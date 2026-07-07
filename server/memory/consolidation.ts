@@ -672,6 +672,7 @@ async function processExtractedClaims(
         continue;
       }
 
+      let legacyDuplicateSignal: { id: number; similarity: number } | null = null;
       try {
         const similarLegacy = await executeSemanticSearch(embedding, 3);
         const nearDuplicateLegacy = similarLegacy.find(
@@ -679,9 +680,8 @@ async function processExtractedClaims(
         );
 
         if (nearDuplicateLegacy) {
-          log.debug(`[${index + 1}/${total}] Claim dedup: skipped legacy duplicate #${nearDuplicateLegacy.row.id} (similarity=${nearDuplicateLegacy.similarity.toFixed(3)}) for "${claim.content.slice(0, 60)}..."`);
-          reinforced++;
-          continue;
+          legacyDuplicateSignal = { id: nearDuplicateLegacy.row.id, similarity: nearDuplicateLegacy.similarity };
+          log.debug(`[${index + 1}/${total}] Legacy duplicate signal for vNext claim: legacy #${nearDuplicateLegacy.row.id} (similarity=${nearDuplicateLegacy.similarity.toFixed(3)}) for "${claim.content.slice(0, 60)}..." — inserting vNext claim anyway`);
         }
       } catch (legacySemanticErr: unknown) {
         log.warn(
@@ -706,6 +706,9 @@ async function processExtractedClaims(
         metadata: {
           confidence: claim.confidence,
           claimType: claim.claimType,
+          ...(legacyDuplicateSignal
+            ? { legacyDuplicateSignal }
+            : {}),
         },
         writeBudget: {
           budget: {
@@ -765,6 +768,16 @@ async function processExtractedClaims(
       });
     } catch (claimErr: unknown) {
       skipped++;
+      logClaimBudgetDecision("memory.vnext.claim_failed", {
+        sourceMemoryId: parentEntry.id,
+        budgetKey,
+        candidateIndex: claimIdx,
+        claimType: claim.claimType,
+        confidence: claim.confidence,
+        preview: claim.content.slice(0, 120),
+        error: claimErr instanceof Error ? claimErr.message : String(claimErr),
+        stack: claimErr instanceof Error ? claimErr.stack : undefined,
+      }, "info");
       log.warn(`[${index + 1}/${total}] Failed to process claim "${claim.content.slice(0, 60)}...": ${claimErr instanceof Error ? claimErr.message : String(claimErr)}`);
     }
   }

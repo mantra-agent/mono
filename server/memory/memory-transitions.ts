@@ -165,12 +165,14 @@ Should these be merged or kept separate?`,
           content: best.entry.content,
           role: "original",
           ordinal: startOrd,
+          createdAt: new Date(),
         });
         await tx.insert(memoryContentBlocks).values({
           entryId: best.entry.id,
           content: newEntry.content,
           role: "merged",
           ordinal: startOrd + 1,
+          createdAt: new Date(),
         });
 
         const setData: Record<string, unknown> = {
