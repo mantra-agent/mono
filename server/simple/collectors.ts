@@ -467,6 +467,7 @@ interface EmailReviewThread {
   date: string | null;
   triageTier: string | null;
   triageReason: string | null;
+  messageIds: number[];
   messageCount: number;
   unreadCount: number;
   enrichmentSummary: string | null;
@@ -496,6 +497,7 @@ async function collectEmailReviewThreads(): Promise<EmailReviewThread[]> {
         em.date::text,
         em.triage_tier,
         em.triage_reason,
+        (SELECT ARRAY_AGG(t.id ORDER BY t.date DESC) FROM email_messages t WHERE t.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id) AND t.account_id = em.account_id AND t.provider = em.provider) AS message_ids,
         (SELECT COUNT(*) FROM email_messages t WHERE t.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id) AND t.account_id = em.account_id AND t.provider = em.provider) AS message_count,
         (SELECT COUNT(*) FROM email_messages t WHERE t.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id) AND t.account_id = em.account_id AND t.provider = em.provider AND t.is_read = false) AS unread_count,
         ee.summary AS enrichment_summary,
@@ -533,6 +535,7 @@ async function collectEmailReviewThreads(): Promise<EmailReviewThread[]> {
       date: row.date,
       triageTier: row.triage_tier,
       triageReason: row.triage_reason,
+      messageIds: Array.isArray(row.message_ids) ? row.message_ids.map((id: unknown) => Number(id)).filter((id: number) => Number.isFinite(id)) : [],
       messageCount: Number(row.message_count) || 1,
       unreadCount: Number(row.unread_count) || 0,
       enrichmentSummary: row.enrichment_summary,
@@ -582,6 +585,7 @@ function itemFromEmailReview(thread: EmailReviewThread, index: number): SimpleFe
       snippet: thread.snippet?.slice(0, 200) || null,
       reason: thread.enrichmentSummary || thread.triageReason || null,
       triageTier: thread.triageTier,
+      messageIds: thread.messageIds,
       messageCount: thread.messageCount,
       unreadCount: thread.unreadCount,
       enrichmentActions: thread.enrichmentActions,

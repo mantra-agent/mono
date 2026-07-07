@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
-import type { SimpleFeed, SimpleFeedItem } from "@shared/models/simple";
+import { useMemo, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { SimpleFeedItem } from "@shared/models/simple";
 import { ChevronRight, Loader2, Mail, MessageSquare, MoreHorizontal, X } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -10,9 +10,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ReminderPopover } from "@/components/library-reminder";
 import { SimpleCheckCircle } from "@/components/home/home-check-circle";
 import { apiRequest } from "@/lib/queryClient";
 import { useFocusSession } from "@/hooks/use-focus-session";
+import { useToast } from "@/hooks/use-toast";
+import { useEmailMarkDone, useEmailSnooze } from "@/hooks/use-email-thread-actions";
 import { cn } from "@/lib/utils";
 
 interface SurfacedEmailRowProps {
@@ -27,26 +30,26 @@ function payloadString(item: SimpleFeedItem, key: string): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function removeFeedItem(feed: SimpleFeed | undefined, itemId: string): SimpleFeed | undefined {
-  if (!feed) return feed;
-  let removed = false;
-  const sections = feed.sections.map(section => {
-    const items = section.items.filter(item => {
-      const keep = item.id !== itemId;
-      if (!keep) removed = true;
-      return keep;
-    });
-    return items === section.items ? section : { ...section, items };
-  });
-  return removed ? { ...feed, sections } : feed;
+function payloadNumberArray(item: SimpleFeedItem, key: string): number[] {
+  const value = item.payload?.[key];
+  if (!Array.isArray(value)) return [];
+  return value.map(Number).filter(Number.isFinite);
 }
 
-function restoreQueries(queryClient: ReturnType<typeof useQueryClient>, snapshots?: Array<{ queryKey: QueryKey; data: unknown }>) {
-  snapshots?.forEach(snapshot => queryClient.setQueryData(snapshot.queryKey, snapshot.data));
+function formatSnoozeTime(date: Date): string {
+  return date.toLocaleString("en-US", {
+    timeZone: "America/Chicago",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
   const queryClient = useQueryClient();
+  const toast = useToast().toast;
   const { route, setSessionForRoute, setWidgetOpen } = useFocusSession();
   const [open, setOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -54,45 +57,59 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
   const reason = payloadString(item, "reason");
   const snippet = payloadString(item, "snippet");
   const triageTier = payloadString(item, "triageTier");
+  const messageIds = useMemo(() => payloadNumberArray(item, "messageIds"), [item]);
 
-  // Extract thread identity from sourceRef id (format: "accountId:providerThreadId")
   const sourceRef = item.sourceRefs.find(ref => ref.type === "email");
   const [accountId, providerThreadId] = (sourceRef?.id ?? "").split(":");
 
-  const dismissMutation = useMutation({
-    mutationFn: async () => {
-      if (!providerThreadId || !accountId) throw new Error("Missing email thread identity");
-      await apiRequest("POST", "/api/email/history/record", {
+  const markDone = useEmailMarkDone();
+  const snoozeMutation = useEmailSnooze();
+
+  const dismiss = () => {
+    if (messageIds.length === 0) {
+      toast({ title: "Email identity missing", description: "This inbox item cannot be dismissed until the feed includes message IDs.", variant: "destructive" });
+      return;
+    }
+    markDone.mutate({
+      ids: messageIds,
+      isDone: true,
+      threadMeta: {
         providerThreadId,
         accountId,
+        tier: triageTier || undefined,
+        sender,
         subject: item.title,
-        dismissedBy: "simple_inbox",
-      });
-    },
-    onMutate: async () => {
-      await queryClient.cancelQueries({ queryKey: ["/api/home/feed"] });
-      await queryClient.cancelQueries({ queryKey: ["/api/simple/feed"] });
+      },
+    });
+  };
 
-      const queryCache = queryClient.getQueryCache();
-      const feedQueries = [
-        ...queryCache.findAll({ queryKey: ["/api/home/feed"] }),
-        ...queryCache.findAll({ queryKey: ["/api/simple/feed"] }),
-      ];
-      const snapshots = feedQueries.map(query => ({ queryKey: query.queryKey, data: query.state.data }));
-      feedQueries.forEach(query => {
-        queryClient.setQueryData<SimpleFeed>(query.queryKey, old => removeFeedItem(old, item.id));
-      });
-      return { snapshots };
-    },
-    onError: (_error, _variables, context) => {
-      restoreQueries(queryClient, context?.snapshots);
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/simple/feed"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/email/messages"] });
-    },
-  });
+  const handleSnooze = (snoozedUntil: string) => {
+    if (messageIds.length === 0) {
+      toast({ title: "Email identity missing", description: "This inbox item cannot be snoozed until the feed includes message IDs.", variant: "destructive" });
+      return;
+    }
+    const formatted = formatSnoozeTime(new Date(snoozedUntil));
+    snoozeMutation.mutate({ ids: messageIds, snoozedUntil }, {
+      onSuccess: () => {
+        toast({
+          title: `Snoozed until ${formatted}`,
+          action: (
+            <button
+              type="button"
+              className="rounded border border-border px-2 py-1 text-xs"
+              onClick={() => snoozeMutation.mutate({ ids: messageIds, snoozedUntil: null })}
+            >
+              Undo
+            </button>
+          ),
+        });
+        setMenuOpen(false);
+      },
+      onError: (err: Error) => {
+        toast({ title: "Snooze failed", description: err.message, variant: "destructive" });
+      },
+    });
+  };
 
   const discussMutation = useMutation({
     mutationFn: async () => {
@@ -116,16 +133,14 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
     },
   });
 
-  const pending = dismissMutation.isPending;
-  const dismiss = () => dismissMutation.mutate();
-
+  const pending = markDone.isPending || snoozeMutation.isPending;
   const tierIcon = triageTier === "🔴" ? "🔴" : triageTier === "🟡" ? "🟡" : triageTier === "🟢" ? "🟢" : null;
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div className={cn(pending && "opacity-60")}>
         <div
-          className="group flex cursor-pointer items-center py-1 transition-colors duration-200 hover:bg-accent/50 rounded-md"
+          className="group flex cursor-pointer items-center rounded-md py-1 transition-colors duration-200 hover:bg-accent/50"
           onClick={() => setOpen(v => !v)}
           role="button"
           tabIndex={0}
@@ -137,11 +152,11 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
           }}
           data-testid={`surfaced-email-row-${item.id}`}
         >
-          <span className="w-14 shrink-0 text-right pr-1.5 text-[11px] leading-tight tabular-nums text-muted-foreground whitespace-nowrap">
+          <span className="w-14 shrink-0 whitespace-nowrap pr-1.5 text-right text-[11px] leading-tight tabular-nums text-muted-foreground">
             {dateLabel ?? ""}
           </span>
-          <span className="w-4 shrink-0 flex items-center justify-center">
-            <SimpleCheckCircle pending={pending} disabled={pending || !providerThreadId} label={`Dismiss ${item.title} from inbox`} onClick={dismiss} />
+          <span className="flex w-4 shrink-0 items-center justify-center">
+            <SimpleCheckCircle pending={markDone.isPending} disabled={pending || messageIds.length === 0} label={`Dismiss ${item.title} from inbox`} onClick={dismiss} />
           </span>
           <div className="relative min-w-0 flex-1 pl-2">
             <span className="inline-flex max-w-full items-center gap-1 text-sm">
@@ -151,28 +166,30 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
               <span className="min-w-0 truncate font-medium">{item.title}</span>
             </span>
           </div>
-          <CollapsibleTrigger type="button" className="ml-1 p-0.5 shrink-0 rounded hover:bg-accent/60" aria-label={`${open ? "Collapse" : "Expand"} ${item.title}`} onClick={(event) => event.stopPropagation()}>
+          <CollapsibleTrigger type="button" className="ml-1 shrink-0 rounded p-0.5 hover:bg-accent/60" aria-label={`${open ? "Collapse" : "Expand"} ${item.title}`} onClick={(event) => event.stopPropagation()}>
             <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", open && "rotate-90")} />
           </CollapsibleTrigger>
-          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
             <DropdownMenuTrigger asChild>
-              <button type="button" className="ml-1 p-0.5 shrink-0 rounded hover:bg-accent/60" aria-label={`Actions for ${item.title}`} onClick={(e) => e.stopPropagation()}>
+              <button type="button" className="ml-1 shrink-0 rounded p-0.5 opacity-0 hover:bg-accent/60 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100" aria-label={`Actions for ${item.title}`} onClick={(e) => e.stopPropagation()}>
                 <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuContent align="end" className="w-48" onClick={(e) => e.stopPropagation()}>
               <DropdownMenuItem disabled={discussMutation.isPending} onClick={(e) => { e.stopPropagation(); discussMutation.mutate(); }}>
-                {discussMutation.isPending ? <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> : <MessageSquare className="h-3.5 w-3.5 mr-2" />}
+                {discussMutation.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <MessageSquare className="mr-2 h-3.5 w-3.5" />}
                 Discuss
               </DropdownMenuItem>
               <DropdownMenuItem onClick={(e) => { e.stopPropagation(); window.location.href = "/comms"; }}>
-                <Mail className="h-3.5 w-3.5 mr-2" />
+                <Mail className="mr-2 h-3.5 w-3.5" />
                 Open in Comms
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); dismiss(); setMenuOpen(false); }}>
-                <X className="h-3.5 w-3.5 mr-2" />
-                Dismiss
+              <ReminderPopover title={item.title} onSelect={handleSnooze} allowNextBoot={false} />
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); dismiss(); setMenuOpen(false); }} disabled={markDone.isPending || messageIds.length === 0}>
+                <X className="mr-2 h-3.5 w-3.5" />
+                Mark done
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
