@@ -75,6 +75,7 @@ COPY package.json package-lock.json ./
 COPY AGENTS.md CODING.md DESIGN.md GOALS.md ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/scripts ./scripts
+RUN chmod +x ./scripts/*.sh
 COPY --from=builder /app/mobile ./mobile
 
 # The server runs on port 5000 by default

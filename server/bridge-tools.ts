@@ -5812,7 +5812,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         if (!problemAfterLock) return "workspace dependencies already hydrated by another session";
 
         toolExec.log(`post-clone: hydrating workspace dependencies (${problemAfterLock})`);
-        const installOutput = await runNpm(["ci", "--include=dev", "--no-audit", "--no-fund"], WORKSPACE_DIR);
+        const installOutput = await runNpm(["ci", "--include=dev", "--legacy-peer-deps", "--no-audit", "--no-fund"], WORKSPACE_DIR);
         await writeFileAsync(stampPath, `${lockHash}\n`, "utf-8");
 
         const remainingProblem = await hydrationProblem();
