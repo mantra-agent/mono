@@ -395,6 +395,20 @@ interface ClaimProcessingResult {
   skipped: number;
 }
 
+export interface VnextExtractionSource {
+  sourceMemoryEntry: MemoryEntry;
+  content: string;
+  title?: string | null;
+  sourceLabel?: string;
+  sourceRefs?: Array<{
+    sourceType: string;
+    sourceId: string;
+    relationship?: string;
+    context?: string;
+    strength?: number;
+  }>;
+}
+
 function clampClaimExtractionBudget(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return CLAIM_EXTRACTION_BUDGET_DEFAULT;
   return Math.max(CLAIM_EXTRACTION_BUDGET_MIN, Math.min(CLAIM_EXTRACTION_BUDGET_MAX, Math.floor(value)));
@@ -504,24 +518,52 @@ export async function processVnextClaimsForMemoryEntry(
     return { created: 0, reinforced: 0, skipped: 0 };
   }
 
+  return processVnextClaimsForSource({
+    sourceMemoryEntry: entry,
+    content: entry.content,
+    title: entry.title ?? (await resolveFallbackTitle(entry)) ?? undefined,
+    sourceLabel: "memory_entry",
+    sourceRefs: [
+      {
+        sourceType: "memory",
+        sourceId: String(entry.id),
+        relationship: "extracted_from",
+        context: "Claim extracted from source memory entry",
+        strength: 1,
+      },
+    ],
+  }, trigger);
+}
+
+export async function processVnextClaimsForSource(
+  source: VnextExtractionSource,
+  trigger: string = "manual",
+): Promise<ClaimProcessingResult> {
+  const entry = source.sourceMemoryEntry;
+  const content = source.content.trim();
+  if (!content) {
+    log.warn(`[vnext_ingest] skip reason=empty_source_content memoryEntryId=${entry.id} trigger=${trigger} sourceLabel=${source.sourceLabel || "unknown"}`);
+    return { created: 0, reinforced: 0, skipped: 0 };
+  }
+
   const meta = (entry.metadata as Record<string, unknown> | null) || {};
   log.info(
     `[vnext_ingest] start memoryEntryId=${entry.id} source=${entry.source || "unknown"} sourceId=${entry.sourceId || "none"} ` +
-    `trigger=${trigger} layer=${entry.layer} integrationStage=${entry.integrationStage} contentLength=${entry.content.length} ` +
+    `trigger=${trigger} sourceLabel=${source.sourceLabel || "unknown"} layer=${entry.layer} integrationStage=${entry.integrationStage} ` +
+    `contentLength=${content.length} mirrorContentLength=${entry.content.length} ` +
     `mirrorKind=${typeof meta.mirrorKind === "string" ? meta.mirrorKind : "none"}`,
   );
 
   try {
     const { generateTitleSummaryTagsAndClaims } = await import("./memory-enrichment");
-    const titleHint = entry.title ?? (await resolveFallbackTitle(entry)) ?? undefined;
     const { claims, claimReasoning } = await generateTitleSummaryTagsAndClaims({
-      content: entry.content,
+      content,
       source: entry.source,
-      title: titleHint || undefined,
+      title: source.title || undefined,
     });
 
     log.info(
-      `[vnext_ingest] candidates memoryEntryId=${entry.id} trigger=${trigger} candidates=${claims.length}` +
+      `[vnext_ingest] candidates memoryEntryId=${entry.id} trigger=${trigger} sourceLabel=${source.sourceLabel || "unknown"} candidates=${claims.length}` +
       `${claimReasoning ? ` reasoning="${claimReasoning.slice(0, 120).replace(/"/g, "'")}"` : ""}`,
     );
 
@@ -529,14 +571,17 @@ export async function processVnextClaimsForMemoryEntry(
       return { created: 0, reinforced: 0, skipped: 0 };
     }
 
-    const result = await processExtractedClaims(claims, entry, 0, 1);
+    const result = await processExtractedClaims(claims, entry, 0, 1, {
+      sourceRefs: source.sourceRefs,
+      sourceLabel: source.sourceLabel,
+    });
     log.info(
-      `[vnext_ingest] complete memoryEntryId=${entry.id} trigger=${trigger} ` +
+      `[vnext_ingest] complete memoryEntryId=${entry.id} trigger=${trigger} sourceLabel=${source.sourceLabel || "unknown"} ` +
       `created=${result.created} reinforced=${result.reinforced} skipped=${result.skipped}`,
     );
     return result;
   } catch (err: unknown) {
-    log.error(`[vnext_ingest] error memoryEntryId=${entry.id} trigger=${trigger} error=${err instanceof Error ? (err.stack || err.message) : String(err)}`);
+    log.error(`[vnext_ingest] error memoryEntryId=${entry.id} trigger=${trigger} sourceLabel=${source.sourceLabel || "unknown"} error=${err instanceof Error ? (err.stack || err.message) : String(err)}`);
     throw err;
   }
 }
@@ -550,6 +595,10 @@ async function processExtractedClaims(
   parentEntry: MemoryEntry,
   index: number,
   total: number,
+  options?: {
+    sourceRefs?: VnextExtractionSource["sourceRefs"];
+    sourceLabel?: string;
+  },
 ): Promise<ClaimProcessingResult> {
   const { generateEmbedding } = await import("./embedding");
 
@@ -673,15 +722,17 @@ async function processExtractedClaims(
           candidateReasons: budgetCandidate.reasons,
           existingAcceptedAtStart: existingAccepted,
         },
-        sourceRefs: [
-          {
-            sourceType: "memory",
-            sourceId: String(parentEntry.id),
-            relationship: "extracted_from",
-            context: "Claim extracted from source memory mirror entry",
-            strength: 1,
-          },
-        ],
+        sourceRefs: options?.sourceRefs?.length
+          ? options.sourceRefs
+          : [
+              {
+                sourceType: "memory",
+                sourceId: String(parentEntry.id),
+                relationship: "extracted_from",
+                context: "Claim extracted from source memory entry",
+                strength: 1,
+              },
+            ],
       });
 
       // Entity linking

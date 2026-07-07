@@ -543,6 +543,46 @@ function extractFallbackSessionSummary(data: SessionData): { summary: string | n
   return { summary: null, reason: "no_summary_material" };
 }
 
+function normalizeForVnextExtraction(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatMessageForVnextExtraction(message: FileMessage): string | null {
+  if (!message.content?.trim()) return null;
+  if (message.role === "system") return null;
+  if (message.isError) return null;
+  const content = normalizeForVnextExtraction(message.content);
+  if (!content) return null;
+  const role = message.role || "message";
+  return `${role}: ${content.slice(0, 2500)}`;
+}
+
+function buildVnextSessionExtractionContent(data: SessionData, fallbackSummary: string): { content: string; reason: string } {
+  const sections: string[] = [];
+  sections.push(`Session title: ${data.title || "Untitled"}`);
+  if (data.topics?.length) sections.push(`Topics: ${data.topics.join(", ")}`);
+  if (data.memorySummary?.trim()) sections.push(`Existing memory summary: ${data.memorySummary.trim()}`);
+  if (data.summary?.trim()) sections.push(`Session summary: ${data.summary.trim()}`);
+  if (!data.summary?.trim() && fallbackSummary.trim()) sections.push(`Fallback summary: ${fallbackSummary.trim()}`);
+
+  const formattedMessages = data.messages
+    .map(formatMessageForVnextExtraction)
+    .filter((line): line is string => Boolean(line));
+
+  const recentMessages = formattedMessages.slice(-24);
+  if (recentMessages.length > 0) {
+    sections.push(`Recent conversation:\n${recentMessages.join("\n")}`);
+  }
+
+  const content = sections.join("\n\n").slice(0, 16000).trim();
+  return {
+    content,
+    reason: recentMessages.length > 0 ? "session_content" : "session_summary_only",
+  };
+}
+
 function publishSessionStatusChanged(data: SessionData, previousStatus: string | undefined, status: string): void {
   eventBus.publish({
     category: "session",
@@ -631,11 +671,42 @@ async function syncSessionMemoryMirrorIfReady(data: SessionData): Promise<void> 
   }
 
   try {
-    memoryMirrorLog.info(`[vnext_ingest] trigger source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId}`);
-    const { processVnextClaimsForMemoryEntry } = await import("./memory/consolidation");
-    const result = await processVnextClaimsForMemoryEntry(memEntryId, "session_memory_mirror");
+    const vnextSource = buildVnextSessionExtractionContent(data, fallback.summary);
     memoryMirrorLog.info(
-      `[vnext_ingest] result source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId} ` +
+      `[vnext_ingest] trigger source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId} ` +
+      `sourceLabel=${vnextSource.reason} contentLength=${vnextSource.content.length} messageCount=${data.messages.length}`,
+    );
+    const { memoryStorage } = await import("./memory/memory-storage");
+    const sourceMemoryEntry = await memoryStorage.getEntry(memEntryId);
+    if (!sourceMemoryEntry) {
+      memoryMirrorLog.warn(`[vnext_ingest] skip source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId} reason=memory_entry_not_found_after_upsert`);
+      return;
+    }
+    const { processVnextClaimsForSource } = await import("./memory/consolidation");
+    const result = await processVnextClaimsForSource({
+      sourceMemoryEntry,
+      content: vnextSource.content,
+      title: data.title,
+      sourceLabel: vnextSource.reason,
+      sourceRefs: [
+        {
+          sourceType: "memory",
+          sourceId: String(memEntryId),
+          relationship: "extracted_from",
+          context: "Legacy session summary mirror retained as provenance for direct vNext session extraction",
+          strength: 1,
+        },
+        {
+          sourceType: "chat_journal",
+          sourceId: data.id,
+          relationship: "extracted_from",
+          context: "Claim extracted directly from saved session content",
+          strength: 1,
+        },
+      ],
+    }, "session_content");
+    memoryMirrorLog.info(
+      `[vnext_ingest] result source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId} sourceLabel=${vnextSource.reason} ` +
       `created=${result.created} reinforced=${result.reinforced} skipped=${result.skipped}`,
     );
 
