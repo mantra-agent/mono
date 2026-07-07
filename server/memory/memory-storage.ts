@@ -3330,13 +3330,13 @@ export class MemoryStorage {
       const nextOrd = (existing[0]?.maxOrd ?? -1) + 1;
       const [block] = await db
         .insert(memoryContentBlocks)
-        .values({ entryId, content, role, ordinal: nextOrd })
+        .values({ entryId, content, role, ordinal: nextOrd, createdAt: new Date() })
         .returning();
       return block;
     }
     const [block] = await db
       .insert(memoryContentBlocks)
-      .values({ entryId, content, role, ordinal: ord })
+      .values({ entryId, content, role, ordinal: ord, createdAt: new Date() })
       .returning();
     return block;
   }

@@ -68,6 +68,7 @@ export async function saveThought(text: string, context?: string, type?: string)
       text,
       context: context || null,
       type: type || null,
+      occurredAt: new Date(),
       ...ownedInsertValues(getCurrentPrincipalOrSystem(), thoughtScopeColumns),
     }).returning();
 
