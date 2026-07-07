@@ -27,6 +27,7 @@ interface MessageListProps {
   messages: Message[];
   streaming: StreamingContent;
   isSessionStreaming: boolean;
+  runActive?: boolean;
   msgsLoading: boolean;
   activeSession: string | null;
   sessionKey?: string | null;
@@ -174,6 +175,7 @@ export function MessageList({
   messages,
   streaming,
   isSessionStreaming,
+  runActive,
   msgsLoading,
   activeSession,
   sessionKey,
@@ -417,7 +419,7 @@ export function MessageList({
   const hasServerAuthoritativeStream =
     !!activeSession &&
     effectiveStreaming.segments.length > 0 &&
-    (isSessionStreaming || !!liveStreamRenderId);
+    ((runActive ?? isSessionStreaming) || !!liveStreamRenderId);
   const activeTurnKey = activeTurn
     ? activeTurn.clientTurnId
     : activeSession

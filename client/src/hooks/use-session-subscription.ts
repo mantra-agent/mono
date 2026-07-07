@@ -19,6 +19,7 @@ const log = createLogger("SessionSub");
 // ---------------------------------------------------------------------------
 
 export type SessionStatus = "idle" | "streaming" | "saved" | "error";
+export type VisibleAssistantActivity = "none" | "thinking" | "streaming" | "tool";
 
 export interface SessionStreamState {
   streamingContent: StreamingContent | null;
@@ -27,6 +28,11 @@ export interface SessionStreamState {
   wsConnected: boolean;
   /** Client receive time for the latest server snapshot/delta. Used to reject stale stream state during optimistic send handoff. */
   updatedAt?: number;
+  /** Server-owned runtime projection. `status` is durable/live run state; this discriminates UI activity. */
+  runActive: boolean;
+  canStop: boolean;
+  visibleAssistantActivity: VisibleAssistantActivity;
+  eventSeq?: number;
 }
 
 export type SessionStreamMap = Record<string, SessionStreamState>;
@@ -41,6 +47,9 @@ interface SessionMessage {
   eventSeq?: number;
   eventType?: string;
   subscriberCount?: number;
+  runActive?: boolean;
+  canStop?: boolean;
+  visibleAssistantActivity?: VisibleAssistantActivity;
 }
 
 export interface SessionSubscriptionOptions {
@@ -52,6 +61,9 @@ const idleStreamState: SessionStreamState = {
   streamingContent: null,
   status: "idle",
   wsConnected: false,
+  runActive: false,
+  canStop: false,
+  visibleAssistantActivity: "none",
 };
 
 // ---------------------------------------------------------------------------
@@ -181,6 +193,10 @@ export function useSessionSubscriptions(
         streamingContent: content,
         status,
         updatedAt: Date.now(),
+        runActive: msg.runActive ?? serverStreaming,
+        canStop: msg.canStop ?? serverStreaming,
+        visibleAssistantActivity: msg.visibleAssistantActivity ?? (serverStreaming ? "thinking" : "none"),
+        eventSeq: msg.eventSeq,
       });
       return;
     }
@@ -194,6 +210,10 @@ export function useSessionSubscriptions(
       if (content) patch.streamingContent = content;
       if (status) patch.status = status;
       patch.updatedAt = Date.now();
+      patch.runActive = msg.runActive ?? serverStreaming;
+      patch.canStop = msg.canStop ?? serverStreaming;
+      patch.visibleAssistantActivity = msg.visibleAssistantActivity ?? (serverStreaming ? "thinking" : "none");
+      patch.eventSeq = msg.eventSeq;
       upsertStream(msg.sessionId, patch);
     }
   }, [handlerId, owner, tabId, upsertStream]);
