@@ -2479,6 +2479,37 @@ function ConnectionsCard({ person }: { person: Person }) {
   );
 }
 
+function PeopleDetailSection({
+  title,
+  count,
+  defaultOpen = false,
+  children,
+  testId,
+}: {
+  title: string;
+  count?: number;
+  defaultOpen?: boolean;
+  children: ReactNode;
+  testId?: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
+      <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate">
+        <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
+        <span>{title}</span>
+        {count !== undefined && <span className="ml-auto text-[10px] font-normal text-muted-foreground/70">{count}</span>}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="space-y-3 pt-1">
+          {children}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 function PersonDetailView({ personId, onClose, onDelete }: { personId: string; onClose: () => void; onDelete: () => void }) {
   const { toast } = useToast();
   const [editingName, setEditingName] = useState(false);
