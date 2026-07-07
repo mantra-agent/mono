@@ -1258,83 +1258,63 @@ function InteractionsTab({ person, onUpdate }: { person: Person; onUpdate: () =>
           No interactions logged yet. Click "Log" to record your first interaction.
         </p>
       ) : (
-        <div className="relative pl-4">
-          <div className="absolute left-2 top-0 bottom-0 w-px bg-border" />
-          <div className="space-y-2">
-            {sorted.map((interaction, idx) => {
-              const Icon = INTERACTION_ICONS[interaction.type] || MessageSquare;
-              const isExpanded = expandedId === interaction.id;
-              const hasContext = !!interaction.context;
-              const dirColor = interaction.direction === "inbound" ? "text-info" : interaction.direction === "outbound" ? "text-success" : "";
-              const meaningColor = interaction.meaningfulness === "high" ? "bg-warning" : interaction.meaningfulness === "medium" ? "bg-success" : "";
-              const d = new Date(interaction.date);
-              const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-              const prevDate = idx > 0 ? new Date(sorted[idx - 1].date) : null;
-              const prevMonthKey = prevDate ? `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}` : null;
-              const showMonthHeader = monthKey !== prevMonthKey;
-              return (
-                <div key={interaction.id}>
+        <div className="overflow-hidden rounded-md border border-border/20" data-testid="interaction-tree">
+          {sorted.map((interaction, idx) => {
+            const Icon = INTERACTION_ICONS[interaction.type] || MessageSquare;
+            const isExpanded = expandedId === interaction.id;
+            const d = new Date(interaction.date);
+            const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+            const prevDate = idx > 0 ? new Date(sorted[idx - 1].date) : null;
+            const prevMonthKey = prevDate ? `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}` : null;
+            const showMonthHeader = monthKey !== prevMonthKey;
+            const dirColor = interaction.direction === "inbound" ? "text-info" : interaction.direction === "outbound" ? "text-success" : "text-muted-foreground";
+            const title = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+            return (
+              <Fragment key={interaction.id}>
                 {showMonthHeader && (
-                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground pt-2 pb-1 -ml-4" data-testid={`month-header-${monthKey}`}>
+                  <div className="px-2 pb-1 pt-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid={`month-header-${monthKey}`}>
                     {d.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
                   </div>
                 )}
-                <div className="relative group" data-testid={`interaction-${interaction.id}`}>
-                  <div className={`absolute -left-4 top-2.5 h-2 w-2 rounded-full ring-2 ring-background ${meaningColor || "bg-muted-foreground/30"}`} />
-                  <div
-                    className={`flex items-start gap-2 py-1 ${hasContext ? "cursor-pointer" : ""}`}
-                    onClick={() => hasContext && setExpandedId(isExpanded ? null : interaction.id)}
-                  >
-                    <div className="flex items-center gap-0.5 shrink-0 mt-0.5">
-                      <Icon className={`h-3.5 w-3.5 ${dirColor || "text-muted-foreground"}`} />
-                      {interaction.direction && interaction.direction !== "mutual" && (
-                        interaction.direction === "inbound"
-                          ? <ArrowDown className="h-2.5 w-2.5 text-info" />
-                          : <ArrowUp className="h-2.5 w-2.5 text-success" />
-                      )}
-                      {hasContext && (
-                        isExpanded
-                          ? <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                          : <ChevronRight className="h-3 w-3 text-muted-foreground" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm">{interaction.summary}</p>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-xs text-muted-foreground">{formatShortDate(interaction.date)}</span>
-                        {interaction.responseOwed && (
-                          <Badge variant="destructive" className="text-xs px-1 py-0">response owed</Badge>
-                        )}
-                        {interaction.capitalImpact && interaction.capitalImpact !== "neutral" && (
-                          <Badge variant="outline" className={`text-xs px-1 py-0 ${interaction.capitalImpact === "deposit" ? "text-success-foreground" : "text-error-foreground"}`}>
-                            {interaction.capitalImpact}
-                          </Badge>
-                        )}
-                        {interaction.meaningfulness && interaction.meaningfulness !== "low" && (
-                          <Badge variant="outline" className="text-xs px-1 py-0">{interaction.meaningfulness}</Badge>
-                        )}
+                <ProfileTreeRow
+                  label={<span>{title}</span>}
+                  icon={<Icon className={cn("h-3.5 w-3.5", dirColor)} />}
+                  hasValue
+                  showEmpty
+                  expandedContent={(
+                    <div className="rounded-md border border-card-border bg-muted/20 p-3 text-sm leading-relaxed">
+                      <p className="whitespace-pre-wrap text-foreground" data-testid={`interaction-summary-${interaction.id}`}>{interaction.summary}</p>
+                      {interaction.context && <p className="mt-2 whitespace-pre-wrap text-muted-foreground">{interaction.context}</p>}
+                      <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                        <Badge variant="outline" className="text-[10px] leading-none">{interaction.type}</Badge>
+                        {interaction.direction && <Badge variant="outline" className="text-[10px] leading-none">{interaction.direction}</Badge>}
+                        {interaction.meaningfulness && <Badge variant="outline" className="text-[10px] leading-none">{interaction.meaningfulness}</Badge>}
+                        {interaction.capitalImpact && interaction.capitalImpact !== "neutral" && <Badge variant="outline" className="text-[10px] leading-none">{interaction.capitalImpact}</Badge>}
+                        {interaction.responseOwed && <Badge variant="destructive" className="text-[10px] leading-none">response owed</Badge>}
+                        {interaction.responseDueBy && <span>due {formatShortDate(interaction.responseDueBy)}</span>}
+                        {interaction.tags?.map((tag) => <Badge key={tag} variant="outline" className="text-[10px] leading-none">{tag}</Badge>)}
                       </div>
                     </div>
+                  )}
+                  expandedContentClassName="px-2 pb-2 pl-2"
+                  testId={`interaction-${interaction.id}`}
+                >
+                  <div className="flex min-w-0 items-center justify-end gap-1.5">
+                    <span className="truncate text-xs text-foreground/80" data-testid={`interaction-preview-${interaction.id}`}>{interaction.summary}</span>
                     <Button
                       size="icon"
                       variant="ghost"
-                      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
                       onClick={(e) => { e.stopPropagation(); deleteMutation.mutate(interaction.id); }}
                       data-testid={`button-delete-interaction-${interaction.id}`}
                     >
                       <Trash2 className="h-3 w-3" />
                     </Button>
                   </div>
-                  {isExpanded && interaction.context && (
-                    <div className="ml-8 mt-1 mb-2 text-xs text-muted-foreground bg-muted/50 rounded-md p-2 border border-border/50">
-                      {interaction.context}
-                    </div>
-                  )}
-                </div>
-                </div>
-              );
-            })}
-          </div>
+                </ProfileTreeRow>
+              </Fragment>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1778,6 +1758,7 @@ function ProfileTreeRow({
   showEmpty,
   children,
   expandedContent,
+  expandedContentClassName,
   testId,
 }: {
   label: ReactNode;
@@ -1786,6 +1767,7 @@ function ProfileTreeRow({
   showEmpty: boolean;
   children: ReactNode;
   expandedContent?: ReactNode;
+  expandedContentClassName?: string;
   testId?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -1805,7 +1787,7 @@ function ProfileTreeRow({
           <div
             className={cn(
               "flex min-w-0 flex-1 items-center justify-end text-right text-xs leading-none",
-              "[&_input]:h-5 [&_input]:bg-muted/50 [&_input]:px-1.5 [&_input]:py-0 [&_input]:text-xs [&_input]:leading-none",
+              "[&_input]:h-5 [&_input]:bg-muted/50 [&_input]:px-1.5 [&_input]:py-0 [&_input]:text-right [&_input]:text-xs [&_input]:leading-none",
               "[&_textarea]:bg-muted/50 [&_textarea]:text-xs",
               "[&_[role=combobox]]:h-5 [&_[role=combobox]]:bg-muted/50 [&_[role=combobox]]:px-1.5 [&_[role=combobox]]:py-0 [&_[role=combobox]]:text-xs",
               "[&_button]:h-5 [&_button]:px-1.5 [&_button]:text-xs",
@@ -1830,7 +1812,7 @@ function ProfileTreeRow({
         </div>
         {canExpand && (
           <CollapsibleContent>
-            <div className="px-2 pb-2 pl-8 text-xs leading-relaxed text-foreground">
+            <div className={cn("px-2 pb-2 pl-8 text-xs leading-relaxed text-foreground", expandedContentClassName)}>
               {expandedContent}
             </div>
           </CollapsibleContent>
@@ -1840,13 +1822,11 @@ function ProfileTreeRow({
   );
 }
 
-function ProfileSummaryRow({
+function ProfileSummaryEditor({
   person,
-  showEmptyFields,
   onSave,
 }: {
   person: Person;
-  showEmptyFields: boolean;
   onSave: (updates: Partial<Person>) => void;
 }) {
   const [draft, setDraft] = useState(person.quickSummary || "");
@@ -1854,8 +1834,6 @@ function ProfileSummaryRow({
   useEffect(() => {
     setDraft(person.quickSummary || "");
   }, [person.id, person.quickSummary]);
-
-  if (person.private) return null;
 
   const save = () => {
     const next = draft.trim();
@@ -1865,32 +1843,16 @@ function ProfileSummaryRow({
   };
 
   return (
-    <ProfileTreeRow
-      label={<span data-testid="label-summary">Summary</span>}
-      icon={<FileText className="h-3.5 w-3.5" />}
-      hasValue={Boolean(draft.trim())}
-      showEmpty={showEmptyFields}
-      expandedContent={
-        <Textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={save}
-          placeholder="Add summary"
-          className="min-h-24 resize-y text-sm"
-          data-testid="textarea-quick-summary"
-        />
-      }
-      testId="row-profile-summary"
-    >
-      <Input
+    <div className="rounded-md border border-card-border bg-muted/20 p-3">
+      <Textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={save}
         placeholder="Add summary"
-        className="max-w-md truncate text-right"
-        data-testid="input-quick-summary"
+        className="min-h-24 resize-y border-0 bg-transparent p-0 text-sm leading-relaxed shadow-none focus-visible:ring-0"
+        data-testid="textarea-quick-summary"
       />
-    </ProfileTreeRow>
+    </div>
   );
 }
 
@@ -2978,6 +2940,10 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
   }, [person?.company]);
 
   useEffect(() => {
+    if (person) setEditName(person.name || "");
+  }, [person?.id, person?.name]);
+
+  useEffect(() => {
     setShowEmptyProfileRows(false);
   }, [personId]);
 
@@ -3091,18 +3057,24 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
         testId="section-profile"
       >
         <div className="overflow-hidden rounded-md border border-border/20">
-          <ProfileSummaryRow person={person} showEmptyFields={showEmptyProfileRows} onSave={(updates) => updateMutation.mutate(updates)} />
-
-          <ProfileTreeRow label={<span data-testid="label-name">Name</span>} icon={<User className="h-3.5 w-3.5" />} hasValue={Boolean(person.name)} showEmpty={showEmptyProfileRows} testId="row-profile-name">
-            {editingName ? (
-              <div className="flex items-center justify-end gap-1">
-                <Input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Name" className="h-8 w-44 text-right" autoFocus onKeyDown={(e) => { if (e.key === "Enter") updateMutation.mutate({ name: editName }); if (e.key === "Escape") setEditingName(false); }} data-testid="input-edit-name" />
-                <Button size="sm" onClick={() => updateMutation.mutate({ name: editName })} disabled={updateMutation.isPending} data-testid="button-save-name">Save</Button>
-                <Button variant="ghost" size="icon" onClick={() => setEditingName(false)}><X className="h-3 w-3" /></Button>
-              </div>
-            ) : (
-              <button className="truncate rounded px-1 text-right text-xs hover-elevate" onClick={() => { setEditName(person.name); setEditingName(true); }} data-testid="display-name">{person.name}</button>
-            )}
+          <ProfileTreeRow
+            label={<span data-testid="label-name">Name</span>}
+            icon={<User className="h-3.5 w-3.5" />}
+            hasValue={Boolean(person.name)}
+            showEmpty={showEmptyProfileRows}
+            expandedContent={!person.private ? <ProfileSummaryEditor person={person} onSave={(updates) => updateMutation.mutate(updates)} /> : undefined}
+            expandedContentClassName="px-2 pb-2 pl-2"
+            testId="row-profile-name"
+          >
+            <Input
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              onBlur={() => { const next = editName.trim(); if (next && next !== person.name) updateMutation.mutate({ name: next }); }}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditName(person.name); }}
+              placeholder="Name"
+              className="w-44"
+              data-testid="input-edit-name"
+            />
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-alias">Alias</span>} icon={<ContactRound className="h-3.5 w-3.5" />} hasValue={person.nicknames.length > 0} showEmpty={showEmptyProfileRows || addingNickname} testId="row-profile-alias">
@@ -3135,7 +3107,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
           <ProfileTreeRow label={<span data-testid="label-tags">Tags</span>} icon={<SlidersHorizontal className="h-3.5 w-3.5" />} hasValue={(person.tags || []).length > 0} showEmpty={showEmptyProfileRows} testId="row-profile-tags"><div className="max-w-md"><DetailTagPicker tags={person.tags || []} onChange={(newTags) => updateMutation.mutate({ tags: newTags })} /></div></ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-met">Met</span>} icon={<Calendar className="h-3.5 w-3.5" />} hasValue={Boolean(person.met)} showEmpty={showEmptyProfileRows || editingMet} testId="row-profile-met">
-            {person.met || editingMet ? <Input key={person.met || "new-met"} type="date" defaultValue={person.met || ""} autoFocus={editingMet} onBlur={(e) => { const v = e.target.value; if (v !== person.met && (v || person.met)) updateMutation.mutate({ met: v || undefined }); setEditingMet(false); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingMet(false); }} className="h-8 w-36 text-right" data-testid="input-met" /> : <Button variant="ghost" size="icon" onClick={() => setEditingMet(true)} data-testid="button-add-met"><Plus className="h-3 w-3" /></Button>}
+            {person.met || editingMet ? <Input key={person.met || "new-met"} type="date" defaultValue={person.met || ""} autoFocus={editingMet} onBlur={(e) => { const v = e.target.value; if (v !== person.met && (v || person.met)) updateMutation.mutate({ met: v || undefined }); setEditingMet(false); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingMet(false); }} className="w-36" data-testid="input-met" /> : <Button variant="ghost" size="icon" onClick={() => setEditingMet(true)} data-testid="button-add-met"><Plus className="h-3 w-3" /></Button>}
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-company">Company</span>} icon={<Building2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.company)} showEmpty={showEmptyProfileRows || editingCompany} testId="row-profile-company">
@@ -3148,7 +3120,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-role">Role</span>} icon={<ContactRound className="h-3.5 w-3.5" />} hasValue={Boolean(person.role)} showEmpty={showEmptyProfileRows || editingRole} testId="row-profile-role">
-            {person.role || editingRole ? <Input key={person.role || "new-role"} defaultValue={person.role || ""} placeholder="Role" autoFocus={editingRole} onBlur={(e) => { const v = e.target.value.trim(); if (v !== person.role && (v || person.role)) updateMutation.mutate({ role: v || undefined }); setEditingRole(false); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingRole(false); }} className="h-8 w-44 text-right" data-testid="input-edit-role" /> : <Button variant="ghost" size="icon" onClick={() => setEditingRole(true)} data-testid="button-add-role"><Plus className="h-3 w-3" /></Button>}
+            <Input key={person.role || "new-role"} defaultValue={person.role || ""} placeholder="Role" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.role || "")) updateMutation.mutate({ role: v || undefined }); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.role || ""; }} className="w-44" data-testid="input-edit-role" />
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-professional-relation">Prof. Relation</span>} icon={<Building2 className="h-3.5 w-3.5" />} hasValue={(person.professionalRelations || []).length > 0} showEmpty={showEmptyProfileRows} testId="row-profile-professional-relation">
@@ -3159,11 +3131,11 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
 
           <ProfileTreeRow label={<span data-testid="label-introduced-by">Introduced By</span>} icon={<Link2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.introducedBy && introducedByPerson)} showEmpty={showEmptyProfileRows || showIntroducedBySearch} testId="row-profile-introduced-by"><div className="relative flex justify-end">{person.introducedBy && introducedByPerson ? <Badge variant="outline" className="text-xs" data-testid="badge-introduced-by">{introducedByPerson.name}<button className="ml-1 inline-flex" onClick={(e) => { e.stopPropagation(); updateMutation.mutate({ introducedBy: "" }); }} data-testid="button-remove-introduced-by"><X className="h-2.5 w-2.5" /></button></Badge> : showIntroducedBySearch ? <div><Input value={introducedBySearch} onChange={(e) => setIntroducedBySearch(e.target.value)} placeholder="Search people..." className="h-8 w-44 text-right" autoFocus onBlur={() => setTimeout(() => { setShowIntroducedBySearch(false); setIntroducedBySearch(""); }, 200)} onKeyDown={(e) => { if (e.key === "Escape") { setShowIntroducedBySearch(false); setIntroducedBySearch(""); } }} data-testid="input-introduced-by-search" />{filteredPeopleForIntroduction.length > 0 && <div className="absolute right-0 z-50 mt-1 w-56 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md" data-testid="dropdown-introduced-by">{filteredPeopleForIntroduction.map((p) => <button key={p.id} className="w-full px-3 py-1.5 text-left text-sm hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { updateMutation.mutate({ introducedBy: p.id }); setShowIntroducedBySearch(false); setIntroducedBySearch(""); }} data-testid={`option-introduced-by-${p.id}`}>{p.name}</button>)}</div>}</div> : <Button variant="ghost" size="icon" onClick={() => setShowIntroducedBySearch(true)} data-testid="button-add-introduced-by"><Plus className="h-3 w-3" /></Button>}</div></ProfileTreeRow>
 
-          <ProfileTreeRow label={<span data-testid="label-instagram">Instagram</span>} icon={<SiInstagram className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.instagram)} showEmpty={showEmptyProfileRows || editingInstagram} testId="row-profile-instagram">{person.socialProfiles?.instagram || editingInstagram ? <Input key={person.socialProfiles?.instagram || "new-instagram"} defaultValue={person.socialProfiles?.instagram || ""} placeholder="Instagram URL" autoFocus={editingInstagram} onBlur={(e) => { const v = e.target.value.trim(); if (v !== person.socialProfiles?.instagram && (v || person.socialProfiles?.instagram)) handleSaveSocial("instagram", v); setEditingInstagram(false); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingInstagram(false); }} className="h-8 w-44 text-right" data-testid="input-social-instagram" /> : <Button variant="ghost" size="icon" onClick={() => setEditingInstagram(true)} data-testid="button-add-instagram"><Plus className="h-3 w-3" /></Button>}</ProfileTreeRow>
-          <ProfileTreeRow label={<span data-testid="label-x">X</span>} icon={<SiX className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.x)} showEmpty={showEmptyProfileRows || editingX} testId="row-profile-x">{person.socialProfiles?.x || editingX ? <Input key={person.socialProfiles?.x || "new-x"} defaultValue={person.socialProfiles?.x || ""} placeholder="X URL" autoFocus={editingX} onBlur={(e) => { const v = e.target.value.trim(); if (v !== person.socialProfiles?.x && (v || person.socialProfiles?.x)) handleSaveSocial("x", v); setEditingX(false); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingX(false); }} className="h-8 w-44 text-right" data-testid="input-social-x" /> : <Button variant="ghost" size="icon" onClick={() => setEditingX(true)} data-testid="button-add-x"><Plus className="h-3 w-3" /></Button>}</ProfileTreeRow>
-          <ProfileTreeRow label={<span data-testid="label-linkedin">LinkedIn</span>} icon={<SiLinkedin className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.linkedin)} showEmpty={showEmptyProfileRows || editingLinkedin} testId="row-profile-linkedin">{person.socialProfiles?.linkedin || editingLinkedin ? <Input key={person.socialProfiles?.linkedin || "new-linkedin"} defaultValue={person.socialProfiles?.linkedin || ""} placeholder="LinkedIn URL" autoFocus={editingLinkedin} onBlur={(e) => { const v = e.target.value.trim(); if (v !== person.socialProfiles?.linkedin && (v || person.socialProfiles?.linkedin)) handleSaveSocial("linkedin", v); setEditingLinkedin(false); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingLinkedin(false); }} className="h-8 w-44 text-right" data-testid="input-social-linkedin" /> : <Button variant="ghost" size="icon" onClick={() => setEditingLinkedin(true)} data-testid="button-add-linkedin"><Plus className="h-3 w-3" /></Button>}</ProfileTreeRow>
+          <ProfileTreeRow label={<span data-testid="label-instagram">Instagram</span>} icon={<SiInstagram className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.instagram)} showEmpty={showEmptyProfileRows || editingInstagram} testId="row-profile-instagram"><Input key={person.socialProfiles?.instagram || "new-instagram"} defaultValue={person.socialProfiles?.instagram || ""} placeholder="Instagram URL" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.instagram || "")) handleSaveSocial("instagram", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.instagram || ""; }} className="w-44" data-testid="input-social-instagram" /></ProfileTreeRow>
+          <ProfileTreeRow label={<span data-testid="label-x">X</span>} icon={<SiX className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.x)} showEmpty={showEmptyProfileRows || editingX} testId="row-profile-x"><Input key={person.socialProfiles?.x || "new-x"} defaultValue={person.socialProfiles?.x || ""} placeholder="X URL" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.x || "")) handleSaveSocial("x", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.x || ""; }} className="w-44" data-testid="input-social-x" /></ProfileTreeRow>
+          <ProfileTreeRow label={<span data-testid="label-linkedin">LinkedIn</span>} icon={<SiLinkedin className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.linkedin)} showEmpty={showEmptyProfileRows || editingLinkedin} testId="row-profile-linkedin"><Input key={person.socialProfiles?.linkedin || "new-linkedin"} defaultValue={person.socialProfiles?.linkedin || ""} placeholder="LinkedIn URL" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.linkedin || "")) handleSaveSocial("linkedin", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.linkedin || ""; }} className="w-44" data-testid="input-social-linkedin" /></ProfileTreeRow>
 
-          {person.contactInfo.map((c, i) => <ProfileTreeRow key={`contact-${i}`} label={c.label || contactTypeLabels[c.type] || c.type} icon={c.type === "email" ? <Mail className="h-3.5 w-3.5" /> : c.type === "phone" ? <Phone className="h-3.5 w-3.5" /> : <ContactRound className="h-3.5 w-3.5" />} hasValue={Boolean(c.value)} showEmpty={showEmptyProfileRows} testId={`row-profile-contact-${i}`}><div className="flex min-w-0 items-center justify-end gap-1 group"><span className="truncate text-sm">{c.value}</span><Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => updateMutation.mutate({ contactInfo: person.contactInfo.filter((_, idx) => idx !== i) })} data-testid={`button-remove-contact-${i}`}><X className="h-3 w-3" /></Button></div></ProfileTreeRow>)}
+          {person.contactInfo.map((c, i) => <ProfileTreeRow key={`contact-${i}`} label={c.label || contactTypeLabels[c.type] || c.type} icon={c.type === "email" ? <Mail className="h-3.5 w-3.5" /> : c.type === "phone" ? <Phone className="h-3.5 w-3.5" /> : <ContactRound className="h-3.5 w-3.5" />} hasValue={Boolean(c.value)} showEmpty={showEmptyProfileRows} testId={`row-profile-contact-${i}`}><div className="flex min-w-0 items-center justify-end gap-1 group"><Input key={`${c.type}-${c.value}`} defaultValue={c.value} placeholder={c.label || contactTypeLabels[c.type] || c.type} onBlur={(e) => { const v = e.target.value.trim(); if (v !== c.value) updateMutation.mutate({ contactInfo: person.contactInfo.map((item, idx) => idx === i ? { ...item, value: v } : item).filter(item => item.value.trim()) }); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = c.value; }} className="w-44" data-testid={`input-contact-${i}`} /><Button size="icon" variant="ghost" className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => updateMutation.mutate({ contactInfo: person.contactInfo.filter((_, idx) => idx !== i) })} data-testid={`button-remove-contact-${i}`}><X className="h-3 w-3" /></Button></div></ProfileTreeRow>)}
 
           <ProfileTreeRow label="New contact" icon={<Plus className="h-3.5 w-3.5" />} hasValue={showAddContact} showEmpty={showEmptyProfileRows || showAddContact} testId="row-profile-new-contact">{showAddContact ? <div className="flex flex-wrap items-center justify-end gap-1.5"><Select value={newContactType} onValueChange={(v) => setNewContactType(v as any)}><SelectTrigger className="h-8 w-24" data-testid="select-contact-type"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="email">Email</SelectItem><SelectItem value="phone">Phone</SelectItem><SelectItem value="social">Social</SelectItem><SelectItem value="other">Other</SelectItem></SelectContent></Select><Input value={newContactLabel} onChange={(e) => setNewContactLabel(e.target.value)} placeholder="Label" className="h-8 w-20 text-right" data-testid="input-contact-label" /><Input value={newContactValue} onChange={(e) => setNewContactValue(e.target.value)} placeholder="Value" className="h-8 min-w-[120px] flex-1 text-right" data-testid="input-contact-value" /><Button size="sm" onClick={() => { if (newContactValue.trim()) { updateMutation.mutate({ contactInfo: [...person.contactInfo, { type: newContactType, label: newContactLabel || contactTypeLabels[newContactType], value: newContactValue }] }); setShowAddContact(false); setNewContactLabel(""); setNewContactValue(""); } }} data-testid="button-save-contact">Add</Button><Button variant="ghost" size="icon" onClick={() => setShowAddContact(false)}><X className="h-3 w-3" /></Button></div> : <Button variant="ghost" size="sm" onClick={() => setShowAddContact(true)} data-testid="button-add-contact"><Plus className="mr-1 h-3 w-3" />Contact info</Button>}</ProfileTreeRow>
         </div>
