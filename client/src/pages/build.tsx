@@ -3,7 +3,6 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import {
   AlertTriangle,
-  ArrowLeftRight,
   Bot,
   Check,
   CheckCircle2,
@@ -824,9 +823,10 @@ function describeLocalKind(kind: LocalDbKind): { label: string; tone: string } {
 interface DatabasePanelProps {
   syncState: DbSyncState | undefined;
   isDevRunning: boolean;
+  embedded?: boolean;
 }
 
-function DatabasePanel({ syncState, isDevRunning }: DatabasePanelProps) {
+function DatabasePanel({ syncState, isDevRunning, embedded = false }: DatabasePanelProps) {
   const { toast } = useToast();
   const environmentOptionsQuery = usePlatformEnvironmentOptions();
   const environmentOptions = environmentOptionsQuery.data ?? [];
@@ -962,14 +962,14 @@ function DatabasePanel({ syncState, isDevRunning }: DatabasePanelProps) {
       };
 
   return (
-    <Card data-testid="card-database-panel">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2">
+    <Card className={cn(embedded && "border-border/30 bg-card/60")} data-testid="card-database-panel">
+      <CardHeader className={cn("pb-3", embedded && "px-3 pt-3")}>
+        <CardTitle className="text-sm flex items-center gap-2">
           <Database className="h-4 w-4" />
           Publish database
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className={cn("space-y-4", embedded && "px-3 pb-3")}>
         {/* Identity badge — what's the local DB actually connected to? */}
         <div
           className={cn(
@@ -5274,47 +5274,45 @@ export function DesignTab() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const VALID_TABS = [
-  "database",
-  "migration",
-  "prompts",
   "history",
   "code",
   "issues",
+  "prompts",
 ] as const;
 type DevTab = (typeof VALID_TABS)[number];
 
 function normalizeTab(raw: string | null | undefined): DevTab {
-  if (!raw) return "database";
+  if (!raw) return "history";
   // Legacy tab redirects
-  if (raw === "preview") return "database";
-  if (raw === "deployments") return "history";
-  if (raw === "logs") return "history";
-  if (raw === "config" || raw === "setup") return "database";
-  if (raw === "home") return "database";
-  if (raw === "stage" || raw === "publish" || raw === "mobile" || raw === "pipeline") return "database";
-  if (raw === "design") return "database";
-  if (raw === "backup") return "database";
-  // Legacy build page tabs
-  if (raw === "version") return "history";
+  if (raw === "deployments" || raw === "logs" || raw === "version") return "history";
   if (raw === "codegraph") return "code";
   if ((VALID_TABS as readonly string[]).includes(raw)) return raw as DevTab;
-  return "database";
+  return "history";
 }
 
 function parseInitialTab(): DevTab {
-  if (typeof window === "undefined") return "database";
+  if (typeof window === "undefined") return "history";
   const t = new URLSearchParams(window.location.search).get("tab");
   return normalizeTab(t);
 }
 
-export default function DevPage() {
-  const initial = useMemo(parseInitialTab, []);
-  const [activeTab, setActiveTab] = useState<DevTab>(initial);
+
+export function DatabasePage() {
   const [cleanseOpen, setCleanseOpen] = useState(false);
   const [purging, setPurging] = useState(false);
   const [browseDataOpen, setBrowseDataOpen] = useState(true);
+  const [migrationOpen, setMigrationOpen] = useState(true);
   const { toast } = useToast();
-  const [databaseTabRef, isDatabaseNarrow] = useNarrowContainer<HTMLDivElement>(760);
+  const [databasePageRef, isDatabaseNarrow] = useNarrowContainer<HTMLDivElement>(760);
+  const { data: status } = useDevStatus();
+  const { data: dbSyncState } = useDbSyncStatus();
+
+  const isConfigured =
+    !!status && "configured" in status && status.configured === true;
+  const dep = isConfigured ? (status as DevStatusOk).deployment : undefined;
+  const isDevRunning = statusFamily(dep?.status) === "running";
+
+  usePageHeader({ title: "Database" });
 
   const handlePurgeEvents = async () => {
     setPurging(true);
@@ -5337,6 +5335,85 @@ export default function DevPage() {
     }
   };
 
+  return (
+    <div className="flex flex-col h-full min-h-0" data-testid="database-page">
+      <div
+        ref={databasePageRef}
+        className={cn("flex-1 min-h-0 overflow-auto", isDatabaseNarrow ? "p-3" : "p-4")}
+        data-testid="database-page-content"
+      >
+        <div className="space-y-4">
+          <BackupPanel />
+          <section className="space-y-2">
+            <div className={cn("flex gap-3 px-1", isDatabaseNarrow ? "flex-col" : "items-center justify-between")}>
+              <button
+                type="button"
+                className="flex items-center gap-1.5 w-full px-2 py-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
+                onClick={() => setBrowseDataOpen(v => !v)}
+                aria-expanded={browseDataOpen}
+              >
+                <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", browseDataOpen && "rotate-90")} />
+                <span>DATA</span>
+              </button>
+              {browseDataOpen && <div className={cn("grid gap-1", isDatabaseNarrow ? "w-full grid-cols-1" : "w-auto shrink-0 grid-cols-2")}>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={handlePurgeEvents}
+                  disabled={purging}
+                >
+                  {purging ? (
+                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                  ) : (
+                    <Eraser className="h-3.5 w-3.5 shrink-0" />
+                  )}
+                  <span>Purge Events</span>
+                </button>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80"
+                  onClick={() => setCleanseOpen(true)}
+                >
+                  <Eraser className="h-3.5 w-3.5 shrink-0" />
+                  <span>Cleanse</span>
+                </button>
+              </div>}
+            </div>
+            {browseDataOpen && <div className="pl-5">
+              <DatabaseDataBrowser />
+            </div>}
+          </section>
+          <section className="space-y-2">
+            <div className="flex gap-3 px-1">
+              <button
+                type="button"
+                className="flex items-center gap-1.5 w-full px-2 py-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
+                onClick={() => setMigrationOpen(v => !v)}
+                aria-expanded={migrationOpen}
+              >
+                <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", migrationOpen && "rotate-90")} />
+                <span>MIGRATION</span>
+              </button>
+            </div>
+            {migrationOpen && <div className="pl-5">
+              <DatabasePanel
+                syncState={dbSyncState}
+                isDevRunning={isDevRunning}
+                embedded
+              />
+            </div>}
+          </section>
+        </div>
+        <CleanseModal open={cleanseOpen} onOpenChange={setCleanseOpen} />
+      </div>
+    </div>
+  );
+}
+
+export default function DevPage() {
+  const initial = useMemo(parseInitialTab, []);
+  const [activeTab, setActiveTab] = useState<DevTab>(initial);
+
   // Canonicalize legacy URLs (?tab=config, ?tab=home, unknown values) on
   // first paint so the address bar matches the rendered tab.
   useEffect(() => {
@@ -5358,23 +5435,9 @@ export default function DevPage() {
     error,
     refetch,
   } = useDevStatus();
-  const { data: dbSyncState } = useDbSyncStatus();
-  // Top-level tabs. Railway setup moved to Integrations page.
-  // Migration tab has the publish-database panel; Database tab has backups + browse data.
+  // Top-level tabs. Railway setup moved to Integrations page; database tooling lives at /database.
   const tabs = useMemo(
     () => [
-      {
-        value: "database",
-        label: "Database",
-        icon: <Database className="h-4 w-4" />,
-        testId: "tab-database",
-      },
-      {
-        value: "migration",
-        label: "Migration",
-        icon: <ArrowLeftRight className="h-4 w-4" />,
-        testId: "tab-migration",
-      },
       {
         value: "prompts",
         label: "Prompts",
@@ -5484,77 +5547,9 @@ export default function DevPage() {
   }
 
   const okStatus = status as DevStatusOk;
-  // Treat the data as stale if our most recent fetch errored AND we are
-  // showing a cached prior response (placeholderData kept it on screen).
-  const isStale = !!error && !isFetching;
-
-  const dep = okStatus.deployment;
-  const isDevRunning = statusFamily(dep?.status) === "running";
-
   return (
     <div className="flex flex-col h-full min-h-0" data-testid="dev-page">
       <div className="flex-1 min-h-0 flex flex-col">
-        {activeTab === "database" && (
-          <div
-            ref={databaseTabRef}
-            className={cn("flex-1 min-h-0 overflow-auto", isDatabaseNarrow ? "p-3" : "p-4")}
-            data-testid="tab-content-database"
-          >
-            <div className="space-y-4">
-              <BackupPanel />
-              <section className="space-y-2">
-                <div className={cn("flex gap-3 px-1", isDatabaseNarrow ? "flex-col" : "items-center justify-between")}>
-                  <button
-                      type="button"
-                      className="flex items-center gap-1.5 w-full px-2 py-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
-                      onClick={() => setBrowseDataOpen(v => !v)}
-                    >
-                      <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", browseDataOpen && "rotate-90")} />
-                      <span>Browse Data</span>
-                    </button>
-                  {browseDataOpen && <div className={cn("grid gap-1", isDatabaseNarrow ? "w-full grid-cols-1" : "w-auto shrink-0 grid-cols-2")}>
-                    <button
-                      type="button"
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80 disabled:cursor-not-allowed disabled:opacity-50"
-                      onClick={handlePurgeEvents}
-                      disabled={purging}
-                    >
-                      {purging ? (
-                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-                      ) : (
-                        <Eraser className="h-3.5 w-3.5 shrink-0" />
-                      )}
-                      <span>Purge Events</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80"
-                      onClick={() => setCleanseOpen(true)}
-                    >
-                      <Eraser className="h-3.5 w-3.5 shrink-0" />
-                      <span>Cleanse</span>
-                    </button>
-                  </div>}
-                </div>
-                {browseDataOpen && <div className="pl-5">
-                  <DatabaseDataBrowser />
-                </div>}
-              </section>
-            </div>
-            <CleanseModal open={cleanseOpen} onOpenChange={setCleanseOpen} />
-          </div>
-        )}
-        {activeTab === "migration" && (
-          <div
-            className="flex-1 min-h-0 flex flex-col gap-4 p-4 overflow-auto"
-            data-testid="tab-content-migration"
-          >
-            <DatabasePanel
-              syncState={dbSyncState}
-              isDevRunning={isDevRunning}
-            />
-          </div>
-        )}
         {activeTab === "prompts" && (
           <div
             className="flex-1 min-h-0 flex flex-col overflow-hidden"
