@@ -17,6 +17,7 @@ Pod::Spec.new do |s|
   s.license        = package['license']
   s.author         = '.'
   s.homepage       = 'https://www.trymantra.ai'
+  s.source         = { :path => '.' }
   s.platforms      = { :ios => '16.0' }
   s.swift_version  = '5.4'
   s.static_framework = true

@@ -1,11 +1,15 @@
 import { createLogger } from "../log";
 import { getSecret } from "../secrets-store";
 import { getSetting, setSetting } from "../system-settings";
+import { db } from "../db";
+import { getEnvironmentBuildLifecycleConfig } from "../platforms/build-lifecycle-service";
 import { spawn, execFileSync, execSync } from "child_process";
 import * as pty from "@lydell/node-pty";
 import path from "path";
 import { getAuthenticatedGitUrl } from "../github-auth";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "fs";
+import { and, eq } from "drizzle-orm";
+import { environmentHostingBindings, platformProductEnvironments, platformProducts, platforms } from "@shared/models/platforms";
 
 const log = createLogger("Expo");
 
@@ -27,6 +31,130 @@ const EAS_RUN_STATE_KEY = "system.expo.latestEasRun";
 const MAIN_BUILD_WORKSPACE_ROOT = path.resolve(process.cwd(), ".tmp", "mobile-build-main");
 
 type MobileBuildSource = "local" | "main"; // "local" retained only for historical/interrupted run snapshots.
+
+type MobileBackendTarget = "production" | "development";
+
+const MOBILE_PLATFORM_ENVIRONMENT_ID = Number.parseInt(process.env.MOBILE_PLATFORM_ENVIRONMENT_ID || "", 10);
+const DEFAULT_MOBILE_PLATFORM_NAME = process.env.MOBILE_PLATFORM_NAME || "Mantra";
+const DEFAULT_MOBILE_PRODUCT_NAME = process.env.MOBILE_PLATFORM_PRODUCT_NAME || "Mobile";
+const DEFAULT_MOBILE_ENVIRONMENT_NAME = process.env.MOBILE_PLATFORM_ENVIRONMENT_NAME || "dev";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringFromRecord(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function numberFromRecord(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function normalizeUrl(value: string): string {
+  return value.trim().replace(/\/+$/, "");
+}
+
+async function resolveDefaultMobileEnvironmentId(): Promise<number | null> {
+  if (Number.isFinite(MOBILE_PLATFORM_ENVIRONMENT_ID) && MOBILE_PLATFORM_ENVIRONMENT_ID > 0) {
+    return MOBILE_PLATFORM_ENVIRONMENT_ID;
+  }
+
+  const [row] = await db
+    .select({ id: platformProductEnvironments.id })
+    .from(platformProductEnvironments)
+    .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
+    .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
+    .where(and(
+      eq(platforms.name, DEFAULT_MOBILE_PLATFORM_NAME),
+      eq(platformProducts.name, DEFAULT_MOBILE_PRODUCT_NAME),
+      eq(platformProductEnvironments.name, DEFAULT_MOBILE_ENVIRONMENT_NAME),
+    ))
+    .limit(1);
+  return row?.id ?? null;
+}
+
+async function getEnvironmentPublicUrl(environmentId: number): Promise<string | null> {
+  const [hosting] = await db
+    .select({ publicUrl: environmentHostingBindings.publicUrl, staticUrl: environmentHostingBindings.staticUrl })
+    .from(environmentHostingBindings)
+    .where(eq(environmentHostingBindings.environmentId, environmentId))
+    .limit(1);
+  const url = hosting?.publicUrl || hosting?.staticUrl || "";
+  return url.trim() ? normalizeUrl(url) : null;
+}
+
+async function resolveMobileBuildEnvironment(profile: string): Promise<{ serverUrl: string; backendTarget: MobileBackendTarget; environmentId: number } | null> {
+  const mobileEnvironmentId = await resolveDefaultMobileEnvironmentId();
+  if (!mobileEnvironmentId) {
+    log.warn("Mobile platform environment not found; leaving EAS profile env unchanged", {
+      platform: DEFAULT_MOBILE_PLATFORM_NAME,
+      product: DEFAULT_MOBILE_PRODUCT_NAME,
+      environment: DEFAULT_MOBILE_ENVIRONMENT_NAME,
+    });
+    return null;
+  }
+
+  const lifecycle = await getEnvironmentBuildLifecycleConfig(mobileEnvironmentId);
+  const deployPolicy = isRecord(lifecycle?.config?.deployPolicy) ? lifecycle.config.deployPolicy : {};
+  const mobile = isRecord(deployPolicy.mobile) ? deployPolicy.mobile : {};
+  const backendEnvironmentByProfile = isRecord(mobile.backendEnvironmentByProfile) ? mobile.backendEnvironmentByProfile : {};
+  const backendTargetByProfile = isRecord(mobile.backendTargetByProfile) ? mobile.backendTargetByProfile : {};
+
+  const backendEnvironmentId = numberFromRecord(backendEnvironmentByProfile, profile)
+    ?? numberFromRecord(backendEnvironmentByProfile, "default")
+    ?? mobileEnvironmentId;
+  const target = stringFromRecord(backendTargetByProfile, profile)
+    ?? stringFromRecord(backendTargetByProfile, "default")
+    ?? (profile === "development" ? "development" : "production");
+  const backendTarget: MobileBackendTarget = target === "development" ? "development" : "production";
+  const serverUrl = await getEnvironmentPublicUrl(backendEnvironmentId);
+  if (!serverUrl) {
+    log.warn("Mobile backend environment has no public URL; leaving EAS profile env unchanged", {
+      mobileEnvironmentId,
+      backendEnvironmentId,
+      profile,
+    });
+    return null;
+  }
+
+  return { serverUrl, backendTarget, environmentId: backendEnvironmentId };
+}
+
+async function applyMobilePlatformEnvironmentToEasProfile(mobileDir: string, profile: string): Promise<void> {
+  const resolved = await resolveMobileBuildEnvironment(profile);
+  if (!resolved) return;
+
+  const easJsonPath = path.join(mobileDir, "eas.json");
+  if (!existsSync(easJsonPath)) {
+    log.warn("mobile/eas.json not found; cannot inject platform mobile environment config", { mobileDir, profile });
+    return;
+  }
+
+  const raw = readFileSync(easJsonPath, "utf-8");
+  const parsed = JSON.parse(raw) as { build?: Record<string, { env?: Record<string, string> }> };
+  parsed.build ||= {};
+  parsed.build[profile] ||= {};
+  parsed.build[profile].env ||= {};
+  parsed.build[profile].env.EXPO_PUBLIC_BACKEND_TARGET = resolved.backendTarget;
+  parsed.build[profile].env.EXPO_PUBLIC_SERVER_URL = resolved.serverUrl;
+  writeFileSync(easJsonPath, `${JSON.stringify(parsed, null, 2)}\n`, "utf-8");
+
+  log.log("Injected Platforms Mobile environment into EAS profile", {
+    mobileEnvironment: `${DEFAULT_MOBILE_PLATFORM_NAME}/${DEFAULT_MOBILE_PRODUCT_NAME}/${DEFAULT_MOBILE_ENVIRONMENT_NAME}`,
+    backendEnvironmentId: resolved.environmentId,
+    profile,
+    backendTarget: resolved.backendTarget,
+    serverUrl: resolved.serverUrl,
+  });
+}
 
 export interface ExpoAppleCredentialsConfig {
   appleIdEmail: string;
@@ -1266,6 +1394,7 @@ export async function easBuild(
   const buildSource: MobileBuildSource = source === "local" ? "main" : source;
   const sourceInfo = await prepareMainBuildWorkspace();
   const mobileDir = sourceInfo.mobileDir;
+  await applyMobilePlatformEnvironmentToEasProfile(mobileDir, profile);
   const project = requireProjectConfig(mobileDir);
   const cancelledBuilds = options.cancelExisting === false
     ? []

@@ -9,7 +9,6 @@
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_BACKEND_TARGET": "development",
-        "EXPO_PUBLIC_SERVER_URL": "https://xyz-development.up.railway.app",
         "SENTRY_DISABLE_AUTO_UPLOAD": "true"
       },
       "ios": {
@@ -22,7 +21,6 @@
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_BACKEND_TARGET": "production",
-        "EXPO_PUBLIC_SERVER_URL": "https://xyz-production-5cad.up.railway.app",
         "SENTRY_DISABLE_AUTO_UPLOAD": "true"
       },
       "ios": {
@@ -33,8 +31,7 @@
       "developmentClient": false,
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_BACKEND_TARGET": "production",
-        "EXPO_PUBLIC_SERVER_URL": "https://xyz-production-5cad.up.railway.app"
+        "EXPO_PUBLIC_BACKEND_TARGET": "production"
       },
       "ios": {
         "image": "macos-sequoia-15.6-xcode-16.4"
