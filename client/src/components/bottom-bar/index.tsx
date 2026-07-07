@@ -6,7 +6,7 @@ import { createLogger } from "@/lib/logger";
 import { Mic, MicOff, ArrowUp, Square, Paperclip, MoreHorizontal, Eye, X, FileText, Bug } from "lucide-react";
 import { useMentionAutocomplete } from "@/hooks/use-mention-autocomplete";
 import { MentionPopover } from "@/components/mention-popover";
-import { InlineReferenceText } from "@/components/references/inline-reference-text";
+import { EditableReferenceInput, type EditableReferenceInputHandle } from "@/components/references/editable-reference-input";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { useSessionSubscription, type SessionStatus, type SessionStreamState } from "@/hooks/use-session-subscription";
 import { useExecutorStatus } from "@/hooks/use-executor-status";
@@ -51,7 +51,6 @@ import { StatusLine } from "./status-line";
 import { PreviewChip } from "./preview-chip";
 import { ExpandedDialogue } from "./expanded-dialogue";
 import type { ExecutionStep, StreamingContent } from "@shared/streaming-types";
-import { parseReferenceText } from "@shared/reference-parser";
 
 const log = createLogger("BottomBar");
 
@@ -415,8 +414,8 @@ export function BottomBar({
   const [showExpanded, setShowExpanded] = useState(false);
   const [composing, setComposing] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
-  const [textInputFocused, setTextInputFocused] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<EditableReferenceInputHandle>(null);
+  const inputAnchorRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const prevStatusRef = useRef<SessionStatus>("idle");
@@ -470,37 +469,19 @@ export function BottomBar({
     }
   }, [barState, sessionSub.canStop, sessionSub.status, sessionSub.streamingContent]);
 
-  // Auto-resize textarea — grows upward, never shows scrollbar
-  const adjustTextareaHeight = useCallback(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    // No max height cap — textarea grows as needed, no scrollbar
-    el.style.height = `${el.scrollHeight}px`;
-  }, []);
-
   const voiceInputDisplay = useMemo(() => {
     if (!voiceSession || voiceSession.status === "idle") return { text: "", state: "empty" as const };
     return getVoiceInputDisplay(voiceSession.transcript);
   }, [voiceSession?.status, voiceSession?.transcript]);
 
   const displayedInputText = voiceActive ? voiceInputDisplay.text : inputText;
-  const displayedInputHasReferences = useMemo(
-    () => parseReferenceText(displayedInputText).some((part) => part.kind === "reference"),
-    [displayedInputText],
-  );
-  const renderReferenceOverlay = displayedInputHasReferences && !textInputFocused;
   const voiceInputPlaceholder = voiceActive ? getVoiceInputPlaceholder(voiceSession) : undefined;
-
-  useEffect(() => {
-    adjustTextareaHeight();
-  }, [displayedInputText, adjustTextareaHeight]);
 
   useEffect(() => {
     if (bottomBarFocusRequestKey === 0 || voiceActive) return;
 
     requestAnimationFrame(() => {
-      textareaRef.current?.focus({ preventScroll: true });
+      inputRef.current?.focus({ preventScroll: true });
     });
   }, [bottomBarFocusRequestKey, voiceActive]);
 
@@ -509,15 +490,11 @@ export function BottomBar({
       setInputText(newValue);
       cursorRef.current = newCursorPosition;
       requestAnimationFrame(() => {
-        const target = textareaRef.current;
-        if (!target) return;
-        target.focus({ preventScroll: true });
-        target.selectionStart = newCursorPosition;
-        target.selectionEnd = newCursorPosition;
-        adjustTextareaHeight();
+        inputRef.current?.focus({ preventScroll: true });
+        inputRef.current?.setSelectionRange(newCursorPosition);
       });
     },
-    [adjustTextareaHeight],
+    [],
   );
 
   const mention = useMentionAutocomplete({
@@ -545,24 +522,18 @@ export function BottomBar({
   }, [inputText, attachedFiles, chatSend, toast, isMobile, setWidgetOpen, mention]);
 
   const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
       // Let mention autocomplete handle keyboard events first
       if (mention.handleKeyDown(e)) return;
 
       if (e.key === "Enter" && e.altKey) {
         e.preventDefault();
-        const el = textareaRef.current;
-        if (!el) return;
-
-        const start = el.selectionStart;
-        const end = el.selectionEnd;
-        const nextValue = inputText.slice(0, start) + "\n" + inputText.slice(end);
+        const start = cursorRef.current;
+        const nextValue = inputText.slice(0, start) + "\n" + inputText.slice(start);
         setInputText(nextValue);
 
         requestAnimationFrame(() => {
-          el.selectionStart = start + 1;
-          el.selectionEnd = start + 1;
-          adjustTextareaHeight();
+          inputRef.current?.setSelectionRange(start + 1);
         });
         return;
       }
@@ -572,7 +543,7 @@ export function BottomBar({
         handleSend();
       }
     },
-    [adjustTextareaHeight, handleSend, inputText, mention],
+    [handleSend, inputText, mention],
   );
 
 
@@ -631,7 +602,7 @@ export function BottomBar({
     e.target.value = "";
   }, [addFiles]);
 
-  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
     const items = e.clipboardData?.items;
     if (!items) return;
 
@@ -640,10 +611,16 @@ export function BottomBar({
       .map((item) => item.getAsFile())
       .filter((file): file is File => file !== null);
 
-    if (files.length === 0) return;
+    if (files.length > 0) {
+      e.preventDefault();
+      addFiles(files);
+      return;
+    }
 
+    const text = e.clipboardData?.getData("text/plain");
+    if (!text) return;
     e.preventDefault();
-    addFiles(files);
+    document.execCommand("insertText", false, text);
   }, [addFiles]);
 
   const removeFile = useCallback((index: number) => {
@@ -741,48 +718,29 @@ export function BottomBar({
             />
 
             {/* Text input — grows upward, never scrolls */}
-            <div className="relative flex flex-1 min-w-0">
-              {renderReferenceOverlay && (
-                <div
-                  className={cn(
-                    "pointer-events-none absolute inset-0 whitespace-pre-wrap break-words",
-                    "min-h-9 rounded-[18px] border border-transparent px-3 py-[7px] text-sm",
-                    "overflow-hidden text-foreground",
-                    voiceActive && "pr-11",
-                  )}
-                  aria-hidden="true"
-                >
-                  <InlineReferenceText text={displayedInputText} />
-                </div>
-              )}
-              <textarea
-                ref={textareaRef}
+            <div ref={inputAnchorRef} className="relative flex flex-1 min-w-0">
+              <EditableReferenceInput
+                ref={inputRef}
                 value={displayedInputText}
-                onFocus={() => setTextInputFocused(true)}
-                onBlur={() => setTextInputFocused(false)}
-                onChange={(e) => {
+                onChange={(value, cursorPosition) => {
                   if (voiceActive) return;
-                  const value = e.target.value;
                   setInputText(value);
-                  cursorRef.current = e.target.selectionStart;
-                  mention.handleInputChange(value, e.target.selectionStart);
+                  cursorRef.current = cursorPosition;
+                  mention.handleInputChange(value, cursorPosition);
+                }}
+                onCursorChange={voiceActive ? undefined : (cursorPosition) => {
+                  cursorRef.current = cursorPosition;
+                  mention.handleInputChange(inputText, cursorPosition);
                 }}
                 onKeyDown={voiceActive ? undefined : handleKeyDown}
-                onSelect={voiceActive ? undefined : (e) => {
-                  const el = e.target as HTMLTextAreaElement;
-                  cursorRef.current = el.selectionStart;
-                  mention.handleInputChange(el.value, el.selectionStart);
-                }}
                 onPaste={voiceActive ? undefined : handlePaste}
                 placeholder={voiceInputPlaceholder ?? (isAgentRunning ? "Message Agent…" : "Agent offline")}
                 disabled={!isAgentRunning || voiceActive}
-                rows={1}
                 className={cn(
-                  "w-full min-h-9 resize-none bg-muted/50 border border-border rounded-[18px] px-3 py-[7px]",
+                  "bg-muted/50 border border-border rounded-[18px] px-3 py-[7px]",
                   voiceActive && "pr-11",
                   "text-sm placeholder:text-muted-foreground",
-                  renderReferenceOverlay && "text-transparent caret-foreground selection:bg-transparent",
-                  "focus:outline-none focus:border-ring focus:ring-1 focus:ring-ring",
+                  "focus:border-ring focus:ring-1 focus:ring-ring",
                   "disabled:cursor-not-allowed",
                   voiceActive
                     ? cn("disabled:opacity-100", voiceInputDisplay.state === "committed" ? "text-muted-foreground" : "text-foreground")
@@ -798,7 +756,7 @@ export function BottomBar({
                   activeIndex={mention.activeIndex}
                   onSelect={mention.insertSuggestion}
                   onHover={mention.setActiveIndex}
-                  anchorRef={textareaRef}
+                  anchorRef={inputAnchorRef}
                   testIdSuffix="-bottom-bar"
                 />
               )}
