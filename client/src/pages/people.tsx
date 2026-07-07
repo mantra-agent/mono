@@ -414,6 +414,28 @@ function fuzzyMatchPeople(query: string, people: PersonIndex[], limit: number): 
 
 type SortMode = "lastInteraction" | "name";
 
+type AgendaPersonItem = {
+  personId?: string;
+};
+
+type AgendaData = {
+  commitments?: AgendaPersonItem[];
+  invest?: AgendaPersonItem[];
+  nurture?: AgendaPersonItem[];
+  agenda?: AgendaPersonItem[];
+};
+
+function hasAgendaNotification(agendaData: AgendaData | undefined, personId: string) {
+  if (!agendaData) return false;
+  const items = [
+    ...(agendaData.commitments ?? []),
+    ...(agendaData.invest ?? []),
+    ...(agendaData.nurture ?? []),
+    ...(agendaData.agenda ?? []),
+  ];
+  return items.some(item => item.personId === personId);
+}
+
 function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOverride, onQuickAddClose, onRequestQuickAdd, sortMode, agendaData, simpleFeed, selectedImportEmail, onSelectImportCandidate }: {
   selectedId: string | null;
   onSelect: (id: string) => void;
