@@ -466,7 +466,7 @@ async function detectDefaultBranch(repoUrl: string, token: string): Promise<stri
 function classifyGitError(err: Error): string {
   const msg = err.message.toLowerCase();
   if (msg.includes("cannot exec") && msg.includes("askpass")) {
-    return "Git credential helper missing — the scripts/ directory may not be present in the container image";
+    return "Git credential helper missing or not executable — scripts/git-askpass.sh may be absent from the image or lack execute permissions";
   }
   if (msg.includes("ssl") || msg.includes("ca cert")) {
     return "Git SSL/TLS error — ca-certificates may not be installed in the container image";
