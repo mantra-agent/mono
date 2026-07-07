@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Switch } from "@/components/ui/switch";
 import ForceGraph2D from "react-force-graph-2d";
 import {
   Loader2, Search, Network, RefreshCcw, AlertTriangle,
@@ -543,7 +542,7 @@ function InteractiveGraph({
 export function CodeGraphTab() {
   const [status, setStatus] = useState<"checking" | "ready" | "indexing" | "error" | "disabled">("checking");
   const [indexingEnabled, setIndexingEnabledState] = useState<boolean | null>(null);
-  const [togglePending, setTogglePending] = useState(false);
+  const [sourceInfo, setSourceInfo] = useState<any>(null);
   const [repoInfo, setRepoInfo] = useState<any>(null);
   const [subPhase, setSubPhase] = useState<string>("");
   const [progressMessage, setProgressMessage] = useState<string>("");
@@ -584,16 +583,24 @@ export function CodeGraphTab() {
   const currentStatus = status;
 
   const checkStatus = useCallback(async () => {
-    if (indexingEnabled === false) return;
     try {
       const res = await fetch("/api/gitnexus-status");
       const data = await res.json();
       if (data.lastIndexedAt != null) setLastIndexedAt(data.lastIndexedAt);
+      setSourceInfo(data.source || null);
       if (data.ready) {
         setStatus("ready");
         setRepoInfo(data.repos);
         setErrorDetail(null);
         setLastErrorPhase(null);
+        if (pollRef.current) {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+        }
+      } else if (data.phase === "disabled") {
+        setStatus("disabled");
+        setIndexingEnabledState(false);
+        setProgressMessage(data.message || "Code indexing is disabled for Platform environments.");
         if (pollRef.current) {
           clearInterval(pollRef.current);
           pollRef.current = null;
@@ -630,61 +637,11 @@ export function CodeGraphTab() {
   }, [checkStatus]);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/gitnexus/indexing-enabled");
-        const data = await res.json();
-        if (cancelled) return;
-        const enabled = data?.enabled !== false;
-        setIndexingEnabledState(enabled);
-        if (!enabled) {
-          setStatus("disabled");
-          if (pollRef.current) {
-            clearInterval(pollRef.current);
-            pollRef.current = null;
-          }
-        }
-      } catch {
-        if (!cancelled) setIndexingEnabledState(true);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  const handleToggleIndexing = useCallback(async (next: boolean) => {
-    setTogglePending(true);
-    try {
-      const res = await fetch("/api/gitnexus/indexing-enabled", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: next }),
-      });
-      const data = await res.json();
-      const applied = data?.enabled !== false;
-      setIndexingEnabledState(applied);
-      if (!applied) {
-        setStatus("disabled");
-        setErrorDetail(null);
-        if (pollRef.current) {
-          clearInterval(pollRef.current);
-          pollRef.current = null;
-        }
-      } else {
-        setStatus("indexing");
-        setSubPhase("");
-        setProgressMessage("Starting...");
-        // Polling interval is managed by the effect keyed on indexingEnabled.
-      }
-    } catch {
-      // leave state untouched; user can retry
-    } finally {
-      setTogglePending(false);
-    }
+    checkStatus();
   }, [checkStatus]);
 
   useEffect(() => {
-    if (indexingEnabled !== true) return;
+    if (indexingEnabled === false) return;
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
@@ -1026,23 +983,14 @@ export function CodeGraphTab() {
             <Network className="h-5 w-5 text-muted-foreground" />
             <span className="font-medium">Code Intelligence Graph</span>
           </div>
-          <div className="flex items-center gap-2" data-testid="indexing-toggle-row">
-            <span className="text-xs text-muted-foreground">Indexing</span>
-            <Switch
-              checked={false}
-              disabled={togglePending}
-              onCheckedChange={handleToggleIndexing}
-              data-testid="switch-indexing-enabled"
-            />
-            <span className="text-xs text-muted-foreground" data-testid="text-indexing-state">Off</span>
-          </div>
+          <Badge variant="outline" data-testid="text-indexing-state">Indexing off</Badge>
         </div>
         <div className="flex flex-col items-center justify-center py-20 gap-3 text-muted-foreground" data-testid="code-graph-disabled">
           <EyeOff className="h-8 w-8" />
           <div className="text-center max-w-md">
             <p className="font-medium text-foreground">GitNexus indexing is off</p>
             <p className="text-sm mt-1">
-              Indexing was skipped on boot. xyz's <code className="font-mono text-xs">code</code> tool will return an error until you turn this back on.
+              No Platform environment source binding has code indexing enabled. The <code className="font-mono text-xs">code</code> tool will skip GitNexus and use normal repo/file inspection instead. Enable indexing on the canonical environment Source Binding when needed.
             </p>
           </div>
         </div>
@@ -1098,15 +1046,11 @@ export function CodeGraphTab() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 mr-2 pr-2 border-r border-border" data-testid="indexing-toggle-row">
-            <span className="text-xs text-muted-foreground">Indexing</span>
-            <Switch
-              checked={indexingEnabled === true}
-              disabled={togglePending || indexingEnabled === null}
-              onCheckedChange={handleToggleIndexing}
-              data-testid="switch-indexing-enabled"
-            />
-          </div>
+          {sourceInfo && (
+            <Badge variant="outline" className="mr-2 max-w-[18rem] truncate" data-testid="text-indexing-source">
+              {sourceInfo.platformName} / {sourceInfo.productName} / {sourceInfo.environmentName} · {sourceInfo.owner}/{sourceInfo.repo}@{sourceInfo.branch}
+            </Badge>
+          )}
           <Button
             variant={activeView === "overview" ? "default" : "outline"}
             size="sm"

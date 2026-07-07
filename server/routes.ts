@@ -429,9 +429,9 @@ export async function registerRoutes(
 
   app.get("/api/gitnexus/indexing-enabled", async (_req: Request, res: Response) => {
     try {
-      const { isIndexingEnabled } = await import("./gitnexus-bridge");
-      const enabled = await isIndexingEnabled();
-      res.json({ enabled });
+      const { getStatus } = await import("./gitnexus-bridge");
+      const status = await getStatus();
+      res.json({ enabled: status.phase !== "disabled", source: status.source || null, phase: status.phase, message: status.message });
     } catch (err: any) {
       res.status(500).json({ enabled: true, error: err.message });
     }
@@ -439,19 +439,7 @@ export async function registerRoutes(
 
   app.post("/api/gitnexus/indexing-enabled", async (req: Request, res: Response) => {
     try {
-      const enabled = !!req.body?.enabled;
-      const { setIndexingEnabled, isGitNexusReady, resetGitNexus, startGitNexus } = await import("./gitnexus-bridge");
-      await setIndexingEnabled(enabled);
-      // If turning ON and we're not already indexed, kick off indexing now so
-      // the user doesn't have to also hit "Restart" to get going.
-      if (enabled && !isGitNexusReady()) {
-        resetGitNexus();
-        startGitNexus().catch((err: unknown) => {
-          const msg = err instanceof Error ? err.message : String(err);
-          routesLog.error("gitnexus indexing-enabled toggle: startGitNexus threw:", msg);
-        });
-      }
-      res.json({ ok: true, enabled });
+      res.status(410).json({ ok: false, error: "GitNexus indexing is configured per Platform environment source binding. Use the environment Source Binding code indexing toggle." });
     } catch (err: any) {
       res.status(500).json({ ok: false, error: err.message });
     }
