@@ -1,6 +1,6 @@
 // Use createLogger for logging ONLY
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueries } from "@tanstack/react-query";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("Integrations");
@@ -3900,6 +3900,54 @@ interface GitHubCredential {
   updatedAt: string;
 }
 
+
+interface ProviderConnection {
+  id: number;
+  provider: string;
+  label: string;
+  accountType: string;
+  status: string;
+  lastVerifiedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  hasCredential?: boolean;
+}
+
+interface PlatformEnvironmentUsage {
+  id: number;
+  platformName: string;
+  productName: string;
+  environmentName: string;
+  owner: string;
+  repo: string;
+  branch: string;
+}
+
+interface PlatformListItem {
+  id: number;
+  name: string;
+  products?: Array<{
+    id: number;
+    name: string;
+    environments?: Array<{
+      id: number;
+      name: string;
+    }>;
+  }>;
+}
+
+interface PlatformEnvironmentDetails {
+  platform: { id: number; name: string };
+  product: { id: number; name: string };
+  environment: { id: number; name: string };
+  source?: {
+    connectionId?: number | null;
+    owner?: string;
+    repo?: string;
+    branch?: string;
+  } | null;
+}
+
 interface GitHubStatus {
   connected: boolean;
   status?: "connected" | "disconnected" | "error";
@@ -3921,12 +3969,63 @@ function GitHubDetail() {
   });
   const credentials = credsData?.credentials || data?.credentials || [];
 
+  const { data: providerConnections = [], refetch: refetchProviderConnections } = useQuery<ProviderConnection[]>({
+    queryKey: ["/api/provider-connections"],
+  });
+
+  const githubConnections = providerConnections.filter((connection) => connection.provider === "github");
+
+  const { data: platformsData = [] } = useQuery<PlatformListItem[]>({
+    queryKey: ["/api/platforms"],
+  });
+
+  const platformEnvironmentIds = useMemo(() => {
+    return platformsData.flatMap((platform) =>
+      (platform.products || []).flatMap((product) =>
+        (product.environments || []).map((environment) => environment.id),
+      ),
+    );
+  }, [platformsData]);
+
+  const environmentQueries = useQueries({
+    queries: platformEnvironmentIds.map((environmentId) => ({
+      queryKey: [`/api/platforms/environments/${environmentId}/details`],
+      enabled: Number.isFinite(environmentId),
+    })),
+  });
+
+  const sourceUsageByConnectionId = useMemo(() => {
+    const usage = new Map<number, PlatformEnvironmentUsage[]>();
+    for (const query of environmentQueries) {
+      const details = query.data;
+      const connectionId = details?.source?.connectionId;
+      if (!details || !connectionId) continue;
+      const list = usage.get(connectionId) || [];
+      list.push({
+        id: details.environment.id,
+        platformName: details.platform.name,
+        productName: details.product.name,
+        environmentName: details.environment.name,
+        owner: details.source?.owner || "",
+        repo: details.source?.repo || "",
+        branch: details.source?.branch || "",
+      });
+      usage.set(connectionId, list);
+    }
+    return usage;
+  }, [environmentQueries.map((query) => query.dataUpdatedAt).join(":")]);
+
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [tokenInput, setTokenInput] = useState("");
   const [labelInput, setLabelInput] = useState("");
   const [patternsInput, setPatternsInput] = useState("");
   const [isDefaultInput, setIsDefaultInput] = useState(false);
   const [validatedLogin, setValidatedLogin] = useState<string | null>(null);
+  const [showProviderDialog, setShowProviderDialog] = useState(false);
+  const [editingProviderConnection, setEditingProviderConnection] = useState<ProviderConnection | null>(null);
+  const [providerLabelInput, setProviderLabelInput] = useState("");
+  const [providerTokenInput, setProviderTokenInput] = useState("");
+  const [providerAccountTypeInput, setProviderAccountTypeInput] = useState("source");
 
   const addCredentialMutation = useMutation({
     mutationFn: async (params: { token: string; label: string; urlPatterns: string[]; isDefault: boolean }) => {
@@ -3977,6 +4076,88 @@ function GitHubDetail() {
     },
     onError: (err: Error) => {
       toast({ title: "Remove failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const resetProviderForm = () => {
+    setShowProviderDialog(false);
+    setEditingProviderConnection(null);
+    setProviderLabelInput("");
+    setProviderTokenInput("");
+    setProviderAccountTypeInput("source");
+  };
+
+  const openProviderDialog = (connection?: ProviderConnection) => {
+    setEditingProviderConnection(connection || null);
+    setProviderLabelInput(connection?.label || "");
+    setProviderAccountTypeInput(connection?.accountType || "source");
+    setProviderTokenInput("");
+    setShowProviderDialog(true);
+  };
+
+  const refreshProviderConnections = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/provider-connections"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/platforms"] });
+    refetchProviderConnections();
+  };
+
+  const saveProviderConnectionMutation = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, string> = {
+        provider: "github",
+        label: providerLabelInput.trim(),
+        accountType: providerAccountTypeInput.trim() || "source",
+      };
+      const token = providerTokenInput.trim();
+      if (token) body.credential = token;
+
+      if (!body.label) throw new Error("Label required");
+      if (!editingProviderConnection && !token) throw new Error("Token required");
+
+      const res = editingProviderConnection
+        ? await apiRequest("PUT", `/api/provider-connections/${editingProviderConnection.id}`, body)
+        : await apiRequest("POST", "/api/provider-connections", body);
+      return (await res.json()) as ProviderConnection;
+    },
+    onSuccess: () => {
+      toast({ title: editingProviderConnection ? "Connection updated" : "Connection created" });
+      resetProviderForm();
+      refreshProviderConnections();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Connection save failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteProviderConnectionMutation = useMutation({
+    mutationFn: async (connection: ProviderConnection) => {
+      const res = await apiRequest("DELETE", `/api/provider-connections/${connection.id}`);
+      return (await res.json()) as { success: boolean };
+    },
+    onSuccess: () => {
+      toast({ title: "Connection deleted" });
+      refreshProviderConnections();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Delete blocked", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const testProviderConnectionMutation = useMutation({
+    mutationFn: async (connection: ProviderConnection) => {
+      const res = await apiRequest("POST", `/api/provider-connections/${connection.id}/test`, {});
+      return (await res.json()) as { ok: boolean; message: string };
+    },
+    onSuccess: (result) => {
+      toast({
+        title: result.ok ? "Connection healthy" : "Connection test failed",
+        description: result.message,
+        variant: result.ok ? "default" : "destructive",
+      });
+      refreshProviderConnections();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Connection test failed", description: err.message, variant: "destructive" });
     },
   });
 
@@ -4112,6 +4293,196 @@ function GitHubDetail() {
           ))}
         </CardContent>
       </Card>
+
+      <Card data-testid="github-platform-connections-card">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <CardTitle className="text-sm font-medium">Platform Connections</CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">
+                GitHub provider connections used by Platforms source bindings. Credentials are stored encrypted and never displayed.
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => openProviderDialog()}
+              data-testid="button-github-add-provider-connection"
+            >
+              <Plus className="h-3.5 w-3.5 mr-1.5" />
+              New Connection
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {githubConnections.length === 0 && (
+            <div className="py-12 text-center rounded-md border border-dashed">
+              <Github className="h-6 w-6 text-muted-foreground mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">No GitHub platform connections yet.</p>
+            </div>
+          )}
+
+          {githubConnections.map((connection) => {
+            const usage = sourceUsageByConnectionId.get(connection.id) || [];
+            const isTesting = testProviderConnectionMutation.isPending;
+            return (
+              <div
+                key={connection.id}
+                className="space-y-3 p-3 rounded-lg border bg-card"
+                data-testid={`github-provider-connection-${connection.id}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <CircleCheck className={cn("h-3.5 w-3.5 shrink-0", connection.status === "active" ? "text-success" : "text-muted-foreground")} />
+                      <span className="text-sm font-medium truncate">{connection.label}</span>
+                      <Badge variant="outline" className="text-xs shrink-0">{connection.accountType || "source"}</Badge>
+                      <Badge variant={connection.status === "active" ? "secondary" : "destructive"} className="text-xs shrink-0">
+                        {connection.status}
+                      </Badge>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      ID {connection.id}
+                      {connection.lastVerifiedAt ? ` · verified ${new Date(connection.lastVerifiedAt).toLocaleString()}` : " · not verified"}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-end gap-1 shrink-0">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => testProviderConnectionMutation.mutate(connection)}
+                      disabled={isTesting}
+                      data-testid={`button-github-test-provider-${connection.id}`}
+                    >
+                      {isTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Activity className="h-3.5 w-3.5 mr-1.5" />}
+                      Test
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => openProviderDialog(connection)}
+                      data-testid={`button-github-edit-provider-${connection.id}`}
+                    >
+                      <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                      Edit
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                      onClick={() => {
+                        if (usage.length > 0) {
+                          toast({
+                            title: "Connection in use",
+                            description: "Remove or reassign Platform source bindings before deleting this connection.",
+                            variant: "destructive",
+                          });
+                          return;
+                        }
+                        if (confirm(`Delete GitHub connection ${connection.label}? This cannot be undone.`)) {
+                          deleteProviderConnectionMutation.mutate(connection);
+                        }
+                      }}
+                      data-testid={`button-github-delete-provider-${connection.id}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2 border-t pt-3">
+                  <div className="text-xs font-medium text-muted-foreground">Used by</div>
+                  {usage.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No Platform source bindings currently use this connection.</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {usage.map((item) => (
+                        <div key={item.id} className="flex items-center justify-between gap-3 text-xs rounded-md bg-muted/30 px-2 py-1.5">
+                          <span className="truncate">
+                            {item.platformName} / {item.productName} / {item.environmentName}
+                          </span>
+                          <span className="font-mono text-muted-foreground truncate max-w-[45%] text-right">
+                            {item.owner}/{item.repo}:{item.branch}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+
+      <Dialog open={showProviderDialog} onOpenChange={(open) => { if (!open) resetProviderForm(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingProviderConnection ? "Edit GitHub Platform Connection" : "New GitHub Platform Connection"}</DialogTitle>
+            <DialogDescription>
+              Add or rotate the token Platforms uses for GitHub source operations. Existing credentials are replaced only when a new token is entered.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="github-provider-label">Label</Label>
+              <Input
+                id="github-provider-label"
+                value={providerLabelInput}
+                onChange={(event) => setProviderLabelInput(event.target.value)}
+                placeholder="Mantra GitHub"
+                data-testid="input-github-provider-label"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="github-provider-account-type">Account type</Label>
+              <Input
+                id="github-provider-account-type"
+                value={providerAccountTypeInput}
+                onChange={(event) => setProviderAccountTypeInput(event.target.value)}
+                placeholder="source"
+                data-testid="input-github-provider-account-type"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="github-provider-token">Personal Access Token</Label>
+              <p className="text-xs text-muted-foreground">
+                Required for new connections. Leave blank while editing to keep the existing encrypted credential.
+              </p>
+              <Input
+                id="github-provider-token"
+                type="password"
+                value={providerTokenInput}
+                onChange={(event) => setProviderTokenInput(event.target.value)}
+                placeholder="github_pat_…"
+                autoComplete="off"
+                spellCheck={false}
+                className="font-mono text-xs"
+                data-testid="input-github-provider-token"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={resetProviderForm}>Cancel</Button>
+            <Button
+              type="button"
+              onClick={() => saveProviderConnectionMutation.mutate()}
+              disabled={saveProviderConnectionMutation.isPending}
+              data-testid="button-github-provider-save"
+            >
+              {saveProviderConnectionMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+              Save Connection
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Add Account Dialog */}
       {showAddDialog && (
