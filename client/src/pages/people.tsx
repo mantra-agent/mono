@@ -1797,15 +1797,18 @@ function ProfileTreeRow({
   return (
     <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
       <div className="group last:border-b-0">
-        <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/70">
-          <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
-            <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground">{icon}</span>
-            <span className="truncate font-medium text-muted-foreground">{label}</span>
+        <div className="group relative flex items-center gap-2 rounded-md px-2 py-1.5 text-sm w-full text-left select-none transition-colors overflow-hidden hover:bg-accent/70">
+          <div className="flex min-w-0 flex-1 items-center gap-2 text-muted-foreground">
+            <span className="flex items-center justify-center shrink-0 text-muted-foreground">{icon}</span>
+            <span className="truncate">{label}</span>
           </div>
           <div
             className={cn(
-              "flex min-w-0 flex-1 items-center justify-end text-right",
-              "[&_input]:bg-muted/50 [&_textarea]:bg-muted/50 [&_[role=combobox]]:bg-muted/50",
+              "flex min-w-0 flex-1 items-center justify-end text-right text-xs leading-none",
+              "[&_input]:h-5 [&_input]:bg-muted/50 [&_input]:px-1.5 [&_input]:py-0 [&_input]:text-xs [&_input]:leading-none",
+              "[&_textarea]:bg-muted/50 [&_textarea]:text-xs",
+              "[&_[role=combobox]]:h-5 [&_[role=combobox]]:bg-muted/50 [&_[role=combobox]]:px-1.5 [&_[role=combobox]]:py-0 [&_[role=combobox]]:text-xs",
+              "[&_button]:h-5 [&_button]:px-1.5 [&_button]:text-xs",
             )}
           >
             {children}
@@ -1827,7 +1830,7 @@ function ProfileTreeRow({
         </div>
         {canExpand && (
           <CollapsibleContent>
-            <div className="px-2 pb-2 pl-8 text-sm leading-relaxed text-foreground">
+            <div className="px-2 pb-2 pl-8 text-xs leading-relaxed text-foreground">
               {expandedContent}
             </div>
           </CollapsibleContent>
@@ -1884,7 +1887,7 @@ function ProfileSummaryRow({
         onChange={(e) => setDraft(e.target.value)}
         onBlur={save}
         placeholder="Add summary"
-        className="h-8 max-w-md truncate text-right"
+        className="max-w-md truncate text-right"
         data-testid="input-quick-summary"
       />
     </ProfileTreeRow>
@@ -2444,99 +2447,73 @@ function PersonMemoriesTab({ personId, personName }: { personId: string; personN
         </div>
       )}
 
-      {filterMode === "relationship" && filteredRmMemories.map((rm) => {
-        const catInfo = RM_CATEGORY_MAP[rm.category];
-        return (
-          <Card key={rm.id} className="overflow-visible" data-testid={`rm-card-${rm.id}`}>
-            <CardContent className="p-3 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Badge variant="outline" className="text-xs bg-cat-event/10 text-cat-event border-cat-event/20">
-                    {catInfo?.label || rm.category}
-                  </Badge>
-                  {rm.createdAt && (
-                    <span className="text-xs text-muted-foreground">
-                      {formatRelativeDate(rm.createdAt)}
-                    </span>
-                  )}
-                </div>
+      <div className="overflow-hidden rounded-md border border-border/20" data-testid="person-memory-tree">
+        {filterMode === "relationship" && filteredRmMemories.map((rm) => {
+          const catInfo = RM_CATEGORY_MAP[rm.category];
+          return (
+            <ProfileTreeRow
+              key={rm.id}
+              label={<span data-testid={`rm-title-${rm.id}`}>{rm.title}</span>}
+              icon={<Brain className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              expandedContent={<p className="whitespace-pre-wrap">{rm.content}</p>}
+              testId={`rm-row-${rm.id}`}
+            >
+              <div className="flex min-w-0 items-center justify-end gap-1.5">
+                <Badge variant="outline" className="text-[10px] leading-none bg-cat-event/10 text-cat-event border-cat-event/20">
+                  {catInfo?.label || rm.category}
+                </Badge>
+                {rm.createdAt && <span className="shrink-0 text-[10px] text-muted-foreground">{formatRelativeDate(rm.createdAt)}</span>}
               </div>
-              <p className="text-sm font-medium text-foreground" data-testid={`rm-title-${rm.id}`}>
-                {rm.title}
-              </p>
-              <p className="text-xs text-muted-foreground/80 line-clamp-3">{rm.content}</p>
-            </CardContent>
-          </Card>
-        );
-      })}
+            </ProfileTreeRow>
+          );
+        })}
 
-      {filterMode !== "relationship" && filteredMemories.map((memory) => (
-        <Card key={memory.id} className="overflow-visible" data-testid={`person-memory-card-${memory.id}`}>
-          <CardContent className="p-3 space-y-2">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Badge variant="outline" className="text-xs">{memory.layer}</Badge>
-                <Badge variant="outline" className="text-xs">{memory.source}</Badge>
-                {memory.createdAt && (
-                  <span className="text-xs text-muted-foreground">
-                    {new Date(memory.createdAt).toLocaleDateString()}
-                  </span>
-                )}
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => unlinkMutation.mutate(memory.id)}
-                disabled={unlinkMutation.isPending}
-                data-testid={`button-unlink-memory-${memory.id}`}
-              >
-                <Unlink className="h-3.5 w-3.5 text-muted-foreground" />
-              </Button>
-            </div>
-            <p className="text-sm font-medium text-foreground" data-testid={`person-memory-title-${memory.id}`}>
-              {memory.title || memory.summary || memory.content.slice(0, 100)}
-            </p>
-            {memory.summary && memory.title && (
-              <p className="text-xs text-muted-foreground/80 line-clamp-2">{memory.summary}</p>
-            )}
-            {isPersonModelEntry(memory) && (() => {
-              const cat = getPersonModelCategory(memory);
-              const meta = memory.metadata as Record<string, unknown> | undefined;
-              const confidence = typeof meta?.confidence === "number" ? meta.confidence : null;
-              const evidenceIds = Array.isArray(meta?.evidence_ids) ? meta.evidence_ids as number[] : [];
-              const lastConfirmed = typeof meta?.last_confirmed === "string" ? meta.last_confirmed as string : null;
-              return (
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {confidence !== null && (
-                    <span className={`h-2 w-2 rounded-full ${getConfidenceColor(confidence)}`}
-                          title={`Confidence: ${Math.round(confidence * 100)}%`} />
-                  )}
-                  {cat ? (
-                    <Badge variant="outline" className="text-xs bg-primary/5">{cat.label}</Badge>
-                  ) : (
-                    <Badge variant="outline" className="text-xs bg-primary/5">Uncategorized</Badge>
-                  )}
-                  {evidenceIds.length > 0 && (
-                    <span className="text-xs text-muted-foreground">{evidenceIds.length} evidence</span>
-                  )}
-                  {lastConfirmed && (
-                    <span className="text-xs text-muted-foreground">confirmed {formatRelativeDate(lastConfirmed)}</span>
-                  )}
+        {filterMode !== "relationship" && filteredMemories.map((memory) => {
+          const title = memory.title || memory.summary || memory.content.slice(0, 100);
+          return (
+            <ProfileTreeRow
+              key={memory.id}
+              label={<span data-testid={`person-memory-title-${memory.id}`}>{title}</span>}
+              icon={<Brain className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              expandedContent={(
+                <div className="space-y-2">
+                  {memory.summary && memory.title && <p className="whitespace-pre-wrap">{memory.summary}</p>}
+                  <p className="whitespace-pre-wrap text-muted-foreground">{memory.content}</p>
+                  {isPersonModelEntry(memory) && (() => {
+                    const cat = getPersonModelCategory(memory);
+                    const meta = memory.metadata as Record<string, unknown> | undefined;
+                    const confidence = typeof meta?.confidence === "number" ? meta.confidence : null;
+                    const evidenceIds = Array.isArray(meta?.evidence_ids) ? meta.evidence_ids as number[] : [];
+                    const lastConfirmed = typeof meta?.last_confirmed === "string" ? meta.last_confirmed as string : null;
+                    return (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {confidence !== null && <span className={`h-2 w-2 rounded-full ${getConfidenceColor(confidence)}`} title={`Confidence: ${Math.round(confidence * 100)}%`} />}
+                        <Badge variant="outline" className="text-[10px] leading-none bg-primary/5">{cat ? cat.label : "Uncategorized"}</Badge>
+                        {evidenceIds.length > 0 && <span className="text-[10px] text-muted-foreground">{evidenceIds.length} evidence</span>}
+                        {lastConfirmed && <span className="text-[10px] text-muted-foreground">confirmed {formatRelativeDate(lastConfirmed)}</span>}
+                      </div>
+                    );
+                  })()}
                 </div>
-              );
-            })()}
-            {memory.tags && memory.tags.length > 0 && (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {memory.tags
-                  .filter(tag => !isPersonModelEntry(memory) || (!tag.startsWith("pm-cat:") && tag !== "person-model"))
-                  .map(tag => (
-                    <Badge key={tag} variant="outline" className="text-xs">{tag}</Badge>
-                  ))}
+              )}
+              testId={`person-memory-row-${memory.id}`}
+            >
+              <div className="flex min-w-0 items-center justify-end gap-1.5">
+                <Badge variant="outline" className="text-[10px] leading-none">{memory.layer}</Badge>
+                <Badge variant="outline" className="text-[10px] leading-none">{memory.source}</Badge>
+                {memory.createdAt && <span className="shrink-0 text-[10px] text-muted-foreground">{new Date(memory.createdAt).toLocaleDateString()}</span>}
+                <Button variant="ghost" size="icon" onClick={() => unlinkMutation.mutate(memory.id)} disabled={unlinkMutation.isPending} data-testid={`button-unlink-memory-${memory.id}`}>
+                  <Unlink className="h-3 w-3 text-muted-foreground" />
+                </Button>
               </div>
-            )}
-          </CardContent>
-        </Card>
-      ))}
+            </ProfileTreeRow>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -3124,7 +3101,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
                 <Button variant="ghost" size="icon" onClick={() => setEditingName(false)}><X className="h-3 w-3" /></Button>
               </div>
             ) : (
-              <button className="truncate rounded px-1 py-0.5 text-right text-sm font-semibold hover-elevate" onClick={() => { setEditName(person.name); setEditingName(true); }} data-testid="display-name">{person.name}</button>
+              <button className="truncate rounded px-1 text-right text-xs hover-elevate" onClick={() => { setEditName(person.name); setEditingName(true); }} data-testid="display-name">{person.name}</button>
             )}
           </ProfileTreeRow>
 
@@ -3228,12 +3205,10 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
         <CommitmentsCard person={person} onUpdate={handleRefetch} />
         <ConnectionsCard person={person} />
         <EnrichmentPromptsCard personId={person.id} personName={person.name} />
-        <PersonMemoriesTab personId={person.id} personName={person.name} />
       </PeopleDetailSection>
 
       <PeopleDetailSection
         title="Log"
-        icon={<Clock className="h-3.5 w-3.5" />}
         count={person.interactions.length + person.notes.length}
         defaultOpen
         testId="section-log"
