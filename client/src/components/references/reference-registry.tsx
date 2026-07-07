@@ -152,10 +152,8 @@ const registry: Record<string, RegistryEntry> = {
       return `PR ${ref.id}`;
     },
     href: ref => {
-      const DEFAULT_OWNER = "bridgeops2030";
       const parts = ref.id.split("/");
       if (parts.length === 3) return `https://github.com/${parts[0]}/${parts[1]}/pull/${parts[2]}`;
-      if (parts.length === 2) return `https://github.com/${DEFAULT_OWNER}/${parts[0]}/pull/${parts[1]}`;
       return undefined;
     },
   },

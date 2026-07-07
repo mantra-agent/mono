@@ -81,8 +81,8 @@ function inferredEnvironmentConfig(environmentName: string) {
   return {
     source: {
       provider: "github",
-      owner: "bridgeops2030",
-      repo: "xyz",
+      owner: "",
+      repo: "",
       branch: inferredBranch(environmentName),
       autoDeploy: true,
       inferred: true,
