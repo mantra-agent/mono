@@ -5,6 +5,7 @@ import { getPromptModulePrompt } from "../prompt-modules";
 import type { MemoryEntry } from "@shared/schema";
 import { contextBuilder } from "../context-builder";
 import { createLogger } from "../log";
+import { insertMemoryEvent } from "./memory-events";
 import { extractJson } from "../utils/extract-json";
 import { sql } from "drizzle-orm";
 
@@ -139,7 +140,7 @@ Should these be merged or kept separate?`,
       });
 
       const { db } = await import("../db");
-      const { memoryEntries, memoryContentBlocks, memoryLinks, memoryEvents: memoryEventsTable } = await import("@shared/schema");
+      const { memoryEntries, memoryContentBlocks, memoryLinks } = await import("@shared/schema");
       const { eq, or } = await import("drizzle-orm");
 
       await db.transaction(async (tx) => {
@@ -210,13 +211,13 @@ Should these be merged or kept separate?`,
           existingPairs.add(`${newFrom}-${newTo}`);
         }
 
-        await tx.insert(memoryEventsTable).values({
+        await insertMemoryEvent(tx, {
           entryId: best.entry.id,
           eventType: "merged",
           details: { mergedFrom: newEntry.id, mergedTitle: newEntry.title },
         });
 
-        await tx.insert(memoryEventsTable).values({
+        await insertMemoryEvent(tx, {
           entryId: newEntry.id,
           eventType: "deleted",
           details: {},

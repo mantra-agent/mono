@@ -157,6 +157,26 @@ export async function runSchemaBootstrap(
     }
   };
 
+  await heal("memory_events occurred_at default", async () => {
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1
+          FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_name = 'memory_events'
+        ) THEN
+          ALTER TABLE memory_events
+            ALTER COLUMN occurred_at SET DEFAULT CURRENT_TIMESTAMP;
+          UPDATE memory_events
+             SET occurred_at = CURRENT_TIMESTAMP
+           WHERE occurred_at IS NULL;
+        END IF;
+      END $$
+    `);
+  });
+
   const ensureColumns = async (
     tableName: string,
     columns: Array<{ name: string; type: string }>,

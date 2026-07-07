@@ -53,6 +53,7 @@ import {
 import { createHash } from "crypto";
 import { getTimezone } from "../timezone";
 import { createLogger } from "../log";
+import { insertMemoryEvent } from "./memory-events";
 
 const log = createLogger("MemoryStorage");
 
@@ -1304,7 +1305,7 @@ export class MemoryStorage {
         toLayer: "stage_2",
         reason: `Stage sweep advanced #${entryId}: stage_1 → stage_2`,
       });
-      await tx.insert(memoryEvents).values({
+      await insertMemoryEvent(tx, {
         entryId,
         eventType: "promoted",
         details: {
@@ -2201,7 +2202,7 @@ export class MemoryStorage {
             toLayer: "mid",
             reason: `Duplicate resolved: deleted short #${sourceId}, kept existing mid #${existingMid.id}: ${title}`,
           });
-          await tx.insert(memoryEvents).values({
+          await insertMemoryEvent(tx, {
             entryId: existingMid.id,
             eventType: "duplicate_resolved",
             details: {
@@ -2244,7 +2245,7 @@ export class MemoryStorage {
         reason: `Promoted #${sourceId}: ${title}`,
       });
 
-      await tx.insert(memoryEvents).values({
+      await insertMemoryEvent(tx, {
         entryId: sourceId,
         eventType: "promoted",
         details: { fromLayer: "short", toLayer: "mid", fromStage: MEMORY_INTEGRATION_STAGE.RAW, toStage: MEMORY_INTEGRATION_STAGE.INTEGRATED },
@@ -2338,7 +2339,7 @@ export class MemoryStorage {
             toLayer: "long",
             reason: `Duplicate resolved: deleted mid #${sourceId}, kept existing long #${existingLong.id}: ${title}`,
           });
-          await tx.insert(memoryEvents).values({
+          await insertMemoryEvent(tx, {
             entryId: existingLong.id,
             eventType: "duplicate_resolved",
             details: {
@@ -2385,7 +2386,7 @@ export class MemoryStorage {
         reason: `Promoted #${sourceId}: ${title}`,
       });
 
-      await tx.insert(memoryEvents).values({
+      await insertMemoryEvent(tx, {
         entryId: sourceId,
         eventType: "promoted",
         details: { fromLayer: "mid", toLayer: "long", fromStage: MEMORY_INTEGRATION_STAGE.INTEGRATED, toStage: MEMORY_INTEGRATION_STAGE.CANONICAL },
@@ -3402,7 +3403,7 @@ export class MemoryStorage {
     details?: Record<string, unknown>,
   ): Promise<void> {
     try {
-      await db.insert(memoryEvents).values({
+      await insertMemoryEvent(db, {
         entryId,
         eventType,
         details: details ?? {},
