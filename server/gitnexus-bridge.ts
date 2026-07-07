@@ -2,10 +2,11 @@ import { resolve as resolvePath, join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { spawn } from "child_process";
 import { existsSync, readdirSync } from "fs";
+import { mkdir } from "fs/promises";
 import { createLogger } from "./log";
 import { withAbortTimeout, TimeoutError } from "./timeout";
 import { WORKSPACE_DIR } from "./paths";
-import { getGitHubAccessToken } from "./github-auth";
+import { createGitAskpassEnv, resolveDefaultIndexedGitSource, type ResolvedGitSource } from "./git-source-resolver";
 
 function getDir(): string {
   try {
@@ -113,6 +114,23 @@ export interface GitNexusStatus {
   errorDetail?: string;
   lastIndexedAt?: string | null;
   lastErrorPhase?: string | null;
+  source?: GitNexusSourceStatus | null;
+}
+
+export interface GitNexusSourceStatus {
+  environmentId: number;
+  platformName: string;
+  productName: string;
+  environmentName: string;
+  sourceBindingId: number;
+  connectionId: number;
+  connectionLabel: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  repoUrl: string;
+  codeIndexingEnabled: boolean;
+  worktreePath?: string;
 }
 
 interface LocalBackendInstance {
@@ -158,6 +176,8 @@ let lastErrorDetail: string | null = null;
 let lastErrorRaw: string | null = null;
 let lastErrorPhase: string | null = null;
 let lastIndexedAt: string | null = null;
+let activeSource: GitNexusSourceStatus | null = null;
+let __testOverride: { percent: number; label?: string } | null | undefined = undefined;
 
 const MAX_AUTO_RETRIES = 3;
 const AUTO_RETRY_BACKOFF_MS = 60_000;
@@ -173,34 +193,46 @@ export function isGitNexusReady() {
 }
 
 // ---------------------------------------------------------------------------
-// Indexing toggle (system_settings key "gitnexus_indexing_enabled")
+// Environment-scoped indexing
 // ---------------------------------------------------------------------------
-// User-visible kill switch surfaced on the Build → Code Graph tab. When set
-// to false we skip indexing on boot entirely and refuse all `code` tool
-// calls with a clear message so xyz doesn't silently degrade.
-//
-// We cache the value in-memory so the hot path (gitnexusBridgeCall on every
-// tool call) doesn't re-hit Postgres. The setter invalidates the cache.
-// Default is `true` so existing installs keep their current behavior.
-const INDEXING_ENABLED_KEY = "gitnexus_indexing_enabled";
-let indexingEnabledCache: boolean | null = null;
 
-export async function isIndexingEnabled(): Promise<boolean> {
-  if (indexingEnabledCache !== null) return indexingEnabledCache;
-  try {
-    const { getSetting } = await import("./system-settings");
-    const v = await getSetting<boolean>(INDEXING_ENABLED_KEY);
-    indexingEnabledCache = v === false ? false : true;
-  } catch {
-    indexingEnabledCache = true;
-  }
-  return indexingEnabledCache;
+function sourceStatus(source: ResolvedGitSource, worktreePath?: string): GitNexusSourceStatus {
+  return {
+    environmentId: source.environmentId,
+    platformName: source.platformName,
+    productName: source.productName,
+    environmentName: source.environmentName,
+    sourceBindingId: source.sourceBindingId,
+    connectionId: source.connectionId,
+    connectionLabel: source.connectionLabel,
+    owner: source.owner,
+    repo: source.repo,
+    branch: source.branch,
+    repoUrl: source.repoUrl,
+    codeIndexingEnabled: source.codeIndexingEnabled,
+    ...(worktreePath ? { worktreePath } : {}),
+  };
 }
 
-export async function setIndexingEnabled(enabled: boolean): Promise<void> {
-  const { setSetting } = await import("./system-settings");
-  await setSetting(INDEXING_ENABLED_KEY, enabled);
-  indexingEnabledCache = enabled;
+function safePathSegment(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "unknown";
+}
+
+function worktreePathForSource(source: ResolvedGitSource): string {
+  return resolvePath(
+    process.cwd(),
+    ".gitnexus",
+    "worktrees",
+    `env-${source.environmentId}-${safePathSegment(source.owner)}-${safePathSegment(source.repo)}-${safePathSegment(source.branch)}`,
+  );
+}
+
+export async function isIndexingEnabled(): Promise<boolean> {
+  return Boolean(await resolveDefaultIndexedGitSource());
+}
+
+export async function setIndexingEnabled(_enabled: boolean): Promise<void> {
+  throw new Error("GitNexus indexing is now configured per Platform environment source binding.");
 }
 
 export function isGitNexusAnalyzing(): boolean {
@@ -433,20 +465,15 @@ function runGit(
   });
 }
 
-async function detectDefaultBranch(repoUrl: string, token: string): Promise<string> {
+async function detectDefaultBranch(repoUrl: string, authEnv: Record<string, string>): Promise<string> {
   try {
-    const askpassScript = resolvePath(__dirname, "../scripts/git-askpass.sh");
     const output = await runGit(
       ["ls-remote", "--symref", repoUrl, "HEAD"],
       process.cwd(),
       {
         captureOutput: true,
         timeoutMs: 30_000,
-        env: {
-          GIT_ASKPASS: askpassScript,
-          GIT_USERNAME: "x-access-token",
-          GIT_PASSWORD: token,
-        },
+        env: authEnv,
       }
     );
     const match = output.match(/^ref: refs\/heads\/(\S+)\s+HEAD/m);
@@ -486,25 +513,21 @@ function classifyGitError(err: Error): string {
   return `Git sync failed: ${err.message}`;
 }
 
-async function syncGitRepo(repoUrl: string, targetDir: string): Promise<void> {
+async function syncGitRepo(source: ResolvedGitSource, targetDir: string): Promise<void> {
   indexingSubPhase = "syncing";
   stageStartedAt = Date.now();
-  indexingProgressMessage = "Authenticating with GitHub...";
+  indexingProgressMessage = "Authenticating with source binding...";
 
-  const token = await getGitHubAccessToken();
-  const askpassScript = resolvePath(__dirname, "../scripts/git-askpass.sh");
-  const credEnv = {
-    GIT_ASKPASS: askpassScript,
-    GIT_USERNAME: "x-access-token",
-    GIT_PASSWORD: token,
-  };
+  await mkdir(targetDir, { recursive: true });
+  const repoUrl = source.repoUrl;
+  const credEnv = await createGitAskpassEnv(source.token);
 
   indexingProgressMessage = "Detecting default branch...";
-  const detectedBranch = await detectDefaultBranch(repoUrl, token);
+  const detectedBranch = source.branch || await detectDefaultBranch(repoUrl, credEnv);
 
   const fallbackOrder: string[] = [detectedBranch];
-  if (!fallbackOrder.includes("master")) fallbackOrder.push("master");
   if (!fallbackOrder.includes("main")) fallbackOrder.push("main");
+  if (!fallbackOrder.includes("master")) fallbackOrder.push("master");
 
   const gitDirExists = existsSync(join(targetDir, ".git"));
 
@@ -582,6 +605,7 @@ export function resetGitNexus() {
   backend = null;
   initPromise = null;
   lastInitFailedAt = null;
+  activeSource = null;
 }
 
 function scheduleAutoRetry(reason: string) {
@@ -755,44 +779,49 @@ export async function startGitNexus() {
     return;
   }
 
-  const githubRepoUrl = process.env.GITHUB_REPO_URL;
-  const repoRoot = resolvePath(process.cwd());
-  const isDev = process.env.NODE_ENV !== "production";
-
   indexingPhase = "indexing";
   indexingStartedAt = indexingStartedAt ?? Date.now();
   indexingSubPhase = "";
-  indexingProgressMessage = "Starting...";
+  indexingProgressMessage = "Resolving platform source binding...";
   lastErrorDetail = null;
   lastErrorRaw = null;
   lastErrorPhase = null;
+  activeSource = null;
 
-  logger.log(`[gitnexus] startGitNexus: phase=indexing repoRoot=${repoRoot} isDev=${isDev}`);
+  const source = await resolveDefaultIndexedGitSource();
+  if (!source) {
+    indexingPhase = "idle";
+    indexingSubPhase = "";
+    indexingProgressMessage = "Code indexing disabled for all Platform environments";
+    activeSource = null;
+    ready = false;
+    backend = null;
+    initPromise = null;
+    logger.log("[gitnexus] no Platform environment has code indexing enabled — skipping boot indexing");
+    return;
+  }
 
-  if (githubRepoUrl && !isDev) {
-    logger.log(`[gitnexus] GITHUB_REPO_URL set (production) — syncing repo before indexing [url=${githubRepoUrl} targetDir=${repoRoot}]`);
-    try {
-      await syncGitRepo(githubRepoUrl, repoRoot);
-      logger.log("[gitnexus] git sync complete — starting background indexing...");
-    } catch (err: unknown) {
-      const rawMsg = err instanceof Error ? err.message : String(err);
-      const classified = classifyGitError(err instanceof Error ? err : new Error(rawMsg));
-      indexingPhase = "error";
-      indexingSubPhase = "";
-      indexingProgressMessage = "";
-      lastErrorDetail = classified;
-      lastErrorRaw = rawMsg;
-      lastErrorPhase = "syncing";
-      logger.error(`[gitnexus] git sync failed — skipping indexing [detail=${classified}] [raw=${rawMsg}]`);
-      await persistState({ lastError: rawMsg, lastErrorPhase: "syncing", lastErrorDetail: classified });
-      await publishNexusFailed("syncing", classified, autoRetryCount);
-      scheduleAutoRetry(`git-sync-error: ${rawMsg}`);
-      return;
-    }
-  } else if (githubRepoUrl && isDev) {
-    logger.log(`[gitnexus] GITHUB_REPO_URL set but DEV mode — skipping git sync, indexing existing codebase at ${repoRoot}`);
-  } else {
-    logger.log("[gitnexus] GITHUB_REPO_URL not set — starting background indexing from cwd...");
+  const repoRoot = worktreePathForSource(source);
+  activeSource = sourceStatus(source, repoRoot);
+  logger.log(`[gitnexus] startGitNexus: phase=indexing source=${source.platformName}/${source.productName}/${source.environmentName} repo=${source.owner}/${source.repo} branch=${source.branch} env=${source.environmentId} worktree=${repoRoot}`);
+
+  try {
+    await syncGitRepo(source, repoRoot);
+    logger.log("[gitnexus] git sync complete — starting background indexing...");
+  } catch (err: unknown) {
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const classified = classifyGitError(err instanceof Error ? err : new Error(rawMsg));
+    indexingPhase = "error";
+    indexingSubPhase = "";
+    indexingProgressMessage = "";
+    lastErrorDetail = classified;
+    lastErrorRaw = rawMsg;
+    lastErrorPhase = "syncing";
+    logger.error(`[gitnexus] git sync failed — skipping indexing [detail=${classified}] [raw=${rawMsg}]`);
+    await persistState({ lastError: rawMsg, lastErrorPhase: "syncing", lastErrorDetail: classified });
+    await publishNexusFailed("syncing", classified, autoRetryCount);
+    scheduleAutoRetry(`git-sync-error: ${rawMsg}`);
+    return;
   }
 
   indexingSubPhase = "analyzing";
@@ -1061,6 +1090,17 @@ export async function getStatus(): Promise<GitNexusStatus> {
       stageElapsedSeconds: stageElapsed,
       message: "GitNexus is indexing the codebase",
       lastIndexedAt,
+      source: activeSource,
+    };
+  }
+
+  if (indexingPhase === "idle") {
+    return {
+      ready: false,
+      phase: "disabled",
+      message: indexingProgressMessage || "Code indexing is disabled for Platform environments. Use git/filesystem inspection instead.",
+      lastIndexedAt,
+      source: activeSource,
     };
   }
 
@@ -1072,6 +1112,7 @@ export async function getStatus(): Promise<GitNexusStatus> {
       ...(lastErrorRaw && lastErrorRaw !== lastErrorDetail && { errorRaw: lastErrorRaw }),
       lastErrorPhase,
       lastIndexedAt,
+      source: activeSource,
     };
   }
 
@@ -1085,6 +1126,7 @@ export async function getStatus(): Promise<GitNexusStatus> {
       stageElapsedSeconds: stageElapsed,
       message: "GitNexus backend not yet initialized",
       lastIndexedAt,
+      source: activeSource,
     };
   }
 
@@ -1095,10 +1137,10 @@ export async function getStatus(): Promise<GitNexusStatus> {
       const { getEmbeddingStatus } = await import("./gitnexus-embeddings");
       embeddingStats = { codeEmbeddings: getEmbeddingStatus() };
     } catch {}
-    return { ready: true, phase: "ready", repos, lastIndexedAt, ...embeddingStats };
+    return { ready: true, phase: "ready", repos, lastIndexedAt, source: activeSource, ...embeddingStats };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { ready: false, phase: "error", errorDetail: msg, lastIndexedAt };
+    return { ready: false, phase: "error", errorDetail: msg, lastIndexedAt, source: activeSource };
   }
 }
 

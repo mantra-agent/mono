@@ -25,12 +25,14 @@ CREATE TABLE IF NOT EXISTS environment_source_bindings (
   repo text NOT NULL DEFAULT '',
   branch text NOT NULL DEFAULT '',
   auto_deploy boolean NOT NULL DEFAULT false,
+  code_indexing_enabled boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_environment_source_bindings_environment ON environment_source_bindings(environment_id);
 CREATE INDEX IF NOT EXISTS idx_environment_source_bindings_connection ON environment_source_bindings(connection_id);
+CREATE INDEX IF NOT EXISTS idx_environment_source_bindings_indexing_enabled ON environment_source_bindings(code_indexing_enabled);
 
 CREATE TABLE IF NOT EXISTS environment_hosting_bindings (
   id serial PRIMARY KEY,

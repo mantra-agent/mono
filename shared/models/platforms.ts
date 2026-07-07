@@ -122,6 +122,7 @@ export const environmentSourceBindings = pgTable(
     repo: text("repo").notNull().default(""),
     branch: text("branch").notNull().default(""),
     autoDeploy: boolean("auto_deploy").notNull().default(false),
+    codeIndexingEnabled: boolean("code_indexing_enabled").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
@@ -275,6 +276,7 @@ export const upsertSourceBindingSchema = z.object({
   repo: z.string().trim().optional(),
   branch: z.string().trim().optional(),
   autoDeploy: z.boolean().optional(),
+  codeIndexingEnabled: z.boolean().optional(),
 });
 export type UpsertSourceBinding = z.infer<typeof upsertSourceBindingSchema>;
 

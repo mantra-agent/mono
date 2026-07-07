@@ -42,6 +42,7 @@ interface EnvironmentBinding {
   repo?: string;
   branch?: string;
   autoDeploy?: boolean;
+  codeIndexingEnabled?: boolean;
   projectId?: string;
   projectName?: string;
   providerEnvironmentId?: string;
@@ -510,6 +511,7 @@ interface SourceDraft {
   owner: string;
   repo: string;
   branch: string;
+  codeIndexingEnabled: boolean;
 }
 
 function SourceBindingCard({
@@ -530,6 +532,7 @@ function SourceBindingCard({
     owner: binding.owner || "",
     repo: binding.repo || "",
     branch: binding.branch || "",
+    codeIndexingEnabled: Boolean(binding.codeIndexingEnabled),
   });
 
   const resetDraft = useCallback(() => {
@@ -538,6 +541,7 @@ function SourceBindingCard({
       owner: binding.owner || "",
       repo: binding.repo || "",
       branch: binding.branch || "",
+      codeIndexingEnabled: Boolean(binding.codeIndexingEnabled),
     });
     setShowNewConn(false);
     setShowUpdateToken(false);
@@ -550,6 +554,7 @@ function SourceBindingCard({
       if (draft.owner) body.owner = draft.owner;
       if (draft.repo) body.repo = draft.repo;
       if (draft.branch) body.branch = draft.branch;
+      body.codeIndexingEnabled = draft.codeIndexingEnabled;
 
       const res = await fetch(`/api/platforms/environments/${environmentId}/source-binding`, {
         method: "PUT",
@@ -607,6 +612,7 @@ function SourceBindingCard({
           <ValueRow label="Repository" value={`${binding.owner || ""}/${binding.repo || ""}`} mono />
           <ValueRow label="Branch" value={binding.branch} mono />
           <ValueRow label="Auto deploy" value={binding.autoDeploy} />
+          <ValueRow label="Code indexing" value={binding.codeIndexingEnabled ? "Enabled" : "Disabled"} />
         </CardContent>
       </Card>
     );
@@ -653,6 +659,19 @@ function SourceBindingCard({
         <EditableRow label="Owner" value={draft.owner} onChange={(v) => setDraft((d) => ({ ...d, owner: v }))} mono placeholder="e.g. bridgeops2030" />
         <EditableRow label="Repository" value={draft.repo} onChange={(v) => setDraft((d) => ({ ...d, repo: v }))} mono placeholder="e.g. xyz" />
         <EditableRow label="Branch" value={draft.branch} onChange={(v) => setDraft((d) => ({ ...d, branch: v }))} mono placeholder="e.g. main" />
+        <div className="grid grid-cols-[9rem_1fr] gap-3 border-b border-border/40 py-3 items-start">
+          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Code indexing</div>
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <div className="text-sm text-foreground">Enable GitNexus for this environment</div>
+              <p className="text-xs text-muted-foreground">Turn this on only for the canonical repo/branch you want indexed. Duplicate live/main environments and small repos can stay off.</p>
+            </div>
+            <Switch
+              checked={draft.codeIndexingEnabled}
+              onCheckedChange={(checked) => setDraft((d) => ({ ...d, codeIndexingEnabled: checked }))}
+            />
+          </div>
+        </div>
         <div className="flex items-center gap-2 pt-3">
           <Button variant="ghost" size="sm" onClick={handleCancel}>Cancel</Button>
           <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>

@@ -1484,6 +1484,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         repo: { type: "string", description: "Repo name (for save_source_binding)" },
         branch: { type: "string", description: "Branch name (for save_source_binding)" },
         autoDeploy: { type: "boolean", description: "Auto-deploy on push (for save_source_binding)" },
+        codeIndexingEnabled: { type: "boolean", description: "Enable GitNexus code indexing for this environment source binding (for save_source_binding)" },
         projectId: { type: "string", description: "Railway project ID (for save_hosting_binding)" },
         providerEnvironmentId: { type: "string", description: "Railway environment ID (for save_hosting_binding)" },
         serviceId: { type: "string", description: "Railway service ID (for save_hosting_binding)" },

@@ -527,6 +527,7 @@ export function registerPlatformRoutes(app: Express): void {
       if (parsed.repo !== undefined) values.repo = parsed.repo;
       if (parsed.branch !== undefined) values.branch = parsed.branch;
       if (parsed.autoDeploy !== undefined) values.autoDeploy = parsed.autoDeploy;
+      if (parsed.codeIndexingEnabled !== undefined) values.codeIndexingEnabled = parsed.codeIndexingEnabled;
 
       const [existing] = await db
         .select({ id: environmentSourceBindings.id })

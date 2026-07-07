@@ -5580,48 +5580,15 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const explicitConnectionId = Number.isFinite(Number(args.connectionId)) ? Number(args.connectionId) : null;
 
       try {
-        const { db } = await import("./db");
-        const { eq } = await import("drizzle-orm");
-        const { environmentSourceBindings, providerConnections } = await import("@shared/models/platforms");
-        const { getProviderCredential } = await import("./provider-credential-store");
-
-        const rows = explicitEnvironmentId
-          ? await db
-              .select({
-                environmentId: environmentSourceBindings.environmentId,
-                provider: environmentSourceBindings.provider,
-                connectionId: environmentSourceBindings.connectionId,
-                owner: environmentSourceBindings.owner,
-                repo: environmentSourceBindings.repo,
-                branch: environmentSourceBindings.branch,
-                connectionStatus: providerConnections.status,
-              })
-              .from(environmentSourceBindings)
-              .leftJoin(providerConnections, eq(providerConnections.id, environmentSourceBindings.connectionId))
-              .where(eq(environmentSourceBindings.environmentId, explicitEnvironmentId))
-          : await db
-              .select({
-                environmentId: environmentSourceBindings.environmentId,
-                provider: environmentSourceBindings.provider,
-                connectionId: environmentSourceBindings.connectionId,
-                owner: environmentSourceBindings.owner,
-                repo: environmentSourceBindings.repo,
-                branch: environmentSourceBindings.branch,
-                connectionStatus: providerConnections.status,
-              })
-              .from(environmentSourceBindings)
-              .leftJoin(providerConnections, eq(providerConnections.id, environmentSourceBindings.connectionId));
-
-        const matchingRows = rows.filter(row => {
-          if (row.provider !== "github") return false;
-          if (!row.connectionId) return false;
-          if (row.connectionStatus && row.connectionStatus !== "active") return false;
-          if (explicitConnectionId && row.connectionId !== explicitConnectionId) return false;
-          return row.owner.toLowerCase() === repoRef.owner.toLowerCase()
-            && row.repo.toLowerCase() === repoRef.repo.toLowerCase();
+        const { resolveGitSource } = await import("./git-source-resolver");
+        const source = await resolveGitSource({
+          repoUrl,
+          platformEnvironmentId: explicitEnvironmentId,
+          connectionId: explicitConnectionId,
+          branch: sanitizeBranch(args.branch),
+          requireIndexingEnabled: false,
         });
-
-        if (matchingRows.length === 0) {
+        if (!source) {
           toolExec.debug("git.clone.platform_auth_no_binding", {
             owner: repoRef.owner,
             repo: repoRef.repo,
@@ -5630,56 +5597,22 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           });
           return null;
         }
-
-        const branch = sanitizeBranch(args.branch);
-        const branchMatches = branch
-          ? matchingRows.filter(row => row.branch === branch || !row.branch)
-          : matchingRows;
-        const usableRows = branchMatches.length > 0 ? branchMatches : matchingRows;
-        const distinctConnectionIds = new Set(usableRows.map(row => row.connectionId));
-        if (!explicitEnvironmentId && !explicitConnectionId && distinctConnectionIds.size > 1) {
-          toolExec.warn("git.clone.platform_auth_ambiguous_binding", {
-            owner: repoRef.owner,
-            repo: repoRef.repo,
-            matchingBindings: usableRows.map(row => ({
-              environmentId: row.environmentId,
-              connectionId: row.connectionId,
-              branch: row.branch,
-            })),
-          });
-          return null;
-        }
-
-        const selected = usableRows[0];
-        if (!selected?.connectionId) return null;
-        const token = await getProviderCredential(selected.connectionId);
-        if (!token) {
-          toolExec.warn("git.clone.platform_auth_missing_credential", {
-            owner: repoRef.owner,
-            repo: repoRef.repo,
-            platformEnvironmentId: selected.environmentId,
-            connectionId: selected.connectionId,
-          });
-          return null;
-        }
-
         toolExec.log("git.clone.platform_auth_resolved", {
-          owner: repoRef.owner,
-          repo: repoRef.repo,
-          platformEnvironmentId: selected.environmentId,
-          connectionId: selected.connectionId,
-          branch: selected.branch || null,
+          owner: source.owner,
+          repo: source.repo,
+          platformEnvironmentId: source.environmentId,
+          connectionId: source.connectionId,
+          branch: source.branch || null,
         });
-
         return {
           mode: "platform",
-          token,
+          token: source.token,
           context: {
-            platformEnvironmentId: selected.environmentId,
-            connectionId: selected.connectionId,
-            owner: repoRef.owner,
-            repo: repoRef.repo,
-            branch: selected.branch || null,
+            platformEnvironmentId: source.environmentId,
+            connectionId: source.connectionId,
+            owner: source.owner,
+            repo: source.repo,
+            branch: source.branch || null,
           },
         };
       } catch (err: any) {
@@ -9225,6 +9158,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         if (typeof args.repo === "string") values.repo = args.repo;
         if (typeof args.branch === "string") values.branch = args.branch;
         if (typeof args.autoDeploy === "boolean") values.autoDeploy = args.autoDeploy;
+        if (typeof args.codeIndexingEnabled === "boolean") values.codeIndexingEnabled = args.codeIndexingEnabled;
         values.provider = "github";
 
         // Upsert
@@ -9236,7 +9170,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           values.createdAt = sqlTag`CURRENT_TIMESTAMP`;
           [saved] = await db.insert(environmentSourceBindings).values(values).returning();
         }
-        return { result: JSON.stringify({ saved: true, binding: { id: saved.id, environmentId: saved.environmentId, provider: saved.provider, owner: saved.owner, repo: saved.repo, branch: saved.branch, connectionId: saved.connectionId } }, null, 2) };
+        return { result: JSON.stringify({ saved: true, binding: { id: saved.id, environmentId: saved.environmentId, provider: saved.provider, owner: saved.owner, repo: saved.repo, branch: saved.branch, connectionId: saved.connectionId, codeIndexingEnabled: saved.codeIndexingEnabled } }, null, 2) };
       }
 
       // ── save_hosting_binding ──
@@ -12486,13 +12420,13 @@ const nextMonthPriorityTools = makePriorityHandlers("this_month", getFirstOfNext
 
 async function gitnexusBridgeCall<T>(fn: () => Promise<T>): Promise<{ ok: boolean; result?: T; error?: string }> {
   try {
-    const { isGitNexusReady, isIndexingEnabled } = await import("./gitnexus-bridge");
-    const enabled = await isIndexingEnabled();
-    if (!enabled) {
-      return { ok: false, error: "GitNexus indexing is disabled. Enable it in Build → Code Graph before using the code tool." };
+    const { isGitNexusReady, getStatus } = await import("./gitnexus-bridge");
+    const status = await getStatus();
+    if (status.phase === "disabled") {
+      return { ok: false, error: "GitNexus indexing is disabled for the current Platform environments. Use normal repo/file inspection instead, or enable code indexing on the relevant environment source binding." };
     }
     if (!isGitNexusReady()) {
-      return { ok: false, error: "Index not ready — GitNexus is still indexing the codebase. Try again in a moment." };
+      return { ok: false, error: status.message || "Index not ready — GitNexus is still indexing the codebase. Try again in a moment." };
     }
     const result = await fn();
     return { ok: true, result };

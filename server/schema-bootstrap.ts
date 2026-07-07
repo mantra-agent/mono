@@ -560,12 +560,15 @@ export async function runSchemaBootstrap(
         repo TEXT NOT NULL DEFAULT '',
         branch TEXT NOT NULL DEFAULT '',
         auto_deploy BOOLEAN NOT NULL DEFAULT false,
+        code_indexing_enabled BOOLEAN NOT NULL DEFAULT false,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_environment_source_bindings_environment ON environment_source_bindings(environment_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_environment_source_bindings_connection ON environment_source_bindings(connection_id)`);
+    await pool.query(`ALTER TABLE environment_source_bindings ADD COLUMN IF NOT EXISTS code_indexing_enabled BOOLEAN NOT NULL DEFAULT false`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_environment_source_bindings_indexing_enabled ON environment_source_bindings(code_indexing_enabled)`);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS environment_hosting_bindings (
