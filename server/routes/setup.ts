@@ -6,7 +6,7 @@ import { setTierModel } from "../job-profiles";
 import { z } from "zod";
 import { createLogger } from "../log";
 import { BOOT_ID } from "../db";
-import { getSecretSync } from "../secrets-store";
+import { getSecret, getSecretSync } from "../secrets-store";
 
 const log = createLogger("SetupRoutes");
 
@@ -110,7 +110,7 @@ export async function registerSetupRoutes(app: Express) {
       openaiSubscription: openaiSubscriptionConnected,
       claudeCli: !!getSecretSync("CLAUDE_CODE_OAUTH_TOKEN"),
       railway: !!getSecretSync("RAILWAY_API_TOKEN"),
-      expo: !!getSecretSync("EXPO_ACCESS_TOKEN"),
+      expo: !!await getSecret("EXPO_ACCESS_TOKEN"),
       sentry: !!(getSecretSync("EXPO_PUBLIC_SENTRY_DSN") && getSecretSync("SENTRY_AUTH_TOKEN") && getSecretSync("SENTRY_ORG") && getSecretSync("SENTRY_PROJECT")),
       phone: false,
       meta: !!(await (async () => {
