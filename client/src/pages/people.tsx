@@ -414,26 +414,39 @@ function fuzzyMatchPeople(query: string, people: PersonIndex[], limit: number): 
 
 type SortMode = "lastInteraction" | "name";
 
-type AgendaPersonItem = {
+type AgendaSectionKey = "commitments" | "invest" | "nurture";
+
+type AgendaItem = {
   personId?: string;
+  reason?: string;
+  suggestedAction?: string;
+  contextBadge?: { label: string; color: string };
 };
 
 type AgendaData = {
-  commitments?: AgendaPersonItem[];
-  invest?: AgendaPersonItem[];
-  nurture?: AgendaPersonItem[];
-  agenda?: AgendaPersonItem[];
+  commitments?: AgendaItem[];
+  invest?: AgendaItem[];
+  nurture?: AgendaItem[];
+  agenda?: AgendaItem[];
 };
 
+const AGENDA_SECTION_META: Record<AgendaSectionKey, { label: string; color: string; icon: typeof MessageSquare }> = {
+  commitments: { label: "Commitments", color: "text-error-foreground", icon: Shield },
+  invest: { label: "Invest", color: "text-info-foreground", icon: TrendingUp },
+  nurture: { label: "Nurture", color: "text-warning-foreground", icon: Heart },
+};
+
+function getAgendaItemsForPerson(data: AgendaData | undefined, personId: string) {
+  if (!data) return [];
+  return (Object.keys(AGENDA_SECTION_META) as AgendaSectionKey[]).flatMap(section =>
+    (data[section] || [])
+      .filter(item => item.personId === personId)
+      .map(item => ({ ...item, section }))
+  );
+}
+
 function hasAgendaNotification(agendaData: AgendaData | undefined, personId: string) {
-  if (!agendaData) return false;
-  const items = [
-    ...(agendaData.commitments ?? []),
-    ...(agendaData.invest ?? []),
-    ...(agendaData.nurture ?? []),
-    ...(agendaData.agenda ?? []),
-  ];
-  return items.some(item => item.personId === personId);
+  return getAgendaItemsForPerson(agendaData, personId).length > 0;
 }
 
 function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOverride, onQuickAddClose, onRequestQuickAdd, sortMode, agendaData, simpleFeed, selectedImportEmail, onSelectImportCandidate }: {
@@ -2268,6 +2281,47 @@ const DUE_STATUS_COLORS: Record<string, string> = {
   drifting: "text-cat-event-foreground",
   urgent: "text-error-foreground",
 };
+
+function RelationshipNotificationsCard({ personId }: { personId: string }) {
+  const { data, isLoading } = useQuery<AgendaData>({
+    queryKey: ["/api/people/agenda"],
+    refetchInterval: 60_000,
+  });
+  const items = getAgendaItemsForPerson(data, personId);
+
+  if (isLoading) return <Skeleton className="h-24 w-full" />;
+  if (items.length === 0) return null;
+
+  return (
+    <Card className="border-info/25 bg-info/5" data-testid="relationship-notifications-card">
+      <CardContent className="space-y-3 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-info-foreground">Notifications</span>
+          <Badge variant="outline" className="border-info/25 text-xs text-info-foreground">{items.length}</Badge>
+        </div>
+        <div className="space-y-2">
+          {items.map((item) => {
+            const meta = AGENDA_SECTION_META[item.section];
+            const Icon = meta.icon;
+            return (
+              <div key={`${item.section}-${item.personId}`} className="rounded-md border border-border/30 bg-background/50 px-3 py-2" data-testid={`profile-agenda-item-${item.section}`}>
+                <div className="flex items-center gap-2">
+                  <Icon className={cn("h-3.5 w-3.5", meta.color)} />
+                  <span className={cn("text-xs font-semibold", meta.color)}>{meta.label}</span>
+                  {item.contextBadge && (
+                    <Badge variant="outline" className={cn("text-xs", item.contextBadge.color)}>{item.contextBadge.label}</Badge>
+                  )}
+                </div>
+                {item.reason && <p className="mt-1 text-xs text-muted-foreground">{item.reason}</p>}
+                {item.suggestedAction && <p className="mt-1 text-xs text-primary">{item.suggestedAction}</p>}
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 function WarmthCard({ person }: { person: Person }) {
   const rp = person.relationshipProfile;
