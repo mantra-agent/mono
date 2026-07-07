@@ -36,6 +36,12 @@ async function ensurePeopleSurfaceStateTable(): Promise<void> {
       `);
       await db.execute(sql`ALTER TABLE simple_people_surface_state ADD COLUMN IF NOT EXISTS reason_key text NOT NULL DEFAULT 'legacy'`);
       await db.execute(sql`ALTER TABLE simple_people_surface_state ADD COLUMN IF NOT EXISTS surfaced_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP`);
+      await db.execute(sql`ALTER TABLE simple_people_surface_state ADD COLUMN IF NOT EXISTS created_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP`);
+      await db.execute(sql`ALTER TABLE simple_people_surface_state ADD COLUMN IF NOT EXISTS updated_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP`);
+      await db.execute(sql`ALTER TABLE simple_people_surface_state ALTER COLUMN reason_key SET DEFAULT 'legacy'`);
+      await db.execute(sql`ALTER TABLE simple_people_surface_state ALTER COLUMN surfaced_at SET DEFAULT CURRENT_TIMESTAMP`);
+      await db.execute(sql`ALTER TABLE simple_people_surface_state ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP`);
+      await db.execute(sql`ALTER TABLE simple_people_surface_state ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP`);
       await db.execute(sql`ALTER TABLE simple_people_surface_state DROP CONSTRAINT IF EXISTS simple_people_surface_state_person_account_unique`);
       await db.execute(sql`
         CREATE UNIQUE INDEX IF NOT EXISTS idx_simple_people_surface_state_person_account_reason_unique
@@ -113,6 +119,7 @@ export async function ensurePeopleSurfaceStates(lookups: PeopleSurfaceStateLooku
       snoozedUntil: null,
       surfacedAt: now,
       ...ownerValues,
+      createdAt: now,
       updatedAt: now,
     }));
   await db
@@ -159,6 +166,7 @@ export async function dismissPeopleSurface(personId: string, reasonKey: string):
       snoozedUntil: null,
       surfacedAt: now,
       ...ownerValues,
+      createdAt: now,
       updatedAt: now,
     })
     .onConflictDoUpdate({
@@ -194,6 +202,7 @@ export async function snoozePeopleSurface(personId: string, reasonKey: string, s
       snoozedUntil,
       surfacedAt: now,
       ...ownerValues,
+      createdAt: now,
       updatedAt: now,
     })
     .onConflictDoUpdate({
