@@ -2894,7 +2894,7 @@ function ExpoDetail() {
               </div>
               <p className="text-xs text-muted-foreground">
                 Build and deploy from the{" "}
-                <a href="/build?tab=mobile" className="underline text-primary">Build → Mobile</a> tab.
+                <a href="/platforms/environments/13" className="underline text-primary">Platforms → Mantra / Mobile / dev</a> page.
               </p>
             </div>
           ) : (

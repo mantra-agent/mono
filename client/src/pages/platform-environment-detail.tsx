@@ -22,7 +22,9 @@ import {
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { detailedStatusLabel, familyClasses, relativeTime, statusFamily } from "@/components/build-status-panel";
+import { BuildStatusPanel, detailedStatusLabel, familyClasses, relativeTime, statusFamily, type DevDeploymentSummary } from "@/components/build-status-panel";
+import { DevPublishTab } from "@/components/dev-publish-tab";
+import { MobileBuildCard } from "@/components/mobile-build-card";
 
 // --- Types ---
 
@@ -183,6 +185,94 @@ interface BuildLifecycleStatus {
   };
   workflows: { recent: WorkflowRunSummary[] };
   checkedAt: string;
+}
+
+
+interface DevStatusOk {
+  configured: true;
+  devUrl: string | null;
+  projectId: string;
+  environmentId: string;
+  serviceId: string;
+  deployment: DevDeploymentSummary | null;
+  statusError: string | null;
+  fetchedAt: string;
+}
+
+interface DevStatusMissing {
+  configured: false;
+  hasToken: boolean;
+  missing: {
+    projectId: boolean;
+    environmentId: boolean;
+    serviceId: boolean;
+    devUrl: boolean;
+  };
+  devUrl: string | null;
+}
+
+type DevStatus = DevStatusOk | DevStatusMissing;
+
+function useDevStatus() {
+  return useQuery<DevStatus>({
+    queryKey: ["/api/railway/dev/status"],
+    queryFn: async () => {
+      const res = await fetch("/api/railway/dev/status", { credentials: "include" });
+      if (res.status === 503) return (await res.json()) as DevStatus;
+      if (!res.ok) throw new Error(`${res.status}: ${(await res.text()) || res.statusText}`);
+      return (await res.json()) as DevStatus;
+    },
+    refetchInterval: (query) => {
+      const data = query.state.data as DevStatus | undefined;
+      if (data?.configured && statusFamily(data.deployment?.status) === "deploying") return 5_000;
+      return 30_000;
+    },
+    refetchOnWindowFocus: true,
+    staleTime: 5_000,
+  });
+}
+
+function DevelopmentPipelineCard() {
+  const { data: status, isLoading, error, refetch, isFetching } = useDevStatus();
+
+  if (isLoading && !status) return <Skeleton className="h-96 w-full" />;
+
+  if (!status) {
+    return (
+      <ConfigCard title="Development" description="Stage deployment status is unavailable.">
+        <div className="flex items-center justify-between gap-3 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
+          <span>Couldn't reach xyz's Railway proxy: {(error as Error)?.message ?? "unknown error"}</span>
+          <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching}>
+            {isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Retry"}
+          </Button>
+        </div>
+      </ConfigCard>
+    );
+  }
+
+  if (!status.configured || !status.deployment) {
+    return (
+      <ConfigCard title="Development" description="Stage deployment status is not configured yet.">
+        <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+          Development environment not configured.
+        </div>
+      </ConfigCard>
+    );
+  }
+
+  return <BuildStatusPanel deployment={status.deployment} />;
+}
+
+function EnvironmentPipelineCard({ details }: { details: EnvironmentDetails }) {
+  const platformName = details.platform.name.toLowerCase();
+  const productName = details.product.name.toLowerCase();
+  const environmentName = details.environment.name.toLowerCase();
+
+  if (platformName !== "mantra") return null;
+  if (productName === "web" && environmentName === "stage") return <DevelopmentPipelineCard />;
+  if (productName === "web" && environmentName === "live") return <DevPublishTab />;
+  if (productName === "mobile" && environmentName === "dev") return <MobileBuildCard />;
+  return null;
 }
 
 // --- Read-only helpers ---
@@ -1711,6 +1801,8 @@ export default function PlatformEnvironmentDetailPage() {
       </div>
 
       <div className="grid gap-4">
+        <EnvironmentPipelineCard details={data} />
+
         <ConfigCard title="Identity">
           <ValueRow label="Platform" value={data.platform.name} />
           <ValueRow label="Product" value={data.product.name} />
