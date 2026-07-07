@@ -6,6 +6,7 @@ import { createLogger } from "@/lib/logger";
 import { Mic, MicOff, ArrowUp, Square, Paperclip, MoreHorizontal, Eye, X, FileText, Bug } from "lucide-react";
 import { useMentionAutocomplete } from "@/hooks/use-mention-autocomplete";
 import { MentionPopover } from "@/components/mention-popover";
+import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { useSessionSubscription, type SessionStatus, type SessionStreamState } from "@/hooks/use-session-subscription";
 import { useExecutorStatus } from "@/hooks/use-executor-status";
@@ -50,6 +51,7 @@ import { StatusLine } from "./status-line";
 import { PreviewChip } from "./preview-chip";
 import { ExpandedDialogue } from "./expanded-dialogue";
 import type { ExecutionStep, StreamingContent } from "@shared/streaming-types";
+import { parseReferenceText } from "@shared/reference-parser";
 
 const log = createLogger("BottomBar");
 
@@ -478,6 +480,10 @@ export function BottomBar({
   }, [voiceSession?.status, voiceSession?.transcript]);
 
   const displayedInputText = voiceActive ? voiceInputDisplay.text : inputText;
+  const displayedInputHasReferences = useMemo(
+    () => parseReferenceText(displayedInputText).some((part) => part.kind === "reference"),
+    [displayedInputText],
+  );
   const voiceInputPlaceholder = voiceActive ? getVoiceInputPlaceholder(voiceSession) : undefined;
 
   useEffect(() => {
@@ -730,6 +736,19 @@ export function BottomBar({
 
             {/* Text input — grows upward, never scrolls */}
             <div className="relative flex flex-1 min-w-0">
+              {displayedInputHasReferences && (
+                <div
+                  className={cn(
+                    "pointer-events-none absolute inset-0 whitespace-pre-wrap break-words",
+                    "min-h-9 rounded-[18px] border border-transparent px-3 py-[7px] text-sm",
+                    "overflow-hidden text-foreground",
+                    voiceActive && "pr-11",
+                  )}
+                  aria-hidden="true"
+                >
+                  <InlineReferenceText text={displayedInputText} />
+                </div>
+              )}
               <textarea
                 ref={textareaRef}
                 value={displayedInputText}
@@ -754,6 +773,7 @@ export function BottomBar({
                   "w-full min-h-9 resize-none bg-muted/50 border border-border rounded-[18px] px-3 py-[7px]",
                   voiceActive && "pr-11",
                   "text-sm placeholder:text-muted-foreground",
+                  displayedInputHasReferences && "text-transparent caret-foreground",
                   "focus:outline-none focus:border-ring focus:ring-1 focus:ring-ring",
                   "disabled:cursor-not-allowed",
                   voiceActive
