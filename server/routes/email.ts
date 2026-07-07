@@ -7,6 +7,7 @@ import { triageJob } from "../triage-job-state";
 import { storage } from "../storage";
 import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwnershipValues } from "../sensitive-scope";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { invalidateSimpleFeedCache } from "../simple/generate-feed";
 
 const log = createLogger("EmailRoutes");
 
@@ -598,6 +599,7 @@ export function registerEmailRoutes(app: Express) {
         reason: reason || null,
         dismissedBy: dismissedBy || "manual",
       });
+      invalidateSimpleFeedCache(req.principal?.accountId || accountId || undefined);
       res.json(dismissal);
     } catch (err: any) {
       log.error(`POST /api/email/history/record error: ${err.message}`);

@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { SimpleFeedItem } from "@shared/models/simple";
+import { useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
+import type { SimpleFeed, SimpleFeedItem } from "@shared/models/simple";
 import { ChevronRight, Loader2, Mail, MessageSquare, MoreHorizontal, X } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -27,6 +27,24 @@ function payloadString(item: SimpleFeedItem, key: string): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function removeFeedItem(feed: SimpleFeed | undefined, itemId: string): SimpleFeed | undefined {
+  if (!feed) return feed;
+  let removed = false;
+  const sections = feed.sections.map(section => {
+    const items = section.items.filter(item => {
+      const keep = item.id !== itemId;
+      if (!keep) removed = true;
+      return keep;
+    });
+    return items === section.items ? section : { ...section, items };
+  });
+  return removed ? { ...feed, sections } : feed;
+}
+
+function restoreQueries(queryClient: ReturnType<typeof useQueryClient>, snapshots?: Array<{ queryKey: QueryKey; data: unknown }>) {
+  snapshots?.forEach(snapshot => queryClient.setQueryData(snapshot.queryKey, snapshot.data));
+}
+
 export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
   const queryClient = useQueryClient();
   const { route, setSessionForRoute, setWidgetOpen } = useFocusSession();
@@ -50,6 +68,24 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
         subject: item.title,
         dismissedBy: "simple_inbox",
       });
+    },
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["/api/home/feed"] });
+      await queryClient.cancelQueries({ queryKey: ["/api/simple/feed"] });
+
+      const queryCache = queryClient.getQueryCache();
+      const feedQueries = [
+        ...queryCache.findAll({ queryKey: ["/api/home/feed"] }),
+        ...queryCache.findAll({ queryKey: ["/api/simple/feed"] }),
+      ];
+      const snapshots = feedQueries.map(query => ({ queryKey: query.queryKey, data: query.state.data }));
+      feedQueries.forEach(query => {
+        queryClient.setQueryData<SimpleFeed>(query.queryKey, old => removeFeedItem(old, item.id));
+      });
+      return { snapshots };
+    },
+    onError: (_error, _variables, context) => {
+      restoreQueries(queryClient, context?.snapshots);
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/simple/feed"] });
