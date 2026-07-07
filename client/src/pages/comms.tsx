@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef, type TouchEvent } from "react";
-import { useQuery, useMutation, type QueryKey } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -60,6 +60,7 @@ import DraftsView from "./people-drafts";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { ReminderPopover } from "@/components/library-reminder";
+import { useEmailMarkDone, useEmailSnooze } from "@/hooks/use-email-thread-actions";
 import type { EmailMessage, EmailEnrichment, EmailDismissal } from "@shared/schema";
 
 type EmailHealthStatus = "healthy" | "stale" | "degraded" | "failed";
@@ -259,155 +260,6 @@ function groupByThread(messages: EmailMessage[]): ThreadGroup[] {
   return groups;
 }
 
-function useMarkDone() {
-  const { toast } = useToast();
-  return useMutation({
-    mutationFn: async ({ ids, isDone, threadMeta }: { ids: number[]; isDone: boolean; threadMeta?: { providerThreadId?: string; accountId?: string; tier?: string; sender?: string; subject?: string } }) => {
-      const results = await Promise.all(
-        ids.map(async (id) => {
-          const res = await apiRequest("PATCH", `/api/email/messages/${id}/done`, { isDone });
-          return res.json() as Promise<EmailMessage & { gmailArchived?: boolean | null }>;
-        })
-      );
-      if (isDone && threadMeta) {
-        try {
-          await apiRequest("POST", "/api/email/history/record", {
-            messageId: ids[0],
-            providerThreadId: threadMeta.providerThreadId || null,
-            accountId: threadMeta.accountId || null,
-            tier: threadMeta.tier || null,
-            sender: threadMeta.sender || null,
-            subject: threadMeta.subject || null,
-            reason: "Manually marked done",
-            dismissedBy: "manual",
-          });
-        } catch {}
-      }
-      return results;
-    },
-    onMutate: async ({ ids, isDone }) => {
-      await queryClient.cancelQueries({ queryKey: ["/api/email/messages"] });
-      const queryCache = queryClient.getQueryCache();
-      const matchingQueries = queryCache.findAll({ queryKey: ["/api/email/messages"] });
-      const idSet = new Set(ids);
-      const snapshots: Array<{ queryKey: QueryKey; data: unknown }> = [];
-      for (const query of matchingQueries) {
-        snapshots.push({ queryKey: query.queryKey, data: query.state.data });
-        queryClient.setQueryData<{ messages: EmailMessage[]; total: number }>(
-          query.queryKey,
-          (old) => {
-            if (!old) return old;
-            const updated = old.messages.map((m) =>
-              idSet.has(m.id) ? { ...m, isDone } : m
-            );
-            return { ...old, messages: updated };
-          }
-        );
-      }
-      const affectedMessages: EmailMessage[] = [];
-      for (const snapshot of snapshots) {
-        const data = snapshot.data as { messages: EmailMessage[]; total: number } | undefined;
-        if (data?.messages) {
-          for (const m of data.messages) {
-            if (idSet.has(m.id) && !m.isDone) {
-              affectedMessages.push(m);
-            }
-          }
-        }
-      }
-      const seen = new Set<number>();
-      let triagedCount = 0;
-      let untriagedCount = 0;
-      for (const m of affectedMessages) {
-        if (seen.has(m.id)) continue;
-        seen.add(m.id);
-        if (m.triageStatus === "triaged") triagedCount++;
-        else if (m.triageStatus === "untriaged") untriagedCount++;
-      }
-
-      await queryClient.cancelQueries({ queryKey: ["/api/email/messages", "review-count"] });
-      await queryClient.cancelQueries({ queryKey: ["/api/email/messages", "inbox-count"] });
-      await queryClient.cancelQueries({ queryKey: ["/api/email/messages", "triage-count"] });
-      const prevReviewCount = queryClient.getQueryData<{ messages: EmailMessage[]; total: number }>(["/api/email/messages", "review-count"]);
-      const prevInboxCount = queryClient.getQueryData<{ messages: EmailMessage[]; total: number }>(["/api/email/messages", "inbox-count"]);
-      const prevTriageCount = queryClient.getQueryData<{ messages: EmailMessage[]; total: number }>(["/api/email/messages", "triage-count"]);
-      if (isDone) {
-        // The triaged set splits between Triage (not enriched) and Review (enriched);
-        // we don't know per-message which side a triaged item is on without an extra
-        // lookup, so we conservatively skip optimistic decrement for those two counts
-        // and let the onSettled invalidation refresh them.
-        if (prevInboxCount && untriagedCount > 0) {
-          queryClient.setQueryData(["/api/email/messages", "inbox-count"], {
-            ...prevInboxCount,
-            total: Math.max(0, prevInboxCount.total - untriagedCount),
-          });
-        }
-      }
-      return { snapshots, prevReviewCount, prevInboxCount, prevTriageCount };
-    },
-    onSuccess: (results, { isDone }, context) => {
-      if (isDone) {
-        const failedResults = results.filter((r) => r.gmailArchived !== null && r.gmailArchived === false);
-        if (failedResults.length > 0) {
-          const failedIds = new Set(failedResults.map((r) => r.id));
-          const queryCache = queryClient.getQueryCache();
-          const matchingQueries = queryCache.findAll({ queryKey: ["/api/email/messages"] });
-          for (const query of matchingQueries) {
-            if (
-              query.queryKey.includes("review-count") ||
-              query.queryKey.includes("inbox-count") ||
-              query.queryKey.includes("triage-count")
-            ) continue;
-            queryClient.setQueryData<{ messages: EmailMessage[]; total: number }>(
-              query.queryKey,
-              (old) => {
-                if (!old) return old;
-                const reverted = old.messages.map((m) =>
-                  failedIds.has(m.id) ? { ...m, isDone: false } : m
-                );
-                return { ...old, messages: reverted };
-              }
-            );
-          }
-          if (context?.prevReviewCount) {
-            queryClient.setQueryData(["/api/email/messages", "review-count"], context.prevReviewCount);
-          }
-          if (context?.prevInboxCount) {
-            queryClient.setQueryData(["/api/email/messages", "inbox-count"], context.prevInboxCount);
-          }
-          if (context?.prevTriageCount) {
-            queryClient.setQueryData(["/api/email/messages", "triage-count"], context.prevTriageCount);
-          }
-          toast({
-            title: "Email hidden locally",
-            description: "Couldn't archive in Gmail — you may need to reconnect your account.",
-            variant: "destructive",
-          });
-        }
-      }
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.snapshots) {
-        for (const { queryKey, data } of context.snapshots) {
-          queryClient.setQueryData(queryKey, data);
-        }
-      }
-      if (context?.prevReviewCount) {
-        queryClient.setQueryData(["/api/email/messages", "review-count"], context.prevReviewCount);
-      }
-      if (context?.prevInboxCount) {
-        queryClient.setQueryData(["/api/email/messages", "inbox-count"], context.prevInboxCount);
-      }
-      if (context?.prevTriageCount) {
-        queryClient.setQueryData(["/api/email/messages", "triage-count"], context.prevTriageCount);
-      }
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/email/messages"] });
-    },
-  });
-}
-
 function formatSnoozeTime(date: Date): string {
   return date.toLocaleString("en-US", {
     timeZone: "America/Chicago",
@@ -416,52 +268,6 @@ function formatSnoozeTime(date: Date): string {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  });
-}
-
-function useSnooze() {
-  const { toast } = useToast();
-  return useMutation({
-    mutationFn: async ({ ids, snoozedUntil }: { ids: number[]; snoozedUntil: string | null }) => {
-      return Promise.all(
-        ids.map(async (id) => {
-          const res = await apiRequest("PATCH", `/api/email/messages/${id}/snooze`, { snoozedUntil });
-          return res.json() as Promise<EmailMessage>;
-        })
-      );
-    },
-    onMutate: async ({ ids }) => {
-      await queryClient.cancelQueries({ queryKey: ["/api/email/messages"] });
-      const queryCache = queryClient.getQueryCache();
-      const matchingQueries = queryCache.findAll({ queryKey: ["/api/email/messages"] });
-      const idSet = new Set(ids);
-      const snapshots: Array<{ queryKey: QueryKey; data: unknown }> = [];
-      for (const query of matchingQueries) {
-        snapshots.push({ queryKey: query.queryKey, data: query.state.data });
-        queryClient.setQueryData<{ messages: EmailMessage[]; total: number }>(
-          query.queryKey,
-          (old) => {
-            if (!old) return old;
-            return {
-              ...old,
-              messages: old.messages.filter((m) => !idSet.has(m.id)),
-              total: Math.max(0, old.total - ids.length),
-            };
-          }
-        );
-      }
-      return { snapshots };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.snapshots) {
-        for (const { queryKey, data } of context.snapshots) {
-          queryClient.setQueryData(queryKey, data);
-        }
-      }
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/email/messages"] });
-    },
   });
 }
 
@@ -632,7 +438,7 @@ function EmailReference({
   const { latestMessage, messages, unreadCount, triageTier, triageReason } = thread;
   const sender = parseSender(latestMessage.fromAddress);
   const hasUnread = unreadCount > 0;
-  const markDone = useMarkDone();
+  const markDone = useEmailMarkDone();
   const isTriaged = messages.some(m => m.triageStatus === "triaged");
   const isDone = messages.some(m => m.isDone);
   const title = latestMessage.subject || "(no subject)";
@@ -1478,7 +1284,7 @@ function EmailPipelineStatusBadge() {
 
 function ReviewTab({ onHover, onSwitchTab }: { onHover: (ids: number[] | null) => void; onSwitchTab: (tab: string) => void }) {
   const { toast } = useToast();
-  const snoozeMutation = useSnooze();
+  const snoozeMutation = useEmailSnooze();
 
   const handleSnooze = useCallback((ids: number[], snoozedUntil: string) => {
     const formatted = formatSnoozeTime(new Date(snoozedUntil));
@@ -1835,7 +1641,7 @@ export default function CommsPage() {
   const touchStartYRef = useRef<number | null>(null);
   const hasRefreshedOnOpenRef = useRef(false);
   const [pullDistance, setPullDistance] = useState(0);
-  const markDone = useMarkDone();
+  const markDone = useEmailMarkDone();
 
   const refreshMutation = useMutation({
     mutationFn: async () => {
