@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <title>Mantra | Personal Mastery</title>
+    <meta name="description" content="Mantra is an AI operating layer for personal mastery, beginning with the commitments that matter." />
+    <meta property="og:title" content="Mantra" />
+    <meta property="og:description" content="An AI operating layer for personal mastery." />
+    <link rel="icon" type="image/png" href="/brand/mantra-logo.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#09090b" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="apple-touch-icon" href="/brand/mantra-logo.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&family=Fira+Code:wght@300..700&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <script>
+      // Pre-hydration: apply UI scale from localStorage before React mounts (prevents layout flash)
+      (function(){var s=localStorage.getItem('xyz-ui-scale');if(s){var n=parseInt(s,10);if(n>=90&&n<=120)document.documentElement.style.fontSize=n+'%';}})();
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

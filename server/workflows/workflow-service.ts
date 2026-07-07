@@ -1,0 +1,1496 @@
+import crypto from "crypto";
+import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { db } from "../db";
+import { getCurrentPrincipal, getCurrentPrincipalOrSystem } from "../principal-context";
+import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
+import { createLogger, getRecentLogs } from "../log";
+import {
+  workflowArtifacts,
+  workflowGates,
+  workflowRuns,
+  workflowSessions,
+  workflowStageAttempts,
+  workflowTemplates,
+  workflowTransitions,
+  type WorkflowArtifact,
+  type WorkflowGate,
+  type WorkflowRun,
+  type WorkflowStageAttempt,
+  type WorkflowTemplate,
+  type WorkflowTransition,
+  type WorkflowTransitionTrigger,
+  workflowAttemptResultSchema,
+  workflowAutonomyModeSchema,
+  workflowGateStatusSchema,
+  workflowRunStatusSchema,
+  workflowTemplateDefinitionSchema,
+  workflowTemplateStatusSchema,
+  workflowTransitionTriggerSchema,
+} from "@shared/schema";
+import {
+  environmentHostingBindings,
+  environmentSourceBindings,
+  platformProductEnvironments,
+  platformProducts,
+  platforms,
+  providerConnections,
+  type EnvironmentHostingBinding,
+  type EnvironmentSourceBinding,
+  type ProviderConnection,
+} from "@shared/models/platforms";
+import { getProviderCredential } from "../provider-credential-store";
+import { getLatestDeploymentByToken } from "../integrations/railway/client";
+import { buildWorkflowRunPageContent, buildWorkflowStages, parseWorkflowDefinition, type WorkflowEnvironmentTruth, type WorkflowRunDetail } from "./workflow-renderer";
+import { monitorChildSession, truncateOutput, type MonitorResult } from "../child-session-monitor";
+
+const log = createLogger("WorkflowService");
+
+/** Default idle timeout for workflow stage children: 15 minutes */
+const WORKFLOW_STAGE_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+
+const templateScopeColumns = { scope: workflowTemplates.scope, ownerUserId: workflowTemplates.ownerUserId, accountId: workflowTemplates.accountId };
+const runScopeColumns = { scope: workflowRuns.scope, ownerUserId: workflowRuns.ownerUserId, accountId: workflowRuns.accountId };
+const attemptScopeColumns = { scope: workflowStageAttempts.scope, ownerUserId: workflowStageAttempts.ownerUserId, accountId: workflowStageAttempts.accountId };
+const transitionScopeColumns = { scope: workflowTransitions.scope, ownerUserId: workflowTransitions.ownerUserId, accountId: workflowTransitions.accountId };
+const artifactScopeColumns = { scope: workflowArtifacts.scope, ownerUserId: workflowArtifacts.ownerUserId, accountId: workflowArtifacts.accountId };
+const gateScopeColumns = { scope: workflowGates.scope, ownerUserId: workflowGates.ownerUserId, accountId: workflowGates.accountId };
+const sessionScopeColumns = { scope: workflowSessions.scope, ownerUserId: workflowSessions.ownerUserId, accountId: workflowSessions.accountId };
+const platformScopeColumns = { scope: platforms.scope, ownerUserId: platforms.ownerUserId, accountId: platforms.accountId };
+
+const ACCEPTANCE_GATE_KEYS = [
+  "stageDeployGreen",
+  "targetUrlHealthy",
+  "targetRouteBrowserLoaded",
+  "screenshotCaptured",
+  "clientLogsChecked",
+  "serverLogsChecked",
+  "authSessionEstablished",
+] as const;
+
+type AcceptanceGateKey = typeof ACCEPTANCE_GATE_KEYS[number];
+
+type AcceptanceEvidencePacket = {
+  capturedAt: string;
+  configSnapshot: Record<string, unknown>;
+  targetUrl: string | null;
+  routePath: string;
+  healthCheckPath: string;
+  gates: Record<AcceptanceGateKey, boolean>;
+  auth: { mode: string; attempted: boolean; established: boolean; verified: boolean; status?: number | null; userId?: string | null; error?: string | null };
+  browserSession?: Record<string, unknown> | null;
+  health: { ok: boolean; status?: number; error?: string };
+  browserError?: string | null;
+  optionalSmokeAttempted: boolean;
+  deployment: WorkflowEnvironmentTruth["deployment"] | null;
+  screenshot?: { path: string; width: number; height: number; truncated: boolean } | null;
+  logs: {
+    client: Array<{ ts: number; level: string; source: string; message: string }>;
+    server: Array<{ ts: number; level: string; source: string; message: string }>;
+  };
+  failurePacket?: Record<string, unknown>;
+};
+
+function visible<T>(columns: T, predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), columns as any, predicate); }
+function writable<T>(columns: T, predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), columns as any, predicate); }
+function owner<T>(columns: T) { return ownedInsertValues(getCurrentPrincipalOrSystem(), columns as any); }
+
+function environmentKind(name: string): "development" | "staging" | "production" | "custom" {
+  const normalized = name.trim().toLowerCase();
+  if (["dev", "development"].includes(normalized)) return "development";
+  if (["stage", "staging"].includes(normalized)) return "staging";
+  if (["prod", "production", "live"].includes(normalized)) return "production";
+  return "custom";
+}
+
+function sanitizeConnection(connection: ProviderConnection | null | undefined) {
+  if (!connection) return null;
+  return { id: connection.id, provider: connection.provider, label: connection.label, status: connection.status, lastVerifiedAt: connection.lastVerifiedAt };
+}
+
+function sanitizeSourceBinding(source: EnvironmentSourceBinding | null | undefined, connection: ProviderConnection | null | undefined) {
+  if (!source) return null;
+  return {
+    id: source.id,
+    provider: source.provider,
+    connectionId: source.connectionId,
+    connection: sanitizeConnection(connection),
+    owner: source.owner,
+    repo: source.repo,
+    branch: source.branch,
+    autoDeploy: source.autoDeploy,
+    inferred: false,
+    updatedAt: source.updatedAt,
+  };
+}
+
+function sanitizeHostingBinding(hosting: EnvironmentHostingBinding | null | undefined, connection: ProviderConnection | null | undefined) {
+  if (!hosting) return null;
+  return {
+    id: hosting.id,
+    provider: hosting.provider,
+    connectionId: hosting.connectionId,
+    connection: sanitizeConnection(connection),
+    projectId: hosting.projectId,
+    projectName: hosting.projectName,
+    providerEnvironmentId: hosting.providerEnvironmentId,
+    providerEnvironmentName: hosting.providerEnvironmentName,
+    serviceId: hosting.serviceId,
+    serviceName: hosting.serviceName,
+    publicUrl: hosting.publicUrl,
+    staticUrl: hosting.staticUrl,
+    inferred: false,
+    updatedAt: hosting.updatedAt,
+  };
+}
+
+function generateWorkflowRunId(): string {
+  return `wf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+const DEFAULT_WORKFLOW_MAX_ATTEMPTS = 10;
+
+type RetryPolicyLike = {
+  maxAttemptsPerStage?: unknown;
+  maxRetries?: unknown;
+};
+
+type WorkflowArtifactBrief = { id: number; kind: string; title: string; refType: string; refId: string | null; url: string | null; summary: string };
+
+type WorkflowRetryContext = {
+  failedStageKey: string;
+  failedStageTitle: string;
+  failedAttemptId: number;
+  failedAttemptNumber: number;
+  status: string;
+  result: string | null;
+  outputSummary: string | null;
+  failureContext: unknown;
+  evidence: unknown;
+  childSessionId: string | null;
+  artifacts: WorkflowArtifactBrief[];
+  runFailurePacket: unknown;
+  instruction: string;
+};
+
+type WorkflowStageInputContext = {
+  workflowRunId: string;
+  workflowTitle: string;
+  objective: string;
+  stageKey: string;
+  stageTitle: string;
+  attemptNumber: number;
+  retryCount: number;
+  maxAttempts: number;
+  previousFailurePacket?: unknown;
+  retryContext?: WorkflowRetryContext;
+  relevantArtifacts: WorkflowArtifactBrief[];
+  instruction: string;
+};
+
+function getMaxAttempts(detail: WorkflowRunDetail): number {
+  const runPolicy = (detail.run.retryPolicy || {}) as RetryPolicyLike & { maxAttempts?: unknown };
+  const templatePolicy = (detail.template.defaultAutonomyPolicy || {}) as RetryPolicyLike & { maxAttempts?: unknown };
+  const candidate = Number(runPolicy.maxAttemptsPerStage ?? runPolicy.maxRetries ?? runPolicy.maxAttempts ?? templatePolicy.maxAttemptsPerStage ?? templatePolicy.maxRetries ?? templatePolicy.maxAttempts ?? DEFAULT_WORKFLOW_MAX_ATTEMPTS);
+  return Number.isFinite(candidate) && candidate > 0 ? Math.floor(candidate) : DEFAULT_WORKFLOW_MAX_ATTEMPTS;
+}
+
+function truncateText(text: string, maxLen = 700): string {
+  return text.length <= maxLen ? text : `${text.slice(0, maxLen - 3)}...`;
+}
+
+function failedAttempts(attempts: WorkflowStageAttempt[]): WorkflowStageAttempt[] {
+  return attempts
+    .filter((attempt) => ["failed", "blocked"].includes(attempt.status) || ["failed", "blocked"].includes(String(attempt.result || "")))
+    .sort((a, b) => b.attemptNumber - a.attemptNumber);
+}
+
+function buildPreviousFailurePacket(attempts: WorkflowStageAttempt[]): unknown | undefined {
+  const latestFailure = failedAttempts(attempts)[0];
+  if (!latestFailure) return undefined;
+  return {
+    attemptId: latestFailure.id,
+    stageKey: latestFailure.stageKey,
+    stageTitle: latestFailure.stageTitle,
+    attemptNumber: latestFailure.attemptNumber,
+    status: latestFailure.status,
+    result: latestFailure.result,
+    outputSummary: latestFailure.outputSummary,
+    failureContext: latestFailure.failureContext,
+    evidence: latestFailure.evidence,
+    childSessionId: latestFailure.childSessionId,
+  };
+}
+
+function stageArtifacts(detail: WorkflowRunDetail, stageKey: string): WorkflowArtifactBrief[] {
+  const attemptIds = new Set(detail.stages.find((stage) => stage.key === stageKey)?.attempts.map((attempt) => attempt.id) || []);
+  return detail.artifacts
+    .filter((artifact) => artifact.stageAttemptId == null || attemptIds.has(artifact.stageAttemptId))
+    .map((artifact) => ({
+      id: artifact.id,
+      kind: artifact.kind,
+      title: artifact.title,
+      refType: artifact.refType,
+      refId: artifact.refId,
+      url: artifact.url,
+      summary: artifact.summary,
+    }));
+}
+
+function attemptArtifacts(detail: WorkflowRunDetail, attemptId: number): WorkflowArtifactBrief[] {
+  return detail.artifacts
+    .filter((artifact) => artifact.stageAttemptId === attemptId)
+    .map((artifact) => ({
+      id: artifact.id,
+      kind: artifact.kind,
+      title: artifact.title,
+      refType: artifact.refType,
+      refId: artifact.refId,
+      url: artifact.url,
+      summary: artifact.summary,
+    }));
+}
+
+function buildRetryContext(detail: WorkflowRunDetail, stageKey: string, stageTitle: string, attempts: WorkflowStageAttempt[]): WorkflowRetryContext | undefined {
+  const latestFailure = failedAttempts(attempts)[0];
+  if (!latestFailure) return undefined;
+  return {
+    failedStageKey: latestFailure.stageKey || stageKey,
+    failedStageTitle: latestFailure.stageTitle || stageTitle,
+    failedAttemptId: latestFailure.id,
+    failedAttemptNumber: latestFailure.attemptNumber,
+    status: latestFailure.status,
+    result: latestFailure.result,
+    outputSummary: latestFailure.outputSummary,
+    failureContext: latestFailure.failureContext,
+    evidence: latestFailure.evidence,
+    childSessionId: latestFailure.childSessionId,
+    artifacts: attemptArtifacts(detail, latestFailure.id),
+    runFailurePacket: detail.run.failurePacket || null,
+    instruction: "Address this failure directly. Do not redo unrelated discovery or repeat the failed approach unless the changed premise is explicit.",
+  };
+}
+
+function buildStageInputContext(detail: WorkflowRunDetail, stageKey: string, stageTitle: string, attemptNumber: number, extraContext?: unknown): WorkflowStageInputContext & { extraContext?: unknown; environmentTruth?: WorkflowEnvironmentTruth | null; lifecycleSnapshot?: unknown; protocols?: Record<string, unknown> } {
+  const priorAttempts = detail.stages.find((stage) => stage.key === stageKey)?.attempts || [];
+  const retryCount = Math.max(0, attemptNumber - 1);
+  const previousFailurePacket = buildPreviousFailurePacket(priorAttempts);
+  const retryContext = retryCount > 0 ? buildRetryContext(detail, stageKey, stageTitle, priorAttempts) : undefined;
+  const instruction = retryCount > 0
+    ? "This is a retry. The actionable failure packet is included inline under Retry Context. Address that failure directly and try a materially different approach. Do not hunt for the failure packet unless you need archival backup evidence."
+    : "Execute this workflow stage in isolation. Use the workflow run artifact as the checkpoint source of truth and report a concise outcome when complete.";
+  return {
+    workflowRunId: detail.run.id,
+    workflowTitle: detail.run.title,
+    objective: detail.run.objective,
+    stageKey,
+    stageTitle,
+    attemptNumber,
+    retryCount,
+    maxAttempts: getMaxAttempts(detail),
+    previousFailurePacket,
+    retryContext,
+    relevantArtifacts: stageArtifacts(detail, stageKey),
+    instruction,
+    environmentTruth: detail.environmentTruth || null,
+    lifecycleSnapshot: detail.lifecycleSnapshot || detail.run.lifecycleSnapshot || null,
+    protocols: detail.template.id === BUILD_WORKFLOW_TEMPLATE_ID ? {
+      primaryProtocol: "Build workflow stage contract",
+      lowerLayerProtocols: ["CODING.md", "PLANNING.md"],
+      rule: "Use CODING.md and PLANNING.md as lower-layer protocols that constrain and supply procedure. Do not replace the workflow stage contract with them.",
+    } : undefined,
+    ...(extraContext !== undefined ? { extraContext } : {}),
+  };
+}
+
+function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: unknown }): string {
+  const lines: string[] = [];
+  lines.push(`# Workflow Stage Attempt`);
+  lines.push("");
+  lines.push(`Workflow Run ID: ${context.workflowRunId}`);
+  lines.push(`Workflow: ${context.workflowTitle}`);
+  lines.push(`Stage: ${context.stageTitle} (${context.stageKey})`);
+  lines.push(`Attempt: ${context.attemptNumber}/${context.maxAttempts}`);
+  lines.push(`Retry Count: ${context.retryCount}`);
+  lines.push("");
+  lines.push(`## Objective`);
+  lines.push(context.objective || "No objective recorded.");
+  lines.push("");
+  lines.push(`## Instruction`);
+  lines.push(context.instruction);
+  if (context.retryCount > 0) {
+    lines.push("");
+    lines.push(`## Retry Context`);
+    if (context.retryContext) {
+      lines.push("The prior failed attempt's actionable failure packet is included below. Treat this as the primary assignment context. Artifact and archive references are backup evidence only.");
+      lines.push("```json");
+      lines.push(truncateText(JSON.stringify(context.retryContext, null, 2), 8000));
+      lines.push("```");
+    } else {
+      lines.push("No structured failure packet was found for the prior attempt. Use the relevant artifacts and run history below as fallback evidence, but do not waste time searching for a packet that is absent.");
+    }
+  } else if (context.previousFailurePacket) {
+    lines.push("");
+    lines.push(`## Previous Failure Packet`);
+    lines.push("```json");
+    lines.push(truncateText(JSON.stringify(context.previousFailurePacket, null, 2), 4000));
+    lines.push("```");
+  }
+  lines.push("");
+  lines.push(`## Relevant Artifacts`);
+  if (context.relevantArtifacts.length === 0) lines.push("No prior artifacts attached.");
+  for (const artifact of context.relevantArtifacts) {
+    const ref = [artifact.refType, artifact.refId, artifact.url].filter(Boolean).join(": ");
+    lines.push(`- ${artifact.kind}: ${artifact.title}${ref ? ` — ${ref}` : ""}${artifact.summary ? ` — ${artifact.summary}` : ""}`);
+  }
+  if ((context as any).protocols) {
+    lines.push("");
+    lines.push(`## Protocol Stack`);
+    lines.push("```json");
+    lines.push(truncateText(JSON.stringify((context as any).protocols, null, 2), 4000));
+    lines.push("```");
+  }
+  if ((context as any).environmentTruth) {
+    lines.push("");
+    lines.push(`## Platform / Environment Truth`);
+    lines.push("```json");
+    lines.push(truncateText(JSON.stringify((context as any).environmentTruth, null, 2), 4000));
+    lines.push("```");
+  }
+  if ((context as any).lifecycleSnapshot) {
+    lines.push("");
+    lines.push(`## Build Lifecycle Snapshot`);
+    lines.push("```json");
+    lines.push(truncateText(JSON.stringify((context as any).lifecycleSnapshot, null, 2), 4000));
+    lines.push("```");
+  }
+  if (context.extraContext !== undefined) {
+    lines.push("");
+    lines.push(`## Extra Input Context`);
+    lines.push("```json");
+    lines.push(truncateText(JSON.stringify(context.extraContext, null, 2), 4000));
+    lines.push("```");
+  }
+  lines.push("");
+  lines.push(`## Completion Contract`);
+  lines.push("When done, summarize what changed, cite artifacts/evidence created, and state whether the stage passed, failed, blocked, or needs review. The workflow parent will checkpoint progress back to the run artifact.");
+  return lines.join("\n");
+}
+
+async function ensureWorkflowParentSession(detail: WorkflowRunDetail): Promise<string> {
+  if (detail.run.parentSessionId) {
+    await linkWorkflowSession({ workflowRunId: detail.run.id, sessionId: detail.run.parentSessionId, role: "parent" });
+    return detail.run.parentSessionId;
+  }
+  const { chatFileStorage } = await import("../chat-file-storage");
+  const title = `Workflow: ${detail.run.title}`;
+  const session = await chatFileStorage.createAutonomousSession(
+    title,
+    "agent",
+    `workflow:${detail.run.id}`,
+    undefined,
+    undefined,
+    { triggerType: "plan", triggerId: detail.run.id, triggerName: title },
+  );
+  await db.update(workflowRuns).set({ parentSessionId: session.id, updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, detail.run.id)));
+  await linkWorkflowSession({ workflowRunId: detail.run.id, sessionId: session.id, role: "parent" });
+  const isDraft = detail.run.status === "draft";
+  await notifyWorkflowProgress(
+    session.id,
+    detail.run.id,
+    isDraft
+      ? `Workflow draft created: **${detail.run.title}**. Preview only. No stages, implementation, builds, deploys, or acceptance actions are running until the workflow is started.`
+      : `Workflow started: **${detail.run.title}**. Progress will checkpoint to the workflow run artifact.`,
+  );
+  return session.id;
+}
+
+async function notifyWorkflowProgress(parentSessionId: string | null | undefined, runId: string, message: string): Promise<void> {
+  if (!parentSessionId) return;
+  try {
+    const { chatFileStorage } = await import("../chat-file-storage");
+    await chatFileStorage.createMessage(parentSessionId, "assistant", message, undefined, undefined, "workflow-executor");
+  } catch (err) {
+    log.warn(`[${runId}] Failed to write workflow progress message: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+function acceptanceStageContext(detail: WorkflowRunDetail): Record<string, unknown> | undefined {
+  if (detail.template.id !== BUILD_WORKFLOW_TEMPLATE_ID || detail.run.currentStageKey !== "acceptance") return undefined;
+  const truth = detail.environmentTruth || null;
+  const publicUrl = typeof truth?.deployment?.publicUrl === "string" && truth.deployment.publicUrl
+    ? (truth.deployment.publicUrl.startsWith("http") ? truth.deployment.publicUrl : `https://${truth.deployment.publicUrl}`)
+    : null;
+  return {
+    v1AcceptanceEvidenceContract: {
+      requiredGates: ACCEPTANCE_GATE_KEYS,
+      targetUrl: publicUrl,
+      deploymentStatus: truth?.deployment?.latest ? String(truth.deployment.latest.status || "unknown") : null,
+      routePathDefault: "/workflows",
+      routePathSelection: "Prefer a route explicitly named in scope or changed files. Otherwise load /workflows because this workflow system is the product surface under acceptance.",
+      logPolicy: "Check structured client and server logs after browser load. Treat relevant error-level entries as gate failures unless clearly unrelated.",
+      smokePolicy: "Attempt the smallest safe feature path. If no non-destructive path exists, mark optional smoke attempted=false with reason rather than blocking.",
+      failurePacketRequiredOnFail: ["failedGates", "targetUrl", "routePath", "deployment", "screenshot", "clientLogErrors", "serverLogErrors", "nextSuggestedFix"],
+    },
+  };
+}
+
+function calibrationStageContext(detail: WorkflowRunDetail): Record<string, unknown> | undefined {
+  if (detail.template.id !== BUILD_WORKFLOW_TEMPLATE_ID || detail.run.currentStageKey !== "calibration") return undefined;
+  const acceptanceArtifacts = detail.artifacts.filter((artifact) => artifact.kind === "acceptance" || artifact.kind === "screenshot" || artifact.kind === "logs").slice(-10);
+
+  // Detect repeated identical acceptance failures — if the same gate keys failed ≥2 consecutive times, escalate to user gate
+  const acceptanceAttempts = detail.stages.find((s) => s.key === "acceptance")?.attempts || [];
+  const failedAttempts = acceptanceAttempts.filter((a) => a.status === "completed" && a.result === "failed").slice(-3);
+  let repeatedFailureEscalation: Record<string, unknown> | undefined;
+  if (failedAttempts.length >= 2) {
+    const getFailedGates = (a: typeof failedAttempts[0]) => {
+      const fc = a.failureContext as Record<string, unknown> | null;
+      const gates = (fc?.failedGates as string[]) || [];
+      return gates.sort().join(",");
+    };
+    const lastTwo = failedAttempts.slice(-2);
+    if (lastTwo[0] && lastTwo[1] && getFailedGates(lastTwo[0]) === getFailedGates(lastTwo[1]) && getFailedGates(lastTwo[0]) !== "") {
+      repeatedFailureEscalation = {
+        detected: true,
+        consecutiveIdenticalFailures: lastTwo.length,
+        repeatedFailedGates: getFailedGates(lastTwo[0]).split(","),
+        directive: "MANDATORY: The same acceptance gates have failed identically ≥2 consecutive times. This indicates a tooling or infrastructure issue that code changes cannot fix. You MUST open a user gate (complete with result 'needs_review') so the user can inspect and decide. Do NOT loop back to implement.",
+      };
+    }
+  }
+
+  return {
+    calibrationContract: {
+      compareAgainst: "Build workflow v1 spec: Design → Design Review → Implement → Implementation Review → Acceptance Test → Calibration → Documentation.",
+      inspectArtifacts: acceptanceArtifacts.map((artifact) => ({ id: artifact.id, kind: artifact.kind, title: artifact.title, summary: artifact.summary, metadata: artifact.metadata })),
+      requiredDecision: "Pass only if acceptance evidence is complete enough and no hard gate remains. Fail back to implementation for product defects. Block/surface gate only for hard user gates, danger/security/privacy, principle conflict, production release, or exhausted retries.",
+      documentationUpdatePolicy: "Attach a calibration artifact recording workflow/spec/doc updates needed or made. Do not create a user gate for routine documentation updates.",
+      ...(repeatedFailureEscalation ? { repeatedFailureEscalation } : {}),
+    },
+  };
+}
+
+async function spawnWorkflowStageChild(parentSessionId: string, detail: WorkflowRunDetail, stageKey: string, stageTitle: string, attemptNumber: number, inputContext: WorkflowStageInputContext & { extraContext?: unknown }): Promise<string> {
+  const { spawnChildSession } = await import("../sessions/tree");
+  const spawnReason = `workflow:${detail.run.id}:${stageKey}:attempt-${attemptNumber}`;
+  const result = await spawnChildSession(parentSessionId, {
+    spawnReason,
+    spawnerTool: "workflow-executor",
+    spawnerSkillRun: `workflow:${detail.run.id}`,
+    preContext: buildStageBrief(inputContext),
+    waitForCompletion: false,
+    titleOverride: `Workflow: ${stageTitle} #${attemptNumber}`,
+    sessionKeyOverride: `workflow:${detail.run.id}:${stageKey}`,
+  });
+  return result.sessionId;
+}
+
+/**
+ * Monitor a workflow stage child session. When the monitor detects completion
+ * (saved/failed/idle_timeout), auto-call completeStageAttempt with the
+ * extracted output and inferred pass/fail result.
+ *
+ * This makes the child's explicit complete_stage_attempt tool call optional.
+ * The idempotency guard in completeStageAttempt ensures no double-completion.
+ */
+async function monitorWorkflowChild(
+  attemptId: number,
+  childSessionId: string,
+  parentSessionId: string | null,
+  runId: string,
+  stageKey: string,
+  stageTitle: string,
+  attemptNumber: number,
+): Promise<void> {
+  const result = await monitorChildSession(
+    childSessionId,
+    WORKFLOW_STAGE_IDLE_TIMEOUT_MS,
+    undefined, // no abort signal — workflows don't have a pause/abort mechanism yet
+    parentSessionId || undefined,
+  );
+
+  // Check if the attempt was already completed by the child's own tool call.
+  // The idempotency guard in completeStageAttempt will no-op, but we can
+  // skip the call entirely to avoid noisy logs.
+  const [currentAttempt] = await db.select().from(workflowStageAttempts)
+    .where(eq(workflowStageAttempts.id, attemptId)).limit(1);
+  if (currentAttempt && currentAttempt.status !== "active") {
+    log.log(`[monitor] Workflow attempt ${attemptId} (${stageTitle} #${attemptNumber}) already ${currentAttempt.status} — monitor no-op`);
+    return;
+  }
+
+  switch (result.status) {
+    case "completed": {
+      // Infer pass/fail from the child's output. Look for explicit signals.
+      const output = result.output;
+      const inferredResult = inferStageResult(output);
+      log.log(`[monitor] Workflow child ${childSessionId} completed — inferred result: ${inferredResult} for ${stageTitle} #${attemptNumber}`);
+      await completeStageAttempt(attemptId, {
+        result: inferredResult,
+        outputSummary: truncateOutput(output, 500),
+      });
+      break;
+    }
+    case "failed": {
+      log.warn(`[monitor] Workflow child ${childSessionId} failed [${result.reason}]: ${result.message}`);
+      await completeStageAttempt(attemptId, {
+        result: "failed",
+        outputSummary: truncateOutput(result.message, 500),
+        failureContext: { reason: result.reason, message: result.message, source: "child-session-monitor" },
+      });
+      break;
+    }
+    case "idle_timeout": {
+      log.warn(`[monitor] Workflow child ${childSessionId} idle timeout after ${result.idleMinutes}m for ${stageTitle} #${attemptNumber}`);
+      await completeStageAttempt(attemptId, {
+        result: "failed",
+        outputSummary: `Stage child went idle for ${result.idleMinutes}m without completing. ${result.message}`,
+        failureContext: { reason: "idle_timeout", idleMinutes: result.idleMinutes, message: result.message, source: "child-session-monitor" },
+      });
+      break;
+    }
+  }
+}
+
+/**
+ * Infer the stage result from the child's final assistant output.
+ * Looks for explicit pass/fail signals in the text. Defaults to "passed"
+ * if the session completed successfully (saved status) without explicit failure.
+ */
+function inferStageResult(output: string): string {
+  const lower = output.toLowerCase();
+  // Check for explicit failure signals
+  if (lower.includes("stage: failed") || lower.includes("result: failed") || lower.includes("stage failed")) {
+    return "failed";
+  }
+  if (lower.includes("stage: blocked") || lower.includes("result: blocked")) {
+    return "blocked";
+  }
+  if (lower.includes("stage: needs_review") || lower.includes("result: needs_review")) {
+    return "needs_review";
+  }
+  // Default: if the session completed (saved), the stage passed
+  return "passed";
+}
+
+export const BUILD_WORKFLOW_TEMPLATE_ID = "build-v1";
+
+const buildDefinition = workflowTemplateDefinitionSchema.parse({
+  stages: [
+    {
+      key: "scope", title: "Design", position: 0, autonomyMode: "autonomous",
+      evidenceRequirements: ["Objective, success criteria, target branch, stage environment, user-visible artifact, verification command, terminal state, and implementation design."],
+      allowedTransitions: [{ toStageKey: "design_review", on: "pass" }, { toStageKey: null, on: "blocked" }],
+    },
+    {
+      key: "design_review", title: "Design Review", position: 1, autonomyMode: "requires_agent_review",
+      evidenceRequirements: ["Implementation design checked against product coding standards, principles, and relevant project protocols (resolve from product documentation config)."],
+      allowedTransitions: [{ toStageKey: "implement", on: "pass" }, { toStageKey: "scope", on: "fail" }],
+    },
+    {
+      key: "implement", title: "Implement", position: 2, autonomyMode: "autonomous",
+      evidenceRequirements: ["Merged or PR-ready code evidence, project build result, impact/change-scope evidence, and branch/commit references."],
+      allowedTransitions: [{ toStageKey: "code_review", on: "pass" }, { toStageKey: "design_review", on: "blocked" }],
+    },
+    {
+      key: "code_review", title: "Implementation Review", position: 3, autonomyMode: "requires_agent_review",
+      evidenceRequirements: [
+        "Review the new code, effected and relevant systems for violations of Engineering Principles in Agents.md and cure obvious bugs, clear violations or structural issues that could lead to technical debt.",
+        "Review finding summary, residual risk, and explicit acceptance readiness decision.",
+      ],
+      allowedTransitions: [{ toStageKey: "acceptance", on: "pass" }, { toStageKey: "implement", on: "fail" }, { toStageKey: "design_review", on: "blocked" }],
+    },
+    {
+      key: "acceptance", title: "Acceptance Test", position: 4, autonomyMode: "autonomous",
+      entryCriteria: ["Confirm staged/dev deployment evidence for the merged commit exists and is healthy. If no deployment exists yet, wait/poll provider status up to timeout. If deployment fails, return deployment failure evidence to Implement."],
+      evidenceRequirements: [
+        "Stage deploy green, target URL healthy, target route browser-loaded, screenshot captured, runtime logs checked (where applicable), and optional feature smoke path attempted or explicitly skipped with reason.",
+        "If any required gate fails, return a compact failure packet and transition back to Implement for retry.",
+      ],
+      allowedTransitions: [{ toStageKey: "calibration", on: "pass" }, { toStageKey: "implement", on: "fail" }, { toStageKey: "implement", on: "blocked" }],
+    },
+    {
+      key: "calibration", title: "Calibration", position: 5, autonomyMode: "autonomous",
+      evidenceRequirements: [
+        "Compare the run against the workflow spec and acceptance evidence; document deltas, false positives/negatives, retry quality, and whether workflow docs/protocols need updating.",
+        "Open a decision gate only for hard user gates, danger/security/privacy, principle conflict, production release, or exhausted retries; otherwise continue autonomously.",
+      ],
+      allowedTransitions: [{ toStageKey: "documentation", on: "pass" }, { toStageKey: "implement", on: "fail" }, { toStageKey: "scope", on: "blocked" }, { toStageKey: null, on: "needs_review", reason: "hard gate" }],
+    },
+    {
+      key: "documentation", title: "Documentation", position: 6, autonomyMode: "autonomous",
+      evidenceRequirements: ["Durable notes, linked artifacts, final handoff including PR/merge/deployment/acceptance/calibration evidence, and any remaining decision gates."],
+      allowedTransitions: [{ toStageKey: null, on: "pass", reason: "complete" }, { toStageKey: "documentation", on: "fail" }],
+    },
+  ],
+  terminalStatuses: ["completed", "failed", "canceled"],
+});
+
+const buildRetryPolicy = {
+  maxAttemptsPerStage: 10,
+  freshSessionPerRetry: true,
+  requireDifferentApproachInstruction: true,
+  escalateOnDanger: true,
+  escalateOnSecurityOrPrivacyRisk: true,
+  escalateOnCredentialNeed: true,
+  escalateOnProductionRelease: true,
+  escalateOnPrincipleConflict: true,
+};
+
+export async function seedBuildWorkflowTemplate(): Promise<WorkflowTemplate> {
+  const [existing] = await db.select().from(workflowTemplates).where(eq(workflowTemplates.id, BUILD_WORKFLOW_TEMPLATE_ID)).limit(1);
+  const values = {
+    name: "Build",
+    type: "build",
+    description: "Reusable software build lifecycle: scope, design review, implementation, code review, staged publish, acceptance, calibration, and documentation.",
+    version: "1.0",
+    status: "active",
+    definition: buildDefinition,
+    defaultAutonomyPolicy: buildRetryPolicy,
+    enabled: true,
+    // Built-in workflow templates must be visible to authenticated users.
+    // scope='system' is intentionally private to system principals in scoped-storage;
+    // scope='global' is the shared/template visibility boundary.
+    scope: "global",
+    updatedAt: new Date(),
+  };
+  if (existing) {
+    const [updated] = await db.update(workflowTemplates).set(values).where(eq(workflowTemplates.id, BUILD_WORKFLOW_TEMPLATE_ID)).returning();
+    return updated;
+  }
+  const [created] = await db.insert(workflowTemplates).values({ id: BUILD_WORKFLOW_TEMPLATE_ID, ...values }).returning();
+  return created;
+}
+
+export async function listWorkflowTemplates(filters: { type?: string; status?: string; limit?: number } = {}): Promise<WorkflowTemplate[]> {
+  const clauses: SQL[] = [];
+  if (filters.type) clauses.push(eq(workflowTemplates.type, filters.type));
+  if (filters.status) clauses.push(eq(workflowTemplates.status, workflowTemplateStatusSchema.parse(filters.status)));
+  return db.select().from(workflowTemplates)
+    .where(visible(templateScopeColumns, clauses.length ? and(...clauses) : undefined))
+    .orderBy(desc(workflowTemplates.updatedAt))
+    .limit(Math.min(filters.limit || 50, 100));
+}
+
+export async function getWorkflowTemplate(templateId: string): Promise<WorkflowTemplate | null> {
+  const [template] = await db.select().from(workflowTemplates).where(visible(templateScopeColumns, eq(workflowTemplates.id, templateId))).limit(1);
+  return template || null;
+}
+
+export async function getWorkflowEnvironmentTruth(runIdOrEnvironmentId: string | number): Promise<WorkflowEnvironmentTruth | null> {
+  let environmentId: number | null = typeof runIdOrEnvironmentId === "number" ? runIdOrEnvironmentId : null;
+  if (typeof runIdOrEnvironmentId === "string") {
+    const [run] = await db.select({ environmentId: workflowRuns.linkedEnvironmentId }).from(workflowRuns).where(visible(runScopeColumns, eq(workflowRuns.id, runIdOrEnvironmentId))).limit(1);
+    environmentId = run?.environmentId ?? null;
+  }
+  if (!environmentId) return null;
+
+  const [row] = await db
+    .select({
+      platform: platforms,
+      product: platformProducts,
+      environment: platformProductEnvironments,
+    })
+    .from(platformProductEnvironments)
+    .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
+    .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
+    .where(and(eq(platformProductEnvironments.id, environmentId), visible(platformScopeColumns)))
+    .limit(1);
+  if (!row) return null;
+
+  const [sourceRow] = await db.select().from(environmentSourceBindings).where(eq(environmentSourceBindings.environmentId, environmentId)).limit(1);
+  const [hostingRow] = await db.select().from(environmentHostingBindings).where(eq(environmentHostingBindings.environmentId, environmentId)).limit(1);
+  const connectionIds = [sourceRow?.connectionId, hostingRow?.connectionId].filter((id): id is number => typeof id === "number");
+  const connections = connectionIds.length
+    ? await db.select().from(providerConnections).where(visible({ scope: providerConnections.scope, ownerUserId: providerConnections.ownerUserId, accountId: providerConnections.accountId }, inArray(providerConnections.id, connectionIds)))
+    : [];
+  const connectionFor = (id: number | null | undefined) => connections.find((connection) => connection.id === id) || null;
+  const source = sanitizeSourceBinding(sourceRow, connectionFor(sourceRow?.connectionId));
+  const hosting = sanitizeHostingBinding(hostingRow, connectionFor(hostingRow?.connectionId));
+
+  let deployment: WorkflowEnvironmentTruth["deployment"] = null;
+  if (hostingRow?.connectionId && hostingRow.projectId && hostingRow.serviceId && hostingRow.providerEnvironmentId) {
+    try {
+      const connection = connectionFor(hostingRow.connectionId);
+      const token = connection?.credentialRef ? await getProviderCredential(connection.credentialRef) : null;
+      if (!token) {
+        deployment = { available: false, reason: "Connection has no decryptable Railway credential", latest: null, publicUrl: hostingRow.publicUrl, urlReachable: null, checkedAt: new Date().toISOString() };
+      } else {
+        const latest = await getLatestDeploymentByToken(token, hostingRow.projectId, hostingRow.serviceId, hostingRow.providerEnvironmentId);
+        let urlReachable: boolean | null = null;
+        if (hostingRow.publicUrl) {
+          try {
+            const healthUrl = hostingRow.publicUrl.startsWith("http") ? hostingRow.publicUrl : `https://${hostingRow.publicUrl}`;
+            const res = await fetch(healthUrl, { method: "HEAD", signal: AbortSignal.timeout(5000) });
+            urlReachable = res.ok;
+          } catch {
+            urlReachable = false;
+          }
+        }
+        deployment = {
+          available: true,
+          latest: latest ? { id: latest.id, status: latest.status, commitSha: latest.commitHash, commitMessage: latest.commitMessage, deployedAt: latest.createdAt } : null,
+          publicUrl: hostingRow.publicUrl,
+          urlReachable,
+          checkedAt: new Date().toISOString(),
+        };
+      }
+    } catch (err) {
+      deployment = { available: false, reason: err instanceof Error ? err.message : String(err), latest: null, publicUrl: hostingRow.publicUrl, urlReachable: null, checkedAt: new Date().toISOString() };
+    }
+  } else {
+    deployment = { available: false, reason: "Railway hosting binding is incomplete", latest: null, publicUrl: hostingRow?.publicUrl || null, urlReachable: null, checkedAt: new Date().toISOString() };
+  }
+
+  return {
+    platform: { id: row.platform.id, name: row.platform.name },
+    product: { id: row.product.id, name: row.product.name },
+    environment: { id: row.environment.id, name: row.environment.name, kind: environmentKind(row.environment.name), status: source || hosting ? "configured" : "planned" },
+    source,
+    hosting,
+    deployment,
+  };
+}
+
+export async function createWorkflowRun(input: {
+  templateId?: string;
+  title: string;
+  objective: string;
+  autonomyPolicy?: unknown;
+  retryPolicy?: unknown;
+  lifecycleSnapshot?: unknown;
+  parentSessionId?: string;
+  linkedPlanId?: string;
+  linkedProjectId?: number;
+  linkedPlatformId?: number;
+  linkedProductId?: number;
+  linkedEnvironmentId?: number;
+  createdBySessionId?: string;
+}): Promise<WorkflowRunDetail> {
+  const templateId = input.templateId || BUILD_WORKFLOW_TEMPLATE_ID;
+  const template = await getWorkflowTemplate(templateId) || (templateId === BUILD_WORKFLOW_TEMPLATE_ID ? await seedBuildWorkflowTemplate() : null);
+  if (!template) throw new Error(`Workflow template not found: ${templateId}`);
+  if (!input.title?.trim()) throw new Error("Workflow title is required");
+  if (!input.objective?.trim()) throw new Error("Workflow objective is required");
+
+  const id = generateWorkflowRunId();
+  const initialContent = `# Workflow: ${input.title}\n\nCreating checkpoint...`;
+  const { createFiledLibraryPage } = await import("../library-save");
+  const page = await createFiledLibraryPage({
+    title: `Workflow: ${input.title}`,
+    markdown: initialContent,
+    purpose: "workflows",
+    pageContext: "/workflows",
+    contentSummary: `Workflow checkpoint for ${input.title}: ${input.objective}`,
+    tags: ["workflow", "checkpoint"],
+    createdBySessionId: input.createdBySessionId || input.parentSessionId,
+    slugSuffix: Math.random().toString(36).slice(2, 7),
+  });
+  const definition = parseWorkflowDefinition(template);
+  const firstStage = definition.stages.slice().sort((a, b) => a.position - b.position)[0];
+  const ownerValues = owner(runScopeColumns);
+
+  await db.insert(workflowRuns).values({
+    id,
+    templateId,
+    title: input.title.trim(),
+    objective: input.objective.trim(),
+    status: "draft",
+    currentStageKey: firstStage?.key || null,
+    autonomyPolicy: input.autonomyPolicy || template.defaultAutonomyPolicy || {},
+    retryPolicy: input.retryPolicy || buildRetryPolicy,
+    lifecycleSnapshot: input.lifecycleSnapshot ?? null,
+    parentSessionId: input.parentSessionId || null,
+    linkedLibraryPageId: page.id,
+    linkedPlanId: input.linkedPlanId || null,
+    linkedProjectId: input.linkedProjectId ?? null,
+    linkedPlatformId: input.linkedPlatformId ?? null,
+    linkedProductId: input.linkedProductId ?? null,
+    linkedEnvironmentId: input.linkedEnvironmentId ?? null,
+    createdBySessionId: input.createdBySessionId || null,
+    ...ownerValues,
+  });
+
+  if (input.parentSessionId) await linkWorkflowSession({ workflowRunId: id, sessionId: input.parentSessionId, role: "parent" });
+  await recordTransition({ workflowRunId: id, fromStageKey: null, toStageKey: firstStage?.key || null, trigger: "system", reason: "run_created", createdBySessionId: input.createdBySessionId, render: false });
+  const created = await getWorkflowRun(id);
+  if (!created) throw new Error(`Workflow run disappeared after create: ${id}`);
+  await ensureWorkflowParentSession(created);
+  await renderWorkflowRunPage(id);
+  const detail = await getWorkflowRun(id);
+  if (!detail) throw new Error(`Workflow run disappeared after parent session creation: ${id}`);
+  return detail;
+}
+
+export async function getWorkflowRun(runId: string): Promise<WorkflowRunDetail | null> {
+  const [run] = await db.select().from(workflowRuns).where(visible(runScopeColumns, eq(workflowRuns.id, runId))).limit(1);
+  if (!run) return null;
+  const template = await getWorkflowTemplate(run.templateId);
+  if (!template) throw new Error(`Workflow template missing: ${run.templateId}`);
+  const [attempts, transitions, artifacts, gates, sessions] = await Promise.all([
+    db.select().from(workflowStageAttempts).where(visible(attemptScopeColumns, eq(workflowStageAttempts.workflowRunId, run.id))).orderBy(workflowStageAttempts.stageKey, workflowStageAttempts.attemptNumber),
+    db.select().from(workflowTransitions).where(visible(transitionScopeColumns, eq(workflowTransitions.workflowRunId, run.id))).orderBy(workflowTransitions.createdAt),
+    db.select().from(workflowArtifacts).where(visible(artifactScopeColumns, eq(workflowArtifacts.workflowRunId, run.id))).orderBy(workflowArtifacts.createdAt),
+    db.select().from(workflowGates).where(visible(gateScopeColumns, eq(workflowGates.workflowRunId, run.id))).orderBy(desc(workflowGates.openedAt)),
+    db.select().from(workflowSessions).where(visible(sessionScopeColumns, eq(workflowSessions.workflowRunId, run.id))).orderBy(workflowSessions.createdAt),
+  ]);
+  const base = { run, template, attempts, transitions, artifacts, gates, sessions };
+  const environmentTruth = await getWorkflowEnvironmentTruth(run.id);
+  return {
+    run,
+    template,
+    stages: buildWorkflowStages(base),
+    transitions,
+    artifacts,
+    gates,
+    sessions,
+    linked: {
+      projectId: run.linkedProjectId,
+      platformId: run.linkedPlatformId,
+      productId: run.linkedProductId,
+      environmentId: run.linkedEnvironmentId,
+      libraryPageId: run.linkedLibraryPageId,
+      planId: run.linkedPlanId,
+    },
+    environmentTruth,
+    lifecycleSnapshot: run.lifecycleSnapshot || null,
+  };
+}
+
+export async function listWorkflowRuns(filters: { status?: string; templateId?: string; projectId?: number; platformId?: number; productId?: number; environmentId?: number; limit?: number } = {}): Promise<WorkflowRun[]> {
+  const clauses: SQL[] = [isNull(workflowRuns.archivedAt)];
+  if (filters.status) clauses.push(eq(workflowRuns.status, workflowRunStatusSchema.parse(filters.status)));
+  if (filters.templateId) clauses.push(eq(workflowRuns.templateId, filters.templateId));
+  if (filters.projectId) clauses.push(eq(workflowRuns.linkedProjectId, filters.projectId));
+  if (filters.platformId) clauses.push(eq(workflowRuns.linkedPlatformId, filters.platformId));
+  if (filters.productId) clauses.push(eq(workflowRuns.linkedProductId, filters.productId));
+  if (filters.environmentId) clauses.push(eq(workflowRuns.linkedEnvironmentId, filters.environmentId));
+  return db.select().from(workflowRuns).where(visible(runScopeColumns, and(...clauses))).orderBy(desc(workflowRuns.updatedAt)).limit(Math.min(filters.limit || 50, 100));
+}
+
+export async function updateWorkflowRun(runId: string, patch: Partial<{ title: string; objective: string; status: string; currentStageKey: string | null; linkedPlanId: string | null; linkedProjectId: number | null; linkedPlatformId: number | null; linkedProductId: number | null; linkedEnvironmentId: number | null; failurePacket: unknown }>): Promise<WorkflowRunDetail> {
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (patch.title !== undefined) updates.title = patch.title;
+  if (patch.objective !== undefined) updates.objective = patch.objective;
+  if (patch.status !== undefined) updates.status = workflowRunStatusSchema.parse(patch.status);
+  if (patch.currentStageKey !== undefined) updates.currentStageKey = patch.currentStageKey;
+  if (patch.linkedPlanId !== undefined) updates.linkedPlanId = patch.linkedPlanId;
+  if (patch.linkedProjectId !== undefined) updates.linkedProjectId = patch.linkedProjectId;
+  if (patch.linkedPlatformId !== undefined) updates.linkedPlatformId = patch.linkedPlatformId;
+  if (patch.linkedProductId !== undefined) updates.linkedProductId = patch.linkedProductId;
+  if (patch.linkedEnvironmentId !== undefined) updates.linkedEnvironmentId = patch.linkedEnvironmentId;
+  if (patch.failurePacket !== undefined) updates.failurePacket = patch.failurePacket;
+  const [updated] = await db.update(workflowRuns).set(updates).where(writable(runScopeColumns, eq(workflowRuns.id, runId))).returning();
+  if (!updated) throw new Error(`Workflow run not found or not writable: ${runId}`);
+  await renderWorkflowRunPage(runId);
+  return (await getWorkflowRun(runId))!;
+}
+
+async function assertNoOpenGate(runId: string): Promise<void> {
+  const [openGate] = await db.select({ id: workflowGates.id }).from(workflowGates).where(visible(gateScopeColumns, and(eq(workflowGates.workflowRunId, runId), eq(workflowGates.status, "open")))).limit(1);
+  if (openGate) throw new Error(`Workflow run ${runId} has open gate ${openGate.id}; autonomous advancement is blocked.`);
+}
+
+export async function recordTransition(input: { workflowRunId: string; fromStageKey?: string | null; toStageKey?: string | null; fromAttemptId?: number | null; trigger: WorkflowTransitionTrigger | string; reason?: string; evidence?: unknown; createdBySessionId?: string; render?: boolean }): Promise<WorkflowTransition> {
+  const trigger = workflowTransitionTriggerSchema.parse(input.trigger);
+  const [transition] = await db.insert(workflowTransitions).values({
+    workflowRunId: input.workflowRunId,
+    fromStageKey: input.fromStageKey ?? null,
+    toStageKey: input.toStageKey ?? null,
+    fromAttemptId: input.fromAttemptId ?? null,
+    trigger,
+    reason: input.reason || "",
+    evidence: input.evidence || {},
+    createdBySessionId: input.createdBySessionId || null,
+    ...owner(transitionScopeColumns),
+  }).returning();
+  await db.update(workflowRuns).set({ currentStageKey: input.toStageKey ?? null, updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, input.workflowRunId)));
+  if (input.render !== false) await renderWorkflowRunPage(input.workflowRunId);
+  return transition;
+}
+
+export async function startWorkflowRun(runId: string): Promise<WorkflowRunDetail> {
+  const detail = await getWorkflowRun(runId);
+  if (!detail) throw new Error(`Workflow run not found: ${runId}`);
+  if (!["draft", "paused", "blocked"].includes(detail.run.status)) throw new Error(`Workflow run status is ${detail.run.status}; cannot start.`);
+  await assertNoOpenGate(runId);
+
+  // Require linkedEnvironmentId when the template includes an acceptance stage
+  const definition = parseWorkflowDefinition(detail.template);
+  const hasAcceptanceStage = definition.stages.some((s) => s.key === "acceptance");
+  if (hasAcceptanceStage && !detail.run.linkedEnvironmentId) {
+    throw new Error(`Workflow template "${detail.template.name}" includes an acceptance stage but no linkedEnvironmentId is set. Link a platform environment before starting.`);
+  }
+  const parentSessionId = await ensureWorkflowParentSession(detail);
+  await db.update(workflowRuns).set({ status: "active", updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, runId)));
+  const stageKey = detail.run.currentStageKey;
+  await notifyWorkflowProgress(parentSessionId, runId, `Workflow active: **${detail.run.title}** at stage ${stageKey || "none"}.`);
+  await renderWorkflowRunPage(runId);
+
+  // Auto-kick the current stage if no active attempt exists yet
+  if (stageKey) {
+    const stageState = detail.stages.find((st) => st.key === stageKey);
+    const hasActiveAttempt = stageState?.attempts.some((a) => a.status === "active");
+    if (!hasActiveAttempt) {
+      await startStageAttempt(runId, stageKey, { spawnChildSession: true });
+    }
+  }
+
+  return (await getWorkflowRun(runId))!;
+}
+
+export async function pauseWorkflowRun(runId: string, reason = "paused"): Promise<WorkflowRunDetail> {
+  await recordTransition({ workflowRunId: runId, fromStageKey: (await getWorkflowRun(runId))?.run.currentStageKey ?? null, toStageKey: (await getWorkflowRun(runId))?.run.currentStageKey ?? null, trigger: "manual", reason, render: false });
+  return updateWorkflowRun(runId, { status: "paused" });
+}
+
+export async function resumeWorkflowRun(runId: string): Promise<WorkflowRunDetail> { return startWorkflowRun(runId); }
+export async function cancelWorkflowRun(runId: string, reason = "canceled"): Promise<WorkflowRunDetail> {
+  const detail = await getWorkflowRun(runId);
+  await recordTransition({ workflowRunId: runId, fromStageKey: detail?.run.currentStageKey ?? null, toStageKey: null, trigger: "manual", reason, render: false });
+  return updateWorkflowRun(runId, { status: "canceled", currentStageKey: null });
+}
+
+function stageFor(detail: WorkflowRunDetail, stageKey: string) {
+  const def = parseWorkflowDefinition(detail.template).stages.find((s) => s.key === stageKey);
+  if (!def) throw new Error(`Stage ${stageKey} not found in template ${detail.template.id}`);
+  return def;
+}
+
+export async function startStageAttempt(runId: string, stageKey?: string, options: { childSessionId?: string; linkedPlanId?: string; inputContext?: unknown; createdBySessionId?: string; spawnChildSession?: boolean } = {}): Promise<WorkflowStageAttempt> {
+  const detail = await getWorkflowRun(runId);
+  if (!detail) throw new Error(`Workflow run not found: ${runId}`);
+  await assertNoOpenGate(runId);
+  const key = stageKey || detail.run.currentStageKey;
+  if (!key) throw new Error(`Workflow run ${runId} has no current stage.`);
+  const stage = stageFor(detail, key);
+  const stageState = detail.stages.find((s) => s.key === key);
+  // Idempotency guard: if an active attempt already exists for this stage, return it instead of creating a duplicate
+  const existingActive = stageState?.attempts.find((a) => a.status === "active");
+  if (existingActive) {
+    log.warn(`startStageAttempt: active attempt ${existingActive.id} already exists for stage ${key} on run ${runId}. Returning existing.`);
+    return existingActive;
+  }
+  const maxAttempt = Math.max(0, ...(stageState?.attempts.map((a) => a.attemptNumber) || [0]));
+  const attemptNumber = maxAttempt + 1;
+  const maxAttempts = getMaxAttempts(detail);
+  if (attemptNumber > maxAttempts) throw new Error(`Workflow run ${runId} stage ${key} exceeded max attempts (${maxAttempts}).`);
+
+  const parentSessionId = await ensureWorkflowParentSession(detail);
+  const stageSpecificContext = key === "acceptance" ? acceptanceStageContext(detail) : key === "calibration" ? calibrationStageContext(detail) : undefined;
+  const mergedInputContext = stageSpecificContext || options.inputContext !== undefined
+    ? { ...(typeof stageSpecificContext === "object" ? stageSpecificContext : {}), ...(typeof options.inputContext === "object" && options.inputContext !== null ? options.inputContext as Record<string, unknown> : options.inputContext !== undefined ? { input: options.inputContext } : {}) }
+    : undefined;
+  const inputContext = buildStageInputContext(detail, key, stage.title, attemptNumber, mergedInputContext);
+  const childSessionId = options.childSessionId || (options.spawnChildSession === false ? null : await spawnWorkflowStageChild(parentSessionId, detail, key, stage.title, attemptNumber, inputContext));
+
+  const [attempt] = await db.insert(workflowStageAttempts).values({
+    workflowRunId: runId,
+    stageKey: key,
+    stageTitle: stage.title,
+    attemptNumber,
+    status: "active",
+    autonomyMode: workflowAutonomyModeSchema.parse(stage.autonomyMode),
+    childSessionId,
+    linkedPlanId: options.linkedPlanId || null,
+    inputContext,
+    startedAt: new Date(),
+    ...owner(attemptScopeColumns),
+  }).returning();
+  if (childSessionId) await linkWorkflowSession({ workflowRunId: runId, stageAttemptId: attempt.id, sessionId: childSessionId, role: "stage_attempt", spawnReason: `workflow:${runId}:${key}:attempt-${attemptNumber}` });
+  await db.update(workflowRuns).set({ status: "active", currentStageKey: key, updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, runId)));
+  await notifyWorkflowProgress(parentSessionId, runId, `Started workflow stage **${stage.title}** attempt ${attemptNumber}/${maxAttempts}${childSessionId ? ` in child session ${childSessionId}` : ""}.`);
+  await renderWorkflowRunPage(runId);
+
+  // Fire-and-forget: monitor the child session and auto-complete the stage
+  // when the child finishes. The child's own complete_stage_attempt tool call
+  // becomes optional — the idempotency guard in completeStageAttempt handles
+  // the case where both the child and the monitor try to complete.
+  if (childSessionId) {
+    monitorWorkflowChild(attempt.id, childSessionId, parentSessionId, runId, key, stage.title, attemptNumber).catch((err) => {
+      log.error(`[monitor] Failed to monitor workflow child ${childSessionId} for attempt ${attempt.id}: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
+
+  return attempt;
+}
+
+function acceptanceGateFailureFromEvidence(attempt: WorkflowStageAttempt, result: string, evidence: unknown): Record<string, unknown> | null {
+  if (attempt.stageKey !== "acceptance" || result !== "passed") return null;
+  const packet = evidence && typeof evidence === "object" ? evidence as Record<string, any> : {};
+  const gates = (packet.gates && typeof packet.gates === "object" ? packet.gates : packet.metadata?.gates && typeof packet.metadata.gates === "object" ? packet.metadata.gates : null) as Record<string, unknown> | null;
+  if (!gates) {
+    return {
+      reason: "missing_acceptance_gate_packet",
+      failedGates: ACCEPTANCE_GATE_KEYS,
+      nextSuggestedFix: "Run capture_acceptance_evidence or provide an evidence.gates packet before passing acceptance.",
+    };
+  }
+  const failedGates = ACCEPTANCE_GATE_KEYS.filter((key) => gates[key] !== true);
+  if (failedGates.length === 0) return null;
+  return packet.failurePacket && typeof packet.failurePacket === "object"
+    ? packet.failurePacket as Record<string, unknown>
+    : { reason: "acceptance_gate_failure", failedGates, gates, nextSuggestedFix: "Return to Implement, fix the failed gate, publish again, and rerun acceptance." };
+}
+
+export async function completeStageAttempt(attemptId: number, resultInput: { result: string; outputSummary?: string; evidence?: unknown; failureContext?: unknown; createdBySessionId?: string }): Promise<WorkflowRunDetail> {
+  const requestedResult = workflowAttemptResultSchema.parse(resultInput.result);
+  const [attempt] = await db.select().from(workflowStageAttempts).where(visible(attemptScopeColumns, eq(workflowStageAttempts.id, attemptId))).limit(1);
+  if (!attempt) throw new Error(`Stage attempt not found: ${attemptId}`);
+  // Idempotency guard: reject duplicate completions for already-completed attempts
+  if (attempt.completedAt || attempt.status !== "active") {
+    log.warn(`completeStageAttempt called on already-completed attempt ${attemptId} (status=${attempt.status}). Returning current state as no-op.`);
+    return (await getWorkflowRun(attempt.workflowRunId))!;
+  }
+  const beforeDetail = await getWorkflowRun(attempt.workflowRunId);
+  if (!beforeDetail) throw new Error(`Workflow run not found: ${attempt.workflowRunId}`);
+  const forcedAcceptanceFailure = acceptanceGateFailureFromEvidence(attempt, requestedResult, resultInput.evidence || attempt.evidence || {});
+  const result = forcedAcceptanceFailure ? "failed" : requestedResult;
+  const status = result === "passed" ? "passed" : result === "needs_review" ? "needs_review" : result === "blocked" ? "blocked" : result === "skipped" ? "skipped" : "failed";
+  const durationSeconds = attempt.startedAt ? Math.max(0, Math.round((Date.now() - attempt.startedAt.getTime()) / 1000)) : null;
+  const failurePacket = status === "failed" || status === "blocked"
+    ? {
+      attemptId: attempt.id,
+      stageKey: attempt.stageKey,
+      stageTitle: attempt.stageTitle,
+      attemptNumber: attempt.attemptNumber,
+      result,
+      requestedResult,
+      outputSummary: resultInput.outputSummary || null,
+      failureContext: forcedAcceptanceFailure || resultInput.failureContext || null,
+      evidence: resultInput.evidence || attempt.evidence || {},
+      childSessionId: attempt.childSessionId,
+    }
+    : null;
+
+  await db.update(workflowStageAttempts).set({
+    status,
+    result,
+    outputSummary: resultInput.outputSummary || null,
+    evidence: resultInput.evidence || attempt.evidence || {},
+    failureContext: failurePacket || resultInput.failureContext || null,
+    completedAt: new Date(),
+    durationSeconds,
+    updatedAt: new Date(),
+  }).where(writable(attemptScopeColumns, eq(workflowStageAttempts.id, attemptId)));
+  if (failurePacket) await db.update(workflowRuns).set({ failurePacket, updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, attempt.workflowRunId)));
+  if (resultInput.evidence) await attachWorkflowArtifact({ workflowRunId: attempt.workflowRunId, stageAttemptId: attempt.id, kind: attempt.stageKey === "calibration" ? "calibration" : attempt.stageKey === "acceptance" ? "acceptance" : result === "passed" ? "acceptance" : "other", title: `${attempt.stageTitle} attempt ${result}`, summary: resultInput.outputSummary || "", metadata: resultInput.evidence, createdBySessionId: resultInput.createdBySessionId, render: false });
+
+  const maxAttempts = getMaxAttempts(beforeDetail);
+  const parentSessionId = beforeDetail.run.parentSessionId || null;
+  await notifyWorkflowProgress(parentSessionId, attempt.workflowRunId, `Completed workflow stage **${attempt.stageTitle}** attempt ${attempt.attemptNumber}/${maxAttempts}: ${result}${resultInput.outputSummary ? ` — ${truncateText(resultInput.outputSummary, 180)}` : ""}.`);
+  if ((status === "failed" || status === "blocked") && attempt.attemptNumber < maxAttempts) {
+    await notifyWorkflowProgress(parentSessionId, attempt.workflowRunId, `Retry available for **${attempt.stageTitle}**. Next attempt will spawn a fresh child session with the failure packet and a different-approach instruction.`);
+  }
+
+  return advanceWorkflowRun(attempt.workflowRunId, result === "passed" ? "autonomous" : "system", attempt.id, result, resultInput.outputSummary || "");
+}
+
+export async function advanceWorkflowRun(runId: string, trigger: WorkflowTransitionTrigger | string = "autonomous", fromAttemptId?: number, result: string = "passed", reason = ""): Promise<WorkflowRunDetail> {
+  const detail = await getWorkflowRun(runId);
+  if (!detail) throw new Error(`Workflow run not found: ${runId}`);
+  if (!(["system", "manual", "user_review"].includes(String(trigger)))) await assertNoOpenGate(runId);
+  const current = detail.run.currentStageKey;
+  if (!current) return detail;
+  // Idempotency guard: if fromAttemptId belongs to a different stage than current, it's a stale signal
+  if (fromAttemptId) {
+    const [sourceAttempt] = await db.select().from(workflowStageAttempts).where(eq(workflowStageAttempts.id, fromAttemptId)).limit(1);
+    if (sourceAttempt && sourceAttempt.stageKey !== current) {
+      log.warn(`advanceWorkflowRun: stale attempt ${fromAttemptId} (stage=${sourceAttempt.stageKey}) does not match current stage (${current}). No-op.`);
+      return detail;
+    }
+  }
+  const stage = stageFor(detail, current);
+  const event = result === "passed" ? "pass" : result === "needs_review" ? "needs_review" : result === "blocked" ? "blocked" : result === "skipped" ? "manual" : "fail";
+  const transitionDef = stage.allowedTransitions.find((t) => t.on === event) || stage.allowedTransitions.find((t) => t.on === "manual");
+  if (!transitionDef) throw new Error(`No transition for ${current} on ${event}`);
+  const next = transitionDef.toStageKey;
+  await recordTransition({ workflowRunId: runId, fromStageKey: current, toStageKey: next, fromAttemptId, trigger, reason: reason || transitionDef.reason || event });
+  const nextStatus = next ? (result === "blocked" || result === "needs_review" ? result : "active") : (result === "passed" ? "completed" : result === "blocked" ? "blocked" : "failed");
+  await db.update(workflowRuns).set({ status: nextStatus, completedAt: next ? null : new Date(), updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, runId)));
+  await renderWorkflowRunPage(runId);
+  const updated = (await getWorkflowRun(runId))!;
+  await notifyWorkflowProgress(updated.run.parentSessionId, runId, next ? `Workflow moved to stage ${next}. Status: ${nextStatus}.` : `Workflow ${nextStatus}: **${updated.run.title}**.`);
+
+  // Auto-kick the next stage if advancing forward and no active attempt exists
+  if (next && nextStatus === "active") {
+    const nextStage = updated.stages.find((st) => st.key === next);
+    const hasActiveAttempt = nextStage?.attempts.some((a) => a.status === "active");
+    if (!hasActiveAttempt) {
+      await startStageAttempt(runId, next, { spawnChildSession: true });
+    }
+  }
+
+  return (await getWorkflowRun(runId))!;
+}
+
+type AttachWorkflowArtifactInput = {
+  workflowRunId?: string;
+  runId?: string;
+  id?: string;
+  stageAttemptId?: number | null;
+  kind: string;
+  title?: string;
+  refType?: string;
+  refId?: string;
+  url?: string;
+  summary?: string;
+  metadata?: unknown;
+  createdBySessionId?: string;
+  render?: boolean;
+};
+
+async function resolveArtifactWorkflowRunId(input: AttachWorkflowArtifactInput): Promise<string> {
+  const explicitRunId = String(input.workflowRunId || input.runId || input.id || "").trim();
+  if (explicitRunId) {
+    const detail = await getWorkflowRun(explicitRunId);
+    if (!detail) throw new Error(`Workflow run not found or not visible: ${explicitRunId}`);
+    return explicitRunId;
+  }
+
+  if (input.stageAttemptId !== undefined && input.stageAttemptId !== null) {
+    const [attempt] = await db
+      .select()
+      .from(workflowStageAttempts)
+      .where(visible(attemptScopeColumns, eq(workflowStageAttempts.id, input.stageAttemptId)))
+      .limit(1);
+    if (!attempt) throw new Error(`Workflow stage attempt not found or not visible: ${input.stageAttemptId}`);
+    return attempt.workflowRunId;
+  }
+
+  throw new Error("attach_artifact requires workflowRunId, runId, id, or stageAttemptId.");
+}
+
+function defaultArtifactTitle(input: AttachWorkflowArtifactInput): string {
+  const explicit = input.title?.trim();
+  if (explicit) return explicit;
+  if (input.kind === "spec" && input.refType === "library_page" && input.refId) return `Spec: ${input.refId}`;
+  if (input.refId) return `${input.kind}: ${input.refId}`;
+  if (input.url) return `${input.kind}: ${input.url}`;
+  return input.kind || "Workflow artifact";
+}
+
+export async function attachWorkflowArtifact(input: AttachWorkflowArtifactInput): Promise<WorkflowArtifact> {
+  const workflowRunId = await resolveArtifactWorkflowRunId(input);
+  const [artifact] = await db.insert(workflowArtifacts).values({
+    workflowRunId,
+    stageAttemptId: input.stageAttemptId ?? null,
+    kind: input.kind,
+    title: defaultArtifactTitle(input),
+    refType: input.refType || "text",
+    refId: input.refId || null,
+    url: input.url || null,
+    summary: input.summary || "",
+    metadata: input.metadata || {},
+    createdBySessionId: input.createdBySessionId || null,
+    ...owner(artifactScopeColumns),
+  }).returning();
+  if (input.render !== false) await renderWorkflowRunPage(workflowRunId);
+  return artifact;
+}
+
+
+export async function capturePublishToStageEvidence(input: { workflowRunId: string; stageAttemptId?: number | null; createdBySessionId?: string; summary?: string }): Promise<WorkflowArtifact> {
+  const detail = await getWorkflowRun(input.workflowRunId);
+  if (!detail) throw new Error(`Workflow run not found: ${input.workflowRunId}`);
+  const truth = detail.environmentTruth || await getWorkflowEnvironmentTruth(input.workflowRunId);
+  if (!truth?.environment) throw new Error(`Workflow run ${input.workflowRunId} has no linked platform environment.`);
+  const stage = detail.stages.find((item) => item.key === "acceptance") || detail.stages.find((item) => item.key === "publish_stage");
+  const stageAttemptId = input.stageAttemptId ?? stage?.latestAttempt?.id ?? null;
+  const latest = truth.deployment?.latest || null;
+  const branch = typeof truth.source?.branch === "string" ? truth.source.branch : null;
+  const title = latest?.id ? `Deployment evidence for ${truth.environment.name}: ${String(latest.id)}` : `Deployment evidence for ${truth.environment.name}`;
+  const status = latest?.status ? String(latest.status) : truth.deployment?.available ? "no deployment found" : "unavailable";
+  const summary = input.summary || `Stage environment ${truth.environment.name} sourced from ${branch || "unknown branch"}; Railway deployment status ${status}.`;
+  return attachWorkflowArtifact({
+    workflowRunId: input.workflowRunId,
+    stageAttemptId,
+    kind: "deployment",
+    title,
+    refType: "railway_deployment",
+    refId: latest?.id ? String(latest.id) : null,
+    url: typeof truth.deployment?.publicUrl === "string" && truth.deployment.publicUrl ? (truth.deployment.publicUrl.startsWith("http") ? truth.deployment.publicUrl : `https://${truth.deployment.publicUrl}`) : undefined,
+    summary,
+    metadata: { environmentTruth: truth, sourceBranch: branch, deployment: truth.deployment },
+    createdBySessionId: input.createdBySessionId,
+  });
+}
+
+function deploymentLooksGreen(deployment: WorkflowEnvironmentTruth["deployment"] | null | undefined): boolean {
+  const status = deployment?.latest?.status ? String(deployment.latest.status).toLowerCase() : "";
+  return Boolean(deployment?.available && deployment.latest && ["success", "succeeded", "complete", "completed", "deployed", "active", "ready", "healthy"].some((value) => status.includes(value)));
+}
+
+function publicUrlFromTruth(truth: WorkflowEnvironmentTruth | null | undefined): string | null {
+  const raw = truth?.deployment?.publicUrl;
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  return raw.startsWith("http") ? raw : `https://${raw}`;
+}
+
+function joinUrl(base: string, routePath: string): string {
+  const url = new URL(base);
+  url.pathname = routePath.startsWith("/") ? routePath : `/${routePath}`;
+  return url.toString();
+}
+
+function safeRoutePath(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  if (!trimmed || !trimmed.startsWith("/") || trimmed.startsWith("//")) return fallback;
+  return trimmed;
+}
+
+function lifecycleSnapshotConfig(snapshot: unknown): Record<string, unknown> {
+  if (!snapshot || typeof snapshot !== "object") return {};
+  const config = (snapshot as Record<string, unknown>).config;
+  return config && typeof config === "object" ? config as Record<string, unknown> : {};
+}
+
+function lifecycleAcceptanceTarget(snapshot: unknown): Record<string, unknown> {
+  const config = lifecycleSnapshotConfig(snapshot);
+  const acceptance = config.acceptance && typeof config.acceptance === "object" ? config.acceptance as Record<string, unknown> : {};
+  const acceptanceTarget = acceptance.target && typeof acceptance.target === "object" ? acceptance.target as Record<string, unknown> : null;
+  const target = acceptanceTarget || config.acceptanceTarget;
+  return target && typeof target === "object" ? target as Record<string, unknown> : {};
+}
+
+function lifecycleAcceptanceConfig(snapshot: unknown): Record<string, unknown> {
+  const config = lifecycleSnapshotConfig(snapshot);
+  const acceptance = config.acceptance && typeof config.acceptance === "object" ? config.acceptance as Record<string, unknown> : {};
+  return {
+    configured: acceptance.configured === true,
+    target: lifecycleAcceptanceTarget(snapshot),
+    authMode: typeof acceptance.authMode === "string" ? acceptance.authMode : configuredAuthMode(snapshot),
+    evidenceConfig: acceptance.evidenceConfig && typeof acceptance.evidenceConfig === "object" ? acceptance.evidenceConfig as Record<string, unknown> : {},
+    missing: Array.isArray(acceptance.missing) ? acceptance.missing : [],
+  };
+}
+
+function configuredTargetUrl(target: Record<string, unknown>, truth: WorkflowEnvironmentTruth | null | undefined): string | null {
+  const raw = typeof target.url === "string" && target.url.trim() ? target.url.trim() : publicUrlFromTruth(truth);
+  if (!raw) return null;
+  return raw.startsWith("http") ? raw : `https://${raw}`;
+}
+
+function configuredAuthMode(snapshot: unknown): string {
+  const mode = lifecycleSnapshotConfig(snapshot).authMode;
+  return typeof mode === "string" && mode.trim() ? mode.trim() : "none";
+}
+
+
+
+async function checkUrlHealthy(url: string): Promise<{ ok: boolean; status?: number; error?: string }> {
+  try {
+    const response = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(8000) });
+    if (response.ok) return { ok: true, status: response.status };
+    const fallback = await fetch(url, { method: "GET", signal: AbortSignal.timeout(10000) });
+    return { ok: fallback.ok, status: fallback.status };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function summarizeLogs(source: "client" | "server", sinceTs: number) {
+  return getRecentLogs({ source, level: "error", limit: 100 })
+    .filter((entry) => entry.ts >= sinceTs)
+    .slice(-25)
+    .map((entry) => ({ ts: entry.ts, level: entry.level, source: entry.source, message: truncateText(entry.message, 500) }));
+}
+
+function buildAcceptanceFailurePacket(packet: AcceptanceEvidencePacket, health: { ok: boolean; status?: number; error?: string }, browserError: string | null): Record<string, unknown> | undefined {
+  const failedGates = ACCEPTANCE_GATE_KEYS.filter((key) => !packet.gates[key]);
+  if (failedGates.length === 0) return undefined;
+  return {
+    failedGates,
+    targetUrl: packet.targetUrl,
+    routePath: packet.routePath,
+    health,
+    browserSession: packet.browserSession,
+    browserError,
+    auth: packet.auth,
+    acceptanceConfig: packet.configSnapshot,
+    healthCheckPath: packet.healthCheckPath,
+    deployment: packet.deployment,
+    screenshot: packet.screenshot || null,
+    clientLogErrors: packet.logs.client,
+    serverLogErrors: packet.logs.server,
+    nextSuggestedFix: "Return to Implement with this packet. Fix the first failed required gate, then rerun publish/acceptance evidence instead of bypassing the gate.",
+  };
+}
+
+export async function captureAcceptanceEvidence(input: { workflowRunId: string; stageAttemptId?: number | null; routePath?: string; createdBySessionId?: string; summary?: string; optionalSmokeAttempted?: boolean }): Promise<WorkflowArtifact> {
+  const captureStartedAt = Date.now();
+  const detail = await getWorkflowRun(input.workflowRunId);
+  if (!detail) throw new Error(`Workflow run not found: ${input.workflowRunId}`);
+  const truth = detail.environmentTruth || await getWorkflowEnvironmentTruth(input.workflowRunId);
+  const stage = detail.stages.find((item) => item.key === "acceptance");
+  const stageAttemptId = input.stageAttemptId ?? stage?.latestAttempt?.id ?? null;
+  const lifecycleSnapshot = detail.lifecycleSnapshot || detail.run.lifecycleSnapshot;
+  const acceptanceConfig = lifecycleAcceptanceConfig(lifecycleSnapshot);
+  const acceptanceTarget = lifecycleAcceptanceTarget(lifecycleSnapshot);
+  const targetUrl = configuredTargetUrl(acceptanceTarget, truth);
+  const routePath = safeRoutePath(input.routePath || acceptanceTarget.routePath || acceptanceTarget.screenshotRoutePath, "/workflows");
+  const healthCheckPath = safeRoutePath(acceptanceTarget.healthCheckPath, "/");
+  const screenshotRoutePath = safeRoutePath(acceptanceTarget.screenshotRoutePath || routePath, routePath);
+  const targetRouteUrl = targetUrl ? joinUrl(targetUrl, screenshotRoutePath) : null;
+  const healthUrl = targetUrl ? joinUrl(targetUrl, healthCheckPath) : null;
+  const authMode = typeof acceptanceConfig.authMode === "string" && acceptanceConfig.authMode.trim() ? acceptanceConfig.authMode.trim() : configuredAuthMode(lifecycleSnapshot);
+  const auth = { mode: authMode, attempted: authMode !== "none", established: authMode === "none", verified: authMode === "none", status: null as number | null, userId: null as string | null, error: null as string | null };
+  const health = healthUrl ? await checkUrlHealthy(healthUrl) : { ok: false, error: "No public URL available from lifecycle acceptance target or linked environment truth" };
+  let screenshot: AcceptanceEvidencePacket["screenshot"] = null;
+  let browserError: string | null = null;
+
+  let browserSession: AcceptanceEvidencePacket["browserSession"] = null;
+  if (targetUrl && targetRouteUrl) {
+    try {
+      const { captureBrowserSessionEvidence, screenshotPage } = await import("../browser-manager");
+      if (auth.attempted) {
+        const directUrl = joinUrl(targetUrl, screenshotRoutePath);
+        const sessionEvidence = await captureBrowserSessionEvidence(directUrl, { expectedRoutePath: screenshotRoutePath, viewport: "desktop", fullPage: true, delay: 1500, authenticate: true });
+        browserSession = sessionEvidence as unknown as Record<string, unknown>;
+        screenshot = sessionEvidence.screenshot;
+        browserError = sessionEvidence.error;
+        auth.established = sessionEvidence.authVerified && !sessionEvidence.loginScreenDetected && !sessionEvidence.error;
+        auth.verified = sessionEvidence.authVerified;
+        auth.status = sessionEvidence.authStatus;
+        auth.userId = sessionEvidence.authUserId;
+        auth.error = auth.established ? null : sessionEvidence.error || `Auth verification failed with status ${sessionEvidence.authStatus ?? "unknown"}`;
+      } else {
+        screenshot = await screenshotPage(targetRouteUrl, { viewport: "desktop", fullPage: true, delay: 1500 });
+        auth.established = true;
+        auth.verified = true;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      browserError = message;
+      if (auth.attempted && !auth.established) auth.error = message;
+    }
+  }
+
+  const clientLogs = summarizeLogs("client", captureStartedAt);
+  const serverLogs = summarizeLogs("server", captureStartedAt);
+  const gates: AcceptanceEvidencePacket["gates"] = {
+    stageDeployGreen: deploymentLooksGreen(truth?.deployment),
+    targetUrlHealthy: health.ok,
+    targetRouteBrowserLoaded: Boolean(screenshot && !browserError),
+    screenshotCaptured: Boolean(screenshot?.path),
+    clientLogsChecked: true,
+    serverLogsChecked: true,
+    authSessionEstablished: auth.established && auth.verified,
+  };
+  const packet: AcceptanceEvidencePacket = {
+    capturedAt: new Date().toISOString(),
+    configSnapshot: acceptanceConfig,
+    targetUrl,
+    routePath: screenshotRoutePath,
+    healthCheckPath,
+    gates,
+    auth,
+    health,
+    browserSession,
+    browserError,
+    optionalSmokeAttempted: Boolean(input.optionalSmokeAttempted),
+    deployment: truth?.deployment || null,
+    screenshot,
+    logs: { client: clientLogs, server: serverLogs },
+  };
+  const failurePacket = buildAcceptanceFailurePacket(packet, health, browserError);
+  if (failurePacket) packet.failurePacket = failurePacket;
+  const passed = !failurePacket;
+  return attachWorkflowArtifact({
+    workflowRunId: input.workflowRunId,
+    stageAttemptId,
+    kind: "acceptance",
+    title: `Acceptance evidence: ${passed ? "passed" : "failed"}`,
+    refType: "workflow_acceptance",
+    refId: input.workflowRunId,
+    url: targetRouteUrl || targetUrl || undefined,
+    summary: input.summary || `Acceptance gates ${passed ? "passed" : "failed"}: ${ACCEPTANCE_GATE_KEYS.map((key) => `${key}=${gates[key] ? "yes" : "no"}`).join(", ")}.`,
+    metadata: packet,
+    createdBySessionId: input.createdBySessionId,
+  });
+}
+
+
+export async function captureCalibrationEvidence(input: { workflowRunId: string; stageAttemptId?: number | null; createdBySessionId?: string; summary?: string; decision?: string; documentationUpdated?: boolean; specDelta?: string; failureContext?: unknown }): Promise<WorkflowArtifact> {
+  const detail = await getWorkflowRun(input.workflowRunId);
+  if (!detail) throw new Error(`Workflow run not found: ${input.workflowRunId}`);
+  const stage = detail.stages.find((item) => item.key === "calibration");
+  const stageAttemptId = input.stageAttemptId ?? stage?.latestAttempt?.id ?? null;
+  const acceptance = detail.artifacts.filter((artifact) => artifact.kind === "acceptance").at(-1) || null;
+  const metadata = {
+    calibratedAt: new Date().toISOString(),
+    decision: input.decision || "continue",
+    documentationUpdated: Boolean(input.documentationUpdated),
+    specDelta: input.specDelta || "No spec delta recorded.",
+    acceptanceArtifactId: acceptance?.id || null,
+    acceptanceSummary: acceptance?.summary || null,
+    hardStopConditions: ["hard_user_gate", "danger_or_security", "privacy_risk", "principle_conflict", "production_release", "exhausted_retries"],
+    failureContext: input.failureContext || null,
+  };
+  return attachWorkflowArtifact({
+    workflowRunId: input.workflowRunId,
+    stageAttemptId,
+    kind: "calibration",
+    title: "Calibration decision",
+    refType: "workflow_calibration",
+    refId: input.workflowRunId,
+    summary: input.summary || `Calibration decision: ${metadata.decision}; documentationUpdated=${metadata.documentationUpdated}.`,
+    metadata,
+    createdBySessionId: input.createdBySessionId,
+  });
+}
+
+export async function openWorkflowGate(input: { workflowRunId: string; stageAttemptId?: number; gateType: string; prompt: string }): Promise<WorkflowGate> {
+  const [gate] = await db.insert(workflowGates).values({ workflowRunId: input.workflowRunId, stageAttemptId: input.stageAttemptId ?? null, gateType: input.gateType, prompt: input.prompt, status: "open", ...owner(gateScopeColumns) }).returning();
+  await updateWorkflowRun(input.workflowRunId, { status: "needs_review" });
+  return gate;
+}
+
+export async function approveWorkflowGate(gateId: number, decisionReason = "approved"): Promise<WorkflowRunDetail> {
+  const principal = getCurrentPrincipal();
+  // Idempotency guard: fetch gate first to check if already resolved
+  const [existing] = await db.select().from(workflowGates).where(eq(workflowGates.id, gateId)).limit(1);
+  if (!existing) throw new Error(`Gate not found: ${gateId}`);
+  if (existing.status !== "open") {
+    log.warn(`approveWorkflowGate: gate ${gateId} already resolved (status=${existing.status}). No-op.`);
+    return (await getWorkflowRun(existing.workflowRunId))!;
+  }
+  const [gate] = await db.update(workflowGates).set({ status: workflowGateStatusSchema.parse("approved"), decision: "approved", decisionReason, resolvedAt: new Date(), resolvedByUserId: principal?.userId || null }).where(writable(gateScopeColumns, eq(workflowGates.id, gateId))).returning();
+  if (!gate) throw new Error(`Gate not found: ${gateId}`);
+  await recordTransition({ workflowRunId: gate.workflowRunId, trigger: "user_review", reason: decisionReason });
+  return updateWorkflowRun(gate.workflowRunId, { status: "active" });
+}
+
+export async function rejectWorkflowGate(gateId: number, decisionReason = "rejected"): Promise<WorkflowRunDetail> {
+  const principal = getCurrentPrincipal();
+  // Idempotency guard: fetch gate first to check if already resolved
+  const [existing] = await db.select().from(workflowGates).where(eq(workflowGates.id, gateId)).limit(1);
+  if (!existing) throw new Error(`Gate not found: ${gateId}`);
+  if (existing.status !== "open") {
+    log.warn(`rejectWorkflowGate: gate ${gateId} already resolved (status=${existing.status}). No-op.`);
+    return (await getWorkflowRun(existing.workflowRunId))!;
+  }
+  const [gate] = await db.update(workflowGates).set({ status: workflowGateStatusSchema.parse("rejected"), decision: "rejected", decisionReason, resolvedAt: new Date(), resolvedByUserId: principal?.userId || null }).where(writable(gateScopeColumns, eq(workflowGates.id, gateId))).returning();
+  if (!gate) throw new Error(`Gate not found: ${gateId}`);
+  await recordTransition({ workflowRunId: gate.workflowRunId, trigger: "user_review", reason: decisionReason });
+  return updateWorkflowRun(gate.workflowRunId, { status: "blocked" });
+}
+
+export async function linkWorkflowSession(input: { workflowRunId: string; stageAttemptId?: number | null; sessionId: string; role: string; spawnReason?: string }): Promise<void> {
+  await db.insert(workflowSessions).values({ workflowRunId: input.workflowRunId, stageAttemptId: input.stageAttemptId ?? null, sessionId: input.sessionId, role: input.role, spawnReason: input.spawnReason || null, ...owner(sessionScopeColumns) }).onConflictDoNothing();
+}
+
+export async function renderWorkflowRunPage(runId: string): Promise<void> {
+  try {
+    const detail = await getWorkflowRun(runId);
+    if (!detail?.run.linkedLibraryPageId) return;
+    const { libraryPages } = await import("@shared/models/info");
+    const { syncContentFields } = await import("@shared/markdown-tiptap");
+    const content = buildWorkflowRunPageContent(detail);
+    const synced = syncContentFields({ markdown: content });
+    await db.update(libraryPages).set({ content: synced.content, plainTextContent: synced.plainTextContent, updatedAt: sql`CURRENT_TIMESTAMP` }).where(eq(libraryPages.id, detail.run.linkedLibraryPageId));
+  } catch (err) {
+    log.warn(`Failed to render workflow ${runId}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}

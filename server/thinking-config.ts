@@ -1,0 +1,79 @@
+import type { ThinkingConfig as SdkThinkingConfig, EffortLevel } from "@anthropic-ai/claude-agent-sdk";
+import { getThinkingInfo } from "./model-registry";
+import { createLogger } from "./log";
+
+const log = createLogger("ThinkingConfig");
+
+export type ThinkingTierConfig =
+  | { type: "disabled" }
+  | { type: "enabled"; budgetTokens: number }
+  | { type: "adaptive"; effort?: EffortLevel };
+
+export interface ResolvedThinking {
+  thinking: SdkThinkingConfig;
+  effort?: EffortLevel;
+}
+
+export function thinkingBudgetToTier(budget: number | undefined): ThinkingTierConfig {
+  if (budget === undefined || budget <= 0) return { type: "disabled" };
+  return { type: "enabled", budgetTokens: budget };
+}
+
+export function tierToThinkingBudget(tier: ThinkingTierConfig | undefined): number {
+  if (!tier) return 0;
+  if (tier.type === "enabled") return tier.budgetTokens;
+  return 0;
+}
+
+export function isAdaptiveCapable(modelId: string): boolean {
+  const info = getThinkingInfo(modelId);
+  return info.level === "extended";
+}
+
+/** Model supports ONLY adaptive thinking — no extended-thinking budget toggle (Fable/Mythos class). */
+export function isAdaptiveOnly(modelId: string): boolean {
+  return getThinkingInfo(modelId).adaptiveOnly === true;
+}
+
+export function resolveThinkingConfig(
+  modelId: string,
+  tierThinking?: ThinkingTierConfig,
+): ResolvedThinking {
+  if (!tierThinking || tierThinking.type === "disabled") {
+    return { thinking: { type: "disabled" } };
+  }
+  if (tierThinking.type === "enabled") {
+    // Adaptive-only models (e.g. Fable) reject the budget-token shape — silently
+    // producing NO thinking blocks. Translate enabled(budget) → adaptive for them.
+    if (isAdaptiveOnly(modelId)) {
+      log.log(`model "${modelId}" is adaptive-only — translating enabled(${tierThinking.budgetTokens}) to adaptive`);
+      return { thinking: { type: "adaptive" } };
+    }
+    const budget = Math.max(1, Math.floor(tierThinking.budgetTokens || 0));
+    return { thinking: { type: "enabled", budgetTokens: budget } };
+  }
+  // adaptive
+  if (!isAdaptiveCapable(modelId)) {
+    log.warn(
+      `adaptive thinking requested for model "${modelId}" but registry says it is not adaptive-capable; falling back to disabled`,
+    );
+    return { thinking: { type: "disabled" } };
+  }
+  const out: ResolvedThinking = { thinking: { type: "adaptive" } };
+  if (tierThinking.effort) out.effort = tierThinking.effort;
+  return out;
+}
+
+export function describeResolvedThinking(r: ResolvedThinking | undefined): string {
+  if (!r) return "none";
+  if (r.thinking.type === "disabled") return "disabled";
+  if (r.thinking.type === "enabled") return `enabled(${r.thinking.budgetTokens ?? "?"})`;
+  return r.effort ? `adaptive(${r.effort})` : "adaptive";
+}
+
+export function thinkingConfigKey(r: ResolvedThinking | undefined): string {
+  if (!r) return "none";
+  if (r.thinking.type === "disabled") return "d";
+  if (r.thinking.type === "enabled") return `e:${r.thinking.budgetTokens ?? 0}`;
+  return `a:${r.effort ?? "default"}`;
+}

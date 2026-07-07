@@ -1,0 +1,73 @@
+# syntax=docker/dockerfile:1.7
+#
+# Dockerfile.dev — used by the Railway *dev* environment.
+#
+# Differences vs. the production Dockerfile:
+#   • Skips the gitnexus runtime bundle / patches (resolved at runtime from
+#     node_modules/gitnexus instead — see server/gitnexus-bridge.ts).
+#   • Skips the claude CLI bundle (resolved at runtime from
+#     node_modules/.bin/claude — see server/cli-sdk-adapter.ts).
+#   • Skips the gitnexus runtime size threshold check (it never runs).
+#   • Does NOT remove dist/tests (keeps the test runner usable in dev).
+#
+# Configure Railway's *dev* service to use this Dockerfile via the service
+# settings → "Dockerfile Path". Production stays on Dockerfile.
+
+# ── Stage 1: Build ──────────────────────────────────────────────────────────
+FROM node:20-trixie-slim AS builder
+
+WORKDIR /app
+
+# Cache mounts removed: Railway's Metal builder rejects them with "missing
+# the cacheKey prefix from its id". Layer caching still applies.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    make \
+    g++ \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package.json package-lock.json ./
+
+RUN npm ci --legacy-peer-deps
+
+COPY . .
+
+# BUILD_DEV_MODE=true skips bundleGitnexusRuntime() and bundleClaudeCliRuntime()
+# in script/build.ts. The runtime resolves gitnexus + claude CLI from
+# node_modules/ instead.
+RUN BUILD_DEV_MODE=true npm run build
+
+# ── Stage 2: Runtime ────────────────────────────────────────────────────────
+FROM node:20-trixie-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    chromium \
+    python3 \
+    && ln -sf /usr/bin/python3 /usr/local/bin/python \
+    && python3 --version \
+    && python --version \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/shared ./shared
+COPY package.json package-lock.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/scripts ./scripts
+
+ENV PORT=5000
+ENV NODE_ENV=production
+# Tell Claude Code we're running in a sandboxed/containerized environment so
+# it allows --dangerously-skip-permissions even though the container runs as
+# root (Railway's default). Without this the CLI exits with:
+#   "--dangerously-skip-permissions cannot be used with root/sudo privileges"
+ENV IS_SANDBOX=1
+EXPOSE 5000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD node -e "fetch('http://localhost:5000/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
+
+CMD ["sh", "scripts/docker-entrypoint.sh"]

@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "ilpYaLM4SWs2JmzcGGCLa"
+uri = "file://.local/voice-audit-2026-04-23.md"
+type = "text"
+title = "Voice v2.5/v3 Audit — 20 findings & cures"

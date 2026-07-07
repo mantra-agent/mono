@@ -1,0 +1,52 @@
+export const glassesTheme = {
+  colors: {
+    canvas: '#000000',
+    viewport: '#09090b',
+    textPrimary: '#ffffff',
+    textSecondary: 'rgba(255, 255, 255, 0.75)',
+    textTertiary: 'rgba(255, 255, 255, 0.6)',
+    borderSubtle: 'rgba(255, 255, 255, 0.06)',
+    borderChrome: 'rgba(255, 255, 255, 0.08)',
+    cardBackground: 'rgba(255, 255, 255, 0.04)',
+    actionPrimary: 'rgba(255, 255, 255, 0.15)',
+    actionSecondary: 'rgba(255, 255, 255, 0.06)',
+    handle: 'rgba(255, 255, 255, 0.3)',
+    urgency: {
+      critical: '#ef4444',
+      high: '#fbbf24',
+      medium: '#ffffff',
+      low: '#d4d4d8',
+    },
+    severity: {
+      info: '#3b82f6',
+      warning: '#fbbf24',
+      critical: '#ef4444',
+    },
+    connection: {
+      connected: '#22c55e',
+      disconnected: '#ef4444',
+    },
+    chatFab: '#a855f7',
+  },
+  spacing: {
+    screenX: 24,
+    surfaceX: 24,
+    surfaceGap: 20,
+    cardY: 20,
+    cardX: 24,
+  },
+  radius: {
+    card: 16,
+    button: 12,
+    fab: 28,
+    dot: 3,
+  },
+  typography: {
+    title: { fontSize: 18, lineHeight: 23, fontWeight: '600' as const },
+    subtitle: { fontSize: 16, lineHeight: 22, fontWeight: '400' as const },
+    label: { fontSize: 16, fontWeight: '500' as const },
+    action: { fontSize: 15, fontWeight: '500' as const },
+    timer: { fontSize: 32, fontWeight: '300' as const },
+    transition: { fontSize: 20, fontWeight: '500' as const },
+  },
+};

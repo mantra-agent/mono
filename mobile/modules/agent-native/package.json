@@ -1,0 +1,8 @@
+{
+  "name": "agent-native",
+  "version": "0.1.0",
+  "description": "Agent local Expo native module for mobile diagnostics.",
+  "main": "src/index.ts",
+  "private": true,
+  "license": "MIT"
+}

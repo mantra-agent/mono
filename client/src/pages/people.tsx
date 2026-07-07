@@ -1,0 +1,4757 @@
+import { useState, useMemo, useCallback, useEffect, useRef, Fragment, type ReactNode } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useRoute, useLocation, Link } from "wouter";
+import { getInstanceName } from "@/lib/instance-config";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Skeleton } from "@/components/ui/skeleton";
+import { usePageHeader } from "@/hooks/use-page-header";
+import { useFocusContext } from "@/hooks/use-focus-context";
+import { useToast } from "@/hooks/use-toast";
+import { SurfacedPersonRow, surfacedDateLabel } from "@/components/people/surfaced-person-row";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { cn } from "@/lib/utils";
+import { formatRelativeDate } from "@/lib/local-date";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  ArrowLeft,
+  Building2,
+  Calendar,
+  Clock,
+  Edit3,
+  FileText,
+  Heart,
+  Loader2,
+  Mail,
+  MessageSquare,
+  Pencil,
+  Phone,
+  Play,
+  Plus,
+  RefreshCw,
+  Save,
+  Search,
+  Shield,
+  ShieldOff,
+  SlidersHorizontal,
+  ArrowDown,
+  ArrowUp,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  Sparkles,
+  Trash2,
+  TrendingUp,
+  User,
+  Users,
+  Video,
+  ContactRound,
+  Download,
+  Smartphone,
+  X,
+  Brain,
+  Link2,
+  Unlink,
+} from "lucide-react";
+import { SiInstagram, SiX, SiLinkedin } from "react-icons/si";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import type { SimpleFeed, SimpleFeedItem } from "@shared/models/simple";
+
+type NativeWebViewWindow = Window & {
+  ReactNativeWebView?: {
+    postMessage?: (message: string) => void;
+  };
+};
+
+function hasNativeWebViewBridge() {
+  if (typeof window === "undefined") return false;
+  const nativeWindow = window as NativeWebViewWindow;
+  return typeof nativeWindow.ReactNativeWebView?.postMessage === "function";
+}
+
+function requestIosContactsImport() {
+  if (!hasNativeWebViewBridge()) return false;
+  const nativeWindow = window as NativeWebViewWindow;
+  nativeWindow.ReactNativeWebView!.postMessage!(JSON.stringify({ type: "contacts.import.request" }));
+  return true;
+}
+
+interface PersonIndex {
+  id: string;
+  name: string;
+  nicknames: string[];
+  cabinetLevel: string;
+  tags: string[];
+  lastInteractionDate?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  private: boolean;
+}
+
+interface ContactInfo {
+  type: "email" | "phone" | "social" | "other";
+  label: string;
+  value: string;
+}
+
+interface Note {
+  id: string;
+  title: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface Interaction {
+  id: string;
+  date: string;
+  type: string;
+  summary: string;
+  context?: string;
+  direction?: "inbound" | "outbound" | "mutual";
+  meaningfulness?: "low" | "medium" | "high";
+  responseOwed?: boolean;
+  responseDueBy?: string;
+  capitalImpact?: "deposit" | "withdrawal" | "neutral";
+  tags?: string[];
+}
+
+interface RelationshipState {
+  temperature?: "hot" | "warm" | "cool" | "cold";
+  momentum?: "rising" | "steady" | "falling";
+  status?: "active" | "dormant" | "new" | "repairing";
+}
+
+interface RelationshipCadence {
+  targetDays?: number;
+  flexDays?: number;
+  cadenceClass?: string;
+}
+
+interface RelationshipRollup {
+  lastInteractionAt?: string;
+  lastMeaningfulAt?: string;
+  interactionCount30d?: number;
+  interactionCount90d?: number;
+  meaningfulCount90d?: number;
+  avgMeaningfulness?: string;
+  dominantChannel?: string;
+  directionBalance?: string;
+}
+
+interface RelationshipOutreach {
+  nextSuggestedAt?: string;
+  reason?: string;
+  recommendedChannel?: string;
+  dueStatus?: string;
+}
+
+interface RelationshipProfile {
+  state?: RelationshipState;
+  cadence?: RelationshipCadence;
+  rollup?: RelationshipRollup;
+  outreach?: RelationshipOutreach;
+}
+
+interface Commitment {
+  id: string;
+  direction: "from_ray" | "to_ray";
+  description: string;
+  status: "open" | "fulfilled" | "expired";
+  createdAt: string;
+  resolvedAt?: string;
+}
+
+interface SocialCapital {
+  balance: string;
+  depositsFromRay: string[];
+  depositsToRay: string[];
+  lastDeposit?: string;
+  lastWithdrawal?: string;
+}
+
+interface NetworkConnection {
+  name: string;
+  relationship: string;
+  domain?: string;
+}
+
+interface Mobilization {
+  ready: boolean;
+  blockers: string[];
+  warmingPath?: string;
+  estimated: boolean;
+}
+
+interface NetworkProfile {
+  expertise?: string[];
+  domains?: string[];
+  resources?: string[];
+  canHelpWith?: string[];
+  connections?: NetworkConnection[];
+  capital?: SocialCapital;
+  commitments?: Commitment[];
+  mobilization?: Mobilization;
+}
+
+interface ImportantDate {
+  id: string;
+  label: string;
+  date: string;
+  recurrence: "annual" | "one-time";
+}
+
+interface SocialProfiles {
+  instagram?: string;
+  x?: string;
+  linkedin?: string;
+}
+
+interface Person {
+  id: string;
+  name: string;
+  nicknames: string[];
+  cabinetLevel: string;
+  photo?: string;
+  birthday?: string;
+  company?: string;
+  role?: string;
+  professionalRelations?: string[];
+  relation?: string;
+  introducedBy?: string;
+  familiarity?: "none" | "surface" | "deep";
+  trust?: "ally" | "positive" | "none" | "negative" | "enemy";
+  met?: string;
+  socialProfiles: SocialProfiles;
+  contactInfo: ContactInfo[];
+  importantDates: ImportantDate[];
+  notes: Note[];
+  interactions: Interaction[];
+  tags: string[];
+  aiSummary?: string;
+  quickSummary?: string;
+  identityContent?: string;
+  private: boolean;
+  createdAt: string;
+  updatedAt: string;
+  relationshipProfile?: RelationshipProfile;
+  networkProfile?: NetworkProfile;
+}
+
+interface CabinetLevel {
+  id: string;
+  name: string;
+  color?: string;
+  order: number;
+}
+
+interface CabinetConfig {
+  levels: CabinetLevel[];
+}
+
+const INTERACTION_ICONS: Record<string, typeof MessageSquare> = {
+  message: MessageSquare,
+  call: Phone,
+  meeting: Video,
+  email: Mail,
+  note: Edit3,
+  text: MessageSquare,
+  in_person: Users,
+  video: Video,
+  social: Users,
+  gift: Sparkles,
+  introduction: Link2,
+  favor: TrendingUp,
+  support: Shield,
+};
+
+const RELATION_OPTIONS = [
+  "Mother", "Father", "Biological Father", "Step Mother", "Step Father",
+  "Brother", "Sister", "Half Brother", "Half Sister", "Step Brother", "Step Sister",
+  "Grandmother", "Grandfather", "Step Grandmother", "Step Grandfather",
+  "Aunt", "Uncle", "Cousin", "Step Cousin",
+  "Son", "Daughter", "Step Son", "Step Daughter",
+  "Nephew", "Niece", "Husband", "Wife", "Spouse", "Ex-Spouse", "In-Law", "Other",
+];
+
+const PROFESSIONAL_RELATION_OPTIONS = [
+  "Partner", "Investor", "Advisor", "Colleague", "Employee", "Vendor", "Customer",
+];
+
+function daysAgo(dateStr?: string): string {
+  if (!dateStr) return "Never";
+  const d = dateStr.length === 10 ? new Date(dateStr + "T00:00:00") : new Date(dateStr);
+  const diff = Math.floor((Date.now() - d.getTime()) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  if (diff < 7) return `${diff}d`;
+  if (diff < 30) return `${Math.floor(diff / 7)}w`;
+  if (diff < 365) return `${Math.floor(diff / 30)}mo`;
+  return `${Math.floor(diff / 365)}y`;
+}
+
+function formatShortDate(dateStr: string): string {
+  const d = dateStr.length === 10 ? new Date(dateStr + "T00:00:00") : new Date(dateStr);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function tokenize(str: string): string[] {
+  return str.toLowerCase().replace(/[,.'"\-_]/g, " ").split(/\s+/).filter(Boolean);
+}
+
+function editDistance(a: string, b: string): number {
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  if (Math.abs(a.length - b.length) > 3) return Math.max(a.length, b.length);
+  const dp: number[][] = [];
+  for (let i = 0; i <= a.length; i++) {
+    dp[i] = [i];
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = i === 0 ? j : 0;
+    }
+  }
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+function fuzzyTokenMatch(queryToken: string, targetToken: string): number {
+  if (targetToken === queryToken) return 1;
+  if (targetToken.startsWith(queryToken)) return 0.9;
+  if (queryToken.length >= 3 && targetToken.includes(queryToken)) return 0.7;
+  const dist = editDistance(queryToken, targetToken);
+  const maxLen = Math.max(queryToken.length, targetToken.length);
+  if (maxLen === 0) return 0;
+  const similarity = 1 - dist / maxLen;
+  if (dist > 1 && queryToken.length <= 4) return 0;
+  return similarity >= 0.75 ? similarity * 0.8 : 0;
+}
+
+function fuzzyMatchPeople(query: string, people: PersonIndex[], limit: number): PersonIndex[] {
+  const queryTokens = tokenize(query);
+  if (queryTokens.length === 0) return [];
+
+  const scored: { person: PersonIndex; score: number }[] = [];
+
+  for (const person of people) {
+    const nameTokens = tokenize(person.name);
+    const nickTokens = (person.nicknames || []).flatMap(n => tokenize(n));
+    const allTargetTokens = [...nameTokens, ...nickTokens];
+
+    if (allTargetTokens.length === 0) continue;
+
+    let totalScore = 0;
+    let matchedQueryTokens = 0;
+
+    for (const qt of queryTokens) {
+      let bestMatch = 0;
+      for (const tt of allTargetTokens) {
+        const s = fuzzyTokenMatch(qt, tt);
+        if (s > bestMatch) bestMatch = s;
+      }
+      totalScore += bestMatch;
+      if (bestMatch > 0.3) matchedQueryTokens++;
+    }
+
+    if (matchedQueryTokens === 0) continue;
+
+    const coverage = matchedQueryTokens / queryTokens.length;
+    const avgScore = totalScore / queryTokens.length;
+    const finalScore = avgScore * 0.6 + coverage * 0.4;
+
+    if (finalScore > 0.4 && coverage >= 0.5) {
+      scored.push({ person, score: finalScore });
+    }
+  }
+
+  return scored
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(s => s.person);
+}
+
+
+type SortMode = "lastInteraction" | "name";
+
+function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOverride, onQuickAddClose, onRequestQuickAdd, sortMode, agendaData, simpleFeed, selectedImportEmail, onSelectImportCandidate }: {
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  searchOverride?: string;
+  showQuickAddOverride?: boolean;
+  onQuickAddClose?: () => void;
+  onRequestQuickAdd?: () => void;
+  sortMode: SortMode;
+  agendaData?: AgendaData;
+  simpleFeed?: SimpleFeed;
+  selectedImportEmail?: string | null;
+  onSelectImportCandidate?: (email: string) => void;
+}) {
+  const { toast } = useToast();
+  const searchQuery = searchOverride ?? "";
+  const showQuickAdd = showQuickAddOverride ?? false;
+  const [newName, setNewName] = useState("");
+  const [newCabinet, setNewCabinet] = useState("");
+  const quickAddRef = useRef<HTMLInputElement>(null);
+
+  const { data: cabinetData } = useQuery<CabinetConfig>({
+    queryKey: ["/api/people/cabinet-config"],
+  });
+
+  const { data: peopleData, isLoading } = useQuery<{ people: PersonIndex[] }>({
+    queryKey: ["/api/people"],
+    refetchInterval: 10000,
+  });
+
+  const { data: importStatus } = useQuery<{ pending: number }>({
+    queryKey: ["/api/import-queue/status"],
+    refetchInterval: 60_000,
+  });
+
+  const { data: importCandidatesData } = useQuery<{ candidates: ImportCandidate[] }>({
+    queryKey: ["/api/import-queue/candidates"],
+    refetchInterval: 60_000,
+  });
+
+  const searchResults = useQuery<{ people: PersonIndex[] }>({
+    queryKey: ["/api/people/search", searchQuery],
+    queryFn: async () => {
+      const res = await fetch(`/api/people/search?q=${encodeURIComponent(searchQuery)}`);
+      if (!res.ok) throw new Error("Search failed");
+      return res.json();
+    },
+    enabled: searchQuery.length > 0,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: { name: string; cabinetLevel: string }) => {
+      const res = await apiRequest("POST", "/api/people", data);
+      return res.json();
+    },
+    onSuccess: (person: Person) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/people"] });
+      onQuickAddClose?.();
+      setNewName("");
+      setNewCabinet("");
+      toast({ title: `Added ${person.name}` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to add person", description: err.message, variant: "destructive" });
+    },
+  });
+
+  useEffect(() => {
+    if (showQuickAdd && quickAddRef.current) {
+      quickAddRef.current.focus();
+    }
+  }, [showQuickAdd]);
+
+  const levels = cabinetData?.levels || [];
+  const people = searchQuery.length > 0 ? (searchResults.data?.people || []) : (peopleData?.people || []);
+
+  const groupedPeople = useMemo(() => {
+    const groups: Record<string, PersonIndex[]> = {};
+    for (const person of people) {
+      if (!groups[person.cabinetLevel]) groups[person.cabinetLevel] = [];
+      groups[person.cabinetLevel].push(person);
+    }
+    for (const key of Object.keys(groups)) {
+      groups[key].sort((a, b) => {
+        if (sortMode === "name") return a.name.localeCompare(b.name);
+        const dateA = a.lastInteractionDate ? new Date(a.lastInteractionDate).getTime() : 0;
+        const dateB = b.lastInteractionDate ? new Date(b.lastInteractionDate).getTime() : 0;
+        return dateB - dateA;
+      });
+    }
+    return groups;
+  }, [people, sortMode]);
+
+  const sortedLevels = useMemo(() => {
+    return [...levels].sort((a, b) => a.order - b.order);
+  }, [levels]);
+
+  const surfacedItems = useMemo((): SimpleFeedItem[] => {
+    const peopleById = new Set(people.map(p => p.id));
+    const inbox = simpleFeed?.sections.find(section => section.section === "inbox")?.items ?? [];
+    return inbox.filter(item => {
+      if (item.widgetType !== "person") return false;
+      const personId = item.sourceRefs.find(ref => ref.type === "person")?.id;
+      return personId ? peopleById.has(personId) : false;
+    });
+  }, [people, simpleFeed]);
+
+  const importCandidates = importCandidatesData?.candidates || [];
+  const importPending = importStatus?.pending ?? importCandidates.length;
+  const visibleImportCandidates = useMemo(() => {
+    const source = searchQuery.length > 0
+      ? importCandidates.filter(candidate =>
+        (candidate.name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+        candidate.email.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+      : importCandidates;
+    return source.slice(0, 25);
+  }, [importCandidates, searchQuery]);
+
+  const handleQuickAdd = useCallback(() => {
+    if (!newName.trim()) return;
+    const cabinet = newCabinet || sortedLevels[sortedLevels.length - 1]?.id || "network";
+    createMutation.mutate({ name: newName.trim(), cabinetLevel: cabinet });
+  }, [newName, newCabinet, sortedLevels, createMutation]);
+
+  const renderPersonRow = useCallback((person: PersonIndex) => {
+    const isSelected = selectedId === person.id;
+    const isNew = person.createdAt && person.updatedAt &&
+      Math.abs(new Date(person.createdAt).getTime() - new Date(person.updatedAt).getTime()) < 5000;
+    const hasNotification = hasAgendaNotification(agendaData, person.id);
+    const titleClass = hasNotification ? "text-cta" : isNew ? "text-foreground" : isSelected ? "text-foreground" : "text-muted-foreground";
+    return (
+      <div
+        key={person.id}
+        className={`group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm w-full text-left cursor-pointer select-none transition-colors overflow-hidden ${isSelected ? "bg-accent" : "hover:bg-accent/70"}`}
+        onClick={() => onSelect(person.id)}
+        data-testid={`person-row-${person.id}`}
+      >
+        <User className={`h-3.5 w-3.5 shrink-0 ${titleClass}`} />
+        <span className={`truncate flex-1 min-w-0 pr-2 ${titleClass}`}>
+          {person.name}
+          {person.nicknames && person.nicknames.length > 0 && (
+            <span className="text-xs text-muted-foreground ml-1">({person.nicknames[0]})</span>
+          )}
+        </span>
+        {person.private && (
+          <Shield className="h-3 w-3 text-muted-foreground/50 shrink-0" />
+        )}
+      </div>
+    );
+  }, [selectedId, onSelect, agendaData]);
+
+  return (
+    <div className="space-y-1" data-testid="people-list-view">
+      {showQuickAdd && (
+        <div className="p-2 border-b mb-1">
+          <div className="space-y-2">
+            <Input
+              ref={quickAddRef}
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Name"
+              className="h-8 text-sm"
+              onKeyDown={(e) => { if (e.key === "Enter") handleQuickAdd(); if (e.key === "Escape") onQuickAddClose?.(); }}
+              data-testid="input-new-person-name"
+            />
+            <div className="flex gap-2">
+              <Select value={newCabinet} onValueChange={setNewCabinet}>
+                <SelectTrigger className="h-8 text-xs flex-1" data-testid="select-new-person-cabinet">
+                  <SelectValue placeholder="Level" />
+                </SelectTrigger>
+                <SelectContent>
+                  {sortedLevels.map((level) => (
+                    <SelectItem key={level.id} value={level.id}>{level.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                size="sm"
+                onClick={handleQuickAdd}
+                disabled={!newName.trim() || createMutation.isPending}
+                data-testid="button-confirm-add-person"
+              >
+                {createMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Add"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={onRequestQuickAdd}
+        className="flex items-center gap-2 w-full px-2 py-1.5 text-sm text-cta hover:text-cta/80 hover:bg-accent/70 rounded-md transition-colors"
+        data-testid="button-new-person-row"
+      >
+        <Plus className="h-3.5 w-3.5 shrink-0" />
+        <span>New Person</span>
+      </button>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        </div>
+      ) : people.length === 0 && !searchQuery ? (
+        <div className="text-center py-8 px-4">
+          <Users className="h-8 w-8 text-muted-foreground/50 mx-auto mb-2" />
+          <p className="text-xs text-muted-foreground" data-testid="text-no-people">No people yet</p>
+        </div>
+      ) : people.length === 0 && searchQuery ? (
+        <div className="text-center py-8 px-4">
+          <p className="text-xs text-muted-foreground" data-testid="text-no-search-results">
+            No results for "{searchQuery}"
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-1">
+          {surfacedItems.length > 0 && (
+            <PeopleGroupSection
+              label="Surface"
+              count={surfacedItems.length}
+              defaultOpen
+              forceOpen={searchQuery.length > 0}
+              testId="people-group-surface"
+            >
+              {surfacedItems.map(item => (
+                <SurfacedPersonRow
+                  key={item.id}
+                  item={item}
+                  dateLabel={surfacedDateLabel(item)}
+                  onSurfaceChange={() => {
+                    queryClient.invalidateQueries({ queryKey: ["/api/simple/feed"] });
+                    queryClient.invalidateQueries({ queryKey: ["/api/people/agenda"] });
+                  }}
+                />
+              ))}
+            </PeopleGroupSection>
+          )}
+          {sortedLevels.map((level) => {
+            const group = groupedPeople[level.id];
+            if (!group || group.length === 0) return null;
+            return (
+              <PeopleGroupSection
+                key={level.id}
+                label={level.name}
+                count={group.length}
+                defaultOpen={false}
+                forceOpen={searchQuery.length > 0}
+                testId={`people-group-${level.id}`}
+              >
+                {group.map(renderPersonRow)}
+              </PeopleGroupSection>
+            );
+          })}
+          {searchQuery && (() => {
+            const ungrouped = people.filter(person => !sortedLevels.some(level => level.id === person.cabinetLevel));
+            if (ungrouped.length === 0) return null;
+            return (
+              <PeopleGroupSection label="Other" count={ungrouped.length} defaultOpen={false} testId="people-group-other">
+                {ungrouped.map(renderPersonRow)}
+              </PeopleGroupSection>
+            );
+          })()}
+        </div>
+      )}
+
+      {(importPending > 0 || visibleImportCandidates.length > 0) && (
+        <PeopleGroupSection
+          label="IMPORT"
+          count={importPending}
+          defaultOpen
+          forceOpen={searchQuery.length > 0}
+          testId="people-group-import"
+        >
+          {visibleImportCandidates.map(candidate => {
+            const selected = selectedImportEmail === candidate.email;
+            return (
+              <button
+                key={candidate.email}
+                type="button"
+                className={`w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-left transition-colors overflow-hidden ${selected ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70"}`}
+                onClick={() => onSelectImportCandidate?.(candidate.email)}
+                data-testid={`candidate-row-${candidate.email}`}
+              >
+                <Mail className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate flex-1 min-w-0">{candidate.name || candidate.email.split("@")[0]}</span>
+                <span className="text-[10px] text-muted-foreground shrink-0">{candidate.threadCount}t</span>
+              </button>
+            );
+          })}
+        </PeopleGroupSection>
+      )}
+    </div>
+  );
+}
+
+function PeopleGroupSection({ label, count, defaultOpen, testId, forceOpen, children }: {
+  label: string;
+  count: number;
+  defaultOpen: boolean;
+  testId: string;
+  forceOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const storageKey = `people:list:${testId}:open`;
+  const [open, setOpen] = useState(() => {
+    if (typeof window === "undefined") return defaultOpen;
+    const stored = window.localStorage.getItem(storageKey);
+    if (stored === "true") return true;
+    if (stored === "false") return false;
+    return defaultOpen;
+  });
+  const effectiveOpen = forceOpen || open;
+  const handleOpenChange = useCallback((nextOpen: boolean) => {
+    if (forceOpen) return;
+    setOpen(nextOpen);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(storageKey, String(nextOpen));
+    }
+  }, [forceOpen, storageKey]);
+
+  return (
+    <Collapsible open={effectiveOpen} onOpenChange={handleOpenChange}>
+      <CollapsibleTrigger
+        className="flex items-center gap-1.5 w-full px-2 py-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider hover-elevate rounded-md"
+        data-testid={`button-toggle-${testId}`}
+      >
+        <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${effectiveOpen ? "rotate-90" : ""}`} />
+        {label} <span className="text-xs font-normal">({count})</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="space-y-0.5 mt-0.5">
+          {children}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function NotesTab({ person, onUpdate }: { person: Person; onUpdate: () => void }) {
+  const { toast } = useToast();
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+
+  const selectedNoteForFocus = useMemo(
+    () => (person.notes || []).find((n) => n.id === selectedNoteId) || null,
+    [person.notes, selectedNoteId]
+  );
+  useFocusContext(
+    selectedNoteId
+      ? {
+          entity: {
+            type: "note",
+            id: selectedNoteId,
+            label: selectedNoteForFocus?.title || `${person.name}: note`,
+          },
+        }
+      : null
+  );
+  const [editingNote, setEditingNote] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editContent, setEditContent] = useState("");
+  const [newTitle, setNewTitle] = useState("");
+  const [newContent, setNewContent] = useState("");
+  const [showNewNote, setShowNewNote] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; preview: string } | null>(null);
+
+  const addMutation = useMutation({
+    mutationFn: async (data: { title: string; content: string }) => {
+      const res = await apiRequest("POST", `/api/people/${person.id}/notes`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/people", person.id] });
+      setNewTitle("");
+      setNewContent("");
+      setShowNewNote(false);
+      onUpdate();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to add note", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ noteId, title, content }: { noteId: string; title: string; content: string }) => {
+      const res = await apiRequest("PATCH", `/api/people/${person.id}/notes/${noteId}`, { title, content });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/people", person.id] });
+      setEditingNote(null);
+      onUpdate();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to update note", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (noteId: string) => {
+      const res = await apiRequest("DELETE", `/api/people/${person.id}/notes/${noteId}`);
+      return res.json();
+    },
+    onSuccess: (_data: any, noteId: string) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/people", person.id] });
+      if (selectedNoteId === noteId) setSelectedNoteId(null);
+      onUpdate();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to delete note", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const sortedNotes = useMemo(() => {
+    return [...person.notes].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [person.notes]);
+
+  const selectedNote = useMemo(() => {
+    return sortedNotes.find(n => n.id === selectedNoteId) || null;
+  }, [sortedNotes, selectedNoteId]);
+
+  return (
+    <div className="flex gap-3 min-h-[300px]" data-testid="notes-tab">
+      <div className="w-48 shrink-0 flex flex-col gap-1">
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full justify-start gap-1"
+          onClick={() => { setShowNewNote(true); setSelectedNoteId(null); setEditingNote(null); }}
+          data-testid="button-new-note"
+        >
+          <Plus className="h-3.5 w-3.5" /> New Note
+        </Button>
+        <ScrollArea className="flex-1 max-h-[400px]">
+          <div className="space-y-0.5 mt-1">
+            {sortedNotes.map((note) => (
+              <div
+                key={note.id}
+                className={`group flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm cursor-pointer select-none transition-colors ${
+                  selectedNoteId === note.id ? "bg-primary/10 text-foreground" : "hover-elevate"
+                }`}
+                onClick={() => { setSelectedNoteId(note.id); setShowNewNote(false); setEditingNote(null); }}
+                data-testid={`note-sidebar-${note.id}`}
+              >
+                <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs truncate">{note.title || "Untitled"}</p>
+                  <span className="text-xs text-muted-foreground">{formatShortDate(note.createdAt)}</span>
+                </div>
+              </div>
+            ))}
+            {sortedNotes.length === 0 && !showNewNote && (
+              <p className="text-xs text-muted-foreground text-center py-4" data-testid="text-no-notes">No notes yet</p>
+            )}
+          </div>
+        </ScrollArea>
+      </div>
+
+      <div className="flex-1 min-w-0">
+        {showNewNote ? (
+          <Card data-testid="new-note-form">
+            <CardContent className="py-3 px-4 space-y-2">
+              <Input
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                placeholder="Note title..."
+                className="text-sm font-medium"
+                data-testid="input-new-note-title"
+              />
+              <Textarea
+                value={newContent}
+                onChange={(e) => setNewContent(e.target.value)}
+                placeholder="Write your note in markdown..."
+                className="min-h-[180px] resize-none text-sm font-mono"
+                data-testid="textarea-new-note"
+              />
+              <div className="flex gap-1 justify-end">
+                <Button variant="ghost" size="sm" onClick={() => { setShowNewNote(false); setNewTitle(""); setNewContent(""); }} data-testid="button-cancel-new-note">
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => addMutation.mutate({ title: newTitle.trim() || "Untitled", content: newContent })}
+                  disabled={!newContent.trim() || addMutation.isPending}
+                  data-testid="button-add-note"
+                >
+                  {addMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  <span className="ml-1">Save</span>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ) : selectedNote ? (
+          <Card data-testid={`note-${selectedNote.id}`}>
+            <CardContent className="py-3 px-4">
+              {editingNote === selectedNote.id ? (
+                <div className="space-y-2">
+                  <Input
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    placeholder="Note title..."
+                    className="text-sm font-medium"
+                    data-testid={`input-edit-note-title-${selectedNote.id}`}
+                  />
+                  <Textarea
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    className="min-h-[180px] resize-none text-sm font-mono"
+                    data-testid={`textarea-edit-note-${selectedNote.id}`}
+                  />
+                  <div className="flex gap-1 justify-end">
+                    <Button variant="ghost" size="sm" onClick={() => setEditingNote(null)}>Cancel</Button>
+                    <Button
+                      size="sm"
+                      onClick={() => updateMutation.mutate({ noteId: selectedNote.id, title: editTitle, content: editContent })}
+                      disabled={updateMutation.isPending}
+                      data-testid={`button-save-note-${selectedNote.id}`}
+                    >
+                      {updateMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                      <span className="ml-1">Save</span>
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <div>
+                      <h3 className="text-base font-semibold" data-testid={`text-note-title-${selectedNote.id}`}>{selectedNote.title || "Untitled"}</h3>
+                      <span className="text-xs text-muted-foreground">
+                        {formatShortDate(selectedNote.createdAt)}
+                        {selectedNote.updatedAt !== selectedNote.createdAt && ` (edited ${formatShortDate(selectedNote.updatedAt)})`}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => { setEditingNote(selectedNote.id); setEditTitle(selectedNote.title || ""); setEditContent(selectedNote.content); }}
+                        data-testid={`button-edit-note-${selectedNote.id}`}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => setDeleteTarget({ id: selectedNote.id, preview: selectedNote.title || selectedNote.content.slice(0, 50) })}
+                        data-testid={`button-delete-note-${selectedNote.id}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="prose prose-sm dark:prose-invert max-w-none text-sm" data-testid={`text-note-content-${selectedNote.id}`}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedNote.content}</ReactMarkdown>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="flex items-center justify-center h-full text-sm text-muted-foreground" data-testid="text-select-note">
+            Select a note or create a new one
+          </div>
+        )}
+      </div>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete note</AlertDialogTitle>
+            <AlertDialogDescription>Delete "{deleteTarget?.preview}"? This cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground" onClick={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null); } }}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+
+function InteractionsTab({ person, onUpdate }: { person: Person; onUpdate: () => void }) {
+  const { toast } = useToast();
+  const [showAdd, setShowAdd] = useState(false);
+  const [newType, setNewType] = useState<string>("message");
+  const [newSummary, setNewSummary] = useState("");
+  const [newDate, setNewDate] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  });
+  const [newDirection, setNewDirection] = useState<string>("mutual");
+  const [newMeaningfulness, setNewMeaningfulness] = useState<string>("medium");
+  const [newResponseOwed, setNewResponseOwed] = useState(false);
+  const [newResponseDueBy, setNewResponseDueBy] = useState<string>("");
+  const [newCapitalImpact, setNewCapitalImpact] = useState<string>("neutral");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+
+  const clearMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", `/api/people/${person.id}/interactions`);
+    },
+    onSuccess: () => {
+      onUpdate();
+      toast({ title: `${person.name} interactions cleared` });
+      setShowClearConfirm(false);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to clear", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const addMutation = useMutation({
+    mutationFn: async (data: Record<string, unknown>) => {
+      const res = await apiRequest("POST", `/api/people/${person.id}/interactions`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/people", person.id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/people"] });
+      toast({ title: `${person.name} interaction logged` });
+      setShowAdd(false);
+      setNewSummary("");
+      setNewDirection("mutual");
+      setNewMeaningfulness("medium");
+      setNewResponseOwed(false);
+      setNewResponseDueBy("");
+      setNewCapitalImpact("neutral");
+      onUpdate();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to log interaction", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (interactionId: string) => {
+      const res = await apiRequest("DELETE", `/api/people/${person.id}/interactions/${interactionId}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/people", person.id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/people"] });
+      toast({ title: "Interaction deleted" });
+      onUpdate();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to delete", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const sorted = useMemo(() => {
+    return [...person.interactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [person.interactions]);
+
+  return (
+    <div className="space-y-3" data-testid="interactions-tab">
+      <ContextPacket person={person} />
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">{sorted.length} interaction{sorted.length !== 1 ? "s" : ""}</span>
+        <div className="flex items-center gap-1">
+          {sorted.length > 0 && (
+            <Button variant="ghost" size="sm" onClick={() => setShowClearConfirm(true)} data-testid="button-clear-interactions">
+              <Trash2 className="h-3.5 w-3.5 mr-1" /> Clear
+            </Button>
+          )}
+          <Button variant="default" size="sm" onClick={() => setShowAdd(!showAdd)} data-testid="button-log-interaction">
+            <Plus className="h-3.5 w-3.5 mr-1" /> Log
+          </Button>
+        </div>
+      </div>
+
+      <AlertDialog open={showClearConfirm} onOpenChange={setShowClearConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear all interactions?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove all {sorted.length} interaction{sorted.length !== 1 ? "s" : ""} for {person.name}. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-clear">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => clearMutation.mutate()}
+              disabled={clearMutation.isPending}
+              className="bg-destructive text-destructive-foreground"
+              data-testid="button-confirm-clear"
+            >
+              {clearMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+              Confirm Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {showAdd && (
+        <Card>
+          <CardContent className="pt-3 pb-2 space-y-2">
+            <div className="flex gap-2 flex-wrap">
+              <div className="w-32">
+                <Select value={newType} onValueChange={(val) => {
+                  setNewType(val);
+                  const outboundTypes = ["email", "message", "text"];
+                  const mutualTypes = ["call", "meeting", "in_person", "video"];
+                  const inboundTypes = ["gift", "favor", "support", "introduction"];
+                  if (outboundTypes.includes(val)) setNewDirection("outbound");
+                  else if (inboundTypes.includes(val)) setNewDirection("inbound");
+                  else if (mutualTypes.includes(val)) setNewDirection("mutual");
+                  else setNewDirection("mutual");
+                }}>
+                  <SelectTrigger data-testid="select-interaction-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="message">Message</SelectItem>
+                    <SelectItem value="call">Call</SelectItem>
+                    <SelectItem value="meeting">Meeting</SelectItem>
+                    <SelectItem value="email">Email</SelectItem>
+                    <SelectItem value="text">Text</SelectItem>
+                    <SelectItem value="in_person">In Person</SelectItem>
+                    <SelectItem value="video">Video</SelectItem>
+                    <SelectItem value="social">Social</SelectItem>
+                    <SelectItem value="gift">Gift</SelectItem>
+                    <SelectItem value="introduction">Introduction</SelectItem>
+                    <SelectItem value="favor">Favor</SelectItem>
+                    <SelectItem value="support">Support</SelectItem>
+                    <SelectItem value="note">Note</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Input
+                type="date"
+                value={newDate}
+                onChange={(e) => setNewDate(e.target.value)}
+                className="w-36"
+                data-testid="input-interaction-date"
+              />
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <div className="w-28">
+                <Select value={newDirection} onValueChange={setNewDirection}>
+                  <SelectTrigger data-testid="select-interaction-direction" className="text-xs">
+                    <SelectValue placeholder="Direction" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="inbound">Inbound</SelectItem>
+                    <SelectItem value="outbound">Outbound</SelectItem>
+                    <SelectItem value="mutual">Mutual</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="w-32">
+                <Select value={newMeaningfulness} onValueChange={setNewMeaningfulness}>
+                  <SelectTrigger data-testid="select-interaction-meaningfulness" className="text-xs">
+                    <SelectValue placeholder="Weight" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {["gift", "favor", "support", "introduction", "meeting", "in_person"].includes(newType) && (
+              <div className="w-28">
+                <Select value={newCapitalImpact} onValueChange={setNewCapitalImpact}>
+                  <SelectTrigger data-testid="select-capital-impact" className="text-xs">
+                    <SelectValue placeholder="Capital" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="neutral">Neutral</SelectItem>
+                    <SelectItem value="deposit">Deposit</SelectItem>
+                    <SelectItem value="withdrawal">Withdrawal</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              )}
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={newResponseOwed}
+                  onChange={(e) => {
+                    setNewResponseOwed(e.target.checked);
+                    if (e.target.checked && !newResponseDueBy) {
+                      const d = new Date();
+                      d.setDate(d.getDate() + 3);
+                      setNewResponseDueBy(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+                    }
+                  }}
+                  className="rounded"
+                  data-testid="checkbox-response-owed"
+                />
+                Response owed
+              </label>
+              {newResponseOwed && (
+                <input
+                  type="date"
+                  value={newResponseDueBy}
+                  onChange={(e) => setNewResponseDueBy(e.target.value)}
+                  className="text-xs bg-background border rounded px-1.5 py-0.5 w-32"
+                  data-testid="input-response-due-by"
+                />
+              )}
+            </div>
+            <Textarea
+              value={newSummary}
+              onChange={(e) => setNewSummary(e.target.value)}
+              placeholder="What happened?"
+              className="min-h-[50px] resize-none text-sm"
+              data-testid="textarea-interaction-summary"
+            />
+            <div className="flex gap-1 justify-end">
+              <Button variant="ghost" size="sm" onClick={() => setShowAdd(false)}>Cancel</Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  const data: Record<string, unknown> = { date: newDate, type: newType, summary: newSummary };
+                  if (newDirection !== "mutual") data.direction = newDirection;
+                  data.meaningfulness = newMeaningfulness;
+                  if (newResponseOwed) {
+                    data.responseOwed = true;
+                    if (newResponseDueBy) data.responseDueBy = newResponseDueBy;
+                  }
+                  if (newCapitalImpact !== "neutral") data.capitalImpact = newCapitalImpact;
+                  addMutation.mutate(data);
+                }}
+                disabled={!newSummary.trim() || addMutation.isPending}
+                data-testid="button-save-interaction"
+              >
+                {addMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+                Save
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {sorted.length === 0 ? (
+        <p className="text-sm text-muted-foreground py-4 text-center" data-testid="text-no-interactions">
+          No interactions logged yet. Click "Log" to record your first interaction.
+        </p>
+      ) : (
+        <div className="relative pl-4">
+          <div className="absolute left-2 top-0 bottom-0 w-px bg-border" />
+          <div className="space-y-2">
+            {sorted.map((interaction, idx) => {
+              const Icon = INTERACTION_ICONS[interaction.type] || MessageSquare;
+              const isExpanded = expandedId === interaction.id;
+              const hasContext = !!interaction.context;
+              const dirColor = interaction.direction === "inbound" ? "text-info" : interaction.direction === "outbound" ? "text-success" : "";
+              const meaningColor = interaction.meaningfulness === "high" ? "bg-warning" : interaction.meaningfulness === "medium" ? "bg-success" : "";
+              const d = new Date(interaction.date);
+              const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+              const prevDate = idx > 0 ? new Date(sorted[idx - 1].date) : null;
+              const prevMonthKey = prevDate ? `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}` : null;
+              const showMonthHeader = monthKey !== prevMonthKey;
+              return (
+                <div key={interaction.id}>
+                {showMonthHeader && (
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground pt-2 pb-1 -ml-4" data-testid={`month-header-${monthKey}`}>
+                    {d.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+                  </div>
+                )}
+                <div className="relative group" data-testid={`interaction-${interaction.id}`}>
+                  <div className={`absolute -left-4 top-2.5 h-2 w-2 rounded-full ring-2 ring-background ${meaningColor || "bg-muted-foreground/30"}`} />
+                  <div
+                    className={`flex items-start gap-2 py-1 ${hasContext ? "cursor-pointer" : ""}`}
+                    onClick={() => hasContext && setExpandedId(isExpanded ? null : interaction.id)}
+                  >
+                    <div className="flex items-center gap-0.5 shrink-0 mt-0.5">
+                      <Icon className={`h-3.5 w-3.5 ${dirColor || "text-muted-foreground"}`} />
+                      {interaction.direction && interaction.direction !== "mutual" && (
+                        interaction.direction === "inbound"
+                          ? <ArrowDown className="h-2.5 w-2.5 text-info" />
+                          : <ArrowUp className="h-2.5 w-2.5 text-success" />
+                      )}
+                      {hasContext && (
+                        isExpanded
+                          ? <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                          : <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm">{interaction.summary}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs text-muted-foreground">{formatShortDate(interaction.date)}</span>
+                        {interaction.responseOwed && (
+                          <Badge variant="destructive" className="text-xs px-1 py-0">response owed</Badge>
+                        )}
+                        {interaction.capitalImpact && interaction.capitalImpact !== "neutral" && (
+                          <Badge variant="outline" className={`text-xs px-1 py-0 ${interaction.capitalImpact === "deposit" ? "text-success-foreground" : "text-error-foreground"}`}>
+                            {interaction.capitalImpact}
+                          </Badge>
+                        )}
+                        {interaction.meaningfulness && interaction.meaningfulness !== "low" && (
+                          <Badge variant="outline" className="text-xs px-1 py-0">{interaction.meaningfulness}</Badge>
+                        )}
+                      </div>
+                    </div>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={(e) => { e.stopPropagation(); deleteMutation.mutate(interaction.id); }}
+                      data-testid={`button-delete-interaction-${interaction.id}`}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  {isExpanded && interaction.context && (
+                    <div className="ml-8 mt-1 mb-2 text-xs text-muted-foreground bg-muted/50 rounded-md p-2 border border-border/50">
+                      {interaction.context}
+                    </div>
+                  )}
+                </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DatesTab({ person, onUpdate }: { person: Person; onUpdate: () => void }) {
+  const { toast } = useToast();
+  const [showAdd, setShowAdd] = useState(false);
+  const [newLabel, setNewLabel] = useState("");
+  const [newDate, setNewDate] = useState("");
+  const [newRecurrence, setNewRecurrence] = useState<"annual" | "one-time">("annual");
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; label: string } | null>(null);
+
+  const addMutation = useMutation({
+    mutationFn: async (data: { label: string; date: string; recurrence: "annual" | "one-time" }) => {
+      const res = await apiRequest("POST", `/api/people/${person.id}/dates`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/people", person.id] });
+      setShowAdd(false);
+      setNewLabel("");
+      setNewDate("");
+      onUpdate();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to add date", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (dateId: string) => {
+      const res = await apiRequest("DELETE", `/api/people/${person.id}/dates/${dateId}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/people", person.id] });
+      onUpdate();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to delete date", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const sortedDates = useMemo(() => {
+    const now = new Date();
+    return [...person.importantDates].sort((a, b) => {
+      const aDate = new Date(a.date);
+      const bDate = new Date(b.date);
+      if (a.recurrence === "annual") {
+        aDate.setFullYear(now.getFullYear());
+        if (aDate < now) aDate.setFullYear(now.getFullYear() + 1);
+      }
+      if (b.recurrence === "annual") {
+        bDate.setFullYear(now.getFullYear());
+        if (bDate < now) bDate.setFullYear(now.getFullYear() + 1);
+      }
+      return aDate.getTime() - bDate.getTime();
+    });
+  }, [person.importantDates]);
+
+  return (
+    <div className="space-y-3" data-testid="dates-tab">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">{sortedDates.length} date{sortedDates.length !== 1 ? "s" : ""}</span>
+        <Button variant="outline" size="sm" onClick={() => setShowAdd(!showAdd)} data-testid="button-add-date">
+          <Plus className="h-3.5 w-3.5 mr-1" /> Add
+        </Button>
+      </div>
+
+      {showAdd && (
+        <Card>
+          <CardContent className="pt-3 pb-2 space-y-2">
+            <div className="flex gap-2 flex-wrap">
+              <Input
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.target.value)}
+                placeholder="e.g. Birthday"
+                className="flex-1 min-w-[120px]"
+                data-testid="input-date-label"
+              />
+              <Input
+                type="date"
+                value={newDate}
+                onChange={(e) => setNewDate(e.target.value)}
+                className="w-36"
+                data-testid="input-date-value"
+              />
+              <Select value={newRecurrence} onValueChange={(v) => setNewRecurrence(v as "annual" | "one-time")}>
+                <SelectTrigger className="w-28" data-testid="select-date-recurrence">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="annual">Annual</SelectItem>
+                  <SelectItem value="one-time">One-time</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex gap-1 justify-end">
+              <Button variant="ghost" size="sm" onClick={() => setShowAdd(false)}>Cancel</Button>
+              <Button
+                size="sm"
+                onClick={() => addMutation.mutate({ label: newLabel, date: newDate, recurrence: newRecurrence })}
+                disabled={!newLabel.trim() || !newDate || addMutation.isPending}
+                data-testid="button-save-date"
+              >
+                Save
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {sortedDates.length === 0 ? (
+        <p className="text-sm text-muted-foreground py-4 text-center" data-testid="text-no-dates">
+          No important dates. Click "Add" to track birthdays, anniversaries, and more.
+        </p>
+      ) : (
+        <div className="space-y-1.5">
+          {sortedDates.map((d) => {
+            const dateObj = new Date(d.date + "T00:00:00");
+            const now = new Date();
+            let nextOccurrence = dateObj;
+            if (d.recurrence === "annual") {
+              nextOccurrence = new Date(dateObj);
+              nextOccurrence.setFullYear(now.getFullYear());
+              if (nextOccurrence < now) nextOccurrence.setFullYear(now.getFullYear() + 1);
+            }
+            const daysUntil = Math.ceil((nextOccurrence.getTime() - now.getTime()) / 86400000);
+            const isUpcoming = daysUntil >= 0 && daysUntil <= 14;
+
+            return (
+              <div key={d.id} className="flex items-center gap-2 group py-1 px-1 rounded-md hover-elevate" data-testid={`date-${d.id}`}>
+                <Calendar className={`h-3.5 w-3.5 shrink-0 ${isUpcoming ? "text-warning" : "text-muted-foreground"}`} />
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm">{d.label}</span>
+                  <span className="text-xs text-muted-foreground ml-2">
+                    {formatShortDate(d.date)}
+                    {d.recurrence === "annual" && " (annual)"}
+                  </span>
+                </div>
+                {isUpcoming && (
+                  <Badge variant="secondary" className="text-xs shrink-0">
+                    {daysUntil === 0 ? "Today" : daysUntil === 1 ? "Tomorrow" : `In ${daysUntil}d`}
+                  </Badge>
+                )}
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={() => setDeleteTarget({ id: d.id, label: d.label })}
+                  data-testid={`button-delete-date-${d.id}`}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete date</AlertDialogTitle>
+            <AlertDialogDescription>Remove "{deleteTarget?.label}"?</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground" onClick={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null); } }}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+function IdentityTab({ person, onUpdate }: { person: Person; onUpdate: () => void }) {
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [content, setContent] = useState(person.identityContent || "");
+
+  useEffect(() => {
+    setContent(person.identityContent || "");
+  }, [person.id, person.identityContent]);
+
+  const saveMutation = useMutation({
+    mutationFn: async (identityContent: string) => {
+      const res = await apiRequest("PUT", `/api/people/${person.id}/identity`, { identityContent });
+      return res.json();
+    },
+    onSuccess: () => {
+      setEditing(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/people", person.id] });
+      onUpdate();
+      toast({ title: "Identity saved" });
+    },
+    onError: () => {
+      toast({ title: "Failed to save identity", variant: "destructive" });
+    },
+  });
+
+  const migrateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/people/migrate-identity");
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/people", person.id] });
+      onUpdate();
+      const migrated = (data.xyzMigrated ? getInstanceName() : "") + (data.partnerMigrated ? (data.xyzMigrated ? " & Partner" : "Partner") : "");
+      toast({ title: migrated ? `Migrated: ${migrated}` : "No documents to migrate (already migrated or no source documents found)" });
+    },
+    onError: () => {
+      toast({ title: "Migration failed", variant: "destructive" });
+    },
+  });
+
+  return (
+    <div className="space-y-3" data-testid="identity-tab">
+      <Card>
+        <CardHeader className="pb-2 flex flex-row items-center justify-between gap-1">
+          <CardTitle className="text-sm font-medium">Identity Document</CardTitle>
+          <div className="flex items-center gap-1 flex-wrap">
+            {!person.identityContent && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => migrateMutation.mutate()}
+                disabled={migrateMutation.isPending}
+                data-testid="button-migrate-identity"
+              >
+                {migrateMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
+                Migrate from Documents
+              </Button>
+            )}
+            {!editing ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setEditing(true)}
+                data-testid="button-edit-identity"
+              >
+                <Edit3 className="h-3.5 w-3.5 mr-1.5" /> Edit
+              </Button>
+            ) : (
+              <div className="flex gap-1 flex-wrap">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { setEditing(false); setContent(person.identityContent || ""); }}
+                  data-testid="button-cancel-identity"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => saveMutation.mutate(content)}
+                  disabled={saveMutation.isPending}
+                  data-testid="button-save-identity"
+                >
+                  {saveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+                  Save
+                </Button>
+              </div>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {editing ? (
+            <Textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              className="min-h-[300px] font-mono text-sm"
+              data-testid="input-identity-content"
+            />
+          ) : person.identityContent ? (
+            <div className="prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap text-sm" data-testid="text-identity-content">
+              {person.identityContent}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground py-4 text-center" data-testid="text-identity-empty">
+              No identity document set for this person. Click "Edit" to write one, or "Migrate from Documents" to import from SOUL.md / USER.md.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function AnalysisTab({ person }: { person: Person }) {
+  const hasData = person.interactions.length > 0 || person.notes.length > 0;
+
+  const interactionBreakdown = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const i of person.interactions) {
+      counts[i.type] = (counts[i.type] || 0) + 1;
+    }
+    return counts;
+  }, [person.interactions]);
+
+  const avgFrequency = useMemo(() => {
+    if (person.interactions.length < 2) return null;
+    const sorted = [...person.interactions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const first = new Date(sorted[0].date).getTime();
+    const last = new Date(sorted[sorted.length - 1].date).getTime();
+    const days = (last - first) / 86400000;
+    if (days === 0) return null;
+    return Math.round(days / (sorted.length - 1));
+  }, [person.interactions]);
+
+  return (
+    <div className="space-y-4" data-testid="analysis-tab">
+      {person.private ? (
+        <Card>
+          <CardContent className="py-8 text-center">
+            <Shield className="h-8 w-8 text-muted-foreground/30 mx-auto mb-3" />
+            <p className="text-sm text-muted-foreground" data-testid="text-analysis-private">
+              AI analysis is disabled for this person. Toggle privacy in profile settings to enable.
+            </p>
+          </CardContent>
+        </Card>
+      ) : !hasData ? (
+        <Card>
+          <CardContent className="py-8 text-center">
+            <TrendingUp className="h-8 w-8 text-muted-foreground/30 mx-auto mb-3" />
+            <p className="text-sm text-muted-foreground" data-testid="text-analysis-no-data">
+              Add interactions and notes to unlock behavioral analysis and predictions.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <TrendingUp className="h-4 w-4" />
+                Communication Patterns
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {Object.entries(interactionBreakdown).map(([type, count]) => {
+                  const Icon = INTERACTION_ICONS[type] || MessageSquare;
+                  return (
+                    <div key={type} className="flex items-center gap-2">
+                      <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span className="text-sm capitalize flex-1">{type}</span>
+                      <span className="text-sm font-mono tabular-nums">{count}</span>
+                    </div>
+                  );
+                })}
+                {avgFrequency !== null && (
+                  <div className="flex items-center gap-2 pt-2 border-t">
+                    <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-sm flex-1">Avg. frequency</span>
+                    <span className="text-sm font-mono tabular-nums">Every {avgFrequency}d</span>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <PredictiveInsightsCard person={person} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function PredictiveInsightsCard({ person }: { person: Person }) {
+  const [summary, setSummary] = useState<string | null>(person.aiSummary || null);
+
+  useEffect(() => {
+    setSummary(person.aiSummary || null);
+  }, [person.id, person.aiSummary]);
+
+  const { toast } = useToast();
+  const summarizeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/people/${person.id}/summarize`);
+      const data = await res.json();
+      return data.summary as string;
+    },
+    onSuccess: (data) => {
+      setSummary(data);
+      queryClient.invalidateQueries({ queryKey: ["/api/people", person.id] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2 space-y-0">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <Sparkles className="h-4 w-4" />
+          Predictive Insights
+        </CardTitle>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => summarizeMutation.mutate()}
+          disabled={summarizeMutation.isPending}
+          data-testid="button-summarize-person"
+        >
+          {summarizeMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Sparkles className="h-3 w-3 mr-1" />}
+          {summary ? "Refresh" : "Analyze"}
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {summarizeMutation.isPending ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="text-summarize-loading">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Analyzing {person.name}...
+          </div>
+        ) : summary ? (
+          <p className="text-sm leading-relaxed whitespace-pre-wrap" data-testid="text-predictive-summary">{summary}</p>
+        ) : summarizeMutation.isError ? (
+          <p className="text-sm text-destructive" data-testid="text-summarize-error">
+            Failed to generate analysis. Try again.
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground" data-testid="text-predictive-placeholder">
+            Tap Analyze to generate a predictive behavioral model of {person.name} based on all available data — profile, identity, notes, interactions, and linked memories.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+
+function ProfileTreeRow({
+  label,
+  icon,
+  hasValue,
+  showEmpty,
+  children,
+  expandedContent,
+  testId,
+}: {
+  label: ReactNode;
+  icon?: ReactNode;
+  hasValue: boolean;
+  showEmpty: boolean;
+  children: ReactNode;
+  expandedContent?: ReactNode;
+  testId?: string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  if (!hasValue && !showEmpty) return null;
+
+  const canExpand = Boolean(expandedContent);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
+      <div className="group last:border-b-0">
+        <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/70">
+          <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+            <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground">{icon}</span>
+            <span className="truncate font-medium text-muted-foreground">{label}</span>
+          </div>
+          <div
+            className={cn(
+              "flex min-w-0 flex-1 items-center justify-end text-right",
+              "[&_input]:bg-muted/50 [&_textarea]:bg-muted/50 [&_[role=combobox]]:bg-muted/50",
+            )}
+          >
+            {children}
+          </div>
+          {canExpand ? (
+            <CollapsibleTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+                aria-label={`${open ? "Collapse" : "Expand"} ${typeof label === "string" ? label : "profile field"}`}
+              >
+                <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
+              </Button>
+            </CollapsibleTrigger>
+          ) : (
+            <span className="h-5 w-5 shrink-0" />
+          )}
+        </div>
+        {canExpand && (
+          <CollapsibleContent>
+            <div className="px-2 pb-2 pl-8 text-sm leading-relaxed text-foreground">
+              {expandedContent}
+            </div>
+          </CollapsibleContent>
+        )}
+      </div>
+    </Collapsible>
+  );
+}
+
+function ProfileSummaryRow({
+  person,
+  showEmptyFields,
+  onSave,
+}: {
+  person: Person;
+  showEmptyFields: boolean;
+  onSave: (updates: Partial<Person>) => void;
+}) {
+  const [draft, setDraft] = useState(person.quickSummary || "");
+
+  useEffect(() => {
+    setDraft(person.quickSummary || "");
+  }, [person.id, person.quickSummary]);
+
+  if (person.private) return null;
+
+  const save = () => {
+    const next = draft.trim();
+    if (next !== (person.quickSummary || "")) {
+      onSave({ quickSummary: next || undefined });
+    }
+  };
+
+  return (
+    <ProfileTreeRow
+      label={<span data-testid="label-summary">Summary</span>}
+      icon={<FileText className="h-3.5 w-3.5" />}
+      hasValue={Boolean(draft.trim())}
+      showEmpty={showEmptyFields}
+      expandedContent={
+        <Textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={save}
+          placeholder="Add summary"
+          className="min-h-24 resize-y text-sm"
+          data-testid="textarea-quick-summary"
+        />
+      }
+      testId="row-profile-summary"
+    >
+      <Input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={save}
+        placeholder="Add summary"
+        className="h-8 max-w-md truncate text-right"
+        data-testid="input-quick-summary"
+      />
+    </ProfileTreeRow>
+  );
+}
+
+function ContextPacket({ person }: { person: Person }) {
+  const lastInteraction = useMemo(() => {
+    if (person.interactions.length === 0) return null;
+    return [...person.interactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+  }, [person.interactions]);
+
+  const upcomingDates = useMemo(() => {
+    const now = new Date();
+    return person.importantDates.filter(d => {
+      const dateObj = new Date(d.date + "T00:00:00");
+      if (d.recurrence === "annual") {
+        dateObj.setFullYear(now.getFullYear());
+        if (dateObj < now) dateObj.setFullYear(now.getFullYear() + 1);
+      }
+      const daysUntil = Math.ceil((dateObj.getTime() - now.getTime()) / 86400000);
+      return daysUntil >= 0 && daysUntil <= 30;
+    });
+  }, [person.importantDates]);
+
+  const recentNotes = useMemo(() => {
+    return [...person.notes].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 2);
+  }, [person.notes]);
+
+  const hasContent = lastInteraction || upcomingDates.length > 0 || recentNotes.length > 0;
+
+  if (!hasContent) return null;
+
+  return (
+    <Card className="border-dashed" data-testid="context-packet">
+      <CardContent className="py-3 px-4">
+        <div className="flex items-center gap-1.5 mb-2">
+          <Sparkles className="h-3 w-3 text-muted-foreground" />
+          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Context</span>
+        </div>
+        <div className="space-y-1.5 text-xs">
+          {lastInteraction && (
+            <div className="flex items-center gap-1.5">
+              <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
+              <span className="text-muted-foreground">Last:</span>
+              <span>{lastInteraction.summary.slice(0, 60)}{lastInteraction.summary.length > 60 ? "..." : ""}</span>
+              <span className="text-muted-foreground ml-auto shrink-0">{daysAgo(lastInteraction.date)}</span>
+            </div>
+          )}
+          {upcomingDates.map(d => (
+            <div key={d.id} className="flex items-center gap-1.5">
+              <Calendar className="h-3 w-3 text-warning shrink-0" />
+              <span>{d.label}</span>
+              <span className="text-muted-foreground ml-auto shrink-0">{formatShortDate(d.date)}</span>
+            </div>
+          ))}
+          {recentNotes.map(n => (
+            <div key={n.id} className="flex items-center gap-1.5">
+              <Edit3 className="h-3 w-3 text-muted-foreground shrink-0" />
+              <span className="truncate">{n.content.slice(0, 80)}{n.content.length > 80 ? "..." : ""}</span>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+
+interface LinkedMemoryEntry {
+  id: number;
+  content: string;
+  title?: string;
+  summary?: string;
+  layer: string;
+  source: string;
+  sourceId?: string;
+  tags?: string[];
+  createdAt?: string;
+  metadata?: Record<string, unknown>;
+  linkId: number;
+}
+
+const PM_CATEGORY_MAP: Record<string, { label: string; key: string }> = {
+  "pm-cat:growth-edge": { label: "Growth Edges", key: "growth-edge" },
+  "pm-cat:skill-level": { label: "Skills", key: "skill-level" },
+  "pm-cat:decision-pattern": { label: "Decisions", key: "decision-pattern" },
+  "pm-cat:blind-spot": { label: "Blind Spots", key: "blind-spot" },
+  "pm-cat:motivation": { label: "Motivations", key: "motivation" },
+  "pm-cat:fear": { label: "Fears", key: "fear" },
+  "pm-cat:strength": { label: "Strengths", key: "strength" },
+  "pm-cat:trigger": { label: "Triggers", key: "trigger" },
+  "pm-cat:belief": { label: "Beliefs", key: "belief" },
+  "pm-cat:relational": { label: "Relational", key: "relational" },
+  "pm-cat:evolution": { label: "Evolution", key: "evolution" },
+};
+
+const RM_CATEGORY_MAP: Record<string, { label: string; icon: string }> = {
+  "dynamic": { label: "Dynamics", icon: "🔄" },
+  "preference": { label: "Preferences", icon: "💡" },
+  "channel": { label: "Channels", icon: "📡" },
+  "expertise": { label: "Expertise", icon: "🎯" },
+  "network": { label: "Network", icon: "🌐" },
+  "capital": { label: "Capital", icon: "🤝" },
+  "risk": { label: "Risks", icon: "⚠️" },
+  "repair": { label: "Repairs", icon: "🔧" },
+  "ritual": { label: "Rituals", icon: "📅" },
+  "opportunity": { label: "Opportunities", icon: "✨" },
+};
+
+interface RelationshipMemory {
+  id: string;
+  title: string;
+  content: string;
+  category: string;
+  tags: string[];
+  createdAt: string | null;
+  personName: string | null;
+}
+
+function isPersonModelEntry(memory: LinkedMemoryEntry): boolean {
+  return memory.tags?.includes("person-model") ?? false;
+}
+
+function getPersonModelCategory(memory: LinkedMemoryEntry): { tag: string; label: string } | null {
+  if (!memory.tags) return null;
+  for (const tag of memory.tags) {
+    if (tag.startsWith("pm-cat:") && PM_CATEGORY_MAP[tag]) {
+      return { tag, label: PM_CATEGORY_MAP[tag].label };
+    }
+  }
+  return null;
+}
+
+function getConfidenceColor(confidence: number): string {
+  if (confidence >= 0.7) return "bg-success";
+  if (confidence >= 0.4) return "bg-warning";
+  return "bg-error";
+}
+
+function PersonMemoriesTab({ personId, personName }: { personId: string; personName: string }) {
+  const { toast } = useToast();
+  const [filterMode, setFilterMode] = useState<"all" | "person-model" | "relationship">("all");
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+
+  const { data: memories, isLoading } = useQuery<LinkedMemoryEntry[]>({
+    queryKey: ["/api/memory/entity-links", "person", personId],
+    queryFn: async () => {
+      const res = await fetch(`/api/memory/entity-links/person/${personId}`);
+      if (!res.ok) throw new Error("Failed to fetch linked memories");
+      return res.json();
+    },
+  });
+
+  const { data: relationshipMemories, isLoading: rmLoading } = useQuery<RelationshipMemory[]>({
+    queryKey: ["/api/people", personId, "relationship-memories"],
+    queryFn: async () => {
+      const res = await fetch(`/api/people/${personId}/relationship-memories`);
+      if (!res.ok) throw new Error("Failed to fetch relationship memories");
+      return res.json();
+    },
+  });
+
+  const unlinkMutation = useMutation({
+    mutationFn: async (memoryId: number) => {
+      await apiRequest("DELETE", `/api/memory/entity-links/${memoryId}/person/${personId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/memory/entity-links", "person", personId] });
+      toast({ title: "Memory unlinked" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to unlink", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const personModelCount = useMemo(() =>
+    memories?.filter(isPersonModelEntry).length ?? 0,
+    [memories]
+  );
+
+  const rmCount = relationshipMemories?.length ?? 0;
+
+  const categoryCounts = useMemo(() => {
+    if (!memories) return {};
+    const counts: Record<string, number> = {};
+    for (const m of memories.filter(isPersonModelEntry)) {
+      const cat = getPersonModelCategory(m);
+      if (cat) counts[cat.tag] = (counts[cat.tag] || 0) + 1;
+    }
+    return counts;
+  }, [memories]);
+
+  const rmCategoryCounts = useMemo(() => {
+    if (!relationshipMemories) return {};
+    const counts: Record<string, number> = {};
+    for (const m of relationshipMemories) {
+      counts[m.category] = (counts[m.category] || 0) + 1;
+    }
+    return counts;
+  }, [relationshipMemories]);
+
+  const filteredMemories = useMemo(() => {
+    if (!memories) return [];
+    let result = memories;
+    if (filterMode === "person-model") {
+      result = result.filter(isPersonModelEntry);
+      if (selectedCategory) {
+        result = result.filter(m => m.tags?.includes(selectedCategory));
+      }
+    }
+    return result;
+  }, [memories, filterMode, selectedCategory]);
+
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newMemoryContent, setNewMemoryContent] = useState("");
+  const [newMemoryTags, setNewMemoryTags] = useState("");
+  const [newRmCategory, setNewRmCategory] = useState<string>("dynamic");
+
+  const addMemoryMutation = useMutation({
+    mutationFn: async ({ content, tags }: { content: string; tags: string[] }) => {
+      const entryRes = await apiRequest("POST", "/api/memory/entries", {
+        content,
+        source: "manual",
+        tags: tags.length > 0 ? tags : ["pm-cat:personal-note"],
+      });
+      const entry = await entryRes.json();
+      await apiRequest("POST", "/api/memory/entity-links", {
+        memoryId: entry.id,
+        entityType: "person",
+        entityId: personId,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/memory/entity-links", "person", personId] });
+      setNewMemoryContent("");
+      setNewMemoryTags("");
+      setShowAddForm(false);
+      toast({ title: "Memory added" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to add memory", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const addRelationshipMemoryMutation = useMutation({
+    mutationFn: async ({ content, category }: { content: string; category: string }) => {
+      await apiRequest("POST", `/api/people/${personId}/relationship-memories`, { content, category });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/people", personId, "relationship-memories"] });
+      setNewMemoryContent("");
+      setNewRmCategory("dynamic");
+      setShowAddForm(false);
+      toast({ title: "Relationship memory added" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to add memory", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const filteredRmMemories = useMemo(() => {
+    if (!relationshipMemories || filterMode !== "relationship") return [];
+    if (selectedCategory) {
+      return relationshipMemories.filter(m => m.category === selectedCategory);
+    }
+    return relationshipMemories;
+  }, [relationshipMemories, filterMode, selectedCategory]);
+
+  if (isLoading || rmLoading) {
+    return (
+      <div className="space-y-3 p-4" data-testid="person-memories-loading">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Skeleton key={i} className="h-20 w-full" />
+        ))}
+      </div>
+    );
+  }
+
+  const totalCount = (memories?.length ?? 0) + rmCount;
+  if (totalCount === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center" data-testid="person-memories-empty">
+        <Brain className="h-10 w-10 text-muted-foreground/30 mb-3" />
+        <h3 className="text-sm font-medium text-foreground mb-1">No memories yet</h3>
+        <p className="text-xs text-muted-foreground/70 max-w-xs mb-3">
+          Memories and relationship insights about {personName} will appear here as xyz learns.
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-xs gap-1"
+          onClick={() => setShowAddForm(true)}
+          data-testid="button-add-first-memory"
+        >
+          <Plus className="h-3 w-3" />
+          Add a memory
+        </Button>
+        {showAddForm && (
+          <Card className="mt-3 w-full max-w-sm border-primary/30" data-testid="add-memory-form-empty">
+            <CardContent className="p-3 space-y-2 text-left">
+              <Textarea
+                placeholder={`Add a memory about ${personName}...`}
+                value={newMemoryContent}
+                onChange={(e) => setNewMemoryContent(e.target.value)}
+                className="min-h-[60px] text-sm"
+                data-testid="input-memory-content-empty"
+              />
+              <div className="flex gap-2 justify-end">
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setShowAddForm(false); setNewMemoryContent(""); }} data-testid="button-cancel-memory-empty">
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-7 text-xs"
+                  disabled={!newMemoryContent.trim() || addMemoryMutation.isPending}
+                  onClick={() => addMemoryMutation.mutate({ content: newMemoryContent.trim(), tags: [] })}
+                  data-testid="button-save-memory-empty"
+                >
+                  {addMemoryMutation.isPending ? "Saving..." : "Save"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3" data-testid="person-memories-list">
+      <div className="flex items-center gap-1.5 flex-wrap" data-testid="person-memories-filter-bar">
+        <button
+          onClick={() => { setFilterMode("all"); setSelectedCategory(null); }}
+          className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+            filterMode === "all"
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted text-muted-foreground hover:text-foreground"
+          }`}
+          data-testid="filter-all-memories"
+        >
+          All Memories
+        </button>
+        <button
+          onClick={() => { setFilterMode("relationship"); setSelectedCategory(null); }}
+          className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors flex items-center ${
+            filterMode === "relationship"
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted text-muted-foreground hover:text-foreground"
+          }`}
+          data-testid="filter-relationship-model"
+        >
+          Relationship
+          {rmCount > 0 && (
+            <Badge variant="secondary" className="ml-1.5 text-xs font-mono px-1 py-0">{rmCount}</Badge>
+          )}
+        </button>
+        <button
+          onClick={() => { setFilterMode("person-model"); setSelectedCategory(null); }}
+          className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors flex items-center ${
+            filterMode === "person-model"
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted text-muted-foreground hover:text-foreground"
+          }`}
+          data-testid="filter-person-model"
+        >
+          Person Model
+          {personModelCount > 0 && (
+            <Badge variant="secondary" className="ml-1.5 text-xs font-mono px-1 py-0">{personModelCount}</Badge>
+          )}
+        </button>
+      </div>
+
+      {filterMode === "relationship" && rmCount > 0 && (
+        <div className="flex items-center gap-1 flex-wrap" data-testid="rm-category-pills">
+          <button
+            onClick={() => setSelectedCategory(null)}
+            className={`px-2 py-0.5 text-xs font-medium rounded-full transition-colors ${
+              !selectedCategory
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:text-foreground"
+            }`}
+            data-testid="rm-category-pill-all"
+          >
+            All
+          </button>
+          {Object.entries(RM_CATEGORY_MAP).map(([cat, { label }]) => {
+            const count = rmCategoryCounts[cat] || 0;
+            if (count === 0) return null;
+            return (
+              <button
+                key={cat}
+                onClick={() => setSelectedCategory(selectedCategory === cat ? null : cat)}
+                className={`px-2 py-0.5 text-xs font-medium rounded-full transition-colors flex items-center ${
+                  selectedCategory === cat
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:text-foreground"
+                }`}
+                data-testid={`rm-category-pill-${cat}`}
+              >
+                {label}
+                <Badge variant="secondary" className="ml-1 text-xs font-mono px-1 py-0">{count}</Badge>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {filterMode === "person-model" && personModelCount > 0 && (
+        <div className="flex items-center gap-1 flex-wrap" data-testid="person-model-category-pills">
+          <button
+            onClick={() => setSelectedCategory(null)}
+            className={`px-2 py-0.5 text-xs font-medium rounded-full transition-colors ${
+              !selectedCategory
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:text-foreground"
+            }`}
+            data-testid="category-pill-all"
+          >
+            All
+          </button>
+          {Object.entries(PM_CATEGORY_MAP).map(([tag, { label }]) => {
+            const count = categoryCounts[tag] || 0;
+            if (count === 0) return null;
+            return (
+              <button
+                key={tag}
+                onClick={() => setSelectedCategory(selectedCategory === tag ? null : tag)}
+                className={`px-2 py-0.5 text-xs font-medium rounded-full transition-colors flex items-center ${
+                  selectedCategory === tag
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:text-foreground"
+                }`}
+                data-testid={`category-pill-${tag}`}
+              >
+                {label}
+                <Badge variant="secondary" className="ml-1 text-xs font-mono px-1 py-0">{count}</Badge>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground flex items-center gap-1">
+          <Brain className="h-3 w-3" />
+          {filterMode === "relationship"
+            ? `${filteredRmMemories.length} relationship ${filteredRmMemories.length === 1 ? "memory" : "memories"}`
+            : `${filteredMemories.length} ${filterMode === "person-model" ? "model" : "linked"} ${filteredMemories.length === 1 ? "memory" : "memories"}`
+          }
+        </p>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 text-xs gap-1"
+          onClick={() => setShowAddForm(!showAddForm)}
+          data-testid="button-add-memory"
+        >
+          <Plus className="h-3 w-3" />
+          Add Memory
+        </Button>
+      </div>
+
+      {showAddForm && filterMode === "relationship" && (
+        <Card className="border-primary/30" data-testid="add-relationship-memory-form">
+          <CardContent className="p-3 space-y-2">
+            <div className="w-full">
+              <Select value={newRmCategory} onValueChange={setNewRmCategory}>
+                <SelectTrigger data-testid="select-rm-category" className="text-xs h-8">
+                  <SelectValue placeholder="Category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(RM_CATEGORY_MAP).map(([cat, { label }]) => (
+                    <SelectItem key={cat} value={cat}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Textarea
+              placeholder={`Add a relationship insight about ${personName}...`}
+              value={newMemoryContent}
+              onChange={(e) => setNewMemoryContent(e.target.value)}
+              className="min-h-[60px] text-sm"
+              data-testid="input-rm-memory-content"
+            />
+            <div className="flex gap-2 justify-end">
+              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setShowAddForm(false); setNewMemoryContent(""); setNewRmCategory("dynamic"); }} data-testid="button-cancel-rm-memory">
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="h-7 text-xs"
+                disabled={!newMemoryContent.trim() || addRelationshipMemoryMutation.isPending}
+                onClick={() => addRelationshipMemoryMutation.mutate({ content: newMemoryContent.trim(), category: newRmCategory })}
+                data-testid="button-save-rm-memory"
+              >
+                {addRelationshipMemoryMutation.isPending ? "Saving..." : "Save"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {showAddForm && filterMode !== "relationship" && (
+        <Card className="border-primary/30" data-testid="add-memory-form">
+          <CardContent className="p-3 space-y-2">
+            <Textarea
+              placeholder={`Add a memory about ${personName}...`}
+              value={newMemoryContent}
+              onChange={(e) => setNewMemoryContent(e.target.value)}
+              className="min-h-[60px] text-sm"
+              data-testid="input-memory-content"
+            />
+            <Input
+              placeholder="Tags (comma-separated, optional)"
+              value={newMemoryTags}
+              onChange={(e) => setNewMemoryTags(e.target.value)}
+              className="text-xs"
+              data-testid="input-memory-tags"
+            />
+            <div className="flex gap-2 justify-end">
+              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setShowAddForm(false); setNewMemoryContent(""); setNewMemoryTags(""); }} data-testid="button-cancel-memory">
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="h-7 text-xs"
+                disabled={!newMemoryContent.trim() || addMemoryMutation.isPending}
+                onClick={() => {
+                  const tags = newMemoryTags.split(",").map(t => t.trim()).filter(Boolean);
+                  addMemoryMutation.mutate({ content: newMemoryContent.trim(), tags });
+                }}
+                data-testid="button-save-memory"
+              >
+                {addMemoryMutation.isPending ? "Saving..." : "Save"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {filterMode === "relationship" && filteredRmMemories.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-8 text-center">
+          <Brain className="h-8 w-8 text-muted-foreground/30 mb-2" />
+          <p className="text-xs text-muted-foreground/70 max-w-xs">
+            No relationship insights yet. xyz will build these as you interact with {personName}.
+          </p>
+        </div>
+      )}
+
+      {filterMode === "person-model" && filteredMemories.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-8 text-center">
+          <Brain className="h-8 w-8 text-muted-foreground/30 mb-2" />
+          <p className="text-xs text-muted-foreground/70 max-w-xs">
+            No person model entries yet. Run a model audit to seed beliefs about {personName}.
+          </p>
+        </div>
+      )}
+
+      {filterMode === "relationship" && filteredRmMemories.map((rm) => {
+        const catInfo = RM_CATEGORY_MAP[rm.category];
+        return (
+          <Card key={rm.id} className="overflow-visible" data-testid={`rm-card-${rm.id}`}>
+            <CardContent className="p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="outline" className="text-xs bg-cat-event/10 text-cat-event border-cat-event/20">
+                    {catInfo?.label || rm.category}
+                  </Badge>
+                  {rm.createdAt && (
+                    <span className="text-xs text-muted-foreground">
+                      {formatRelativeDate(rm.createdAt)}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <p className="text-sm font-medium text-foreground" data-testid={`rm-title-${rm.id}`}>
+                {rm.title}
+              </p>
+              <p className="text-xs text-muted-foreground/80 line-clamp-3">{rm.content}</p>
+            </CardContent>
+          </Card>
+        );
+      })}
+
+      {filterMode !== "relationship" && filteredMemories.map((memory) => (
+        <Card key={memory.id} className="overflow-visible" data-testid={`person-memory-card-${memory.id}`}>
+          <CardContent className="p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Badge variant="outline" className="text-xs">{memory.layer}</Badge>
+                <Badge variant="outline" className="text-xs">{memory.source}</Badge>
+                {memory.createdAt && (
+                  <span className="text-xs text-muted-foreground">
+                    {new Date(memory.createdAt).toLocaleDateString()}
+                  </span>
+                )}
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => unlinkMutation.mutate(memory.id)}
+                disabled={unlinkMutation.isPending}
+                data-testid={`button-unlink-memory-${memory.id}`}
+              >
+                <Unlink className="h-3.5 w-3.5 text-muted-foreground" />
+              </Button>
+            </div>
+            <p className="text-sm font-medium text-foreground" data-testid={`person-memory-title-${memory.id}`}>
+              {memory.title || memory.summary || memory.content.slice(0, 100)}
+            </p>
+            {memory.summary && memory.title && (
+              <p className="text-xs text-muted-foreground/80 line-clamp-2">{memory.summary}</p>
+            )}
+            {isPersonModelEntry(memory) && (() => {
+              const cat = getPersonModelCategory(memory);
+              const meta = memory.metadata as Record<string, unknown> | undefined;
+              const confidence = typeof meta?.confidence === "number" ? meta.confidence : null;
+              const evidenceIds = Array.isArray(meta?.evidence_ids) ? meta.evidence_ids as number[] : [];
+              const lastConfirmed = typeof meta?.last_confirmed === "string" ? meta.last_confirmed as string : null;
+              return (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {confidence !== null && (
+                    <span className={`h-2 w-2 rounded-full ${getConfidenceColor(confidence)}`}
+                          title={`Confidence: ${Math.round(confidence * 100)}%`} />
+                  )}
+                  {cat ? (
+                    <Badge variant="outline" className="text-xs bg-primary/5">{cat.label}</Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-xs bg-primary/5">Uncategorized</Badge>
+                  )}
+                  {evidenceIds.length > 0 && (
+                    <span className="text-xs text-muted-foreground">{evidenceIds.length} evidence</span>
+                  )}
+                  {lastConfirmed && (
+                    <span className="text-xs text-muted-foreground">confirmed {formatRelativeDate(lastConfirmed)}</span>
+                  )}
+                </div>
+              );
+            })()}
+            {memory.tags && memory.tags.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {memory.tags
+                  .filter(tag => !isPersonModelEntry(memory) || (!tag.startsWith("pm-cat:") && tag !== "person-model"))
+                  .map(tag => (
+                    <Badge key={tag} variant="outline" className="text-xs">{tag}</Badge>
+                  ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+const TEMPERATURE_COLORS: Record<string, string> = {
+  hot: "text-error",
+  warm: "text-warning",
+  cool: "text-info",
+  cold: "text-info-foreground",
+};
+
+const TEMPERATURE_BG: Record<string, string> = {
+  hot: "bg-error/10 border-error/20",
+  warm: "bg-warning/10 border-warning/20",
+  cool: "bg-info/10 border-info/20",
+  cold: "bg-info/10 border-info/20",
+};
+
+const MOMENTUM_ICONS: Record<string, string> = {
+  rising: "↗",
+  steady: "→",
+  falling: "↘",
+};
+
+const DUE_STATUS_COLORS: Record<string, string> = {
+  on_track: "text-success-foreground",
+  due: "text-warning-foreground",
+  drifting: "text-cat-event-foreground",
+  urgent: "text-error-foreground",
+};
+
+function WarmthCard({ person }: { person: Person }) {
+  const rp = person.relationshipProfile;
+  const state = rp?.state;
+  const rollup = rp?.rollup;
+  const outreach = rp?.outreach;
+  const cadence = rp?.cadence;
+
+  const temp = state?.temperature || "warm";
+  const momentum = state?.momentum || "steady";
+  const dueStatus = outreach?.dueStatus || "on_track";
+
+  const daysSinceMeaningful = rollup?.lastMeaningfulAt
+    ? Math.floor((Date.now() - new Date(rollup.lastMeaningfulAt).getTime()) / 86400000) : null;
+  const daysSinceLast = rollup?.lastInteractionAt
+    ? Math.floor((Date.now() - new Date(rollup.lastInteractionAt).getTime()) / 86400000) : null;
+
+  return (
+    <Card className={`border ${TEMPERATURE_BG[temp] || ""}`} data-testid="warmth-card">
+      <CardContent className="py-3 px-4">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Warmth</span>
+          <Badge variant="outline" className={`text-xs ${DUE_STATUS_COLORS[dueStatus] || ""}`} data-testid="badge-due-status">
+            {dueStatus.replace(/_/g, " ")}
+          </Badge>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <span className="text-xs text-muted-foreground block">Temperature</span>
+            <span className={`text-sm font-semibold capitalize ${TEMPERATURE_COLORS[temp] || ""}`} data-testid="text-temperature">
+              {temp} {state?.temperature ? "" : "(est.)"}
+            </span>
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">Momentum</span>
+            <span className="text-sm font-medium" data-testid="text-momentum">
+              {MOMENTUM_ICONS[momentum] || ""} {momentum}
+            </span>
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">Cadence</span>
+            <span className="text-sm font-medium" data-testid="text-cadence">
+              {cadence?.targetDays ? `${cadence.targetDays}d` : "—"}
+              {cadence?.flexDays ? ` ±${cadence.flexDays}d` : ""}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+          {daysSinceLast !== null && <span>Last contact: {daysSinceLast}d ago</span>}
+          {daysSinceMeaningful !== null && daysSinceMeaningful !== daysSinceLast && (
+            <span>Meaningful: {daysSinceMeaningful}d ago</span>
+          )}
+          {rollup?.interactionCount30d !== undefined && <span>{rollup.interactionCount30d} in 30d</span>}
+        </div>
+        {outreach?.reason && dueStatus !== "on_track" && (
+          <p className="text-xs text-muted-foreground mt-1 italic">{outreach.reason}</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function LeverageCard({ person }: { person: Person }) {
+  const np = person.networkProfile;
+  if (!np) return null;
+
+  const mob = np.mobilization;
+  const capital = np.capital;
+  const hasContent = np.expertise?.length || np.canHelpWith?.length || np.connections?.length || capital || mob;
+  if (!hasContent) return null;
+
+  return (
+    <Card data-testid="leverage-card">
+      <CardContent className="py-3 px-4">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Leverage</span>
+          {mob && (
+            <Badge
+              variant={mob.ready ? "default" : "outline"}
+              className={`text-xs ${mob.ready ? "bg-success" : mob.estimated ? "text-muted-foreground" : "text-warning-foreground"}`}
+              data-testid="badge-mobilization"
+            >
+              {mob.ready ? "Mobilizable" : "Not Ready"}{mob.estimated ? " (est.)" : ""}
+            </Badge>
+          )}
+        </div>
+
+        {np.expertise && np.expertise.length > 0 && (
+          <div className="mb-2">
+            <span className="text-xs text-muted-foreground">Expertise</span>
+            <div className="flex flex-wrap gap-1 mt-0.5">
+              {np.expertise.map(e => <Badge key={e} variant="outline" className="text-xs">{e}</Badge>)}
+            </div>
+          </div>
+        )}
+
+        {np.canHelpWith && np.canHelpWith.length > 0 && (
+          <div className="mb-2">
+            <span className="text-xs text-muted-foreground">Can help with</span>
+            <div className="flex flex-wrap gap-1 mt-0.5">
+              {np.canHelpWith.map(h => <Badge key={h} variant="outline" className="text-xs">{h}</Badge>)}
+            </div>
+          </div>
+        )}
+
+        {capital && (
+          <div className="mb-2">
+            <span className="text-xs text-muted-foreground">Social Capital</span>
+            <span className={`text-sm font-medium ml-2 ${
+              capital.balance === "overdrawn" ? "text-error-foreground" :
+              capital.balance === "invested" ? "text-success-foreground" :
+              "text-muted-foreground"
+            }`} data-testid="text-capital-balance">
+              {capital.balance}
+            </span>
+          </div>
+        )}
+
+        {mob && !mob.ready && mob.blockers.length > 0 && (
+          <div className="mt-2 text-xs text-warning-foreground space-y-0.5">
+            {mob.blockers.map((b, i) => <p key={i}>⚠ {b}</p>)}
+            {mob.warmingPath && <p className="text-muted-foreground italic mt-1">→ {mob.warmingPath}</p>}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CommitmentsCard({ person, onUpdate }: { person: Person; onUpdate: () => void }) {
+  const commitments = person.networkProfile?.commitments || [];
+  const open = commitments.filter(c => c.status === "open");
+  const resolved = commitments.filter(c => c.status !== "open");
+
+  if (commitments.length === 0) return null;
+
+  return (
+    <Card data-testid="commitments-card">
+      <CardContent className="py-3 px-4">
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Commitments
+        </span>
+        {open.length > 0 && (
+          <div className="mt-2 space-y-1.5">
+            {open.map(c => {
+              const age = Math.floor((Date.now() - new Date(c.createdAt).getTime()) / 86400000);
+              return (
+                <div key={c.id} className="flex items-start gap-2 text-sm" data-testid={`commitment-${c.id}`}>
+                  <span className={`shrink-0 text-xs mt-0.5 ${c.direction === "from_ray" ? "text-info-foreground" : "text-warning-foreground"}`}>
+                    {c.direction === "from_ray" ? "→" : "←"}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm">{c.description}</p>
+                    <span className="text-xs text-muted-foreground">
+                      {c.direction === "from_ray" ? "Ray promised" : "They offered"} · {age}d ago
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {resolved.length > 0 && (
+          <Collapsible>
+            <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground mt-2 hover:text-foreground" data-testid="toggle-resolved-commitments">
+              <ChevronRight className="h-3 w-3" />
+              {resolved.length} resolved
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="mt-1 space-y-1 opacity-60">
+                {resolved.map(c => (
+                  <div key={c.id} className="flex items-center gap-2 text-xs text-muted-foreground line-through">
+                    <span>{c.direction === "from_ray" ? "→" : "←"}</span>
+                    <span className="truncate">{c.description}</span>
+                    <Badge variant="outline" className="text-xs shrink-0">{c.status}</Badge>
+                  </div>
+                ))}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ConnectionsCard({ person }: { person: Person }) {
+  const connections = person.networkProfile?.connections || [];
+  if (connections.length === 0) return null;
+
+  return (
+    <Card data-testid="connections-card">
+      <CardContent className="py-3 px-4">
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Network Connections
+        </span>
+        <div className="mt-2 space-y-1.5">
+          {connections.map((conn, i) => (
+            <div key={i} className="flex items-center gap-2 text-sm" data-testid={`connection-${i}`}>
+              <Users className="h-3 w-3 text-muted-foreground shrink-0" />
+              <span className="font-medium">{conn.name}</span>
+              <span className="text-xs text-muted-foreground">({conn.relationship})</span>
+              {conn.domain && <Badge variant="outline" className="text-xs">{conn.domain}</Badge>}
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface EnrichmentData {
+  complete: boolean;
+  missing: string[];
+  prompts: { field: string; question: string }[];
+}
+
+function EnrichmentPromptsCard({ personId, personName }: { personId: string; personName: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const { data, isLoading } = useQuery<EnrichmentData>({
+    queryKey: ["/api/people", personId, "enrichment-prompts"],
+    queryFn: async () => {
+      const res = await fetch(`/api/people/${personId}/enrichment-prompts`);
+      if (!res.ok) throw new Error("Failed to load enrichment prompts");
+      return res.json();
+    },
+  });
+
+  if (isLoading || !data || data.complete) return null;
+
+  return (
+    <Card className="border-warning/30 bg-warning/5" data-testid="enrichment-prompts-card">
+      <CardContent className="py-3 px-4">
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="w-full flex items-center justify-between"
+          data-testid="button-toggle-enrichment"
+        >
+          <span className="text-xs font-semibold uppercase tracking-wider text-warning">
+            Enrich Profile ({data.missing.length} gaps)
+          </span>
+          {expanded ? <ChevronUp className="h-3.5 w-3.5 text-warning" /> : <ChevronDown className="h-3.5 w-3.5 text-warning" />}
+        </button>
+        {expanded && (
+          <div className="mt-2 space-y-2">
+            <p className="text-xs text-muted-foreground">
+              Tell xyz the answers to fill in {personName}'s profile:
+            </p>
+            {data.prompts.map((p, i) => (
+              <div key={i} className="flex items-start gap-2 text-xs" data-testid={`enrichment-prompt-${i}`}>
+                <Badge variant="outline" className="text-xs shrink-0 mt-0.5">{p.field}</Badge>
+                <span className="text-muted-foreground italic">{p.question}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+interface AgendaItem {
+  personId: string;
+  name: string;
+  cabinetLevel: string;
+  daysSinceLastContact: number;
+  daysSinceMeaningful: number;
+  reason: string;
+  suggestedAction: string;
+  dueStatus: string;
+  surfaceTier?: "follow_up" | "maintenance";
+  surfaceRank?: number;
+  contextBadge?: { label: string; color: string };
+  responseOwedDetails?: string;
+  commitmentDetails?: string;
+  photo?: string;
+}
+
+interface AgendaData {
+  commitments: AgendaItem[];
+  invest: AgendaItem[];
+  nurture: AgendaItem[];
+  agenda: AgendaItem[];
+}
+
+type AgendaSectionKey = "commitments" | "invest" | "nurture";
+
+const AGENDA_SECTION_META: Record<AgendaSectionKey, { label: string; color: string; icon: typeof MessageSquare }> = {
+  commitments: { label: "Commitments", color: "text-error-foreground", icon: Shield },
+  invest: { label: "Invest", color: "text-info-foreground", icon: TrendingUp },
+  nurture: { label: "Nurture", color: "text-warning-foreground", icon: Heart },
+};
+
+function getAgendaItemsForPerson(data: AgendaData | undefined, personId: string) {
+  if (!data) return [];
+  return (Object.keys(AGENDA_SECTION_META) as AgendaSectionKey[]).flatMap(section =>
+    (data[section] || [])
+      .filter(item => item.personId === personId)
+      .map(item => ({ ...item, section }))
+  );
+}
+
+function hasAgendaNotification(data: AgendaData | undefined, personId: string) {
+  return getAgendaItemsForPerson(data, personId).length > 0;
+}
+
+function RelationshipNotificationsCard({ personId }: { personId: string }) {
+  const { data, isLoading } = useQuery<AgendaData>({
+    queryKey: ["/api/people/agenda"],
+    refetchInterval: 60_000,
+  });
+  const items = getAgendaItemsForPerson(data, personId);
+
+  if (isLoading) return <Skeleton className="h-24 w-full" />;
+  if (items.length === 0) return null;
+
+  return (
+    <Card className="border-info/25 bg-info/5" data-testid="relationship-notifications-card">
+      <CardContent className="py-3 px-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-info-foreground">Notifications</span>
+          <Badge variant="outline" className="text-xs border-info/25 text-info-foreground">{items.length}</Badge>
+        </div>
+        <div className="space-y-2">
+          {items.map(item => {
+            const meta = AGENDA_SECTION_META[item.section];
+            const Icon = meta.icon;
+            return (
+              <div key={`${item.section}-${item.personId}`} className="rounded-md border border-border/30 bg-background/50 px-3 py-2" data-testid={`profile-agenda-item-${item.section}`}>
+                <div className="flex items-center gap-2">
+                  <Icon className={`h-3.5 w-3.5 ${meta.color}`} />
+                  <span className={`text-xs font-semibold ${meta.color}`}>{meta.label}</span>
+                  {item.contextBadge && (
+                    <Badge variant="outline" className={`text-xs ${item.contextBadge.color}`}>{item.contextBadge.label}</Badge>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">{item.reason}</p>
+                <p className="text-xs text-primary mt-1">{item.suggestedAction}</p>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PeopleDetailSection({
+  title,
+  count,
+  defaultOpen = true,
+  children,
+  testId,
+}: {
+  title: string;
+  count?: number;
+  defaultOpen?: boolean;
+  children: ReactNode;
+  testId: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="space-y-3" data-testid={testId}>
+      <CollapsibleTrigger className="flex items-center gap-1.5 w-full px-2 py-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider hover-elevate rounded-md">
+        {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        <span>{title}</span>
+        {typeof count === "number" && (
+          <Badge variant="secondary" className="ml-auto text-xs font-mono px-1.5 py-0">
+            {count}
+          </Badge>
+        )}
+      </CollapsibleTrigger>
+      <CollapsibleContent className="space-y-4 pl-1">
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function PersonDetailView({ personId, onClose, onDelete }: { personId: string; onClose: () => void; onDelete: () => void }) {
+  const { toast } = useToast();
+  const [editingName, setEditingName] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [showAddContact, setShowAddContact] = useState(false);
+  const [newContactType, setNewContactType] = useState<"email" | "phone" | "social" | "other">("email");
+  const [newContactLabel, setNewContactLabel] = useState("");
+  const [newContactValue, setNewContactValue] = useState("");
+  const [addingNickname, setAddingNickname] = useState(false);
+  const [newNickname, setNewNickname] = useState("");
+  const [introducedBySearch, setIntroducedBySearch] = useState("");
+  const [showIntroducedBySearch, setShowIntroducedBySearch] = useState(false);
+  const [relationSearch, setRelationSearch] = useState("");
+  const [showRelationSearch, setShowRelationSearch] = useState(false);
+  const [companyInputValue, setCompanyInputValue] = useState("");
+  const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
+  const [editingCompany, setEditingCompany] = useState(false);
+  const [editingRole, setEditingRole] = useState(false);
+  const [editingInstagram, setEditingInstagram] = useState(false);
+  const [editingX, setEditingX] = useState(false);
+  const [editingLinkedin, setEditingLinkedin] = useState(false);
+  const [editingMet, setEditingMet] = useState(false);
+  const [editingFamiliarity, setEditingFamiliarity] = useState(false);
+  const [editingTrust, setEditingTrust] = useState(false);
+  const [showEmptyProfileRows, setShowEmptyProfileRows] = useState(false);
+
+  const { data: person, isLoading } = useQuery<Person>({
+    queryKey: ["/api/people", personId],
+  });
+
+  useFocusContext({
+    entity: { type: "person", id: personId, label: person?.name },
+    subView: "detail",
+  });
+
+  const { data: cabinetData } = useQuery<CabinetConfig>({
+    queryKey: ["/api/people/cabinet-config"],
+  });
+
+  const { data: allPeopleData } = useQuery<{ people: PersonIndex[] }>({
+    queryKey: ["/api/people"],
+  });
+
+  const { data: companiesData } = useQuery<{ companies: string[] }>({
+    queryKey: ["/api/people/companies"],
+  });
+
+  useEffect(() => {
+    if (person) setCompanyInputValue(person.company || "");
+  }, [person?.company]);
+
+  useEffect(() => {
+    setShowEmptyProfileRows(false);
+  }, [personId]);
+
+  const introducedByPerson = useMemo(() => {
+    if (!person?.introducedBy || !allPeopleData?.people) return null;
+    return allPeopleData.people.find(p => p.id === person.introducedBy);
+  }, [person?.introducedBy, allPeopleData?.people]);
+
+  const filteredPeopleForIntroduction = useMemo(() => {
+    if (!allPeopleData?.people || !person) return [];
+    return allPeopleData.people
+      .filter(p => p.id !== person.id && p.name.toLowerCase().includes(introducedBySearch.toLowerCase()))
+      .slice(0, 8);
+  }, [allPeopleData?.people, person, introducedBySearch]);
+
+  const updateMutation = useMutation({
+    mutationFn: async (updates: Partial<Person>) => {
+      const res = await apiRequest("PATCH", `/api/people/${personId}`, updates);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/people", personId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/people"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/people/companies"] });
+      setEditingName(false);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to update", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("DELETE", `/api/people/${personId}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: ["/api/people", personId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/people"] });
+      onDelete();
+      toast({ title: "Person deleted" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to delete", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const levels = cabinetData?.levels || [];
+  const sortedLevels = useMemo(() => [...levels].sort((a, b) => a.order - b.order), [levels]);
+
+  const handleRefetch = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["/api/people", personId] });
+  }, [personId]);
+
+  const handleAddNickname = useCallback(() => {
+    if (!newNickname.trim() || !person) return;
+    updateMutation.mutate({ nicknames: [...person.nicknames, newNickname.trim()] });
+    setNewNickname("");
+    setAddingNickname(false);
+  }, [newNickname, person, updateMutation]);
+
+  const handleRemoveNickname = useCallback((index: number) => {
+    if (!person) return;
+    const updated = person.nicknames.filter((_, i) => i !== index);
+    updateMutation.mutate({ nicknames: updated });
+  }, [person, updateMutation]);
+
+  const handleSaveSocial = useCallback((platform: keyof SocialProfiles, value: string) => {
+    if (!person) return;
+    updateMutation.mutate({
+      socialProfiles: { ...person.socialProfiles, [platform]: value || undefined },
+    });
+  }, [person, updateMutation]);
+
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-10 w-48" />
+        <Skeleton className="h-32" />
+        <Skeleton className="h-48" />
+      </div>
+    );
+  }
+
+  if (!person) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <p className="text-sm text-muted-foreground" data-testid="text-person-not-found">Person not found.</p>
+          <Button variant="outline" className="mt-4" onClick={onClose} data-testid="button-back-not-found">
+            <ArrowLeft className="h-3.5 w-3.5 mr-1.5" /> Back to People
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const contactTypeLabels: Record<string, string> = {
+    email: "Email",
+    phone: "Phone",
+    social: "Social",
+    other: "Other",
+  };
+
+  return (
+    <div className="space-y-6" data-testid="person-detail-view">
+      <PeopleDetailSection
+        title="Profile"
+        defaultOpen
+        testId="section-profile"
+      >
+        <div className="overflow-hidden rounded-md border border-border/20">
+          <ProfileSummaryRow person={person} showEmptyFields={showEmptyProfileRows} onSave={(updates) => updateMutation.mutate(updates)} />
+
+          <ProfileTreeRow label={<span data-testid="label-name">Name</span>} icon={<User className="h-3.5 w-3.5" />} hasValue={Boolean(person.name)} showEmpty={showEmptyProfileRows} testId="row-profile-name">
+            {editingName ? (
+              <div className="flex items-center justify-end gap-1">
+                <Input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Name" className="h-8 w-44 text-right" autoFocus onKeyDown={(e) => { if (e.key === "Enter") updateMutation.mutate({ name: editName }); if (e.key === "Escape") setEditingName(false); }} data-testid="input-edit-name" />
+                <Button size="sm" onClick={() => updateMutation.mutate({ name: editName })} disabled={updateMutation.isPending} data-testid="button-save-name">Save</Button>
+                <Button variant="ghost" size="icon" onClick={() => setEditingName(false)}><X className="h-3 w-3" /></Button>
+              </div>
+            ) : (
+              <button className="truncate rounded px-1 py-0.5 text-right text-sm font-semibold hover-elevate" onClick={() => { setEditName(person.name); setEditingName(true); }} data-testid="display-name">{person.name}</button>
+            )}
+          </ProfileTreeRow>
+
+          <ProfileTreeRow label={<span data-testid="label-alias">Alias</span>} icon={<ContactRound className="h-3.5 w-3.5" />} hasValue={person.nicknames.length > 0} showEmpty={showEmptyProfileRows || addingNickname} testId="row-profile-alias">
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
+              {person.nicknames.map((nick, i) => (
+                <Badge key={i} variant="outline" className="text-xs" data-testid={`badge-alias-${i}`}>{nick}<button className="ml-1 inline-flex" onClick={(e) => { e.stopPropagation(); handleRemoveNickname(i); }} data-testid={`button-remove-alias-${i}`}><X className="h-2.5 w-2.5" /></button></Badge>
+              ))}
+              {addingNickname ? (
+                <div className="flex items-center gap-1"><Input value={newNickname} onChange={(e) => setNewNickname(e.target.value)} placeholder="Alias" className="h-8 w-28 text-right" autoFocus onKeyDown={(e) => { if (e.key === "Enter") handleAddNickname(); if (e.key === "Escape") setAddingNickname(false); }} data-testid="input-add-alias" /><Button size="sm" onClick={handleAddNickname} disabled={!newNickname.trim()} data-testid="button-save-alias">Add</Button><Button variant="ghost" size="icon" onClick={() => setAddingNickname(false)} data-testid="button-cancel-alias"><X className="h-3 w-3" /></Button></div>
+              ) : <Button variant="ghost" size="icon" onClick={() => setAddingNickname(true)} data-testid="button-add-alias"><Plus className="h-3 w-3" /></Button>}
+            </div>
+          </ProfileTreeRow>
+
+          <ProfileTreeRow label={<span data-testid="label-category">Category</span>} icon={<Shield className="h-3.5 w-3.5" />} hasValue={Boolean(person.cabinetLevel)} showEmpty={showEmptyProfileRows} testId="row-profile-category">
+            <Select value={person.cabinetLevel} onValueChange={(v) => updateMutation.mutate({ cabinetLevel: v })}><SelectTrigger className="h-8 w-36" data-testid="select-cabinet-level"><SelectValue /></SelectTrigger><SelectContent>{sortedLevels.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent></Select>
+          </ProfileTreeRow>
+
+          <ProfileTreeRow label={<span data-testid="label-familiarity">Familiarity</span>} icon={<Users className="h-3.5 w-3.5" />} hasValue={Boolean(person.familiarity && person.familiarity !== "none")} showEmpty={showEmptyProfileRows || editingFamiliarity} testId="row-profile-familiarity">
+            {(person.familiarity && person.familiarity !== "none") || editingFamiliarity ? (
+              <Select value={person.familiarity || "none"} onValueChange={(v) => { updateMutation.mutate({ familiarity: v as Person["familiarity"] }); setEditingFamiliarity(false); }}><SelectTrigger className="h-8 w-36" data-testid="select-familiarity"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">None</SelectItem><SelectItem value="surface">Surface</SelectItem><SelectItem value="deep">Deep</SelectItem></SelectContent></Select>
+            ) : <Button variant="ghost" size="icon" onClick={() => setEditingFamiliarity(true)} data-testid="button-add-familiarity"><Plus className="h-3 w-3" /></Button>}
+          </ProfileTreeRow>
+
+          <ProfileTreeRow label={<span data-testid="label-trust">Trust</span>} icon={<Heart className="h-3.5 w-3.5" />} hasValue={Boolean(person.trust && person.trust !== "none")} showEmpty={showEmptyProfileRows || editingTrust} testId="row-profile-trust">
+            {(person.trust && person.trust !== "none") || editingTrust ? (
+              <Select value={person.trust || "none"} onValueChange={(v) => { updateMutation.mutate({ trust: v as Person["trust"] }); setEditingTrust(false); }}><SelectTrigger className="h-8 w-36" data-testid="select-trust"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ally">Ally</SelectItem><SelectItem value="positive">Positive</SelectItem><SelectItem value="none">None</SelectItem><SelectItem value="negative">Negative</SelectItem><SelectItem value="enemy">Enemy</SelectItem></SelectContent></Select>
+            ) : <Button variant="ghost" size="icon" onClick={() => setEditingTrust(true)} data-testid="button-add-trust"><Plus className="h-3 w-3" /></Button>}
+          </ProfileTreeRow>
+
+          <ProfileTreeRow label={<span data-testid="label-tags">Tags</span>} icon={<SlidersHorizontal className="h-3.5 w-3.5" />} hasValue={(person.tags || []).length > 0} showEmpty={showEmptyProfileRows} testId="row-profile-tags"><div className="max-w-md"><DetailTagPicker tags={person.tags || []} onChange={(newTags) => updateMutation.mutate({ tags: newTags })} /></div></ProfileTreeRow>
+
+          <ProfileTreeRow label={<span data-testid="label-met">Met</span>} icon={<Calendar className="h-3.5 w-3.5" />} hasValue={Boolean(person.met)} showEmpty={showEmptyProfileRows || editingMet} testId="row-profile-met">
+            {person.met || editingMet ? <Input key={person.met || "new-met"} type="date" defaultValue={person.met || ""} autoFocus={editingMet} onBlur={(e) => { const v = e.target.value; if (v !== person.met && (v || person.met)) updateMutation.mutate({ met: v || undefined }); setEditingMet(false); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingMet(false); }} className="h-8 w-36 text-right" data-testid="input-met" /> : <Button variant="ghost" size="icon" onClick={() => setEditingMet(true)} data-testid="button-add-met"><Plus className="h-3 w-3" /></Button>}
+          </ProfileTreeRow>
+
+          <ProfileTreeRow label={<span data-testid="label-company">Company</span>} icon={<Building2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.company)} showEmpty={showEmptyProfileRows || editingCompany} testId="row-profile-company">
+            <div className="relative flex justify-end">
+              {person.company || editingCompany ? (<>
+                <Input value={companyInputValue} onChange={(e) => { setCompanyInputValue(e.target.value); setShowCompanyDropdown(true); }} onFocus={() => setShowCompanyDropdown(true)} onBlur={() => { setTimeout(() => { setShowCompanyDropdown(false); if (companyInputValue.trim() !== (person.company || "")) updateMutation.mutate({ company: companyInputValue.trim() || undefined }); setEditingCompany(false); }, 200); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setEditingCompany(false); setCompanyInputValue(person.company || ""); } }} placeholder="Company name" className="h-8 w-44 text-right" autoFocus={editingCompany} data-testid="input-edit-company" />
+                {showCompanyDropdown && companyInputValue.trim() && (() => { const matches = (companiesData?.companies || []).filter(c => c.toLowerCase().includes(companyInputValue.toLowerCase())); const exactMatch = matches.some(c => c.toLowerCase() === companyInputValue.toLowerCase().trim()); return <div className="absolute right-0 z-50 mt-9 w-56 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md" data-testid="dropdown-company">{matches.map((c) => <button key={c} className="w-full px-3 py-1.5 text-left text-sm hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { setCompanyInputValue(c); setShowCompanyDropdown(false); updateMutation.mutate({ company: c }); setEditingCompany(false); }} data-testid={`option-company-${c}`}>{c}</button>)}{!exactMatch && <button className="w-full px-3 py-1.5 text-left text-sm text-muted-foreground hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { setShowCompanyDropdown(false); updateMutation.mutate({ company: companyInputValue.trim() }); setEditingCompany(false); }} data-testid="option-company-add-new">+ Add "{companyInputValue.trim()}"</button>}</div>; })()}
+              </>) : <Button variant="ghost" size="icon" onClick={() => { setCompanyInputValue(""); setEditingCompany(true); }} data-testid="button-add-company"><Plus className="h-3 w-3" /></Button>}
+            </div>
+          </ProfileTreeRow>
+
+          <ProfileTreeRow label={<span data-testid="label-role">Role</span>} icon={<ContactRound className="h-3.5 w-3.5" />} hasValue={Boolean(person.role)} showEmpty={showEmptyProfileRows || editingRole} testId="row-profile-role">
+            {person.role || editingRole ? <Input key={person.role || "new-role"} defaultValue={person.role || ""} placeholder="Role" autoFocus={editingRole} onBlur={(e) => { const v = e.target.value.trim(); if (v !== person.role && (v || person.role)) updateMutation.mutate({ role: v || undefined }); setEditingRole(false); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingRole(false); }} className="h-8 w-44 text-right" data-testid="input-edit-role" /> : <Button variant="ghost" size="icon" onClick={() => setEditingRole(true)} data-testid="button-add-role"><Plus className="h-3 w-3" /></Button>}
+          </ProfileTreeRow>
+
+          <ProfileTreeRow label={<span data-testid="label-professional-relation">Prof. Relation</span>} icon={<Building2 className="h-3.5 w-3.5" />} hasValue={(person.professionalRelations || []).length > 0} showEmpty={showEmptyProfileRows} testId="row-profile-professional-relation">
+            <div className="flex flex-wrap items-center justify-end gap-1">{(person.professionalRelations || []).map((pr) => <Badge key={pr} variant="outline" className="text-xs" data-testid={`badge-prof-relation-${pr.toLowerCase()}`}>{pr}<button className="ml-1 inline-flex" onClick={(e) => { e.stopPropagation(); updateMutation.mutate({ professionalRelations: (person.professionalRelations || []).filter(r => r !== pr) }); }} data-testid={`button-remove-prof-relation-${pr.toLowerCase()}`}><X className="h-2.5 w-2.5" /></button></Badge>)}<DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" data-testid="button-add-prof-relation"><Plus className="h-3 w-3" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">{PROFESSIONAL_RELATION_OPTIONS.filter(o => !(person.professionalRelations || []).includes(o)).map((opt) => <DropdownMenuItem key={opt} onClick={() => updateMutation.mutate({ professionalRelations: [...(person.professionalRelations || []), opt] })} data-testid={`menu-prof-relation-${opt.toLowerCase()}`}>{opt}</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu></div>
+          </ProfileTreeRow>
+
+          <ProfileTreeRow label={<span data-testid="label-personal-relation">Personal Relation</span>} icon={<Heart className="h-3.5 w-3.5" />} hasValue={Boolean(person.relation)} showEmpty={showEmptyProfileRows || showRelationSearch} testId="row-profile-personal-relation"><div className="relative flex justify-end">{person.relation ? <Badge variant="outline" className="text-xs" data-testid="badge-relation">{person.relation}<button className="ml-1 inline-flex" onClick={(e) => { e.stopPropagation(); updateMutation.mutate({ relation: "" }); }} data-testid="button-remove-relation"><X className="h-2.5 w-2.5" /></button></Badge> : showRelationSearch ? <div><Input value={relationSearch} onChange={(e) => setRelationSearch(e.target.value)} placeholder="Search relations..." className="h-8 w-44 text-right" autoFocus onBlur={() => setTimeout(() => { setShowRelationSearch(false); setRelationSearch(""); }, 200)} onKeyDown={(e) => { if (e.key === "Escape") { setShowRelationSearch(false); setRelationSearch(""); } }} data-testid="input-relation-search" />{(() => { const filtered = RELATION_OPTIONS.filter(r => r.toLowerCase().includes(relationSearch.toLowerCase())); return filtered.length > 0 ? <div className="absolute right-0 z-50 mt-1 w-56 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md" data-testid="dropdown-relation">{filtered.map((r) => <button key={r} className="w-full px-3 py-1.5 text-left text-sm hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { updateMutation.mutate({ relation: r }); setShowRelationSearch(false); setRelationSearch(""); }} data-testid={`option-relation-${r.toLowerCase().replace(/\s+/g, '-')}`}>{r}</button>)}</div> : null; })()}</div> : <Button variant="ghost" size="icon" onClick={() => setShowRelationSearch(true)} data-testid="button-add-relation"><Plus className="h-3 w-3" /></Button>}</div></ProfileTreeRow>
+
+          <ProfileTreeRow label={<span data-testid="label-introduced-by">Introduced By</span>} icon={<Link2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.introducedBy && introducedByPerson)} showEmpty={showEmptyProfileRows || showIntroducedBySearch} testId="row-profile-introduced-by"><div className="relative flex justify-end">{person.introducedBy && introducedByPerson ? <Badge variant="outline" className="text-xs" data-testid="badge-introduced-by">{introducedByPerson.name}<button className="ml-1 inline-flex" onClick={(e) => { e.stopPropagation(); updateMutation.mutate({ introducedBy: "" }); }} data-testid="button-remove-introduced-by"><X className="h-2.5 w-2.5" /></button></Badge> : showIntroducedBySearch ? <div><Input value={introducedBySearch} onChange={(e) => setIntroducedBySearch(e.target.value)} placeholder="Search people..." className="h-8 w-44 text-right" autoFocus onBlur={() => setTimeout(() => { setShowIntroducedBySearch(false); setIntroducedBySearch(""); }, 200)} onKeyDown={(e) => { if (e.key === "Escape") { setShowIntroducedBySearch(false); setIntroducedBySearch(""); } }} data-testid="input-introduced-by-search" />{filteredPeopleForIntroduction.length > 0 && <div className="absolute right-0 z-50 mt-1 w-56 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md" data-testid="dropdown-introduced-by">{filteredPeopleForIntroduction.map((p) => <button key={p.id} className="w-full px-3 py-1.5 text-left text-sm hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { updateMutation.mutate({ introducedBy: p.id }); setShowIntroducedBySearch(false); setIntroducedBySearch(""); }} data-testid={`option-introduced-by-${p.id}`}>{p.name}</button>)}</div>}</div> : <Button variant="ghost" size="icon" onClick={() => setShowIntroducedBySearch(true)} data-testid="button-add-introduced-by"><Plus className="h-3 w-3" /></Button>}</div></ProfileTreeRow>
+
+          <ProfileTreeRow label={<span data-testid="label-instagram">Instagram</span>} icon={<SiInstagram className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.instagram)} showEmpty={showEmptyProfileRows || editingInstagram} testId="row-profile-instagram">{person.socialProfiles?.instagram || editingInstagram ? <Input key={person.socialProfiles?.instagram || "new-instagram"} defaultValue={person.socialProfiles?.instagram || ""} placeholder="Instagram URL" autoFocus={editingInstagram} onBlur={(e) => { const v = e.target.value.trim(); if (v !== person.socialProfiles?.instagram && (v || person.socialProfiles?.instagram)) handleSaveSocial("instagram", v); setEditingInstagram(false); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingInstagram(false); }} className="h-8 w-44 text-right" data-testid="input-social-instagram" /> : <Button variant="ghost" size="icon" onClick={() => setEditingInstagram(true)} data-testid="button-add-instagram"><Plus className="h-3 w-3" /></Button>}</ProfileTreeRow>
+          <ProfileTreeRow label={<span data-testid="label-x">X</span>} icon={<SiX className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.x)} showEmpty={showEmptyProfileRows || editingX} testId="row-profile-x">{person.socialProfiles?.x || editingX ? <Input key={person.socialProfiles?.x || "new-x"} defaultValue={person.socialProfiles?.x || ""} placeholder="X URL" autoFocus={editingX} onBlur={(e) => { const v = e.target.value.trim(); if (v !== person.socialProfiles?.x && (v || person.socialProfiles?.x)) handleSaveSocial("x", v); setEditingX(false); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingX(false); }} className="h-8 w-44 text-right" data-testid="input-social-x" /> : <Button variant="ghost" size="icon" onClick={() => setEditingX(true)} data-testid="button-add-x"><Plus className="h-3 w-3" /></Button>}</ProfileTreeRow>
+          <ProfileTreeRow label={<span data-testid="label-linkedin">LinkedIn</span>} icon={<SiLinkedin className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.linkedin)} showEmpty={showEmptyProfileRows || editingLinkedin} testId="row-profile-linkedin">{person.socialProfiles?.linkedin || editingLinkedin ? <Input key={person.socialProfiles?.linkedin || "new-linkedin"} defaultValue={person.socialProfiles?.linkedin || ""} placeholder="LinkedIn URL" autoFocus={editingLinkedin} onBlur={(e) => { const v = e.target.value.trim(); if (v !== person.socialProfiles?.linkedin && (v || person.socialProfiles?.linkedin)) handleSaveSocial("linkedin", v); setEditingLinkedin(false); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingLinkedin(false); }} className="h-8 w-44 text-right" data-testid="input-social-linkedin" /> : <Button variant="ghost" size="icon" onClick={() => setEditingLinkedin(true)} data-testid="button-add-linkedin"><Plus className="h-3 w-3" /></Button>}</ProfileTreeRow>
+
+          {person.contactInfo.map((c, i) => <ProfileTreeRow key={`contact-${i}`} label={c.label || contactTypeLabels[c.type] || c.type} icon={c.type === "email" ? <Mail className="h-3.5 w-3.5" /> : c.type === "phone" ? <Phone className="h-3.5 w-3.5" /> : <ContactRound className="h-3.5 w-3.5" />} hasValue={Boolean(c.value)} showEmpty={showEmptyProfileRows} testId={`row-profile-contact-${i}`}><div className="flex min-w-0 items-center justify-end gap-1 group"><span className="truncate text-sm">{c.value}</span><Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => updateMutation.mutate({ contactInfo: person.contactInfo.filter((_, idx) => idx !== i) })} data-testid={`button-remove-contact-${i}`}><X className="h-3 w-3" /></Button></div></ProfileTreeRow>)}
+
+          <ProfileTreeRow label="New contact" icon={<Plus className="h-3.5 w-3.5" />} hasValue={showAddContact} showEmpty={showEmptyProfileRows || showAddContact} testId="row-profile-new-contact">{showAddContact ? <div className="flex flex-wrap items-center justify-end gap-1.5"><Select value={newContactType} onValueChange={(v) => setNewContactType(v as any)}><SelectTrigger className="h-8 w-24" data-testid="select-contact-type"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="email">Email</SelectItem><SelectItem value="phone">Phone</SelectItem><SelectItem value="social">Social</SelectItem><SelectItem value="other">Other</SelectItem></SelectContent></Select><Input value={newContactLabel} onChange={(e) => setNewContactLabel(e.target.value)} placeholder="Label" className="h-8 w-20 text-right" data-testid="input-contact-label" /><Input value={newContactValue} onChange={(e) => setNewContactValue(e.target.value)} placeholder="Value" className="h-8 min-w-[120px] flex-1 text-right" data-testid="input-contact-value" /><Button size="sm" onClick={() => { if (newContactValue.trim()) { updateMutation.mutate({ contactInfo: [...person.contactInfo, { type: newContactType, label: newContactLabel || contactTypeLabels[newContactType], value: newContactValue }] }); setShowAddContact(false); setNewContactLabel(""); setNewContactValue(""); } }} data-testid="button-save-contact">Add</Button><Button variant="ghost" size="icon" onClick={() => setShowAddContact(false)}><X className="h-3 w-3" /></Button></div> : <Button variant="ghost" size="sm" onClick={() => setShowAddContact(true)} data-testid="button-add-contact"><Plus className="mr-1 h-3 w-3" />Contact info</Button>}</ProfileTreeRow>
+        </div>
+
+        <div className="pt-2">
+          <button
+            type="button"
+            onClick={() => setShowEmptyProfileRows(v => !v)}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80"
+            data-testid="button-toggle-empty-profile-rows"
+          >
+            <Plus className={cn("h-3.5 w-3.5 shrink-0 transition-transform", showEmptyProfileRows && "rotate-45")} />
+            <span>{showEmptyProfileRows ? "Hide empty fields" : "Show empty fields"}</span>
+          </button>
+        </div>
+
+        <div className="space-y-4">
+
+          <div className="pt-4 border-t">
+            <Button
+              variant="outline"
+              className="text-destructive border-destructive/30"
+              onClick={() => setDeleteConfirm(true)}
+              data-testid="button-delete-person"
+            >
+              <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
+            </Button>
+          </div>
+        </div>
+      </PeopleDetailSection>
+
+      <PeopleDetailSection
+        title="Relationship"
+        defaultOpen
+        testId="section-relationship"
+      >
+        <RelationshipNotificationsCard personId={person.id} />
+        <WarmthCard person={person} />
+        <CommitmentsCard person={person} onUpdate={handleRefetch} />
+        <ConnectionsCard person={person} />
+        <EnrichmentPromptsCard personId={person.id} personName={person.name} />
+        <PersonMemoriesTab personId={person.id} personName={person.name} />
+      </PeopleDetailSection>
+
+      <PeopleDetailSection
+        title="Log"
+        icon={<Clock className="h-3.5 w-3.5" />}
+        count={person.interactions.length + person.notes.length}
+        defaultOpen
+        testId="section-log"
+      >
+        <InteractionsTab person={person} onUpdate={handleRefetch} />
+        <PersonMemoriesTab personId={person.id} personName={person.name} />
+        <NotesTab person={person} onUpdate={handleRefetch} />
+      </PeopleDetailSection>
+
+      <AlertDialog open={deleteConfirm} onOpenChange={(open) => { setDeleteConfirm(open); if (!open) setDeleteConfirmText(""); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {person.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove {person.name} and all their data. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="px-6 pb-2">
+            <label className="text-xs text-muted-foreground mb-1.5 block">
+              Type <span className="font-semibold text-foreground">Confirm Delete</span> to proceed
+            </label>
+            <Input
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder="Confirm Delete"
+              data-testid="input-confirm-delete"
+              autoFocus
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete-person">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground"
+              onClick={() => deleteMutation.mutate()}
+              disabled={deleteConfirmText !== "Confirm Delete"}
+              data-testid="button-confirm-delete-person"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+interface GmailInteraction {
+  date: string;
+  subject: string;
+  direction: 'sent' | 'received';
+  snippet?: string;
+}
+
+interface GmailContact {
+  email: string;
+  name: string;
+  sentCount: number;
+  receivedCount: number;
+  threadCount: number;
+  lastInteraction: string;
+  firstInteraction: string;
+  sampleSubjects: string[];
+  interactions: GmailInteraction[];
+}
+
+interface GmailStatus {
+  connected: boolean;
+  readAccess: boolean;
+  connectorAccess: boolean;
+  email: string | null;
+  oauthConfigured: boolean;
+}
+
+interface ImportQueueStatus {
+  total: number;
+  pending: number;
+  added: number;
+  merged: number;
+  skipped: number;
+  scan: {
+    status: "idle" | "scanning" | "done" | "error";
+    mode?: string;
+    nextPageToken?: string;
+    threadsProcessed: number;
+    estimatedTotal: number;
+    contactsFound: number;
+    batchNumber?: number;
+    oldestDate?: string;
+    newestDate?: string;
+    lastCompletedAt?: string;
+    error?: string;
+  };
+  stats: { totalAdded: number; totalMerged: number; totalSkipped: number };
+}
+
+interface ImportContactInfo {
+  type: "email" | "phone" | "social" | "other";
+  label: string;
+  value: string;
+}
+
+interface ImportCandidate extends GmailContact {
+  decision: string;
+  scannedAt: string;
+  accountId?: string;
+  source?: string;
+  sourceId?: string;
+  displayName?: string;
+  givenName?: string;
+  familyName?: string;
+  company?: string;
+  role?: string;
+  emails?: string[];
+  phones?: string[];
+  contactInfo?: ImportContactInfo[];
+}
+
+function ExpandableInteractions({ interactions }: { interactions: GmailInteraction[] }) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const sorted = [...(interactions || [])]
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 15);
+
+  return (
+    <div className="max-h-52 overflow-y-auto scrollbar-thin space-y-0.5 pl-2 border-l border-muted ml-1">
+      {sorted.map((ix, i) => {
+        const isOpen = expandedIdx === i;
+        return (
+          <div key={i} className="py-0.5">
+            <button
+              type="button"
+              className="w-full text-left flex items-start gap-2 text-xs hover-elevate rounded px-1 py-0.5"
+              onClick={() => setExpandedIdx(isOpen ? null : i)}
+              data-testid={`interaction-row-${i}`}
+            >
+              <span className={`shrink-0 mt-0.5 ${ix.direction === "sent" ? "text-primary" : "text-muted-foreground"}`}>
+                {ix.direction === "sent" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="truncate">{ix.subject}</span>
+                  <span className="text-muted-foreground shrink-0">{formatShortDate(ix.date)}</span>
+                </div>
+              </div>
+              <span className="shrink-0 mt-0.5 text-muted-foreground">
+                {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              </span>
+            </button>
+            {isOpen && ix.snippet && (
+              <div className="ml-6 mr-1 mt-1 mb-1.5 text-xs text-muted-foreground leading-relaxed bg-muted/30 rounded p-2">
+                {ix.snippet}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ImportCandidateDetail({
+  candidate,
+  levels,
+  existingPeople,
+  onDecide,
+  isPending,
+}: {
+  candidate: ImportCandidate;
+  levels: CabinetLevel[];
+  existingPeople: PersonIndex[];
+  onDecide: (params: { email: string; decision: "add" | "merge" | "skip"; cabinetLevel?: string; tags?: string[]; mergePersonId?: string; name?: string; company?: string; role?: string; relation?: string; professionalRelations?: string[]; familiarity?: string; trust?: string; met?: string; notes?: string; introducedBy?: string }) => void;
+  isPending: boolean;
+}) {
+  const [cabinet, setCabinet] = useState("network");
+  const [tags, setTags] = useState<string[]>([]);
+  const [mergeTarget, setMergeTarget] = useState<string | null>(null);
+  const [mergeQuery, setMergeQuery] = useState("");
+  const [showMerge, setShowMerge] = useState(false);
+  const [editName, setEditName] = useState(candidate.name || candidate.email.split("@")[0]);
+  const [company, setCompany] = useState("");
+  const [role, setRole] = useState("");
+  const [personalRelation, setPersonalRelation] = useState("");
+  const [profRelations, setProfRelations] = useState<string[]>([]);
+  const [relationSearch, setRelationSearch] = useState("");
+  const [familiarity, setFamiliarity] = useState("none");
+  const [trust, setTrust] = useState("none");
+  const [editingImportCompany, setEditingImportCompany] = useState(false);
+  const [editingImportRole, setEditingImportRole] = useState(false);
+  const [editingImportFamiliarity, setEditingImportFamiliarity] = useState(false);
+  const [editingImportTrust, setEditingImportTrust] = useState(false);
+  const [showImportRelationSearch, setShowImportRelationSearch] = useState(false);
+  const [met, setMet] = useState("");
+  const [notes, setNotes] = useState("");
+  const [introducedBy, setIntroducedBy] = useState("");
+  const [introducedBySearch, setIntroducedBySearch] = useState("");
+  const [showIntroducedByPicker, setShowIntroducedByPicker] = useState(false);
+
+  useEffect(() => {
+    setEditName(candidate.name || candidate.email.split("@")[0]);
+    setCabinet("network");
+    setTags([]);
+    setMergeTarget(null);
+    setMergeQuery("");
+    setShowMerge(false);
+    setRole(candidate.role || "");
+    setPersonalRelation("");
+    setProfRelations([]);
+    setRelationSearch("");
+    setFamiliarity("none");
+    setTrust("none");
+    setEditingImportCompany(false);
+    setEditingImportRole(false);
+    setEditingImportFamiliarity(false);
+    setEditingImportTrust(false);
+    setShowImportRelationSearch(false);
+    setNotes("");
+    setIntroducedBy("");
+    setIntroducedBySearch("");
+    setShowIntroducedByPicker(false);
+
+    if (candidate.company) {
+      setCompany(candidate.company);
+    } else {
+      const FREE_DOMAINS = new Set(["gmail.com","googlemail.com","yahoo.com","yahoo.co.uk","hotmail.com","outlook.com","live.com","msn.com","aol.com","icloud.com","me.com","mac.com","mail.com","protonmail.com","proton.me","zoho.com","yandex.com","gmx.com","gmx.net","fastmail.com","hey.com","tutanota.com","pm.me","comcast.net","verizon.net","att.net","sbcglobal.net","cox.net","charter.net","earthlink.net","optonline.net","frontier.com","roadrunner.com"]);
+      const domain = candidate.email.split("@")[1]?.toLowerCase() || "";
+      if (domain && domain !== "contacts.local" && !FREE_DOMAINS.has(domain)) {
+        const parts = domain.split(".");
+        const name = parts[0];
+        const KNOWN_COMPANIES: Record<string, string> = { ibm: "IBM", hp: "HP", att: "AT&T", bmw: "BMW", pwc: "PwC", ey: "EY", kpmg: "KPMG", hbo: "HBO", bbc: "BBC", cnn: "CNN", mit: "MIT", nasa: "NASA", nyu: "NYU", ucla: "UCLA", usc: "USC", jpmorgan: "JPMorgan", mckinsey: "McKinsey" };
+        const companyName = KNOWN_COMPANIES[name] || name.charAt(0).toUpperCase() + name.slice(1);
+        setCompany(companyName);
+      } else {
+        setCompany("");
+      }
+    }
+
+    if (candidate.firstInteraction) {
+      setMet(candidate.firstInteraction.split("T")[0]);
+    } else {
+      setMet("");
+    }
+  }, [candidate.email, candidate.company, candidate.role]);
+
+  const mergeResults = useMemo(() => {
+    if (!mergeQuery) return [];
+    return fuzzyMatchPeople(mergeQuery, existingPeople, 8);
+  }, [mergeQuery, existingPeople]);
+
+  const mergedPersonName = mergeTarget ? existingPeople.find(p => p.id === mergeTarget)?.name : null;
+
+  const suggestedMerge = useMemo(() => {
+    const name = candidate.name || "";
+    if (!name || name.length < 2) return null;
+    const matches = fuzzyMatchPeople(name, existingPeople, 1);
+    return matches.length > 0 ? matches[0] : null;
+  }, [candidate.name, existingPeople]);
+
+  const sorted = useMemo(() =>
+    [...(candidate.interactions || [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+    [candidate.interactions]
+  );
+
+  const filteredRelationOptions = RELATION_OPTIONS.filter(r =>
+    r.toLowerCase().includes(relationSearch.toLowerCase())
+  );
+
+  const introducedByName = introducedBy ? existingPeople.find(p => p.id === introducedBy)?.name : null;
+
+  const filteredIntroducedByPeople = useMemo(() => {
+    if (!introducedBySearch) return [];
+    return existingPeople
+      .filter(p => p.name.toLowerCase().includes(introducedBySearch.toLowerCase()))
+      .slice(0, 8);
+  }, [existingPeople, introducedBySearch]);
+
+  return (
+    <div className="h-full flex flex-col" data-testid="import-detail">
+      <div className="p-3 border-b space-y-2">
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onDecide({ email: candidate.email, decision: "skip" })}
+            disabled={isPending}
+            data-testid="button-skip-contact"
+          >
+            Skip
+          </Button>
+          <div className="flex-1" />
+          {!mergeTarget && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => { setShowMerge(!showMerge); setMergeQuery(""); }}
+              disabled={isPending}
+              data-testid="button-toggle-merge"
+            >
+              <Users className="h-3 w-3 mr-1" />
+              {showMerge ? "Cancel" : "Merge"}
+            </Button>
+          )}
+          <Button
+            size="sm"
+            onClick={() => {
+              if (mergeTarget) {
+                onDecide({ email: candidate.email, decision: "merge", mergePersonId: mergeTarget, tags, name: editName, notes: notes || undefined, introducedBy: introducedBy || undefined });
+              } else {
+                onDecide({
+                  email: candidate.email,
+                  decision: "add",
+                  cabinetLevel: cabinet,
+                  tags,
+                  name: editName,
+                  company: company || undefined,
+                  role: role || undefined,
+                  relation: personalRelation || undefined,
+                  professionalRelations: profRelations.length > 0 ? profRelations : undefined,
+                  familiarity,
+                  trust,
+                  met: met || undefined,
+                  notes: notes || undefined,
+                  introducedBy: introducedBy || undefined,
+                });
+              }
+            }}
+            disabled={isPending}
+            data-testid="button-add-contact"
+          >
+            {isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+            {mergeTarget ? "Merge" : "Add"}
+          </Button>
+        </div>
+
+        {!mergeTarget && suggestedMerge && (
+          <button
+            type="button"
+            className="w-full text-left p-2 rounded-md border border-dashed text-xs flex items-center justify-between gap-2 hover-elevate"
+            onClick={() => { setMergeTarget(suggestedMerge.id); setShowMerge(false); }}
+            data-testid="button-suggested-merge"
+          >
+            <span className="flex items-center gap-1.5 text-muted-foreground">
+              <Users className="h-3 w-3" />
+              Merge with <span className="font-medium text-foreground">{suggestedMerge.name}</span>?
+            </span>
+            <span className="inline-flex items-center bg-cat-growth/15 text-cat-growth-foreground border border-cat-growth/30 rounded-sm text-xs font-medium px-2 py-0.5">{suggestedMerge.cabinetLevel}</span>
+          </button>
+        )}
+
+        {showMerge && (
+          <div className="space-y-2">
+            <Input
+              placeholder="Search existing contacts..."
+              value={mergeQuery}
+              onChange={e => setMergeQuery(e.target.value)}
+              className="text-xs"
+              autoFocus
+              data-testid="input-merge-search"
+            />
+            {mergeResults.length > 0 && (
+              <div className="border rounded-md divide-y max-h-36 overflow-y-auto">
+                {mergeResults.map(p => (
+                  <div
+                    key={p.id}
+                    className="flex items-center justify-between gap-2 p-2 cursor-pointer hover-elevate text-xs"
+                    onClick={() => { setMergeTarget(p.id); setShowMerge(false); }}
+                    data-testid={`merge-option-${p.id}`}
+                  >
+                    <span>{p.name}</span>
+                    <span className="inline-flex items-center bg-cat-growth/15 text-cat-growth-foreground border border-cat-growth/30 rounded-sm text-xs font-medium px-2 py-0.5">{p.cabinetLevel}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="p-4 border-b space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <Input
+              value={editName}
+              onChange={e => setEditName(e.target.value)}
+              className="text-base font-medium border-none px-0 h-auto focus-visible:ring-0"
+              data-testid="input-candidate-name"
+            />
+            <div className="text-xs text-muted-foreground mt-0.5 space-y-0.5" data-testid="text-candidate-contact-info">
+              {(candidate.emails?.length ? candidate.emails : candidate.email.endsWith("@contacts.local") ? [] : [candidate.email]).map((email) => (
+                <p key={email}>{email}</p>
+              ))}
+              {candidate.phones?.map((phone) => (
+                <p key={phone}>{phone}</p>
+              ))}
+              {candidate.source === "ios_contacts" && <p className="text-cat-channel-foreground">iOS Contacts</p>}
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0 text-xs text-muted-foreground">
+            <Badge variant="outline" className="text-xs">{candidate.source === "ios_contacts" ? "contact" : `${candidate.threadCount} threads`}</Badge>
+          </div>
+        </div>
+        <div className="flex gap-3 text-xs text-muted-foreground">
+          {candidate.source !== "ios_contacts" && <span>{candidate.sentCount} sent</span>}
+          {candidate.source !== "ios_contacts" && <span>{candidate.receivedCount} received</span>}
+          {candidate.lastInteraction && <span>Last: {daysAgo(candidate.lastInteraction)}</span>}
+          {candidate.firstInteraction && <span>First: {daysAgo(candidate.firstInteraction)}</span>}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto scrollbar-thin">
+        <div className="p-4 space-y-4">
+          {mergeTarget ? (
+            <div className="border rounded-md p-3 bg-accent/30 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium flex items-center gap-2">
+                  <Users className="h-4 w-4" />
+                  Merge into: {mergedPersonName}
+                </p>
+                <Button variant="ghost" size="icon" onClick={() => setMergeTarget(null)} data-testid="button-clear-merge">
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2.5 items-center text-sm">
+                <span className="text-xs text-muted-foreground text-right">Category</span>
+                <Select value={cabinet} onValueChange={setCabinet}>
+                  <SelectTrigger className="w-36" data-testid="select-import-cabinet">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {levels.map(l => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+
+                <span className="text-xs text-muted-foreground text-right">Familiarity</span>
+                <div>
+                  {familiarity !== "none" ? (
+                    <Select value={familiarity} onValueChange={setFamiliarity}>
+                      <SelectTrigger className="w-36" data-testid="select-import-familiarity">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">None</SelectItem>
+                        <SelectItem value="surface">Surface</SelectItem>
+                        <SelectItem value="deep">Deep</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : editingImportFamiliarity ? (
+                    <Select value={familiarity} onValueChange={(v) => { setFamiliarity(v); setEditingImportFamiliarity(false); }}>
+                      <SelectTrigger className="w-36" data-testid="select-import-familiarity" autoFocus>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">None</SelectItem>
+                        <SelectItem value="surface">Surface</SelectItem>
+                        <SelectItem value="deep">Deep</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Button variant="ghost" size="icon" onClick={() => setEditingImportFamiliarity(true)} data-testid="button-add-import-familiarity">
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+
+                <span className="text-xs text-muted-foreground text-right">Trust</span>
+                <div>
+                  {trust !== "none" ? (
+                    <Select value={trust} onValueChange={setTrust}>
+                      <SelectTrigger className="w-36" data-testid="select-import-trust">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ally">Ally</SelectItem>
+                        <SelectItem value="positive">Positive</SelectItem>
+                        <SelectItem value="none">None</SelectItem>
+                        <SelectItem value="negative">Negative</SelectItem>
+                        <SelectItem value="enemy">Enemy</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : editingImportTrust ? (
+                    <Select value={trust} onValueChange={(v) => { setTrust(v); setEditingImportTrust(false); }}>
+                      <SelectTrigger className="w-36" data-testid="select-import-trust" autoFocus>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ally">Ally</SelectItem>
+                        <SelectItem value="positive">Positive</SelectItem>
+                        <SelectItem value="none">None</SelectItem>
+                        <SelectItem value="negative">Negative</SelectItem>
+                        <SelectItem value="enemy">Enemy</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Button variant="ghost" size="icon" onClick={() => setEditingImportTrust(true)} data-testid="button-add-import-trust">
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+
+                <span className="text-xs text-muted-foreground text-right">Tags</span>
+                <ImportTagPicker tags={tags} onChange={setTags} />
+
+                <span className="text-xs text-muted-foreground text-right">Met</span>
+                <div>
+                  {met ? (
+                    <Input type="date" value={met} onChange={e => setMet(e.target.value)} className="w-36" data-testid="input-import-met" />
+                  ) : (
+                    <span className="text-xs text-muted-foreground">Unknown</span>
+                  )}
+                </div>
+
+                <span className="text-xs text-muted-foreground text-right">Company</span>
+                <div>
+                  {company ? (
+                    <Input value={company} onChange={e => setCompany(e.target.value)} data-testid="input-import-company" className="w-44 border-0 bg-transparent px-1 py-0.5 -ml-1 text-sm focus-visible:ring-1 focus-visible:ring-ring" />
+                  ) : editingImportCompany ? (
+                    <Input autoFocus value={company} onChange={e => setCompany(e.target.value)} placeholder="Company name" className="w-44" onKeyDown={(e) => { if (e.key === "Escape") setEditingImportCompany(false); }} onBlur={() => { if (!company) setEditingImportCompany(false); }} data-testid="input-import-company" />
+                  ) : (
+                    <Button variant="ghost" size="icon" onClick={() => setEditingImportCompany(true)} data-testid="button-add-import-company">
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+
+                <span className="text-xs text-muted-foreground text-right">Role</span>
+                <div>
+                  {role ? (
+                    <Input value={role} onChange={e => setRole(e.target.value)} data-testid="input-import-role" className="w-44 border-0 bg-transparent px-1 py-0.5 -ml-1 text-sm focus-visible:ring-1 focus-visible:ring-ring" />
+                  ) : editingImportRole ? (
+                    <Input autoFocus value={role} onChange={e => setRole(e.target.value)} placeholder="Role" className="w-44" onKeyDown={(e) => { if (e.key === "Escape") setEditingImportRole(false); }} onBlur={() => { if (!role) setEditingImportRole(false); }} data-testid="input-import-role" />
+                  ) : (
+                    <Button variant="ghost" size="icon" onClick={() => setEditingImportRole(true)} data-testid="button-add-import-role">
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+
+                <span className="text-xs text-muted-foreground text-right">Prof. Relation</span>
+                <div className="flex flex-wrap gap-1 items-center">
+                  {profRelations.map(pr => (
+                    <span key={pr} className="inline-flex items-center bg-cat-channel/15 text-cat-channel-foreground border border-cat-channel/30 rounded-sm text-xs font-medium px-2 py-0.5" data-testid={`badge-import-prof-${pr.toLowerCase()}`}>
+                      {pr}
+                      <button className="ml-1" onClick={() => setProfRelations(prev => prev.filter(r => r !== pr))} data-testid={`button-remove-import-prof-${pr.toLowerCase()}`}>
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </span>
+                  ))}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" data-testid="button-add-import-prof-relation">
+                        <Plus className="h-3 w-3" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent>
+                      {PROFESSIONAL_RELATION_OPTIONS.filter(o => !profRelations.includes(o)).map(opt => (
+                        <DropdownMenuItem key={opt} onClick={() => setProfRelations(prev => [...prev, opt])} data-testid={`menu-import-prof-${opt.toLowerCase()}`}>
+                          {opt}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+
+                <span className="text-xs text-muted-foreground text-right">Personal Relation</span>
+                <div className="relative">
+                  {personalRelation ? (
+                    <div className="flex items-center gap-1">
+                      <span className="inline-flex items-center bg-cat-channel/15 text-cat-channel-foreground border border-cat-channel/30 rounded-sm text-xs font-medium px-2 py-0.5" data-testid="badge-import-relation">
+                        {personalRelation}
+                        <button className="ml-1" onClick={() => setPersonalRelation("")} data-testid="button-remove-import-relation">
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </span>
+                    </div>
+                  ) : showImportRelationSearch ? (
+                    <div>
+                      <Input
+                        value={relationSearch}
+                        onChange={e => setRelationSearch(e.target.value)}
+                        placeholder="Search relations..."
+                        className="w-44"
+                        autoFocus
+                        onBlur={() => setTimeout(() => { setShowImportRelationSearch(false); setRelationSearch(""); }, 200)}
+                        onKeyDown={(e) => { if (e.key === "Escape") { setShowImportRelationSearch(false); setRelationSearch(""); } }}
+                        data-testid="input-import-relation-search"
+                      />
+                      {filteredRelationOptions.length > 0 && (
+                        <div className="absolute z-50 mt-1 w-56 bg-popover border rounded-md shadow-md max-h-48 overflow-y-auto" data-testid="dropdown-import-relation">
+                          {filteredRelationOptions.map(r => (
+                            <button
+                              key={r}
+                              className="w-full text-left px-3 py-1.5 text-sm hover-elevate"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => { setPersonalRelation(r); setRelationSearch(""); setShowImportRelationSearch(false); }}
+                              data-testid={`option-import-relation-${r.toLowerCase().replace(/\s+/g, '-')}`}
+                            >
+                              {r}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <Button variant="ghost" size="icon" onClick={() => setShowImportRelationSearch(true)} data-testid="button-add-import-relation">
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+
+                <span className="text-xs text-muted-foreground text-right">Introduced By</span>
+                <div className="relative">
+                  {introducedBy && introducedByName ? (
+                    <div className="flex items-center gap-1">
+                      <span className="inline-flex items-center bg-cat-channel/15 text-cat-channel-foreground border border-cat-channel/30 rounded-sm text-xs font-medium px-2 py-0.5" data-testid="badge-import-introduced-by">
+                        {introducedByName}
+                        <button
+                          className="ml-1 inline-flex"
+                          onClick={(e) => { e.stopPropagation(); setIntroducedBy(""); }}
+                          data-testid="button-remove-import-introduced-by"
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </span>
+                    </div>
+                  ) : (
+                    <div>
+                      <Input
+                        value={introducedBySearch}
+                        onChange={(e) => setIntroducedBySearch(e.target.value)}
+                        onFocus={() => setShowIntroducedByPicker(true)}
+                        onBlur={() => setTimeout(() => setShowIntroducedByPicker(false), 200)}
+                        placeholder="Search people..."
+                        className="w-44 text-sm"
+                        data-testid="input-import-introduced-by"
+                      />
+                      {showIntroducedByPicker && filteredIntroducedByPeople.length > 0 && (
+                        <div className="absolute z-10 top-full mt-1 w-56 border rounded-md bg-popover shadow-md max-h-36 overflow-y-auto">
+                          {filteredIntroducedByPeople.map(p => (
+                            <div
+                              key={p.id}
+                              className="flex items-center justify-between gap-2 p-2 cursor-pointer hover:bg-accent text-xs"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => {
+                                setIntroducedBy(p.id);
+                                setIntroducedBySearch("");
+                                setShowIntroducedByPicker(false);
+                              }}
+                              data-testid={`introduced-by-option-${p.id}`}
+                            >
+                              <span>{p.name}</span>
+                              <span className="inline-flex items-center bg-cat-growth/15 text-cat-growth-foreground border border-cat-growth/30 rounded-sm text-xs font-medium px-2 py-0.5">{p.cabinetLevel}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <span className="text-xs text-muted-foreground">Notes</span>
+                <Textarea
+                  value={notes}
+                  onChange={e => setNotes(e.target.value)}
+                  placeholder="Add notes about this person..."
+                  className="min-h-[60px] resize-none text-sm"
+                  data-testid="textarea-import-notes"
+                />
+              </div>
+            </div>
+          )}
+
+          {sorted.length > 0 && (
+            <div className="space-y-1 pt-2">
+              <h4 className="text-xs font-medium text-muted-foreground mb-2">Email History ({sorted.length})</h4>
+              <ExpandableInteractions interactions={candidate.interactions} />
+            </div>
+          )}
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+const PAGE_SIZE = 50;
+
+function ImportView({ onSelectPerson, selectedEmailOverride, onClearSelection }: { onSelectPerson: (id: string) => void; selectedEmailOverride?: string | null; onClearSelection?: () => void }) {
+  const { toast } = useToast();
+  const [selectedEmail, setSelectedEmailRaw] = useState<string | null>(selectedEmailOverride ?? null);
+  const setSelectedEmail = useCallback((email: string | null) => {
+    setSelectedEmailRaw(email);
+    if (email === null) onClearSelection?.();
+  }, [onClearSelection]);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [showSkipListManager, setShowSkipListManager] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [page, setPage] = useState(0);
+
+  useEffect(() => {
+    if (selectedEmailOverride !== undefined) setSelectedEmailRaw(selectedEmailOverride);
+  }, [selectedEmailOverride]);
+
+  const { data: gmailStatus, isLoading: statusLoading } = useQuery<GmailStatus>({
+    queryKey: ["/api/gmail/status"],
+  });
+
+  const { data: accountsData } = useQuery<{ accounts: Array<{ id: string; email: string; label: string }> }>({
+    queryKey: ["/api/gmail/accounts"],
+  });
+
+  const { data: queueStatus, refetch: refetchStatus } = useQuery<ImportQueueStatus>({
+    queryKey: ["/api/import-queue/status"],
+    refetchInterval: (query) => {
+      const data = query.state.data as ImportQueueStatus | undefined;
+      return data?.scan?.status === "scanning" ? 2000 : false;
+    },
+  });
+
+  const { data: candidatesData, refetch: refetchCandidates } = useQuery<{ candidates: ImportCandidate[] }>({
+    queryKey: ["/api/import-queue/candidates"],
+    enabled: !!queueStatus && queueStatus.pending > 0,
+  });
+
+  const { data: cabinetData } = useQuery<CabinetConfig>({
+    queryKey: ["/api/people/cabinet-config"],
+  });
+
+  const { data: existingPeople } = useQuery<{ people: PersonIndex[] }>({
+    queryKey: ["/api/people"],
+  });
+
+  const { data: skipListData, refetch: refetchSkipList } = useQuery<{ skipList: { email: string; name?: string; skippedAt: string }[] }>({
+    queryKey: ["/api/gmail/contacts/skip-list"],
+  });
+
+  useEffect(() => {
+    if (!selectedAccountId && accountsData?.accounts?.length) {
+      setSelectedAccountId(accountsData.accounts[0].id);
+    }
+  }, [accountsData, selectedAccountId]);
+
+  const scanMutation = useMutation({
+    mutationFn: async (mode: "start" | "continue" | "refresh") => {
+      const res = await apiRequest("POST", "/api/import-queue/scan", {
+        mode,
+        accountId: selectedAccountId || undefined,
+      });
+      return res.json();
+    },
+    onSuccess: (_data, mode) => {
+      refetchStatus();
+      toast({ title: mode === "start" ? "Import started" : mode === "continue" ? "Resuming import" : "Refreshing contacts" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Scan failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const cancelScan = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/import-queue/cancel");
+      return res.json();
+    },
+    onSuccess: () => {
+      refetchStatus();
+      toast({ title: "Scan cancelled" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Cancel failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const decideMutation = useMutation({
+    mutationFn: async (params: { email: string; decision: "add" | "merge" | "skip"; cabinetLevel?: string; tags?: string[]; mergePersonId?: string; name?: string; company?: string; role?: string; relation?: string; professionalRelations?: string[]; familiarity?: string; trust?: string; met?: string; notes?: string; introducedBy?: string }) => {
+      const res = await apiRequest("POST", "/api/import-queue/decide", params);
+      return res.json();
+    },
+    onSuccess: (_data, vars) => {
+      const currentIdx = paginated.findIndex(c => c.email === vars.email);
+      const nextCandidate = currentIdx >= 0 ? paginated[currentIdx + 1] || paginated[currentIdx - 1] : null;
+
+      refetchCandidates();
+      refetchStatus();
+      queryClient.invalidateQueries({ queryKey: ["/api/people"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/people/email-map"] });
+
+      if (vars.decision === "add" || vars.decision === "merge") {
+        const personId = _data?.person?.id || vars.mergePersonId;
+        if (personId) {
+          onSelectPerson(personId);
+          return;
+        }
+      }
+      setSelectedEmail(nextCandidate?.email ?? null);
+
+      const action = vars.decision === "add" ? "Added" : vars.decision === "merge" ? "Merged" : "Skipped";
+      toast({ title: `${action} ${vars.name || vars.email}` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Action failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/import-queue/reset", {});
+      return res.json();
+    },
+    onSuccess: () => {
+      refetchStatus();
+      refetchCandidates();
+      setSelectedEmail(null);
+      toast({ title: "Import queue cleared" });
+    },
+  });
+
+  const startOAuth = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/gmail/oauth/start");
+      if (!res.ok) throw new Error("Failed to start OAuth");
+      const data = await res.json();
+      window.open(data.url, "_blank", "width=500,height=700");
+    },
+  });
+
+  const allCandidates = candidatesData?.candidates || [];
+  const levels = cabinetData?.levels ? [...cabinetData.levels].sort((a, b) => a.order - b.order) : [];
+  const scan = queueStatus?.scan;
+  const isScanning = scan?.status === "scanning";
+  const hasCompleted = !!scan?.lastCompletedAt;
+  const canContinue = !!scan?.nextPageToken && scan?.status !== "scanning";
+
+  const filtered = useMemo(() => {
+    if (!searchQuery) return allCandidates;
+    const q = searchQuery.toLowerCase();
+    return allCandidates.filter(c =>
+      (c.name || "").toLowerCase().includes(q) || c.email.toLowerCase().includes(q)
+    );
+  }, [allCandidates, searchQuery]);
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const paginated = useMemo(() => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE), [filtered, page]);
+
+  useEffect(() => { setPage(0); }, [searchQuery]);
+
+  const selectedCandidate = useMemo(() =>
+    selectedEmail ? allCandidates.find(c => c.email === selectedEmail) : null,
+    [selectedEmail, allCandidates]
+  );
+
+  if (statusLoading) {
+    return (
+      <div className="space-y-3" data-testid="import-loading">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-32 w-full" />
+      </div>
+    );
+  }
+
+  if (!gmailStatus?.readAccess) {
+    return (
+      <div className="flex items-center justify-center h-full" data-testid="import-no-access">
+        <Card className="max-w-sm w-full">
+          <CardContent className="pt-6">
+            <div className="text-center space-y-4">
+              <Mail className="h-10 w-10 text-muted-foreground/30 mx-auto" />
+              <div>
+                <h3 className="font-medium text-sm">Connect Gmail for Import</h3>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {gmailStatus?.oauthConfigured
+                    ? "Authorize full inbox access to scan for contacts."
+                    : "Google OAuth credentials needed. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Settings."}
+                </p>
+              </div>
+              {gmailStatus?.oauthConfigured && (
+                <Button
+                  onClick={() => startOAuth.mutate()}
+                  disabled={startOAuth.isPending}
+                  data-testid="button-authorize-gmail"
+                >
+                  {startOAuth.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Mail className="h-4 w-4 mr-2" />}
+                  Authorize Gmail
+                </Button>
+              )}
+              {gmailStatus?.connectorAccess && (
+                <p className="text-xs text-muted-foreground">
+                  Connector connected (send/labels only). Full read access requires OAuth.
+                </p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const scanControls = (
+    <div className="space-y-3 p-3 border-b">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Mail className="h-4 w-4 text-muted-foreground" />
+        <span className="text-sm font-medium">Gmail Import</span>
+        {queueStatus && queueStatus.pending > 0 && (
+          <Badge variant="secondary" className="text-xs font-mono px-1 py-0" data-testid="badge-pending-count">
+            {queueStatus.pending} pending
+          </Badge>
+        )}
+      </div>
+
+      {(accountsData?.accounts?.length ?? 0) > 1 && !isScanning && (
+        <Select
+          value={selectedAccountId || accountsData!.accounts[0]?.id || ""}
+          onValueChange={setSelectedAccountId}
+        >
+          <SelectTrigger className="text-xs" data-testid="select-gmail-account">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {accountsData!.accounts.map(a => (
+              <SelectItem key={a.id} value={a.id}>{a.label} ({a.email})</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+
+      {isScanning && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-3 w-3 animate-spin text-primary" />
+            <span className="text-xs">
+              {scan.estimatedTotal > 0
+                ? `Batch ${scan.batchNumber || 1} — ${scan.threadsProcessed.toLocaleString()} / ~${scan.estimatedTotal.toLocaleString()}`
+                : `Scanning batch ${scan.batchNumber || 1}...`}
+            </span>
+          </div>
+          <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+            {scan.estimatedTotal > 0 ? (
+              <div className="h-full bg-primary rounded-full transition-all duration-500" style={{ width: `${Math.max(Math.round((scan.threadsProcessed / scan.estimatedTotal) * 100), 2)}%` }} />
+            ) : (
+              <div className="h-full bg-primary/60 rounded-full animate-pulse" style={{ width: '30%' }} />
+            )}
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-muted-foreground">
+              {scan.contactsFound > 0 ? `${scan.contactsFound} found` : "Searching..."}
+            </span>
+            <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => cancelScan.mutate()} disabled={cancelScan.isPending} data-testid="button-cancel-scan">
+              <X className="h-3 w-3 mr-0.5" /> Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {scan?.status === "error" && (
+        <div className="text-xs text-destructive bg-destructive/10 rounded-md p-2" data-testid="scan-error">
+          {scan.error || "Scan encountered an error"}
+        </div>
+      )}
+
+      {!isScanning && (
+        <div className="flex gap-1.5 flex-wrap">
+          {!hasCompleted && !canContinue && (
+            <Button size="sm" onClick={() => scanMutation.mutate("start")} disabled={scanMutation.isPending} data-testid="button-start-import">
+              {scanMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Search className="h-3 w-3 mr-1" />}
+              Start Import
+            </Button>
+          )}
+          {canContinue && (
+            <Button size="sm" onClick={() => scanMutation.mutate("continue")} disabled={scanMutation.isPending} data-testid="button-continue-import">
+              {scanMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Play className="h-3 w-3 mr-1" />}
+              Continue
+            </Button>
+          )}
+          {hasCompleted && (
+            <Button variant="outline" size="sm" onClick={() => scanMutation.mutate("refresh")} disabled={scanMutation.isPending} data-testid="button-refresh-import">
+              {scanMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+              Refresh
+            </Button>
+          )}
+          {(hasCompleted || canContinue || (queueStatus && queueStatus.total > 0)) && (
+            <Button variant="ghost" size="sm" onClick={() => scanMutation.mutate("start")} disabled={scanMutation.isPending} data-testid="button-start-fresh">
+              Start Fresh
+            </Button>
+          )}
+        </div>
+      )}
+
+      {queueStatus && (queueStatus.stats.totalAdded > 0 || queueStatus.stats.totalMerged > 0 || queueStatus.stats.totalSkipped > 0) && (
+        <div className="flex gap-1.5 flex-wrap">
+          {queueStatus.stats.totalAdded > 0 && <Badge variant="outline" className="text-xs">{queueStatus.stats.totalAdded} added</Badge>}
+          {queueStatus.stats.totalMerged > 0 && <Badge variant="outline" className="text-xs">{queueStatus.stats.totalMerged} merged</Badge>}
+          {queueStatus.stats.totalSkipped > 0 && <Badge variant="outline" className="text-xs">{queueStatus.stats.totalSkipped} skipped</Badge>}
+        </div>
+      )}
+
+      {hasCompleted && scan?.lastCompletedAt && (
+        <p className="text-xs text-muted-foreground">
+          Last scan: {new Date(scan.lastCompletedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+        </p>
+      )}
+    </div>
+  );
+
+  const hasCandidates = allCandidates.length > 0;
+  const allDone = !isScanning && queueStatus && queueStatus.pending === 0 && queueStatus.total > 0;
+  const isEmpty = !isScanning && (!queueStatus || (queueStatus.total === 0 && !hasCompleted)) && gmailStatus?.readAccess;
+
+  return (
+    <div className="flex h-full" data-testid="import-view">
+      <div className={`w-full @md:w-72 shrink-0 border-r flex flex-col bg-muted/30 ${selectedEmail ? "hidden @md:flex" : "flex"}`}>
+        {scanControls}
+
+        {hasCandidates && (
+          <>
+            <div className="p-2 border-b">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Filter candidates..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="pl-8 h-8 text-xs"
+                  data-testid="input-filter-candidates"
+                />
+              </div>
+            </div>
+
+            <ScrollArea className="flex-1">
+              <div className="p-1">
+                {paginated.map(candidate => {
+                  const isSelected = selectedEmail === candidate.email;
+                  return (
+                    <button
+                      key={candidate.email}
+                      type="button"
+                      className={`w-full text-left px-3 py-2 rounded-md text-xs transition-colors ${isSelected ? "bg-accent" : "hover-elevate"}`}
+                      onClick={() => setSelectedEmail(candidate.email)}
+                      data-testid={`candidate-row-${candidate.email}`}
+                    >
+                      <span className="font-medium truncate">{candidate.name || candidate.email.split("@")[0]}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </ScrollArea>
+
+            {totalPages > 1 && (
+              <div className="p-2 border-t flex items-center justify-between gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-xs"
+                  disabled={page === 0}
+                  onClick={() => setPage(p => p - 1)}
+                  data-testid="button-prev-page"
+                >
+                  Prev
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  {page + 1} / {totalPages}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-xs"
+                  disabled={page >= totalPages - 1}
+                  onClick={() => setPage(p => p + 1)}
+                  data-testid="button-next-page"
+                >
+                  Next
+                </Button>
+              </div>
+            )}
+
+            {(skipListData?.skipList?.length ?? 0) > 0 && (
+              <div className="p-2 border-t text-center">
+                <button
+                  className="text-xs text-muted-foreground hover-elevate px-2 py-0.5 rounded-md"
+                  onClick={() => setShowSkipListManager(!showSkipListManager)}
+                  data-testid="button-manage-skip-list"
+                >
+                  {skipListData!.skipList.length} skipped
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
+        {allDone && (
+          <div className="p-4 text-center space-y-2 flex-1 flex flex-col items-center justify-center">
+            <Users className="h-6 w-6 text-muted-foreground/30" />
+            <p className="text-xs text-muted-foreground">All reviewed</p>
+            <div className="flex gap-1.5 flex-wrap justify-center">
+              {queueStatus.stats.totalAdded > 0 && <Badge variant="outline" className="text-xs">{queueStatus.stats.totalAdded} added</Badge>}
+              {queueStatus.stats.totalMerged > 0 && <Badge variant="outline" className="text-xs">{queueStatus.stats.totalMerged} merged</Badge>}
+              {queueStatus.stats.totalSkipped > 0 && <Badge variant="outline" className="text-xs">{queueStatus.stats.totalSkipped} skipped</Badge>}
+            </div>
+            <Button variant="ghost" size="sm" className="text-xs" onClick={() => resetMutation.mutate()} data-testid="button-clear-queue">
+              Clear Queue
+            </Button>
+          </div>
+        )}
+
+        {isEmpty && !hasCandidates && (
+          <div className="p-4 text-center flex-1 flex flex-col items-center justify-center">
+            <Mail className="h-6 w-6 text-muted-foreground/20 mb-2" />
+            <p className="text-xs text-muted-foreground">Scan your inbox to find contacts.</p>
+          </div>
+        )}
+      </div>
+
+      <div className="flex-1 flex flex-col min-w-0">
+        {selectedEmail && selectedCandidate ? (
+          <>
+            <div className="flex items-center gap-2 p-2 border-b @md:hidden">
+              <Button size="icon" variant="ghost" onClick={() => setSelectedEmail(null)} data-testid="button-back-to-candidates">
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            </div>
+            <ImportCandidateDetail
+              candidate={selectedCandidate}
+              levels={levels}
+              existingPeople={existingPeople?.people || []}
+              onDecide={(params) => decideMutation.mutate(params)}
+              isPending={decideMutation.isPending}
+            />
+          </>
+        ) : (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center">
+              <Mail className="h-12 w-12 text-muted-foreground/20 mx-auto mb-3" />
+              <p className="text-sm text-muted-foreground">Select a candidate to review</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {showSkipListManager && skipListData?.skipList && skipListData.skipList.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowSkipListManager(false)}>
+          <Card className="w-full max-w-sm mx-4" onClick={e => e.stopPropagation()}>
+            <CardContent className="pt-4 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium">Skipped Contacts</span>
+                <Button variant="ghost" size="icon" onClick={() => setShowSkipListManager(false)} data-testid="button-close-skip-list">
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+              <div className="max-h-64 overflow-y-auto space-y-1">
+                {skipListData.skipList.map(entry => (
+                  <div key={entry.email} className="flex items-center justify-between gap-2 text-xs py-1" data-testid={`skip-entry-${entry.email}`}>
+                    <div className="min-w-0">
+                      {entry.name && <span className="font-medium mr-1">{entry.name}</span>}
+                      <span className="text-muted-foreground truncate">{entry.email}</span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0"
+                      onClick={async () => {
+                        try {
+                          await apiRequest("DELETE", "/api/gmail/contacts/skip-list", { emails: [entry.email] });
+                          refetchSkipList();
+                          toast({ title: `${entry.name || entry.email} will appear in future scans` });
+                        } catch {}
+                      }}
+                      data-testid={`button-unskip-${entry.email}`}
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailTagPicker({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) {
+  const [input, setInput] = useState("");
+  const [adding, setAdding] = useState(false);
+  const { data: tagData } = useQuery<{ tags: { slug: string; label: string }[] }>({
+    queryKey: ["/api/tags"],
+  });
+  const allTags = tagData?.tags || [];
+  const suggestions = input.length > 0
+    ? allTags.filter(t => t.label.toLowerCase().includes(input.toLowerCase()) && !tags.includes(t.slug)).slice(0, 5)
+    : [];
+
+  return (
+    <div className="flex items-center gap-1 flex-wrap">
+      {tags.map(t => (
+        <Badge key={t} variant="outline" className="text-xs" data-testid={`badge-tag-${t}`}>
+          {t}
+          <button
+            className="ml-1 inline-flex"
+            onClick={(e) => { e.stopPropagation(); onChange(tags.filter(x => x !== t)); }}
+            data-testid={`button-remove-tag-${t}`}
+          >
+            <X className="h-2.5 w-2.5" />
+          </button>
+        </Badge>
+      ))}
+      {adding ? (
+        <div className="relative">
+          <Input
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            placeholder="Tag"
+            className="w-28 text-xs"
+            autoFocus
+            onKeyDown={e => {
+              if (e.key === "Enter" && input.trim()) {
+                e.preventDefault();
+                const slug = input.trim().toLowerCase().replace(/\s+/g, "-");
+                if (!tags.includes(slug)) onChange([...tags, slug]);
+                setInput("");
+                setAdding(false);
+              }
+              if (e.key === "Escape") { setAdding(false); setInput(""); }
+            }}
+            onBlur={() => { setTimeout(() => { setAdding(false); setInput(""); }, 200); }}
+            data-testid="input-detail-tags"
+          />
+          {suggestions.length > 0 && (
+            <div className="absolute top-full left-0 right-0 z-50 border rounded-md bg-popover mt-1 divide-y">
+              {suggestions.map(s => (
+                <div
+                  key={s.slug}
+                  className="px-2 py-1.5 text-xs cursor-pointer hover-elevate"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    if (!tags.includes(s.slug)) onChange([...tags, s.slug]);
+                    setInput("");
+                    setAdding(false);
+                  }}
+                  data-testid={`option-tag-${s.slug}`}
+                >
+                  {s.label}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <Button variant="ghost" size="icon" onClick={() => setAdding(true)} data-testid="button-add-tag">
+          <Plus className="h-3 w-3" />
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function ImportTagPicker({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) {
+  const [input, setInput] = useState("");
+  const { data: tagData } = useQuery<{ tags: { slug: string; label: string }[] }>({
+    queryKey: ["/api/tags"],
+  });
+  const allTags = tagData?.tags || [];
+  const suggestions = input.length > 0
+    ? allTags.filter(t => t.label.toLowerCase().includes(input.toLowerCase()) && !tags.includes(t.slug)).slice(0, 5)
+    : [];
+
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap gap-1">
+        {tags.map(t => (
+          <Badge key={t} variant="outline" className="text-xs">
+            {t}
+            <button className="ml-1" onClick={() => onChange(tags.filter(x => x !== t))}>
+              <X className="h-2.5 w-2.5" />
+            </button>
+          </Badge>
+        ))}
+      </div>
+      <div className="relative">
+        <Input
+          placeholder="Add tags..."
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === "Enter" && input.trim()) {
+              e.preventDefault();
+              const slug = input.trim().toLowerCase().replace(/\s+/g, "-");
+              if (!tags.includes(slug)) onChange([...tags, slug]);
+              setInput("");
+            }
+          }}
+          data-testid="input-import-tags"
+        />
+        {suggestions.length > 0 && (
+          <div className="absolute top-full left-0 right-0 z-10 border rounded-md bg-popover mt-1 divide-y">
+            {suggestions.map(s => (
+              <div
+                key={s.slug}
+                className="px-2 py-1.5 text-xs cursor-pointer hover-elevate"
+                onClick={() => {
+                  if (!tags.includes(s.slug)) onChange([...tags, s.slug]);
+                  setInput("");
+                }}
+              >
+                {s.label}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DesktopPlaceholder() {
+  return (
+    <div className="flex items-center justify-center h-full" data-testid="detail-placeholder">
+      <div className="text-center">
+        <Users className="h-12 w-12 text-muted-foreground/20 mx-auto mb-3" />
+        <p className="text-sm text-muted-foreground">Select a person to view their details</p>
+      </div>
+    </div>
+  );
+}
+
+export default function PeoplePage() {
+  const { toast } = useToast();
+  const [, params] = useRoute("/people/:id");
+  const [, setLocation] = useLocation();
+  const [selectedPersonId, setSelectedPersonIdRaw] = useState<string | null>(params?.id && params.id !== "import" && params.id !== "network" ? params.id : null);
+  const [activeTab, setActiveTabRaw] = useState("contacts");
+  const [selectedImportEmail, setSelectedImportEmail] = useState<string | null>(null);
+  const [listSearch, setListSearch] = useState("");
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [sortMode, setSortMode] = useState<SortMode>("lastInteraction");
+  const canImportIosContacts = hasNativeWebViewBridge();
+
+  const handleImportIosContacts = useCallback(() => {
+    if (requestIosContactsImport()) {
+      toast({ title: "Opening iOS Contacts import" });
+      return;
+    }
+
+    toast({
+      title: "Open the mobile app to import iOS contacts",
+      description: "iOS Contacts are available only inside the native mobile app.",
+    });
+  }, [toast]);
+
+  const setSelectedPersonId = useCallback((id: string | null) => {
+    setSelectedPersonIdRaw(id);
+    setSelectedImportEmail(null);
+    if (id) {
+      setLocation(`/people/${id}`);
+    } else {
+      setLocation(`/people`);
+    }
+  }, [setLocation]);
+
+  useEffect(() => {
+    if (params?.id === "network" || params?.id === "import") {
+      setActiveTabRaw("contacts");
+      setSelectedPersonIdRaw(null);
+      setSelectedImportEmail(null);
+      setLocation("/people");
+      return;
+    }
+    if (params?.id && params.id !== selectedPersonId) {
+      setActiveTabRaw("contacts");
+      setSelectedImportEmail(null);
+      setSelectedPersonIdRaw(params.id);
+    }
+  }, [params?.id, selectedPersonId, setLocation]);
+
+  const setActiveTab = useCallback((_tab: string) => {
+    setActiveTabRaw("contacts");
+    setLocation(selectedPersonId ? `/people/${selectedPersonId}` : "/people");
+  }, [selectedPersonId, setLocation]);
+
+  const { data: pageAgendaData } = useQuery<AgendaData>({
+    queryKey: ["/api/people/agenda"],
+    refetchInterval: 60_000,
+  });
+
+  const { data: simpleFeed } = useQuery<SimpleFeed>({
+    queryKey: ["/api/simple/feed"],
+    refetchInterval: 60_000,
+  });
+
+  const { data: headerPeopleData } = useQuery<{ people: PersonIndex[] }>({
+    queryKey: ["/api/people"],
+    refetchInterval: 10000,
+  });
+
+  const selectedPersonName = useMemo(() => {
+    if (!selectedPersonId) return null;
+    return headerPeopleData?.people.find(person => person.id === selectedPersonId)?.name ?? null;
+  }, [headerPeopleData?.people, selectedPersonId]);
+
+  const peopleTabs = useMemo(() => [
+    { value: "contacts", label: "Contacts", testId: "tab-contacts", icon: <ContactRound className="h-3.5 w-3.5" /> },
+  ], []);
+
+  usePageHeader({
+    title: selectedPersonId ? selectedPersonName ?? "People" : "People",
+    tabs: selectedPersonId ? undefined : peopleTabs,
+    activeTab: selectedPersonId ? undefined : activeTab,
+    onTabChange: selectedPersonId ? undefined : setActiveTab,
+  });
+
+  useFocusContext(selectedPersonId ? null : { subView: activeTab });
+
+  return (
+    <div className="flex h-full bg-black" data-testid="people-page">
+      <div className={`w-full @md:w-64 shrink-0 flex flex-col bg-black ${selectedPersonId || selectedImportEmail ? "hidden @md:flex" : "flex"}`}>
+        <div className="p-2">
+          <div className="flex items-center gap-1.5">
+            <div className="relative flex-1 min-w-0">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search people..."
+                value={listSearch}
+                onChange={(e) => setListSearch(e.target.value)}
+                className="w-full h-7 pl-7 pr-7 rounded-md border border-input bg-background text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                data-testid="input-search-people"
+              />
+              {listSearch && (
+                <button
+                  onClick={() => setListSearch("")}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 h-4 w-4 flex items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+                  data-testid="button-clear-people-search"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="shrink-0 flex h-7 w-7 items-center justify-center rounded-md border border-input bg-background text-muted-foreground hover:bg-accent/70 hover:text-foreground transition-colors"
+                  aria-label="People settings"
+                  data-testid="button-people-settings"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem
+                  onClick={() => setSortMode(sortMode === "lastInteraction" ? "name" : "lastInteraction")}
+                  data-testid="menu-sort-people"
+                >
+                  <SlidersHorizontal className="mr-2 h-3.5 w-3.5" />
+                  <span className="flex-1">Sort By</span>
+                  <span className="text-xs text-muted-foreground">
+                    {sortMode === "lastInteraction" ? "Last Contact" : "Name"}
+                  </span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={handleImportIosContacts}
+                  disabled={!canImportIosContacts}
+                  data-testid="menu-import-ios-contacts"
+                >
+                  <Smartphone className="mr-2 h-3.5 w-3.5" />
+                  <span className="flex-1">Import iOS Contacts</span>
+                  {!canImportIosContacts && (
+                    <span className="text-xs text-muted-foreground">Mobile</span>
+                  )}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+        <ScrollArea className="flex-1">
+          <div className="p-2">
+            <PeopleListView
+              selectedId={selectedPersonId}
+              onSelect={setSelectedPersonId}
+              searchOverride={listSearch}
+              showQuickAddOverride={showQuickAdd}
+              onQuickAddClose={() => setShowQuickAdd(false)}
+              onRequestQuickAdd={() => setShowQuickAdd(true)}
+              sortMode={sortMode}
+              agendaData={pageAgendaData}
+              simpleFeed={simpleFeed}
+              selectedImportEmail={selectedImportEmail}
+              onSelectImportCandidate={(email) => {
+                setSelectedPersonIdRaw(null);
+                setSelectedImportEmail(email);
+                setLocation("/people");
+              }}
+            />
+          </div>
+        </ScrollArea>
+      </div>
+
+      <div className={`flex-1 flex flex-col min-w-0 ${selectedPersonId || selectedImportEmail ? "flex" : "hidden @md:flex"}`}>
+        {selectedPersonId ? (
+          <>
+            <div className="flex-1 overflow-y-auto scrollbar-thin">
+              <div className="p-4">
+                <PersonDetailView personId={selectedPersonId} onClose={() => setSelectedPersonId(null)} onDelete={() => setSelectedPersonId(null)} />
+              </div>
+            </div>
+          </>
+        ) : selectedImportEmail ? (
+          <ImportView
+            selectedEmailOverride={selectedImportEmail}
+            onClearSelection={() => setSelectedImportEmail(null)}
+            onSelectPerson={setSelectedPersonId}
+          />
+        ) : (
+          <DesktopPlaceholder />
+        )}
+      </div>
+    </div>
+  );
+}

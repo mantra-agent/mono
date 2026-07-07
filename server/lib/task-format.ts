@@ -1,0 +1,25 @@
+import type { Task } from "@shared/models/work";
+import { formatDeadlineCompact, getDeadlineProximity } from "@shared/models/work";
+
+function deadlineStr(deadline: string | null): string {
+  if (!deadline) return '';
+  const compact = formatDeadlineCompact(deadline);
+  const prox = getDeadlineProximity(deadline);
+  return prox ? `, due ${compact} (${prox.label})` : `, due ${compact}`;
+}
+
+export function formatTaskForBridge(t: Task): string {
+  const est = t.estimateLow != null && t.estimateHigh != null
+    ? ` ~${((t.estimateLow + t.estimateHigh) / 2).toFixed(1)}h`
+    : '';
+  const dl = deadlineStr(t.deadline);
+  return `- [${t.status}] ${t.title} (id: ${t.id}, ${t.priority}, owner: ${t.owner}${est}${dl})${t.projectId ? ` — project ${t.projectId}` : ""}`;
+}
+
+export function formatTaskForProjectDetail(t: Task): string {
+  const est = t.estimateLow != null && t.estimateHigh != null
+    ? ` ~${((t.estimateLow + t.estimateHigh) / 2).toFixed(1)}h`
+    : '';
+  const dl = deadlineStr(t.deadline);
+  return `  - [${t.id}] [${t.status}] ${t.title} (${t.priority}, owner: ${t.owner}${t.milestoneId ? `, milestone: ${t.milestoneId}` : ""}${est}${dl})`;
+}

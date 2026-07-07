@@ -1,0 +1,50 @@
+# Build from mobile/ should upload only the Expo app plus explicitly needed shared code.
+# Keep local mobile dependencies and large parent-repo directories out of EAS archives.
+
+# Mobile-local generated/dependency bulk
+node_modules/
+.expo/
+.expo-shared/
+.gradle/
+android/build/
+ios/build/
+
+# Parent VCS and dependency caches
+../.git/
+../.github/
+../node_modules/
+../**/node_modules/
+
+# Parent server/web/runtime assets
+../attached_assets/
+../uploads/
+../project-files/
+../.canvas/
+../.claude/
+../.agents/
+../data/
+../logs/
+../dist/
+../server/
+../client/
+../docs/
+../migrations/
+../scripts/
+../script/
+../config/
+../workspace/
+../placeholder/
+../agents/
+
+# Root-only deployment/config artifacts
+../Dockerfile
+../Dockerfile.dev
+../triage-entries.json
+../CLAUDE.md
+../DESIGN.md
+../components.json
+../postcss.config.js
+../tailwind.config.ts
+../vite.config.ts
+../drizzle.config.ts
+../tsconfig.json

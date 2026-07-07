@@ -1,0 +1,118 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1774030978519,
+      "tag": "0001_voice_session_active",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1774117378519,
+      "tag": "0002_library_pages_type_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1774203778519,
+      "tag": "0003_unify_library_page_types",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1774548900000,
+      "tag": "0004_intentions_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1774629600000,
+      "tag": "0005_email_triage_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1774716000000,
+      "tag": "0006_add_manual_payment_amount",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1774857600000,
+      "tag": "0007_plaid_liabilities_notes",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1774944000000,
+      "tag": "0008_rename_conversations_to_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1775030400000,
+      "tag": "0009_content_queue",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1775116800000,
+      "tag": "0010_drop_gateway_logs",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1775203200000,
+      "tag": "0011_add_skill_customized_flag",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1775289600000,
+      "tag": "0012_add_skill_session_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1775376000000,
+      "tag": "0013_add_email_is_done",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1776744926157,
+      "tag": "0016_add_intention_execution_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1778522400000,
+      "tag": "0021_library_page_id_default",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1781811900000,
+      "tag": "0025_skill_run_failure_reason",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+node_modules
+dist
+logs/
+.DS_Store
+server/public
+vite.config.ts.*
+*.tar.gz
+
+# OpenClaw - track workspace but ignore sensitive/runtime files
+.openclaw/openclaw.json
+.openclaw/openclaw.json.bak*
+.openclaw/gateway.state.json
+.openclaw/update-check.json
+.openclaw/profiles.json
+.openclaw/identity/
+.openclaw/devices/
+.openclaw/memory/
+.openclaw/canvas/
+.openclaw/cron/
+.data/
+
+# Agent workspace directory - ephemeral scratch data, not authoritative source
+# Exclude the whole directory to prevent gitnexus from scanning nested copies
+workspace/
+
+# Fine-grained fallback exclusions (superseded by workspace/ above but kept for resilience)
+workspace/chat/
+workspace/config/
+workspace/issues/
+
+# Workspace migration marker (one-time migration already completed)
+.workspace-migrated
+
+# GitNexus code intelligence index (re-indexed on each boot)
+.gitnexus/
+attached_assets/Pasted-Great-call-This-is-a-real-gap-I-just-hit-it-trying-to-r_1774540281379.txt
+
+# This app does not use CI — keep .github/workflows/ out of the repo so future
+# task agents (or manual edits) can't silently re-add a workflow file that
+# would block `git push origin main` on a token without the `workflow` scope.
+.github/workflows/

@@ -1,0 +1,472 @@
+// Use createLogger for logging ONLY
+import { createLogger } from "@/lib/logger";
+import { useState, useRef, useCallback, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { useEditableContent } from "@/hooks/use-editable-content";
+import { useApiMutation } from "@/hooks/use-api-mutation";
+import { downloadPageAsMarkdown } from "@/lib/editor-utils";
+import { markdownToTiptap, isValidTiptapDoc } from "@shared/markdown-tiptap";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { RichTextEditor, type RichTextEditorHandle } from "@/components/rich-text-editor";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
+import {
+  Trash2, FileText, BookOpen, ChevronRight, Download, MoreHorizontal, Loader2, FilePlus, ArrowLeft, Search, Info, FolderInput, Globe,
+} from "lucide-react";
+import data from "@emoji-mart/data";
+import Picker from "@emoji-mart/react";
+import type { JSONContent } from "@tiptap/core";
+import type { LibraryPage, LibraryPageFull, TreeNode } from "./types";
+
+
+const log = createLogger("LibraryComponents");
+
+export function PageEmoji({ emoji, size = "sm" }: { emoji: string | null; size?: "xs" | "sm" | "md" }) {
+  const sizeClass = size === "md" ? "text-base h-4 w-4" : size === "xs" ? "text-xs h-3.5 w-3.5" : "text-sm h-4 w-4";
+  if (emoji) return <span className={cn("shrink-0 leading-none flex items-center justify-center", sizeClass)}>{emoji}</span>;
+  return <FileText className={cn("shrink-0 text-muted-foreground", sizeClass)} />;
+}
+
+function extractWikiLinkTitles(plainText: string): string[] {
+  const matches = [...plainText.matchAll(/\[\[([^\]]+)\]\]/g)];
+  return matches.map(m => m[1]);
+}
+
+interface LinkedSessionInfo {
+  sessionId: string;
+  title: string;
+  sessionType: string;
+  createdAt: string;
+}
+
+function LinkedSessions({ slug }: { slug: string }) {
+  const { data: sessions } = useQuery<LinkedSessionInfo[]>({
+    queryKey: ["/api/library", slug, "sessions"],
+    queryFn: () => fetch(`/api/library/${slug}/sessions`).then(r => r.json()),
+    enabled: !!slug,
+  });
+
+  if (!sessions?.length) return null;
+
+  return (
+    <div className="px-3 pt-1 flex flex-wrap gap-2">
+      {sessions.map((s) => {
+        const relative = formatRelativeTime(s.createdAt);
+        return (
+          <a
+            key={`${s.sessionId}-${s.createdAt}`}
+            href={`/session?c=${encodeURIComponent(s.sessionId)}`}
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {s.title || "Untitled"} · {relative}
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
+function formatRelativeTime(dateStr: string): string {
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  const diffMs = now - then;
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(dateStr).toLocaleDateString();
+}
+
+interface LibraryPageEditorProps {
+  selectedId: string;
+  selectedPage: LibraryPageFull;
+  pages: LibraryPage[];
+  isMobile: boolean;
+  onBack: () => void;
+  onSelectPage: (id: string) => void;
+  onDeleteRequest: (id: string) => void;
+}
+
+export function LibraryPageEditor({
+  selectedId, selectedPage, pages, isMobile, onBack, onSelectPage, onDeleteRequest,
+}: LibraryPageEditorProps) {
+  const editorRef = useRef<RichTextEditorHandle>(null);
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const [specPickerOpen, setSpecPickerOpen] = useState(false);
+  const [specPickerQuery, setSpecPickerQuery] = useState("");
+  const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
+  const [moveDialogOpen, setMoveDialogOpen] = useState(false);
+
+  const selectedPageContent = useMemo((): JSONContent | null => {
+    const rawContent = selectedPage.content;
+    if (isValidTiptapDoc(rawContent)) {
+      log.debug("[LibraryContent] using rich content", { pageId: selectedPage.id, contentSize: JSON.stringify(rawContent).length });
+      return rawContent;
+    }
+    if (selectedPage.plainTextContent) {
+      log.warn("[LibraryContent] page has no valid rich content, falling back to plainText conversion", { pageId: selectedPage.id, plainTextLength: selectedPage.plainTextContent.length });
+      return markdownToTiptap(selectedPage.plainTextContent);
+    }
+    log.warn("[LibraryContent] page has no content at all", { pageId: selectedPage.id });
+    return rawContent;
+  }, [selectedPage.id, selectedPage.content, selectedPage.plainTextContent]);
+
+  const saveMutation = useApiMutation<{ id: string; title: string; content: JSONContent | null; plainTextContent: string }>({
+    method: "PATCH",
+    path: ({ id }) => `/api/info/library/${id}`,
+    body: ({ title, content, plainTextContent, id }) => {
+      const wikiTitles = extractWikiLinkTitles(plainTextContent);
+      const linkPageIds = wikiTitles
+        .map(t => pages.find(p => p.title.toLowerCase() === t.toLowerCase())?.id)
+        .filter((pid): pid is string => !!pid && pid !== id);
+      return { title, content, plainTextContent, ...(linkPageIds.length > 0 ? { linkPages: linkPageIds } : {}) };
+    },
+    invalidateKeys: [["/api/info/library"], ["/api/info/library", selectedId]],
+    successMessage: (_result, input) => `${input.title || "Page"} saved`,
+    errorTitle: "Save failed",
+    onSuccess: (_result, input) => {
+      setIsDirty(false);
+      apiRequest("PATCH", `/api/info/library/${input.id}/read`).then(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/info/library/unread"] });
+      }).catch(() => {});
+    },
+  });
+
+  const {
+    editTitle, editContent, isDirty, setIsDirty,
+    handleContentChange, handleTitleChange: rawHandleTitleChange,
+  } = useEditableContent({
+    selectedId,
+    initialTitle: selectedPage.title || "",
+    initialContent: selectedPageContent,
+    initialPlainText: selectedPage.plainTextContent || "",
+    saveMutation,
+  });
+
+  const handleTitleChange = useCallback((value: string) => {
+    queryClient.setQueryData<LibraryPage[]>(["/api/info/library"], (old) =>
+      old?.map(p => p.id === selectedId ? { ...p, title: value } : p)
+    );
+    rawHandleTitleChange(value);
+  }, [selectedId, rawHandleTitleChange]);
+
+  const emojiMutation = useApiMutation<{ id: string; emoji: string | null }>({
+    method: "PATCH",
+    path: ({ id }) => `/api/info/library/${id}`,
+    body: ({ emoji }) => ({ emoji }),
+    invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"], ["/api/info/library", selectedId]],
+  });
+
+  const shareMutation = useApiMutation<{ id: string; shared: boolean }>({
+    method: "PATCH",
+    path: ({ id }) => `/api/info/library/${id}/share`,
+    body: ({ shared }) => ({ shared }),
+    invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"], ["/api/info/library", selectedId]],
+  });
+
+  const buildBreadcrumbs = useCallback((pageId: string): LibraryPage[] => {
+    const trail: LibraryPage[] = [];
+    let current = pages.find(p => p.id === pageId);
+    while (current) {
+      trail.unshift(current);
+      current = current.parentId ? pages.find(p => p.id === current!.parentId) : undefined;
+    }
+    return trail;
+  }, [pages]);
+
+  const breadcrumbs = buildBreadcrumbs(selectedId);
+
+  return (
+    <>
+      {isMobile && (
+        <div className="p-2 border-b border-border">
+          <Button size="sm" variant="ghost" onClick={onBack} className="h-7 px-2 text-xs gap-1" data-testid="button-library-back">
+            <ArrowLeft className="h-3.5 w-3.5" /> Pages
+          </Button>
+        </div>
+      )}
+      {breadcrumbs.length > 1 && (
+        <div className="px-3 pt-2 pb-0 flex items-center gap-1 text-xs text-muted-foreground">
+          {breadcrumbs.slice(0, -1).map((crumb, i) => (
+            <span key={crumb.id} className="flex items-center gap-1">
+              {i > 0 && <ChevronRight className="h-2.5 w-2.5" />}
+              <button onClick={() => onSelectPage(crumb.id)} className="hover:text-foreground transition-colors" data-testid={`breadcrumb-${crumb.id}`}>
+                {crumb.title || "Untitled"}
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <LinkedSessions slug={selectedPage.slug} />
+      <div className="p-3 border-b border-border flex items-center gap-2">
+        <Popover open={emojiPickerOpen} onOpenChange={setEmojiPickerOpen}>
+          <PopoverTrigger asChild>
+            <button className="shrink-0 h-7 w-7 flex items-center justify-center rounded hover:bg-accent transition-colors" data-testid="button-emoji-picker" title="Set page icon">
+              <PageEmoji emoji={selectedPage.emoji} size="md" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-auto p-0 border-0" sideOffset={4}>
+            <Picker data={data} onEmojiSelect={(emoji: { native: string }) => { emojiMutation.mutate({ id: selectedPage.id, emoji: emoji.native }); setEmojiPickerOpen(false); }} theme="light" previewPosition="none" skinTonePosition="search" />
+            {selectedPage.emoji && (
+              <button className="w-full text-xs text-muted-foreground hover:text-foreground py-2 hover:bg-accent transition-colors border-t" data-testid="button-remove-emoji" onClick={() => { emojiMutation.mutate({ id: selectedPage.id, emoji: null }); setEmojiPickerOpen(false); }}>
+                Remove icon
+              </button>
+            )}
+          </PopoverContent>
+        </Popover>
+        <Input value={editTitle} onChange={(e) => handleTitleChange(e.target.value)} placeholder="Page title" className="flex-1 h-8 text-sm font-medium border-none shadow-none focus-visible:ring-0 p-0 bg-transparent" data-testid="input-library-title" />
+        <div className="flex items-center gap-1.5 shrink-0">
+          {isDirty && <span className="text-xs text-muted-foreground">unsaved</span>}
+          {saveMutation.isPending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="ghost" data-testid="button-page-actions-menu" className="h-7 w-7 p-0 text-muted-foreground">
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[140px]" onCloseAutoFocus={(e) => e.preventDefault()}>
+              <DropdownMenuItem onClick={() => setDetailsDialogOpen(true)} data-testid="menu-page-details">
+                <Info className="h-3.5 w-3.5 mr-2" /> Details
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setMoveDialogOpen(true)} data-testid="menu-move-page">
+                <FolderInput className="h-3.5 w-3.5 mr-2" /> Move
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => shareMutation.mutate({ id: selectedPage.id, shared: selectedPage.scope !== "shared" })} data-testid="menu-share-page">
+                <Globe className="h-3.5 w-3.5 mr-2" /> {selectedPage.scope === "shared" ? "Unshare" : "Share with all users"}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => downloadPageAsMarkdown(selectedPage.title, selectedPage.content, selectedPage.plainTextContent)} data-testid="menu-download-page">
+                <Download className="h-3.5 w-3.5 mr-2" /> Download
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onDeleteRequest(selectedPage.id)} className="text-destructive" data-testid="menu-delete-page">
+                <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+      <div className="flex-1 flex overflow-hidden">
+        <RichTextEditor ref={editorRef} key={selectedId} value={editContent} onChange={handleContentChange} placeholder="Write your page content here..." className="flex-1 overflow-hidden" data-testid="editor-library-content" onInsertLink={() => { setSpecPickerQuery(""); setSpecPickerOpen(true); }} plainTextFallback={selectedPage.plainTextContent || ""} />
+      </div>
+      <PageLinkPickerDialog open={specPickerOpen} onOpenChange={setSpecPickerOpen} query={specPickerQuery} onQueryChange={setSpecPickerQuery} pages={pages} editorRef={editorRef} />
+      <PageDetailsDialog open={detailsDialogOpen} onOpenChange={setDetailsDialogOpen} page={selectedPage} pages={pages} />
+      <MovePageDialog open={moveDialogOpen} onOpenChange={setMoveDialogOpen} page={selectedPage} pages={pages} />
+    </>
+  );
+}
+
+export function EmptyLibraryState({ onCreate }: { onCreate: () => void }) {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-3">
+      <BookOpen className="h-10 w-10 opacity-20" />
+      <p className="text-sm">Select a page or create a new one</p>
+      <div className="flex gap-2">
+        <Button size="sm" variant="outline" onClick={onCreate} data-testid="button-create-library-empty">
+          <FilePlus className="h-3.5 w-3.5" /> New Page
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function PageLinkPickerDialog({ open, onOpenChange, query, onQueryChange, pages, editorRef }: {
+  open: boolean; onOpenChange: (open: boolean) => void; query: string; onQueryChange: (query: string) => void; pages: LibraryPage[]; editorRef: React.RefObject<RichTextEditorHandle | null>;
+}) {
+  const { toast } = useToast();
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Insert Page Link</DialogTitle>
+          <DialogDescription>Search for a page to insert a reference link.</DialogDescription>
+        </DialogHeader>
+        <div className="relative">
+          <Search className="absolute left-2 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+          <Input value={query} onChange={(e) => onQueryChange(e.target.value)} placeholder="Search pages..." className="pl-7 h-8 text-sm" data-testid="input-page-picker-search" autoFocus />
+        </div>
+        <ScrollArea className="max-h-48">
+          {pages
+            .filter(p => !query || p.title.toLowerCase().includes(query.toLowerCase()) || p.slug.includes(query.toLowerCase()))
+            .map(page => (
+              <button key={page.id} className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-accent/50 flex items-center gap-2" data-testid={`button-page-pick-${page.id}`}
+                onClick={() => {
+                  const linkText = `[[${page.title}]]`;
+                  if (editorRef.current) { editorRef.current.insertContent(linkText); }
+                  else { navigator.clipboard.writeText(linkText).catch((err) => log.warn("clipboard write failed", err)); toast({ title: "Copied to clipboard", description: `${linkText} — paste it in your content` }); }
+                  onOpenChange(false);
+                }}>
+                <FileText className="h-3 w-3 text-muted-foreground shrink-0" />
+                <span className="truncate flex-1">{page.title}</span>
+              </button>
+            ))}
+          {pages.length === 0 && <p className="text-xs text-muted-foreground text-center py-3">No pages yet</p>}
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function DeletePageDialog({ open, onOpenChange, pageTitle, isPending, onConfirm }: {
+  open: boolean; onOpenChange: (open: boolean) => void; pageTitle: string; isPending: boolean; onConfirm: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Delete Page</DialogTitle>
+          <DialogDescription>Are you sure you want to delete "{pageTitle}"? This action cannot be undone.</DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} data-testid="button-cancel-delete">Cancel</Button>
+          <Button variant="destructive" size="sm" disabled={isPending} data-testid="button-confirm-delete" onClick={onConfirm}>
+            {isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+            Delete
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PageDetailsDialog({ open, onOpenChange, page, pages }: {
+  open: boolean; onOpenChange: (open: boolean) => void; page: LibraryPageFull; pages: LibraryPage[];
+}) {
+  const parent = page.parentId ? pages.find(p => p.id === page.parentId) : null;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Page Details</DialogTitle>
+          <DialogDescription>Metadata for "{page.title || "Untitled"}"</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2 text-sm">
+          <DetailRow label="ID" value={`#${page.pageId}`} mono />
+          <DetailRow label="Slug" value={page.slug} mono />
+          {parent && <DetailRow label="Parent" value={parent.title || "Untitled"} />}
+          {page.oneLiner && <DetailRow label="One-liner" value={page.oneLiner} />}
+          {page.summary && <DetailRow label="Summary" value={page.summary} />}
+          {page.tags.length > 0 && (
+            <div className="flex gap-2">
+              <span className="text-muted-foreground shrink-0 w-20">Tags</span>
+              <div className="flex flex-wrap gap-1">
+                {page.tags.map(t => (
+                  <span key={t} className="text-xs bg-accent px-1.5 py-0.5 rounded">{t}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          <DetailRow label="Created" value={new Date(page.createdAt).toLocaleString()} />
+          <DetailRow label="Updated" value={new Date(page.updatedAt).toLocaleString()} />
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DetailRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex gap-2">
+      <span className="text-muted-foreground shrink-0 w-20">{label}</span>
+      <span className={cn("break-all", mono && "font-mono text-xs")}>{value}</span>
+    </div>
+  );
+}
+
+function getDescendantIds(pages: LibraryPage[], rootId: string): Set<string> {
+  const descendants = new Set<string>();
+  const walk = (parentId: string) => {
+    for (const p of pages) {
+      if (p.parentId === parentId && !descendants.has(p.id)) {
+        descendants.add(p.id);
+        walk(p.id);
+      }
+    }
+  };
+  walk(rootId);
+  return descendants;
+}
+
+export function MovePageDialog({ open, onOpenChange, page, pages }: {
+  open: boolean; onOpenChange: (open: boolean) => void; page: LibraryPage | LibraryPageFull; pages: LibraryPage[];
+}) {
+  const [query, setQuery] = useState("");
+  const { toast } = useToast();
+
+  const moveMutation = useApiMutation<{ id: string; parentId: string | null }>({
+    method: "PATCH",
+    path: ({ id }) => `/api/info/library/${id}`,
+    body: ({ parentId }) => ({ parentId: parentId ?? "" }),
+    invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"]],
+    successMessage: () => `${page.title || "Page"} moved`,
+    errorTitle: "Move failed",
+    onSuccess: () => onOpenChange(false),
+  });
+
+  const excludeIds = useMemo(() => {
+    const ids = getDescendantIds(pages, page.id);
+    ids.add(page.id);
+    return ids;
+  }, [pages, page.id]);
+
+  const filteredPages = useMemo(() =>
+    pages.filter(p => !excludeIds.has(p.id) && (!query || p.title.toLowerCase().includes(query.toLowerCase()))),
+    [pages, excludeIds, query]
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Move Page</DialogTitle>
+          <DialogDescription>Choose a new parent for "{page.title || "Untitled"}"</DialogDescription>
+        </DialogHeader>
+        <div className="relative">
+          <Search className="absolute left-2 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search pages..." className="pl-7 h-8 text-sm" data-testid="input-move-search" autoFocus />
+        </div>
+        <ScrollArea className="max-h-48">
+          {page.parentId !== null && (
+            <button
+              className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-accent/50 flex items-center gap-2 text-muted-foreground"
+              data-testid="button-move-root"
+              disabled={moveMutation.isPending}
+              onClick={() => moveMutation.mutate({ id: page.id, parentId: null })}
+            >
+              <FolderInput className="h-3 w-3 shrink-0" />
+              <span className="truncate flex-1">Move to root</span>
+            </button>
+          )}
+          {filteredPages.map(p => (
+            <button
+              key={p.id}
+              className={cn(
+                "w-full text-left px-2 py-1.5 text-xs rounded hover:bg-accent/50 flex items-center gap-2",
+                p.id === page.parentId && "text-muted-foreground"
+              )}
+              data-testid={`button-move-${p.id}`}
+              disabled={moveMutation.isPending || p.id === page.parentId}
+              onClick={() => moveMutation.mutate({ id: page.id, parentId: p.id })}
+            >
+              <PageEmoji emoji={p.emoji} />
+              <span className="truncate flex-1">{p.title || "Untitled"}</span>
+              {p.id === page.parentId && <span className="text-xs text-muted-foreground">(current)</span>}
+            </button>
+          ))}
+          {filteredPages.length === 0 && !page.parentId && (
+            <p className="text-xs text-muted-foreground text-center py-3">No pages to move to</p>
+          )}
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  );
+}

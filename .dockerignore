@@ -1,0 +1,46 @@
+# Dependencies & build outputs (rebuilt inside the image)
+node_modules
+dist
+
+# Local runtime state
+logs
+uploads
+.cache
+.data
+data
+workspace
+.gitnexus
+.openclaw
+.canvas
+
+# VCS / editor / OS junk
+.git
+.gitignore
+.gitattributes
+.DS_Store
+**/.DS_Store
+**/*.log
+*.tar.gz
+**/.env
+**/.env.*
+!**/.env.example
+
+# Repo metadata not needed in the image
+.config
+.upm
+.breakpoints
+CLAUDE.md
+bun.lock
+
+# Local agent / planning state
+.local
+.agents
+agents
+.claude
+
+# Docs / asset folders not consumed at build time
+docs
+project-files
+
+# Chat-attached assets — only the logo is referenced by the client.
+attached_assets

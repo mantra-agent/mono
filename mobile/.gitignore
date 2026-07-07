@@ -1,0 +1,17 @@
+node_modules/
+.expo/
+dist/
+ios/
+android/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+.DS_Store
+.expo-shared/
+eas-credentials/
+!modules/
+!modules/**

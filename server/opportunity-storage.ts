@@ -1,0 +1,513 @@
+import { db, pool } from "./db";
+import { eq, desc, and, inArray } from "drizzle-orm";
+import {
+  opportunities,
+  opportunityArtifacts,
+  opportunitySkills,
+  execSkills,
+  computeEV,
+  type OpportunityRow,
+  type InsertOpportunity,
+  type OpportunityWithSkills,
+  type OpportunityArtifactRow,
+  type ArtifactKind,
+} from "@shared/schema";
+import { createLogger } from "./log";
+
+const log = createLogger("OpportunityStorage");
+
+let schemaMigrated = false;
+
+// ── Opportunity → People follow-up sync ─────────────────────────
+// When an opportunity has followUpBy + a linked person (champion or contact),
+// auto-create/update an interaction on that person with responseOwed so the
+// people agenda system surfaces the follow-up obligation.
+
+const OPP_FOLLOWUP_TAG_PREFIX = "opp-followup:";
+
+interface FollowUpSyncInput {
+  opportunityId: number;
+  title: string;
+  followUpBy: string | null;
+  followUpNote: string | null;
+  championPersonId: string | null;
+  contactPersonId: string | null;
+  /** Previous state for diffing on update */
+  previous?: {
+    followUpBy: string | null;
+    championPersonId: string | null;
+    contactPersonId: string | null;
+  };
+}
+
+async function syncOpportunityFollowUp(input: FollowUpSyncInput): Promise<void> {
+  // Lazy import to avoid circular dependency at module init
+  const { peopleStorage } = await import("./people-storage");
+  const tag = `${OPP_FOLLOWUP_TAG_PREFIX}${input.opportunityId}`;
+
+  // Determine which person IDs are currently linked
+  const currentPersonIds = new Set<string>();
+  if (input.championPersonId) currentPersonIds.add(input.championPersonId);
+  if (input.contactPersonId) currentPersonIds.add(input.contactPersonId);
+
+  // Determine which person IDs were previously linked (for cleanup)
+  const previousPersonIds = new Set<string>();
+  if (input.previous?.championPersonId) previousPersonIds.add(input.previous.championPersonId);
+  if (input.previous?.contactPersonId) previousPersonIds.add(input.previous.contactPersonId);
+
+  // Person IDs that were removed — clear their follow-up
+  const removedPersonIds = [...previousPersonIds].filter(id => !currentPersonIds.has(id));
+
+  // Clear responseOwed on removed persons
+  for (const personId of removedPersonIds) {
+    try {
+      const person = await peopleStorage.getPerson(personId);
+      if (!person) continue;
+      const existing = person.interactions.find(ix => ix.tags?.includes(tag));
+      if (existing && existing.responseOwed) {
+        await peopleStorage.updateInteraction(personId, existing.id, { responseOwed: false });
+        log.debug(`cleared follow-up on removed person=${personId} opp=${input.opportunityId}`);
+      }
+    } catch (err) {
+      log.warn(`failed to clear follow-up on person=${personId}: ${err}`);
+    }
+  }
+
+  // Sync current person IDs
+  for (const personId of currentPersonIds) {
+    try {
+      const person = await peopleStorage.getPerson(personId);
+      if (!person) {
+        log.debug(`skip follow-up sync: person=${personId} not found`);
+        continue;
+      }
+
+      const existing = person.interactions.find(ix => ix.tags?.includes(tag));
+      const summary = `Follow up: ${input.title}${input.followUpNote ? ` — ${input.followUpNote}` : ""}`;
+
+      if (input.followUpBy) {
+        if (existing) {
+          // Update existing interaction
+          await peopleStorage.updateInteraction(personId, existing.id, {
+            summary,
+            responseOwed: true,
+            responseDueBy: input.followUpBy,
+          });
+          log.debug(`updated follow-up interaction on person=${personId} opp=${input.opportunityId} dueBy=${input.followUpBy}`);
+        } else {
+          // Create new interaction
+          await peopleStorage.addInteraction(personId, {
+            date: new Date().toISOString().split("T")[0],
+            type: "note",
+            summary,
+            responseOwed: true,
+            responseDueBy: input.followUpBy,
+            tags: [tag],
+          });
+          log.debug(`created follow-up interaction on person=${personId} opp=${input.opportunityId} dueBy=${input.followUpBy}`);
+        }
+      } else if (existing && existing.responseOwed) {
+        // followUpBy was cleared — clear the obligation
+        await peopleStorage.updateInteraction(personId, existing.id, { responseOwed: false });
+        log.debug(`cleared follow-up on person=${personId} opp=${input.opportunityId} (followUpBy removed)`);
+      }
+    } catch (err) {
+      log.warn(`failed to sync follow-up on person=${personId}: ${err}`);
+    }
+  }
+}
+
+async function autoHeal<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    const message = err instanceof Error ? err.message : String(err);
+    if ((code === "42703" || code === "42P01") && !schemaMigrated) {
+      log.debug(`auto-heal: migrating schema after column/relation error (${message})`);
+      await migrateOpportunitySchema();
+      schemaMigrated = true;
+      try {
+        return await operation();
+      } catch (retryErr) {
+        const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+        log.warn(`auto-heal: retry failed after migration (${retryMsg})`);
+        throw retryErr;
+      }
+    }
+    throw err;
+  }
+}
+
+export async function migrateOpportunitySchema(): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS opportunities (
+        id SERIAL PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'discovered',
+        probability REAL NOT NULL DEFAULT 0.05,
+        is_full_time BOOLEAN NOT NULL DEFAULT false,
+        hours_per_week INTEGER,
+        time_commitment_period TEXT DEFAULT 'week',
+        time_horizon_months INTEGER,
+        ev_inputs JSONB NOT NULL DEFAULT '{}'::jsonb,
+        computed_ev REAL,
+        contact_person_id TEXT,
+        source_type TEXT NOT NULL DEFAULT 'manual',
+        source_signal_id TEXT,
+        required_skills TEXT[] NOT NULL DEFAULT '{}'::text[],
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Auto-heal columns
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS is_full_time BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS hours_per_week INTEGER;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS time_commitment_period TEXT DEFAULT 'week';
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS time_horizon_months INTEGER;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS contact_person_id TEXT;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'manual';
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS source_signal_id TEXT;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS required_skills TEXT[] NOT NULL DEFAULT '{}'::text[];
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS company TEXT;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS location TEXT;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS next_steps TEXT;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS priority TEXT;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS jd_text TEXT;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS job_url TEXT;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS champion_person_id TEXT;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS follow_up_by TEXT;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS follow_up_note TEXT;
+
+      CREATE INDEX IF NOT EXISTS idx_opportunities_status ON opportunities(status);
+      CREATE INDEX IF NOT EXISTS idx_opportunities_type ON opportunities(type);
+      CREATE INDEX IF NOT EXISTS idx_opportunities_user ON opportunities(user_id);
+
+      CREATE TABLE IF NOT EXISTS opportunity_artifacts (
+        id SERIAL PRIMARY KEY,
+        opportunity_id INTEGER NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        library_page_id TEXT NOT NULL,
+        session_id TEXT,
+        docx_file_name TEXT,
+        generated_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uq_opportunity_artifact_kind UNIQUE(opportunity_id, kind)
+      );
+
+      CREATE TABLE IF NOT EXISTS opportunity_skills (
+        id SERIAL PRIMARY KEY,
+        opportunity_id INTEGER NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+        skill_id INTEGER NOT NULL REFERENCES exec_skills(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uq_opportunity_skill UNIQUE(opportunity_id, skill_id)
+      );
+    `);
+    log.debug("opportunity schema migration complete");
+  } finally {
+    client.release();
+  }
+}
+
+// ── Storage Class ──────────────────────────────────────────────────
+class OpportunityStorage {
+  async list(userId: string, filters?: { status?: string; type?: string }): Promise<OpportunityRow[]> {
+    return autoHeal(async () => {
+      const conditions = [eq(opportunities.userId, userId)];
+      if (filters?.status) conditions.push(eq(opportunities.status, filters.status));
+      if (filters?.type) conditions.push(eq(opportunities.type, filters.type));
+      const rows = await db.select().from(opportunities)
+        .where(and(...conditions))
+        .orderBy(desc(opportunities.updatedAt));
+      return rows;
+    });
+  }
+
+  async get(id: number, userId?: string): Promise<OpportunityRow | undefined> {
+    return autoHeal(async () => {
+      const conditions = userId
+        ? and(eq(opportunities.id, id), eq(opportunities.userId, userId))
+        : eq(opportunities.id, id);
+      const [row] = await db.select().from(opportunities).where(conditions);
+      return row;
+    });
+  }
+
+  async create(userId: string, data: InsertOpportunity): Promise<OpportunityRow> {
+    return autoHeal(async () => {
+      const ev = computeEV(data.type, (data.evInputs || {}) as Record<string, any>, data.probability ?? 0.05, data.hoursPerWeek);
+      const [row] = await db.insert(opportunities).values({
+        ...data,
+        userId,
+        evInputs: data.evInputs || {},
+        computedEv: ev,
+      }).returning();
+      log.debug(`create opportunity id=${row.id} title="${row.title}" ev=${ev.toFixed(0)}`);
+
+      // Sync follow-up to people interactions (fire-and-forget)
+      syncOpportunityFollowUp({
+        opportunityId: row.id,
+        title: row.title,
+        followUpBy: row.followUpBy,
+        followUpNote: row.followUpNote,
+        championPersonId: row.championPersonId,
+        contactPersonId: row.contactPersonId,
+      }).catch(err => log.warn(`follow-up sync failed for new opp=${row.id}: ${err}`));
+
+      return row;
+    });
+  }
+
+  async update(id: number, updates: Partial<InsertOpportunity>, userId?: string): Promise<OpportunityRow | undefined> {
+    return autoHeal(async () => {
+      // If EV-affecting fields changed, we need to recompute
+      const existing = await this.get(id, userId);
+      if (!existing) return undefined;
+
+      const merged = { ...existing, ...updates };
+      const needsRecompute = updates.type !== undefined || updates.evInputs !== undefined || updates.probability !== undefined || updates.hoursPerWeek !== undefined;
+      const patch: Record<string, unknown> = { ...updates, updatedAt: new Date() };
+
+      if (needsRecompute) {
+        patch.computedEv = computeEV(
+          merged.type,
+          (merged.evInputs || {}) as Record<string, any>,
+          merged.probability ?? 0.05,
+          merged.hoursPerWeek,
+        );
+      }
+
+      const updateConditions = userId
+        ? and(eq(opportunities.id, id), eq(opportunities.userId, userId))
+        : eq(opportunities.id, id);
+      const [row] = await db.update(opportunities).set(patch).where(updateConditions).returning();
+      log.debug(`update opportunity id=${id} found=${!!row}`);
+
+      // Sync follow-up to people interactions when relevant fields changed
+      if (row && (updates.followUpBy !== undefined || updates.championPersonId !== undefined
+        || updates.contactPersonId !== undefined || updates.followUpNote !== undefined || updates.title !== undefined)) {
+        syncOpportunityFollowUp({
+          opportunityId: row.id,
+          title: row.title,
+          followUpBy: row.followUpBy,
+          followUpNote: row.followUpNote,
+          championPersonId: row.championPersonId,
+          contactPersonId: row.contactPersonId,
+          previous: {
+            followUpBy: existing.followUpBy,
+            championPersonId: existing.championPersonId,
+            contactPersonId: existing.contactPersonId,
+          },
+        }).catch(err => log.warn(`follow-up sync failed for opp=${id}: ${err}`));
+      }
+
+      return row;
+    });
+  }
+
+  async delete(id: number, userId?: string): Promise<boolean> {
+    return autoHeal(async () => {
+      const deleteConditions = userId
+        ? and(eq(opportunities.id, id), eq(opportunities.userId, userId))
+        : eq(opportunities.id, id);
+      const [row] = await db.delete(opportunities).where(deleteConditions).returning();
+      log.debug(`delete opportunity id=${id} found=${!!row}`);
+      return !!row;
+    });
+  }
+
+  // ── Artifact Slots ─────────────────────────────────────────────
+
+  /**
+   * Upsert the artifact slot for (opportunityId, kind). Keyed on the
+   * unique constraint so regeneration updates the existing slot row
+   * (same Library page identity, fresh session + timestamp).
+   */
+  async upsertArtifact(
+    opportunityId: number,
+    kind: ArtifactKind,
+    data: { libraryPageId: string; sessionId?: string | null },
+  ): Promise<OpportunityArtifactRow> {
+    return autoHeal(async () => {
+      const [row] = await db.insert(opportunityArtifacts).values({
+        opportunityId,
+        kind,
+        libraryPageId: data.libraryPageId,
+        sessionId: data.sessionId ?? null,
+        generatedAt: new Date(),
+      }).onConflictDoUpdate({
+        target: [opportunityArtifacts.opportunityId, opportunityArtifacts.kind],
+        set: {
+          libraryPageId: data.libraryPageId,
+          sessionId: data.sessionId ?? null,
+          generatedAt: new Date(),
+          updatedAt: new Date(),
+        },
+      }).returning();
+      log.debug(`upsert artifact opportunity=${opportunityId} kind=${kind} page=${data.libraryPageId}`);
+      return row;
+    });
+  }
+
+  async getArtifacts(opportunityId: number): Promise<OpportunityArtifactRow[]> {
+    return autoHeal(async () => {
+      return db.select().from(opportunityArtifacts)
+        .where(eq(opportunityArtifacts.opportunityId, opportunityId));
+    });
+  }
+
+  async getArtifact(opportunityId: number, kind: ArtifactKind): Promise<OpportunityArtifactRow | undefined> {
+    return autoHeal(async () => {
+      const [row] = await db.select().from(opportunityArtifacts).where(
+        and(
+          eq(opportunityArtifacts.opportunityId, opportunityId),
+          eq(opportunityArtifacts.kind, kind),
+        ),
+      );
+      return row;
+    });
+  }
+
+  /** Delete an artifact slot. Returns true if a row was actually removed. */
+  async deleteArtifact(opportunityId: number, kind: ArtifactKind): Promise<boolean> {
+    return autoHeal(async () => {
+      const [row] = await db.delete(opportunityArtifacts)
+        .where(and(
+          eq(opportunityArtifacts.opportunityId, opportunityId),
+          eq(opportunityArtifacts.kind, kind),
+        )).returning();
+      log.debug(`delete artifact opportunity=${opportunityId} kind=${kind} found=${!!row}`);
+      return !!row;
+    });
+  }
+
+  /** Record the rendered DOCX filename on an existing slot. */
+  async setArtifactDocx(opportunityId: number, kind: ArtifactKind, docxFileName: string): Promise<boolean> {
+    return autoHeal(async () => {
+      const [row] = await db.update(opportunityArtifacts)
+        .set({ docxFileName, updatedAt: new Date() })
+        .where(and(
+          eq(opportunityArtifacts.opportunityId, opportunityId),
+          eq(opportunityArtifacts.kind, kind),
+        )).returning();
+      log.debug(`set artifact docx opportunity=${opportunityId} kind=${kind} file=${docxFileName} found=${!!row}`);
+      return !!row;
+    });
+  }
+
+  // ── Skill Linking ──────────────────────────────────────────────
+
+  async linkSkill(opportunityId: number, skillId: number): Promise<void> {
+    return autoHeal(async () => {
+      await db.insert(opportunitySkills).values({ opportunityId, skillId })
+        .onConflictDoNothing();
+      log.debug(`linked skill ${skillId} to opportunity ${opportunityId}`);
+    });
+  }
+
+  async unlinkSkill(opportunityId: number, skillId: number): Promise<boolean> {
+    return autoHeal(async () => {
+      const [row] = await db.delete(opportunitySkills).where(
+        and(
+          eq(opportunitySkills.opportunityId, opportunityId),
+          eq(opportunitySkills.skillId, skillId),
+        ),
+      ).returning();
+      log.debug(`unlinked skill ${skillId} from opportunity ${opportunityId} found=${!!row}`);
+      return !!row;
+    });
+  }
+
+  async getSkillsForOpportunity(opportunityId: number): Promise<Array<{
+    id: number; name: string; category: string | null;
+    skillType: string | null; proficiency: string | null; energyLevel: string | null;
+  }>> {
+    return autoHeal(async () => {
+      const rows = await db.select({
+        id: execSkills.id,
+        name: execSkills.name,
+        category: execSkills.category,
+        skillType: execSkills.skillType,
+        proficiency: execSkills.proficiency,
+        energyLevel: execSkills.energyLevel,
+      })
+        .from(opportunitySkills)
+        .innerJoin(execSkills, eq(opportunitySkills.skillId, execSkills.id))
+        .where(eq(opportunitySkills.opportunityId, opportunityId));
+      return rows;
+    });
+  }
+
+  async getOpportunitiesForSkill(skillId: number): Promise<OpportunityRow[]> {
+    return autoHeal(async () => {
+      const rows = await db.select({
+        opportunity: opportunities,
+      })
+        .from(opportunitySkills)
+        .innerJoin(opportunities, eq(opportunitySkills.opportunityId, opportunities.id))
+        .where(eq(opportunitySkills.skillId, skillId));
+      return rows.map(r => r.opportunity);
+    });
+  }
+
+  /** List with linked skills eagerly loaded */
+  async listWithSkills(userId: string, filters?: { status?: string; type?: string }): Promise<OpportunityWithSkills[]> {
+    return autoHeal(async () => {
+      const opps = await this.list(userId, filters);
+      if (opps.length === 0) return [];
+
+      // Batch-load all linked skills for these opportunities
+      const oppIds = opps.map(o => o.id);
+      const allLinks = await db.select({
+        opportunityId: opportunitySkills.opportunityId,
+        id: execSkills.id,
+        name: execSkills.name,
+        category: execSkills.category,
+        skillType: execSkills.skillType,
+        proficiency: execSkills.proficiency,
+        energyLevel: execSkills.energyLevel,
+      })
+        .from(opportunitySkills)
+        .innerJoin(execSkills, eq(opportunitySkills.skillId, execSkills.id))
+        .where(inArray(opportunitySkills.opportunityId, oppIds));
+
+      // Group by opportunity ID
+      const byOpp = new Map<number, OpportunityWithSkills["linkedSkills"]>();
+      for (const link of allLinks) {
+        const arr = byOpp.get(link.opportunityId) || [];
+        arr.push({
+          id: link.id,
+          name: link.name,
+          category: link.category,
+          skillType: link.skillType,
+          proficiency: link.proficiency,
+          energyLevel: link.energyLevel,
+        });
+        byOpp.set(link.opportunityId, arr);
+      }
+
+      return opps.map(o => ({
+        ...o,
+        linkedSkills: byOpp.get(o.id) || [],
+      }));
+    });
+  }
+
+  /** Get single opportunity with linked skills */
+  async getWithSkills(id: number, userId?: string): Promise<OpportunityWithSkills | undefined> {
+    return autoHeal(async () => {
+      const opp = await this.get(id, userId);
+      if (!opp) return undefined;
+      const linkedSkills = await this.getSkillsForOpportunity(id);
+      return { ...opp, linkedSkills };
+    });
+  }
+}
+
+export const opportunityStorage = new OpportunityStorage();

@@ -1,0 +1,48 @@
+# EAS builds are mobile-only. Keep repo/runtime ballast out of the upload.
+# shared/ stays included because mobile Metro imports shared models from the repo root.
+
+# VCS and dependency caches
+.git/
+.github/
+node_modules/
+**/node_modules/
+mobile/node_modules/
+mobile/.expo/
+mobile/.expo-shared/
+mobile/.gradle/
+mobile/android/build/
+mobile/ios/build/
+
+# Server/web/runtime assets not needed by the native app
+attached_assets/
+uploads/
+project-files/
+.canvas/
+.claude/
+.agents/
+data/
+logs/
+dist/
+server/
+client/
+docs/
+migrations/
+scripts/
+script/
+config/
+workspace/
+placeholder/
+agents/
+
+# Root-only deployment/config artifacts
+Dockerfile
+Dockerfile.dev
+triage-entries.json
+CLAUDE.md
+DESIGN.md
+components.json
+postcss.config.js
+tailwind.config.ts
+vite.config.ts
+drizzle.config.ts
+tsconfig.json

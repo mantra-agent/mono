@@ -1,0 +1,262 @@
+/* Glasses Surface — dark theme for additive display */
+
+.glasses-page {
+  background: #09090b; /* zinc-950 */
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.glasses-viewport {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.glasses-chrome {
+  width: 100%;
+  height: 100%;
+  border-radius: 40px;
+  border: 3px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 60px rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.glasses-surface {
+  width: 100%;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 48px 40px;
+  gap: 32px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.glasses-surface::-webkit-scrollbar {
+  display: none;
+}
+
+/* Cards */
+.glasses-card {
+  color: #fff;
+  padding: 32px 36px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 2px solid rgba(255, 255, 255, 0.08);
+  transition: background 0.15s ease;
+}
+
+.glasses-card.focusable {
+  cursor: pointer;
+}
+
+.glasses-card.focused {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Typography — 3x scale for glasses readability */
+.glasses-title {
+  font-size: 54px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #fff;
+  margin: 0;
+}
+
+.glasses-subtitle {
+  font-size: 48px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.75);
+  margin: 8px 0 0;
+}
+
+.glasses-label {
+  font-size: 48px;
+  font-weight: 500;
+  color: #fff;
+}
+
+/* Urgency colors */
+.urgency-critical { color: #ef4444; }
+.urgency-high { color: #fbbf24; }
+.urgency-medium { color: #fff; }
+.urgency-low { color: #d4d4d8; }
+
+/* Alert severities */
+.alert-info { border-left: 6px solid #3b82f6; }
+.alert-warning { border-left: 6px solid #fbbf24; }
+.alert-critical { border-left: 6px solid #ef4444; }
+
+/* List items */
+.glasses-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.06);
+}
+
+.glasses-list-item:last-child {
+  border-bottom: none;
+}
+
+.glasses-list-label {
+  font-size: 45px;
+  color: #fff;
+}
+
+.glasses-list-meta {
+  font-size: 45px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* Action button */
+.glasses-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 40px;
+  border-radius: 16px;
+  font-size: 45px;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.glasses-action.primary {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.glasses-action.secondary {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* Transition card */
+.glasses-transition {
+  text-align: center;
+  padding: 60px 36px;
+}
+
+.glasses-transition-message {
+  font-size: 60px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* Timer */
+.glasses-timer {
+  font-size: 96px;
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  margin-top: 8px;
+}
+
+/* Dev panel */
+.glasses-dev-toggle {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.2);
+  transition: color 0.15s ease;
+  border-radius: 6px;
+  z-index: 10;
+}
+
+.glasses-dev-toggle:hover {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.glasses-dev-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 360px;
+  height: 100vh;
+  background: #0a0a0a;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-y: auto;
+  padding: 20px;
+  z-index: 50;
+  color: #fff;
+  font-size: 13px;
+  scrollbar-width: thin;
+}
+
+.glasses-dev-section {
+  margin-bottom: 20px;
+}
+
+.glasses-dev-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.4);
+  margin: 0 0 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.glasses-dev-pre {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Connection status */
+.glasses-connection-dot {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  z-index: 10;
+}
+
+.glasses-connection-dot.connected {
+  background: #22c55e;
+}
+
+.glasses-connection-dot.disconnected {
+  background: #ef4444;
+}
+
+/* Responsive: full screen on glasses display */
+@media (max-width: 680px) {
+  .glasses-viewport {
+    width: 100%;
+    height: 100%;
+  }
+}

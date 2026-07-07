@@ -1,0 +1,1 @@
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS customized boolean NOT NULL DEFAULT false;
