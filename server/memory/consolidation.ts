@@ -600,13 +600,21 @@ async function processExtractedClaims(
       // Generate embedding for dedup search
       const embedding = await generateEmbedding(claim.content);
 
-      // Vector-search existing vNext claims for near-duplicates. Legacy semantic
-      // search remains as a read compatibility signal only; new extracted claims
-      // must not be written into memory_entries.
-      const similarVnextClaims = await executeVnextClaimSemanticSearch(embedding, 3);
-      const nearDuplicateVnextClaim = similarVnextClaims.find(
-        (s) => s.similarity >= CLAIM_DEDUP_SIMILARITY_THRESHOLD,
-      );
+      // Vector-search existing vNext claims for near-duplicates. Semantic dedupe is
+      // optional enrichment: if vector search fails, the source-backed vNext claim
+      // must still be durably written through the idempotent vNext storage boundary.
+      let nearDuplicateVnextClaim: Awaited<ReturnType<typeof executeVnextClaimSemanticSearch>>[number] | undefined;
+      try {
+        const similarVnextClaims = await executeVnextClaimSemanticSearch(embedding, 3);
+        nearDuplicateVnextClaim = similarVnextClaims.find(
+          (s) => s.similarity >= CLAIM_DEDUP_SIMILARITY_THRESHOLD,
+        );
+      } catch (semanticErr: unknown) {
+        log.warn(
+          `[${index + 1}/${total}] vNext semantic dedupe failed open for claim "${claim.content.slice(0, 80)}...": ` +
+          `${semanticErr instanceof Error ? semanticErr.message : String(semanticErr)}`,
+        );
+      }
 
       if (nearDuplicateVnextClaim) {
         await memoryVnextClaimStorage.reinforceClaim(nearDuplicateVnextClaim.row.id);
@@ -615,15 +623,22 @@ async function processExtractedClaims(
         continue;
       }
 
-      const similarLegacy = await executeSemanticSearch(embedding, 3);
-      const nearDuplicateLegacy = similarLegacy.find(
-        (s) => s.similarity >= CLAIM_DEDUP_SIMILARITY_THRESHOLD && (s.row.metadata as Record<string, unknown> | null)?.claimType,
-      );
+      try {
+        const similarLegacy = await executeSemanticSearch(embedding, 3);
+        const nearDuplicateLegacy = similarLegacy.find(
+          (s) => s.similarity >= CLAIM_DEDUP_SIMILARITY_THRESHOLD && (s.row.metadata as Record<string, unknown> | null)?.claimType,
+        );
 
-      if (nearDuplicateLegacy) {
-        log.debug(`[${index + 1}/${total}] Claim dedup: skipped legacy duplicate #${nearDuplicateLegacy.row.id} (similarity=${nearDuplicateLegacy.similarity.toFixed(3)}) for "${claim.content.slice(0, 60)}..."`);
-        reinforced++;
-        continue;
+        if (nearDuplicateLegacy) {
+          log.debug(`[${index + 1}/${total}] Claim dedup: skipped legacy duplicate #${nearDuplicateLegacy.row.id} (similarity=${nearDuplicateLegacy.similarity.toFixed(3)}) for "${claim.content.slice(0, 60)}..."`);
+          reinforced++;
+          continue;
+        }
+      } catch (legacySemanticErr: unknown) {
+        log.warn(
+          `[${index + 1}/${total}] Legacy semantic dedupe failed open for vNext claim "${claim.content.slice(0, 80)}...": ` +
+          `${legacySemanticErr instanceof Error ? legacySemanticErr.message : String(legacySemanticErr)}`,
+        );
       }
 
       // Determine createdAt from parent entry's source session date

@@ -19,6 +19,7 @@ import {
   type MemoryVnextClaimLink,
 } from "@shared/schema";
 import type { ClaimCandidate } from "./memory-enrichment";
+import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "./embedding";
 
 const log = createLogger("MemoryVnextClaims");
 
@@ -172,7 +173,24 @@ function nextLifecycleStage(current: string, candidate: MemoryVnextLifecycleStag
   return order[candidate] > order[normalizedCurrent] ? candidate : normalizedCurrent;
 }
 
+export const MEMORY_VNEXT_EMBEDDING_PROFILE = {
+  model: EMBEDDING_MODEL,
+  dimensions: EMBEDDING_DIMENSIONS,
+} as const;
+
+function validateVnextEmbedding(embedding: number[] | undefined, context: string): number[] | undefined {
+  if (!embedding) return undefined;
+  if (embedding.length !== MEMORY_VNEXT_EMBEDDING_PROFILE.dimensions) {
+    throw new Error(
+      `vNext embedding dimension mismatch in ${context}: expected ${MEMORY_VNEXT_EMBEDDING_PROFILE.dimensions} ` +
+      `for ${MEMORY_VNEXT_EMBEDDING_PROFILE.model}, got ${embedding.length}`,
+    );
+  }
+  return embedding;
+}
+
 function vectorLiteral(embedding: number[]): string {
+  validateVnextEmbedding(embedding, "semantic_search");
   return `[${embedding.join(",")}]`;
 }
 
@@ -219,10 +237,14 @@ export class MemoryVnextClaimStorage {
       }
     }
 
+    const validatedEmbedding = validateVnextEmbedding(input.embedding, "create_claim");
+
     const metadata = {
       ...(input.metadata ?? {}),
       extractedFrom: input.sourceMemoryId,
       schema: "memory_vnext_claim",
+      embeddingProfile: MEMORY_VNEXT_EMBEDDING_PROFILE,
+      embeddingStatus: validatedEmbedding ? "ready" : "unavailable",
       ...(writeBudget
         ? {
             extractionBudget: {
@@ -251,7 +273,7 @@ export class MemoryVnextClaimStorage {
         lifecycleStage: MEMORY_VNEXT_LIFECYCLE_STAGE.EXTRACTED,
         lifecycleStageUpdatedAt: new Date(),
         contentHash,
-        embedding: input.embedding,
+        embedding: validatedEmbedding,
         sourceMemoryId: input.sourceMemoryId,
         source: input.source,
         sourceId: input.sourceId ?? null,
