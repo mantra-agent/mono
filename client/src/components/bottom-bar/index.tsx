@@ -415,6 +415,7 @@ export function BottomBar({
   const [showExpanded, setShowExpanded] = useState(false);
   const [composing, setComposing] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [textInputFocused, setTextInputFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cursorRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -484,6 +485,7 @@ export function BottomBar({
     () => parseReferenceText(displayedInputText).some((part) => part.kind === "reference"),
     [displayedInputText],
   );
+  const renderReferenceOverlay = displayedInputHasReferences && !textInputFocused;
   const voiceInputPlaceholder = voiceActive ? getVoiceInputPlaceholder(voiceSession) : undefined;
 
   useEffect(() => {
@@ -736,7 +738,7 @@ export function BottomBar({
 
             {/* Text input — grows upward, never scrolls */}
             <div className="relative flex flex-1 min-w-0">
-              {displayedInputHasReferences && (
+              {renderReferenceOverlay && (
                 <div
                   className={cn(
                     "pointer-events-none absolute inset-0 whitespace-pre-wrap break-words",
@@ -752,6 +754,8 @@ export function BottomBar({
               <textarea
                 ref={textareaRef}
                 value={displayedInputText}
+                onFocus={() => setTextInputFocused(true)}
+                onBlur={() => setTextInputFocused(false)}
                 onChange={(e) => {
                   if (voiceActive) return;
                   const value = e.target.value;
@@ -773,7 +777,7 @@ export function BottomBar({
                   "w-full min-h-9 resize-none bg-muted/50 border border-border rounded-[18px] px-3 py-[7px]",
                   voiceActive && "pr-11",
                   "text-sm placeholder:text-muted-foreground",
-                  displayedInputHasReferences && "text-transparent caret-foreground",
+                  renderReferenceOverlay && "text-transparent caret-foreground selection:bg-transparent",
                   "focus:outline-none focus:border-ring focus:ring-1 focus:ring-ring",
                   "disabled:cursor-not-allowed",
                   voiceActive
