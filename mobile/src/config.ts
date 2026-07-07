@@ -2,14 +2,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type BackendTarget = 'production' | 'development' | 'custom';
 
-const PRODUCTION_SERVER_URL = 'https://xyz-production-5cad.up.railway.app';
-const DEVELOPMENT_SERVER_URL = 'https://xyz-development.up.railway.app';
 const envServerUrl = process.env.EXPO_PUBLIC_SERVER_URL?.trim().replace(/\/+$/, '');
+const envProductionServerUrl = process.env.EXPO_PUBLIC_PRODUCTION_SERVER_URL?.trim().replace(/\/+$/, '');
+const envDevelopmentServerUrl = process.env.EXPO_PUBLIC_DEVELOPMENT_SERVER_URL?.trim().replace(/\/+$/, '');
 const envBackendTarget = process.env.EXPO_PUBLIC_BACKEND_TARGET;
 
 export const BACKEND_TARGETS: Record<Exclude<BackendTarget, 'custom'>, string> = {
-  production: envBackendTarget === 'production' && envServerUrl ? envServerUrl : PRODUCTION_SERVER_URL,
-  development: envBackendTarget === 'development' && envServerUrl ? envServerUrl : DEVELOPMENT_SERVER_URL,
+  production: envProductionServerUrl || (envBackendTarget === 'production' ? envServerUrl || '' : ''),
+  development: envDevelopmentServerUrl || (envBackendTarget === 'development' ? envServerUrl || '' : ''),
 };
 
 const DEFAULTS = {
