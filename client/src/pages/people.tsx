@@ -12,6 +12,7 @@ import { usePageHeader } from "@/hooks/use-page-header";
 import { useFocusContext } from "@/hooks/use-focus-context";
 import { useToast } from "@/hooks/use-toast";
 import { SurfacedPersonRow, surfacedDateLabel } from "@/components/people/surfaced-person-row";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { formatRelativeDate } from "@/lib/local-date";
@@ -858,11 +859,45 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
     },
   });
 
+
+  const { data: linkedMemories = [] } = useQuery<LinkedMemoryEntry[]>({
+    queryKey: ["/api/memory/entity-links", "person", person.id],
+    queryFn: async () => {
+      const res = await fetch(`/api/memory/entity-links/person/${person.id}`);
+      if (!res.ok) throw new Error("Failed to fetch linked memories");
+      return res.json();
+    },
+  });
+
+  const { data: relationshipMemories = [] } = useQuery<RelationshipMemory[]>({
+    queryKey: ["/api/people", person.id, "relationship-memories"],
+    queryFn: async () => {
+      const res = await fetch(`/api/people/${person.id}/relationship-memories`);
+      if (!res.ok) throw new Error("Failed to fetch relationship memories");
+      return res.json();
+    },
+  });
+
+  const unlinkMemoryMutation = useMutation({
+    mutationFn: async (memoryId: number) => {
+      await apiRequest("DELETE", `/api/memory/entity-links/${memoryId}/person/${person.id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/memory/entity-links", "person", person.id] });
+      toast({ title: "Memory unlinked" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to unlink memory", description: err.message, variant: "destructive" });
+    },
+  });
+
   const sorted = useMemo(() => {
     const interactionItems = person.interactions.map((interaction) => ({ kind: "interaction" as const, id: interaction.id, date: interaction.date, interaction }));
     const noteItems = person.notes.map((note) => ({ kind: "note" as const, id: note.id, date: note.createdAt, note }));
-    return [...interactionItems, ...noteItems].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [person.interactions, person.notes]);
+    const memoryItems = linkedMemories.map((memory) => ({ kind: "memory" as const, id: String(memory.id), date: memory.createdAt || new Date(0).toISOString(), memory }));
+    const relationshipMemoryItems = relationshipMemories.map((relationshipMemory) => ({ kind: "relationshipMemory" as const, id: relationshipMemory.id, date: relationshipMemory.createdAt || new Date(0).toISOString(), relationshipMemory }));
+    return [...interactionItems, ...noteItems, ...memoryItems, ...relationshipMemoryItems].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [person.interactions, person.notes, linkedMemories, relationshipMemories]);
 
   return (
     <div className="space-y-3" data-testid="interactions-tab">
@@ -907,7 +942,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                 type="date"
                 value={newDate}
                 onChange={(e) => setNewDate(e.target.value)}
-                className="w-48"
+                className="w-56"
                 data-testid="input-interaction-date"
               />
             </div>
@@ -1018,9 +1053,13 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
         <div className="overflow-hidden rounded-md border border-border/20" data-testid="interaction-tree">
           {sorted.map((item, idx) => {
             const isNote = item.kind === "note";
+            const isMemory = item.kind === "memory";
+            const isRelationshipMemory = item.kind === "relationshipMemory";
             const interaction = item.kind === "interaction" ? item.interaction : null;
-            const note = item.kind === "note" ? item.note : null;
-            const Icon = isNote ? FileText : INTERACTION_ICONS[interaction?.type || ""] || MessageSquare;
+            const note = isNote ? item.note : null;
+            const memory = isMemory ? item.memory : null;
+            const relationshipMemory = isRelationshipMemory ? item.relationshipMemory : null;
+            const Icon = isNote ? FileText : (isMemory || isRelationshipMemory) ? Brain : INTERACTION_ICONS[interaction?.type || ""] || MessageSquare;
             const d = new Date(item.date);
             const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
             const prevDate = idx > 0 ? new Date(sorted[idx - 1].date) : null;
@@ -1028,7 +1067,9 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
             const showMonthHeader = monthKey !== prevMonthKey;
             const dirColor = interaction?.direction === "inbound" ? "text-info" : interaction?.direction === "outbound" ? "text-success" : "text-muted-foreground";
             const title = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-            const preview = isNote ? (note?.title || note?.content || "Note") : (interaction?.summary || "");
+            const memoryTitle = memory?.title || memory?.summary || memory?.content || "Memory";
+            const relationshipMemoryTitle = relationshipMemory?.title || relationshipMemory?.content || "Relationship memory";
+            const preview = isNote ? (note?.title || note?.content || "Note") : isMemory ? memoryTitle : isRelationshipMemory ? relationshipMemoryTitle : (interaction?.summary || "");
             return (
               <Fragment key={`${item.kind}-${item.id}`}>
                 {showMonthHeader && (
@@ -1038,7 +1079,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                 )}
                 <ProfileTreeRow
                   label={<span>{title}</span>}
-                  icon={<Icon className={cn("h-3.5 w-3.5", isNote ? "text-muted-foreground" : dirColor)} />}
+                  icon={<Icon className={cn("h-3.5 w-3.5", isNote || isMemory || isRelationshipMemory ? "text-muted-foreground" : dirColor)} />}
                   hasValue
                   showEmpty
                   expandedContent={(
@@ -1050,6 +1091,26 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{note?.content || ""}</ReactMarkdown>
                           </div>
                           {note?.updatedAt && note.updatedAt !== note.createdAt && <p className="mt-2 text-[10px] text-muted-foreground">edited {formatShortDate(note.updatedAt)}</p>}
+                        </div>
+                      ) : isMemory ? (
+                        <div>
+                          <p className="font-medium text-foreground">{memoryTitle}</p>
+                          {memory?.summary && memory.title && <p className="mt-2 whitespace-pre-wrap text-foreground">{memory.summary}</p>}
+                          <p className="mt-2 whitespace-pre-wrap text-muted-foreground">{memory?.content}</p>
+                          <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                            <Badge variant="outline" className="text-[10px] leading-none">{memory?.layer}</Badge>
+                            <Badge variant="outline" className="text-[10px] leading-none">{memory?.source}</Badge>
+                            {memory?.tags?.map((tag) => <Badge key={tag} variant="outline" className="text-[10px] leading-none">{tag}</Badge>)}
+                          </div>
+                        </div>
+                      ) : isRelationshipMemory ? (
+                        <div>
+                          <p className="font-medium text-foreground">{relationshipMemoryTitle}</p>
+                          <p className="mt-2 whitespace-pre-wrap text-muted-foreground">{relationshipMemory?.content}</p>
+                          <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                            {relationshipMemory?.category && <Badge variant="outline" className="text-[10px] leading-none">{RM_CATEGORY_MAP[relationshipMemory.category]?.label || relationshipMemory.category}</Badge>}
+                            {relationshipMemory?.tags?.map((tag) => <Badge key={tag} variant="outline" className="text-[10px] leading-none">{tag}</Badge>)}
+                          </div>
                         </div>
                       ) : (
                         <>
@@ -1073,15 +1134,17 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                 >
                   <div className="flex min-w-0 items-center justify-end gap-1.5">
                     <span className="truncate text-xs text-foreground/80" data-testid={`log-preview-${item.id}`}>{preview}</span>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                      onClick={(e) => { e.stopPropagation(); isNote ? deleteNoteMutation.mutate(item.id) : deleteMutation.mutate(item.id); }}
-                      data-testid={`button-delete-log-${item.id}`}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
+                    {!isRelationshipMemory && (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                        onClick={(e) => { e.stopPropagation(); isNote ? deleteNoteMutation.mutate(item.id) : isMemory ? unlinkMemoryMutation.mutate(Number(item.id)) : deleteMutation.mutate(item.id); }}
+                        data-testid={`button-delete-log-${item.id}`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    )}
                   </div>
                 </ProfileTreeRow>
               </Fragment>
@@ -1107,7 +1170,7 @@ function DatesTab({ person, onUpdate }: { person: Person; onUpdate: () => void }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/people", person.id] });
-      setEffectiveShowAdd(false);
+      setShowAdd(false);
       setNewLabel("");
       setNewDate("");
       onUpdate();
@@ -1172,7 +1235,7 @@ function DatesTab({ person, onUpdate }: { person: Person; onUpdate: () => void }
                 type="date"
                 value={newDate}
                 onChange={(e) => setNewDate(e.target.value)}
-                className="w-48"
+                className="w-56"
                 data-testid="input-date-value"
               />
               <Select value={newRecurrence} onValueChange={(v) => setNewRecurrence(v as "annual" | "one-time")}>
@@ -1186,7 +1249,7 @@ function DatesTab({ person, onUpdate }: { person: Person; onUpdate: () => void }
               </Select>
             </div>
             <div className="flex gap-1 justify-end">
-              <Button variant="ghost" size="sm" onClick={() => setEffectiveShowAdd(false)}>Cancel</Button>
+              <Button variant="ghost" size="sm" onClick={() => setShowAdd(false)}>Cancel</Button>
               <Button
                 size="sm"
                 onClick={() => addMutation.mutate({ label: newLabel, date: newDate, recurrence: newRecurrence })}
@@ -1559,10 +1622,10 @@ function ProfileTreeRow({
           </div>
           <div
             className={cn(
-              "flex min-w-0 flex-1 items-center justify-end text-right text-xs leading-none",
-              "[&_input]:h-5 [&_input]:w-48 [&_input]:bg-muted/50 [&_input]:px-1.5 [&_input]:py-0 [&_input]:text-right [&_input]:text-xs [&_input]:leading-none",
+              "flex min-w-0 w-56 shrink-0 items-center justify-end text-right text-xs leading-none",
+              "[&_input]:h-5 [&_input]:w-56 [&_input]:bg-muted/50 [&_input]:px-1.5 [&_input]:py-0 [&_input]:text-right [&_input]:text-xs [&_input]:leading-none",
               "[&_textarea]:bg-muted/50 [&_textarea]:text-xs",
-              "[&_[role=combobox]]:h-5 [&_[role=combobox]]:w-48 [&_[role=combobox]]:bg-muted/50 [&_[role=combobox]]:px-1.5 [&_[role=combobox]]:py-0 [&_[role=combobox]]:text-xs",
+              "[&_[role=combobox]]:h-5 [&_[role=combobox]]:w-56 [&_[role=combobox]]:bg-muted/50 [&_[role=combobox]]:px-1.5 [&_[role=combobox]]:py-0 [&_[role=combobox]]:text-xs",
               "[&_button]:h-5 [&_button]:px-1.5 [&_button]:text-xs",
             )}
           >
@@ -1708,20 +1771,6 @@ interface LinkedMemoryEntry {
   linkId: number;
 }
 
-const PM_CATEGORY_MAP: Record<string, { label: string; key: string }> = {
-  "pm-cat:growth-edge": { label: "Growth Edges", key: "growth-edge" },
-  "pm-cat:skill-level": { label: "Skills", key: "skill-level" },
-  "pm-cat:decision-pattern": { label: "Decisions", key: "decision-pattern" },
-  "pm-cat:blind-spot": { label: "Blind Spots", key: "blind-spot" },
-  "pm-cat:motivation": { label: "Motivations", key: "motivation" },
-  "pm-cat:fear": { label: "Fears", key: "fear" },
-  "pm-cat:strength": { label: "Strengths", key: "strength" },
-  "pm-cat:trigger": { label: "Triggers", key: "trigger" },
-  "pm-cat:belief": { label: "Beliefs", key: "belief" },
-  "pm-cat:relational": { label: "Relational", key: "relational" },
-  "pm-cat:evolution": { label: "Evolution", key: "evolution" },
-};
-
 const RM_CATEGORY_MAP: Record<string, { label: string; icon: string }> = {
   "dynamic": { label: "Dynamics", icon: "🔄" },
   "preference": { label: "Preferences", icon: "💡" },
@@ -1765,496 +1814,6 @@ function getConfidenceColor(confidence: number): string {
   return "bg-error";
 }
 
-function PersonMemoriesTab({ personId, personName }: { personId: string; personName: string }) {
-  const { toast } = useToast();
-  const [filterMode, setFilterMode] = useState<"all" | "person-model" | "relationship">("all");
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-
-  const { data: memories, isLoading } = useQuery<LinkedMemoryEntry[]>({
-    queryKey: ["/api/memory/entity-links", "person", personId],
-    queryFn: async () => {
-      const res = await fetch(`/api/memory/entity-links/person/${personId}`);
-      if (!res.ok) throw new Error("Failed to fetch linked memories");
-      return res.json();
-    },
-  });
-
-  const { data: relationshipMemories, isLoading: rmLoading } = useQuery<RelationshipMemory[]>({
-    queryKey: ["/api/people", personId, "relationship-memories"],
-    queryFn: async () => {
-      const res = await fetch(`/api/people/${personId}/relationship-memories`);
-      if (!res.ok) throw new Error("Failed to fetch relationship memories");
-      return res.json();
-    },
-  });
-
-  const unlinkMutation = useMutation({
-    mutationFn: async (memoryId: number) => {
-      await apiRequest("DELETE", `/api/memory/entity-links/${memoryId}/person/${personId}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/memory/entity-links", "person", personId] });
-      toast({ title: "Memory unlinked" });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to unlink", description: err.message, variant: "destructive" });
-    },
-  });
-
-  const personModelCount = useMemo(() =>
-    memories?.filter(isPersonModelEntry).length ?? 0,
-    [memories]
-  );
-
-  const rmCount = relationshipMemories?.length ?? 0;
-
-  const categoryCounts = useMemo(() => {
-    if (!memories) return {};
-    const counts: Record<string, number> = {};
-    for (const m of memories.filter(isPersonModelEntry)) {
-      const cat = getPersonModelCategory(m);
-      if (cat) counts[cat.tag] = (counts[cat.tag] || 0) + 1;
-    }
-    return counts;
-  }, [memories]);
-
-  const rmCategoryCounts = useMemo(() => {
-    if (!relationshipMemories) return {};
-    const counts: Record<string, number> = {};
-    for (const m of relationshipMemories) {
-      counts[m.category] = (counts[m.category] || 0) + 1;
-    }
-    return counts;
-  }, [relationshipMemories]);
-
-  const filteredMemories = useMemo(() => {
-    if (!memories) return [];
-    let result = memories;
-    if (filterMode === "person-model") {
-      result = result.filter(isPersonModelEntry);
-      if (selectedCategory) {
-        result = result.filter(m => m.tags?.includes(selectedCategory));
-      }
-    }
-    return result;
-  }, [memories, filterMode, selectedCategory]);
-
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [newMemoryContent, setNewMemoryContent] = useState("");
-  const [newMemoryTags, setNewMemoryTags] = useState("");
-  const [newRmCategory, setNewRmCategory] = useState<string>("dynamic");
-
-  const addMemoryMutation = useMutation({
-    mutationFn: async ({ content, tags }: { content: string; tags: string[] }) => {
-      const entryRes = await apiRequest("POST", "/api/memory/entries", {
-        content,
-        source: "manual",
-        tags: tags.length > 0 ? tags : ["pm-cat:personal-note"],
-      });
-      const entry = await entryRes.json();
-      await apiRequest("POST", "/api/memory/entity-links", {
-        memoryId: entry.id,
-        entityType: "person",
-        entityId: personId,
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/memory/entity-links", "person", personId] });
-      setNewMemoryContent("");
-      setNewMemoryTags("");
-      setShowAddForm(false);
-      toast({ title: "Memory added" });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to add memory", description: err.message, variant: "destructive" });
-    },
-  });
-
-  const addRelationshipMemoryMutation = useMutation({
-    mutationFn: async ({ content, category }: { content: string; category: string }) => {
-      await apiRequest("POST", `/api/people/${personId}/relationship-memories`, { content, category });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/people", personId, "relationship-memories"] });
-      setNewMemoryContent("");
-      setNewRmCategory("dynamic");
-      setShowAddForm(false);
-      toast({ title: "Relationship memory added" });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to add memory", description: err.message, variant: "destructive" });
-    },
-  });
-
-  const filteredRmMemories = useMemo(() => {
-    if (!relationshipMemories || filterMode !== "relationship") return [];
-    if (selectedCategory) {
-      return relationshipMemories.filter(m => m.category === selectedCategory);
-    }
-    return relationshipMemories;
-  }, [relationshipMemories, filterMode, selectedCategory]);
-
-  if (isLoading || rmLoading) {
-    return (
-      <div className="space-y-3 p-4" data-testid="person-memories-loading">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <Skeleton key={i} className="h-20 w-full" />
-        ))}
-      </div>
-    );
-  }
-
-  const totalCount = (memories?.length ?? 0) + rmCount;
-  if (totalCount === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-12 text-center" data-testid="person-memories-empty">
-        <Brain className="h-10 w-10 text-muted-foreground/30 mb-3" />
-        <h3 className="text-sm font-medium text-foreground mb-1">No memories yet</h3>
-        <p className="text-xs text-muted-foreground/70 max-w-xs mb-3">
-          Memories and relationship insights about {personName} will appear here as xyz learns.
-        </p>
-        <Button
-          variant="outline"
-          size="sm"
-          className="text-xs gap-1"
-          onClick={() => setShowAddForm(true)}
-          data-testid="button-add-first-memory"
-        >
-          <Plus className="h-3 w-3" />
-          Add a memory
-        </Button>
-        {showAddForm && (
-          <Card className="mt-3 w-full max-w-sm border-primary/30" data-testid="add-memory-form-empty">
-            <CardContent className="p-3 space-y-2 text-left">
-              <Textarea
-                placeholder={`Add a memory about ${personName}...`}
-                value={newMemoryContent}
-                onChange={(e) => setNewMemoryContent(e.target.value)}
-                className="min-h-[60px] text-sm"
-                data-testid="input-memory-content-empty"
-              />
-              <div className="flex gap-2 justify-end">
-                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setShowAddForm(false); setNewMemoryContent(""); }} data-testid="button-cancel-memory-empty">
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  className="h-7 text-xs"
-                  disabled={!newMemoryContent.trim() || addMemoryMutation.isPending}
-                  onClick={() => addMemoryMutation.mutate({ content: newMemoryContent.trim(), tags: [] })}
-                  data-testid="button-save-memory-empty"
-                >
-                  {addMemoryMutation.isPending ? "Saving..." : "Save"}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-3" data-testid="person-memories-list">
-      <div className="flex items-center gap-1.5 flex-wrap" data-testid="person-memories-filter-bar">
-        <button
-          onClick={() => { setFilterMode("all"); setSelectedCategory(null); }}
-          className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
-            filterMode === "all"
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted text-muted-foreground hover:text-foreground"
-          }`}
-          data-testid="filter-all-memories"
-        >
-          All Memories
-        </button>
-        <button
-          onClick={() => { setFilterMode("relationship"); setSelectedCategory(null); }}
-          className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors flex items-center ${
-            filterMode === "relationship"
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted text-muted-foreground hover:text-foreground"
-          }`}
-          data-testid="filter-relationship-model"
-        >
-          Relationship
-          {rmCount > 0 && (
-            <Badge variant="secondary" className="ml-1.5 text-xs font-mono px-1 py-0">{rmCount}</Badge>
-          )}
-        </button>
-        <button
-          onClick={() => { setFilterMode("person-model"); setSelectedCategory(null); }}
-          className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors flex items-center ${
-            filterMode === "person-model"
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted text-muted-foreground hover:text-foreground"
-          }`}
-          data-testid="filter-person-model"
-        >
-          Person Model
-          {personModelCount > 0 && (
-            <Badge variant="secondary" className="ml-1.5 text-xs font-mono px-1 py-0">{personModelCount}</Badge>
-          )}
-        </button>
-      </div>
-
-      {filterMode === "relationship" && rmCount > 0 && (
-        <div className="flex items-center gap-1 flex-wrap" data-testid="rm-category-pills">
-          <button
-            onClick={() => setSelectedCategory(null)}
-            className={`px-2 py-0.5 text-xs font-medium rounded-full transition-colors ${
-              !selectedCategory
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground hover:text-foreground"
-            }`}
-            data-testid="rm-category-pill-all"
-          >
-            All
-          </button>
-          {Object.entries(RM_CATEGORY_MAP).map(([cat, { label }]) => {
-            const count = rmCategoryCounts[cat] || 0;
-            if (count === 0) return null;
-            return (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(selectedCategory === cat ? null : cat)}
-                className={`px-2 py-0.5 text-xs font-medium rounded-full transition-colors flex items-center ${
-                  selectedCategory === cat
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-muted-foreground hover:text-foreground"
-                }`}
-                data-testid={`rm-category-pill-${cat}`}
-              >
-                {label}
-                <Badge variant="secondary" className="ml-1 text-xs font-mono px-1 py-0">{count}</Badge>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {filterMode === "person-model" && personModelCount > 0 && (
-        <div className="flex items-center gap-1 flex-wrap" data-testid="person-model-category-pills">
-          <button
-            onClick={() => setSelectedCategory(null)}
-            className={`px-2 py-0.5 text-xs font-medium rounded-full transition-colors ${
-              !selectedCategory
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground hover:text-foreground"
-            }`}
-            data-testid="category-pill-all"
-          >
-            All
-          </button>
-          {Object.entries(PM_CATEGORY_MAP).map(([tag, { label }]) => {
-            const count = categoryCounts[tag] || 0;
-            if (count === 0) return null;
-            return (
-              <button
-                key={tag}
-                onClick={() => setSelectedCategory(selectedCategory === tag ? null : tag)}
-                className={`px-2 py-0.5 text-xs font-medium rounded-full transition-colors flex items-center ${
-                  selectedCategory === tag
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-muted-foreground hover:text-foreground"
-                }`}
-                data-testid={`category-pill-${tag}`}
-              >
-                {label}
-                <Badge variant="secondary" className="ml-1 text-xs font-mono px-1 py-0">{count}</Badge>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground flex items-center gap-1">
-          <Brain className="h-3 w-3" />
-          {filterMode === "relationship"
-            ? `${filteredRmMemories.length} relationship ${filteredRmMemories.length === 1 ? "memory" : "memories"}`
-            : `${filteredMemories.length} ${filterMode === "person-model" ? "model" : "linked"} ${filteredMemories.length === 1 ? "memory" : "memories"}`
-          }
-        </p>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 text-xs gap-1"
-          onClick={() => setShowAddForm(!showAddForm)}
-          data-testid="button-add-memory"
-        >
-          <Plus className="h-3 w-3" />
-          Add Memory
-        </Button>
-      </div>
-
-      {showAddForm && filterMode === "relationship" && (
-        <Card className="border-primary/30" data-testid="add-relationship-memory-form">
-          <CardContent className="p-3 space-y-2">
-            <div className="w-full">
-              <Select value={newRmCategory} onValueChange={setNewRmCategory}>
-                <SelectTrigger data-testid="select-rm-category" className="text-xs h-8">
-                  <SelectValue placeholder="Category" />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(RM_CATEGORY_MAP).map(([cat, { label }]) => (
-                    <SelectItem key={cat} value={cat}>{label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <Textarea
-              placeholder={`Add a relationship insight about ${personName}...`}
-              value={newMemoryContent}
-              onChange={(e) => setNewMemoryContent(e.target.value)}
-              className="min-h-[60px] text-sm"
-              data-testid="input-rm-memory-content"
-            />
-            <div className="flex gap-2 justify-end">
-              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setShowAddForm(false); setNewMemoryContent(""); setNewRmCategory("dynamic"); }} data-testid="button-cancel-rm-memory">
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                className="h-7 text-xs"
-                disabled={!newMemoryContent.trim() || addRelationshipMemoryMutation.isPending}
-                onClick={() => addRelationshipMemoryMutation.mutate({ content: newMemoryContent.trim(), category: newRmCategory })}
-                data-testid="button-save-rm-memory"
-              >
-                {addRelationshipMemoryMutation.isPending ? "Saving..." : "Save"}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {showAddForm && filterMode !== "relationship" && (
-        <Card className="border-primary/30" data-testid="add-memory-form">
-          <CardContent className="p-3 space-y-2">
-            <Textarea
-              placeholder={`Add a memory about ${personName}...`}
-              value={newMemoryContent}
-              onChange={(e) => setNewMemoryContent(e.target.value)}
-              className="min-h-[60px] text-sm"
-              data-testid="input-memory-content"
-            />
-            <Input
-              placeholder="Tags (comma-separated, optional)"
-              value={newMemoryTags}
-              onChange={(e) => setNewMemoryTags(e.target.value)}
-              className="text-xs"
-              data-testid="input-memory-tags"
-            />
-            <div className="flex gap-2 justify-end">
-              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setShowAddForm(false); setNewMemoryContent(""); setNewMemoryTags(""); }} data-testid="button-cancel-memory">
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                className="h-7 text-xs"
-                disabled={!newMemoryContent.trim() || addMemoryMutation.isPending}
-                onClick={() => {
-                  const tags = newMemoryTags.split(",").map(t => t.trim()).filter(Boolean);
-                  addMemoryMutation.mutate({ content: newMemoryContent.trim(), tags });
-                }}
-                data-testid="button-save-memory"
-              >
-                {addMemoryMutation.isPending ? "Saving..." : "Save"}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {filterMode === "relationship" && filteredRmMemories.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-8 text-center">
-          <Brain className="h-8 w-8 text-muted-foreground/30 mb-2" />
-          <p className="text-xs text-muted-foreground/70 max-w-xs">
-            No relationship insights yet. xyz will build these as you interact with {personName}.
-          </p>
-        </div>
-      )}
-
-      {filterMode === "person-model" && filteredMemories.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-8 text-center">
-          <Brain className="h-8 w-8 text-muted-foreground/30 mb-2" />
-          <p className="text-xs text-muted-foreground/70 max-w-xs">
-            No person model entries yet. Run a model audit to seed beliefs about {personName}.
-          </p>
-        </div>
-      )}
-
-      <div className="overflow-hidden rounded-md border border-border/20" data-testid="person-memory-tree">
-        {filterMode === "relationship" && filteredRmMemories.map((rm) => {
-          const catInfo = RM_CATEGORY_MAP[rm.category];
-          return (
-            <ProfileTreeRow
-              key={rm.id}
-              label={<span data-testid={`rm-title-${rm.id}`}>{rm.title}</span>}
-              icon={<Brain className="h-3.5 w-3.5" />}
-              hasValue
-              showEmpty
-              expandedContent={<p className="whitespace-pre-wrap">{rm.content}</p>}
-              testId={`rm-row-${rm.id}`}
-            >
-              <div className="flex min-w-0 items-center justify-end gap-1.5">
-                <Badge variant="outline" className="text-[10px] leading-none bg-cat-event/10 text-cat-event border-cat-event/20">
-                  {catInfo?.label || rm.category}
-                </Badge>
-                {rm.createdAt && <span className="shrink-0 text-[10px] text-muted-foreground">{formatRelativeDate(rm.createdAt)}</span>}
-              </div>
-            </ProfileTreeRow>
-          );
-        })}
-
-        {filterMode !== "relationship" && filteredMemories.map((memory) => {
-          const title = memory.title || memory.summary || memory.content.slice(0, 100);
-          return (
-            <ProfileTreeRow
-              key={memory.id}
-              label={<span data-testid={`person-memory-title-${memory.id}`}>{title}</span>}
-              icon={<Brain className="h-3.5 w-3.5" />}
-              hasValue
-              showEmpty
-              expandedContent={(
-                <div className="space-y-2">
-                  {memory.summary && memory.title && <p className="whitespace-pre-wrap">{memory.summary}</p>}
-                  <p className="whitespace-pre-wrap text-muted-foreground">{memory.content}</p>
-                  {isPersonModelEntry(memory) && (() => {
-                    const cat = getPersonModelCategory(memory);
-                    const meta = memory.metadata as Record<string, unknown> | undefined;
-                    const confidence = typeof meta?.confidence === "number" ? meta.confidence : null;
-                    const evidenceIds = Array.isArray(meta?.evidence_ids) ? meta.evidence_ids as number[] : [];
-                    const lastConfirmed = typeof meta?.last_confirmed === "string" ? meta.last_confirmed as string : null;
-                    return (
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {confidence !== null && <span className={`h-2 w-2 rounded-full ${getConfidenceColor(confidence)}`} title={`Confidence: ${Math.round(confidence * 100)}%`} />}
-                        <Badge variant="outline" className="text-[10px] leading-none bg-primary/5">{cat ? cat.label : "Uncategorized"}</Badge>
-                        {evidenceIds.length > 0 && <span className="text-[10px] text-muted-foreground">{evidenceIds.length} evidence</span>}
-                        {lastConfirmed && <span className="text-[10px] text-muted-foreground">confirmed {formatRelativeDate(lastConfirmed)}</span>}
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
-              testId={`person-memory-row-${memory.id}`}
-            >
-              <div className="flex min-w-0 items-center justify-end gap-1.5">
-                <Badge variant="outline" className="text-[10px] leading-none">{memory.layer}</Badge>
-                <Badge variant="outline" className="text-[10px] leading-none">{memory.source}</Badge>
-                {memory.createdAt && <span className="shrink-0 text-[10px] text-muted-foreground">{new Date(memory.createdAt).toLocaleDateString()}</span>}
-                <Button variant="ghost" size="icon" onClick={() => unlinkMutation.mutate(memory.id)} disabled={unlinkMutation.isPending} data-testid={`button-unlink-memory-${memory.id}`}>
-                  <Unlink className="h-3 w-3 text-muted-foreground" />
-                </Button>
-              </div>
-            </ProfileTreeRow>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 const TEMPERATURE_COLORS: Record<string, string> = {
   hot: "text-error",
   warm: "text-warning",
@@ -2289,39 +1848,41 @@ function RelationshipNotificationsCard({ personId }: { personId: string }) {
   });
   const items = getAgendaItemsForPerson(data, personId);
 
-  if (isLoading) return <Skeleton className="h-24 w-full" />;
+  if (isLoading) return <Skeleton className="h-10 w-full" />;
   if (items.length === 0) return null;
 
   return (
-    <Card className="border-info/25 bg-info/5" data-testid="relationship-notifications-card">
-      <CardContent className="space-y-3 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-info-foreground">Notifications</span>
-          <Badge variant="outline" className="border-info/25 text-xs text-info-foreground">{items.length}</Badge>
-        </div>
-        <div className="space-y-2">
-          {items.map((item) => {
-            const meta = AGENDA_SECTION_META[item.section];
-            const Icon = meta.icon;
-            return (
-              <div key={`${item.section}-${item.personId}`} className="rounded-md border border-border/30 bg-background/50 px-3 py-2" data-testid={`profile-agenda-item-${item.section}`}>
-                <div className="flex items-center gap-2">
-                  <Icon className={cn("h-3.5 w-3.5", meta.color)} />
-                  <span className={cn("text-xs font-semibold", meta.color)}>{meta.label}</span>
-                  {item.contextBadge && (
-                    <Badge variant="outline" className={cn("text-xs", item.contextBadge.color)}>{item.contextBadge.label}</Badge>
-                  )}
-                </div>
-                {item.reason && <p className="mt-1 text-xs text-muted-foreground">{item.reason}</p>}
-                {item.suggestedAction && <p className="mt-1 text-xs text-primary">{item.suggestedAction}</p>}
+    <div className="overflow-hidden rounded-md border border-border/20" data-testid="relationship-notifications-card">
+      {items.map((item) => {
+        const meta = AGENDA_SECTION_META[item.section];
+        const Icon = meta.icon;
+        return (
+          <ProfileTreeRow
+            key={`${item.section}-${item.personId}`}
+            label={<span>Notification</span>}
+            icon={<Icon className={cn("h-3.5 w-3.5", meta.color)} />}
+            hasValue
+            showEmpty
+            expandedContent={(
+              <div className="rounded-md border border-card-border bg-muted/20 p-3 text-sm leading-relaxed">
+                {item.reason && <p className="text-foreground">{item.reason}</p>}
+                {item.suggestedAction && <p className="mt-2 text-cta">{item.suggestedAction}</p>}
               </div>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
+            )}
+            expandedContentClassName="px-2 pb-2 pl-2"
+            testId={`profile-agenda-item-${item.section}`}
+          >
+            <div className="flex w-56 items-center justify-end gap-1.5">
+              <span className={cn("truncate text-xs", meta.color)}>{meta.label}</span>
+              {item.contextBadge && <Badge variant="outline" className={cn("text-[10px] leading-none", item.contextBadge.color)}>{item.contextBadge.label}</Badge>}
+            </div>
+          </ProfileTreeRow>
+        );
+      })}
+    </div>
   );
 }
+
 
 function WarmthCard({ person }: { person: Person }) {
   const rp = person.relationshipProfile;
@@ -2701,7 +2262,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
   if (isLoading) {
     return (
       <div className="space-y-4">
-        <Skeleton className="h-10 w-48" />
+        <Skeleton className="h-10 w-56" />
         <Skeleton className="h-32" />
         <Skeleton className="h-48" />
       </div>
@@ -2733,7 +2294,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
       <button
         type="button"
         onClick={() => setShowNewLog(v => !v)}
-        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80"
         data-testid="button-new-log"
       >
         <Plus className={cn("h-3.5 w-3.5 shrink-0 transition-transform", showNewLog && "rotate-45")} />
@@ -2761,7 +2322,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
               onBlur={() => { const next = editName.trim(); if (next && next !== person.name) updateMutation.mutate({ name: next }); }}
               onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditName(person.name); }}
               placeholder="Name"
-              className="w-48"
+              className="w-56"
               data-testid="input-edit-name"
             />
           </ProfileTreeRow>
@@ -2778,44 +2339,44 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-category">Category</span>} icon={<Shield className="h-3.5 w-3.5" />} hasValue={Boolean(person.cabinetLevel)} showEmpty={showEmptyProfileRows} testId="row-profile-category">
-            <Select value={person.cabinetLevel} onValueChange={(v) => updateMutation.mutate({ cabinetLevel: v })}><SelectTrigger className="w-48" data-testid="select-cabinet-level"><SelectValue /></SelectTrigger><SelectContent>{sortedLevels.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent></Select>
+            <Select value={person.cabinetLevel} onValueChange={(v) => updateMutation.mutate({ cabinetLevel: v })}><SelectTrigger className="w-56" data-testid="select-cabinet-level"><SelectValue /></SelectTrigger><SelectContent>{sortedLevels.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent></Select>
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-familiarity">Familiarity</span>} icon={<Users className="h-3.5 w-3.5" />} hasValue={Boolean(person.familiarity && person.familiarity !== "none")} showEmpty={showEmptyProfileRows || editingFamiliarity} testId="row-profile-familiarity">
             {(person.familiarity && person.familiarity !== "none") || editingFamiliarity ? (
-              <Select value={person.familiarity || "none"} onValueChange={(v) => { updateMutation.mutate({ familiarity: v as Person["familiarity"] }); setEditingFamiliarity(false); }}><SelectTrigger className="w-48" data-testid="select-familiarity"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">None</SelectItem><SelectItem value="surface">Surface</SelectItem><SelectItem value="deep">Deep</SelectItem></SelectContent></Select>
+              <Select value={person.familiarity || "none"} onValueChange={(v) => { updateMutation.mutate({ familiarity: v as Person["familiarity"] }); setEditingFamiliarity(false); }}><SelectTrigger className="w-56" data-testid="select-familiarity"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">None</SelectItem><SelectItem value="surface">Surface</SelectItem><SelectItem value="deep">Deep</SelectItem></SelectContent></Select>
             ) : <Button variant="ghost" size="icon" onClick={() => setEditingFamiliarity(true)} data-testid="button-add-familiarity"><Plus className="h-3 w-3" /></Button>}
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-trust">Trust</span>} icon={<Heart className="h-3.5 w-3.5" />} hasValue={Boolean(person.trust && person.trust !== "none")} showEmpty={showEmptyProfileRows || editingTrust} testId="row-profile-trust">
             {(person.trust && person.trust !== "none") || editingTrust ? (
-              <Select value={person.trust || "none"} onValueChange={(v) => { updateMutation.mutate({ trust: v as Person["trust"] }); setEditingTrust(false); }}><SelectTrigger className="w-48" data-testid="select-trust"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ally">Ally</SelectItem><SelectItem value="positive">Positive</SelectItem><SelectItem value="none">None</SelectItem><SelectItem value="negative">Negative</SelectItem><SelectItem value="enemy">Enemy</SelectItem></SelectContent></Select>
+              <Select value={person.trust || "none"} onValueChange={(v) => { updateMutation.mutate({ trust: v as Person["trust"] }); setEditingTrust(false); }}><SelectTrigger className="w-56" data-testid="select-trust"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ally">Ally</SelectItem><SelectItem value="positive">Positive</SelectItem><SelectItem value="none">None</SelectItem><SelectItem value="negative">Negative</SelectItem><SelectItem value="enemy">Enemy</SelectItem></SelectContent></Select>
             ) : <Button variant="ghost" size="icon" onClick={() => setEditingTrust(true)} data-testid="button-add-trust"><Plus className="h-3 w-3" /></Button>}
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-tags">Tags</span>} icon={<SlidersHorizontal className="h-3.5 w-3.5" />} hasValue={(person.tags || []).length > 0} showEmpty={showEmptyProfileRows} testId="row-profile-tags"><div className="max-w-md"><DetailTagPicker tags={person.tags || []} onChange={(newTags) => updateMutation.mutate({ tags: newTags })} /></div></ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-met">Met</span>} icon={<Calendar className="h-3.5 w-3.5" />} hasValue={Boolean(person.met)} showEmpty={showEmptyProfileRows || editingMet} testId="row-profile-met">
-            {person.met || editingMet ? <Input key={person.met || "new-met"} type="date" defaultValue={person.met || ""} autoFocus={editingMet} onBlur={(e) => { const v = e.target.value; if (v !== person.met && (v || person.met)) updateMutation.mutate({ met: v || undefined }); setEditingMet(false); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingMet(false); }} className="w-48" data-testid="input-met" /> : <Button variant="ghost" size="icon" onClick={() => setEditingMet(true)} data-testid="button-add-met"><Plus className="h-3 w-3" /></Button>}
+            {person.met || editingMet ? <Input key={person.met || "new-met"} type="date" defaultValue={person.met || ""} autoFocus={editingMet} onBlur={(e) => { const v = e.target.value; if (v !== person.met && (v || person.met)) updateMutation.mutate({ met: v || undefined }); setEditingMet(false); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingMet(false); }} className="w-56" data-testid="input-met" /> : <Button variant="ghost" size="icon" onClick={() => setEditingMet(true)} data-testid="button-add-met"><Plus className="h-3 w-3" /></Button>}
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-company">Company</span>} icon={<Building2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.company)} showEmpty={showEmptyProfileRows || editingCompany} testId="row-profile-company">
             <div className="relative flex justify-end">
               {person.company || editingCompany ? (<>
-                <Input value={companyInputValue} onChange={(e) => { setCompanyInputValue(e.target.value); setShowCompanyDropdown(true); }} onFocus={() => setShowCompanyDropdown(true)} onBlur={() => { setTimeout(() => { setShowCompanyDropdown(false); if (companyInputValue.trim() !== (person.company || "")) updateMutation.mutate({ company: companyInputValue.trim() || undefined }); setEditingCompany(false); }, 200); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setEditingCompany(false); setCompanyInputValue(person.company || ""); } }} placeholder="Company name" className="w-48" autoFocus={editingCompany} data-testid="input-edit-company" />
+                <Input value={companyInputValue} onChange={(e) => { setCompanyInputValue(e.target.value); setShowCompanyDropdown(true); }} onFocus={() => setShowCompanyDropdown(true)} onBlur={() => { setTimeout(() => { setShowCompanyDropdown(false); if (companyInputValue.trim() !== (person.company || "")) updateMutation.mutate({ company: companyInputValue.trim() || undefined }); setEditingCompany(false); }, 200); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setEditingCompany(false); setCompanyInputValue(person.company || ""); } }} placeholder="Company name" className="w-56" autoFocus={editingCompany} data-testid="input-edit-company" />
                 {showCompanyDropdown && companyInputValue.trim() && (() => { const matches = (companiesData?.companies || []).filter(c => c.toLowerCase().includes(companyInputValue.toLowerCase())); const exactMatch = matches.some(c => c.toLowerCase() === companyInputValue.toLowerCase().trim()); return <div className="absolute right-0 z-50 mt-9 w-56 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md" data-testid="dropdown-company">{matches.map((c) => <button key={c} className="w-full px-3 py-1.5 text-left text-sm hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { setCompanyInputValue(c); setShowCompanyDropdown(false); updateMutation.mutate({ company: c }); setEditingCompany(false); }} data-testid={`option-company-${c}`}>{c}</button>)}{!exactMatch && <button className="w-full px-3 py-1.5 text-left text-sm text-muted-foreground hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { setShowCompanyDropdown(false); updateMutation.mutate({ company: companyInputValue.trim() }); setEditingCompany(false); }} data-testid="option-company-add-new">+ Add "{companyInputValue.trim()}"</button>}</div>; })()}
               </>) : <Button variant="ghost" size="icon" onClick={() => { setCompanyInputValue(""); setEditingCompany(true); }} data-testid="button-add-company"><Plus className="h-3 w-3" /></Button>}
             </div>
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-role">Role</span>} icon={<ContactRound className="h-3.5 w-3.5" />} hasValue={Boolean(person.role)} showEmpty={showEmptyProfileRows || editingRole} testId="row-profile-role">
-            <Input key={person.role || "new-role"} defaultValue={person.role || ""} placeholder="Role" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.role || "")) updateMutation.mutate({ role: v || undefined }); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.role || ""; }} className="w-48" data-testid="input-edit-role" />
+            <Input key={person.role || "new-role"} defaultValue={person.role || ""} placeholder="Role" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.role || "")) updateMutation.mutate({ role: v || undefined }); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.role || ""; }} className="w-56" data-testid="input-edit-role" />
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-professional-relation">Prof. Relation</span>} icon={<Building2 className="h-3.5 w-3.5" />} hasValue={(person.professionalRelations || []).length > 0} showEmpty={showEmptyProfileRows} testId="row-profile-professional-relation">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button type="button" className="flex h-5 w-48 items-center justify-end gap-1 overflow-hidden rounded border border-input bg-muted/50 px-1.5 text-right text-xs" data-testid="button-prof-relation-picker">
+                <button type="button" className="flex h-5 w-56 items-center justify-end gap-1 overflow-hidden rounded border border-input bg-muted/50 px-1.5 text-right text-xs" data-testid="button-prof-relation-picker">
                   <span className="truncate">{(person.professionalRelations || []).join(", ") || "Select"}</span>
                 </button>
               </DropdownMenuTrigger>
@@ -2826,17 +2387,17 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
             </DropdownMenu>
           </ProfileTreeRow>
 
-          <ProfileTreeRow label={<span data-testid="label-personal-relation">Personal Relation</span>} icon={<Heart className="h-3.5 w-3.5" />} hasValue={Boolean(person.relation)} showEmpty={showEmptyProfileRows || showRelationSearch} testId="row-profile-personal-relation"><div className="relative flex justify-end">{person.relation ? <Badge variant="outline" className="text-xs" data-testid="badge-relation">{person.relation}<button className="ml-1 inline-flex" onClick={(e) => { e.stopPropagation(); updateMutation.mutate({ relation: "" }); }} data-testid="button-remove-relation"><X className="h-2.5 w-2.5" /></button></Badge> : showRelationSearch ? <div><Input value={relationSearch} onChange={(e) => setRelationSearch(e.target.value)} placeholder="Search relations..." className="w-48" autoFocus onBlur={() => setTimeout(() => { setShowRelationSearch(false); setRelationSearch(""); }, 200)} onKeyDown={(e) => { if (e.key === "Escape") { setShowRelationSearch(false); setRelationSearch(""); } }} data-testid="input-relation-search" />{(() => { const filtered = RELATION_OPTIONS.filter(r => r.toLowerCase().includes(relationSearch.toLowerCase())); return filtered.length > 0 ? <div className="absolute right-0 z-50 mt-1 w-56 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md" data-testid="dropdown-relation">{filtered.map((r) => <button key={r} className="w-full px-3 py-1.5 text-left text-sm hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { updateMutation.mutate({ relation: r }); setShowRelationSearch(false); setRelationSearch(""); }} data-testid={`option-relation-${r.toLowerCase().replace(/\s+/g, '-')}`}>{r}</button>)}</div> : null; })()}</div> : <Button variant="ghost" size="icon" onClick={() => setShowRelationSearch(true)} data-testid="button-add-relation"><Plus className="h-3 w-3" /></Button>}</div></ProfileTreeRow>
+          <ProfileTreeRow label={<span data-testid="label-personal-relation">Personal Relation</span>} icon={<Heart className="h-3.5 w-3.5" />} hasValue={Boolean(person.relation)} showEmpty={showEmptyProfileRows || showRelationSearch} testId="row-profile-personal-relation"><div className="relative flex justify-end">{person.relation ? <Badge variant="outline" className="text-xs" data-testid="badge-relation">{person.relation}<button className="ml-1 inline-flex" onClick={(e) => { e.stopPropagation(); updateMutation.mutate({ relation: "" }); }} data-testid="button-remove-relation"><X className="h-2.5 w-2.5" /></button></Badge> : showRelationSearch ? <div><Input value={relationSearch} onChange={(e) => setRelationSearch(e.target.value)} placeholder="Search relations..." className="w-56" autoFocus onBlur={() => setTimeout(() => { setShowRelationSearch(false); setRelationSearch(""); }, 200)} onKeyDown={(e) => { if (e.key === "Escape") { setShowRelationSearch(false); setRelationSearch(""); } }} data-testid="input-relation-search" />{(() => { const filtered = RELATION_OPTIONS.filter(r => r.toLowerCase().includes(relationSearch.toLowerCase())); return filtered.length > 0 ? <div className="absolute right-0 z-50 mt-1 w-56 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md" data-testid="dropdown-relation">{filtered.map((r) => <button key={r} className="w-full px-3 py-1.5 text-left text-sm hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { updateMutation.mutate({ relation: r }); setShowRelationSearch(false); setRelationSearch(""); }} data-testid={`option-relation-${r.toLowerCase().replace(/\s+/g, '-')}`}>{r}</button>)}</div> : null; })()}</div> : <Button variant="ghost" size="icon" onClick={() => setShowRelationSearch(true)} data-testid="button-add-relation"><Plus className="h-3 w-3" /></Button>}</div></ProfileTreeRow>
 
-          <ProfileTreeRow label={<span data-testid="label-introduced-by">Introduced By</span>} icon={<Link2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.introducedBy && introducedByPerson)} showEmpty={showEmptyProfileRows || showIntroducedBySearch} testId="row-profile-introduced-by"><div className="relative flex justify-end">{person.introducedBy && introducedByPerson ? <Badge variant="outline" className="text-xs" data-testid="badge-introduced-by">{introducedByPerson.name}<button className="ml-1 inline-flex" onClick={(e) => { e.stopPropagation(); updateMutation.mutate({ introducedBy: "" }); }} data-testid="button-remove-introduced-by"><X className="h-2.5 w-2.5" /></button></Badge> : showIntroducedBySearch ? <div><Input value={introducedBySearch} onChange={(e) => setIntroducedBySearch(e.target.value)} placeholder="Search people..." className="w-48" autoFocus onBlur={() => setTimeout(() => { setShowIntroducedBySearch(false); setIntroducedBySearch(""); }, 200)} onKeyDown={(e) => { if (e.key === "Escape") { setShowIntroducedBySearch(false); setIntroducedBySearch(""); } }} data-testid="input-introduced-by-search" />{filteredPeopleForIntroduction.length > 0 && <div className="absolute right-0 z-50 mt-1 w-56 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md" data-testid="dropdown-introduced-by">{filteredPeopleForIntroduction.map((p) => <button key={p.id} className="w-full px-3 py-1.5 text-left text-sm hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { updateMutation.mutate({ introducedBy: p.id }); setShowIntroducedBySearch(false); setIntroducedBySearch(""); }} data-testid={`option-introduced-by-${p.id}`}>{p.name}</button>)}</div>}</div> : <Button variant="ghost" size="icon" onClick={() => setShowIntroducedBySearch(true)} data-testid="button-add-introduced-by"><Plus className="h-3 w-3" /></Button>}</div></ProfileTreeRow>
+          <ProfileTreeRow label={<span data-testid="label-introduced-by">Introduced</span>} icon={<Link2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.introducedBy && introducedByPerson)} showEmpty={showEmptyProfileRows || showIntroducedBySearch} testId="row-profile-introduced-by"><div className="relative flex justify-end">{person.introducedBy && introducedByPerson ? <div className="flex w-56 items-center justify-end gap-1" data-testid="chip-introduced-by"><ReferenceRenderer refValue={{ type: "person", id: person.introducedBy, canonical: `@person:${person.introducedBy}` }} surface="chat-inline" className="max-w-[12rem]" /><button className="inline-flex h-5 w-5 items-center justify-center rounded hover:bg-accent" onClick={(e) => { e.stopPropagation(); updateMutation.mutate({ introducedBy: "" }); }} data-testid="button-remove-introduced-by"><X className="h-3 w-3" /></button></div> : showIntroducedBySearch ? <div><Input value={introducedBySearch} onChange={(e) => setIntroducedBySearch(e.target.value)} placeholder="Search people..." className="w-56" autoFocus onBlur={() => setTimeout(() => { setShowIntroducedBySearch(false); setIntroducedBySearch(""); }, 200)} onKeyDown={(e) => { if (e.key === "Escape") { setShowIntroducedBySearch(false); setIntroducedBySearch(""); } }} data-testid="input-introduced-by-search" />{filteredPeopleForIntroduction.length > 0 && <div className="absolute right-0 z-50 mt-1 w-56 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md" data-testid="dropdown-introduced-by">{filteredPeopleForIntroduction.map((p) => <button key={p.id} className="w-full px-3 py-1.5 text-left text-sm hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { updateMutation.mutate({ introducedBy: p.id }); setShowIntroducedBySearch(false); setIntroducedBySearch(""); }} data-testid={`option-introduced-by-${p.id}`}>{p.name}</button>)}</div>}</div> : <Button variant="ghost" size="icon" onClick={() => setShowIntroducedBySearch(true)} data-testid="button-add-introduced-by"><Plus className="h-3 w-3" /></Button>}</div></ProfileTreeRow>
 
-          <ProfileTreeRow label={<span data-testid="label-instagram">Instagram</span>} icon={<SiInstagram className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.instagram)} showEmpty={showEmptyProfileRows || editingInstagram} testId="row-profile-instagram"><Input key={person.socialProfiles?.instagram || "new-instagram"} defaultValue={person.socialProfiles?.instagram || ""} placeholder="Instagram URL" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.instagram || "")) handleSaveSocial("instagram", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.instagram || ""; }} className="w-48" data-testid="input-social-instagram" /></ProfileTreeRow>
-          <ProfileTreeRow label={<span data-testid="label-x">X</span>} icon={<SiX className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.x)} showEmpty={showEmptyProfileRows || editingX} testId="row-profile-x"><Input key={person.socialProfiles?.x || "new-x"} defaultValue={person.socialProfiles?.x || ""} placeholder="X URL" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.x || "")) handleSaveSocial("x", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.x || ""; }} className="w-48" data-testid="input-social-x" /></ProfileTreeRow>
-          <ProfileTreeRow label={<span data-testid="label-linkedin">LinkedIn</span>} icon={<SiLinkedin className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.linkedin)} showEmpty={showEmptyProfileRows || editingLinkedin} testId="row-profile-linkedin"><Input key={person.socialProfiles?.linkedin || "new-linkedin"} defaultValue={person.socialProfiles?.linkedin || ""} placeholder="LinkedIn URL" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.linkedin || "")) handleSaveSocial("linkedin", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.linkedin || ""; }} className="w-48" data-testid="input-social-linkedin" /></ProfileTreeRow>
+          <ProfileTreeRow label={<span data-testid="label-instagram">Instagram</span>} icon={<SiInstagram className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.instagram)} showEmpty={showEmptyProfileRows || editingInstagram} testId="row-profile-instagram"><Input key={person.socialProfiles?.instagram || "new-instagram"} defaultValue={person.socialProfiles?.instagram || ""} placeholder="Instagram URL" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.instagram || "")) handleSaveSocial("instagram", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.instagram || ""; }} className="w-56" data-testid="input-social-instagram" /></ProfileTreeRow>
+          <ProfileTreeRow label={<span data-testid="label-x">X</span>} icon={<SiX className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.x)} showEmpty={showEmptyProfileRows || editingX} testId="row-profile-x"><Input key={person.socialProfiles?.x || "new-x"} defaultValue={person.socialProfiles?.x || ""} placeholder="X URL" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.x || "")) handleSaveSocial("x", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.x || ""; }} className="w-56" data-testid="input-social-x" /></ProfileTreeRow>
+          <ProfileTreeRow label={<span data-testid="label-linkedin">LinkedIn</span>} icon={<SiLinkedin className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.linkedin)} showEmpty={showEmptyProfileRows || editingLinkedin} testId="row-profile-linkedin"><Input key={person.socialProfiles?.linkedin || "new-linkedin"} defaultValue={person.socialProfiles?.linkedin || ""} placeholder="LinkedIn URL" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.linkedin || "")) handleSaveSocial("linkedin", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.linkedin || ""; }} className="w-56" data-testid="input-social-linkedin" /></ProfileTreeRow>
 
           {person.contactInfo.map((c, i) => <ProfileTreeRow key={`contact-${i}`} label={c.label || contactTypeLabels[c.type] || c.type} icon={c.type === "email" ? <Mail className="h-3.5 w-3.5" /> : c.type === "phone" ? <Phone className="h-3.5 w-3.5" /> : <ContactRound className="h-3.5 w-3.5" />} hasValue={Boolean(c.value)} showEmpty={showEmptyProfileRows} actionContent={<Button size="icon" variant="ghost" className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => updateMutation.mutate({ contactInfo: person.contactInfo.filter((_, idx) => idx !== i) })} data-testid={`button-remove-contact-${i}`}><X className="h-3 w-3" /></Button>} testId={`row-profile-contact-${i}`}><Input key={`${c.type}-${c.value}`} defaultValue={c.value} placeholder={c.label || contactTypeLabels[c.type] || c.type} onBlur={(e) => { const v = e.target.value.trim(); if (v !== c.value) updateMutation.mutate({ contactInfo: person.contactInfo.map((item, idx) => idx === i ? { ...item, value: v } : item).filter(item => item.value.trim()) }); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = c.value; }} data-testid={`input-contact-${i}`} /></ProfileTreeRow>)}
 
-          <ProfileTreeRow label="New contact" icon={<Plus className="h-3.5 w-3.5" />} hasValue={showAddContact} showEmpty={showEmptyProfileRows || showAddContact} testId="row-profile-new-contact">{showAddContact ? <div className="flex flex-wrap items-center justify-end gap-1.5"><Select value={newContactType} onValueChange={(v) => setNewContactType(v as any)}><SelectTrigger className="w-48" data-testid="select-contact-type"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="email">Email</SelectItem><SelectItem value="phone">Phone</SelectItem><SelectItem value="social">Social</SelectItem><SelectItem value="other">Other</SelectItem></SelectContent></Select><Input value={newContactLabel} onChange={(e) => setNewContactLabel(e.target.value)} placeholder="Label" className="h-8 w-20 text-right" data-testid="input-contact-label" /><Input value={newContactValue} onChange={(e) => setNewContactValue(e.target.value)} placeholder="Value" className="h-8 min-w-[120px] flex-1 text-right" data-testid="input-contact-value" /><Button size="sm" onClick={() => { if (newContactValue.trim()) { updateMutation.mutate({ contactInfo: [...person.contactInfo, { type: newContactType, label: newContactLabel || contactTypeLabels[newContactType], value: newContactValue }] }); setShowAddContact(false); setNewContactLabel(""); setNewContactValue(""); } }} data-testid="button-save-contact">Add</Button><Button variant="ghost" size="icon" onClick={() => setShowAddContact(false)}><X className="h-3 w-3" /></Button></div> : <Button variant="ghost" size="sm" onClick={() => setShowAddContact(true)} data-testid="button-add-contact"><Plus className="mr-1 h-3 w-3" />Contact info</Button>}</ProfileTreeRow>
+          <ProfileTreeRow label="New contact" icon={<Plus className="h-3.5 w-3.5" />} hasValue={showAddContact} showEmpty={showEmptyProfileRows || showAddContact} testId="row-profile-new-contact">{showAddContact ? <div className="flex flex-wrap items-center justify-end gap-1.5"><Select value={newContactType} onValueChange={(v) => setNewContactType(v as any)}><SelectTrigger className="w-56" data-testid="select-contact-type"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="email">Email</SelectItem><SelectItem value="phone">Phone</SelectItem><SelectItem value="social">Social</SelectItem><SelectItem value="other">Other</SelectItem></SelectContent></Select><Input value={newContactLabel} onChange={(e) => setNewContactLabel(e.target.value)} placeholder="Label" className="h-8 w-20 text-right" data-testid="input-contact-label" /><Input value={newContactValue} onChange={(e) => setNewContactValue(e.target.value)} placeholder="Value" className="h-8 min-w-[120px] flex-1 text-right" data-testid="input-contact-value" /><Button size="sm" onClick={() => { if (newContactValue.trim()) { updateMutation.mutate({ contactInfo: [...person.contactInfo, { type: newContactType, label: newContactLabel || contactTypeLabels[newContactType], value: newContactValue }] }); setShowAddContact(false); setNewContactLabel(""); setNewContactValue(""); } }} data-testid="button-save-contact">Add</Button><Button variant="ghost" size="icon" onClick={() => setShowAddContact(false)}><X className="h-3 w-3" /></Button></div> : <Button variant="ghost" size="sm" onClick={() => setShowAddContact(true)} data-testid="button-add-contact"><Plus className="mr-1 h-3 w-3" />Contact info</Button>}</ProfileTreeRow>
         </div>
 
         <div className="pt-2">
@@ -2905,7 +2466,6 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
         testId="section-log"
       >
         <InteractionsTab person={person} onUpdate={handleRefetch} showAdd={showNewLog} setShowAdd={setShowNewLog} />
-        <PersonMemoriesTab personId={person.id} personName={person.name} />
       </PeopleDetailSection>
 
       <AlertDialog open={deleteConfirm} onOpenChange={(open) => { setDeleteConfirm(open); if (!open) setDeleteConfirmText(""); }}>
@@ -3326,7 +2886,7 @@ function ImportCandidateDetail({
               <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2.5 items-center text-sm">
                 <span className="text-xs text-muted-foreground text-right">Category</span>
                 <Select value={cabinet} onValueChange={setCabinet}>
-                  <SelectTrigger className="w-48" data-testid="select-import-cabinet">
+                  <SelectTrigger className="w-56" data-testid="select-import-cabinet">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -3338,7 +2898,7 @@ function ImportCandidateDetail({
                 <div>
                   {familiarity !== "none" ? (
                     <Select value={familiarity} onValueChange={setFamiliarity}>
-                      <SelectTrigger className="w-48" data-testid="select-import-familiarity">
+                      <SelectTrigger className="w-56" data-testid="select-import-familiarity">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -3349,7 +2909,7 @@ function ImportCandidateDetail({
                     </Select>
                   ) : editingImportFamiliarity ? (
                     <Select value={familiarity} onValueChange={(v) => { setFamiliarity(v); setEditingImportFamiliarity(false); }}>
-                      <SelectTrigger className="w-48" data-testid="select-import-familiarity" autoFocus>
+                      <SelectTrigger className="w-56" data-testid="select-import-familiarity" autoFocus>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -3369,7 +2929,7 @@ function ImportCandidateDetail({
                 <div>
                   {trust !== "none" ? (
                     <Select value={trust} onValueChange={setTrust}>
-                      <SelectTrigger className="w-48" data-testid="select-import-trust">
+                      <SelectTrigger className="w-56" data-testid="select-import-trust">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -3382,7 +2942,7 @@ function ImportCandidateDetail({
                     </Select>
                   ) : editingImportTrust ? (
                     <Select value={trust} onValueChange={(v) => { setTrust(v); setEditingImportTrust(false); }}>
-                      <SelectTrigger className="w-48" data-testid="select-import-trust" autoFocus>
+                      <SelectTrigger className="w-56" data-testid="select-import-trust" autoFocus>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -3406,7 +2966,7 @@ function ImportCandidateDetail({
                 <span className="text-xs text-muted-foreground text-right">Met</span>
                 <div>
                   {met ? (
-                    <Input type="date" value={met} onChange={e => setMet(e.target.value)} className="w-48" data-testid="input-import-met" />
+                    <Input type="date" value={met} onChange={e => setMet(e.target.value)} className="w-56" data-testid="input-import-met" />
                   ) : (
                     <span className="text-xs text-muted-foreground">Unknown</span>
                   )}
@@ -3417,7 +2977,7 @@ function ImportCandidateDetail({
                   {company ? (
                     <Input value={company} onChange={e => setCompany(e.target.value)} data-testid="input-import-company" className="w-44 border-0 bg-transparent px-1 py-0.5 -ml-1 text-sm focus-visible:ring-1 focus-visible:ring-ring" />
                   ) : editingImportCompany ? (
-                    <Input autoFocus value={company} onChange={e => setCompany(e.target.value)} placeholder="Company name" className="w-48" onKeyDown={(e) => { if (e.key === "Escape") setEditingImportCompany(false); }} onBlur={() => { if (!company) setEditingImportCompany(false); }} data-testid="input-import-company" />
+                    <Input autoFocus value={company} onChange={e => setCompany(e.target.value)} placeholder="Company name" className="w-56" onKeyDown={(e) => { if (e.key === "Escape") setEditingImportCompany(false); }} onBlur={() => { if (!company) setEditingImportCompany(false); }} data-testid="input-import-company" />
                   ) : (
                     <Button variant="ghost" size="icon" onClick={() => setEditingImportCompany(true)} data-testid="button-add-import-company">
                       <Plus className="h-3 w-3" />
@@ -3430,7 +2990,7 @@ function ImportCandidateDetail({
                   {role ? (
                     <Input value={role} onChange={e => setRole(e.target.value)} data-testid="input-import-role" className="w-44 border-0 bg-transparent px-1 py-0.5 -ml-1 text-sm focus-visible:ring-1 focus-visible:ring-ring" />
                   ) : editingImportRole ? (
-                    <Input autoFocus value={role} onChange={e => setRole(e.target.value)} placeholder="Role" className="w-48" onKeyDown={(e) => { if (e.key === "Escape") setEditingImportRole(false); }} onBlur={() => { if (!role) setEditingImportRole(false); }} data-testid="input-import-role" />
+                    <Input autoFocus value={role} onChange={e => setRole(e.target.value)} placeholder="Role" className="w-56" onKeyDown={(e) => { if (e.key === "Escape") setEditingImportRole(false); }} onBlur={() => { if (!role) setEditingImportRole(false); }} data-testid="input-import-role" />
                   ) : (
                     <Button variant="ghost" size="icon" onClick={() => setEditingImportRole(true)} data-testid="button-add-import-role">
                       <Plus className="h-3 w-3" />
@@ -3481,7 +3041,7 @@ function ImportCandidateDetail({
                         value={relationSearch}
                         onChange={e => setRelationSearch(e.target.value)}
                         placeholder="Search relations..."
-                        className="w-48"
+                        className="w-56"
                         autoFocus
                         onBlur={() => setTimeout(() => { setShowImportRelationSearch(false); setRelationSearch(""); }, 200)}
                         onKeyDown={(e) => { if (e.key === "Escape") { setShowImportRelationSearch(false); setRelationSearch(""); } }}
@@ -3756,7 +3316,7 @@ function ImportView({ onSelectPerson, selectedEmailOverride, onClearSelection }:
   if (statusLoading) {
     return (
       <div className="space-y-3" data-testid="import-loading">
-        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-8 w-56" />
         <Skeleton className="h-32 w-full" />
       </div>
     );
