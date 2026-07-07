@@ -67,6 +67,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  Sparkles,
   Shield,
   ShieldOff,
   SlidersHorizontal,
@@ -75,7 +76,6 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
-  Sparkles,
   Trash2,
   TrendingUp,
   User,
@@ -955,8 +955,6 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
 
   return (
     <div className="space-y-3" data-testid="interactions-tab">
-      <ContextPacket person={person} />
-
       {effectiveShowAdd && (
         <Card>
           <CardContent className="pt-3 pb-2 space-y-2">
@@ -1744,69 +1742,6 @@ function ProfileSummaryEditor({
   );
 }
 
-function ContextPacket({ person }: { person: Person }) {
-  const lastInteraction = useMemo(() => {
-    if (person.interactions.length === 0) return null;
-    return [...person.interactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
-  }, [person.interactions]);
-
-  const upcomingDates = useMemo(() => {
-    const now = new Date();
-    return person.importantDates.filter(d => {
-      const dateObj = new Date(d.date + "T00:00:00");
-      if (d.recurrence === "annual") {
-        dateObj.setFullYear(now.getFullYear());
-        if (dateObj < now) dateObj.setFullYear(now.getFullYear() + 1);
-      }
-      const daysUntil = Math.ceil((dateObj.getTime() - now.getTime()) / 86400000);
-      return daysUntil >= 0 && daysUntil <= 30;
-    });
-  }, [person.importantDates]);
-
-  const recentNotes = useMemo(() => {
-    return [...person.notes].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 2);
-  }, [person.notes]);
-
-  const hasContent = lastInteraction || upcomingDates.length > 0 || recentNotes.length > 0;
-
-  if (!hasContent) return null;
-
-  return (
-    <Card className="border-dashed" data-testid="context-packet">
-      <CardContent className="py-3 px-4">
-        <div className="flex items-center gap-1.5 mb-2">
-          <Sparkles className="h-3 w-3 text-muted-foreground" />
-          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Context</span>
-        </div>
-        <div className="space-y-1.5 text-xs">
-          {lastInteraction && (
-            <div className="flex items-center gap-1.5">
-              <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
-              <span className="text-muted-foreground">Last:</span>
-              <span>{lastInteraction.summary.slice(0, 60)}{lastInteraction.summary.length > 60 ? "..." : ""}</span>
-              <span className="text-muted-foreground ml-auto shrink-0">{daysAgo(lastInteraction.date)}</span>
-            </div>
-          )}
-          {upcomingDates.map(d => (
-            <div key={d.id} className="flex items-center gap-1.5">
-              <Calendar className="h-3 w-3 text-warning shrink-0" />
-              <span>{d.label}</span>
-              <span className="text-muted-foreground ml-auto shrink-0">{formatShortDate(d.date)}</span>
-            </div>
-          ))}
-          {recentNotes.map(n => (
-            <div key={n.id} className="flex items-center gap-1.5">
-              <Edit3 className="h-3 w-3 text-muted-foreground shrink-0" />
-              <span className="truncate">{n.content.slice(0, 80)}{n.content.length > 80 ? "..." : ""}</span>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-
 interface LinkedMemoryEntry {
   id: number;
   content: string;
@@ -1862,204 +1797,6 @@ function getConfidenceColor(confidence: number): string {
   if (confidence >= 0.7) return "bg-success";
   if (confidence >= 0.4) return "bg-warning";
   return "bg-error";
-}
-
-const TEMPERATURE_COLORS: Record<string, string> = {
-  hot: "text-error",
-  warm: "text-warning",
-  cool: "text-info",
-  cold: "text-info-foreground",
-};
-
-const TEMPERATURE_BG: Record<string, string> = {
-  hot: "bg-error/10 border-error/20",
-  warm: "bg-warning/10 border-warning/20",
-  cool: "bg-info/10 border-info/20",
-  cold: "bg-info/10 border-info/20",
-};
-
-const MOMENTUM_ICONS: Record<string, string> = {
-  rising: "↗",
-  steady: "→",
-  falling: "↘",
-};
-
-const DUE_STATUS_COLORS: Record<string, string> = {
-  on_track: "text-success-foreground",
-  due: "text-warning-foreground",
-  drifting: "text-cat-event-foreground",
-  urgent: "text-error-foreground",
-};
-
-function RelationshipNotificationsCard({ personId }: { personId: string }) {
-  const { data, isLoading } = useQuery<AgendaData>({
-    queryKey: ["/api/people/agenda"],
-    refetchInterval: 60_000,
-  });
-  const items = getAgendaItemsForPerson(data, personId);
-
-  if (isLoading) return <Skeleton className="h-10 w-full" />;
-  if (items.length === 0) return null;
-
-  return (
-    <div className="overflow-hidden rounded-md border border-border/20" data-testid="relationship-notifications-card">
-      {items.map((item) => {
-        const meta = AGENDA_SECTION_META[item.section];
-        const Icon = meta.icon;
-        return (
-          <ProfileTreeRow
-            key={`${item.section}-${item.personId}`}
-            label={<span>Notification</span>}
-            icon={<Icon className={cn("h-3.5 w-3.5", meta.color)} />}
-            hasValue
-            showEmpty
-            expandedContent={(
-              <div className="rounded-md border border-card-border bg-muted/20 p-3 text-sm leading-relaxed">
-                {item.reason && <p className="text-foreground">{item.reason}</p>}
-                {item.suggestedAction && <p className="mt-2 text-cta">{item.suggestedAction}</p>}
-              </div>
-            )}
-            expandedContentClassName="px-2 pb-2 pl-2"
-            testId={`profile-agenda-item-${item.section}`}
-          >
-            <div className="flex w-48 items-center justify-end gap-1.5">
-              <span className={cn("truncate text-xs", meta.color)}>{meta.label}</span>
-              {item.contextBadge && <Badge variant="outline" className={cn("text-[10px] leading-none", item.contextBadge.color)}>{item.contextBadge.label}</Badge>}
-            </div>
-          </ProfileTreeRow>
-        );
-      })}
-    </div>
-  );
-}
-
-
-function WarmthCard({ person }: { person: Person }) {
-  const rp = person.relationshipProfile;
-  const state = rp?.state;
-  const rollup = rp?.rollup;
-  const outreach = rp?.outreach;
-  const cadence = rp?.cadence;
-
-  const temp = state?.temperature || "warm";
-  const momentum = state?.momentum || "steady";
-  const dueStatus = outreach?.dueStatus || "on_track";
-
-  const daysSinceMeaningful = rollup?.lastMeaningfulAt
-    ? Math.floor((Date.now() - new Date(rollup.lastMeaningfulAt).getTime()) / 86400000) : null;
-  const daysSinceLast = rollup?.lastInteractionAt
-    ? Math.floor((Date.now() - new Date(rollup.lastInteractionAt).getTime()) / 86400000) : null;
-
-  return (
-    <Card className={`border ${TEMPERATURE_BG[temp] || ""}`} data-testid="warmth-card">
-      <CardContent className="py-3 px-4">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Warmth</span>
-          <Badge variant="outline" className={`text-xs ${DUE_STATUS_COLORS[dueStatus] || ""}`} data-testid="badge-due-status">
-            {dueStatus.replace(/_/g, " ")}
-          </Badge>
-        </div>
-        <div className="grid grid-cols-3 gap-3">
-          <div>
-            <span className="text-xs text-muted-foreground block">Temperature</span>
-            <span className={`text-sm font-semibold capitalize ${TEMPERATURE_COLORS[temp] || ""}`} data-testid="text-temperature">
-              {temp} {state?.temperature ? "" : "(est.)"}
-            </span>
-          </div>
-          <div>
-            <span className="text-xs text-muted-foreground block">Momentum</span>
-            <span className="text-sm font-medium" data-testid="text-momentum">
-              {MOMENTUM_ICONS[momentum] || ""} {momentum}
-            </span>
-          </div>
-          <div>
-            <span className="text-xs text-muted-foreground block">Cadence</span>
-            <span className="text-sm font-medium" data-testid="text-cadence">
-              {cadence?.targetDays ? `${cadence.targetDays}d` : "—"}
-              {cadence?.flexDays ? ` ±${cadence.flexDays}d` : ""}
-            </span>
-          </div>
-        </div>
-        <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-          {daysSinceLast !== null && <span>Last contact: {daysSinceLast}d ago</span>}
-          {daysSinceMeaningful !== null && daysSinceMeaningful !== daysSinceLast && (
-            <span>Meaningful: {daysSinceMeaningful}d ago</span>
-          )}
-          {rollup?.interactionCount30d !== undefined && <span>{rollup.interactionCount30d} in 30d</span>}
-        </div>
-        {outreach?.reason && dueStatus !== "on_track" && (
-          <p className="text-xs text-muted-foreground mt-1 italic">{outreach.reason}</p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function LeverageCard({ person }: { person: Person }) {
-  const np = person.networkProfile;
-  if (!np) return null;
-
-  const mob = np.mobilization;
-  const capital = np.capital;
-  const hasContent = np.expertise?.length || np.canHelpWith?.length || np.connections?.length || capital || mob;
-  if (!hasContent) return null;
-
-  return (
-    <Card data-testid="leverage-card">
-      <CardContent className="py-3 px-4">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Leverage</span>
-          {mob && (
-            <Badge
-              variant={mob.ready ? "default" : "outline"}
-              className={`text-xs ${mob.ready ? "bg-success" : mob.estimated ? "text-muted-foreground" : "text-warning-foreground"}`}
-              data-testid="badge-mobilization"
-            >
-              {mob.ready ? "Mobilizable" : "Not Ready"}{mob.estimated ? " (est.)" : ""}
-            </Badge>
-          )}
-        </div>
-
-        {np.expertise && np.expertise.length > 0 && (
-          <div className="mb-2">
-            <span className="text-xs text-muted-foreground">Expertise</span>
-            <div className="flex flex-wrap gap-1 mt-0.5">
-              {np.expertise.map(e => <Badge key={e} variant="outline" className="text-xs">{e}</Badge>)}
-            </div>
-          </div>
-        )}
-
-        {np.canHelpWith && np.canHelpWith.length > 0 && (
-          <div className="mb-2">
-            <span className="text-xs text-muted-foreground">Can help with</span>
-            <div className="flex flex-wrap gap-1 mt-0.5">
-              {np.canHelpWith.map(h => <Badge key={h} variant="outline" className="text-xs">{h}</Badge>)}
-            </div>
-          </div>
-        )}
-
-        {capital && (
-          <div className="mb-2">
-            <span className="text-xs text-muted-foreground">Social Capital</span>
-            <span className={`text-sm font-medium ml-2 ${
-              capital.balance === "overdrawn" ? "text-error-foreground" :
-              capital.balance === "invested" ? "text-success-foreground" :
-              "text-muted-foreground"
-            }`} data-testid="text-capital-balance">
-              {capital.balance}
-            </span>
-          </div>
-        )}
-
-        {mob && !mob.ready && mob.blockers.length > 0 && (
-          <div className="mt-2 text-xs text-warning-foreground space-y-0.5">
-            {mob.blockers.map((b, i) => <p key={i}>⚠ {b}</p>)}
-            {mob.warmingPath && <p className="text-muted-foreground italic mt-1">→ {mob.warmingPath}</p>}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
 }
 
 function CommitmentsCard({ person, onUpdate }: { person: Person; onUpdate: () => void }) {
@@ -2341,6 +2078,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
 
   return (
     <div className="space-y-6" data-testid="person-detail-view">
+      <div className="space-y-0">
       <button
         type="button"
         onClick={() => setShowNewLog(v => !v)}
@@ -2386,22 +2124,6 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
                 <div className="flex items-center gap-1"><Input value={newNickname} onChange={(e) => setNewNickname(e.target.value)} placeholder="Alias" className="h-8 w-28 text-right" autoFocus onKeyDown={(e) => { if (e.key === "Enter") handleAddNickname(); if (e.key === "Escape") setAddingNickname(false); }} data-testid="input-add-alias" /><Button size="sm" onClick={handleAddNickname} disabled={!newNickname.trim()} data-testid="button-save-alias">Add</Button><Button variant="ghost" size="icon" onClick={() => setAddingNickname(false)} data-testid="button-cancel-alias"><X className="h-3 w-3" /></Button></div>
               ) : <Button variant="ghost" size="icon" onClick={() => setAddingNickname(true)} data-testid="button-add-alias"><Plus className="h-3 w-3" /></Button>}
             </div>
-          </ProfileTreeRow>
-
-          <ProfileTreeRow label={<span data-testid="label-category">Category</span>} icon={<Shield className="h-3.5 w-3.5" />} hasValue={Boolean(person.cabinetLevel)} showEmpty={showEmptyProfileRows} testId="row-profile-category">
-            <Select value={person.cabinetLevel} onValueChange={(v) => updateMutation.mutate({ cabinetLevel: v })}><SelectTrigger className="w-48" data-testid="select-cabinet-level"><SelectValue /></SelectTrigger><SelectContent>{sortedLevels.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent></Select>
-          </ProfileTreeRow>
-
-          <ProfileTreeRow label={<span data-testid="label-familiarity">Familiarity</span>} icon={<Users className="h-3.5 w-3.5" />} hasValue={Boolean(person.familiarity && person.familiarity !== "none")} showEmpty={showEmptyProfileRows || editingFamiliarity} testId="row-profile-familiarity">
-            {(person.familiarity && person.familiarity !== "none") || editingFamiliarity ? (
-              <Select value={person.familiarity || "none"} onValueChange={(v) => { updateMutation.mutate({ familiarity: v as Person["familiarity"] }); setEditingFamiliarity(false); }}><SelectTrigger className="w-48" data-testid="select-familiarity"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">None</SelectItem><SelectItem value="surface">Surface</SelectItem><SelectItem value="deep">Deep</SelectItem></SelectContent></Select>
-            ) : <Button variant="ghost" size="icon" onClick={() => setEditingFamiliarity(true)} data-testid="button-add-familiarity"><Plus className="h-3 w-3" /></Button>}
-          </ProfileTreeRow>
-
-          <ProfileTreeRow label={<span data-testid="label-trust">Trust</span>} icon={<Heart className="h-3.5 w-3.5" />} hasValue={Boolean(person.trust && person.trust !== "none")} showEmpty={showEmptyProfileRows || editingTrust} testId="row-profile-trust">
-            {(person.trust && person.trust !== "none") || editingTrust ? (
-              <Select value={person.trust || "none"} onValueChange={(v) => { updateMutation.mutate({ trust: v as Person["trust"] }); setEditingTrust(false); }}><SelectTrigger className="w-48" data-testid="select-trust"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ally">Ally</SelectItem><SelectItem value="positive">Positive</SelectItem><SelectItem value="none">None</SelectItem><SelectItem value="negative">Negative</SelectItem><SelectItem value="enemy">Enemy</SelectItem></SelectContent></Select>
-            ) : <Button variant="ghost" size="icon" onClick={() => setEditingTrust(true)} data-testid="button-add-trust"><Plus className="h-3 w-3" /></Button>}
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-tags">Tags</span>} icon={<SlidersHorizontal className="h-3.5 w-3.5" />} hasValue={(person.tags || []).length > 0} showEmpty={showEmptyProfileRows} testId="row-profile-tags"><div className="max-w-md"><DetailTagPicker tags={person.tags || []} onChange={(newTags) => updateMutation.mutate({ tags: newTags })} /></div></ProfileTreeRow>
@@ -2504,33 +2226,47 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
 
       </PeopleDetailSection>
 
+      </div>
+
       <PeopleDetailSection
         title="Relationship"
         defaultOpen
         testId="section-relationship"
       >
-        <RelationshipNotificationsCard personId={person.id} />
         <div className="overflow-hidden rounded-md border border-border/20">
+          <ProfileTreeRow label={<span data-testid="label-category">Category</span>} icon={<Shield className="h-3.5 w-3.5" />} hasValue={Boolean(person.cabinetLevel)} showEmpty={showEmptyProfileRows} testId="row-relationship-category">
+            <Select value={person.cabinetLevel} onValueChange={(v) => updateMutation.mutate({ cabinetLevel: v })}>
+              <SelectTrigger className="w-48" data-testid="select-cabinet-level"><SelectValue /></SelectTrigger>
+              <SelectContent>{sortedLevels.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent>
+            </Select>
+          </ProfileTreeRow>
+          <ProfileTreeRow label={<span data-testid="label-familiarity">Familiarity</span>} icon={<Users className="h-3.5 w-3.5" />} hasValue={Boolean(person.familiarity && person.familiarity !== "none")} showEmpty={showEmptyProfileRows || editingFamiliarity} testId="row-relationship-familiarity">
+            {(person.familiarity && person.familiarity !== "none") || editingFamiliarity ? (
+              <Select value={person.familiarity || "none"} onValueChange={(v) => { updateMutation.mutate({ familiarity: v as Person["familiarity"] }); setEditingFamiliarity(false); }}>
+                <SelectTrigger className="w-48" data-testid="select-familiarity"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="none">None</SelectItem><SelectItem value="surface">Surface</SelectItem><SelectItem value="deep">Deep</SelectItem></SelectContent>
+              </Select>
+            ) : <Button variant="ghost" size="icon" onClick={() => setEditingFamiliarity(true)} data-testid="button-add-familiarity"><Plus className="h-3 w-3" /></Button>}
+          </ProfileTreeRow>
+          <ProfileTreeRow label={<span data-testid="label-trust">Trust</span>} icon={<Heart className="h-3.5 w-3.5" />} hasValue={Boolean(person.trust && person.trust !== "none")} showEmpty={showEmptyProfileRows || editingTrust} testId="row-relationship-trust">
+            {(person.trust && person.trust !== "none") || editingTrust ? (
+              <Select value={person.trust || "none"} onValueChange={(v) => { updateMutation.mutate({ trust: v as Person["trust"] }); setEditingTrust(false); }}>
+                <SelectTrigger className="w-48" data-testid="select-trust"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="ally">Ally</SelectItem><SelectItem value="positive">Positive</SelectItem><SelectItem value="none">None</SelectItem><SelectItem value="negative">Negative</SelectItem><SelectItem value="enemy">Enemy</SelectItem></SelectContent>
+              </Select>
+            ) : <Button variant="ghost" size="icon" onClick={() => setEditingTrust(true)} data-testid="button-add-trust"><Plus className="h-3 w-3" /></Button>}
+          </ProfileTreeRow>
           <ProfileTreeRow label="Temperature" icon={<Heart className="h-3.5 w-3.5" />} hasValue={Boolean(person.relationshipProfile?.state?.temperature)} showEmpty={showEmptyProfileRows} testId="row-relationship-temperature">
             <Input readOnly value={person.relationshipProfile?.state?.temperature || ""} placeholder="—" />
           </ProfileTreeRow>
           <ProfileTreeRow label="Momentum" icon={<ArrowUp className="h-3.5 w-3.5" />} hasValue={Boolean(person.relationshipProfile?.state?.momentum)} showEmpty={showEmptyProfileRows} testId="row-relationship-momentum">
             <Input readOnly value={person.relationshipProfile?.state?.momentum || ""} placeholder="—" />
           </ProfileTreeRow>
-          <ProfileTreeRow label="Cadence" icon={<Clock className="h-3.5 w-3.5" />} hasValue={Boolean(person.relationshipProfile?.cadence?.targetDays)} showEmpty={showEmptyProfileRows} testId="row-relationship-cadence">
-            <Input readOnly value={person.relationshipProfile?.cadence?.targetDays ? `${person.relationshipProfile.cadence.targetDays}d${person.relationshipProfile.cadence.flexDays ? ` ±${person.relationshipProfile.cadence.flexDays}d` : ""}` : ""} placeholder="—" />
-          </ProfileTreeRow>
           <ProfileTreeRow label="Last Contact" icon={<Calendar className="h-3.5 w-3.5" />} hasValue={Boolean(person.relationshipProfile?.rollup?.lastInteractionAt)} showEmpty={showEmptyProfileRows} testId="row-relationship-last-contact">
             <Input readOnly value={person.relationshipProfile?.rollup?.lastInteractionAt ? formatShortDate(person.relationshipProfile.rollup.lastInteractionAt) : ""} placeholder="—" />
           </ProfileTreeRow>
-          <ProfileTreeRow label="Meaningful Contact" icon={<MessageSquare className="h-3.5 w-3.5" />} hasValue={Boolean(person.relationshipProfile?.rollup?.lastMeaningfulAt)} showEmpty={showEmptyProfileRows} testId="row-relationship-meaningful-contact">
-            <Input readOnly value={person.relationshipProfile?.rollup?.lastMeaningfulAt ? formatShortDate(person.relationshipProfile.rollup.lastMeaningfulAt) : ""} placeholder="—" />
-          </ProfileTreeRow>
           <ProfileTreeRow label="30d Interactions" icon={<RefreshCw className="h-3.5 w-3.5" />} hasValue={person.relationshipProfile?.rollup?.interactionCount30d !== undefined} showEmpty={showEmptyProfileRows} testId="row-relationship-interactions-30d">
             <Input readOnly value={person.relationshipProfile?.rollup?.interactionCount30d?.toString() || ""} placeholder="—" />
-          </ProfileTreeRow>
-          <ProfileTreeRow label="Outreach" icon={<Mail className="h-3.5 w-3.5" />} hasValue={Boolean(person.relationshipProfile?.outreach?.reason)} showEmpty={showEmptyProfileRows} expandedContent={person.relationshipProfile?.outreach?.reason ? <div className="rounded-md border border-card-border bg-muted/20 p-3 text-sm leading-relaxed">{person.relationshipProfile.outreach.reason}</div> : undefined} expandedContentClassName="px-2 pb-2 pl-2" testId="row-relationship-outreach">
-            <Input readOnly value={person.relationshipProfile?.outreach?.dueStatus || ""} placeholder="—" />
           </ProfileTreeRow>
         </div>
         <CommitmentsCard person={person} onUpdate={handleRefetch} />
