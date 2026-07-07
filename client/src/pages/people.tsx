@@ -2406,8 +2406,48 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
 
           <ProfileTreeRow label={<span data-testid="label-tags">Tags</span>} icon={<SlidersHorizontal className="h-3.5 w-3.5" />} hasValue={(person.tags || []).length > 0} showEmpty={showEmptyProfileRows} testId="row-profile-tags"><div className="max-w-md"><DetailTagPicker tags={person.tags || []} onChange={(newTags) => updateMutation.mutate({ tags: newTags })} /></div></ProfileTreeRow>
 
-          <ProfileTreeRow label={<span data-testid="label-met">Met</span>} icon={<Calendar className="h-3.5 w-3.5" />} hasValue={Boolean(person.met)} showEmpty={showEmptyProfileRows || editingMet} testId="row-profile-met">
-            {person.met || editingMet ? <Input key={person.met || "new-met"} type="date" defaultValue={person.met || ""} autoFocus={editingMet} onBlur={(e) => { const v = e.target.value; if (v !== person.met && (v || person.met)) updateMutation.mutate({ met: v || undefined }); setEditingMet(false); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingMet(false); }} className="w-48" data-testid="input-met" /> : <Button variant="ghost" size="icon" onClick={() => setEditingMet(true)} data-testid="button-add-met"><Plus className="h-3 w-3" /></Button>}
+          <ProfileTreeRow
+            label={<span data-testid="label-met">Met</span>}
+            icon={<Calendar className="h-3.5 w-3.5" />}
+            hasValue={Boolean(person.met)}
+            showEmpty={showEmptyProfileRows || editingMet}
+            actionContent={person.met || editingMet ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5 shrink-0 text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground"
+                onClick={() => document.getElementById(`met-picker-${person.id}`)?.click()}
+                data-testid="button-met-calendar"
+              >
+                <Calendar className="h-3 w-3" />
+              </Button>
+            ) : undefined}
+            testId="row-profile-met"
+          >
+            {person.met || editingMet ? (
+              <div className="relative flex justify-end">
+                <Input
+                  key={person.met || "new-met"}
+                  type="text"
+                  defaultValue={person.met || ""}
+                  placeholder="YYYY-MM-DD"
+                  autoFocus={editingMet}
+                  onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.met || "")) updateMutation.mutate({ met: v || undefined }); setEditingMet(false); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { (e.target as HTMLInputElement).value = person.met || ""; setEditingMet(false); } }}
+                  className="w-48 text-right"
+                  data-testid="input-met"
+                />
+                <input
+                  id={`met-picker-${person.id}`}
+                  type="date"
+                  defaultValue={person.met || ""}
+                  className="sr-only"
+                  tabIndex={-1}
+                  onChange={(e) => { const v = e.target.value; updateMutation.mutate({ met: v || undefined }); setEditingMet(false); }}
+                  aria-hidden="true"
+                />
+              </div>
+            ) : <Button variant="ghost" size="icon" onClick={() => setEditingMet(true)} data-testid="button-add-met"><Plus className="h-3 w-3" /></Button>}
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-company">Company</span>} icon={<Building2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.company)} showEmpty={showEmptyProfileRows || editingCompany} testId="row-profile-company">
