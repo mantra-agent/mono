@@ -72,18 +72,6 @@ function optimisticSessionStatusUpdate(sessionId: string, status: string): void 
  * Apply a session delta directly to the cache.  Returns true if the delta was
  * handled, false if the caller should fall back to full invalidation.
  */
-function preserveLiveStatus(current: ChatSession, incoming: ChatSession): ChatSession {
-  if (current.status !== "streaming" || incoming.status === "streaming") {
-    return incoming;
-  }
-  return {
-    ...incoming,
-    status: current.status,
-    sessionKey: incoming.sessionKey ?? current.sessionKey,
-    hasActiveDescendant: current.hasActiveDescendant || incoming.hasActiveDescendant,
-  };
-}
-
 function applySessionDelta(delta: { action: string; sessionId: string; session?: ChatSession }): boolean {
   const { action, sessionId, session } = delta;
 
@@ -107,11 +95,7 @@ function applySessionDelta(delta: { action: string; sessionId: string; session?:
   if (action === "updated" && session) {
     queryClient.setQueryData<ChatSession[]>(["/api/sessions"], (old) => {
       if (!old) return old;
-      const updated = old.map(s => {
-        if (s.id !== sessionId) return s;
-        const merged = { ...s, ...session };
-        return preserveLiveStatus(s, merged);
-      });
+      const updated = old.map(s => s.id === sessionId ? { ...s, ...session } : s);
       return recomputeActiveDescendants(updated);
     });
     return true;
@@ -240,6 +224,29 @@ export function useDataSync() {
         }
       }
 
+      // Session status events are event-carried realtime state. Apply them directly
+      // and do not immediately refetch the session list, because an older HTTP
+      // response can overwrite the just-applied server event and make the menu blink.
+      if (eventName === "chat.session.status_changed" && event.payload) {
+        const { sessionId, status } = event.payload as { sessionId?: string; status?: string };
+        if (sessionId && status) optimisticSessionStatusUpdate(sessionId, status);
+        return;
+      }
+      if (eventName === "chat.autonomous.completed" && event.payload) {
+        const { sessionId } = event.payload as { sessionId?: string };
+        if (sessionId) optimisticSessionStatusUpdate(sessionId, "saved");
+        return;
+      }
+      if (eventName === "chat.autonomous.failed" && event.payload) {
+        const { sessionId } = event.payload as { sessionId?: string };
+        if (sessionId) optimisticSessionStatusUpdate(sessionId, "failed");
+        return;
+      }
+      if (eventName === "chat.autonomous.started" && event.payload) {
+        autonomousStartedCallback?.(event.payload as { sessionId: string; sessionKey?: string; skillId?: string });
+        return;
+      }
+
       const keys = INVALIDATION_MAP[eventName];
       if (keys) {
         for (const queryKey of keys) {
@@ -263,27 +270,6 @@ export function useDataSync() {
         maybeToastPreferenceChange(eventName, event.payload as Record<string, unknown> | undefined);
       }
 
-      // Optimistically update session status in cache before the refetch completes.
-      // This eliminates the visible lag between the session title (WS-driven) and the
-      // session menu (query-driven) when a session's status changes.
-      if (eventName === "chat.session.status_changed" && event.payload) {
-        const { sessionId, status } = event.payload as { sessionId?: string; status?: string };
-        if (sessionId && status) {
-          optimisticSessionStatusUpdate(sessionId, status);
-        }
-      }
-      if (eventName === "chat.autonomous.completed" && event.payload) {
-        const { sessionId } = event.payload as { sessionId?: string };
-        if (sessionId) optimisticSessionStatusUpdate(sessionId, "saved");
-      }
-      if (eventName === "chat.autonomous.failed" && event.payload) {
-        const { sessionId } = event.payload as { sessionId?: string };
-        if (sessionId) optimisticSessionStatusUpdate(sessionId, "failed");
-      }
-
-      if (eventName === "chat.autonomous.started" && event.payload) {
-        autonomousStartedCallback?.(event.payload as { sessionId: string; sessionKey?: string; skillId?: string });
-      }
 
       if (eventName === "data:people_changed") {
         const payload = event.payload as Record<string, unknown> | undefined;

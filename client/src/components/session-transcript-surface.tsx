@@ -18,6 +18,7 @@ export interface SessionTranscriptSurfaceProps {
   messages: Message[];
   streaming: StreamingContent;
   isSessionStreaming: boolean;
+  runActive?: boolean;
   msgsLoading: boolean;
   voiceActive: boolean;
   showVoiceTools: boolean;
@@ -50,6 +51,7 @@ export function SessionTranscriptSurface({
   messages,
   streaming,
   isSessionStreaming,
+  runActive,
   msgsLoading,
   voiceActive,
   showVoiceTools,
@@ -102,6 +104,7 @@ export function SessionTranscriptSurface({
             messages={messages}
             streaming={streaming}
             isSessionStreaming={isSessionStreaming}
+            runActive={runActive}
             msgsLoading={msgsLoading}
             activeSession={activeSession}
             sessionKey={sessionKey}

@@ -293,8 +293,11 @@ export function SessionTranscriptPanel({
   const rawStreaming = sessionSub.streamingContent ?? initialStreamingContent;
   const persistedSessionStatus = sessionData?.status ?? null;
   const isSessionActive =
+    sessionSub.runActive ||
     sessionSub.status === "streaming" ||
     (sessionSub.status === "idle" && persistedSessionStatus === "streaming");
+  const assistantActivity = sessionSub.visibleAssistantActivity;
+  const hasVisibleAssistantActivity = assistantActivity === "thinking" || assistantActivity === "streaming";
   const streaming = isSessionActive ? rawStreaming : initialStreamingContent;
 
   const persistedMessages = sessionData?.messages || [];
@@ -463,6 +466,7 @@ export function SessionTranscriptPanel({
   const currentTurnStreaming = streamIsFreshForPendingTurn ? streaming : initialStreamingContent;
   const serverStreaming = isSessionActive && streamIsFreshForPendingTurn;
   const hasLiveStreamingState = serverStreaming && currentTurnStreaming.source !== null;
+  const hasVisibleLiveAssistantState = hasLiveStreamingState && hasVisibleAssistantActivity;
   const pendingWasAdoptedByServer = visiblePendingTurn?.status === "streaming";
   const [frozenStreamHandoff, setFrozenStreamHandoff] = useState<FrozenStreamHandoff | null>(null);
 
@@ -500,8 +504,8 @@ export function SessionTranscriptPanel({
   // Keep one assistant placeholder alive for the active turn until the server
   // has visible assistant stream content. User-message persistence only retires
   // the optimistic user bubble; it must not clear the assistant Thinking state.
-  const serverHasVisibleAssistantStream = hasLiveStreamingState && currentTurnStreaming.segments.length > 0;
-  const renderPendingTurn = serverHasVisibleAssistantStream
+  const serverHasVisibleAssistantStream = hasVisibleLiveAssistantState && currentTurnStreaming.segments.length > 0;
+  const renderPendingTurn = serverHasVisibleAssistantStream || serverStreaming
     ? null
     : visiblePendingTurn;
   // The active assistant placeholder must have one stable identity for the
@@ -510,7 +514,7 @@ export function SessionTranscriptPanel({
   // adopted the pending turn. That deterministic remount happened on every send
   // and made the bottom transcript visibly tear/re-anchor. Derive the id
   // synchronously from the pending turn whenever this client owns the send.
-  const liveStreamRenderId = hasLiveStreamingState
+  const liveStreamRenderId = hasVisibleLiveAssistantState
     ? visiblePendingTurn?.clientTurnId
       ? `draft-assistant-${visiblePendingTurn.clientTurnId}`
       : activeSession
@@ -519,7 +523,7 @@ export function SessionTranscriptPanel({
     : null;
 
   useEffect(() => {
-    if (!activeSession || !hasLiveStreamingState || !liveStreamRenderId || currentTurnStreaming.segments.length === 0) return;
+    if (!activeSession || !hasVisibleLiveAssistantState || !liveStreamRenderId || currentTurnStreaming.segments.length === 0) return;
     const lowerBound = visiblePendingTurn
       ? new Date(visiblePendingTurn.submittedAt).getTime()
       : displayMessages.length > 0
@@ -533,7 +537,7 @@ export function SessionTranscriptPanel({
       streaming: freezeStreamingContent(currentTurnStreaming),
       lowerBound: Number.isFinite(lowerBound) ? lowerBound : null,
     });
-  }, [activeSession, currentTurnStreaming, displayMessages, hasLiveStreamingState, liveStreamRenderId, visiblePendingTurn]);
+  }, [activeSession, currentTurnStreaming, displayMessages, hasVisibleLiveAssistantState, liveStreamRenderId, visiblePendingTurn]);
 
   const frozenAssistantNowPersisted = frozenStreamHandoff
     ? displayMessages.some((message) => {
@@ -546,19 +550,19 @@ export function SessionTranscriptPanel({
   useEffect(() => {
     setFrozenStreamHandoff((prev) => {
       if (!prev) return prev;
-      if (prev.sessionId !== activeSession || hasLiveStreamingState || frozenAssistantNowPersisted) return null;
+      if (prev.sessionId !== activeSession || hasVisibleLiveAssistantState || frozenAssistantNowPersisted) return null;
       return prev;
     });
-  }, [activeSession, frozenAssistantNowPersisted, hasLiveStreamingState]);
+  }, [activeSession, frozenAssistantNowPersisted, hasVisibleLiveAssistantState]);
 
-  const displayStreaming = hasLiveStreamingState
+  const displayStreaming = hasVisibleLiveAssistantState
     ? currentTurnStreaming
     : frozenStreamHandoff?.sessionId === activeSession
       ? frozenStreamHandoff.streaming
       : currentTurnStreaming;
   const displayLiveStreamRenderId = liveStreamRenderId ?? (frozenStreamHandoff?.sessionId === activeSession ? frozenStreamHandoff.renderId : null);
-  const hasFrozenHandoff = !hasLiveStreamingState && frozenStreamHandoff?.sessionId === activeSession;
-  const isStreaming = hasLiveStreamingState || hasFrozenHandoff || postSending || !!renderPendingTurn;
+  const hasFrozenHandoff = !hasVisibleLiveAssistantState && frozenStreamHandoff?.sessionId === activeSession;
+  const isStreaming = hasVisibleLiveAssistantState || hasFrozenHandoff || postSending || !!renderPendingTurn;
 
   const renderRevision = useMemo(() => {
     const messageRevision = displayMessages
@@ -892,6 +896,7 @@ export function SessionTranscriptPanel({
         messages={displayMessages}
         streaming={displayStreaming}
         isSessionStreaming={isStreaming}
+        runActive={isSessionActive}
         msgsLoading={msgsLoading}
         voiceActive={voiceActive}
         showVoiceTools={showVoiceTools}

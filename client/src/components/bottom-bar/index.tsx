@@ -442,13 +442,15 @@ export function BottomBar({
     prevStatusRef.current = "idle";
   }, [focusedSessionId]);
 
-  // Derive bar state from streaming status
+  // Derive bar state from the server runtime projection. Stop is tied to
+  // cancellability, not to the transcript's visible Thinking state.
   useEffect(() => {
     const status = sessionSub.status;
+    const canStop = sessionSub.canStop;
     const prevStatus = prevStatusRef.current;
     prevStatusRef.current = status;
 
-    if (status === "streaming") {
+    if (canStop) {
       setBarState("working");
       setShowPreview(false);
     } else if (prevStatus === "streaming" && (status === "saved" || status === "idle")) {
@@ -463,8 +465,10 @@ export function BottomBar({
     } else if (status === "error") {
       toast({ title: "Something went wrong", description: "Try sending your message again.", variant: "destructive" });
       setBarState("idle");
+    } else if (!canStop && barState === "working") {
+      setBarState("idle");
     }
-  }, [sessionSub.status, sessionSub.streamingContent]);
+  }, [barState, sessionSub.canStop, sessionSub.status, sessionSub.streamingContent]);
 
   // Auto-resize textarea — grows upward, never shows scrollbar
   const adjustTextareaHeight = useCallback(() => {
@@ -671,7 +675,7 @@ export function BottomBar({
   }
 
   const latestStep = getLatestStep(sessionSub.streamingContent);
-  const isWorking = barState === "working" && !!focusedSessionId;
+  const isWorking = sessionSub.canStop && !!focusedSessionId;
   const hasText = inputText.trim().length > 0;
   const hasContent = !voiceActive && (hasText || attachedFiles.length > 0);
   const voiceEnding = voiceSession?.status === "ending";

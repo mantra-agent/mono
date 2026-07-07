@@ -19,7 +19,7 @@ import {
   resolveSystemStep,
   settleStream,
 } from "./streaming-reducers";
-import type { StreamingContent, StreamingSource } from "@shared/streaming-types";
+import type { ExecutionStep, StreamingContent, StreamingSource } from "@shared/streaming-types";
 import { initialStreamingContent } from "@shared/streaming-types";
 
 const log = createLogger("session-manager");
@@ -28,12 +28,15 @@ const log = createLogger("session-manager");
 // Types
 // ---------------------------------------------------------------------------
 
+type SessionRuntimeStatus = "streaming" | "saved" | "error";
+type VisibleAssistantActivity = "none" | "thinking" | "streaming" | "tool";
+
 interface LiveSession {
   sessionId: string;
   sessionKey: string;
   source: StreamingSource;
   streamingContent: StreamingContent;
-  status: "streaming" | "saved" | "error";
+  status: SessionRuntimeStatus;
   subscribers: Set<WebSocket>;
   finalizedAt: number | null;
   cleanupTimer: ReturnType<typeof setTimeout> | null;
@@ -53,9 +56,12 @@ export interface SessionSnapshot {
   sessionId: string;
   sessionKey: string;
   streamingContent: StreamingContent;
-  status: "streaming" | "saved" | "error";
+  status: SessionRuntimeStatus;
   eventSeq: number;
   subscriberCount: number;
+  runActive: boolean;
+  canStop: boolean;
+  visibleAssistantActivity: VisibleAssistantActivity;
 }
 
 /** Delta broadcast to subscribers after each event. */
@@ -63,7 +69,39 @@ export interface SessionDelta {
   sessionId: string;
   type: string;
   streamingContent: StreamingContent;
-  status: "streaming" | "saved" | "error";
+  status: SessionRuntimeStatus;
+  runActive: boolean;
+  canStop: boolean;
+  visibleAssistantActivity: VisibleAssistantActivity;
+}
+
+
+function getSteps(streamingContent: StreamingContent): ExecutionStep[] {
+  return streamingContent.segments.flatMap((segment) => segment.type === "timeline" ? segment.steps : []);
+}
+
+function deriveVisibleAssistantActivity(session: LiveSession): VisibleAssistantActivity {
+  if (session.status !== "streaming") return "none";
+  const steps = getSteps(session.streamingContent);
+  if (steps.some((step) => step.type === "thinking" && step.status === "active" && (step.thinking || "").trim().length > 0)) {
+    return "thinking";
+  }
+  if (session.streamingContent.segments.some((segment) => segment.type === "content" && segment.content.length > 0)) {
+    return "streaming";
+  }
+  if (steps.some((step) => step.type === "tool_call" && step.status === "active")) {
+    return "tool";
+  }
+  return "none";
+}
+
+function runtimeProjection(session: LiveSession) {
+  const runActive = session.status === "streaming";
+  return {
+    runActive,
+    canStop: runActive,
+    visibleAssistantActivity: deriveVisibleAssistantActivity(session),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +165,7 @@ class SessionManager {
         status: session.status,
         eventSeq: session.eventSeq,
         subscriberCount: session.subscribers.size,
+        ...runtimeProjection(session),
       });
       for (const ws of pending) {
         try {
@@ -292,6 +331,7 @@ class SessionManager {
       type: event.type,
       streamingContent: session.streamingContent,
       status: session.status,
+      ...runtimeProjection(session),
     });
   }
 
@@ -333,6 +373,7 @@ class SessionManager {
       status: session.status,
       eventSeq: session.eventSeq,
       subscriberCount: session.subscribers.size,
+      ...runtimeProjection(session),
     };
   }
 
@@ -399,6 +440,9 @@ class SessionManager {
       type: "finalized",
       streamingContent: session.streamingContent,
       status: "saved",
+      runActive: false,
+      canStop: false,
+      visibleAssistantActivity: "none",
     });
 
     log.log(`finalizeSession sessionId=${sessionId} subscribers=${session.subscribers.size}`);
@@ -426,6 +470,7 @@ class SessionManager {
       status: session.status,
       eventSeq: session.eventSeq,
       subscriberCount: session.subscribers.size,
+      ...runtimeProjection(session),
     };
   }
 
@@ -442,6 +487,9 @@ class SessionManager {
       status: delta.status,
       eventSeq,
       subscriberCount: session.subscribers.size,
+      runActive: delta.runActive,
+      canStop: delta.canStop,
+      visibleAssistantActivity: delta.visibleAssistantActivity,
     });
     const dead: WebSocket[] = [];
     log.verbose(() => `SESSION:DELTA:BROADCAST session=${session.sessionId} seq=${eventSeq} type=${delta.type} source=${delta.streamingContent.source} segments=${delta.streamingContent.segments.length} subs=${session.subscribers.size}`);
