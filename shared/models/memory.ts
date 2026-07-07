@@ -370,7 +370,7 @@ export const memoryVnextClaims = pgTable(
       .default(sql`CURRENT_TIMESTAMP`)
       .notNull(),
     contentHash: text("content_hash").notNull(),
-    embedding: vector("embedding", { dimensions: 1536 }),
+    embedding: vector("embedding", { dimensions: 384 }),
     sourceMemoryId: integer("source_memory_id").references(() => memoryEntries.id, {
       onDelete: "set null",
     }),
