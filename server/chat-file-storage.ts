@@ -612,7 +612,7 @@ function publishSessionStatusChanged(data: SessionData, previousStatus: string |
 }
 
 
-async function syncSessionMemoryMirrorIfReady(data: SessionData): Promise<void> {
+async function syncSessionMemoryMirrorIfReady(data: SessionData, options?: { writeBackMemoryEntryId?: boolean }): Promise<void> {
   if (data.status !== "saved") {
     memoryMirrorLog.debug(`[ingest] skip source=chat_journal sessionId=${data.id} reason=status_not_saved status=${data.status}`);
     return;
@@ -662,10 +662,16 @@ async function syncSessionMemoryMirrorIfReady(data: SessionData): Promise<void> 
   if (data.memoryEntryId !== memEntryId) {
     const previousMemoryEntryId = data.memoryEntryId || null;
     data.memoryEntryId = memEntryId;
-    await writeConv(data);
-    memoryMirrorLog.info(
-      `[ingest] writeback source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId} previousMemoryEntryId=${previousMemoryEntryId || "none"}`,
-    );
+    if (options?.writeBackMemoryEntryId !== false) {
+      await writeConv(data);
+      memoryMirrorLog.info(
+        `[ingest] writeback source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId} previousMemoryEntryId=${previousMemoryEntryId || "none"}`,
+      );
+    } else {
+      memoryMirrorLog.info(
+        `[ingest] writeback_deferred source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId} previousMemoryEntryId=${previousMemoryEntryId || "none"}`,
+      );
+    }
   } else {
     memoryMirrorLog.debug(`[ingest] writeback_unchanged source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId}`);
   }
@@ -730,6 +736,40 @@ async function syncSessionMemoryMirrorIfReady(data: SessionData): Promise<void> 
       `error=${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+
+function queueSessionMemoryMirror(data: SessionData, context: string): void {
+  if (data.status !== "saved") {
+    memoryMirrorLog.debug(
+      `[ingest] async_skip source=chat_journal sessionId=${data.id} context=${context} reason=status_not_saved status=${data.status}`,
+    );
+    return;
+  }
+
+  const snapshot = structuredClone(data) as SessionData;
+  void syncSessionMemoryMirrorIfReady(snapshot, { writeBackMemoryEntryId: false })
+    .then(() => {
+      if (snapshot.memoryEntryId && snapshot.memoryEntryId !== data.memoryEntryId) {
+        return withConvLock(snapshot.id, async () => {
+          const latest = await readConv(snapshot.id);
+          if (!latest || latest.memoryEntryId === snapshot.memoryEntryId) return;
+          latest.memoryEntryId = snapshot.memoryEntryId;
+          latest.updatedAt = new Date().toISOString();
+          await writeConv(latest);
+          invalidateSessionsCache({ action: "updated", sessionId: latest.id, session: convToMeta(latest) });
+          memoryMirrorLog.info(
+            `[ingest] async_writeback source=chat_journal sessionId=${latest.id} context=${context} memoryEntryId=${snapshot.memoryEntryId}`,
+          );
+        });
+      }
+    })
+    .catch((err) => {
+      memoryMirrorLog.warn(
+        `[ingest] async_failed source=chat_journal sessionId=${snapshot.id} context=${context} ` +
+        `error=${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
 }
 
 function convToMeta(data: SessionData): FileSession {
@@ -1334,9 +1374,9 @@ export const chatFileStorage: IChatFileStorage = {
       data.status = "saved";
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
-      await syncSessionMemoryMirrorIfReady(data);
       invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
       publishSessionStatusChanged(data, previousStatus, "saved");
+      queueSessionMemoryMirror(data, "saveSession");
       import("./chat-markdown")
         .then((m) => m.generateChatMarkdown(id))
         .catch((err) => log.warn("markdown generation failed", err));
@@ -1400,8 +1440,8 @@ export const chatFileStorage: IChatFileStorage = {
       }
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
-      await syncSessionMemoryMirrorIfReady(data);
       invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
+      queueSessionMemoryMirror(data, "archiveSession");
       publishSessionStatusChanged(data, previousStatus, status);
     });
   },
@@ -1947,8 +1987,8 @@ export const chatFileStorage: IChatFileStorage = {
       data.isPinned = false;
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
-      await syncSessionMemoryMirrorIfReady(data);
       invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
+      queueSessionMemoryMirror(data, "archiveSession");
     });
   },
 
