@@ -105,7 +105,6 @@ export const navTree: NavItem[] = [
     { title: "Tags", tab: "tags" },
   ]},
   { title: "Build", url: "/build", icon: Hammer, children: [
-    { title: "Pipeline", tab: "pipeline" },
     { title: "Database", tab: "database" },
     { title: "Migration", tab: "migration" },
     { title: "History", tab: "history" },
