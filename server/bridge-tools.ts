@@ -5770,15 +5770,16 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       try {
         const nodeModulesStat = await lstatAsync(clonedNodeModules);
         if (!nodeModulesStat.isSymbolicLink()) {
-          throw new Error(`post-clone: repos/${dirName}/node_modules exists but is not a symlink; refusing to mutate it`);
-        }
-
-        const currentTarget = resolve(targetDir, await readlinkAsync(clonedNodeModules));
-        if (currentTarget === rootNodeModules) {
-          shouldCreateSymlink = false;
+          await rmAsync(clonedNodeModules, { recursive: true, force: true });
+          toolExec.warn(`post-clone: removed local node_modules in ${dirName}; replacing with shared workspace symlink`);
         } else {
-          await unlinkAsync(clonedNodeModules);
-          toolExec.warn(`post-clone: replaced stale node_modules symlink in ${dirName} (${currentTarget} → ${rootNodeModules})`);
+          const currentTarget = resolve(targetDir, await readlinkAsync(clonedNodeModules));
+          if (currentTarget === rootNodeModules) {
+            shouldCreateSymlink = false;
+          } else {
+            await unlinkAsync(clonedNodeModules);
+            toolExec.warn(`post-clone: replaced stale node_modules symlink in ${dirName} (${currentTarget} → ${rootNodeModules})`);
+          }
         }
       } catch (err: any) {
         if (err?.code !== "ENOENT") throw err;
