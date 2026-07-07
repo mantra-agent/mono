@@ -746,8 +746,8 @@ function SourceBindingCard({
             />
           </div>
         )}
-        <EditableRow label="Owner" value={draft.owner} onChange={(v) => setDraft((d) => ({ ...d, owner: v }))} mono placeholder="e.g. bridgeops2030" />
-        <EditableRow label="Repository" value={draft.repo} onChange={(v) => setDraft((d) => ({ ...d, repo: v }))} mono placeholder="e.g. xyz" />
+        <EditableRow label="Owner" value={draft.owner} onChange={(v) => setDraft((d) => ({ ...d, owner: v }))} mono placeholder="e.g. mantra-agent" />
+        <EditableRow label="Repository" value={draft.repo} onChange={(v) => setDraft((d) => ({ ...d, repo: v }))} mono placeholder="e.g. mono" />
         <EditableRow label="Branch" value={draft.branch} onChange={(v) => setDraft((d) => ({ ...d, branch: v }))} mono placeholder="e.g. main" />
         <div className="grid grid-cols-[9rem_1fr] gap-3 border-b border-border/40 py-3 items-start">
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Code indexing</div>

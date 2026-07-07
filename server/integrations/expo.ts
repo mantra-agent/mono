@@ -761,7 +761,10 @@ function ensureMobileDependencyLink(mobileDir: string): void {
 }
 
 async function prepareMainBuildWorkspace(): Promise<{ mobileDir: string; sourceRef: string }> {
-  const repoUrl = process.env.GITHUB_REPO_URL || "https://github.com/bridgeops2030/xyz";
+  const repoUrl = process.env.GITHUB_REPO_URL;
+  if (!repoUrl) {
+    throw new Error("GITHUB_REPO_URL is required to prepare a Mobile build workspace from main.");
+  }
   const authenticatedUrl = await getAuthenticatedGitUrl(repoUrl);
   const workspace = createMainBuildWorkspacePath();
   mkdirSync(MAIN_BUILD_WORKSPACE_ROOT, { recursive: true });
