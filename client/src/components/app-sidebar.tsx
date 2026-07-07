@@ -76,6 +76,7 @@ export const navTree: NavItem[] = [
     { title: "Strategies", tab: "strategies" },
   ]},
   { title: "Platforms", url: "/platforms", icon: Boxes },
+  { title: "Database", url: "/database", icon: DatabaseZap },
   { title: "Skills", url: "/skills", icon: Lightbulb },
   { title: "Brain", url: "/brain", icon: BrainCircuit, children: [
     { title: "Observations", tab: "thoughts" },
@@ -106,8 +107,6 @@ export const navTree: NavItem[] = [
   ]},
   { title: "Build", url: "/build", icon: Hammer, children: [
     { title: "Pipeline", tab: "pipeline" },
-    { title: "Database", tab: "database" },
-    { title: "Migration", tab: "migration" },
     { title: "History", tab: "history" },
     { title: "Code", tab: "code" },
     { title: "Issues", tab: "issues" },
@@ -200,7 +199,7 @@ export function NavPage() {
 
   const permittedItems = useMemo(() => navTree.filter((item) => {
     if (item.title === "System") return hasPermission("system:read");
-    if (item.title === "Build") return hasPermission("build:read");
+    if (item.title === "Build" || item.title === "Database") return hasPermission("build:read");
     return true;
   }), [hasPermission]);
 

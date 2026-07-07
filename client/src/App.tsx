@@ -52,6 +52,7 @@ const UserDetailsPage = lazyWithRetry(() => import("@/pages/user-details"));
 const LoginPage = lazyWithRetry(() => import("@/pages/login"));
 const RegisterPage = lazyWithRetry(() => import("@/pages/register"));
 const BuildPage = lazyWithRetry(() => import("@/pages/build"));
+const DatabasePage = lazyWithRetry(() => import("@/pages/build").then(m => ({ default: m.DatabasePage })));
 const DesignPage = lazyWithRetry(() => import("@/pages/design"));
 const PeoplePage = lazyWithRetry(() => import("@/pages/people"));
 const CommsPage = lazyWithRetry(() => import("@/pages/comms"));
@@ -255,6 +256,7 @@ function Router() {
         <Route path="/platforms" component={PlatformsPage} />
         <Route path="/memory" component={MemoryPageFull} />
         <Route path="/build">{() => <RequirePermission permission="build:read"><BuildPage /></RequirePermission>}</Route>
+        <Route path="/database">{() => <RequirePermission permission="build:read"><DatabasePage /></RequirePermission>}</Route>
         <Route path="/design">{() => <RequirePermission permission="build:read"><DesignPage /></RequirePermission>}</Route>
         <Route path="/dev">{() => <Redirect to="/build" />}</Route>
         <Route path="/people/:id" component={PeoplePage} />
