@@ -1062,6 +1062,30 @@ export default function OpportunitiesTab() {
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
       <div className="flex-1 overflow-y-auto p-2">
         <div className="min-w-0 space-y-1">
+          <div className="relative mb-1 min-w-0">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={event => setSearchQuery(event.target.value)}
+              placeholder=""
+              className="h-7 w-full rounded-md border border-input bg-background pl-7 pr-7 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              aria-label="Search opportunities"
+              data-testid="input-search-opportunities"
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+                aria-label="Clear opportunity search"
+                data-testid="button-clear-opportunity-search"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            ) : null}
+          </div>
+
           <button
             type="button"
             onClick={() => setCreating(true)}
