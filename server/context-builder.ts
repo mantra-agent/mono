@@ -2498,7 +2498,7 @@ const TOOL_SHORT_DESCRIPTIONS: Record<string, string> = {
   gmail: "Read, search, and send emails via Gmail. Actions: status, search, read, send, draft, recent, download_attachment.",
   goals: "Manage life goals by domain and time horizon. Actions: list, get, create, update, delete, search, set_parent, unlink_parent.",
   intentions: `DEPRECATED — intentions system removed. Use the autonomy skill instead.`,
-  introspection: "Introspect skill configs and past LLM inference calls. Actions: list_skills, get_skill, list_inference_calls, get_inference_call.",
+  router: "Call and inspect the model routing layer. Actions: eval, list_inference_calls, get_inference_call.",
   library: "Manage wiki pages, notes, and annotations. Actions: list_library_pages, get_library_page, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, link_pages, annotate.",
   meetings: "Manage calendar events. Actions: add, list, update, delete.",
   memory: "Unified memory — read/write knowledge files, search all layers, manage graph links, run maintenance. Actions: read, write, read_entry, search, create_link, update_entry, get, consolidate_short, integrate_mid_to_long, run_myelination, run_memory_decay, run_memory_reinforcement, run_capability_audit.",

@@ -197,10 +197,10 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     whenToUse: "Do not use — this tool returns a deprecation notice. Use skills tool with the autonomy skill instead.",
     example: '{ "action": "list" }',
   },
-  introspection: {
-    description: "Introspect Agent's skill configurations and past LLM inference calls. Actions: list_skills, get_skill, list_inference_calls, get_inference_call.",
-    whenToUse: "When Agent needs to review its own skills, examine past LLM call patterns, or debug skill behavior.",
-    example: '{ "action": "get_skill", "id": "myelination-summarize" }',
+  router: {
+    description: "Call and inspect the production model routing layer. Actions: eval, list_inference_calls, get_inference_call.",
+    whenToUse: "When Agent needs to test prompt compositions through the real model tier/profile system or inspect audited inference calls.",
+    example: '{ "action": "eval", "profile": "memory", "systemPrompt": "Return JSON", "userPrompt": "Sample text", "jsonMode": true }',
   },
   skills: {
     description: "Manage Agent's skill library — reusable instruction sets. Actions: list, get, create, update, delete, search.",

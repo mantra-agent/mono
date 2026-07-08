@@ -16,7 +16,7 @@ import { isSimilarText } from "./utils/text-similarity";
 import { safeStringify } from "./utils/safe-stringify";
 import { eventBus } from "./event-bus";
 import type { Interaction, Mobilization, RelationshipProfile, NetworkProfile, ScoredAgendaItem, Person, PersonIndexEntry } from "./people-storage";
-import { ACTIVITY_FRAMING } from "./job-profiles";
+import { ACTIVITY_CHAT, ACTIVITY_FRAMING, ACTIVITY_MEMORY, ACTIVITY_THINKING, ACTIVITY_WORK, type ActivityId } from "./job-profiles";
 import { formatTaskForBridge, formatTaskForProjectDetail } from "./lib/task-format";
 import { WORKSPACE_DIR } from "./paths";
 import { pathExists, resolveWorkspacePath } from "./fs-utils";
@@ -6965,72 +6965,49 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
   },
 
-  async introspection(args) {
-    const action = args.action || "list_skills";
+  async router(args) {
+    const action = args.action || "list_inference_calls";
+
+    const resolveRouterActivity = (profile: string | undefined): ActivityId => {
+      switch ((profile || "chat").toLowerCase()) {
+        case "memory":
+        case "myelination":
+          return ACTIVITY_MEMORY;
+        case "reasoning":
+        case "thinking":
+          return ACTIVITY_THINKING;
+        case "work":
+          return ACTIVITY_WORK;
+        case "cheap":
+        case "fast":
+        case "framing":
+          return ACTIVITY_FRAMING;
+        case "chat":
+        default:
+          return ACTIVITY_CHAT;
+      }
+    };
 
     try {
       switch (action) {
-        case "list_prompts":
-        case "list_skills": {
-          const { storage } = await import("./storage");
-          const category = args.category || undefined;
-          const allSkills = await storage.getSkills(category ? { category } : undefined);
-          if (allSkills.length === 0) return { result: "No skills registered." };
-          const lines = allSkills.map(s => {
-            return `- **${s.name}** (${s.category || "general"}) — ${s.status}\n  Activity: ${s.activity || "n/a"} | Author: ${s.author || "user"}${s.description ? `\n  ${s.description.slice(0, 120)}${s.description.length > 120 ? "..." : ""}` : ""}`;
-          });
-          return { result: `${allSkills.length} skills:\n${lines.join("\n")}` };
-        }
-        case "get_prompt":
-        case "get_skill": {
-          const id = args.id;
-          if (!id) return { result: "Missing skill id", error: true };
-          const { storage } = await import("./storage");
-          let skill = await storage.getSkillByName(id);
-          if (!skill) skill = await storage.getSkill(id);
-          if (!skill) {
-            return { result: `Skill "${id}" not found`, error: true };
-          }
-          const parts = [
-            `**${skill.name}** (id: ${skill.id})`,
-            `Category: ${skill.category || "general"} | Activity: ${skill.activity || "n/a"} | Status: ${skill.status}`,
-            `Author: ${skill.author || "user"} | Version: ${skill.version} | Session Type: ${skill.sessionType || "default (autonomous)"}`,
-          ];
-          if (skill.description) parts.push(`Description: ${skill.description}`);
-          parts.push(`\nProcess:\n${skill.process}`);
-          if (skill.whenToUse) parts.push(`\nWhen To Use:\n${skill.whenToUse}`);
-          parts.push(`\n${formatChecklistForXyz(skill.checklist)}`);
-          return { result: parts.join("\n") };
-        }
         case "list_inference_calls": {
           const { fileApiCallStorage } = await import("./file-storage/api-calls");
           const limit = Math.min(parseInt(args.limit) || 50, 200);
           let calls = await fileApiCallStorage.getApiCalls(limit, 0);
 
-          if (args.profile) {
-            calls = calls.filter(c => c.profile === args.profile);
-          }
-          if (args.model) {
-            calls = calls.filter(c => c.model === args.model);
-          }
+          if (args.profile) calls = calls.filter(c => c.profile === args.profile);
+          if (args.model) calls = calls.filter(c => c.model === args.model);
           if (args.status) {
             const { eventBus } = await import("./event-bus");
             const bootTime = new Date(eventBus.bootTimestamp).getTime();
             if (args.status === "complete") {
-              calls = calls.filter(c => {
-                const ts = c.timestamp instanceof Date ? c.timestamp : new Date(c.timestamp);
-                return ts.getTime() >= bootTime;
-              });
+              calls = calls.filter(c => new Date(c.timestamp as any).getTime() >= bootTime);
             } else if (args.status === "past") {
-              calls = calls.filter(c => {
-                const ts = c.timestamp instanceof Date ? c.timestamp : new Date(c.timestamp);
-                return ts.getTime() < bootTime;
-              });
+              calls = calls.filter(c => new Date(c.timestamp as any).getTime() < bootTime);
             }
           }
 
           if (calls.length === 0) return { result: "No inference calls found matching the criteria." };
-
           const lines = calls.slice(0, limit).map(c => {
             const ts = c.timestamp instanceof Date ? c.timestamp.toISOString() : c.timestamp;
             const cost = c.costTotal ? `$${c.costTotal.toFixed(4)}` : "$0";
@@ -7045,7 +7022,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const { fileApiCallStorage } = await import("./file-storage/api-calls");
           const call = await fileApiCallStorage.getApiCall(id);
           if (!call) return { result: `Inference call ${id} not found`, error: true };
-
           const ts = call.timestamp instanceof Date ? call.timestamp.toISOString() : call.timestamp;
           const parts = [
             `**Inference Call #${call.id}**`,
@@ -7057,35 +7033,78 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             `Timestamp: ${ts}`,
             `Stop Reason: ${call.stopReason || "n/a"}`,
           ];
-
-          if (call.requestContent) {
-            const words = call.requestContent.split(/\s+/);
-            if (words.length > 5000) {
-              const { indexAndArchive, formatReferenceBlock } = await import("./content-indexer");
-              const ref = await indexAndArchive({ content: call.requestContent, sourceType: "inference", sourceLabel: `inference-input:${call.id}` });
-              parts.push(`\n--- Input ---\n${ref ? formatReferenceBlock(ref) : call.requestContent.slice(0, 20000) + "\n[... content archived]"}`);
-            } else {
-              parts.push(`\n--- Input ---\n${call.requestContent}`);
-            }
-          }
-          if (call.responseContent) {
-            const words = call.responseContent.split(/\s+/);
-            if (words.length > 5000) {
-              const { indexAndArchive, formatReferenceBlock } = await import("./content-indexer");
-              const ref = await indexAndArchive({ content: call.responseContent, sourceType: "inference", sourceLabel: `inference-output:${call.id}` });
-              parts.push(`\n--- Output ---\n${ref ? formatReferenceBlock(ref) : call.responseContent.slice(0, 20000) + "\n[... content archived]"}`);
-            } else {
-              parts.push(`\n--- Output ---\n${call.responseContent}`);
-            }
-          }
-
+          if (call.requestContent) parts.push(`\n--- Input ---\n${call.requestContent}`);
+          if (call.responseContent) parts.push(`\n--- Output ---\n${call.responseContent}`);
           return { result: parts.join("\n") };
         }
+        case "eval": {
+          const systemPrompt = String(args.systemPrompt || "");
+          const userPrompt = String(args.userPrompt || "");
+          if (!systemPrompt.trim() && !userPrompt.trim()) return { result: "Missing systemPrompt or userPrompt", error: true };
+
+          const maxPromptChars = 120_000;
+          if (systemPrompt.length + userPrompt.length > maxPromptChars) {
+            return { result: `Prompt too large for router.eval (${systemPrompt.length + userPrompt.length} chars > ${maxPromptChars})`, error: true };
+          }
+          const maxTokens = Math.max(1, Math.min(parseInt(args.maxTokens) || 1200, 4000));
+          const temperatureRaw = typeof args.temperature === "number" ? args.temperature : parseFloat(args.temperature);
+          const temperature = Number.isFinite(temperatureRaw) ? Math.max(0, Math.min(temperatureRaw, 1)) : 0.2;
+          const profile = String(args.profile || "chat");
+          const activity = args.activityId ? String(args.activityId) as ActivityId : resolveRouterActivity(profile);
+          const sessionKey = `router_eval:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+
+          const { chatCompletion } = await import("./model-client");
+          const result = await chatCompletion({
+            activity,
+            messages: [
+              ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt }] : []),
+              { role: "user" as const, content: userPrompt },
+            ],
+            jsonMode: !!args.jsonMode,
+            maxTokens,
+            temperature,
+            metadata: {
+              source: "router.eval",
+              activity,
+              sessionKey,
+              toolName: "router",
+              ...(args.metadata && typeof args.metadata === "object" ? args.metadata : {}),
+            },
+          });
+
+          let parsedJson: unknown = undefined;
+          if (args.jsonMode) {
+            try {
+              const { extractJson } = await import("./utils/extract-json");
+              parsedJson = JSON.parse(extractJson(result.content));
+            } catch (jsonErr: unknown) {
+              parsedJson = { parseError: jsonErr instanceof Error ? jsonErr.message : String(jsonErr) };
+            }
+          }
+
+          const { fileApiCallStorage } = await import("./file-storage/api-calls");
+          const recent = await fileApiCallStorage.getApiCalls(10, 0);
+          const audit = recent.find(c => c.sessionKey === sessionKey);
+          return {
+            result: JSON.stringify({
+              provider: result.provider,
+              model: result.model,
+              profile,
+              activity,
+              inputTokens: result.usage?.promptTokens ?? null,
+              outputTokens: result.usage?.completionTokens ?? null,
+              totalTokens: result.usage?.totalTokens ?? null,
+              inferenceCallId: audit?.id ?? null,
+              rawOutput: result.content,
+              parsedJson,
+            }, null, 2),
+          };
+        }
         default:
-          return { result: `Unknown introspection action: ${action}. Available: list_skills, get_skill, list_inference_calls, get_inference_call`, error: true };
+          return { result: `Unknown router action: ${action}. Available: eval, list_inference_calls, get_inference_call`, error: true };
       }
     } catch (err: any) {
-      return { result: `Introspection tool error: ${err.message}`, error: true };
+      return { result: `Router tool error: ${err.message}`, error: true };
     }
   },
 
