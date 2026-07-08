@@ -254,15 +254,11 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
     }, [commitValue, disabled, value]);
 
     const handleInput = useCallback(() => {
-      // Contenteditable is rendered from canonical React state. Native DOM mutations are
-      // prevented in beforeinput; this fallback only reconciles unexpected browser paths.
-      const root = rootRef.current;
-      if (!root) return;
-      const nextValue = extractValue(root);
-      if (nextValue === value) return;
-      const cursor = selectionOffsetWithin(root);
-      commitValue(nextValue, cursor);
-    }, [commitValue, value]);
+      // Canonical React state is the only supported mutation path. Normal text edits,
+      // paste, and delete are handled in beforeinput/paste with native DOM mutation
+      // prevented. Letting a late contenteditable input event re-extract DOM here can
+      // resurrect stale DOM after the parent clears the value on send.
+    }, []);
 
     const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
       onPaste?.(event);
