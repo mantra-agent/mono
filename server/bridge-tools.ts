@@ -15401,22 +15401,26 @@ function commandTargetsRootInstructionBootstrap(command: string, root: string): 
   const safePath = "(?:AGENTS\\.md|\\./AGENTS\\.md|" + escapedAgentsPath + ")";
 
   const rootDiscovery = [
-    /\bpwd\b/,
-    /\bls\b[^;&|]*$/,
-    /\bgit\s+rev-parse\s+--show-toplevel\b/,
-    /\bgit\s+remote\s+-v\b/,
-    /\bgit\s+branch\s+(?:--show-current|-vv)\b/,
-    /\bgit\s+status\s+(?:--short|-sb)\b/,
+    /^pwd$/,
+    /^ls(?:\s+[-A-Za-z0-9.,=\/]+)*$/,
+    /^find\s+\.\s+[^;&|]*AGENTS\.md[^;&|]*$/,
+    /^git\s+rev-parse\s+--show-toplevel$/,
+    /^git\s+remote\s+-v$/,
+    /^git\s+branch(?:\s+(?:--show-current|-vv|-a))?$/,
+    /^git\s+status(?:\s+(?:--short|-sb))?$/,
+    /^git\s+log(?:\s+--oneline)?(?:\s+-n\s*\d+|\s+-\d+)?$/,
   ];
   const instructionReads = [
-    new RegExp("\\bcat\\s+" + safePath + "\\b"),
-    new RegExp("\\bsed\\s+[^;&|]*" + safePath + "\\b"),
-    new RegExp("\\btest\\s+-(?:f|e)\\s+" + safePath + "\\b"),
+    new RegExp("^cat\\s+" + safePath + "$"),
+    new RegExp("^sed\\s+[^;&|]*" + safePath + "$"),
+    new RegExp("^test\\s+-(?:f|e)\\s+" + safePath + "$"),
+    new RegExp("^\\[\\s+-(?:f|e)\\s+" + safePath + "\\s+\\]$"),
   ];
   const instructionWrites = [
-    new RegExp("(?:^|[;&|]\\s*)(?:cat\\s+>)\\s*" + safePath + "\\b"),
-    new RegExp("(?:^|[;&|]\\s*)(?:tee)\\s+" + safePath + "\\b"),
-    new RegExp("(?:^|[;&|]\\s*)python3?\\s+.*AGENTS\\.md", "s"),
+    new RegExp("^cat\\s+>\\s*" + safePath + "(?:\\s*<<[A-Za-z0-9_-]+)?$"),
+    new RegExp("^tee(?:\\s+-a)?\\s+" + safePath + "$"),
+    new RegExp("^printf\\s+.+>\\s*" + safePath + "$", "s"),
+    new RegExp("^python3?\\s+.*AGENTS\\.md", "s"),
   ];
 
   const allowedPatterns = [...rootDiscovery, ...instructionReads, ...instructionWrites];
