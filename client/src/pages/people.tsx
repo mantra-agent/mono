@@ -39,6 +39,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Tooltip,
   TooltipContent,
@@ -838,7 +839,6 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
   const [newResponseOwed, setNewResponseOwed] = useState(false);
   const [newResponseDueBy, setNewResponseDueBy] = useState<string>("");
   const [savedInteractionId, setSavedInteractionId] = useState<string | null>(null);
-  const [newLogOptionsOpen, setNewLogOptionsOpen] = useState(false);
   const summaryInputRef = useRef<HTMLTextAreaElement | null>(null);
   const lastSavedPayloadRef = useRef<string>("");
 
@@ -988,7 +988,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
   };
 
   const renderInteractionOptions = (interaction: Interaction) => (
-    <div className="w-56 space-y-2 p-2">
+    <div className="space-y-2">
       <div className="space-y-1">
         <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Type</label>
         <Select value={interaction.type || "note"} onValueChange={(value) => interactionPatch(interaction, { type: value })}>
@@ -1036,12 +1036,13 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
         />
       )}
       <div className="border-t border-border/40 pt-1">
-        <DropdownMenuItem
-          className="text-destructive focus:text-destructive"
+        <button
+          type="button"
+          className="flex w-full items-center rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent hover:text-destructive"
           onClick={() => setPendingDeleteLogItem({ kind: "interaction", id: interaction.id, label: interaction.summary || "Log item" })}
         >
           Delete
-        </DropdownMenuItem>
+        </button>
       </div>
     </div>
   );
@@ -1124,20 +1125,19 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
               className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[14px] leading-tight text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]"
               data-testid="textarea-interaction-summary"
             />
-            <DropdownMenu open={newLogOptionsOpen} onOpenChange={setNewLogOptionsOpen}>
-              <DropdownMenuTrigger asChild>
+            <Popover>
+              <PopoverTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
                   className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
                   aria-label="Log options"
                   data-testid="button-new-log-options"
-                  onMouseDown={(event) => event.preventDefault()}
                 >
                   <MoreHorizontal className="h-3 w-3" />
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56 space-y-2 p-2" onCloseAutoFocus={(event) => event.preventDefault()}>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-56 space-y-2 p-2">
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Type</label>
                   <Select value={newType} onValueChange={setNewType}>
@@ -1191,8 +1191,8 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                     data-testid="input-response-due-by"
                   />
                 )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
       ) : (
@@ -1298,6 +1298,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                     </div>
                   )}
                   expandedContentClassName="px-2 pb-2 pl-2"
+                  usePopoverMenu={!!interaction}
                   menuContent={interaction ? renderInteractionOptions(interaction) : !isRelationshipMemory ? (
                     <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
@@ -1795,6 +1796,7 @@ function ProfileTreeRow({
   expandedContentClassName,
   actionContent,
   menuContent,
+  usePopoverMenu,
   testId,
 }: {
   label: ReactNode;
@@ -1806,6 +1808,7 @@ function ProfileTreeRow({
   expandedContentClassName?: string;
   actionContent?: ReactNode;
   menuContent?: ReactNode;
+  usePopoverMenu?: boolean;
   testId?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -1851,6 +1854,16 @@ function ProfileTreeRow({
             <span className="h-5 w-5 shrink-0" />
           )}
           {menuContent ? (
+            usePopoverMenu ? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100" aria-label="More actions">
+                  <MoreHorizontal className="h-3 w-3" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-56 p-2">{menuContent}</PopoverContent>
+            </Popover>
+            ) : (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100" aria-label="More actions">
@@ -1859,6 +1872,7 @@ function ProfileTreeRow({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">{menuContent}</DropdownMenuContent>
             </DropdownMenu>
+            )
           ) : null}
         </div>
         {canExpand && (
