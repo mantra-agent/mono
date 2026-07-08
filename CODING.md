@@ -38,7 +38,7 @@ Do not run standalone TypeScript checks (`npm run check`, `tsc --noEmit`, or equ
 
 ## Git
 
-- Before any coding work, resolve the target Platform Environment. Do not infer repo, credentials, branch, or host target from memory, workspace files, old session state, or visible repo names. Use the Platforms environment/source/hosting bindings as source of truth when available. If no target environment is specified and more than one plausible environment exists, ask Ray for the environment before cloning or editing.
+- Before any coding work, resolve the target Platform Environment. Do not infer repo, credentials, branch, or host target from memory, workspace files, old session state, or visible repo names. Use the Platforms environment/source/hosting bindings as source of truth when available. Ray's product codebase is Mantra, not xyz; xyz is the agent/app identity. When Ray asks for product/codebase/build workflow work without naming an environment, default to the Platforms registry entry for `Mantra / Web / stage` if it exists and is unambiguous. If multiple Mantra environments are plausible for the requested work, ask Ray before cloning or editing. If no target environment is specified and more than one plausible non-Mantra environment exists, ask Ray for the environment before cloning or editing.
 - The workspace `.git` is depth-1 (Railway deploy clone). Use the GitHub API for history, blame, and diffs on the main repo
 - Full clones for code work go in `repos/` via the git MCP tool. Each session gets an isolated clone at `repos/{name}-{sessionId[:8]}` (enforced by the tool, not by convention)
 - Never guess repository URLs. Use the authenticated workspace remote or an explicit URL from Ray; repo access is credential-bound.
