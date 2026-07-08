@@ -47,6 +47,8 @@ const log = createLogger("WorkflowService");
 
 /** Default idle timeout for workflow stage children: 15 minutes */
 const WORKFLOW_STAGE_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+const ACCEPTANCE_DEPLOY_WAIT_TIMEOUT_MS = 12 * 60 * 1000;
+const ACCEPTANCE_DEPLOY_POLL_INTERVAL_MS = 15 * 1000;
 
 const templateScopeColumns = { scope: workflowTemplates.scope, ownerUserId: workflowTemplates.ownerUserId, accountId: workflowTemplates.accountId };
 const runScopeColumns = { scope: workflowRuns.scope, ownerUserId: workflowRuns.ownerUserId, accountId: workflowRuns.accountId };
@@ -82,6 +84,7 @@ type AcceptanceEvidencePacket = {
   browserError?: string | null;
   optionalSmokeAttempted: boolean;
   deployment: WorkflowEnvironmentTruth["deployment"] | null;
+  deploymentReadiness?: DeploymentReadiness;
   screenshot?: { path: string; width: number; height: number; truncated: boolean } | null;
   logs: {
     client: Array<{ ts: number; level: string; source: string; message: string }>;
@@ -1216,9 +1219,99 @@ export async function capturePublishToStageEvidence(input: { workflowRunId: stri
   });
 }
 
+
+type DeploymentReadiness = {
+  status: "green" | "pending" | "failed" | "unavailable" | "timeout";
+  waitedMs: number;
+  attempts: number;
+  initialStatus: string | null;
+  finalStatus: string | null;
+  finalDeploymentId: string | null;
+  message: string;
+};
+
+function normalizedDeploymentStatus(deployment: WorkflowEnvironmentTruth["deployment"] | null | undefined): string {
+  return deployment?.latest?.status ? String(deployment.latest.status).trim().toUpperCase() : "";
+}
+
+function deploymentStatusCategory(status: string): "green" | "pending" | "failed" | "unknown" {
+  const s = status.trim().toUpperCase();
+  if (!s) return "unknown";
+  if (["SUCCESS", "SUCCEEDED", "COMPLETE", "COMPLETED", "DEPLOYED", "ACTIVE", "READY", "HEALTHY"].includes(s)) return "green";
+  if (["BUILDING", "DEPLOYING", "INITIALIZING", "QUEUED", "WAITING", "PENDING", "REMOVING", "RESTARTING"].includes(s)) return "pending";
+  if (["FAILED", "CRASHED", "REMOVED", "ERROR", "CANCELED", "CANCELLED", "SKIPPED"].includes(s)) return "failed";
+  return "unknown";
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function deploymentId(deployment: WorkflowEnvironmentTruth["deployment"] | null | undefined): string | null {
+  const id = deployment?.latest?.id;
+  return typeof id === "string" && id.trim() ? id : null;
+}
+
+function deploymentReadinessMessage(readiness: DeploymentReadiness): string {
+  const status = readiness.finalStatus || "unknown";
+  if (readiness.status === "green") return `Deployment ${readiness.finalDeploymentId || "unknown"} reached ${status} after ${readiness.attempts} check(s).`;
+  if (readiness.status === "timeout") return `Timed out after ${Math.round(readiness.waitedMs / 1000)}s waiting for Railway deployment to finish; final status ${status}.`;
+  if (readiness.status === "failed") return `Deployment ${readiness.finalDeploymentId || "unknown"} reached terminal failure status ${status}.`;
+  if (readiness.status === "pending") return `Deployment ${readiness.finalDeploymentId || "unknown"} is still pending with status ${status}.`;
+  return `Deployment status unavailable: ${status}.`;
+}
+
+async function waitForAcceptanceDeploymentTruth(runId: string, initialTruth: WorkflowEnvironmentTruth | null): Promise<{ truth: WorkflowEnvironmentTruth | null; readiness: DeploymentReadiness }> {
+  const startedAt = Date.now();
+  let truth = initialTruth;
+  let attempts = 0;
+  const initialStatus = normalizedDeploymentStatus(truth?.deployment) || null;
+  while (true) {
+    attempts += 1;
+    if (attempts > 1 || !truth) truth = await getWorkflowEnvironmentTruth(runId);
+    const deployment = truth?.deployment || null;
+    const status = normalizedDeploymentStatus(deployment);
+    const category = deploymentStatusCategory(status);
+    const waitedMs = Date.now() - startedAt;
+    const base = {
+      waitedMs,
+      attempts,
+      initialStatus,
+      finalStatus: status || null,
+      finalDeploymentId: deploymentId(deployment),
+    };
+
+    if (!deployment?.available) {
+      const readiness: DeploymentReadiness = { status: "unavailable", ...base, message: deployment?.reason || "Deployment status is unavailable." };
+      return { truth, readiness };
+    }
+    if (category === "green") {
+      const readiness: DeploymentReadiness = { status: "green", ...base, message: "" };
+      readiness.message = deploymentReadinessMessage(readiness);
+      return { truth, readiness };
+    }
+    if (category === "failed") {
+      const readiness: DeploymentReadiness = { status: "failed", ...base, message: "" };
+      readiness.message = deploymentReadinessMessage(readiness);
+      return { truth, readiness };
+    }
+    if (category === "pending" || !deployment.latest) {
+      if (waitedMs >= ACCEPTANCE_DEPLOY_WAIT_TIMEOUT_MS) {
+        const readiness: DeploymentReadiness = { status: "timeout", ...base, message: "" };
+        readiness.message = deploymentReadinessMessage(readiness);
+        return { truth, readiness };
+      }
+      await sleep(Math.min(ACCEPTANCE_DEPLOY_POLL_INTERVAL_MS, ACCEPTANCE_DEPLOY_WAIT_TIMEOUT_MS - waitedMs));
+      continue;
+    }
+
+    const readiness: DeploymentReadiness = { status: "pending", ...base, message: `Unknown Railway deployment status ${status}; leaving acceptance gate non-green.` };
+    return { truth, readiness };
+  }
+}
+
 function deploymentLooksGreen(deployment: WorkflowEnvironmentTruth["deployment"] | null | undefined): boolean {
-  const status = deployment?.latest?.status ? String(deployment.latest.status).toLowerCase() : "";
-  return Boolean(deployment?.available && deployment.latest && ["success", "succeeded", "complete", "completed", "deployed", "active", "ready", "healthy"].some((value) => status.includes(value)));
+  return Boolean(deployment?.available && deployment.latest && deploymentStatusCategory(normalizedDeploymentStatus(deployment)) === "green");
 }
 
 function publicUrlFromTruth(truth: WorkflowEnvironmentTruth | null | undefined): string | null {
@@ -1311,6 +1404,7 @@ function buildAcceptanceFailurePacket(packet: AcceptanceEvidencePacket, health: 
     acceptanceConfig: packet.configSnapshot,
     healthCheckPath: packet.healthCheckPath,
     deployment: packet.deployment,
+    deploymentReadiness: packet.deploymentReadiness || null,
     screenshot: packet.screenshot || null,
     clientLogErrors: packet.logs.client,
     serverLogErrors: packet.logs.server,
@@ -1322,7 +1416,8 @@ export async function captureAcceptanceEvidence(input: { workflowRunId: string; 
   const captureStartedAt = Date.now();
   const detail = await getWorkflowRun(input.workflowRunId);
   if (!detail) throw new Error(`Workflow run not found: ${input.workflowRunId}`);
-  const truth = detail.environmentTruth || await getWorkflowEnvironmentTruth(input.workflowRunId);
+  const initialTruth = detail.environmentTruth || await getWorkflowEnvironmentTruth(input.workflowRunId);
+  const { truth, readiness: deploymentReadiness } = await waitForAcceptanceDeploymentTruth(input.workflowRunId, initialTruth);
   const stage = detail.stages.find((item) => item.key === "acceptance");
   const stageAttemptId = input.stageAttemptId ?? stage?.latestAttempt?.id ?? null;
   const lifecycleSnapshot = detail.lifecycleSnapshot || detail.run.lifecycleSnapshot;
@@ -1391,6 +1486,7 @@ export async function captureAcceptanceEvidence(input: { workflowRunId: string; 
     browserError,
     optionalSmokeAttempted: Boolean(input.optionalSmokeAttempted),
     deployment: truth?.deployment || null,
+    deploymentReadiness,
     screenshot,
     logs: { client: clientLogs, server: serverLogs },
   };
@@ -1405,7 +1501,7 @@ export async function captureAcceptanceEvidence(input: { workflowRunId: string; 
     refType: "workflow_acceptance",
     refId: input.workflowRunId,
     url: targetRouteUrl || targetUrl || undefined,
-    summary: input.summary || `Acceptance gates ${passed ? "passed" : "failed"}: ${ACCEPTANCE_GATE_KEYS.map((key) => `${key}=${gates[key] ? "yes" : "no"}`).join(", ")}.`,
+    summary: input.summary || `Acceptance gates ${passed ? "passed" : "failed"}: ${ACCEPTANCE_GATE_KEYS.map((key) => `${key}=${gates[key] ? "yes" : "no"}`).join(", ")}. Deployment readiness: ${deploymentReadiness.message}`,
     metadata: packet,
     createdBySessionId: input.createdBySessionId,
   });
