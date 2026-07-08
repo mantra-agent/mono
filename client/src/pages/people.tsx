@@ -1114,14 +1114,14 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
   return (
     <div className="space-y-3" data-testid="interactions-tab">
       {effectiveShowAdd ? (
-        <div className="max-h-80 max-w-none overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-[12px] leading-tight text-white scrollbar-thin">
+        <div className="max-h-80 max-w-none overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-[14px] leading-tight text-white scrollbar-thin">
           <div className="flex items-start gap-2">
             <Textarea
               ref={summaryInputRef}
               value={newSummary}
               onChange={(e) => setNewSummary(e.target.value)}
               placeholder="What happened?"
-              className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[12px] leading-tight text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[12px]"
+              className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[14px] leading-tight text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]"
               data-testid="textarea-interaction-summary"
             />
             <DropdownMenu open={newLogOptionsOpen} onOpenChange={setNewLogOptionsOpen}>
@@ -1234,7 +1234,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                   hasValue
                   showEmpty
                   expandedContent={(
-                    <div className="max-h-80 max-w-none overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-[12px] leading-tight text-white scrollbar-thin">
+                    <div className="max-h-80 max-w-none overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-[14px] leading-tight text-white scrollbar-thin">
                       {isNote ? (
                         <div>
                           {editingNoteId === item.id ? (
@@ -1264,8 +1264,8 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                       ) : isMemory ? (
                         <div>
                           <p className="font-semibold text-white">{memoryTitle}</p>
-                          {memory?.summary && memory.title && <p className="mt-2 whitespace-pre-wrap text-[12px] leading-tight text-white">{memory.summary}</p>}
-                          <p className="mt-2 whitespace-pre-wrap text-[12px] leading-tight text-white">{memory?.content}</p>
+                          {memory?.summary && memory.title && <p className="mt-2 whitespace-pre-wrap text-[14px] leading-tight text-white">{memory.summary}</p>}
+                          <p className="mt-2 whitespace-pre-wrap text-[14px] leading-tight text-white">{memory?.content}</p>
                           <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                             <Badge variant="outline" className="text-[10px] leading-none">{memory?.layer}</Badge>
                             <Badge variant="outline" className="text-[10px] leading-none">{memory?.source}</Badge>
@@ -1275,7 +1275,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                       ) : isRelationshipMemory ? (
                         <div>
                           <p className="font-semibold text-white">{relationshipMemoryTitle}</p>
-                          <p className="mt-2 whitespace-pre-wrap text-[12px] leading-tight text-white">{relationshipMemory?.content}</p>
+                          <p className="mt-2 whitespace-pre-wrap text-[14px] leading-tight text-white">{relationshipMemory?.content}</p>
                           <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                             {relationshipMemory?.category && <Badge variant="outline" className="text-[10px] leading-none">{RM_CATEGORY_MAP[relationshipMemory.category]?.label || relationshipMemory.category}</Badge>}
                             {relationshipMemory?.tags?.map((tag) => <Badge key={tag} variant="outline" className="text-[10px] leading-none">{tag}</Badge>)}
@@ -1283,8 +1283,8 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                         </div>
                       ) : (
                         <>
-                          <p className="whitespace-pre-wrap text-[12px] leading-tight text-white" data-testid={`interaction-summary-${item.id}`}>{interaction?.summary}</p>
-                          {interaction?.context && <p className="mt-2 whitespace-pre-wrap text-[12px] leading-tight text-white">{interaction.context}</p>}
+                          <p className="whitespace-pre-wrap text-[14px] leading-tight text-white" data-testid={`interaction-summary-${item.id}`}>{interaction?.summary}</p>
+                          {interaction?.context && <p className="mt-2 whitespace-pre-wrap text-[14px] leading-tight text-white">{interaction.context}</p>}
                           {(interaction?.capitalImpact && interaction.capitalImpact !== "neutral") || interaction?.responseOwed || interaction?.responseDueBy || interaction?.tags?.length ? (
                             <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                               {interaction?.capitalImpact && interaction.capitalImpact !== "neutral" && <span>{interaction.capitalImpact}</span>}
@@ -1984,13 +1984,13 @@ function ProfileSummaryEditor({
   };
 
   return (
-    <div className="max-h-80 max-w-none overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-[12px] leading-tight text-white scrollbar-thin">
+    <div className="max-h-80 max-w-none overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-[14px] leading-tight text-white scrollbar-thin">
       <Textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={save}
         placeholder="Add summary"
-        className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[12px] leading-tight text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[12px]"
+        className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[14px] leading-tight text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]"
         data-testid="textarea-quick-summary"
       />
     </div>
