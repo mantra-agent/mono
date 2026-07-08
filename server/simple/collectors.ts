@@ -435,6 +435,7 @@ function itemFromAgendaPerson(item: TieredAgendaItem, index: number): SimpleFeed
       cabinetLevel: item.cabinetLevel,
       contextBadge: badge || null,
       responseOwedDetails: item.responseOwedDetails || null,
+      responseDueBy: item.responseDueBy || null,
       commitmentDetails: item.commitmentDetails || null,
       surfaceTier: item.simpleSurfaceTier,
       urgencyScore: item.urgencyScore,
@@ -678,14 +679,40 @@ function itemFromNewsSignal(signal: SignalItem, index: number): SimpleFeedItem {
  * Higher = more urgent. Positive = overdue, negative = days until due.
  */
 function computeUrgencyScore(item: ScoredAgendaItem): number {
-  // Response-owed and commitment items: urgency based on days since last contact
-  if (item.responseOwedDetails || item.commitmentDetails) {
-    return item.daysSinceLastContact;
-  }
-  // Cadence items: overdue items score positive (more overdue = higher), due items near zero
+  // Follow-up and reconnect ordering each use their own explicit comparators below.
+  // This score remains a payload/debug signal and a fallback tie-breaker.
+  if (item.responseOwedDetails || item.commitmentDetails) return item.daysSinceLastContact;
   if (item.dueStatus === "drifting" || item.dueStatus === "urgent") return item.daysSinceMeaningful;
   if (item.dueStatus === "due") return 0;
-  return -item.daysSinceMeaningful; // on_track items: negative urgency
+  return -item.daysSinceMeaningful;
+}
+
+function responseDueSortValue(item: ScoredAgendaItem): number {
+  if (!item.responseDueBy) return Number.POSITIVE_INFINITY;
+  const value = new Date(item.responseDueBy).getTime();
+  return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY;
+}
+
+function compareFollowUps(a: TieredAgendaItem, b: TieredAgendaItem): number {
+  const aDue = responseDueSortValue(a);
+  const bDue = responseDueSortValue(b);
+  if (aDue !== bDue) return aDue - bDue;
+  const urgencyDelta = b.urgencyScore - a.urgencyScore;
+  if (urgencyDelta !== 0) return urgencyDelta;
+  return a.name.localeCompare(b.name);
+}
+
+function compareMaintenance(a: TieredAgendaItem, b: TieredAgendaItem): number {
+  const contactDelta = b.daysSinceLastContact - a.daysSinceLastContact;
+  if (contactDelta !== 0) return contactDelta;
+  const urgencyDelta = b.urgencyScore - a.urgencyScore;
+  if (urgencyDelta !== 0) return urgencyDelta;
+  return a.name.localeCompare(b.name);
+}
+
+function compareAgendaSurface(a: TieredAgendaItem, b: TieredAgendaItem): number {
+  if (a.simpleSurfaceTier !== b.simpleSurfaceTier) return a.simpleSurfaceTier === "follow_up" ? -1 : 1;
+  return a.simpleSurfaceTier === "follow_up" ? compareFollowUps(a, b) : compareMaintenance(a, b);
 }
 
 async function collectAgendaPeople(): Promise<TieredAgendaItem[]> {
@@ -694,7 +721,7 @@ async function collectAgendaPeople(): Promise<TieredAgendaItem[]> {
   const cabinetWeights: Record<string, number> = {};
   for (const level of cabinetConfig.levels) cabinetWeights[level.id] = Math.max(1, 7 - level.order);
 
-  const candidateEntries = people.filter(entry => !["self", "agent", "user", "network"].includes(entry.cabinetLevel));
+  const candidateEntries = people.filter(entry => !["self", "agent", "user"].includes(entry.cabinetLevel));
   const fullPeople = await peopleStorage.getPeopleByIds(candidateEntries.map(entry => entry.id));
   const peopleById = new Map(fullPeople.map(person => [person.id, person]));
   const agenda: TieredAgendaItem[] = [];
@@ -704,6 +731,7 @@ async function collectAgendaPeople(): Promise<TieredAgendaItem[]> {
     if (!person) continue;
     const scored = computeAgendaSignals(person, cabinetWeights, now);
     if (!scored) continue;
+    if (entry.cabinetLevel === "network" && scored.surfaceTier !== "follow_up") continue;
     const latest = latestInteraction(person.interactions ?? []);
     const simpleSurfaceTier: SimplePeopleSurfaceTier = scored.surfaceTier === "follow_up" ? "follow_up" : "maintenance";
     agenda.push({
@@ -737,14 +765,14 @@ async function collectAgendaPeople(): Promise<TieredAgendaItem[]> {
 
   const followUps = visible
     .filter(item => item.simpleSurfaceTier === "follow_up")
-    .sort((a, b) => b.urgencyScore - a.urgencyScore);
+    .sort(compareFollowUps);
   const remainingSlots = Math.max(0, PEOPLE_SURFACE_LIMIT - followUps.length);
   const maintenance = visible
     .filter(item => item.simpleSurfaceTier === "maintenance")
-    .sort((a, b) => b.urgencyScore - a.urgencyScore)
+    .sort(compareMaintenance)
     .slice(0, remainingSlots);
 
-  return [...followUps, ...maintenance, ...snoozed.sort((a, b) => b.urgencyScore - a.urgencyScore)];
+  return [...followUps, ...maintenance, ...snoozed.sort(compareAgendaSurface)];
 }
 
 // ─── Tasks ───

@@ -373,9 +373,27 @@ export interface ScoredAgendaItem {
   contextBadge?: { label: string; color: string };
   signals: AgendaSignals;
   responseOwedDetails?: string;
+  responseDueBy?: string;
   commitmentDetails?: string;
   surfacedAt?: string;
   photo?: string;
+}
+
+function responseDueSortValue(interaction: Interaction): number {
+  if (!interaction.responseDueBy) return Number.POSITIVE_INFINITY;
+  const value = new Date(interaction.responseDueBy).getTime();
+  return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY;
+}
+
+function selectResponseOwedInteraction(interactions: Interaction[]): Interaction | undefined {
+  return interactions
+    .filter(ix => ix.responseOwed)
+    .sort((a, b) => {
+      const aDue = responseDueSortValue(a);
+      const bDue = responseDueSortValue(b);
+      if (aDue !== bDue) return aDue - bDue;
+      return new Date(a.date).getTime() - new Date(b.date).getTime();
+    })[0];
 }
 
 export function computeAgendaSignals(
@@ -397,7 +415,7 @@ export function computeAgendaSignals(
     : 365;
 
   const weight = cabinetWeights[person.cabinetLevel] || 1;
-  const responseOwedIx = person.interactions.find(ix => ix.responseOwed);
+  const responseOwedIx = selectResponseOwedInteraction(person.interactions);
   const openCommitments = person.networkProfile?.commitments?.filter(c => c.status === "open") || [];
   const temperature = person.relationshipProfile?.state?.temperature;
   const capitalBalance = person.networkProfile?.capital?.balance;
@@ -465,6 +483,7 @@ export function computeAgendaSignals(
 
   if (responseOwedIx) {
     item.responseOwedDetails = responseOwedIx.summary;
+    item.responseDueBy = responseOwedIx.responseDueBy;
     item.surfacedAt = responseOwedIx.date
       ? (responseOwedIx.date.length === 10 ? `${responseOwedIx.date}T12:00:00.000Z` : new Date(responseOwedIx.date).toISOString())
       : undefined;
