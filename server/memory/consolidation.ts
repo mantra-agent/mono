@@ -7,7 +7,7 @@ import { MEMORY_INTEGRATION_STAGE } from "@shared/schema";
 import type { MemoryEntry, MemoryLayer, MemorySource } from "@shared/schema";
 import { getSetting, setSetting } from "../system-settings";
 import { createLogger } from "../log";
-import type { ClaimCandidate, EnrichmentWithClaims } from "./memory-enrichment";
+import type { ClaimCandidate } from "./memory-enrichment";
 
 type Logger = ReturnType<typeof createLogger>;
 
@@ -304,7 +304,7 @@ async function processConsolidationEntry(
   entry: MemoryEntry,
   index: number,
   total: number,
-  enrichFn: (e: { content: string; source?: string | null; title?: string | null }) => Promise<EnrichmentWithClaims>,
+  enrichFn: (e: { content: string; source?: string | null; title?: string | null }) => Promise<{ title: string; oneLiner: string; summary: string; tags: string[] }>,
 ): Promise<void> {
   const entryMeta = (entry.metadata as Record<string, unknown>) || {};
   const isRecalled = !!entryMeta.recalledAt;
@@ -315,13 +315,13 @@ async function processConsolidationEntry(
 
   log.verbose(() => `[${index + 1}/${total}] enrichment input — entry #${entry.id}${isRecalled ? " (recalled)" : ""}, content (${entry.content.length} chars): "${entry.content.slice(0, 150).replace(/\n/g, " ")}...", source="${entry.source}", title="${titleHint ?? ""}"`);
 
-  const { title, oneLiner, summary, tags, claims, claimReasoning } = await enrichFn({
+  const { title, oneLiner, summary, tags } = await enrichFn({
     content: entry.content,
     source: entry.source,
     title: titleHint || undefined,
   });
 
-  log.debug(() => `[${index + 1}/${total}] enrichment output — title="${title}", oneLiner="${oneLiner.slice(0, 60)}", summary="${summary.slice(0, 120)}...", tags=[${tags.join(", ")}], claims=${claims.length}${claimReasoning ? `, reasoning="${claimReasoning.slice(0, 80)}"` : ""}`);
+  log.debug(() => `[${index + 1}/${total}] enrichment output — title="${title}", oneLiner="${oneLiner.slice(0, 60)}", summary="${summary.slice(0, 120)}...", tags=[${tags.join(", ")}]`);
 
   const midEntry = await memoryStorage.promoteToMid(entry.id, title, summary, tags);
   log.log(`[MemoryTransition] AUTO #${entry.id} "${title}" short → mid (consolidation${isRecalled ? ", reconsolidated" : ""})`);
@@ -362,21 +362,8 @@ async function processConsolidationEntry(
     log.warn(`[${index + 1}/${total}] Embedding generation failed for #${midEntry.id}: ${embErrMsg}`);
   }
 
-  // Process extracted claims BEFORE merge — merge may delete the parent entry,
-  // which would cause extracted_from link creation to fail (target no longer exists)
-  if (claims.length > 0) {
-    try {
-      const claimResults = await processExtractedClaims(
-        claims,
-        midEntry,
-        index,
-        total,
-      );
-      log.log(`[${index + 1}/${total}] Claims: ${claimResults.created} created, ${claimResults.reinforced} reinforced, ${claimResults.skipped} skipped for entry #${midEntry.id}`);
-    } catch (claimErr: unknown) {
-      log.warn(`[${index + 1}/${total}] Claim extraction failed for #${midEntry.id}: ${claimErr instanceof Error ? claimErr.message : String(claimErr)}`);
-    }
-  }
+  // Claims are extracted upstream at session-save time (chat-file-storage.ts),
+  // not during consolidation. Consolidation only handles title/summary/tags enrichment.
 
   const mergeResult = await tryMergeWithExistingMid(midEntry);
   if (mergeResult.merged) {
@@ -935,7 +922,7 @@ export async function runAgeBasedConsolidation(): Promise<{ promoted: number; fa
   let failureCount = 0;
 
   try {
-    const { generateTitleSummaryTagsAndClaims } = await import("./memory-enrichment");
+    const { generateTitleSummaryTags } = await import("./memory-enrichment");
 
     for (let i = 0; i < staleEntries.length; i++) {
       const entry = staleEntries[i];
@@ -946,7 +933,7 @@ export async function runAgeBasedConsolidation(): Promise<{ promoted: number; fa
         const isFresh = await verifyEntryFreshness(entry, "short", i, staleEntries.length, log);
         if (!isFresh) continue;
 
-        await processConsolidationEntry(entry, i, staleEntries.length, generateTitleSummaryTagsAndClaims);
+        await processConsolidationEntry(entry, i, staleEntries.length, generateTitleSummaryTags);
         successCount++;
 
         state.currentTokens = (state.currentTokens ?? 0) - estimateTokens(entry.content);
@@ -1208,7 +1195,7 @@ export async function runConsolidation(layer: "short" = "short"): Promise<void> 
     state.total = entriesToPromote;
     log.verbose(() => `Need to promote ${entriesToPromote} entries to get below target capacity (${currentTokens} → target <${thresholds.targetCapacity})`);
 
-    const { generateTitleSummaryTagsAndClaims } = await import("./memory-enrichment");
+    const { generateTitleSummaryTags } = await import("./memory-enrichment");
 
     let successCount = 0;
     let failureCount = 0;
@@ -1225,7 +1212,7 @@ export async function runConsolidation(layer: "short" = "short"): Promise<void> 
         if (!isFresh) continue;
 
         const entryStart = Date.now();
-        await processConsolidationEntry(entry, i, entriesToPromote, generateTitleSummaryTagsAndClaims);
+        await processConsolidationEntry(entry, i, entriesToPromote, generateTitleSummaryTags);
 
         successCount++;
         currentTokens -= estimateTokens(entry.content);
