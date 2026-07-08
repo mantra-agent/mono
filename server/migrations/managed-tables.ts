@@ -104,6 +104,5 @@ export const MANAGED_TABLES: string[] = [
   "voice_session_active",
   "wellness_activities",
   "wellness_logs",
-  "workspace_backup_files",
   "workspace_documents",
 ];
