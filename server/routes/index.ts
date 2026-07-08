@@ -46,6 +46,7 @@ import { registerOnboardingRoutes } from "../onboarding";
 import { registerMobileTelemetryRoutes } from "./mobile-telemetry";
 import { registerMobileDATDebugRoutes } from "./mobile-dat-debug";
 import { registerHomeRoutes } from "./home";
+import { registerNotificationRoutes } from "./notifications";
 import mediaRoutes from "../media/media-routes";
 import renderRoutes from "../media/render-routes";
 
@@ -92,7 +93,7 @@ export async function registerDomainRoutes(
   // Confirmed user-data leak surfaces: never rely on client-side tab filtering.
   // Prefix gates ensure principal context is established before integration, email,
   // goal/priority, and voice-goal handlers touch principal-scoped storage.
-  app.use(["/api/gmail", "/api/email", "/api/email-drafts", "/api/goals", "/api/import-queue"], requireAuth);
+  app.use(["/api/gmail", "/api/email", "/api/email-drafts", "/api/goals", "/api/import-queue", "/api/notifications"], requireAuth);
 
   await registerIntegrationsRoutes(app);
   await registerOuraRoutes(app);
@@ -127,6 +128,7 @@ export async function registerDomainRoutes(
   registerIssueRoutes(app);
   registerProviderConnectionRoutes(app);
   registerHomeRoutes(app);
+  registerNotificationRoutes(app);
   registerMobileTelemetryRoutes(app);
   registerMobileDATDebugRoutes(app);
   app.use("/api/media", mediaRoutes);
