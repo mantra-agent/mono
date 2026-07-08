@@ -14,6 +14,8 @@ import { storage } from "../storage";
 import { chatFileStorage } from "../chat-file-storage";
 import { pool } from "../db";
 import { getSetting, setSetting } from "../system-settings";
+import { runWithPrincipal } from "../principal-context";
+import { createSystemPrincipal } from "../principal";
 
 const INFERENCE_DEBUG_KEY = "system.inference_debug";
 
@@ -989,14 +991,19 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
         }
       }
 
-      // Add OpenAI Subscription models if account is connected
+      // Add OpenAI Subscription models if account is connected.
+      // Subscription accounts are system-wide integrations. Use the same system-principal
+      // visibility path as /api/openai-subscription/status so user ownership predicates
+      // do not hide the configured subscription from this admin model setup page.
       try {
         const { getAccount } = await import("../connected-accounts");
-        const openaiSubAccount = await getAccount("openai-subscription-primary");
+        const openaiSubAccount = await runWithPrincipal(createSystemPrincipal(), () =>
+          getAccount("openai-subscription-primary")
+        );
         if (openaiSubAccount) {
           const subModels = modelRegistry.getSubscriptionModels()
             .filter(({ info }) => info.provider === "openai-subscription");
-          if (subModels.length > 0) {
+          if (subModels.length > 0 && !providers.some(p => p.id === "openai-subscription")) {
             providers.push({
               id: "openai-subscription",
               name: "OpenAI Subscription",
