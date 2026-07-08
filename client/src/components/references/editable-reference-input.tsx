@@ -1,6 +1,7 @@
 import {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
@@ -201,10 +202,9 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
       setSelectionAtOffset(root, pending);
     }, [value]);
 
-    const handleBeforeInput = useCallback((event: React.FormEvent<HTMLDivElement>) => {
+    const handleBeforeInput = useCallback((inputEvent: InputEvent) => {
       if (disabled) return;
 
-      const inputEvent = event.nativeEvent as InputEvent;
       const root = rootRef.current;
       if (!root) return;
 
@@ -221,7 +221,7 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
           inserted = "\n";
           break;
         case "deleteContentBackward": {
-          event.preventDefault();
+          inputEvent.preventDefault();
           if (selection.start !== selection.end) {
             const next = replaceRange(value, selection, "");
             commitValue(next.value, next.cursor);
@@ -233,7 +233,7 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
           return;
         }
         case "deleteContentForward": {
-          event.preventDefault();
+          inputEvent.preventDefault();
           if (selection.start !== selection.end) {
             const next = replaceRange(value, selection, "");
             commitValue(next.value, next.cursor);
@@ -248,10 +248,18 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
           return;
       }
 
-      event.preventDefault();
+      inputEvent.preventDefault();
       const next = replaceRange(value, selection, inserted);
       commitValue(next.value, next.cursor);
     }, [commitValue, disabled, value]);
+
+    useEffect(() => {
+      const root = rootRef.current;
+      if (!root) return;
+      const listener = (event: Event) => handleBeforeInput(event as InputEvent);
+      root.addEventListener("beforeinput", listener);
+      return () => root.removeEventListener("beforeinput", listener);
+    }, [handleBeforeInput]);
 
     const handleInput = useCallback(() => {
       // Canonical React state is the only supported mutation path. Normal text edits,
@@ -289,7 +297,6 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
         suppressContentEditableWarning
         data-placeholder={placeholder}
         data-empty={value.length === 0 ? "true" : undefined}
-        onBeforeInput={handleBeforeInput}
         onInput={handleInput}
         onKeyUp={handleSelect}
         onMouseUp={handleSelect}
