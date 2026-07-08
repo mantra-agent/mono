@@ -64,7 +64,7 @@ import {
   Loader2,
   Mail,
   MessageSquare,
-  MoreVertical,
+  MoreHorizontal,
   Phone,
   Play,
   Plus,
@@ -1729,8 +1729,8 @@ function ProfileTreeRow({
           {menuContent ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground" aria-label="More actions">
-                  <MoreVertical className="h-3 w-3" />
+                <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100" aria-label="More actions">
+                  <MoreHorizontal className="h-3 w-3" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">{menuContent}</DropdownMenuContent>
@@ -1756,45 +1756,84 @@ function CombinedRelationshipPicker({
   person: Person;
   onUpdate: (updates: Partial<Person>) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const selectedProfessional = person.professionalRelations || [];
   const selected = [...(person.relation ? [person.relation] : []), ...selectedProfessional];
+  const options = Array.from(new Set([...RELATION_OPTIONS, ...PROFESSIONAL_RELATION_OPTIONS, ...selected])).sort((a, b) => a.localeCompare(b));
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredOptions = options.filter(option => option.toLowerCase().includes(normalizedQuery));
+  const exactMatch = options.some(option => option.toLowerCase() === normalizedQuery);
 
-  const togglePersonal = (value: string) => {
-    onUpdate({ relation: person.relation === value ? "" : value });
+  const removeValue = (value: string) => {
+    if (person.relation === value) onUpdate({ relation: "" });
+    else onUpdate({ professionalRelations: selectedProfessional.filter(item => item !== value) });
   };
 
-  const toggleProfessional = (value: string) => {
-    onUpdate({ professionalRelations: selectedProfessional.includes(value) ? selectedProfessional.filter(item => item !== value) : [...selectedProfessional, value] });
+  const addValue = (value: string) => {
+    const next = value.trim();
+    if (!next) return;
+    if (RELATION_OPTIONS.includes(next)) {
+      onUpdate({ relation: person.relation === next ? "" : next });
+    } else if (selectedProfessional.includes(next)) {
+      onUpdate({ professionalRelations: selectedProfessional.filter(item => item !== next) });
+    } else if (person.relation !== next) {
+      onUpdate({ professionalRelations: [...selectedProfessional, next] });
+    }
+    setQuery("");
   };
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <button type="button" className="flex h-5 w-48 items-center justify-end gap-1 overflow-hidden rounded border border-input bg-muted/50 px-1.5 text-right text-xs" data-testid="button-relationship-picker">
-          <span className="truncate">{selected.length > 0 ? selected.join(", ") : "Select"}</span>
+          <span className="truncate">{selected.length > 0 ? selected.join(", ") : "Add relationship"}</span>
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Personal</div>
-        {RELATION_OPTIONS.map((option) => {
-          const active = person.relation === option;
-          return (
-            <DropdownMenuItem key={`personal-${option}`} onClick={() => togglePersonal(option)} className="gap-2">
-              <CheckCircle2 className={cn("h-3.5 w-3.5", active ? "text-cta" : "text-muted-foreground/30")} />
-              <span>{option}</span>
+      <DropdownMenuContent align="end" className="w-64 p-2" onCloseAutoFocus={(event) => event.preventDefault()}>
+        {selected.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1">
+            {selected.map((value) => (
+              <Badge key={value} variant="outline" className="gap-1 text-[10px]">
+                <span className="max-w-[10rem] truncate">{value}</span>
+                <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); removeValue(value); }} aria-label={`Remove ${value}`}>
+                  <X className="h-2.5 w-2.5" />
+                </button>
+              </Badge>
+            ))}
+          </div>
+        )}
+        <Input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.key === "Enter") {
+              event.preventDefault();
+              addValue(query);
+            }
+          }}
+          placeholder="Type to search or add"
+          className="mb-1 h-7 w-full text-left text-xs"
+          data-testid="input-relationship-search"
+        />
+        <div className="max-h-48 overflow-y-auto py-1">
+          {filteredOptions.map((option) => {
+            const active = selected.includes(option);
+            return (
+              <DropdownMenuItem key={option} onClick={() => addValue(option)} className="gap-2">
+                <CheckCircle2 className={cn("h-3.5 w-3.5", active ? "text-cta" : "text-muted-foreground/30")} />
+                <span className="truncate">{option}</span>
+              </DropdownMenuItem>
+            );
+          })}
+          {query.trim() && !exactMatch && (
+            <DropdownMenuItem onClick={() => addValue(query)} className="gap-2 text-muted-foreground">
+              <Plus className="h-3.5 w-3.5" />
+              <span>Add “{query.trim()}”</span>
             </DropdownMenuItem>
-          );
-        })}
-        <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Professional</div>
-        {PROFESSIONAL_RELATION_OPTIONS.map((option) => {
-          const active = selectedProfessional.includes(option);
-          return (
-            <DropdownMenuItem key={`professional-${option}`} onClick={() => toggleProfessional(option)} className="gap-2">
-              <CheckCircle2 className={cn("h-3.5 w-3.5", active ? "text-cta" : "text-muted-foreground/30")} />
-              <span>{option}</span>
-            </DropdownMenuItem>
-          );
-        })}
+          )}
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -1821,13 +1860,13 @@ function ProfileSummaryEditor({
   };
 
   return (
-    <div className="rounded-md border border-card-border bg-muted/20 p-3">
+    <div className="max-h-80 overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-xs leading-relaxed text-white scrollbar-thin">
       <Textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={save}
         placeholder="Add summary"
-        className="min-h-24 resize-y border-0 bg-transparent p-0 text-sm leading-relaxed shadow-none focus-visible:ring-0"
+        className="min-h-24 resize-none border-0 bg-transparent p-0 text-xs leading-relaxed text-white shadow-none placeholder:text-muted-foreground focus-visible:ring-0"
         data-testid="textarea-quick-summary"
       />
     </div>
@@ -1980,7 +2019,7 @@ function PeopleDetailSection({
   children,
   testId,
 }: {
-  title: string;
+  title: ReactNode;
   count?: number;
   defaultOpen?: boolean;
   children: ReactNode;
@@ -1992,11 +2031,11 @@ function PeopleDetailSection({
     <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
       <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate">
         <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
-        <span>{title}</span>
+        <span className="min-w-0 flex-1 text-left">{title}</span>
         {count !== undefined && <span className="ml-auto text-[10px] font-normal text-muted-foreground/70">{count}</span>}
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="space-y-3 pt-1">
+        <div className="space-y-2 pt-1">
           {children}
         </div>
       </CollapsibleContent>
@@ -2182,30 +2221,27 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
       </button>
 
       <PeopleDetailSection
-        title="Profile"
+        title={(
+          <Input
+            value={editName}
+            onClick={(event) => event.stopPropagation()}
+            onChange={(e) => setEditName(e.target.value)}
+            onBlur={() => { const next = editName.trim(); if (next && next !== person.name) updateMutation.mutate({ name: next }); }}
+            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditName(person.name); }}
+            placeholder="Name"
+            className="h-5 w-full border-0 bg-transparent p-0 text-xs font-bold uppercase tracking-wider text-muted-foreground shadow-none focus-visible:ring-0"
+            data-testid="input-edit-profile-name"
+          />
+        )}
         defaultOpen
         testId="section-profile"
       >
         <div className="overflow-hidden rounded-md border border-border/20">
-          <ProfileTreeRow
-            label={<span data-testid="label-name">Name</span>}
-            icon={<User className="h-3.5 w-3.5" />}
-            hasValue={Boolean(person.name)}
-            showEmpty={showEmptyProfileRows}
-            expandedContent={!person.private ? <ProfileSummaryEditor person={person} onSave={(updates) => updateMutation.mutate(updates)} /> : undefined}
-            expandedContentClassName="px-2 pb-2 pl-2"
-            testId="row-profile-name"
-          >
-            <Input
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              onBlur={() => { const next = editName.trim(); if (next && next !== person.name) updateMutation.mutate({ name: next }); }}
-              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditName(person.name); }}
-              placeholder="Name"
-              className="w-48"
-              data-testid="input-edit-name"
-            />
-          </ProfileTreeRow>
+          {!person.private && (
+            <div className="px-2 pb-1" data-testid="row-profile-summary">
+              <ProfileSummaryEditor person={person} onSave={(updates) => updateMutation.mutate(updates)} />
+            </div>
+          )}
 
           <ProfileTreeRow label={<span data-testid="label-alias">Alias</span>} icon={<ContactRound className="h-3.5 w-3.5" />} hasValue={person.nicknames.length > 0} showEmpty={showEmptyProfileRows || addingNickname} testId="row-profile-alias">
             <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
@@ -2306,10 +2342,6 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
             ) : <Button variant="ghost" size="icon" onClick={() => setEditingTrust(true)} data-testid="button-add-trust"><Plus className="h-3 w-3" /></Button>}
           </ProfileTreeRow>
 
-          <ProfileTreeRow label="Temperature" icon={<Heart className="h-3.5 w-3.5" />} hasValue={Boolean(person.relationshipProfile?.state?.temperature)} showEmpty={showEmptyProfileRows} testId="row-profile-temperature">
-            <Input readOnly value={person.relationshipProfile?.state?.temperature || ""} placeholder="—" />
-          </ProfileTreeRow>
-
           <ProfileTreeRow label={<span data-testid="label-introduced-by">Introduced</span>} icon={<Link2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.introducedBy && introducedByPerson)} showEmpty={showEmptyProfileRows || showIntroducedBySearch} actionContent={person.introducedBy && introducedByPerson ? <Button size="icon" variant="ghost" className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => updateMutation.mutate({ introducedBy: "" })} data-testid="button-remove-introduced-by"><X className="h-3 w-3" /></Button> : undefined} testId="row-profile-introduced-by"><div className="relative flex justify-end">{person.introducedBy && introducedByPerson ? <div className="flex w-48 items-center justify-end" data-testid="chip-introduced-by"><ReferenceRenderer refValue={{ type: "person", id: person.introducedBy, canonical: `@person:${person.introducedBy}` }} surface="chat-inline" className="max-w-[12rem]" /></div> : showIntroducedBySearch ? <div><Input value={introducedBySearch} onChange={(e) => setIntroducedBySearch(e.target.value)} placeholder="Search people..." className="w-48" autoFocus onBlur={() => setTimeout(() => { setShowIntroducedBySearch(false); setIntroducedBySearch(""); }, 200)} onKeyDown={(e) => { if (e.key === "Escape") { setShowIntroducedBySearch(false); setIntroducedBySearch(""); } }} data-testid="input-introduced-by-search" />{filteredPeopleForIntroduction.length > 0 && <div className="absolute right-0 z-50 mt-1 w-48 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md" data-testid="dropdown-introduced-by">{filteredPeopleForIntroduction.map((p) => <button key={p.id} className="w-full px-3 py-1.5 text-left text-sm hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { updateMutation.mutate({ introducedBy: p.id }); setShowIntroducedBySearch(false); setIntroducedBySearch(""); }} data-testid={`option-introduced-by-${p.id}`}>{p.name}</button>)}</div>}</div> : <Button variant="ghost" size="icon" onClick={() => setShowIntroducedBySearch(true)} data-testid="button-add-introduced-by"><Plus className="h-3 w-3" /></Button>}</div></ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-instagram">Instagram</span>} icon={<SiInstagram className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.instagram)} showEmpty={showEmptyProfileRows || editingInstagram} testId="row-profile-instagram"><Input key={person.socialProfiles?.instagram || "new-instagram"} defaultValue={person.socialProfiles?.instagram || ""} placeholder="Instagram URL" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.instagram || "")) handleSaveSocial("instagram", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.instagram || ""; }} className="w-48" data-testid="input-social-instagram" /></ProfileTreeRow>
@@ -2321,7 +2353,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
           <ProfileTreeRow label="New contact" icon={<Plus className="h-3.5 w-3.5" />} hasValue={showAddContact} showEmpty={showEmptyProfileRows || showAddContact} testId="row-profile-new-contact">{showAddContact ? <div className="flex flex-wrap items-center justify-end gap-1.5"><Select value={newContactType} onValueChange={(v) => setNewContactType(v as any)}><SelectTrigger className="w-48" data-testid="select-contact-type"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="email">Email</SelectItem><SelectItem value="phone">Phone</SelectItem><SelectItem value="social">Social</SelectItem><SelectItem value="other">Other</SelectItem></SelectContent></Select><Input value={newContactLabel} onChange={(e) => setNewContactLabel(e.target.value)} placeholder="Label" className="h-8 w-20 text-right" data-testid="input-contact-label" /><Input value={newContactValue} onChange={(e) => setNewContactValue(e.target.value)} placeholder="Value" className="h-8 min-w-[120px] flex-1 text-right" data-testid="input-contact-value" /><Button size="sm" onClick={() => { if (newContactValue.trim()) { updateMutation.mutate({ contactInfo: [...person.contactInfo, { type: newContactType, label: newContactLabel || contactTypeLabels[newContactType], value: newContactValue }] }); setShowAddContact(false); setNewContactLabel(""); setNewContactValue(""); } }} data-testid="button-save-contact">Add</Button><Button variant="ghost" size="icon" onClick={() => setShowAddContact(false)}><X className="h-3 w-3" /></Button></div> : <Button variant="ghost" size="sm" onClick={() => setShowAddContact(true)} data-testid="button-add-contact"><Plus className="mr-1 h-3 w-3" />Contact info</Button>}</ProfileTreeRow>
         </div>
 
-        <div className="pt-2">
+        <div className="pt-0">
           <button
             type="button"
             onClick={() => setShowEmptyProfileRows(v => !v)}
