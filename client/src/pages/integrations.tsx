@@ -3970,11 +3970,16 @@ function GitHubDetail() {
   });
   const credentials = credsData?.credentials || data?.credentials || [];
 
-  const { data: providerConnections = [], refetch: refetchProviderConnections } = useQuery<ProviderConnection[]>({
+  const {
+    data: providerConnections = [],
+    refetch: refetchProviderConnections,
+    isLoading: isLoadingProviderConnections,
+  } = useQuery<ProviderConnection[]>({
     queryKey: ["/api/provider-connections"],
   });
 
   const githubConnections = providerConnections.filter((connection) => connection.provider === "github");
+  const hasPlatformGitHubConnection = githubConnections.some((connection) => connection.status === "active");
 
   const { data: platformsData = [] } = useQuery<PlatformListItem[]>({
     queryKey: ["/api/platforms"],
@@ -4187,14 +4192,14 @@ function GitHubDetail() {
     );
   }
 
-  const connected = !!data?.connected;
+  const connected = !!data?.connected || hasPlatformGitHubConnection;
   const hasError = !connected;
   const isProd = import.meta.env.MODE === "production";
   const repoMisconfigured = isProd && !data?.repoUrlSet;
 
   return (
     <div className="space-y-6" data-testid="github-tab">
-      {hasError && credentials.length === 0 && (
+      {hasError && credentials.length === 0 && !isLoadingProviderConnections && (
         <Card
           className="border-error/30 dark:border-error/50 bg-error/5 dark:bg-error/20"
           data-testid="github-error-banner"
@@ -4202,10 +4207,10 @@ function GitHubDetail() {
           <CardContent className="py-4 space-y-3">
             <div className="flex items-center gap-2 text-sm font-medium text-error-foreground dark:text-error">
               <AlertTriangle className="h-4 w-4" />
-              No GitHub accounts connected
+              No GitHub credentials connected
             </div>
             <p className="text-sm text-muted-foreground">
-              Add a GitHub Personal Access Token to enable the in-app git tool and GitNexus indexing.
+              Add either a Platform GitHub connection or a legacy GitHub Personal Access Token to enable git operations.
             </p>
           </CardContent>
         </Card>
@@ -4215,7 +4220,7 @@ function GitHubDetail() {
       <Card data-testid="github-accounts-card">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
-            <CardTitle className="text-sm font-medium">Connected Accounts</CardTitle>
+            <CardTitle className="text-sm font-medium">Legacy Accounts</CardTitle>
             <Button
               type="button"
               size="sm"
@@ -4231,7 +4236,7 @@ function GitHubDetail() {
         <CardContent className="space-y-3">
           {credentials.length === 0 && (
             <p className="text-sm text-muted-foreground text-center py-4">
-              No accounts connected. Click "Add Account" to get started.
+              No legacy accounts connected. Platform Connections below are preferred for new git operations.
             </p>
           )}
 

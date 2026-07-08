@@ -5706,6 +5706,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           platformEnvironmentId: explicitEnvironmentId,
           connectionId: explicitConnectionId,
           branch: sanitizeBranch(args.branch),
+          matchBranch: action === "clone",
           requireIndexingEnabled: false,
         });
         if (!source) {

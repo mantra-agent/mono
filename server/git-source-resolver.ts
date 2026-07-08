@@ -57,6 +57,7 @@ interface ResolveOptions {
   connectionId?: number | null;
   repoUrl?: string | null;
   branch?: string | null;
+  matchBranch?: boolean;
   requireIndexingEnabled?: boolean;
 }
 
@@ -101,7 +102,7 @@ export async function resolveGitSource(options: ResolveOptions = {}): Promise<Re
       if (row.owner.toLowerCase() !== repoRef.owner.toLowerCase()) return false;
       if (row.repo.toLowerCase() !== repoRef.repo.toLowerCase()) return false;
     }
-    if (options.branch && row.branch && row.branch !== options.branch) return false;
+    if (options.matchBranch !== false && options.branch && row.branch && row.branch !== options.branch) return false;
     return Boolean(row.owner && row.repo);
   });
 
