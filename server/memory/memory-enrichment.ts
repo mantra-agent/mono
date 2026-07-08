@@ -362,28 +362,29 @@ Default to returning no claims. Most sources should produce {"claims": []}.
 
 Goal: extract only memories that improve Agent's future model of the external world: people, relationships, organizations, incentives, constraints, preferences, decisions, commitments, markets, family, money, health, time, logistics, or non-obvious causal dynamics outside the codebase.
 
-Internal system facts are usually not memory. Do not store ordinary facts about code changes, UI behavior, PRs, migrations, deploys, logs, builds, database row counts, task movement, workflow stages, or Agent's own activity. Agent can inspect code, git, logs, tools, and structured records later.
+Internal system facts are usually not memory. Do not store ordinary facts about code changes, UI behavior, PRs, migrations, deploys, logs, builds, database row counts, task movement, workflow stages, or Agent's own activity. Agent can recover these from code, git, logs, tools, and structured records.
 
-Internal facts qualify only when they reveal a durable external/behavioral rule about Ray or how Agent should work with Ray.
-Good: "Ray expects Agent to verify live environment truth before claiming a production fix is complete."
-Bad: "PR #41 repaired the vNext embedding schema."
-Good: "Ray wants vNext memory to store claims that improve future modeling of people and external reality, not internal implementation summaries."
-Bad: "The Memory page has a Legacy/vNext toggle."
+Internal facts qualify only when they reveal a durable behavioral rule about Ray or how Agent should work with Ray.
 
 Extract 0-3 claims. Never extract more than 3.
 
 A claim must be a standalone sentence that would change future prediction, judgment, relationship handling, prioritization, or decision-making. If the source merely says what happened, return no claims.
 
 Claim types:
-- "state": durable external reality, preference, constraint, relationship, commitment, or belief.
+- "state": durable external reality about people, relationships, organizations, finances, constraints, preferences, or beliefs. Includes: who works where, who manages what for whom, financial service relationships, account structures, organizational affiliations, team structures, identity facts, and relationship dynamics between named people. These claims serve as anchor nodes for the memory graph — even if the fact exists in another tool, having it as a claim enables fast cross-domain linking in later lifecycle stages.
 - "cause": why an external behavior, decision, pressure, preference, or constraint exists.
-- "action": a durable commitment or future-relevant action outside ordinary implementation bookkeeping.
+- "action": a commitment, plan, or intended action — including event-specific ones when they reveal strategy, positioning, or relationship-building intent. Reject actions that are purely logistical with no strategic signal.
+
+Extraction principle: look through the process wrapper to the underlying facts. "Enriched 1 email thread about X" is not a claim, but the X itself may contain one. "Agent updated person record with Y" is not a claim, but Y may be. "Consolidation promoted N entries" contains no underlying fact.
+
+Indexing test: a good claim is one that, if pre-indexed and linked in the memory graph, would accelerate future reasoning about people, relationships, or strategy without requiring deep searches across calendar, tasks, people records, or opportunity pipelines. Think of claims as the fast-lookup index, not a replacement for source-of-truth tools.
 
 Reject:
-- implementation summaries, UI changelog facts, git/deploy/log/build facts, migration details, runtime errors, temporary status, row counts, task/project status snapshots, and "Agent did X" facts
-- facts already better represented in code, git, logs, database records, tasks, or deployment history
+- implementation summaries, UI changelog facts, git/deploy/log/build facts, migration details, runtime errors, row counts, task/project status snapshots
+- short-lived calendar/scheduling facts (specific meeting times, dates that expire within days)
 - generic advice, procedural how-to, and weak restatements of the source
 - claims below 0.4 confidence
+- process status messages with no underlying external fact
 
 For each claim, include 1-4 topics and entityMentions for named people, projects, or goals when present. entityType must be "person", "project", or "goal". If one claim is caused by another claim in this batch, set sourceClaimIndex to that claim's 0-based index; otherwise use null.
 
