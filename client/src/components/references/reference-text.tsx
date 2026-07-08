@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import { parseReferenceText } from "@shared/reference-parser";
 import { isParseableReferenceType } from "@shared/references";
 import { createReferenceRef } from "@shared/references";
-import { ReferenceRenderer } from "./reference-renderer";
+import { ReferenceRenderer, type ReferenceSurface } from "./reference-renderer";
 
 const REF_PROTOCOL = "ref://";
 const CODE_WRAPPED_CANONICAL_REF = /`(@([A-Za-z_][A-Za-z0-9_]*):([^`\s\]<>]+))`/g;
@@ -29,7 +29,7 @@ function urlTransform(url: string): string {
  * ReferenceChip on each parent re-render, preventing the async
  * useReferenceLabel hook from completing its fetch.
  */
-function createRefImg(fallbackImg?: (props: any) => any) {
+function createRefImg(fallbackImg?: (props: any) => any, surface: ReferenceSurface = "chat-inline") {
   return function RefImg({ src, alt, ...props }: any) {
     if (src?.startsWith(REF_PROTOCOL)) {
       const rest = src.slice(REF_PROTOCOL.length);
@@ -38,7 +38,7 @@ function createRefImg(fallbackImg?: (props: any) => any) {
         const type = rest.slice(0, slashIndex);
         const id = decodeURIComponent(rest.slice(slashIndex + 1));
         const ref = createReferenceRef({ type, id });
-        return <ReferenceRenderer refValue={ref} surface="chat-inline" />;
+        return <ReferenceRenderer refValue={ref} surface={surface} />;
       }
     }
     if (fallbackImg) return fallbackImg({ src, alt, ...props });
@@ -59,9 +59,11 @@ function createRefImg(fallbackImg?: (props: any) => any) {
 export function ReferenceText({
   content,
   markdownComponents,
+  referenceSurface = "chat-inline",
 }: {
   content: string;
   markdownComponents: Record<string, any>;
+  referenceSurface?: ReferenceSurface;
 }) {
   const normalizedContent = unwrapCodeWrappedReferenceTokens(content);
   const parts = parseReferenceText(normalizedContent);
@@ -72,8 +74,8 @@ export function ReferenceText({
   // the async useReferenceLabel hook to resolve names from the server.
   const refComponents = useMemo(() => ({
     ...markdownComponents,
-    img: createRefImg(markdownComponents.img),
-  }), [markdownComponents]);
+    img: createRefImg(markdownComponents.img, referenceSurface),
+  }), [markdownComponents, referenceSurface]);
 
   if (!hasReferences) {
     return <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{normalizedContent}</ReactMarkdown>;

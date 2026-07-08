@@ -107,7 +107,7 @@ export function filterStepsByLayer(steps: ExecutionStep[], layer: 1 | 2 | 3 | 4,
 }
 import { useVisibilityLayer } from "@/hooks/use-visibility-layer";
 import { ReferenceText } from "@/components/references/reference-text";
-import { InlineReferenceText } from "@/components/references/inline-reference-text";
+import type { ReferenceSurface } from "@/components/references/reference-renderer";
 
 const log = createLogger("ChatShared");
 
@@ -1155,7 +1155,7 @@ const markdownComponents = {
   },
 };
 
-export function MarkdownContent({ content, stripTags = false, compact = false }: { content: string; stripTags?: boolean; compact?: boolean }) {
+export function MarkdownContent({ content, stripTags = false, compact = false, referenceSurface = "chat-inline" }: { content: string; stripTags?: boolean; compact?: boolean; referenceSurface?: ReferenceSurface }) {
   const timestampStripped = stripMessageTimestamp(content);
   const strippedContent = stripTags ? stripExpressionTags(timestampStripped) : timestampStripped;
   const { tags, remaining } = stripTags ? { tags: [], remaining: strippedContent } : parseLeadingExpressionTags(strippedContent);
@@ -1175,7 +1175,7 @@ export function MarkdownContent({ content, stripTags = false, compact = false }:
           ))}
         </span>
       )}
-      <ReferenceText content={remaining} markdownComponents={markdownComponents} />
+      <ReferenceText content={remaining} markdownComponents={markdownComponents} referenceSurface={referenceSurface} />
     </div>
   );
 }
@@ -1429,7 +1429,11 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
       <div className="flex justify-end" data-testid={`message-user-${message.id}`}>
         <div className="max-w-[75%]">
           <div className="bg-muted text-foreground rounded-2xl rounded-br-sm px-4 py-2.5">
-            {displayUserContent && <p className="text-sm whitespace-pre-wrap" data-testid="text-user-message"><InlineReferenceText text={displayUserContent} surface={compactReferences ? "simple-chip" : "chat-inline"} /></p>}
+            {displayUserContent && (
+              <div className="text-sm" data-testid="text-user-message">
+                <MarkdownContent content={displayUserContent} stripTags compact referenceSurface={compactReferences ? "simple-chip" : "chat-inline"} />
+              </div>
+            )}
             {images.length > 0 && (
               <div className={`flex flex-wrap gap-2 ${displayUserContent ? "mt-2" : ""}`}>
                 {images.map((img, i) => {
