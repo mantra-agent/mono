@@ -834,6 +834,8 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
   const [newDirection, setNewDirection] = useState<string>("mutual");
   const [newMeaningfulness, setNewMeaningfulness] = useState<string>("medium");
   const [pendingDeleteLogItem, setPendingDeleteLogItem] = useState<{ kind: "interaction" | "note" | "memory"; id: string; label: string } | null>(null);
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
   const [newResponseOwed, setNewResponseOwed] = useState(false);
   const [newResponseDueBy, setNewResponseDueBy] = useState<string>("");
   const [newCapitalImpact, setNewCapitalImpact] = useState<string>("neutral");
@@ -891,6 +893,32 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
       toast({ title: "Failed to delete note", description: err.message, variant: "destructive" });
     },
   });
+
+
+  const updateNoteMutation = useMutation({
+    mutationFn: async ({ noteId, content, title }: { noteId: string; content: string; title?: string }) => {
+      const res = await apiRequest("PATCH", `/api/people/${person.id}/notes/${noteId}`, { content, title });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/people", person.id] });
+      toast({ title: "Note updated" });
+      setEditingNoteId(null);
+      setNoteDraft("");
+      onUpdate();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to update note", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const saveNoteDraft = (note: Note | null) => {
+    if (!note) return;
+    const next = noteDraft.trim();
+    if (!next) return;
+    if (next !== note.content) updateNoteMutation.mutate({ noteId: note.id, content: next, title: note.title });
+    else setEditingNoteId(null);
+  };
 
 
   const { data: linkedMemories = [] } = useQuery<LinkedMemoryEntry[]>({
@@ -1133,20 +1161,38 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                   hasValue
                   showEmpty
                   expandedContent={(
-                    <div className="rounded-md border border-card-border bg-muted/20 p-3 text-sm leading-relaxed">
+                    <div className="rounded-md border border-border/20 bg-muted/20 px-2 py-1.5 text-xs font-medium leading-relaxed text-muted-foreground">
                       {isNote ? (
                         <div>
-                          <p className="font-medium text-foreground">{note?.title || "Note"}</p>
-                          <div className="prose prose-sm dark:prose-invert mt-2 max-w-none text-sm" data-testid={`note-log-content-${item.id}`}>
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{note?.content || ""}</ReactMarkdown>
-                          </div>
-                          {note?.updatedAt && note.updatedAt !== note.createdAt && <p className="mt-2 text-[10px] text-muted-foreground">edited {formatShortDate(note.updatedAt)}</p>}
+                          {editingNoteId === item.id ? (
+                            <Textarea
+                              value={noteDraft}
+                              onChange={(event) => setNoteDraft(event.target.value)}
+                              onBlur={() => saveNoteDraft(note)}
+                              onKeyDown={(event) => {
+                                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") saveNoteDraft(note);
+                                if (event.key === "Escape") { setEditingNoteId(null); setNoteDraft(""); }
+                              }}
+                              className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-xs font-medium leading-relaxed text-muted-foreground shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                              data-testid={`textarea-note-log-${item.id}`}
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              className="block w-full whitespace-pre-wrap text-left text-xs font-medium leading-relaxed text-muted-foreground"
+                              onClick={() => { setEditingNoteId(item.id); setNoteDraft(note?.content || ""); }}
+                              data-testid={`note-log-content-${item.id}`}
+                            >
+                              {note?.content || note?.title || "Note"}
+                            </button>
+                          )}
+                          {note?.updatedAt && note.updatedAt !== note.createdAt && <p className="mt-2 text-[10px] text-muted-foreground/70">edited {formatShortDate(note.updatedAt)}</p>}
                         </div>
                       ) : isMemory ? (
                         <div>
-                          <p className="font-medium text-foreground">{memoryTitle}</p>
-                          {memory?.summary && memory.title && <p className="mt-2 whitespace-pre-wrap text-foreground">{memory.summary}</p>}
-                          <p className="mt-2 whitespace-pre-wrap text-muted-foreground">{memory?.content}</p>
+                          <p className="font-medium text-muted-foreground">{memoryTitle}</p>
+                          {memory?.summary && memory.title && <p className="mt-2 whitespace-pre-wrap text-xs font-medium leading-relaxed text-muted-foreground">{memory.summary}</p>}
+                          <p className="mt-2 whitespace-pre-wrap text-xs font-medium leading-relaxed text-muted-foreground">{memory?.content}</p>
                           <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                             <Badge variant="outline" className="text-[10px] leading-none">{memory?.layer}</Badge>
                             <Badge variant="outline" className="text-[10px] leading-none">{memory?.source}</Badge>
@@ -1155,8 +1201,8 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                         </div>
                       ) : isRelationshipMemory ? (
                         <div>
-                          <p className="font-medium text-foreground">{relationshipMemoryTitle}</p>
-                          <p className="mt-2 whitespace-pre-wrap text-muted-foreground">{relationshipMemory?.content}</p>
+                          <p className="font-medium text-muted-foreground">{relationshipMemoryTitle}</p>
+                          <p className="mt-2 whitespace-pre-wrap text-xs font-medium leading-relaxed text-muted-foreground">{relationshipMemory?.content}</p>
                           <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                             {relationshipMemory?.category && <Badge variant="outline" className="text-[10px] leading-none">{RM_CATEGORY_MAP[relationshipMemory.category]?.label || relationshipMemory.category}</Badge>}
                             {relationshipMemory?.tags?.map((tag) => <Badge key={tag} variant="outline" className="text-[10px] leading-none">{tag}</Badge>)}
@@ -1164,17 +1210,16 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                         </div>
                       ) : (
                         <>
-                          <p className="whitespace-pre-wrap text-foreground" data-testid={`interaction-summary-${item.id}`}>{interaction?.summary}</p>
-                          {interaction?.context && <p className="mt-2 whitespace-pre-wrap text-muted-foreground">{interaction.context}</p>}
-                          <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
-                            <Badge variant="outline" className="text-[10px] leading-none">{interaction?.type}</Badge>
-                            {interaction?.direction && <Badge variant="outline" className="text-[10px] leading-none">{interaction.direction}</Badge>}
-                            {interaction?.meaningfulness && <Badge variant="outline" className="text-[10px] leading-none">{interaction.meaningfulness}</Badge>}
-                            {interaction?.capitalImpact && interaction.capitalImpact !== "neutral" && <Badge variant="outline" className="text-[10px] leading-none">{interaction.capitalImpact}</Badge>}
-                            {interaction?.responseOwed && <Badge variant="destructive" className="text-[10px] leading-none">response owed</Badge>}
-                            {interaction?.responseDueBy && <span>due {formatShortDate(interaction.responseDueBy)}</span>}
-                            {interaction?.tags?.map((tag) => <Badge key={tag} variant="outline" className="text-[10px] leading-none">{tag}</Badge>)}
-                          </div>
+                          <p className="whitespace-pre-wrap text-xs font-medium leading-relaxed text-muted-foreground" data-testid={`interaction-summary-${item.id}`}>{interaction?.summary}</p>
+                          {interaction?.context && <p className="mt-2 whitespace-pre-wrap text-xs font-medium leading-relaxed text-muted-foreground">{interaction.context}</p>}
+                          {(interaction?.capitalImpact && interaction.capitalImpact !== "neutral") || interaction?.responseOwed || interaction?.responseDueBy || interaction?.tags?.length ? (
+                            <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                              {interaction?.capitalImpact && interaction.capitalImpact !== "neutral" && <span>{interaction.capitalImpact}</span>}
+                              {interaction?.responseOwed && <span className="text-foreground">response owed</span>}
+                              {interaction?.responseDueBy && <span>due {formatShortDate(interaction.responseDueBy)}</span>}
+                              {interaction?.tags?.map((tag) => <span key={tag}>{tag}</span>)}
+                            </div>
+                          ) : null}
                         </>
                       )}
                     </div>
@@ -1191,7 +1236,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                   testId={`${item.kind}-${item.id}`}
                 >
                   <div className="flex min-w-0 items-center justify-end gap-1.5">
-                    <span className="truncate text-xs text-foreground/80" data-testid={`log-preview-${item.id}`}>{preview}</span>
+                    <span className={cn("truncate text-xs", interaction?.responseOwed ? "text-foreground" : "text-muted-foreground")} data-testid={`log-preview-${item.id}`}>{preview}</span>
                     {DirectionIcon && <DirectionIcon className="h-3 w-3 shrink-0 text-muted-foreground" aria-label={interaction?.direction || undefined} />}
                   </div>
                 </ProfileTreeRow>
@@ -1860,13 +1905,13 @@ function ProfileSummaryEditor({
   };
 
   return (
-    <div className="max-h-80 overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-xs leading-relaxed text-white scrollbar-thin">
+    <div className="max-h-40 overflow-y-auto rounded-md border border-border/20 bg-muted/20 px-2 py-1.5 scrollbar-thin">
       <Textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={save}
         placeholder="Add summary"
-        className="min-h-24 resize-none border-0 bg-transparent p-0 text-xs leading-relaxed text-white shadow-none placeholder:text-muted-foreground focus-visible:ring-0"
+        className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-xs font-medium leading-relaxed text-muted-foreground shadow-none outline-none ring-0 placeholder:text-muted-foreground/70 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
         data-testid="textarea-quick-summary"
       />
     </div>
@@ -2035,7 +2080,7 @@ function PeopleDetailSection({
         {count !== undefined && <span className="ml-auto text-[10px] font-normal text-muted-foreground/70">{count}</span>}
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="space-y-2 pt-1">
+        <div className="space-y-1 pt-1">
           {children}
         </div>
       </CollapsibleContent>
@@ -2049,6 +2094,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
   const [editName, setEditName] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [pendingContactDeleteIndex, setPendingContactDeleteIndex] = useState<number | null>(null);
   const [showAddContact, setShowAddContact] = useState(false);
   const [newContactType, setNewContactType] = useState<"email" | "phone" | "social" | "other">("email");
   const [newContactLabel, setNewContactLabel] = useState("");
@@ -2229,7 +2275,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
             onBlur={() => { const next = editName.trim(); if (next && next !== person.name) updateMutation.mutate({ name: next }); }}
             onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditName(person.name); }}
             placeholder="Name"
-            className="h-5 w-full border-0 bg-transparent p-0 text-xs font-bold uppercase tracking-wider text-muted-foreground shadow-none focus-visible:ring-0"
+            className="h-4 w-full border-0 bg-transparent p-0 text-xs font-bold uppercase tracking-wider text-muted-foreground shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
             data-testid="input-edit-profile-name"
           />
         )}
@@ -2238,7 +2284,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
       >
         <div className="overflow-hidden rounded-md border border-border/20">
           {!person.private && (
-            <div className="px-2 pb-1" data-testid="row-profile-summary">
+            <div data-testid="row-profile-summary">
               <ProfileSummaryEditor person={person} onSave={(updates) => updateMutation.mutate(updates)} />
             </div>
           )}
@@ -2342,13 +2388,26 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
             ) : <Button variant="ghost" size="icon" onClick={() => setEditingTrust(true)} data-testid="button-add-trust"><Plus className="h-3 w-3" /></Button>}
           </ProfileTreeRow>
 
-          <ProfileTreeRow label={<span data-testid="label-introduced-by">Introduced</span>} icon={<Link2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.introducedBy && introducedByPerson)} showEmpty={showEmptyProfileRows || showIntroducedBySearch} actionContent={person.introducedBy && introducedByPerson ? <Button size="icon" variant="ghost" className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => updateMutation.mutate({ introducedBy: "" })} data-testid="button-remove-introduced-by"><X className="h-3 w-3" /></Button> : undefined} testId="row-profile-introduced-by"><div className="relative flex justify-end">{person.introducedBy && introducedByPerson ? <div className="flex w-48 items-center justify-end" data-testid="chip-introduced-by"><ReferenceRenderer refValue={{ type: "person", id: person.introducedBy, canonical: `@person:${person.introducedBy}` }} surface="chat-inline" className="max-w-[12rem]" /></div> : showIntroducedBySearch ? <div><Input value={introducedBySearch} onChange={(e) => setIntroducedBySearch(e.target.value)} placeholder="Search people..." className="w-48" autoFocus onBlur={() => setTimeout(() => { setShowIntroducedBySearch(false); setIntroducedBySearch(""); }, 200)} onKeyDown={(e) => { if (e.key === "Escape") { setShowIntroducedBySearch(false); setIntroducedBySearch(""); } }} data-testid="input-introduced-by-search" />{filteredPeopleForIntroduction.length > 0 && <div className="absolute right-0 z-50 mt-1 w-48 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md" data-testid="dropdown-introduced-by">{filteredPeopleForIntroduction.map((p) => <button key={p.id} className="w-full px-3 py-1.5 text-left text-sm hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { updateMutation.mutate({ introducedBy: p.id }); setShowIntroducedBySearch(false); setIntroducedBySearch(""); }} data-testid={`option-introduced-by-${p.id}`}>{p.name}</button>)}</div>}</div> : <Button variant="ghost" size="icon" onClick={() => setShowIntroducedBySearch(true)} data-testid="button-add-introduced-by"><Plus className="h-3 w-3" /></Button>}</div></ProfileTreeRow>
+          <ProfileTreeRow label={<span data-testid="label-introduced-by">Introduced</span>} icon={<Link2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.introducedBy && introducedByPerson)} showEmpty={showEmptyProfileRows || showIntroducedBySearch} actionContent={person.introducedBy && introducedByPerson ? <Button size="icon" variant="ghost" className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => updateMutation.mutate({ introducedBy: "" })} data-testid="button-remove-introduced-by"><X className="h-3 w-3" /></Button> : undefined} testId="row-profile-introduced-by">
+            <div className="relative flex justify-end">
+              {showIntroducedBySearch ? (
+                <div>
+                  <Input value={introducedBySearch} onChange={(e) => setIntroducedBySearch(e.target.value)} placeholder="Search people..." className="w-48" autoFocus onBlur={() => setTimeout(() => { setShowIntroducedBySearch(false); setIntroducedBySearch(""); }, 200)} onKeyDown={(e) => { if (e.key === "Escape") { setShowIntroducedBySearch(false); setIntroducedBySearch(""); } }} data-testid="input-introduced-by-search" />
+                  {filteredPeopleForIntroduction.length > 0 && <div className="absolute right-0 z-50 mt-1 max-h-48 w-48 overflow-y-auto rounded-md border bg-popover shadow-md scrollbar-thin" data-testid="dropdown-introduced-by">{filteredPeopleForIntroduction.map((p) => <button key={p.id} className="w-full px-3 py-1.5 text-left text-xs hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { updateMutation.mutate({ introducedBy: p.id }); setShowIntroducedBySearch(false); setIntroducedBySearch(""); }} data-testid={`option-introduced-by-${p.id}`}>{p.name}</button>)}</div>}
+                </div>
+              ) : person.introducedBy && introducedByPerson ? (
+                <button type="button" className="flex w-48 items-center justify-end" onClick={() => { setShowIntroducedBySearch(true); setIntroducedBySearch(introducedByPerson.name); }} data-testid="chip-introduced-by"><ReferenceRenderer refValue={{ type: "person", id: person.introducedBy, canonical: `@person:${person.introducedBy}` }} surface="chat-inline" className="max-w-[12rem]" /></button>
+              ) : (
+                <Button variant="ghost" size="icon" onClick={() => setShowIntroducedBySearch(true)} data-testid="button-add-introduced-by"><Plus className="h-3 w-3" /></Button>
+              )}
+            </div>
+          </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-instagram">Instagram</span>} icon={<SiInstagram className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.instagram)} showEmpty={showEmptyProfileRows || editingInstagram} testId="row-profile-instagram"><Input key={person.socialProfiles?.instagram || "new-instagram"} defaultValue={person.socialProfiles?.instagram || ""} placeholder="Instagram URL" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.instagram || "")) handleSaveSocial("instagram", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.instagram || ""; }} className="w-48" data-testid="input-social-instagram" /></ProfileTreeRow>
           <ProfileTreeRow label={<span data-testid="label-x">X</span>} icon={<SiX className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.x)} showEmpty={showEmptyProfileRows || editingX} testId="row-profile-x"><Input key={person.socialProfiles?.x || "new-x"} defaultValue={person.socialProfiles?.x || ""} placeholder="X URL" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.x || "")) handleSaveSocial("x", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.x || ""; }} className="w-48" data-testid="input-social-x" /></ProfileTreeRow>
           <ProfileTreeRow label={<span data-testid="label-linkedin">LinkedIn</span>} icon={<SiLinkedin className="h-3.5 w-3.5" />} hasValue={Boolean(person.socialProfiles?.linkedin)} showEmpty={showEmptyProfileRows || editingLinkedin} testId="row-profile-linkedin"><Input key={person.socialProfiles?.linkedin || "new-linkedin"} defaultValue={person.socialProfiles?.linkedin || ""} placeholder="LinkedIn URL" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.socialProfiles?.linkedin || "")) handleSaveSocial("linkedin", v); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.socialProfiles?.linkedin || ""; }} className="w-48" data-testid="input-social-linkedin" /></ProfileTreeRow>
 
-          {person.contactInfo.map((c, i) => <ProfileTreeRow key={`contact-${i}`} label={c.label || contactTypeLabels[c.type] || c.type} icon={c.type === "email" ? <Mail className="h-3.5 w-3.5" /> : c.type === "phone" ? <Phone className="h-3.5 w-3.5" /> : <ContactRound className="h-3.5 w-3.5" />} hasValue={Boolean(c.value)} showEmpty={showEmptyProfileRows} actionContent={<Button size="icon" variant="ghost" className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => updateMutation.mutate({ contactInfo: person.contactInfo.filter((_, idx) => idx !== i) })} data-testid={`button-remove-contact-${i}`}><X className="h-3 w-3" /></Button>} testId={`row-profile-contact-${i}`}><Input key={`${c.type}-${c.value}`} defaultValue={c.value} placeholder={c.label || contactTypeLabels[c.type] || c.type} onBlur={(e) => { const v = e.target.value.trim(); if (v !== c.value) updateMutation.mutate({ contactInfo: person.contactInfo.map((item, idx) => idx === i ? { ...item, value: v } : item).filter(item => item.value.trim()) }); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = c.value; }} data-testid={`input-contact-${i}`} /></ProfileTreeRow>)}
+          {person.contactInfo.map((c, i) => <ProfileTreeRow key={`contact-${i}`} label={c.label || contactTypeLabels[c.type] || c.type} icon={c.type === "email" ? <Mail className="h-3.5 w-3.5" /> : c.type === "phone" ? <Phone className="h-3.5 w-3.5" /> : <ContactRound className="h-3.5 w-3.5" />} hasValue={Boolean(c.value)} showEmpty={showEmptyProfileRows} actionContent={<Button size="icon" variant="ghost" className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => setPendingContactDeleteIndex(i)} data-testid={`button-remove-contact-${i}`}><X className="h-3 w-3" /></Button>} testId={`row-profile-contact-${i}`}><Input key={`${c.type}-${c.value}`} defaultValue={c.value} placeholder={c.label || contactTypeLabels[c.type] || c.type} onBlur={(e) => { const v = e.target.value.trim(); if (v !== c.value) updateMutation.mutate({ contactInfo: person.contactInfo.map((item, idx) => idx === i ? { ...item, value: v } : item).filter(item => item.value.trim()) }); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = c.value; }} data-testid={`input-contact-${i}`} /></ProfileTreeRow>)}
 
           <ProfileTreeRow label="New contact" icon={<Plus className="h-3.5 w-3.5" />} hasValue={showAddContact} showEmpty={showEmptyProfileRows || showAddContact} testId="row-profile-new-contact">{showAddContact ? <div className="flex flex-wrap items-center justify-end gap-1.5"><Select value={newContactType} onValueChange={(v) => setNewContactType(v as any)}><SelectTrigger className="w-48" data-testid="select-contact-type"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="email">Email</SelectItem><SelectItem value="phone">Phone</SelectItem><SelectItem value="social">Social</SelectItem><SelectItem value="other">Other</SelectItem></SelectContent></Select><Input value={newContactLabel} onChange={(e) => setNewContactLabel(e.target.value)} placeholder="Label" className="h-8 w-20 text-right" data-testid="input-contact-label" /><Input value={newContactValue} onChange={(e) => setNewContactValue(e.target.value)} placeholder="Value" className="h-8 min-w-[120px] flex-1 text-right" data-testid="input-contact-value" /><Button size="sm" onClick={() => { if (newContactValue.trim()) { updateMutation.mutate({ contactInfo: [...person.contactInfo, { type: newContactType, label: newContactLabel || contactTypeLabels[newContactType], value: newContactValue }] }); setShowAddContact(false); setNewContactLabel(""); setNewContactValue(""); } }} data-testid="button-save-contact">Add</Button><Button variant="ghost" size="icon" onClick={() => setShowAddContact(false)}><X className="h-3 w-3" /></Button></div> : <Button variant="ghost" size="sm" onClick={() => setShowAddContact(true)} data-testid="button-add-contact"><Plus className="mr-1 h-3 w-3" />Contact info</Button>}</ProfileTreeRow>
         </div>
@@ -2382,6 +2441,30 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
           <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
         </Button>
       </div>
+
+      <AlertDialog open={pendingContactDeleteIndex !== null} onOpenChange={(open) => !open && setPendingContactDeleteIndex(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete contact info?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove “{pendingContactDeleteIndex !== null ? person.contactInfo[pendingContactDeleteIndex]?.value : ""}” from {person.name}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (pendingContactDeleteIndex === null) return;
+                updateMutation.mutate({ contactInfo: person.contactInfo.filter((_, idx) => idx !== pendingContactDeleteIndex) });
+                setPendingContactDeleteIndex(null);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={deleteConfirm} onOpenChange={(open) => { setDeleteConfirm(open); if (!open) setDeleteConfirmText(""); }}>
         <AlertDialogContent>
