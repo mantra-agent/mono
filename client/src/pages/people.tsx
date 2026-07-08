@@ -1183,13 +1183,13 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                                 if ((event.metaKey || event.ctrlKey) && event.key === "Enter") saveNoteDraft(note);
                                 if (event.key === "Escape") { setEditingNoteId(null); setNoteDraft(""); }
                               }}
-                              className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[11px] leading-tight text-white shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                              className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-xs leading-relaxed text-white shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-xs"
                               data-testid={`textarea-note-log-${item.id}`}
                             />
                           ) : (
                             <button
                               type="button"
-                              className="block w-full whitespace-pre-wrap text-left text-[11px] leading-tight text-white"
+                              className="block w-full whitespace-pre-wrap text-left text-xs leading-relaxed text-white"
                               onClick={() => { setEditingNoteId(item.id); setNoteDraft(note?.content || ""); }}
                               data-testid={`note-log-content-${item.id}`}
                             >
@@ -1921,7 +1921,7 @@ function ProfileSummaryEditor({
         onChange={(e) => setDraft(e.target.value)}
         onBlur={save}
         placeholder="Add summary"
-        className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[9px] leading-tight text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+        className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[9px] leading-tight text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[9px]"
         data-testid="textarea-quick-summary"
       />
     </div>
