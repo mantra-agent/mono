@@ -175,6 +175,63 @@ export interface CliCrashContext {
   stderrTail?: string | null;
 }
 
+type ClaudeCliTokenUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  source: string;
+};
+
+function numberField(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeClaudeCliUsage(raw: unknown, source: string): ClaudeCliTokenUsage | null {
+  if (!raw || typeof raw !== "object") return null;
+  const usage = raw as Record<string, unknown>;
+  const inputTokens = numberField(usage.input_tokens) ?? numberField(usage.inputTokens);
+  const outputTokens = numberField(usage.output_tokens) ?? numberField(usage.outputTokens);
+  const cacheReadTokens = numberField(usage.cache_read_input_tokens) ?? numberField(usage.cacheReadTokens) ?? 0;
+  const cacheWriteTokens = numberField(usage.cache_creation_input_tokens) ?? numberField(usage.cacheWriteTokens) ?? 0;
+  if (inputTokens === undefined && outputTokens === undefined && cacheReadTokens === 0 && cacheWriteTokens === 0) return null;
+  return {
+    inputTokens: inputTokens ?? 0,
+    outputTokens: outputTokens ?? 0,
+    cacheReadTokens,
+    cacheWriteTokens,
+    source,
+  };
+}
+
+function normalizeClaudeCliModelUsage(raw: unknown): ClaudeCliTokenUsage | null {
+  if (!raw || typeof raw !== "object") return null;
+  let total: ClaudeCliTokenUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, source: "result.modelUsage" };
+  let sawUsage = false;
+  for (const usage of Object.values(raw as Record<string, unknown>)) {
+    const normalized = normalizeClaudeCliUsage(usage, "result.modelUsage");
+    if (!normalized) continue;
+    sawUsage = true;
+    total = {
+      ...total,
+      inputTokens: total.inputTokens + normalized.inputTokens,
+      outputTokens: total.outputTokens + normalized.outputTokens,
+      cacheReadTokens: total.cacheReadTokens + normalized.cacheReadTokens,
+      cacheWriteTokens: total.cacheWriteTokens + normalized.cacheWriteTokens,
+    };
+  }
+  return sawUsage ? total : null;
+}
+
+function applyClaudeCliUsage(usage: ClaudeCliTokenUsage): { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } {
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cacheReadTokens: usage.cacheReadTokens,
+    cacheWriteTokens: usage.cacheWriteTokens,
+  };
+}
+
 export function emitCliSubprocessCrash(ctx: CliCrashContext): void {
   const probe = probeCliRuntime();
   const { exitCode, signal } = parseExitCodeAndSignal(ctx.rawError || "");
@@ -779,6 +836,7 @@ export async function* cliSdkStream(
   let outputTokens = 0;
   let cacheReadTokens = 0;
   let cacheWriteTokens = 0;
+  let usageSource = "assistant.usage";
   let sawStreamDeltas = false;
   let connectedEmitted = false;
   let ttftLogged = false;
@@ -1093,11 +1151,13 @@ export async function* cliSdkStream(
 
         case "assistant": {
           const betaMsg = iterValue.message;
-          if (betaMsg.usage) {
-            inputTokens += betaMsg.usage.input_tokens || 0;
-            outputTokens += betaMsg.usage.output_tokens || 0;
-            cacheReadTokens += betaMsg.usage.cache_read_input_tokens || 0;
-            cacheWriteTokens += betaMsg.usage.cache_creation_input_tokens || 0;
+          const assistantUsage = normalizeClaudeCliUsage(betaMsg.usage, "assistant.usage");
+          if (assistantUsage) {
+            inputTokens += assistantUsage.inputTokens;
+            outputTokens += assistantUsage.outputTokens;
+            cacheReadTokens += assistantUsage.cacheReadTokens;
+            cacheWriteTokens += assistantUsage.cacheWriteTokens;
+            usageSource = assistantUsage.source;
           }
 
           for (const block of betaMsg.content) {
@@ -1126,21 +1186,28 @@ export async function* cliSdkStream(
         }
 
         case "result": {
-          const resultMsg = iterValue as { type: "result"; subtype: string; result?: string; usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }; errors?: string[] };
+          const resultMsg = iterValue as {
+            type: "result";
+            subtype: string;
+            result?: string;
+            usage?: unknown;
+            modelUsage?: Record<string, unknown>;
+            errors?: string[];
+          };
           if (resultMsg.result && typeof resultMsg.result === "string" && !fullText) {
             fullText = resultMsg.result;
             yield { type: "text_delta", content: fullText };
           }
 
-          if (resultMsg.usage) {
-            inputTokens = resultMsg.usage.input_tokens ?? inputTokens;
-            outputTokens = resultMsg.usage.output_tokens ?? outputTokens;
-            cacheReadTokens = resultMsg.usage.cache_read_input_tokens ?? cacheReadTokens;
-            cacheWriteTokens = resultMsg.usage.cache_creation_input_tokens ?? cacheWriteTokens;
-            usageMetadata = {
-              ...(usageMetadata || {}),
-              claudeCliUsageSource: "result.usage",
-            };
+          const resultUsage = normalizeClaudeCliUsage(resultMsg.usage, "result.usage")
+            ?? normalizeClaudeCliModelUsage(resultMsg.modelUsage);
+          if (resultUsage) {
+            const applied = applyClaudeCliUsage(resultUsage);
+            inputTokens = applied.inputTokens;
+            outputTokens = applied.outputTokens;
+            cacheReadTokens = applied.cacheReadTokens;
+            cacheWriteTokens = applied.cacheWriteTokens;
+            usageSource = resultUsage.source;
           }
 
           if (resultMsg.subtype && resultMsg.subtype.startsWith("error")) {
@@ -1209,7 +1276,7 @@ export async function* cliSdkStream(
         cli_elapsed_ms: elapsed,
         cli_event_count: eventCount,
         tokenAccounting: {
-          providerReportedUsage: "SDKResultMessage.usage when present; otherwise summed assistant message usage",
+          providerReportedUsage: usageSource,
           cacheReadTokens,
           cacheWriteTokens,
         },
@@ -1301,7 +1368,34 @@ export async function* cliSdkStream(
         outputTokens,
         stderrTail: stderrBuf.tail || null,
       });
-      if (errMsg.includes("expired") || errMsg.includes("invalid") || errMsg.includes("unauthorized") || errMsg.includes("401")) {
+
+      if (/usageMetadata is not defined/i.test(errMsg) && fullText) {
+        log.warn(
+          `cliSdkStream: degrading post-output SDK usage finalization failure model=${model} ` +
+          `events=${eventCount} input=${inputTokens} output=${outputTokens}`,
+        );
+        yield {
+          type: "usage",
+          usage: {
+            inputTokens,
+            outputTokens,
+            cacheReadTokens,
+            cacheWriteTokens,
+            totalTokens: inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens,
+          },
+          model,
+          stopReason: "end_turn",
+          metadata: {
+            degraded: true,
+            degradationReason: "claude_cli_usage_finalization_failed",
+            tokenAccounting: {
+              providerReportedUsage: usageSource,
+              cacheReadTokens,
+              cacheWriteTokens,
+            },
+          },
+        };
+      } else if (errMsg.includes("expired") || errMsg.includes("invalid") || errMsg.includes("unauthorized") || errMsg.includes("401")) {
         yield { type: "error", error: "Claude CLI token expired or invalid. Please re-run `claude setup-token` and update the secret." };
       } else {
         yield { type: "error", error: friendlyCliError(errMsg, model) };

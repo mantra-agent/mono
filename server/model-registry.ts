@@ -368,15 +368,15 @@ const REGISTRY: Record<string, ModelInfo> = {
   },
   "claude-opus-4-7-sub": {
     id: "claude-opus-4-7-sub",
-    name: "Claude Opus 4.7 (Subscription)",
+    name: "Claude Opus Latest (Subscription)",
     provider: "claude-cli",
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 200000,
     maxOutputTokens: 128000,
     reasoning: false,
-    thinking: { level: "extended", description: "Deep extended thinking via Claude subscription" },
+    thinking: { level: "extended", description: "Deep extended thinking via Claude subscription using Claude Code's documented Opus alias" },
     requiresSubscription: true,
-    claudeModelId: "claude-opus-4-7",
+    claudeModelId: "opus",
   },
   "claude-fable-sub": {
     id: "claude-fable-sub",
