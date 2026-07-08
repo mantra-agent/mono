@@ -32,6 +32,7 @@ function markdownToJson(md: string): JSONContent | null {
 
 export interface RichTextEditorHandle {
   insertContent: (content: string) => void;
+  focus: () => void;
 }
 
 interface RichTextEditorProps {
@@ -43,11 +44,13 @@ interface RichTextEditorProps {
   readOnly?: boolean;
   onInsertLink?: () => void;
   plainTextFallback?: string;
+  onFocusChange?: (focused: boolean) => void;
 }
 
 const EDITOR_INIT_TIMEOUT_MS = 5000;
 
 type EditorMenuAnchor = { top: number; left: number };
+type BlockHandleAnchor = { top: number; left: number };
 type EditorMenuSource = "slash" | "handle";
 
 type EditorCommand = {
@@ -130,6 +133,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     readOnly = false,
     onInsertLink,
     plainTextFallback,
+    onFocusChange,
   }: RichTextEditorProps,
   ref: ForwardedRef<RichTextEditorHandle>,
 ) {
@@ -143,6 +147,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
   const plainTextFallbackRef = useRef(plainTextFallback);
   plainTextFallbackRef.current = plainTextFallback;
   const [initFailed, setInitFailed] = useState(false);
+  const [isEditorFocused, setIsEditorFocused] = useState(false);
 
   const {
     wikiQuery,
@@ -249,6 +254,11 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
       const plainText = ed.getText();
       onChangeRef.current(json, plainText);
     },
+    focus() {
+      const ed = editorRef.current;
+      if (!ed) return;
+      ed.chain().focus("start").run();
+    },
   }), []);
 
   useEffect(() => {
@@ -348,6 +358,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
   );
 
   const [menuAnchor, setMenuAnchor] = useState<EditorMenuAnchor | null>(null);
+  const [blockHandleAnchor, setBlockHandleAnchor] = useState<BlockHandleAnchor | null>(null);
   const [menuSource, setMenuSource] = useState<EditorMenuSource>("slash");
   const slashTriggerFromRef = useRef<number | null>(null);
   const [commandQuery, setCommandQuery] = useState("");
@@ -365,6 +376,23 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     setCommandQuery("");
     setSelectedCommandIdx(0);
   }, []);
+
+  const updateBlockHandleFromMouse = useCallback((target: EventTarget | null) => {
+    const container = editorContainerRef.current;
+    if (!container || readOnly || isEditorFocused || menuAnchor) {
+      setBlockHandleAnchor(null);
+      return;
+    }
+    const element = target instanceof Element ? target : null;
+    const block = element?.closest(".ProseMirror p, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror li, .ProseMirror blockquote, .ProseMirror pre");
+    if (!block || !container.contains(block)) {
+      setBlockHandleAnchor(null);
+      return;
+    }
+    const blockBox = block.getBoundingClientRect();
+    const containerBox = container.getBoundingClientRect();
+    setBlockHandleAnchor({ top: blockBox.top - containerBox.top + Math.max(0, (blockBox.height - 28) / 2), left: 4 });
+  }, [isEditorFocused, menuAnchor, readOnly]);
 
   const openCommandMenuAtSelection = useCallback((source: EditorMenuSource) => {
     const ed = editorRef.current;
@@ -423,6 +451,15 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
       onPaste={handlePaste}
       onDrop={handleDrop}
       onDragOver={(e) => { if (!readOnly) e.preventDefault(); }}
+      onMouseMove={(e) => updateBlockHandleFromMouse(e.target)}
+      onMouseLeave={() => setBlockHandleAnchor(null)}
+      onFocusCapture={() => { setIsEditorFocused(true); setBlockHandleAnchor(null); onFocusChange?.(true); }}
+      onBlurCapture={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+          setIsEditorFocused(false);
+          onFocusChange?.(false);
+        }
+      }}
       onKeyDown={(e) => {
         if (menuAnchor) {
           if (e.key === "ArrowDown") {
@@ -459,10 +496,11 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
         handleWikiKeyDown(e, editor);
       }}
     >
-      {!readOnly && (
+      {!readOnly && blockHandleAnchor && !isEditorFocused && !menuAnchor && (
         <button
           type="button"
-          className="absolute left-1 top-16 z-20 hidden h-7 w-7 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus:opacity-100 group-hover:opacity-100 md:flex"
+          className="absolute z-20 hidden h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:bg-accent focus:text-foreground md:flex"
+          style={{ top: blockHandleAnchor.top, left: blockHandleAnchor.left }}
           onMouseDown={(e) => { e.preventDefault(); openCommandMenuAtSelection("handle"); }}
           title="Open block menu"
           data-testid="button-editor-block-menu"
