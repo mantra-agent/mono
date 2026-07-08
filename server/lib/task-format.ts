@@ -9,17 +9,11 @@ function deadlineStr(deadline: string | null): string {
 }
 
 export function formatTaskForBridge(t: Task): string {
-  const est = t.estimateLow != null && t.estimateHigh != null
-    ? ` ~${((t.estimateLow + t.estimateHigh) / 2).toFixed(1)}h`
-    : '';
   const dl = deadlineStr(t.deadline);
-  return `- [${t.status}] ${t.title} (id: ${t.id}, ${t.priority}, owner: ${t.owner}${est}${dl})${t.projectId ? ` — project ${t.projectId}` : ""}`;
+  return `- [${t.status}] ${t.title} (id: ${t.id}, ${t.priority}, owner: ${t.owner}${dl})${t.projectId ? ` — project ${t.projectId}` : ""}`;
 }
 
 export function formatTaskForProjectDetail(t: Task): string {
-  const est = t.estimateLow != null && t.estimateHigh != null
-    ? ` ~${((t.estimateLow + t.estimateHigh) / 2).toFixed(1)}h`
-    : '';
   const dl = deadlineStr(t.deadline);
-  return `  - [${t.id}] [${t.status}] ${t.title} (${t.priority}, owner: ${t.owner}${t.milestoneId ? `, milestone: ${t.milestoneId}` : ""}${est}${dl})`;
+  return `  - [${t.id}] [${t.status}] ${t.title} (${t.priority}, owner: ${t.owner}${t.milestoneId ? `, milestone: ${t.milestoneId}` : ""}${dl})`;
 }

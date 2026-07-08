@@ -309,9 +309,7 @@ async function genProjects(dir: string): Promise<{ count: number }> {
         (tasks.length > 0
           ? tasks.map((t) => {
               const done = t.status === "done";
-              const estimate = (t.estimateLow != null || t.estimateHigh != null)
-                ? ` [est: ${t.estimateLow ?? "?"}–${t.estimateHigh ?? "?"}h]`
-                : "";
+              const estimate = "";
               return (
                 `- [${done ? "x" : " "}] **${t.title ?? "Task"}**${estimate}\n` +
                 `  Status: ${t.status ?? ""} | Priority: ${t.priority ?? ""} | Effort: ${t.effort ?? ""} | Impact: ${t.impact ?? ""} | Owner: ${t.owner ?? ""}\n` +

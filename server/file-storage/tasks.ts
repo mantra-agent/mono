@@ -2,7 +2,6 @@ import { db } from "../db";
 import { tasks } from "@shared/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
 import type { Task, InsertTask, TaskStatus } from "@shared/models/work";
-import { computeEffort } from "@shared/models/work";
 import { createLogger } from "../log";
 import { TTLCache } from "../utils/ttl-cache";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
@@ -34,8 +33,6 @@ function rowToTask(row: typeof tasks.$inferSelect): Task {
     acceptanceCriteria: row.acceptanceCriteria,
     context: row.context,
     output: row.output,
-    estimateLow: row.estimateLow,
-    estimateHigh: row.estimateHigh,
     deadline: row.deadline,
     tokenEstimate: row.tokenEstimate,
     createdAt: row.createdAt.toISOString(),
@@ -114,7 +111,7 @@ export class FileTaskStorage {
 
   async createTask(input: InsertTask): Promise<Task> {
     const now = new Date();
-    const effort = computeEffort(input.estimateLow ?? null, input.estimateHigh ?? null) || input.effort || "mid";
+    const effort = input.effort || "mid";
 
     const [row] = await db.insert(tasks).values({
       title: input.title,
@@ -132,8 +129,6 @@ export class FileTaskStorage {
       acceptanceCriteria: input.acceptanceCriteria || "",
       context: input.context || "",
       output: input.output || "",
-      estimateLow: input.estimateLow ?? null,
-      estimateHigh: input.estimateHigh ?? null,
       deadline: input.deadline ?? null,
       tokenEstimate: input.tokenEstimate ?? null,
       createdAt: now,
@@ -169,16 +164,8 @@ export class FileTaskStorage {
     if (updates.acceptanceCriteria !== undefined) setValues.acceptanceCriteria = updates.acceptanceCriteria;
     if (updates.context !== undefined) setValues.context = updates.context;
     if (updates.output !== undefined) setValues.output = updates.output;
-    if (updates.estimateLow !== undefined) setValues.estimateLow = updates.estimateLow;
-    if (updates.estimateHigh !== undefined) setValues.estimateHigh = updates.estimateHigh;
     if (updates.deadline !== undefined) setValues.deadline = updates.deadline;
     if (updates.tokenEstimate !== undefined) setValues.tokenEstimate = updates.tokenEstimate;
-
-    // Recompute effort if estimates changed
-    const newLow = updates.estimateLow !== undefined ? updates.estimateLow : existing.estimateLow;
-    const newHigh = updates.estimateHigh !== undefined ? updates.estimateHigh : existing.estimateHigh;
-    const autoEffort = computeEffort(newLow ?? null, newHigh ?? null);
-    if (autoEffort) setValues.effort = autoEffort;
 
     const [row] = await db.update(tasks).set(setValues).where(eq(tasks.id, id)).returning();
     if (updates.status && updates.status !== existing.status) {

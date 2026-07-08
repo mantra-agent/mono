@@ -78,8 +78,6 @@ export const insertTaskSchema = z.object({
   acceptanceCriteria: z.string().optional().default(""),
   context: z.string().optional().default(""),
   output: z.string().optional().default(""),
-  estimateLow: z.number().nullable().optional().default(null),
-  estimateHigh: z.number().nullable().optional().default(null),
   deadline: z.string().nullable().optional().default(null),
   tokenEstimate: z.number().nullable().optional().default(null),
 });
@@ -102,20 +100,10 @@ export interface Task {
   acceptanceCriteria: string;
   context: string;
   output: string;
-  estimateLow: number | null;
-  estimateHigh: number | null;
   deadline: string | null;
   tokenEstimate: number | null;
   createdAt: string;
   updatedAt: string;
-}
-
-export function computeEffort(estimateLow: number | null, estimateHigh: number | null): ImpactEffort | null {
-  if (estimateLow == null || estimateHigh == null) return null;
-  const avg = (estimateLow + estimateHigh) / 2;
-  if (avg < 1) return "low";
-  if (avg <= 4) return "mid";
-  return "high";
 }
 
 export function formatDeadlineCompact(deadline: string): string {
