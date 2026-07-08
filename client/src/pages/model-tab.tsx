@@ -354,7 +354,7 @@ export default function ModelTab() {
             <div className="flex flex-col items-center gap-3 text-center">
               <AlertTriangle className="h-8 w-8 text-muted-foreground" />
               <p className="text-sm text-muted-foreground">
-                No API keys detected. Add ANTHROPIC_API_KEY or OPENAI_API_KEY in your Secrets to see available models.
+                No model providers detected. Connect an OpenAI or Claude subscription, or add ANTHROPIC_API_KEY / OPENAI_API_KEY in Secrets to see available models.
               </p>
             </div>
           </Card>
