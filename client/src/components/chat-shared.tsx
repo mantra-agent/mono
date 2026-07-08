@@ -1301,7 +1301,7 @@ function CompactionBoundary({ message, stripTags }: { message: ChatMessage; stri
   );
 }
 
-export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, sessionKey }: { message: ChatMessage; isLast: boolean; streaming?: StreamingContent; sessionKey?: string | null }) {
+export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, sessionKey, compactReferences = false }: { message: ChatMessage; isLast: boolean; streaming?: StreamingContent; sessionKey?: string | null; compactReferences?: boolean }) {
   const isUser = message.role === "user";
   const isSystemPrompt = message.role === "system_prompt";
   const isVoiceMessage = message.voice?.source === "elevenlabs-voice";
@@ -1429,7 +1429,7 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
       <div className="flex justify-end" data-testid={`message-user-${message.id}`}>
         <div className="max-w-[75%]">
           <div className="bg-muted text-foreground rounded-2xl rounded-br-sm px-4 py-2.5">
-            {displayUserContent && <p className="text-sm whitespace-pre-wrap" data-testid="text-user-message"><InlineReferenceText text={displayUserContent} /></p>}
+            {displayUserContent && <p className="text-sm whitespace-pre-wrap" data-testid="text-user-message"><InlineReferenceText text={displayUserContent} surface={compactReferences ? "simple-chip" : "chat-inline"} /></p>}
             {images.length > 0 && (
               <div className={`flex flex-wrap gap-2 ${displayUserContent ? "mt-2" : ""}`}>
                 {images.map((img, i) => {

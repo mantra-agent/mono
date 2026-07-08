@@ -918,6 +918,7 @@ export function SessionTranscriptPanel({
         scrollContainerRef={scrollContainerRef}
         onUserScrollIntent={handleUserScrollIntent}
         onScroll={handleScroll}
+        compactReferences={isWidget}
       />
     </div>
   );

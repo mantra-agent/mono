@@ -44,6 +44,7 @@ interface MessageListProps {
   pendingTurn?: PendingChatTurn | null;
   optimisticUserTurn?: PendingChatTurn | null;
   liveStreamRenderId?: string | null;
+  compactReferences?: boolean;
 }
 
 type ListItem =
@@ -190,6 +191,7 @@ export function MessageList({
   pendingTurn,
   optimisticUserTurn,
   liveStreamRenderId,
+  compactReferences = false,
 }: MessageListProps) {
   const { layer } = useVisibilityLayer();
   const { childBlocks, crossMessages } = useLiveSessionBlocks(activeSession);
@@ -583,6 +585,7 @@ export function MessageList({
         isLast={isLast}
         streaming={isStreamingTarget ? effectiveStreaming : undefined}
         sessionKey={sessionKey ?? undefined}
+        compactReferences={compactReferences}
       />
     );
   };
