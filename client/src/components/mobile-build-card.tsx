@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
-import { ExternalLink, Loader2, Play, RefreshCw, Smartphone, Wifi, XCircle } from "lucide-react";
+import { ExternalLink, Loader2, Play, RefreshCw, Smartphone, Upload, Wifi, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
