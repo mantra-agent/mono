@@ -2526,19 +2526,85 @@ const TOOL_SHORT_DESCRIPTIONS: Record<string, string> = {
 };
 
 async function resolveCodeInstructions(): Promise<string> {
+  const header = `## Coding Instructions
+
+This section is always loaded. Use it for code changes, debugging, repo/system diagnosis, builds, PRs, merges, deployments, and implementation planning.`;
+
+  // Strategy 1: Load from environment context artifact (kind = 'coding_process')
+  try {
+    const { db } = await import("./db");
+    const { eq } = await import("drizzle-orm");
+    const { environmentContextArtifacts } = await import("@shared/models/platforms");
+    const { libraryPages } = await import("@shared/models/info");
+
+    // Find active platform environment — check for any environments with a coding_process artifact
+    const artifactRows = await db
+      .select({
+        libraryPageId: environmentContextArtifacts.libraryPageId,
+        environmentId: environmentContextArtifacts.environmentId,
+      })
+      .from(environmentContextArtifacts)
+      .where(eq(environmentContextArtifacts.kind, "coding_process"))
+      .limit(1);
+
+    if (artifactRows.length > 0) {
+      const [page] = await db
+        .select({ content: libraryPages.plainTextContent })
+        .from(libraryPages)
+        .where(eq(libraryPages.id, artifactRows[0].libraryPageId))
+        .limit(1);
+
+      if (page?.content) {
+        return `${header}
+
+${page.content.trim()}`;
+      }
+    }
+  } catch (err) {
+    // Fall through to next strategy
+    const { createLogger } = await import("./log");
+    createLogger("ContextBuilder").warn("Failed to load coding process from environment artifact", { error: err instanceof Error ? err.message : String(err) });
+  }
+
+  // Strategy 2: Load from well-known Library page slug 'universal-coding-process'
+  try {
+    const { db } = await import("./db");
+    const { eq } = await import("drizzle-orm");
+    const { libraryPages } = await import("@shared/models/info");
+
+    const [page] = await db
+      .select({ content: libraryPages.plainTextContent })
+      .from(libraryPages)
+      .where(eq(libraryPages.slug, "universal-coding-process"))
+      .limit(1);
+
+    if (page?.content) {
+      return `${header}
+
+${page.content.trim()}`;
+    }
+  } catch (err) {
+    const { createLogger } = await import("./log");
+    createLogger("ContextBuilder").warn("Failed to load coding process from well-known slug", { error: err instanceof Error ? err.message : String(err) });
+  }
+
+  // Strategy 3: Filesystem fallback (CODING.md)
   try {
     const codingProcessPath = path.resolve(process.cwd(), "CODING.md");
     const codingProcess = await readFile(codingProcessPath, "utf-8");
-    return `## Coding Instructions
-
-This section is always loaded. Use it for code changes, debugging, repo/system diagnosis, builds, PRs, merges, deployments, and implementation planning.
+    const { createLogger } = await import("./log");
+    createLogger("ContextBuilder").warn("Coding instructions loaded from filesystem CODING.md (fallback). Prefer linking a Library page as a coding_process context artifact on the platform environment.");
+    return `${header}
 
 ${codingProcess.trim()}`;
-  } catch (error) {
-    return `## Coding Instructions
-
-CRITICAL: Failed to load root CODING.md, which is the canonical procedural coding workflow. Block coding work until CODING.md can be loaded. Error: ${error instanceof Error ? error.message : String(error)}`;
+  } catch {
+    // All strategies failed
   }
+
+  // Strategy 4: Degraded
+  return `${header}
+
+WARNING: Coding instructions could not be loaded from any source (environment context artifact, well-known Library page, or filesystem CODING.md). Coding work may proceed with reduced guidance. Report this in the final coding report as a degraded check.`;
 }
 
 async function resolvePlanningInstructions(): Promise<string> {

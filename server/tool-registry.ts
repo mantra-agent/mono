@@ -1471,12 +1471,12 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   platforms: {
-    description: "Manage platform infrastructure — provider connections, environments, bindings, build lifecycle configuration, workflow launch, and deployment status. Actions: list_connections, get_connection, test_connection, create_connection, list_environments, get_environment, get_environment_status, get_build_lifecycle, set_build_lifecycle, disable_build_lifecycle, delete_build_lifecycle, get_build_status, start_build_workflow, list_environment_workflows, create_platform, update_platform, create_product, update_product, create_environment, update_environment, delete_environment, save_source_binding, save_hosting_binding.",
+    description: "Manage platform infrastructure — provider connections, environments, bindings, build lifecycle configuration, workflow launch, and deployment status. Actions: list_connections, get_connection, test_connection, create_connection, list_environments, get_environment, get_environment_status, get_build_lifecycle, set_build_lifecycle, disable_build_lifecycle, delete_build_lifecycle, get_build_status, start_build_workflow, list_environment_workflows, create_platform, update_platform, create_product, update_product, create_environment, update_environment, delete_environment, save_source_binding, save_hosting_binding, save_context_artifact, get_context_artifacts, remove_context_artifact.",
     category: "system",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list_connections", "get_connection", "test_connection", "create_connection", "list_environments", "get_environment", "get_environment_status", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "create_product", "update_product", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding"], description: "Action to perform" },
+        action: { type: "string", enum: ["list_connections", "get_connection", "test_connection", "create_connection", "list_environments", "get_environment", "get_environment_status", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "create_product", "update_product", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "save_context_artifact", "get_context_artifacts", "remove_context_artifact"], description: "Action to perform" },
         id: { type: "number", description: "Connection ID, Platform ID, Product ID, or Environment ID depending on action" },
         provider: { type: "string", description: "Provider name e.g. 'railway', 'github' (for create_connection)" },
         label: { type: "string", description: "Human-readable label (for create_connection)" },
@@ -1497,6 +1497,8 @@ export const TOOLS: Record<string, ToolMeta> = {
         providerEnvironmentName: { type: "string", description: "Railway environment name (for save_hosting_binding)" },
         serviceName: { type: "string", description: "Railway service name (for save_hosting_binding)" },
         publicUrl: { type: "string", description: "Public URL (for save_hosting_binding)" },
+        kind: { type: "string", description: "Context artifact kind, e.g. coding_process, design_system, planning_process (for save_context_artifact, remove_context_artifact)" },
+        libraryPageId: { type: "string", description: "Library page ID to link (for save_context_artifact)" },
         workflowTemplateId: { type: "string", description: "Workflow template ID for build lifecycle, e.g. build-v1" },
         providerKind: { type: "string", description: "Build provider kind: railway, eas, or manual" },
         deployPolicy: { type: "object", description: "Low-level deploy policy JSON for lifecycle config" },

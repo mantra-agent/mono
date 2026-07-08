@@ -8780,7 +8780,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     const action = typeof args.action === "string" ? args.action : "";
     if (!action) return { result: "Missing 'action' parameter", error: true };
 
-    const allowed = new Set(["list_connections", "get_connection", "test_connection", "list_environments", "get_environment", "get_environment_status", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "create_product", "update_product", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "create_connection"]);
+    const allowed = new Set(["list_connections", "get_connection", "test_connection", "list_environments", "get_environment", "get_environment_status", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "create_product", "update_product", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "create_connection", "save_context_artifact", "get_context_artifacts", "remove_context_artifact"]);
     if (!allowed.has(action)) {
       return { result: `Unknown platforms action: ${action}. Allowed: ${[...allowed].join(", ")}`, error: true };
     }
@@ -8793,6 +8793,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         environmentSourceBindings,
         environmentHostingBindings,
         environmentRuntimeVariables,
+        environmentContextArtifacts,
         platforms: platformsTable,
         platformProducts,
         platformProductEnvironments,
@@ -8800,6 +8801,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         insertPlatformSchema,
         insertPlatformProductSchema,
         insertPlatformProductEnvironmentSchema,
+        upsertContextArtifactSchema,
       } = await import("@shared/models/platforms");
       const { getCurrentPrincipalOrSystem } = await import("./principal-context");
       const { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } = await import("./scoped-storage");
@@ -9358,6 +9360,82 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           [saved] = await db.insert(environmentHostingBindings).values(values).returning();
         }
         return { result: JSON.stringify({ saved: true, binding: { id: saved.id, environmentId: saved.environmentId, provider: saved.provider, projectId: saved.projectId, projectName: saved.projectName, providerEnvironmentId: saved.providerEnvironmentId, serviceName: saved.serviceName, connectionId: saved.connectionId } }, null, 2) };
+      }
+
+      // ── save_context_artifact ──
+      if (action === "save_context_artifact") {
+        const envId = typeof args.id === "number" ? args.id : null;
+        if (!envId) return { result: "Missing 'id' (environment ID) for save_context_artifact", error: true };
+        const kind = typeof args.kind === "string" ? args.kind.trim() : null;
+        const libraryPageId = typeof args.libraryPageId === "string" ? args.libraryPageId.trim() : null;
+        if (!kind) return { result: "Missing 'kind' for save_context_artifact", error: true };
+        if (!libraryPageId) return { result: "Missing 'libraryPageId' for save_context_artifact", error: true };
+
+        const [env] = await db.select().from(platformProductEnvironments).where(eq(platformProductEnvironments.id, envId)).limit(1);
+        if (!env) return { result: `Environment ${envId} not found`, error: true };
+        const [prod] = await db.select().from(platformProducts).where(eq(platformProducts.id, env.productId)).limit(1);
+        if (!prod) return { result: `Product not found for environment ${envId}`, error: true };
+        const [plat] = await db.select().from(platformsTable).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), platScopeColumns, eq(platformsTable.id, prod.platformId))).limit(1);
+        if (!plat) return { result: `No write access to platform for environment ${envId}`, error: true };
+
+        // Verify library page exists
+        const { libraryPages } = await import("@shared/models/info");
+        const [page] = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(eq(libraryPages.id, libraryPageId)).limit(1);
+        if (!page) return { result: `Library page ${libraryPageId} not found`, error: true };
+
+        const [existing] = await db.select({ id: environmentContextArtifacts.id }).from(environmentContextArtifacts)
+          .where(and(eq(environmentContextArtifacts.environmentId, envId), eq(environmentContextArtifacts.kind, kind))).limit(1);
+
+        let saved;
+        if (existing) {
+          [saved] = await db.update(environmentContextArtifacts).set({ libraryPageId, updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(eq(environmentContextArtifacts.id, existing.id)).returning();
+        } else {
+          [saved] = await db.insert(environmentContextArtifacts).values({ environmentId: envId, kind, libraryPageId }).returning();
+        }
+        return { result: JSON.stringify({ saved: true, artifact: { id: saved.id, environmentId: saved.environmentId, kind: saved.kind, libraryPageId: saved.libraryPageId, pageTitle: page.title } }, null, 2) };
+      }
+
+      // ── get_context_artifacts ──
+      if (action === "get_context_artifacts") {
+        const envId = typeof args.id === "number" ? args.id : null;
+        if (!envId) return { result: "Missing 'id' (environment ID) for get_context_artifacts", error: true };
+
+        const { libraryPages } = await import("@shared/models/info");
+        const rows = await db
+          .select({
+            id: environmentContextArtifacts.id,
+            environmentId: environmentContextArtifacts.environmentId,
+            kind: environmentContextArtifacts.kind,
+            libraryPageId: environmentContextArtifacts.libraryPageId,
+            pageTitle: libraryPages.title,
+          })
+          .from(environmentContextArtifacts)
+          .leftJoin(libraryPages, eq(environmentContextArtifacts.libraryPageId, libraryPages.id))
+          .where(eq(environmentContextArtifacts.environmentId, envId));
+
+        return { result: JSON.stringify(rows.map(r => ({ ...r, pageTitle: r.pageTitle || "Untitled" })), null, 2) };
+      }
+
+      // ── remove_context_artifact ──
+      if (action === "remove_context_artifact") {
+        const envId = typeof args.id === "number" ? args.id : null;
+        const kind = typeof args.kind === "string" ? args.kind.trim() : null;
+        if (!envId) return { result: "Missing 'id' (environment ID) for remove_context_artifact", error: true };
+        if (!kind) return { result: "Missing 'kind' for remove_context_artifact", error: true };
+
+        const [env] = await db.select().from(platformProductEnvironments).where(eq(platformProductEnvironments.id, envId)).limit(1);
+        if (!env) return { result: `Environment ${envId} not found`, error: true };
+        const [prod] = await db.select().from(platformProducts).where(eq(platformProducts.id, env.productId)).limit(1);
+        if (!prod) return { result: `Product not found for environment ${envId}`, error: true };
+        const [plat] = await db.select().from(platformsTable).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), platScopeColumns, eq(platformsTable.id, prod.platformId))).limit(1);
+        if (!plat) return { result: `No write access to platform for environment ${envId}`, error: true };
+
+        const [deleted] = await db.delete(environmentContextArtifacts)
+          .where(and(eq(environmentContextArtifacts.environmentId, envId), eq(environmentContextArtifacts.kind, kind)))
+          .returning({ id: environmentContextArtifacts.id });
+
+        if (!deleted) return { result: `Context artifact kind '${kind}' not found for environment ${envId}`, error: true };
+        return { result: JSON.stringify({ removed: true, kind }) };
       }
 
       return { result: `Unhandled platforms action: ${action}`, error: true };
