@@ -45,6 +45,7 @@ interface RichTextEditorProps {
   onInsertLink?: () => void;
   plainTextFallback?: string;
   onFocusChange?: (focused: boolean) => void;
+  contentFooter?: ReactNode;
 }
 
 const EDITOR_INIT_TIMEOUT_MS = 5000;
@@ -134,6 +135,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     onInsertLink,
     plainTextFallback,
     onFocusChange,
+    contentFooter,
   }: RichTextEditorProps,
   ref: ForwardedRef<RichTextEditorHandle>,
 ) {
@@ -384,6 +386,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
       return;
     }
     const element = target instanceof Element ? target : null;
+    if (element?.closest("[data-editor-block-menu]")) return;
     const block = element?.closest(".ProseMirror p, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror li, .ProseMirror blockquote, .ProseMirror pre");
     if (!block || !container.contains(block)) {
       setBlockHandleAnchor(null);
@@ -503,15 +506,20 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
           style={{ top: blockHandleAnchor.top, left: blockHandleAnchor.left }}
           onMouseDown={(e) => { e.preventDefault(); openCommandMenuAtSelection("handle"); }}
           title="Open block menu"
+          data-editor-block-menu="true"
+          onMouseEnter={() => blockHandleAnchor && setBlockHandleAnchor(blockHandleAnchor)}
           data-testid="button-editor-block-menu"
         >
           ⋮⋮
         </button>
       )}
-      <EditorContent
-        editor={editor}
-        className="flex-1 overflow-y-auto scrollbar-thin prose prose-sm dark:prose-invert max-w-none px-10 py-4 focus-visible:outline-none [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-full [&_.ProseMirror_p.is-editor-empty:first-child::before]:content-[attr(data-placeholder)] [&_.ProseMirror_p.is-editor-empty:first-child::before]:text-muted-foreground [&_.ProseMirror_p.is-editor-empty:first-child::before]:pointer-events-none [&_.ProseMirror_p.is-editor-empty:first-child::before]:float-left [&_.ProseMirror_p.is-editor-empty:first-child::before]:h-0 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_ul_ul]:my-0.5 [&_ol_ol]:my-0.5 [&_ul_ol]:my-0.5 [&_ol_ul]:my-0.5 [&_li>p]:my-0"
-      />
+      <div className="flex-1 overflow-y-auto scrollbar-thin">
+        <EditorContent
+          editor={editor}
+          className="prose prose-sm dark:prose-invert max-w-none px-10 py-4 focus-visible:outline-none [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[45vh] [&_.ProseMirror_p.is-editor-empty:first-child::before]:content-[attr(data-placeholder)] [&_.ProseMirror_p.is-editor-empty:first-child::before]:text-muted-foreground [&_.ProseMirror_p.is-editor-empty:first-child::before]:pointer-events-none [&_.ProseMirror_p.is-editor-empty:first-child::before]:float-left [&_.ProseMirror_p.is-editor-empty:first-child::before]:h-0 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_ul_ul]:my-0.5 [&_ol_ol]:my-0.5 [&_ul_ol]:my-0.5 [&_ol_ul]:my-0.5 [&_li>p]:my-0"
+        />
+        {contentFooter}
+      </div>
       {menuAnchor && !readOnly && (
         <div
           className="absolute z-50 w-72 max-w-[calc(100%-1rem)] overflow-hidden rounded-md border border-border bg-popover shadow-md"

@@ -221,8 +221,7 @@ export function LibraryPageEditor({
         </div>
       </div>
       <div className="flex-1 flex flex-col overflow-hidden">
-        <RichTextEditor ref={editorRef} key={selectedId} value={editContent} onChange={handleContentChange} placeholder="Write your page content here..." className="flex-1 overflow-hidden" data-testid="editor-library-content" onInsertLink={() => { setSpecPickerQuery(""); setSpecPickerOpen(true); }} plainTextFallback={selectedPage.plainTextContent || ""} onFocusChange={setBodyFocused} />
-        <LinkedSessions slug={selectedPage.slug} />
+        <RichTextEditor ref={editorRef} key={selectedId} value={editContent} onChange={handleContentChange} placeholder="Write your page content here..." className="flex-1 overflow-hidden" data-testid="editor-library-content" onInsertLink={() => { setSpecPickerQuery(""); setSpecPickerOpen(true); }} plainTextFallback={selectedPage.plainTextContent || ""} onFocusChange={setBodyFocused} contentFooter={<LinkedSessions slug={selectedPage.slug} />} />
       </div>
       <PageLinkPickerDialog open={specPickerOpen} onOpenChange={setSpecPickerOpen} query={specPickerQuery} onQueryChange={setSpecPickerQuery} pages={pages} editorRef={editorRef} />
       <PageDetailsDialog open={detailsDialogOpen} onOpenChange={setDetailsDialogOpen} page={selectedPage} pages={pages} />
