@@ -118,7 +118,7 @@ export function SegmentStream({ segments, isStreaming, layer, stripTags = false,
         })),
       }),
     });
-  }, [segments, renderSegments, isStreaming, layer, stripTags, suppressTrailingThinking, contentCompact, contentClassName]);
+  }, [segments, renderSegments, isStreaming, layer, stripTags, suppressTrailingThinking, contentCompact, contentClassName, hasContent]);
 
   if (segments.length > 0) {
     return (
@@ -147,7 +147,7 @@ export function SegmentStream({ segments, isStreaming, layer, stripTags = false,
           }
           return null;
         })}
-        {!suppressTrailingThinking && isStreaming && !segments.some(seg =>
+        {!suppressTrailingThinking && isStreaming && !hasContent && !segments.some(seg =>
           seg.type === "timeline" && seg.steps.some(s =>
             (s.type === "thinking" && s.status === "active" && (layer === 1 || !s.thinking)) ||
             (s.type === "tool_call" && s.status === "active")
