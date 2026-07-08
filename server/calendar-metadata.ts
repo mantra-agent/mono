@@ -135,7 +135,17 @@ export async function setMetadata(
 
   const rows = await db
     .insert(calendarEventMetadata)
-    .values({ googleEventId, accountId, calendarId, eventType, capacityType: storedCapacityType, notes: storedNotes, ...sensitiveOwnershipValues() })
+    .values({
+      googleEventId,
+      accountId,
+      calendarId,
+      eventType,
+      capacityType: storedCapacityType,
+      notes: storedNotes,
+      createdAt: sql`CURRENT_TIMESTAMP`,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+      ...sensitiveOwnershipValues(),
+    })
     .onConflictDoUpdate({
       target: [calendarEventMetadata.googleEventId, calendarEventMetadata.accountId, calendarEventMetadata.calendarId],
       set: {
