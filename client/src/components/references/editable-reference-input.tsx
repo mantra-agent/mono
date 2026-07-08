@@ -220,6 +220,14 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
         case "insertParagraph":
           inserted = "\n";
           break;
+        case "insertFromPaste": {
+          const pastedText = inputEvent.dataTransfer?.getData("text/plain") || inputEvent.data || "";
+          inputEvent.preventDefault();
+          if (!pastedText) return;
+          const next = replaceRange(value, selection, pastedText);
+          commitValue(next.value, next.cursor);
+          return;
+        }
         case "deleteContentBackward": {
           inputEvent.preventDefault();
           if (selection.start !== selection.end) {
