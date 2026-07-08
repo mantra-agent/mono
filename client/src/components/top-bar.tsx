@@ -4,10 +4,11 @@ import { cn } from "@/lib/utils";
 import { MessageSquare } from "lucide-react";
 import { ConnectionsIndicator } from "@/components/connections-indicator";
 import { useFocusSession } from "@/hooks/use-focus-session";
+import { usePageHeaderContext } from "@/hooks/use-page-header";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSessionActivityState } from "@/components/thought-indicator";
 import { useLocation } from "wouter";
-import { useCallback } from "react";
+import { useCallback, type ReactNode } from "react";
 
 const DETAIL_ROUTE_TITLES: Array<[string, string]> = [
   ["/goals/", "Goals"],
@@ -42,7 +43,14 @@ function getPageTitle(pathname: string) {
   return navMatch.title === "Info" ? "Library" : navMatch.title;
 }
 
-function PageTitle({ title }: { title: string }) {
+function PageTitle({ title, customContent }: { title: string; customContent?: ReactNode }) {
+  if (customContent) {
+    return (
+      <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground" data-testid="top-bar-page-title" title={title}>
+        {customContent}
+      </div>
+    );
+  }
   return (
     <div
       className="min-w-0 truncate text-sm font-medium text-foreground"
@@ -60,8 +68,10 @@ export function TopBar() {
   const isMobile = useIsMobile();
   const previewOwnsAgentIcon = location.startsWith("/interface-preview");
   const pageTitle = getPageTitle(location.split("?")[0] || "/");
+  const { config: pageHeaderConfig } = usePageHeaderContext();
   const { route, widgetOpen, setWidgetOpen, clearSessionForRoute, requestSessionMenuReset, mobileSessionTitle } = useFocusSession();
-  const displayTitle = isMobile && mobileSessionTitle ? mobileSessionTitle : pageTitle;
+  const configuredTitle = pageHeaderConfig?.title || pageTitle;
+  const displayTitle = isMobile && mobileSessionTitle ? mobileSessionTitle : configuredTitle;
   const { setOpenMobile } = useSidebar();
   const { hasStreaming } = useSessionActivityState();
 
@@ -104,7 +114,7 @@ export function TopBar() {
         data-testid="top-bar"
       >
         {!previewOwnsAgentIcon && <XyzIconButton />}
-        <PageTitle title={displayTitle} />
+        <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} />
         <div className="flex-1" />
       </div>
     );
@@ -122,7 +132,7 @@ export function TopBar() {
       data-testid="top-bar"
     >
       {!previewOwnsAgentIcon && <XyzIconButton />}
-      <PageTitle title={displayTitle} />
+      <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} />
       <div className="flex-1" />
       <ConnectionsIndicator />
       {converseButton}

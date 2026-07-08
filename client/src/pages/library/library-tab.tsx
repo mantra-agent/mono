@@ -119,6 +119,10 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
   }, [pages]);
 
   useEffect(() => {
+    if (!initialSpecSlug && !initialPageSlug) setSelectedId(null);
+  }, [initialSpecSlug, initialPageSlug]);
+
+  useEffect(() => {
     const handler = () => {
       const raw = window.location.hash.replace(/^#/, "");
       if (raw.startsWith("library?page=")) {
@@ -190,14 +194,13 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
     method: "POST",
     path: "/api/info/library",
     body: (opts) => ({
-      title: opts?.title || "Untitled Page",
+      title: opts?.title ?? "",
       content: null,
       plainTextContent: "",
       parentId: opts?.parentId || null,
       tags: opts?.tags || [],
     }),
     invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"]],
-    successMessage: (page) => `${page.title || "Page"} created`,
     errorTitle: "Failed to create page",
     onSuccess: (page, opts) => {
       if (opts?.parentId) {
@@ -356,9 +359,6 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
               selectedId={selectedId}
               selectedPage={selectedPageFull}
               pages={pages}
-              isMobile={isMobile}
-              onBack={() => setSelectedId(null)}
-              onSelectPage={selectPage}
               onDeleteRequest={(id) => setDeleteConfirmId(id)}
             />
           )
