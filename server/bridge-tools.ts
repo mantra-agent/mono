@@ -8911,7 +8911,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
               return {
                 id: env.id,
                 name: env.name,
-                source: sb ? { provider: sb.provider, owner: sb.owner, repo: sb.repo, branch: sb.branch, connectionId: sb.connectionId } : null,
+                source: sb ? { provider: sb.provider, owner: sb.owner, repo: sb.repo, branch: sb.branch, connectionId: sb.connectionId, codeIndexingEnabled: sb.codeIndexingEnabled } : null,
                 hosting: hb ? { provider: hb.provider, projectName: hb.projectName, providerEnvironmentName: hb.providerEnvironmentName, serviceName: hb.serviceName, connectionId: hb.connectionId } : null,
               };
             }),
@@ -8957,7 +8957,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           environment: { id: env.id, name: env.name },
           product: prod ? { id: prod.id, name: prod.name } : null,
           platform: { id: plat.id, name: plat.name },
-          sourceBinding: sourceBinding ? { provider: sourceBinding.provider, connectionId: sourceBinding.connectionId, owner: sourceBinding.owner, repo: sourceBinding.repo, branch: sourceBinding.branch, autoDeploy: sourceBinding.autoDeploy } : null,
+          sourceBinding: sourceBinding ? { provider: sourceBinding.provider, connectionId: sourceBinding.connectionId, owner: sourceBinding.owner, repo: sourceBinding.repo, branch: sourceBinding.branch, autoDeploy: sourceBinding.autoDeploy, codeIndexingEnabled: sourceBinding.codeIndexingEnabled } : null,
           hostingBinding: hostingBinding ? { provider: hostingBinding.provider, connectionId: hostingBinding.connectionId, projectId: hostingBinding.projectId, projectName: hostingBinding.projectName, providerEnvironmentId: hostingBinding.providerEnvironmentId, providerEnvironmentName: hostingBinding.providerEnvironmentName, serviceId: hostingBinding.serviceId, serviceName: hostingBinding.serviceName, publicUrl: hostingBinding.publicUrl } : null,
           runtimeVariables: runtimeVars.map(v => ({ key: v.key, category: v.category, required: v.required, configured: v.configured, source: v.source })),
         }, null, 2) };

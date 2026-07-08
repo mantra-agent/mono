@@ -5502,6 +5502,9 @@ export default function DevPage() {
   }
 
   // Total fetch failure with no cached data: keep the page usable.
+  const isConfigured =
+    !!status && "configured" in status && status.configured === true;
+
   if (!status) {
     return (
       <div className="flex flex-col h-full" data-testid="dev-error">
