@@ -60,6 +60,7 @@ const CalendarPage = lazyWithRetry(() => import("@/pages/calendar"));
 const TimersPage = lazyWithRetry(() => import("@/pages/timers"));
 const MemoryPageFull = lazyWithRetry(() => import("@/pages/memory-page"));
 const StrategyPage = lazyWithRetry(() => import("@/pages/strategy"));
+const DecisionsPage = lazyWithRetry(() => import("@/pages/decisions"));
 const StrategyDetailPage = lazyWithRetry(() => import("@/pages/strategy-detail"));
 
 const OrientationPage = lazyWithRetry(() => import("@/pages/orientation"));
@@ -243,6 +244,7 @@ function Router() {
         <Route path="/vision" component={VisionPage} />
         <Route path="/strategy/:id" component={StrategyDetailPage} />
         <Route path="/strategy" component={StrategyPage} />
+        <Route path="/decisions" component={DecisionsPage} />
         <Route path="/schedule/:eventId" component={CalendarPage} />
         <Route path="/schedule" component={CalendarPage} />
         <Route path="/calendar/:eventId">{(params: { eventId?: string }) => <Redirect to={`/schedule/${params.eventId || ""}`} />}</Route>
