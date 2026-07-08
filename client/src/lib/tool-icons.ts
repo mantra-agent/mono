@@ -205,7 +205,7 @@ export const TOOL_ICON_MAP: Record<string, string> = {
   session: "MessageSquare",
   converse: "MessagesSquare",
   intentions: "Crosshair",
-  introspection: "Microscope",
+  router: "Route",
   skills: "GraduationCap",
   beliefs: "Heart",
   finance: "DollarSign",

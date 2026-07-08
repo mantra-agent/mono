@@ -61,7 +61,7 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   observe: { default: 1 },
   orient: { default: 1 },
   cognition: { default: 1, actions: { get_emotion: 0, emotion_history: 0, get_persona: 0, list_personas: 0 } },
-  introspection: { default: 0 },
+  router: { default: 0 },
   images: { default: 1, actions: { analyze: 0 } },
   indexed_content: { default: 0 },
   notion: { default: 0 },
