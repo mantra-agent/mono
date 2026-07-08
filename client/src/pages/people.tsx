@@ -294,6 +294,7 @@ const INTERACTION_ICONS: Record<string, typeof MessageSquare> = {
   message: MessageSquare,
   call: Phone,
   meeting: Video,
+  meetup: Users,
   email: Mail,
   note: Edit3,
   text: MessageSquare,
@@ -825,40 +826,56 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
   const [localShowAdd, setLocalShowAdd] = useState(false);
   const effectiveShowAdd = showAdd ?? localShowAdd;
   const setEffectiveShowAdd = setShowAdd ?? setLocalShowAdd;
-  const [newType, setNewType] = useState<string>("message");
+  const [newType, setNewType] = useState<string>("note");
   const [newSummary, setNewSummary] = useState("");
   const [newDate, setNewDate] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   });
-  const [newDirection, setNewDirection] = useState<string>("mutual");
-  const [newMeaningfulness, setNewMeaningfulness] = useState<string>("medium");
   const [pendingDeleteLogItem, setPendingDeleteLogItem] = useState<{ kind: "interaction" | "note" | "memory"; id: string; label: string } | null>(null);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [newResponseOwed, setNewResponseOwed] = useState(false);
   const [newResponseDueBy, setNewResponseDueBy] = useState<string>("");
-  const [newCapitalImpact, setNewCapitalImpact] = useState<string>("neutral");
+  const [savedInteractionId, setSavedInteractionId] = useState<string | null>(null);
+  const summaryInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const lastSavedPayloadRef = useRef<string>("");
+
+  useEffect(() => {
+    if (effectiveShowAdd) summaryInputRef.current?.focus();
+  }, [effectiveShowAdd]);
+
   const addMutation = useMutation({
     mutationFn: async (data: Record<string, unknown>) => {
       const res = await apiRequest("POST", `/api/people/${person.id}/interactions`, data);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (updatedPerson: Person) => {
+      const createdInteraction = updatedPerson.interactions.at(-1);
+      setSavedInteractionId((prev) => prev || createdInteraction?.id || null);
       queryClient.invalidateQueries({ queryKey: ["/api/people", person.id] });
       queryClient.invalidateQueries({ queryKey: ["/api/people"] });
-      toast({ title: `${person.name} interaction logged` });
-      setEffectiveShowAdd(false);
-      setNewSummary("");
-      setNewDirection("mutual");
-      setNewMeaningfulness("medium");
-      setNewResponseOwed(false);
-      setNewResponseDueBy("");
-      setNewCapitalImpact("neutral");
       onUpdate();
     },
     onError: (err: Error) => {
+      lastSavedPayloadRef.current = "";
       toast({ title: "Failed to log interaction", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const updateInteractionMutation = useMutation({
+    mutationFn: async ({ interactionId, data }: { interactionId: string; data: Record<string, unknown> }) => {
+      const res = await apiRequest("PATCH", `/api/people/${person.id}/interactions/${interactionId}`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/people", person.id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/people"] });
+      onUpdate();
+    },
+    onError: (err: Error) => {
+      lastSavedPayloadRef.current = "";
+      toast({ title: "Failed to update interaction", description: err.message, variant: "destructive" });
     },
   });
 
@@ -920,6 +937,42 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
     else setEditingNoteId(null);
   };
 
+
+  useEffect(() => {
+    const trimmed = newSummary.trim();
+    if (!effectiveShowAdd || !trimmed) return;
+    const timeout = window.setTimeout(() => {
+      const data: Record<string, unknown> = { date: newDate, type: newType, summary: trimmed };
+      if (newResponseOwed) {
+        data.responseOwed = true;
+        if (newResponseDueBy) data.responseDueBy = newResponseDueBy;
+      }
+      const payloadKey = JSON.stringify(data);
+      if (payloadKey === lastSavedPayloadRef.current) return;
+      if (savedInteractionId) {
+        if (!updateInteractionMutation.isPending) {
+          lastSavedPayloadRef.current = payloadKey;
+          updateInteractionMutation.mutate({ interactionId: savedInteractionId, data });
+        }
+      } else if (!addMutation.isPending) {
+        lastSavedPayloadRef.current = payloadKey;
+        addMutation.mutate(data);
+      }
+    }, 600);
+    return () => window.clearTimeout(timeout);
+  }, [addMutation, effectiveShowAdd, newDate, newResponseDueBy, newResponseOwed, newSummary, newType, savedInteractionId, updateInteractionMutation]);
+
+  const closeNewLogDraft = () => {
+    if (!newSummary.trim() || savedInteractionId) {
+      setEffectiveShowAdd(false);
+      setSavedInteractionId(null);
+      setNewType("note");
+      setNewSummary("");
+      setNewResponseOwed(false);
+      setNewResponseDueBy("");
+      lastSavedPayloadRef.current = "";
+    }
+  };
 
   const { data: linkedMemories = [] } = useQuery<LinkedMemoryEntry[]>({
     queryKey: ["/api/memory/entity-links", "person", person.id],
@@ -988,157 +1041,103 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
 
   return (
     <div className="space-y-3" data-testid="interactions-tab">
-      {effectiveShowAdd && (
+      {effectiveShowAdd ? (
         <Card>
           <CardContent className="pt-3 pb-2 space-y-2">
-            <div className="flex gap-2 flex-wrap">
-              <div className="w-32">
-                <Select value={newType} onValueChange={(val) => {
-                  setNewType(val);
-                  const outboundTypes = ["email", "message", "text"];
-                  const mutualTypes = ["call", "meeting", "in_person", "video"];
-                  const inboundTypes = ["gift", "favor", "support", "introduction"];
-                  if (outboundTypes.includes(val)) setNewDirection("outbound");
-                  else if (inboundTypes.includes(val)) setNewDirection("inbound");
-                  else if (mutualTypes.includes(val)) setNewDirection("mutual");
-                  else setNewDirection("mutual");
-                }}>
-                  <SelectTrigger data-testid="select-interaction-type">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="message">Message</SelectItem>
-                    <SelectItem value="call">Call</SelectItem>
-                    <SelectItem value="meeting">Meeting</SelectItem>
-                    <SelectItem value="email">Email</SelectItem>
-                    <SelectItem value="text">Text</SelectItem>
-                    <SelectItem value="in_person">In Person</SelectItem>
-                    <SelectItem value="video">Video</SelectItem>
-                    <SelectItem value="social">Social</SelectItem>
-                    <SelectItem value="gift">Gift</SelectItem>
-                    <SelectItem value="introduction">Introduction</SelectItem>
-                    <SelectItem value="favor">Favor</SelectItem>
-                    <SelectItem value="support">Support</SelectItem>
-                    <SelectItem value="note">Note</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <Input
-                type="date"
-                value={newDate}
-                onChange={(e) => setNewDate(e.target.value)}
-                className="w-48"
-                data-testid="input-interaction-date"
-              />
-            </div>
-            <div className="flex gap-2 flex-wrap">
-              <div className="w-28">
-                <Select value={newDirection} onValueChange={setNewDirection}>
-                  <SelectTrigger data-testid="select-interaction-direction" className="text-xs">
-                    <SelectValue placeholder="Direction" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="inbound">Inbound</SelectItem>
-                    <SelectItem value="outbound">Outbound</SelectItem>
-                    <SelectItem value="mutual">Mutual</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="w-32">
-                <Select value={newMeaningfulness} onValueChange={setNewMeaningfulness}>
-                  <SelectTrigger data-testid="select-interaction-meaningfulness" className="text-xs">
-                    <SelectValue placeholder="Weight" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="low">Low</SelectItem>
-                    <SelectItem value="medium">Medium</SelectItem>
-                    <SelectItem value="high">High</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              {["gift", "favor", "support", "introduction", "meeting", "in_person"].includes(newType) && (
-              <div className="w-28">
-                <Select value={newCapitalImpact} onValueChange={setNewCapitalImpact}>
-                  <SelectTrigger data-testid="select-capital-impact" className="text-xs">
-                    <SelectValue placeholder="Capital" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="neutral">Neutral</SelectItem>
-                    <SelectItem value="deposit">Deposit</SelectItem>
-                    <SelectItem value="withdrawal">Withdrawal</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              )}
-              <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={newResponseOwed}
-                  onChange={(e) => {
-                    setNewResponseOwed(e.target.checked);
-                    if (e.target.checked && !newResponseDueBy) {
-                      const d = new Date();
-                      d.setDate(d.getDate() + 3);
-                      setNewResponseDueBy(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
-                    }
-                  }}
-                  className="rounded"
-                  data-testid="checkbox-response-owed"
+            <div className="flex items-start gap-2">
+              <div className="max-h-80 max-w-none flex-1 overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-[9px] leading-tight text-white scrollbar-thin">
+                <Textarea
+                  ref={summaryInputRef}
+                  value={newSummary}
+                  onChange={(e) => setNewSummary(e.target.value)}
+                  onBlur={closeNewLogDraft}
+                  placeholder="What happened?"
+                  className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[9px] leading-tight text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[9px]"
+                  data-testid="textarea-interaction-summary"
                 />
-                Response owed
-              </label>
-              {newResponseOwed && (
-                <input
-                  type="date"
-                  value={newResponseDueBy}
-                  onChange={(e) => setNewResponseDueBy(e.target.value)}
-                  className="text-xs bg-background border rounded px-1.5 py-0.5 w-32"
-                  data-testid="input-response-due-by"
-                />
-              )}
-            </div>
-            <Textarea
-              value={newSummary}
-              onChange={(e) => setNewSummary(e.target.value)}
-              placeholder="What happened?"
-              className="min-h-[50px] resize-none text-sm"
-              data-testid="textarea-interaction-summary"
-            />
-            <div className="flex gap-1 justify-end">
-              <Button variant="ghost" size="sm" onClick={() => setEffectiveShowAdd(false)}>Cancel</Button>
-              <Button
-                size="sm"
-                onClick={() => {
-                  const data: Record<string, unknown> = { date: newDate, type: newType, summary: newSummary };
-                  if (newDirection !== "mutual") data.direction = newDirection;
-                  data.meaningfulness = newMeaningfulness;
-                  if (newResponseOwed) {
-                    data.responseOwed = true;
-                    if (newResponseDueBy) data.responseDueBy = newResponseDueBy;
-                  }
-                  if (newCapitalImpact !== "neutral") data.capitalImpact = newCapitalImpact;
-                  addMutation.mutate(data);
-                }}
-                disabled={!newSummary.trim() || addMutation.isPending}
-                data-testid="button-save-interaction"
-              >
-                {addMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
-                Save
-              </Button>
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+                    aria-label="Log options"
+                    data-testid="button-new-log-options"
+                  >
+                    <MoreHorizontal className="h-3 w-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56 space-y-2 p-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Type</label>
+                    <Select value={newType} onValueChange={setNewType}>
+                      <SelectTrigger data-testid="select-interaction-type" className="h-7 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="note">Note</SelectItem>
+                        <SelectItem value="call">Call</SelectItem>
+                        <SelectItem value="meeting">Meeting</SelectItem>
+                        <SelectItem value="meetup">Meetup</SelectItem>
+                        <SelectItem value="email">Email</SelectItem>
+                        <SelectItem value="text">Text</SelectItem>
+                        <SelectItem value="in_person">In Person</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Date</label>
+                    <Input
+                      type="date"
+                      value={newDate}
+                      onChange={(e) => setNewDate(e.target.value)}
+                      className="h-7 text-xs"
+                      data-testid="input-interaction-date"
+                    />
+                  </div>
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={newResponseOwed}
+                      onChange={(e) => {
+                        setNewResponseOwed(e.target.checked);
+                        if (e.target.checked && !newResponseDueBy) {
+                          const d = new Date();
+                          d.setDate(d.getDate() + 3);
+                          setNewResponseDueBy(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+                        }
+                      }}
+                      className="rounded"
+                      data-testid="checkbox-response-owed"
+                    />
+                    Follow-up
+                  </label>
+                  {newResponseOwed && (
+                    <Input
+                      type="date"
+                      value={newResponseDueBy}
+                      onChange={(e) => setNewResponseDueBy(e.target.value)}
+                      className="h-7 text-xs"
+                      data-testid="input-response-due-by"
+                    />
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </CardContent>
         </Card>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setEffectiveShowAdd(true)}
+          className="flex items-center gap-2 w-full px-2 py-1.5 text-sm text-cta hover:text-cta/80 hover:bg-accent/70 rounded-md transition-colors"
+          data-testid="button-new-log"
+        >
+          <Plus className="h-3.5 w-3.5 shrink-0" />
+          <span>New Log</span>
+        </button>
       )}
-
-      <button
-        type="button"
-        onClick={() => setEffectiveShowAdd(v => !v)}
-        className="flex items-center gap-2 w-full px-2 py-1.5 text-sm text-cta hover:text-cta/80 hover:bg-accent/70 rounded-md transition-colors"
-        data-testid="button-new-log"
-      >
-        <Plus className={cn("h-3.5 w-3.5 shrink-0 transition-transform", effectiveShowAdd && "rotate-45")} />
-        <span>New Log</span>
-      </button>
 
       {sorted.length === 0 ? (
         <p className="text-sm text-muted-foreground py-4 text-center" data-testid="text-no-interactions">
@@ -1225,7 +1224,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                           {(interaction?.capitalImpact && interaction.capitalImpact !== "neutral") || interaction?.responseOwed || interaction?.responseDueBy || interaction?.tags?.length ? (
                             <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                               {interaction?.capitalImpact && interaction.capitalImpact !== "neutral" && <span>{interaction.capitalImpact}</span>}
-                              {interaction?.responseOwed && <span className="text-foreground">response owed</span>}
+                              {interaction?.responseOwed && <span className="text-foreground">follow-up</span>}
                               {interaction?.responseDueBy && <span>due {formatShortDate(interaction.responseDueBy)}</span>}
                               {interaction?.tags?.map((tag) => <span key={tag}>{tag}</span>)}
                             </div>
@@ -1293,6 +1292,12 @@ function DatesTab({ person, onUpdate }: { person: Person; onUpdate: () => void }
   const [newDate, setNewDate] = useState("");
   const [newRecurrence, setNewRecurrence] = useState<"annual" | "one-time">("annual");
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; label: string } | null>(null);
+
+  const summaryInputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (effectiveShowAdd) summaryInputRef.current?.focus();
+  }, [effectiveShowAdd]);
 
   const addMutation = useMutation({
     mutationFn: async (data: { label: string; date: string; recurrence: "annual" | "one-time" }) => {

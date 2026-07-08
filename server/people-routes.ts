@@ -374,7 +374,7 @@ export function registerPeopleRoutes(app: Express, peopleStorage: PeopleStorage)
       if (!summary || typeof summary !== "string") {
         return res.status(400).json({ error: "summary is required" });
       }
-      const validTypes = ["message", "call", "meeting", "email", "note", "text", "in_person", "video", "social", "gift", "introduction", "favor", "support"];
+      const validTypes = ["message", "call", "meeting", "meetup", "email", "note", "text", "in_person", "video", "social", "gift", "introduction", "favor", "support"];
       if (!validTypes.includes(type)) {
         return res.status(400).json({ error: `type must be one of: ${validTypes.join(", ")}` });
       }
@@ -413,7 +413,7 @@ export function registerPeopleRoutes(app: Express, peopleStorage: PeopleStorage)
       if (summary !== undefined) updates.summary = summary;
       if (context !== undefined) updates.context = context;
       if (type !== undefined) {
-        const validTypes = ["message", "call", "meeting", "email", "note", "text", "in_person", "video", "social", "gift", "introduction", "favor", "support"];
+        const validTypes = ["message", "call", "meeting", "meetup", "email", "note", "text", "in_person", "video", "social", "gift", "introduction", "favor", "support"];
         if (!validTypes.includes(type)) {
           return res.status(400).json({ error: `type must be one of: ${validTypes.join(", ")}` });
         }
