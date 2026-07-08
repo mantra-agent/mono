@@ -64,7 +64,7 @@ const SEED_PERSONAS = [
   {
     name: "Default",
     description:
-      "Standard xyz configuration — balanced across all cognitive dimensions.",
+      "Standard Agent configuration — balanced across all cognitive dimensions.",
     icon: "User",
     promptOverlay: [
       "You are in your standard configuration — balanced, adaptive, present.",

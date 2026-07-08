@@ -624,7 +624,7 @@ function NoAccountsCta() {
       <Mail className="h-12 w-12 text-muted-foreground/30 mb-4" />
       <h3 className="text-lg font-medium mb-2">No Gmail accounts connected</h3>
       <p className="text-sm text-muted-foreground mb-4 max-w-sm">
-        Connect a Gmail account to see your inbox here. xyz can triage and draft replies for you.
+        Connect a Gmail account to see your inbox here. Agent can triage and draft replies for you.
       </p>
       <Button
         variant="default"

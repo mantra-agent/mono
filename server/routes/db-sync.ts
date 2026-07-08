@@ -782,7 +782,7 @@ const startBodySchema = z.object({
 });
 
 // Railway secrets are sometimes set without a scheme (e.g. just
-// "xyz-production-5cad.up.railway.app"), which makes fetch() throw
+// legacy production host), which makes fetch() throw
 // "Failed to parse URL". Normalize: prepend https:// when the value
 // lacks a scheme, strip trailing slashes.
 function normalizeTargetBaseUrl(raw: string | undefined): string | undefined {

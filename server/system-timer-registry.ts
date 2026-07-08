@@ -439,7 +439,7 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     systemKey: "weekly-ideas",
     name: "Weekly Ideas",
     description:
-      "Fire the ideate skill once a week. Top 3 ideas to make xyz, Ray, or the collaboration better. Research-backed, context-grounded.",
+      "Fire the ideate skill once a week. Top 3 ideas to make Agent, Ray, or the collaboration better. Research-backed, context-grounded.",
     type: "skill",
     skillId: "ideate",
     prompt: "",

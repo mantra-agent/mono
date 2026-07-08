@@ -627,7 +627,7 @@ function PronunciationSection() {
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-xs text-muted-foreground" data-testid="text-pronunciation-note">
-          Teach xyz how to pronounce names, brands, and terms. Entries are case-sensitive — add separate entries for different capitalizations if needed (e.g. "nginx" and "Nginx").
+          Teach Agent how to pronounce names, brands, and terms. Entries are case-sensitive — add separate entries for different capitalizations if needed (e.g. "nginx" and "Nginx").
         </p>
 
         {isLoading ? (
@@ -639,7 +639,7 @@ function PronunciationSection() {
           <div className="flex flex-col items-center gap-2 py-4 text-center">
             <Volume2 className="h-5 w-5 text-muted-foreground" />
             <p className="text-sm text-muted-foreground" data-testid="text-pronunciation-empty">
-              No pronunciation entries yet. Add one below to teach xyz how to say a word.
+              No pronunciation entries yet. Add one below to teach Agent how to say a word.
             </p>
           </div>
         ) : (
@@ -860,7 +860,7 @@ function InstantVoiceCloneWizard() {
       form.append("name", voiceName.trim());
       form.append("consent", String(consent));
       form.append("removeBackgroundNoise", String(removeBackgroundNoise));
-      form.append("description", "Created from xyz Integrations Instant Voice Clone wizard for Magic Demo FTUE validation.");
+      form.append("description", "Created from Mantra Integrations Instant Voice Clone wizard for Magic Demo FTUE validation.");
       samples.forEach((sample, index) => {
         form.append("samples", sample.blob, `ivc-sample-${index + 1}.webm`);
       });
@@ -936,7 +936,7 @@ function InstantVoiceCloneWizard() {
           <DialogHeader>
             <DialogTitle>Instant Voice Clone Wizard</DialogTitle>
             <DialogDescription>
-              Consent-first prototype for validating ElevenLabs IVC latency, quality, and FTUE viability. Raw samples are uploaded to xyz, forwarded to ElevenLabs, then discarded by this server.
+              Consent-first prototype for validating ElevenLabs IVC latency, quality, and FTUE viability. Raw samples are uploaded to Mantra, forwarded to ElevenLabs, then discarded by this server.
             </DialogDescription>
           </DialogHeader>
 

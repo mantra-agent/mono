@@ -63,7 +63,7 @@ function resolveBackendUrl(): string {
   const constants = getConfigConstants();
   const extra = getConstantsExtra(constants);
   const configured = typeof extra?.apiUrl === 'string' ? extra.apiUrl : null;
-  backendUrl = configured || (__DEV__ ? 'http://localhost:5000' : 'https://xyz-production.up.railway.app');
+  backendUrl = configured || (__DEV__ ? 'http://localhost:5000' : 'https://mono-prod-8d22.up.railway.app');
   return backendUrl;
 }
 

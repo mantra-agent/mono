@@ -79,8 +79,8 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     },
   },
   code: {
-    description: "Query and navigate the xyz codebase knowledge graph — search by concept, inspect symbols, analyze impact, trace execution flows, and run Cypher queries. Actions: query, context, impact, changes, architecture, modules, flows, rename, schema, cypher.",
-    whenToUse: "When you need to understand, navigate, or modify the xyz codebase. Use query to find implementations, context to understand how a symbol fits, impact to assess change blast radius, and architecture for a high-level overview.",
+    description: "Query and navigate the selected Platform codebase knowledge graph — search by concept, inspect symbols, analyze impact, trace execution flows, and run Cypher queries. Actions: query, context, impact, changes, architecture, modules, flows, rename, schema, cypher.",
+    whenToUse: "When you need to understand, navigate, or modify the selected Platform codebase. Use query to find implementations, context to understand how a symbol fits, impact to assess change blast radius, and architecture for a high-level overview.",
     example: 'Search: { "action": "query", "query": "authentication middleware" }\nSymbol context: { "action": "context", "name": "executeTool" }\nImpact: { "action": "impact", "target": "executeTool", "direction": "upstream" }',
     actions: {
       query: { description: "Search the codebase knowledge graph by concept or execution flow. Returns matched processes, clusters, and symbols using BM25 + graph traversal.", requiredParams: ["query"], optionalParams: ["goal", "task_context", "limit", "max_symbols", "include_content"] },
@@ -198,18 +198,18 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: '{ "action": "list" }',
   },
   introspection: {
-    description: "Introspect xyz's skill configurations and past LLM inference calls. Actions: list_skills, get_skill, list_inference_calls, get_inference_call.",
-    whenToUse: "When xyz needs to review its own skills, examine past LLM call patterns, or debug skill behavior.",
+    description: "Introspect Agent's skill configurations and past LLM inference calls. Actions: list_skills, get_skill, list_inference_calls, get_inference_call.",
+    whenToUse: "When Agent needs to review its own skills, examine past LLM call patterns, or debug skill behavior.",
     example: '{ "action": "get_skill", "id": "myelination-summarize" }',
   },
   skills: {
-    description: "Manage xyz's skill library — reusable instruction sets. Actions: list, get, create, update, delete, search.",
-    whenToUse: "When xyz needs to create, review, or modify its own reusable skills.",
+    description: "Manage Agent's skill library — reusable instruction sets. Actions: list, get, create, update, delete, search.",
+    whenToUse: "When Agent needs to create, review, or modify its own reusable skills.",
     example: '{ "action": "create", "name": "my-analysis", "process": "...", "description": "Custom analysis" }',
   },
   beliefs: {
-    description: "Manage xyz's belief system — claims about the world, user, or self with confidence scores. Actions: list, get, save, create, update, invalidate.",
-    whenToUse: "When xyz forms or updates beliefs based on observations, conversations, or reflections.",
+    description: "Manage Agent's belief system — claims about the world, user, or self with confidence scores. Actions: list, get, save, create, update, invalidate.",
+    whenToUse: "When Agent forms or updates beliefs based on observations, conversations, or reflections.",
     example: '{ "action": "create", "claim": "User prefers morning meetings", "domain": "scheduling", "confidence": 0.6 }',
   },
   shell: {

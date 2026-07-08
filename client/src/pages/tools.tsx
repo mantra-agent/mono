@@ -189,9 +189,9 @@ export default function ToolsPage({ embedded }: { embedded?: boolean }) {
               <Wrench className="h-12 w-12 text-muted-foreground/20" />
               <Sparkles className="h-5 w-5 text-chart-4 absolute -top-1 -right-1" />
             </div>
-            <p className="text-sm font-medium mb-1" data-testid="text-tools-empty">xyz's toolbox is empty</p>
+            <p className="text-sm font-medium mb-1" data-testid="text-tools-empty">Agent's toolbox is empty</p>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              Tools appear here as xyz discovers and uses them during sessions. Start a chat to see the toolbox come alive.
+              Tools appear here as Agent discovers and uses them during sessions. Start a chat to see the toolbox come alive.
             </p>
           </div>
         ) : (

@@ -1143,7 +1143,7 @@ async function runSkillPipeline(
 
     if (config.postRunVerify) {
       if (isAgentType(config.sessionType)) {
-        logger.log(`[SkillChat] [${sessionId}] Deferring postRunVerify for xyz session — will run when session completes`);
+        logger.log(`[SkillChat] [${sessionId}] Deferring postRunVerify for Agent session — will run when session completes`);
         deferredPostRunVerify.set(sessionId, { toolCalls: toolCallLog, verifyFn: config.postRunVerify });
       } else {
         try {

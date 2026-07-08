@@ -250,7 +250,7 @@ export async function getAlerts(args: Record<string, any>): Promise<string> {
   if (cached) return cached;
 
   const pointUrl = `https://api.weather.gov/points/${loc.lat.toFixed(4)},${loc.lon.toFixed(4)}`;
-  const pointRes = await fetch(pointUrl, { headers: { "User-Agent": "(xyz-weather, contact@example.com)" } });
+  const pointRes = await fetch(pointUrl, { headers: { "User-Agent": "(mantra-weather, contact@example.com)" } });
   if (!pointRes.ok) {
     return `Unable to fetch NWS data for ${loc.label}. The NWS API may be temporarily unavailable.`;
   }
@@ -261,7 +261,7 @@ export async function getAlerts(args: Record<string, any>): Promise<string> {
   }
 
   const alertUrl = `https://api.weather.gov/alerts/active?zone=${zoneId}`;
-  const alertRes = await fetch(alertUrl, { headers: { "User-Agent": "(xyz-weather, contact@example.com)" } });
+  const alertRes = await fetch(alertUrl, { headers: { "User-Agent": "(mantra-weather, contact@example.com)" } });
   if (!alertRes.ok) {
     return `Unable to fetch alerts for ${loc.label}. The NWS API may be temporarily unavailable.`;
   }

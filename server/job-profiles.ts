@@ -90,7 +90,7 @@ export const TIER_META: TierMeta[] = [
 ];
 
 export const ACTIVITY_META: ActivityMeta[] = [
-  { id: ACTIVITY_CHAT, label: "Communication", description: "Conversations with xyz" },
+  { id: ACTIVITY_CHAT, label: "Communication", description: "Conversations with Agent" },
   { id: ACTIVITY_WORK, label: "Work", description: "Complex reasoning and code generation" },
   { id: ACTIVITY_RECALL, label: "Recall", description: "Agenda preparation before voice sessions" },
   { id: ACTIVITY_FRAMING, label: "Framing", description: "Titles, summaries, classification" },

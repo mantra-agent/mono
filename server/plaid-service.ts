@@ -160,7 +160,7 @@ export async function createLinkToken(): Promise<{ linkToken: string }> {
 
   const response = await client.linkTokenCreate({
     user: { client_user_id: "xyz-user-1" },
-    client_name: "xyz Finance",
+    client_name: "Mantra Finance",
     products: [Products.Transactions],
     additional_consented_products: [Products.Investments, Products.Liabilities],
     country_codes: [CountryCode.Us],

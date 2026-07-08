@@ -57,8 +57,8 @@ async function createDictionary(entries: PronunciationEntry[]): Promise<Pronunci
     method: "POST",
     headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({
-      name: "xyz Pronunciation",
-      description: "User-managed pronunciation corrections for xyz voice",
+      name: "Agent Pronunciation",
+      description: "User-managed pronunciation corrections for Agent voice",
       rules,
     }),
   });

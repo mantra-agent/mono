@@ -953,7 +953,7 @@ export function RailwaySetupTab({ children }: { children?: ReactNode }) {
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-xs text-muted-foreground">
-            Required for the Publish tab. Point xyz at the Railway environment + service that
+            Required for the Publish tab. Point Mantra at the Railway environment + service that
             tracks your <code>live</code> branch, and tell it which URL to health-check after
             promotion.
           </p>

@@ -1018,7 +1018,7 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
           if (stalePR) {
             await closePR(repo, stalePR.number, {
               comment:
-                "Superseded by direct fast-forward via xyz Publish — `live` is now updated by ref-update, not by squash-merging this PR.",
+                "Superseded by direct fast-forward via Mantra Publish — `live` is now updated by ref-update, not by squash-merging this PR.",
             });
             appendLog(
               run,
@@ -1423,7 +1423,7 @@ async function healthCheck(
       try {
         const res = await fetch(url, {
           method: "GET",
-          headers: { "User-Agent": "xyz-Publish-HealthCheck" },
+          headers: { "User-Agent": "Mantra-Publish-HealthCheck" },
           signal,
         });
         if (res.status >= 200 && res.status < 300) {

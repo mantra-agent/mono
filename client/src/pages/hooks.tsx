@@ -899,7 +899,7 @@ export default function HooksPage({ embedded }: { embedded?: boolean }) {
               No hooks configured yet.
             </p>
             <p className="text-xs text-muted-foreground/60 mt-2 max-w-md">
-              Hooks let xyz react autonomously to system events — like running a skill when email
+              Hooks let Agent react autonomously to system events — like running a skill when email
               triage completes, or starting a conversation when a timer fails. Create your first
               hook to get started.
             </p>

@@ -481,7 +481,7 @@ Supported reference examples:
 - `@task:456`
 - `@project:789`
 - `@page:design`
-- `@pr:xyz/1928`
+- `@pr:mantra-agent/mono/1928`
 
 #### Reference rules
 

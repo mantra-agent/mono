@@ -6764,7 +6764,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           // Pull failure context (endReason + last crash/error snippet) from
           // the chat session for each run. skill_runs has no dedicated error
           // column — the dashboard surfaces this by reading the underlying
-          // session, so we mirror that here for xyz.
+          // session, so we mirror that here for Agent.
           const { chatFileStorage } = await import("./chat-file-storage");
           const enriched = await Promise.all(runs.map(async (r) => {
             let endReason: string | undefined;
@@ -10124,7 +10124,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         if (!page) return { result: `Library page "${id}" not found.` };
         const annotations = await db.select().from(libraryAnnotations).where(eq(libraryAnnotations.pageId, page.id));
         const annotationText = annotations.length > 0
-          ? `\n\n**xyz Annotations:**\n${annotations.map(a => `- [${a.annotationType}] ${a.content}`).join("\n")}`
+          ? `\n\n**Agent Annotations:**\n${annotations.map(a => `- [${a.annotationType}] ${a.content}`).join("\n")}`
           : "";
         const statusLine = page.status ? `\n**Status:** ${page.status}` : "";
         const surfaceLine = page.surface && page.surfaceUntil ? `\n**Surfaced Until:** ${page.surfaceUntil instanceof Date ? page.surfaceUntil.toISOString() : page.surfaceUntil}` : "";

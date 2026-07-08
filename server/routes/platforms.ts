@@ -90,11 +90,11 @@ function inferredEnvironmentConfig(environmentName: string) {
     hosting: {
       provider: "railway",
       projectId: getSecretSync("RAILWAY_PROJECT_ID") || process.env.RAILWAY_PROJECT_ID || "",
-      projectName: process.env.RAILWAY_PROJECT_NAME || "xyz",
+      projectName: process.env.RAILWAY_PROJECT_NAME || "mantra",
       providerEnvironmentId: environmentIdKey ? getSecretSync(environmentIdKey) || process.env[environmentIdKey] || "" : "",
       providerEnvironmentName: environmentKind(environmentName),
       serviceId: serviceIdKey ? getSecretSync(serviceIdKey) || process.env[serviceIdKey] || "" : "",
-      serviceName: process.env.RAILWAY_SERVICE_NAME || "xyz",
+      serviceName: process.env.RAILWAY_SERVICE_NAME || "mantra",
       publicUrl: urlKey ? getSecretSync(urlKey) || process.env[urlKey] || "" : "",
       staticUrl: process.env.RAILWAY_STATIC_URL || "",
       inferred: true,

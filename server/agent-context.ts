@@ -446,7 +446,7 @@ export async function assembleContext(options: {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.warn(`ContextBuilder degraded to minimal fallback reason=${isTimeoutError(err) ? "timeout" : "failure"} timeoutMs=${CONTEXT_ASSEMBLY_TIMEOUT_MS}: ${msg}`);
-    spinePrompt = `You are xyz.\n\nCurrent time: ${getLocalTimeString()}`;
+    spinePrompt = `You are Agent.\n\nCurrent time: ${getLocalTimeString()}`;
   }
 
   let systemPrompt = buildSystemPromptFromSpine(spinePrompt);

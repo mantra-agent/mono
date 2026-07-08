@@ -35,7 +35,7 @@ export async function registerSetupRoutes(app: Express) {
         await executorManager.stop();
       }
       await executorManager.resetConfig();
-      res.json({ message: "Setup has been reset. You can now reconfigure xyz." });
+      res.json({ message: "Setup has been reset. You can now reconfigure Mantra." });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

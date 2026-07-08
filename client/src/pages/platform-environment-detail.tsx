@@ -241,7 +241,7 @@ function DevelopmentPipelineCard() {
     return (
       <ConfigCard title="Development" description="Stage deployment status is unavailable.">
         <div className="flex items-center justify-between gap-3 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
-          <span>Couldn't reach xyz's Railway proxy: {(error as Error)?.message ?? "unknown error"}</span>
+          <span>Couldn't reach Mantra's Railway proxy: {(error as Error)?.message ?? "unknown error"}</span>
           <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching}>
             {isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Retry"}
           </Button>
@@ -975,11 +975,11 @@ function HostingBindingCard({
         ) : (
           <>
             <EditableRow label="Project ID" value={draft.projectId} onChange={(v) => setDraft((d) => ({ ...d, projectId: v }))} mono placeholder="Railway project UUID" />
-            <EditableRow label="Project name" value={draft.projectName} onChange={(v) => setDraft((d) => ({ ...d, projectName: v }))} placeholder="e.g. xyz" />
+            <EditableRow label="Project name" value={draft.projectName} onChange={(v) => setDraft((d) => ({ ...d, projectName: v }))} placeholder="e.g. mantra" />
             <EditableRow label="Env ID" value={draft.providerEnvironmentId} onChange={(v) => setDraft((d) => ({ ...d, providerEnvironmentId: v }))} mono placeholder="Railway environment UUID" />
             <EditableRow label="Env name" value={draft.providerEnvironmentName} onChange={(v) => setDraft((d) => ({ ...d, providerEnvironmentName: v }))} placeholder="e.g. production" />
             <EditableRow label="Service ID" value={draft.serviceId} onChange={(v) => setDraft((d) => ({ ...d, serviceId: v }))} mono placeholder="Railway service UUID" />
-            <EditableRow label="Service name" value={draft.serviceName} onChange={(v) => setDraft((d) => ({ ...d, serviceName: v }))} placeholder="e.g. xyz-prod" />
+            <EditableRow label="Service name" value={draft.serviceName} onChange={(v) => setDraft((d) => ({ ...d, serviceName: v }))} placeholder="e.g. mono-prod" />
           </>
         )}
         <EditableRow label="Public URL" value={draft.publicUrl} onChange={(v) => setDraft((d) => ({ ...d, publicUrl: v }))} mono placeholder="https://..." />

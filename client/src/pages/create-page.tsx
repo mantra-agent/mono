@@ -710,7 +710,7 @@ function ContentTab() {
           <AlertDialogHeader>
             <AlertDialogTitle>Reject Post</AlertDialogTitle>
             <AlertDialogDescription>
-              Provide an optional reason so xyz can improve future drafts.
+              Provide an optional reason so Agent can improve future drafts.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <Textarea
@@ -938,7 +938,7 @@ function EmptyState({ onNewPost }: { onNewPost: () => void }) {
       </div>
       <h3 className="text-lg font-semibold mb-2">Your content pipeline is ready</h3>
       <p className="text-sm text-muted-foreground max-w-md mb-6">
-        xyz drafts posts from your manifesto and voice standard. They queue here for your review. Approve with a single click, and they publish automatically at optimal times.
+        Agent drafts posts from your manifesto and voice standard. They queue here for your review. Approve with a single click, and they publish automatically at optimal times.
       </p>
       <div className="flex gap-3">
         <Button onClick={onNewPost} data-testid="button-create-first-post">
@@ -946,7 +946,7 @@ function EmptyState({ onNewPost }: { onNewPost: () => void }) {
         </Button>
       </div>
       <p className="text-xs text-muted-foreground mt-4">
-        Or ask xyz to draft posts from your manifesto
+        Or ask Agent to draft posts from your manifesto
       </p>
     </div>
   );

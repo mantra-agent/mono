@@ -780,7 +780,7 @@ export default function Performance({ embedded }: { embedded?: boolean }) {
         <CardContent>
           {chartData.length === 0 ? (
             <div className="flex items-center justify-center h-[200px] text-sm text-muted-foreground">
-              No data yet. Start chatting with xyz to see usage stats.
+              No data yet. Start chatting with Agent to see usage stats.
             </div>
           ) : (
             <>
@@ -967,7 +967,7 @@ export default function Performance({ embedded }: { embedded?: boolean }) {
                 </div>
               ) : calls.length === 0 ? (
                 <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
-                  No API calls recorded yet. Chat with xyz to generate activity.
+                  No API calls recorded yet. Chat with Agent to generate activity.
                 </div>
               ) : (
                 <>
