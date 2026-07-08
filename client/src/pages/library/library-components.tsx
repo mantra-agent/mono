@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { RichTextEditor, type RichTextEditorHandle } from "@/components/rich-text-editor";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -57,35 +58,26 @@ function LinkedSessions({ slug }: { slug: string }) {
   if (!sessions?.length) return null;
 
   return (
-    <div className="px-3 pt-1 flex flex-wrap gap-2">
-      {sessions.map((s) => {
-        const relative = formatRelativeTime(s.createdAt);
-        return (
-          <a
-            key={`${s.sessionId}-${s.createdAt}`}
-            href={`/session?c=${encodeURIComponent(s.sessionId)}`}
-            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            {s.title || "Untitled"} · {relative}
-          </a>
-        );
-      })}
+    <div className="border-t border-border/60 px-10 py-3 space-y-1.5" data-testid="linked-page-sessions">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Linked sessions</div>
+      <div className="space-y-1">
+        {sessions.map((s) => (
+          <div key={`${s.sessionId}-${s.createdAt}`} className="flex min-w-0 items-center" data-testid={`linked-session-${s.sessionId}`}>
+            <ReferenceRenderer
+              refValue={{
+                type: "session",
+                id: s.sessionId,
+                canonical: `@session:${s.sessionId}`,
+                metadata: { label: s.title || "Untitled", href: `/session?c=${encodeURIComponent(s.sessionId)}` },
+              }}
+              surface="chat-inline"
+              className="max-w-full"
+            />
+          </div>
+        ))}
+      </div>
     </div>
   );
-}
-
-function formatRelativeTime(dateStr: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diffMs = now - then;
-  const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString();
 }
 
 interface LibraryPageEditorProps {
@@ -104,6 +96,7 @@ export function LibraryPageEditor({
   const [specPickerQuery, setSpecPickerQuery] = useState("");
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
+  const [bodyFocused, setBodyFocused] = useState(false);
 
   const selectedPageContent = useMemo((): JSONContent | null => {
     const rawContent = selectedPage.content;
@@ -182,11 +175,10 @@ export function LibraryPageEditor({
 
   return (
     <>
-      <LinkedSessions slug={selectedPage.slug} />
-      <div className="px-3 py-3 flex items-center gap-2">
+      <div className="px-10 py-4 flex items-start gap-3">
         <Popover open={emojiPickerOpen} onOpenChange={setEmojiPickerOpen}>
           <PopoverTrigger asChild>
-            <button className="shrink-0 h-7 w-7 flex items-center justify-center rounded hover:bg-accent transition-colors" data-testid="button-emoji-picker" title="Set page icon">
+            <button className="mt-1 shrink-0 h-8 w-8 flex items-center justify-center rounded hover:bg-accent transition-colors" data-testid="button-emoji-picker" title="Set page icon">
               <PageEmoji emoji={selectedPage.emoji} size="md" />
             </button>
           </PopoverTrigger>
@@ -199,9 +191,8 @@ export function LibraryPageEditor({
             )}
           </PopoverContent>
         </Popover>
-        <Input ref={titleInputRef} value={editTitle} onChange={(e) => handleTitleChange(e.target.value)} placeholder="New page" className="flex-1 h-8 text-sm font-medium border-none shadow-none focus-visible:ring-0 p-0 bg-transparent placeholder:text-muted-foreground" data-testid="input-library-title" />
-        <div className="flex items-center gap-1.5 shrink-0">
-          {isDirty && <span className="text-xs text-muted-foreground">unsaved</span>}
+        <Input ref={titleInputRef} value={editTitle} onChange={(e) => handleTitleChange(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); editorRef.current?.focus(); } }} placeholder="New page" className="flex-1 h-auto min-h-12 text-4xl font-semibold tracking-tight border-none shadow-none focus-visible:ring-0 p-0 bg-transparent placeholder:text-muted-foreground" data-testid="input-library-title" />
+        <div className={cn("flex items-center gap-1.5 shrink-0", bodyFocused && "invisible pointer-events-none")}>
           {saveMutation.isPending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
@@ -229,8 +220,9 @@ export function LibraryPageEditor({
           </DropdownMenu>
         </div>
       </div>
-      <div className="flex-1 flex overflow-hidden">
-        <RichTextEditor ref={editorRef} key={selectedId} value={editContent} onChange={handleContentChange} placeholder="Write your page content here..." className="flex-1 overflow-hidden" data-testid="editor-library-content" onInsertLink={() => { setSpecPickerQuery(""); setSpecPickerOpen(true); }} plainTextFallback={selectedPage.plainTextContent || ""} />
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <RichTextEditor ref={editorRef} key={selectedId} value={editContent} onChange={handleContentChange} placeholder="Write your page content here..." className="flex-1 overflow-hidden" data-testid="editor-library-content" onInsertLink={() => { setSpecPickerQuery(""); setSpecPickerOpen(true); }} plainTextFallback={selectedPage.plainTextContent || ""} onFocusChange={setBodyFocused} />
+        <LinkedSessions slug={selectedPage.slug} />
       </div>
       <PageLinkPickerDialog open={specPickerOpen} onOpenChange={setSpecPickerOpen} query={specPickerQuery} onQueryChange={setSpecPickerQuery} pages={pages} editorRef={editorRef} />
       <PageDetailsDialog open={detailsDialogOpen} onOpenChange={setDetailsDialogOpen} page={selectedPage} pages={pages} />
