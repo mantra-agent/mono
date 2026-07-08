@@ -186,6 +186,8 @@ export async function linkTask(
       priorityTitle: priorityTitle ?? null,
       taskTitle: taskTitle ?? null,
       estimateHours: estimateHours ?? null,
+      createdAt: sql`CURRENT_TIMESTAMP`,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
       ...sensitiveOwnershipValues(),
     })
     .onConflictDoUpdate({
@@ -253,6 +255,8 @@ export async function linkArtifact(
       artifactKind,
       title: title ?? null,
       source: source ?? null,
+      createdAt: sql`CURRENT_TIMESTAMP`,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
       ...sensitiveOwnershipValues(),
     })
     .onConflictDoUpdate({
@@ -325,7 +329,7 @@ export async function autoLinkPeople(metadataId: number, attendeeEmails: string[
     try {
       const rows = await db
         .insert(calendarEventPeople)
-        .values({ metadataId, personId: person.id, personName: person.name, attendeeEmail: matchedEmail, ...sensitiveOwnershipValues() })
+        .values({ metadataId, personId: person.id, personName: person.name, attendeeEmail: matchedEmail, createdAt: sql`CURRENT_TIMESTAMP`, updatedAt: sql`CURRENT_TIMESTAMP`, ...sensitiveOwnershipValues() })
         .onConflictDoNothing()
         .returning();
       if (rows[0]) linked.push(rows[0]);
