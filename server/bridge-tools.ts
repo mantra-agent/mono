@@ -3915,10 +3915,10 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     if (!description) return { result: "Missing task description", error: true };
 
     const owner = args.owner === "xyz" ? "agent" : (args.owner || "me");
-    const milestoneId = args.milestoneId ?? null;
-    if (milestoneId == null) {
+    const milestoneId = typeof args.milestoneId === "number" ? args.milestoneId : Number(args.milestoneId);
+    if (!Number.isInteger(milestoneId) || milestoneId <= 0) {
       return {
-        result: "Missing milestoneId. Every new task must be assigned to a milestone. If the right milestone is unclear, ask Ray which milestone it belongs under before creating the task.",
+        result: "Missing milestoneId. Every new task must be assigned to a real milestone. If the right milestone is unclear, ask Ray which milestone it belongs under before creating the task.",
         error: true,
       };
     }
