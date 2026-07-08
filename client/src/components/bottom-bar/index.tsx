@@ -617,10 +617,9 @@ export function BottomBar({
       return;
     }
 
-    const text = e.clipboardData?.getData("text/plain");
-    if (!text) return;
-    e.preventDefault();
-    document.execCommand("insertText", false, text);
+    // Text paste is owned by EditableReferenceInput so pasted text goes through
+    // the same canonical mutation path as typed text. Do not use execCommand
+    // here; it mutates the contenteditable DOM behind React and corrupts state.
   }, [addFiles]);
 
   const removeFile = useCallback((index: number) => {
