@@ -7050,8 +7050,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const maxTokens = Math.max(1, Math.min(parseInt(args.maxTokens) || 1200, 4000));
           const temperatureRaw = typeof args.temperature === "number" ? args.temperature : parseFloat(args.temperature);
           const temperature = Number.isFinite(temperatureRaw) ? Math.max(0, Math.min(temperatureRaw, 1)) : 0.2;
-          const profile = String(args.profile || "chat");
-          const activity = args.activityId ? String(args.activityId) as ActivityId : resolveRouterActivity(profile);
+          const requestedProfile = String(args.profile || "chat");
+          const activity = args.activityId ? String(args.activityId) as ActivityId : resolveRouterActivity(requestedProfile);
           const sessionKey = `router_eval:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
 
           const { chatCompletion } = await import("./model-client");
@@ -7090,7 +7090,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             result: JSON.stringify({
               provider: result.provider,
               model: result.model,
-              profile,
+              requestedProfile,
+              resolvedProfile: result.metadata?.routing?.tier ?? audit?.profile ?? null,
+              auditProfile: audit?.profile ?? null,
               activity,
               inputTokens: result.usage?.promptTokens ?? null,
               outputTokens: result.usage?.completionTokens ?? null,

@@ -1073,7 +1073,7 @@ export const TOOLS: Record<string, ToolMeta> = {
       properties: {
         action: { type: "string", enum: ["eval", "list_inference_calls", "get_inference_call"], description: "eval: run an arbitrary prompt through the production model router without writing app state. list_inference_calls/get_inference_call inspect audited model calls." },
         id: { type: "string", description: "Inference call ID (for get_inference_call)" },
-        profile: { type: "string", description: "For eval: routing profile alias such as memory, chat, reasoning, cheap, work. For list: filter by recorded profile/tier." },
+        profile: { type: "string", description: "For eval: requested routing profile alias such as memory, chat, reasoning, cheap, work. router.eval returns this as requestedProfile and also returns the resolved/audit tier. For list: filter by recorded profile/tier." },
         activityId: { type: "string", description: "Optional explicit activity ID for router.eval. Overrides profile alias while still using production routing." },
         systemPrompt: { type: "string", description: "System prompt for eval." },
         userPrompt: { type: "string", description: "User prompt/source text for eval." },
