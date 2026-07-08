@@ -1,5 +1,5 @@
 import { parseReferenceText } from "@shared/reference-parser";
-import { ReferenceRenderer } from "./reference-renderer";
+import { ReferenceRenderer, type ReferenceSurface } from "./reference-renderer";
 
 /**
  * Renders text containing `@type:id` handles as inline reference chips
@@ -9,9 +9,11 @@ import { ReferenceRenderer } from "./reference-renderer";
 export function InlineReferenceText({
   text,
   className,
+  surface = "chat-inline",
 }: {
   text: string;
   className?: string;
+  surface?: ReferenceSurface;
 }) {
   const parts = parseReferenceText(text);
 
@@ -28,7 +30,7 @@ export function InlineReferenceText({
           <ReferenceRenderer
             key={i}
             refValue={part.ref}
-            surface="chat-inline"
+            surface={surface}
           />
         ),
       )}

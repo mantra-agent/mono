@@ -40,6 +40,7 @@ export interface SessionTranscriptSurfaceProps {
   onUserScrollIntent: React.UIEventHandler<HTMLDivElement>;
   className?: string;
   listClassName?: string;
+  compactReferences?: boolean;
 }
 
 const TERMINAL_PLAN_STATUSES = new Set(["completed", "completed_with_failures", "failed", "aborted"]);
@@ -73,6 +74,7 @@ export function SessionTranscriptSurface({
   onUserScrollIntent,
   className,
   listClassName,
+  compactReferences = false,
 }: SessionTranscriptSurfaceProps) {
   const showPlan = !!plan && !TERMINAL_PLAN_STATUSES.has(plan.status);
   const showWorkflow = !!workflow && !TERMINAL_WORKFLOW_STATUSES.has(workflow.run.status);
@@ -119,6 +121,7 @@ export function SessionTranscriptSurface({
             optimisticUserTurn={optimisticUserTurn}
             liveStreamRenderId={liveStreamRenderId}
             sessionStreams={sessionStreams}
+            compactReferences={compactReferences}
           />
         </div>
       </div>
