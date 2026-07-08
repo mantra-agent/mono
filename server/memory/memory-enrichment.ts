@@ -354,56 +354,41 @@ async function progressiveSummarize(
   return result;
 }
 
-// --- Standalone claim extraction for individual chunks ---
+// --- vNext claim extraction prompt and parsing ---
 
-const CHUNK_CLAIM_EXTRACTION_PROMPT = `You are extracting a causal subgraph of claims from a section of a larger document.
+const VNEXT_CLAIM_EXTRACTION_PROMPT = `You extract durable vNext memory claims. You are not summarizing.
 
-Extract 0-5 **claims** from this content. Only extract claims that are independently meaningful without the source context.
+Default to returning no claims. Most sources should produce {"claims": []}.
 
-The claim ontology is: CAUSE → ACTION → STATE
+Goal: extract only memories that improve Agent's future model of the external world: people, relationships, organizations, incentives, constraints, preferences, decisions, commitments, markets, family, money, health, time, logistics, or non-obvious causal dynamics outside the codebase.
+
+Internal system facts are usually not memory. Do not store ordinary facts about code changes, UI behavior, PRs, migrations, deploys, logs, builds, database row counts, task movement, workflow stages, or Agent's own activity. Agent can inspect code, git, logs, tools, and structured records later.
+
+Internal facts qualify only when they reveal a durable external/behavioral rule about Ray or how Agent should work with Ray.
+Good: "Ray expects Agent to verify live environment truth before claiming a production fix is complete."
+Bad: "PR #41 repaired the vNext embedding schema."
+Good: "Ray wants vNext memory to store claims that improve future modeling of people and external reality, not internal implementation summaries."
+Bad: "The Memory page has a Legacy/vNext toggle."
+
+Extract 0-3 claims. Never extract more than 3.
+
+A claim must be a standalone sentence that would change future prediction, judgment, relationship handling, prioritization, or decision-making. If the source merely says what happened, return no claims.
 
 Claim types:
-- "cause": WHY something was done — the diagnosis, pressure, invariant violation, insight, or strategic reasoning that motivated change. Causes are durable patterns and principles. Example: "Mirrored session transcripts degraded into noise at scale because they stored raw conversation without extracting independent knowledge."
-- "action": WHAT was intentionally done in response to a cause. Actions are deliberate changes, decisions, or interventions. Example: "The memory system was rebuilt from session mirroring to independent claim extraction with type, confidence, and entity links."
-- "state": A durable architectural reality or design constraint — HOW things are structured. States describe lasting design relationships and invariants, NOT current bug status, deployment state, or transient runtime conditions. Example: "Memory entries are independently extracted claims rather than mirrored session transcripts."
+- "state": durable external reality, preference, constraint, relationship, commitment, or belief.
+- "cause": why an external behavior, decision, pressure, preference, or constraint exists.
+- "action": a durable commitment or future-relevant action outside ordinary implementation bookkeeping.
 
-Every action should ideally have a cause and lead to a state. When you can identify the full chain (cause → action → state), extract all three and link them using sourceClaimIndex.
+Reject:
+- implementation summaries, UI changelog facts, git/deploy/log/build facts, migration details, runtime errors, temporary status, row counts, task/project status snapshots, and "Agent did X" facts
+- facts already better represented in code, git, logs, database records, tasks, or deployment history
+- generic advice, procedural how-to, and weak restatements of the source
+- claims below 0.4 confidence
 
-For each claim:
-- Write it as a standalone sentence that would be meaningful to someone who never saw the source
-- Assign a claimType: "state", "cause", or "action"
-- Self-score confidence 0-1 (minimum 0.4 to include; omit claims below 0.4)
-- Add 1-4 semantic topics for graph traversal
-- Identify entity mentions by name and likely type (person, project, goal)
-- If this claim is caused by or motivated by another claim in THIS batch, set sourceClaimIndex to that claim's 0-based index
+For each claim, include 1-4 topics and entityMentions for named people, projects, or goals when present. entityType must be "person", "project", or "goal". If one claim is caused by another claim in this batch, set sourceClaimIndex to that claim's 0-based index; otherwise use null.
 
-Do NOT extract:
-- Facts better served by existing structured records: git history (commits, PRs, merge SHAs), database row counts or snapshots, task/project status, deployment logs. If a query against an existing system would return this fact with higher accuracy and freshness, it is not a claim — it is redundant storage.
-- Bare changelog entries ("PR X merged", "feature Y shipped", "build passed"). These belong in git and project tracking, not memory.
-- Point-in-time counts or metrics that will be stale within days (e.g., "the database contains N rows")
-- Opinions or preferences (unless they reveal durable state about a person)
-- Procedural steps or how-to instructions
-- Transient conversational context ("we discussed X")
-- Claims you are less than 0.4 confident about
-- **Self-referential operational state**: your own bugs, errors, variable-name typos, build failures, deployment status, commit hashes, uptime numbers, or internal plumbing. These are telemetry that belongs in logs, not memory. The codebase and git history are the source of truth for your own internals.
-- Operational non-events ("no emails were pending", "0 threads enriched", "enrichment processed 0 items")
-- "X is broken / still broken / was escalated" about your own systems — status updates about internal tooling are not knowledge
-- Near-duplicate restatements of the same internal issue from different angles
-
-**Key distinction**: Facts about people, relationships, decisions, market signals, external events, and conversations ARE worth remembering. Facts about your own runtime state are NOT. "Jeremie mentioned raising a seed round" is a permanent memory. "browserSession is not defined" is a log line.
-
-Before including any claim, ask: "If I encountered a similar situation in 6 months, would this claim change what I do?" If no, skip it.
-
-Prefer claims that generalize:
-- Instead of "browserSession is not defined in buildAcceptanceFailurePacket," extract "Helper functions that destructure results from a parent call must reference the parent's namespace, not assume variables are in scope" — capture the class of bug, not the instance.
-- Instead of "The workflow loops because the auth gate fails," extract "Automated verification loops need an escape hatch when the same infrastructure failure repeats, to distinguish tooling problems from code problems."
-- Causes should describe repeatable correlations or invariants, not just one bug.
-- State claims should describe durable architectural relationships or design constraints, not ephemeral snapshots or current bug status.
-
-Entity mentions are REQUIRED when the source text names specific people, projects, or goals — even if the claim itself is generalized. The claim content generalizes the principle; entityMentions tag WHO or WHAT it relates to. Example: claim "Funding conversations lose momentum if follow-up is delayed beyond one week" should still have entityMentions: [{"name": "Jeremie", "entityType": "person"}] if Jeremie was the funding contact in the source. Always extract the full first name as it appears in the source text.
-
-Respond with only valid JSON: {"claims": [...], "reasoning": "..."}
-Each claim: {"content": "...", "claimType": "state|cause|action", "confidence": 0.0-1.0, "topics": ["..."], "entityMentions": [{"name": "...", "entityType": "person|project|goal"}], "sourceClaimIndex": null}`;
+Respond with only valid JSON:
+{"claims":[{"content":"...","claimType":"state|cause|action","confidence":0.0,"topics":["..."],"entityMentions":[{"name":"...","entityType":"person|project|goal"}],"sourceClaimIndex":null}],"reasoning":"short reason, or why no claims were worth storing"}`;
 
 async function extractClaimsFromChunk(
   chunk: string,
@@ -414,7 +399,7 @@ async function extractClaimsFromChunk(
 ): Promise<ClaimCandidate[]> {
   try {
     const messages = [
-      { role: "system" as const, content: CHUNK_CLAIM_EXTRACTION_PROMPT },
+      { role: "system" as const, content: VNEXT_CLAIM_EXTRACTION_PROMPT },
       {
         role: "user" as const,
         content: `Section ${index + 1} of ${total}\nSource: ${source || "unknown"}\nTitle: ${title || "untitled"}\n\n${chunk}`,
@@ -423,96 +408,31 @@ async function extractClaimsFromChunk(
 
     const result = await chatCompletion({
       activity: ACTIVITY_MEMORY,
-      metadata: { source: "memory-consolidation", activity: ACTIVITY_MEMORY },
-      maxTokens: 1500,
+      metadata: { source: "memory-vnext-claim-extraction", activity: ACTIVITY_MEMORY },
+      maxTokens: 1200,
       messages,
-      temperature: 0.3,
+      temperature: 0.2,
       jsonMode: true,
     });
 
-    try {
-      const parsed = JSON.parse(extractJson(result.content));
-      return parseClaimsFromResponse(parsed);
-    } catch {
-      log.warn(`extractClaimsFromChunk: Failed to parse claims from chunk ${index + 1}/${total}`);
-      return [];
-    }
+    const parsed = JSON.parse(extractJson(result.content));
+    return parseClaimsFromResponse(parsed).slice(0, 3);
   } catch (err) {
-    log.error(`extractClaimsFromChunk: Chunk ${index + 1}/${total} failed:`, err);
+    log.warn(`extractClaimsFromChunk: Chunk ${index + 1}/${total} vNext claim extraction failed: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
 }
 
-/** Dedup claims across chunks by content similarity (exact substring match) */
 function deduplicateChunkClaims(allClaims: ClaimCandidate[]): ClaimCandidate[] {
   const seen: ClaimCandidate[] = [];
   for (const claim of allClaims) {
     const isDupe = seen.some(
       (s) => s.content === claim.content || s.content.includes(claim.content) || claim.content.includes(s.content),
     );
-    if (!isDupe) {
-      seen.push(claim);
-    }
+    if (!isDupe) seen.push(claim);
   }
-  // Cap at 7 total after cross-chunk dedup
-  return seen.slice(0, 7);
+  return seen.slice(0, 3);
 }
-
-// --- Claim extraction prompt and parsing ---
-
-const CLAIM_EXTRACTION_PROMPT_SUFFIX = `
-
-Additionally, extract 0-7 **claims** as a causal subgraph from this content. Most entries produce 0-3 claims. Only extract claims that are independently meaningful without the source context.
-
-The claim ontology is: CAUSE → ACTION → STATE
-
-Claim types:
-- "cause": WHY something was done — the diagnosis, pressure, invariant violation, insight, or strategic reasoning that motivated change. Causes are durable patterns and principles. Example: "Mirrored session transcripts degraded into noise at scale because they stored raw conversation without extracting independent knowledge."
-- "action": WHAT was intentionally done in response to a cause. Actions are deliberate changes, decisions, or interventions. Example: "The memory system was rebuilt from session mirroring to independent claim extraction with type, confidence, and entity links."
-- "state": A durable architectural reality or design constraint — HOW things are structured. States describe lasting design relationships and invariants, NOT current bug status, deployment state, or transient runtime conditions. Example: "Memory entries are independently extracted claims rather than mirrored session transcripts."
-
-Every action should ideally have a cause and lead to a state. When you can identify the full chain (cause → action → state), extract all three and link them using sourceClaimIndex.
-
-For each claim:
-- Write it as a standalone sentence that would be meaningful to someone who never saw the source
-- Assign a claimType: "state", "cause", or "action"
-- Self-score confidence 0-1 (minimum 0.4 to include; omit claims below 0.4)
-- Add 1-4 semantic topics for graph traversal
-- Identify entity mentions by name and likely type (person, project, goal)
-- If this claim is caused by or motivated by another claim in THIS batch, set sourceClaimIndex to that claim's 0-based index
-- Add a brief "reasoning" string explaining why you extracted these claims (for observability)
-
-Do NOT extract:
-- Facts better served by existing structured records: git history (commits, PRs, merge SHAs), database row counts or snapshots, task/project status, deployment logs. If a query against an existing system would return this fact with higher accuracy and freshness, it is not a claim — it is redundant storage.
-- Bare changelog entries ("PR X merged", "feature Y shipped", "build passed"). These belong in git and project tracking, not memory.
-- Point-in-time counts or metrics that will be stale within days (e.g., "the database contains N rows")
-- Opinions or preferences (unless they reveal durable state about a person)
-- Procedural steps or how-to instructions
-- Transient conversational context ("we discussed X")
-- Claims you are less than 0.4 confident about
-- **Self-referential operational state**: your own bugs, errors, variable-name typos, build failures, deployment status, commit hashes, uptime numbers, or internal plumbing. These are telemetry that belongs in logs, not memory. The codebase and git history are the source of truth for your own internals.
-- Operational non-events ("no emails were pending", "0 threads enriched", "enrichment processed 0 items")
-- "X is broken / still broken / was escalated" about your own systems — status updates about internal tooling are not knowledge
-- Near-duplicate restatements of the same internal issue from different angles
-
-**Key distinction**: Facts about people, relationships, decisions, market signals, external events, and conversations ARE worth remembering. Facts about your own runtime state are NOT. "Jeremie mentioned raising a seed round" is a permanent memory. "browserSession is not defined" is a log line.
-
-Before including any claim, ask: "If I encountered a similar situation in 6 months, would this claim change what I do?" If no, skip it.
-
-Prefer claims that generalize:
-- Instead of "browserSession is not defined in buildAcceptanceFailurePacket," extract "Helper functions that destructure results from a parent call must reference the parent's namespace, not assume variables are in scope" — capture the class of bug, not the instance.
-- Instead of "The workflow loops because the auth gate fails," extract "Automated verification loops need an escape hatch when the same infrastructure failure repeats, to distinguish tooling problems from code problems."
-- Causes should describe repeatable correlations or invariants, not just one bug.
-- State claims should describe durable architectural relationships or design constraints, not ephemeral snapshots or current bug status.
-
-Entity mentions are REQUIRED when the source text names specific people, projects, or goals — even if the claim itself is generalized. The claim content generalizes the principle; entityMentions tag WHO or WHAT it relates to. Example: claim "Funding conversations lose momentum if follow-up is delayed beyond one week" should still have entityMentions: [{"name": "Jeremie", "entityType": "person"}] if Jeremie was the funding contact in the source. Always extract the full first name as it appears in the source text.
-
-Include a "claims" array in your JSON response. Each claim: {"content": "...", "claimType": "state|cause|action", "confidence": 0.0-1.0, "topics": ["..."], "entityMentions": [{"name": "...", "entityType": "person|project|goal"}], "sourceClaimIndex": null}
-
-If no meaningful claims exist, return an empty claims array.
-
-Respond with only valid JSON: {"title": "...", "oneLiner": "...", "summary": "...", "tags": ["..."], "claims": [...], "reasoning": "..."}`;
-
 function parseClaimsFromResponse(parsed: Record<string, unknown>): ClaimCandidate[] {
   if (!Array.isArray(parsed.claims)) return [];
 
@@ -591,76 +511,40 @@ function parseSummarizationWithClaimsResponse(
 async function singlePassSummarizeWithClaims(
   entry: { content: string; source?: string | null; title?: string | null }
 ): Promise<EnrichmentWithClaims> {
-  let existingTagHint = "";
-  try {
-    const { tagRegistry } = await import("../file-storage/tags");
-    const existing = await tagRegistry.listTags();
-    if (existing.length > 0) {
-      const topTags = existing.slice(0, 50).map(t => t.slug);
-      existingTagHint = `\n\nExisting tags in the system (prefer reusing these when they fit): ${topTags.join(", ")}`;
-    }
-  } catch (err) { log.warn("tag hint lookup failed", err); }
-
-  const promptProcess = await getPromptModulePrompt("myelination-summarize");
-  const internalSpine = await contextBuilder.resolve({ callType: 'internal', llmMode: 'text' });
-  const internalContext = contextBuilder.renderToPrompt(internalSpine);
-
-  // Replace the JSON-only instruction line with the expanded claims version
-  const basePrompt = promptProcess.replace(
-    /Respond with only valid JSON:.*$/s,
-    ""
-  ).trim();
-  const claimAwarePrompt = basePrompt + CLAIM_EXTRACTION_PROMPT_SUFFIX;
-
-  const systemContent = buildSummarizationPrompt(existingTagHint, internalContext, claimAwarePrompt);
-
-  const summarizeMessages = [
-    { role: "system" as const, content: systemContent },
+  const messages = [
+    { role: "system" as const, content: VNEXT_CLAIM_EXTRACTION_PROMPT },
     {
       role: "user" as const,
       content: `Source: ${entry.source || "unknown"}\nTitle: ${entry.title || "untitled"}\n\n${entry.content}`,
     },
   ];
+
   const result = await chatCompletion({
     activity: ACTIVITY_MEMORY,
-    metadata: { source: "memory-consolidation", activity: ACTIVITY_MEMORY },
-    maxTokens: 3000,
-    messages: summarizeMessages,
-    temperature: 0.3,
+    metadata: { source: "memory-vnext-claim-extraction", activity: ACTIVITY_MEMORY },
+    maxTokens: 1600,
+    messages,
+    temperature: 0.2,
     jsonMode: true,
   });
 
-  const passedInTitle = (entry.title || "").trim();
-  const preferredFallbackTitle = passedInTitle || "Untitled";
+  const parsed = JSON.parse(extractJson(result.content));
+  const claims = parseClaimsFromResponse(parsed).slice(0, 3);
+  const claimReasoning = typeof parsed.reasoning === "string" ? parsed.reasoning.trim() : undefined;
+  const title = (entry.title || "Untitled").trim() || "Untitled";
 
-  const parsed = parseSummarizationWithClaimsResponse(result.content, preferredFallbackTitle);
-
-  // Validate summary quality (same as singlePassSummarize)
-  const validation = validateSummary(parsed.summary, entry.content.length);
-  if (!validation.valid) {
-    emitLog("myelination.summarize.failed", {
-      entryTitle: parsed.title,
-      reason: validation.reason,
-      contentLength: entry.content.length,
-      summaryLength: parsed.summary.length,
-    }, "error");
-    log.warn(`singlePassSummarizeWithClaims: Summary failed validation (${validation.reason}) for "${parsed.title}", returning empty summary`);
-    return { ...parsed, summary: "" };
+  if (claims.length > 0) {
+    log.debug(`singlePassSummarizeWithClaims: Extracted ${claims.length} vNext claims for "${title}"`);
   }
 
-  emitLog("myelination.summarize.quality", {
-    entryTitle: parsed.title,
-    contentLength: entry.content.length,
-    summaryLength: parsed.summary.length,
-    compressionRatio: validation.compressionRatio,
-    claimCount: parsed.claims.length,
-  }, "debug");
-
-  if (parsed.claims.length > 0) {
-    log.debug(`singlePassSummarizeWithClaims: Extracted ${parsed.claims.length} claims for "${parsed.title}"`);
-  }
-
-  return parsed;
+  return {
+    title,
+    oneLiner: "",
+    summary: "",
+    tags: [],
+    claims,
+    claimReasoning,
+  };
 }
 
 async function progressiveSummarizeWithClaims(
@@ -706,11 +590,11 @@ async function progressiveSummarizeWithClaims(
     }
   }
 
-  // Dedup claims across chunks and cap at 10 per entry to prevent volume bloat
-  const MAX_CLAIMS_PER_ENTRY = 10;
+  // Dedup claims across chunks and cap at 3 per source. vNext memory is sparse by default.
+  const MAX_CLAIMS_PER_ENTRY = 3;
   const dedupedClaims = deduplicateChunkClaims(allChunkClaims).slice(0, MAX_CLAIMS_PER_ENTRY);
   if (allChunkClaims.length > MAX_CLAIMS_PER_ENTRY) {
-    log.debug(`progressiveSummarizeWithClaims: Capped claims from ${allChunkClaims.length} to ${dedupedClaims.length} (max ${MAX_CLAIMS_PER_ENTRY} per entry)`);
+    log.debug(`progressiveSummarizeWithClaims: Capped claims from ${allChunkClaims.length} to ${dedupedClaims.length} (max ${MAX_CLAIMS_PER_ENTRY} per source)`);
   }
 
   // Reduce phase: get title/summary/tags from concatenated summaries (no claims needed)
