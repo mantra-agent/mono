@@ -338,3 +338,32 @@ export const upsertCapabilityBindingSchema = z.object({
 
 export type EnvironmentCapabilityBinding = typeof environmentCapabilityBindings.$inferSelect;
 export type UpsertCapabilityBinding = z.infer<typeof upsertCapabilityBindingSchema>;
+
+// ---------------------------------------------------------------------------
+// Context artifacts — Library pages linked to environments for context assembly
+// ---------------------------------------------------------------------------
+
+export const environmentContextArtifacts = pgTable(
+  "environment_context_artifacts",
+  {
+    id: serial("id").primaryKey(),
+    environmentId: integer("environment_id").notNull().references(() => platformProductEnvironments.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    libraryPageId: text("library_page_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    index("idx_environment_context_artifacts_environment").on(table.environmentId),
+    index("idx_environment_context_artifacts_kind").on(table.kind),
+    uniqueIndex("idx_environment_context_artifacts_env_kind").on(table.environmentId, table.kind),
+  ],
+);
+
+export const upsertContextArtifactSchema = z.object({
+  kind: z.string().trim().min(1, "Artifact kind is required"),
+  libraryPageId: z.string().uuid("Library page ID must be a UUID"),
+});
+
+export type EnvironmentContextArtifact = typeof environmentContextArtifacts.$inferSelect;
+export type UpsertContextArtifact = z.infer<typeof upsertContextArtifactSchema>;

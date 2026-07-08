@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { useLocation, useParams } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, Settings2, ExternalLink, Play, History, ShieldCheck } from "lucide-react";
+import { Pencil, Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, Settings2, ExternalLink, Play, History, ShieldCheck, Trash2, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -65,6 +65,16 @@ interface RuntimeVariable {
   inferred?: boolean;
 }
 
+interface ContextArtifact {
+  id: number;
+  environmentId: number;
+  kind: string;
+  libraryPageId: string;
+  pageTitle: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface EnvironmentDetails {
   platform: { id: number; name: string };
   product: { id: number; name: string };
@@ -72,6 +82,7 @@ interface EnvironmentDetails {
   source: EnvironmentBinding;
   hosting: EnvironmentBinding;
   runtimeVariables: RuntimeVariable[];
+  contextArtifacts?: ContextArtifact[];
   deploymentState: { status: string; note?: string };
   promotion: { mode: string; sourceBranch: string; targetBranch: string | null };
 }
@@ -1731,6 +1742,124 @@ function DeploymentStatusCard({
 
 // --- Config Card (read-only) ---
 
+function ContextArtifactsCard({ artifacts, environmentId }: { artifacts: ContextArtifact[]; environmentId: number }) {
+  const [adding, setAdding] = useState(false);
+  const [newKind, setNewKind] = useState("");
+  const [newPageId, setNewPageId] = useState("");
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const saveMutation = useMutation({
+    mutationFn: async ({ kind, libraryPageId }: { kind: string; libraryPageId: string }) => {
+      const res = await fetch(`/api/platforms/environments/${environmentId}/context-artifacts`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, libraryPageId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Failed" }));
+        throw new Error(err.error || "Failed to save context artifact");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/platforms/environments", environmentId, "details"] });
+      setAdding(false);
+      setNewKind("");
+      setNewPageId("");
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: async (kind: string) => {
+      const res = await fetch(`/api/platforms/environments/${environmentId}/context-artifacts/${encodeURIComponent(kind)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to remove context artifact");
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/platforms/environments", environmentId, "details"] }),
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  return (
+    <Card className="border-border/40 bg-card/60 shadow-none">
+      <CardHeader className="px-3 pb-2 pt-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm font-medium">Context Artifacts</CardTitle>
+          {!adding && (
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setAdding(true)}>
+              <Plus className="mr-1 h-3 w-3" /> Add
+            </Button>
+          )}
+        </div>
+        <CardDescription className="text-xs">Library pages loaded into Agent's context for this environment.</CardDescription>
+      </CardHeader>
+      <CardContent className="px-3 pb-3">
+        {artifacts.length === 0 && !adding && (
+          <p className="text-xs text-muted-foreground py-2">No context artifacts linked.</p>
+        )}
+        {artifacts.length > 0 && (
+          <div className="space-y-1">
+            {artifacts.map((a) => (
+              <div key={a.id} className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs hover:bg-muted/40">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0">{a.kind}</Badge>
+                  <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{a.pageTitle}</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 w-5 p-0 shrink-0 text-muted-foreground hover:text-destructive"
+                  onClick={() => removeMutation.mutate(a.kind)}
+                  disabled={removeMutation.isPending}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        {adding && (
+          <div className="mt-2 space-y-2 rounded border border-border/30 p-2">
+            <div className="grid gap-1.5">
+              <Label className="text-xs">Kind</Label>
+              <Input
+                value={newKind}
+                onChange={(e) => setNewKind(e.target.value)}
+                placeholder="e.g. coding_process, design_system"
+                className="h-7 text-xs"
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label className="text-xs">Library Page ID</Label>
+              <Input
+                value={newPageId}
+                onChange={(e) => setNewPageId(e.target.value)}
+                placeholder="UUID of the Library page"
+                className="h-7 text-xs font-mono"
+              />
+            </div>
+            <div className="flex gap-1.5 justify-end">
+              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => { setAdding(false); setNewKind(""); setNewPageId(""); }}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="h-6 px-2 text-xs"
+                disabled={!newKind.trim() || !newPageId.trim() || saveMutation.isPending}
+                onClick={() => saveMutation.mutate({ kind: newKind.trim(), libraryPageId: newPageId.trim() })}
+              >
+                {saveMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Save"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ConfigCard({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
     <Card className="border-border/40 bg-card/60 shadow-none">
@@ -1764,6 +1893,7 @@ function EnvironmentDetailsConfigureCard({ details, environmentId }: { details: 
               <ValueRow label="Target branch" value={details.promotion.targetBranch || "—"} mono />
               <ValueRow label="Mode" value={details.promotion.mode} />
             </ConfigCard>
+            <ContextArtifactsCard artifacts={details.contextArtifacts || []} environmentId={environmentId} />
           </div>
         </div>
       </CardContent>
