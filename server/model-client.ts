@@ -972,7 +972,7 @@ export async function* chatCompletionStream(options: ChatCompletionStreamOptions
   const t0 = Date.now();
   const requestContent = buildRequestContent(options.messages);
   let responseContent = "";
-  let streamUsage: { inputTokens: number; outputTokens: number; totalTokens: number } | undefined;
+  let streamUsage: { inputTokens: number; outputTokens: number; totalTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; reasoningTokens?: number; visibleOutputTokens?: number } | undefined;
   let firstSdkEventAt: number | null = null;
   let firstTextAt: number | null = null;
   let firstThinkingAt: number | null = null;
