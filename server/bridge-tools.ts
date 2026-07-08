@@ -15356,6 +15356,11 @@ function resolveEngineeringContextRoot(toolName: string, args: Record<string, an
   }
 
   if (toolName === "git") {
+    const action = String(args.action || "").trim();
+    if (action === "clone") {
+      return { root: WORKSPACE_DIR, reason: "git clone runs before target repo instructions exist" };
+    }
+
     const directory = String(args.directory || "").trim();
     if (directory && directory !== "." && directory !== "self") {
       const repoRoot = directory.startsWith("repos/")
