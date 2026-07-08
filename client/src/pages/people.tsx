@@ -1225,7 +1225,8 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
             const title = d.toLocaleDateString("en-US", { month: "numeric", day: "2-digit" });
             const memoryTitle = memory?.title || memory?.summary || memory?.content || "Memory";
             const relationshipMemoryTitle = relationshipMemory?.title || relationshipMemory?.content || "Relationship memory";
-            const preview = isNote ? (note?.title || note?.content || "Note") : isMemory ? memoryTitle : isRelationshipMemory ? relationshipMemoryTitle : (interaction?.summary || "");
+            const noteTitle = note?.title && note.title !== "Untitled" ? note.title : null;
+            const preview = isNote ? (noteTitle || note?.content || "Note") : isMemory ? memoryTitle : isRelationshipMemory ? relationshipMemoryTitle : (interaction?.summary || "");
             return (
               <Fragment key={`${item.kind}-${item.id}`}>
                 <ProfileTreeRow

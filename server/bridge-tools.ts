@@ -393,6 +393,7 @@ async function handlePeopleAddNote(args: Record<string, any>): Promise<ToolHandl
   const content = args.content;
   if (!content) return { result: "Missing note content", error: true };
   const title = args.title?.trim();
+  if (!title) return { result: "Missing required field: title. Every note needs a descriptive title.", error: true };
   let action = "add_note";
   if (title) {
     const person = await peopleStorage.getPerson(resolved.id);
@@ -403,8 +404,6 @@ async function handlePeopleAddNote(args: Record<string, any>): Promise<ToolHandl
     } else {
       await peopleStorage.addNote(resolved.id, content, title);
     }
-  } else {
-    await peopleStorage.addNote(resolved.id, content);
   }
   const { eventBus } = await import("./event-bus");
   eventBus.publish({
