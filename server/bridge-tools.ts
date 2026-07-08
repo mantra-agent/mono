@@ -15351,7 +15351,7 @@ function isSideEffectOnly(toolName: string, args: Record<string, any>): boolean 
 
 
 type CodingSubdir = "client" | "server" | "mobile";
-type CodingReferenceId = "root_agents" | "root_coding" | "design_md" | `subdir_agents:${CodingSubdir}`;
+type CodingReferenceId = "root_agents" | "design_md" | `subdir_agents:${CodingSubdir}`;
 
 type EngineeringContextRoot = {
   root: string;
@@ -15360,7 +15360,7 @@ type EngineeringContextRoot = {
 
 const ENGINEERING_TOOL_NAMES = new Set(["code", "shell", "git", "system", "railway", "sentry"]);
 const ENGINEERING_REF_CACHE = new Map<string, Set<string>>();
-const ENGINEERING_ROOT_REPO_HINTS = ["repos/", "AGENTS.md", "CODING.md", "DESIGN.md", "npm run build", "git ", "server/", "client/", "mobile/", "shared/"];
+const ENGINEERING_ROOT_REPO_HINTS = ["repos/", "AGENTS.md", "DESIGN.md", "npm run build", "git ", "server/", "client/", "mobile/", "shared/"];
 const CODING_SUBDIRS: CodingSubdir[] = ["client", "server", "mobile"];
 
 function shouldEnsureCodingContext(toolName: string, args: Record<string, any>): boolean {
@@ -15462,7 +15462,7 @@ function touchedCodingSubdirs(args: Record<string, any>): CodingSubdir[] {
 }
 
 function requiredCodingReferences(toolName: string, args: Record<string, any>): CodingReferenceId[] {
-  const refs = new Set<CodingReferenceId>(["root_agents", "root_coding"]);
+  const refs = new Set<CodingReferenceId>(["root_agents"]);
   for (const dir of touchedCodingSubdirs(args)) refs.add(`subdir_agents:${dir}`);
 
   const pathHints = new Set<string>();
@@ -15470,80 +15470,6 @@ function requiredCodingReferences(toolName: string, args: Record<string, any>): 
   const combined = [...pathHints, String(args.command || "")].join("\n");
   if (/(^|[\s'"`])(client|mobile)\//.test(combined) || /context-page|session-details|component|tsx|css|DESIGN\.md/.test(combined)) refs.add("design_md");
   return [...refs];
-}
-
-function commandTargetsRootInstructionBootstrap(command: string, root: string, fileName = "AGENTS.md"): boolean {
-  const trimmed = command.trim();
-  if (!trimmed) return false;
-
-  const instructionPath = resolve(root, fileName);
-  const escapedInstructionPath = instructionPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const escapedFileName = fileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const safePath = "(?:" + escapedFileName + "|\\./" + escapedFileName + "|" + escapedInstructionPath + ")";
-
-  const rootDiscovery = [
-    /^pwd$/,
-    /^ls(?:\s+[-A-Za-z0-9.,=\/]+)*$/,
-    new RegExp("^find\\s+\\.\\s+[^;&|]*" + escapedFileName + "[^;&|]*$"),
-    /^git\s+rev-parse\s+--show-toplevel$/,
-    /^git\s+remote\s+-v$/,
-    /^git\s+branch(?:\s+(?:--show-current|-vv|-a))?$/,
-    /^git\s+status(?:\s+(?:--short|-sb))?$/,
-    /^git\s+log(?:\s+--oneline)?(?:\s+-n\s*\d+|\s+-\d+)?$/,
-  ];
-  const instructionReads = [
-    new RegExp("^cat\\s+" + safePath + "$"),
-    new RegExp("^sed\\s+[^;&|]*" + safePath + "$"),
-    new RegExp("^test\\s+-(?:f|e)\\s+" + safePath + "$"),
-    new RegExp("^\\[\\s+-(?:f|e)\\s+" + safePath + "\\s+\\]$"),
-  ];
-  const instructionWrites = [
-    new RegExp("^cat\\s+>\\s*" + safePath + "(?:\\s*<<[A-Za-z0-9_-]+)?$"),
-    new RegExp("^tee(?:\\s+-a)?\\s+" + safePath + "$"),
-    new RegExp("^printf\\s+.+>\\s*" + safePath + "$", "s"),
-    new RegExp("^python3?\\s+.*" + escapedFileName, "s"),
-  ];
-
-  const allowedPatterns = [...rootDiscovery, ...instructionReads, ...instructionWrites];
-  const segments = trimmed
-    .split(/&&|\|\||;/)
-    .map(segment => segment.trim())
-    .filter(Boolean)
-    .filter(segment => !/^cd\s+/.test(segment));
-
-  if (segments.length === 0) return false;
-  return segments.every(segment => allowedPatterns.some(pattern => pattern.test(segment)));
-}
-
-
-async function repoRootLooksVerified(root: string): Promise<boolean> {
-  if (root === WORKSPACE_DIR) return true;
-  if (!root.startsWith(`${WORKSPACE_DIR}/repos/`)) return false;
-  return pathExists(resolve(root, ".git"));
-}
-
-const SAFE_MISSING_AGENTS_GIT_ACTIONS = new Set(["status", "branch", "log", "show", "diff", "push", "create_pr"]);
-
-function isGitContinuationAllowedWithoutRootAgents(args: Record<string, any>): boolean {
-  const action = String(args.action || "").trim();
-  if (!SAFE_MISSING_AGENTS_GIT_ACTIONS.has(action)) return false;
-
-  if (action === "branch") {
-    const branchAction = String(args.branchAction || "").trim();
-    return !branchAction || branchAction === "list";
-  }
-
-  return true;
-}
-
-function isRootInstructionBootstrapAllowed(
-  toolName: string,
-  args: Record<string, any>,
-  contextRoot: EngineeringContextRoot,
-): boolean {
-  if (toolName === "shell") return commandTargetsRootInstructionBootstrap(String(args.command || ""), contextRoot.root);
-  if (toolName === "git") return isGitContinuationAllowedWithoutRootAgents(args);
-  return false;
 }
 
 function cacheKeyForContext(root: string, context?: BridgeToolContext): string {
@@ -15586,60 +15512,15 @@ async function ensureCodingContextLoaded(
     `The runtime loaded the required coding context before executing this engineering tool.`,
     `Effective root: ${contextRoot.root} (${contextRoot.reason}).`,
   ];
-  let instructionBootstrapMode = false;
 
+  // AGENTS.md is advisory: load if present, note if absent, never block
   if (missing.includes("root_agents")) {
     try {
       parts.push(`\n## AGENTS.md\n\n${await readInstructionFile(contextRoot.root, "AGENTS.md")}`);
       loadedRefs.add("root_agents");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const bootstrapAllowed = isRootInstructionBootstrapAllowed(toolName, args, contextRoot) && await repoRootLooksVerified(contextRoot.root);
-      if (!bootstrapAllowed) {
-        throw new Error(`Required coding context missing: root AGENTS.md under ${contextRoot.root} (${message})`);
-      }
-      parts.push(`\n## AGENTS.md\n\n_Missing under verified repo root ${contextRoot.root}. Continuing only because this shell command is limited to repo-root discovery or AGENTS.md bootstrap. This missing reference is not cached; the next engineering command must load the file after creation._`);
-      instructionBootstrapMode = true;
-    }
-  }
-
-  if (instructionBootstrapMode) {
-    eventBus.publish({
-      category: "agent",
-      event: "tool:coding_context_loaded",
-      payload: {
-        toolName,
-        refs: [...loadedRefs],
-        effectiveRoot: contextRoot.root,
-        effectiveRootReason: contextRoot.reason,
-        sessionId: context?.sessionId,
-        sessionKey: context?.sessionKey,
-        bootstrapMode: true,
-      },
-    });
-    return parts.join("\n\n");
-  }
-
-  if (missing.includes("root_coding")) {
-    try {
-      parts.push(`
-## CODING.md
-
-${await readInstructionFile(contextRoot.root, "CODING.md")}`);
-      loadedRefs.add("root_coding");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const bootstrapAllowed = toolName === "shell"
-        && commandTargetsRootInstructionBootstrap(String(args.command || ""), contextRoot.root, "CODING.md")
-        && await repoRootLooksVerified(contextRoot.root);
-      if (!bootstrapAllowed) {
-        throw new Error(`Required coding context missing: root CODING.md under ${contextRoot.root} (${message})`);
-      }
-      parts.push(`
-## CODING.md
-
-_Missing under verified repo root ${contextRoot.root}. Continuing only because this shell command is limited to repo-root discovery or CODING.md bootstrap. This missing reference is not cached; the next engineering command must load the file after creation._`);
-      instructionBootstrapMode = true;
+    } catch {
+      parts.push(`\n## AGENTS.md\n\n_AGENTS.md not found under ${contextRoot.root}; proceeding without repo-specific architecture context. Universal coding process is loaded from Library._`);
+      loadedRefs.add("root_agents");
     }
   }
 
