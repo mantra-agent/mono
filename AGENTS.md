@@ -160,6 +160,10 @@ Write correct code first. Optimize with measured bottlenecks and evidence. Excep
 
 Every component gets minimum access. Secrets never appear in code, logs, or error messages. Validate input at the boundary. API keys are scoped to exactly the permissions required.
 
+**Safe Partial Updates**
+
+Tool and route APIs must treat omitted optional fields, empty strings, empty arrays, and empty objects as "no value provided," not as destructive writes. Clearing persisted data requires an explicit clear contract such as `clearFields` plus any domain-required confirmation and reason. Do not rely on callers, schemas, or LLM behavior to omit blank defaults correctly; normalize empty optional inputs at the mutation boundary before constructing persistence patches.
+
 **Access Control is Centralized**
 
 Authorization decisions use the central principal + permission service, not route-local role checks. Resolve identity into a `Principal`, derive effective permissions from `server/permissions.ts`, and gate privileged operations with named permissions such as `users:read`, `users:write`, `build:read`, `build:write`, `system:read`, and `system:write`. If a route, tool, or background path needs a new capability, add it to the central permission vocabulary first and expose it through `/api/auth/me`; do not invent ad hoc booleans like `isAdmin` as the authority. User-owned data access must also use principal-aware scoping helpers, not raw table/object reads that bypass ownership columns.

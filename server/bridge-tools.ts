@@ -15060,6 +15060,34 @@ const DISPATCH_MAP: Record<string, ToolHandler> = {
   ...bridgeHandlers,
 };
 
+
+function isEmptyToolArgumentValue(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (typeof value === "string") return value.trim() === "";
+  if (Array.isArray(value)) return value.length === 0;
+  if (value !== null && typeof value === "object") return Object.keys(value as Record<string, unknown>).length === 0;
+  return false;
+}
+
+function normalizeToolArgs(toolName: string, args: Record<string, any>): Record<string, any> {
+  const schemas = getToolSchemas();
+  const schema = schemas.find(s => s.name === toolName);
+  const required = new Set(schema?.parameters?.required ?? []);
+
+  const normalized: Record<string, any> = {};
+  for (const [key, value] of Object.entries(args ?? {})) {
+    if (required.has(key)) {
+      normalized[key] = value;
+      continue;
+    }
+    if (isEmptyToolArgumentValue(value)) {
+      continue;
+    }
+    normalized[key] = value;
+  }
+  return normalized;
+}
+
 function validateToolArgs(
   toolName: string,
   args: Record<string, any>,
@@ -15352,16 +15380,22 @@ export async function executeTool(
     toolExec.log(`rejected tool=${toolName} callId=${toolCallId} reason=unknown_tool`);
     return { result: `Unknown tool: ${toolName}`, error: true, sideEffectOnly: true, durationMs };
   }
-  const validation = validateToolArgs(resolvedName, args);
+  const normalizedArgs = normalizeToolArgs(resolvedName, args);
+  const droppedEmptyKeys = Object.keys(args ?? {}).filter((key) => !(key in normalizedArgs));
+  if (droppedEmptyKeys.length > 0) {
+    toolExec.verbose(() => `normalized tool=${toolName} callId=${toolCallId} droppedEmptyKeys=${droppedEmptyKeys.join(",")}`);
+  }
+
+  const validation = validateToolArgs(resolvedName, normalizedArgs);
   if (!validation.valid) {
     const durationMs = Date.now() - startTime;
     toolExec.log(`rejected tool=${toolName} callId=${toolCallId} reason=${validation.error}`);
     return { result: validation.error!, error: true, durationMs };
   }
 
-  toolExec.verbose(() => `dispatch tool=${toolName} callId=${toolCallId} argKeys=${Object.keys(args).join(",")}`);
+  toolExec.verbose(() => `dispatch tool=${toolName} callId=${toolCallId} argKeys=${Object.keys(normalizedArgs).join(",")}`);
 
-  const enrichedArgs = { ...args };
+  const enrichedArgs = { ...normalizedArgs };
   // Universal _sessionId/_sessionKey injection — all tools get session context
   if (context?.sessionId) enrichedArgs._sessionId = context.sessionId;
   if (context?.sessionKey) enrichedArgs._sessionKey = context.sessionKey;
@@ -15391,7 +15425,7 @@ export async function executeTool(
     const durationMs = Date.now() - startTime;
     recordToolCallEnd(toolCallId, !!outcome.error);
     _wwTrackEnd?.(toolCallId);
-    const sideEffectOnly = !outcome.error && isSideEffectOnly(resolvedName, args);
+    const sideEffectOnly = !outcome.error && isSideEffectOnly(resolvedName, normalizedArgs);
     const resultWithPrelude = codingContextPrelude
       ? `${codingContextPrelude}
 
