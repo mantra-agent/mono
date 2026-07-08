@@ -150,7 +150,7 @@ export function SegmentStream({ segments, isStreaming, layer, stripTags = false,
         })}
         {!suppressTrailingThinking && isStreaming && !hasContent && !segments.some(seg =>
           seg.type === "timeline" && seg.steps.some(s =>
-            (s.type === "thinking" && s.status === "active" && (layer <= 2 || !s.thinking)) ||
+            (s.type === "thinking" && s.status === "active" && (layer === 1 || !s.thinking)) ||
             (s.type === "tool_call" && s.status === "active")
           )
         ) && (
