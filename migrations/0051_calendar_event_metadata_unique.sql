@@ -142,6 +142,11 @@ BEGIN
     WHERE metadata.id = ranked.id
       AND ranked.rn > 1;
 
+    ALTER TABLE calendar_event_metadata ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;
+    ALTER TABLE calendar_event_metadata ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;
+    UPDATE calendar_event_metadata SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL;
+    UPDATE calendar_event_metadata SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL;
+
     CREATE UNIQUE INDEX IF NOT EXISTS calendar_event_metadata_event_account_calendar_unique
       ON calendar_event_metadata(google_event_id, account_id, calendar_id);
   END IF;
