@@ -1,7 +1,7 @@
 import { createLogger } from './log';
 import { db } from './db';
 import { pool } from './db';
-import { connectedAccounts, emailMessages, emailSyncCursors, emailDismissals, emailSyncLog, emailEnrichments, emailDrafts } from '@shared/schema';
+import { accounts, connectedAccounts, emailMessages, emailSyncCursors, emailDismissals, emailSyncLog, emailEnrichments, emailDrafts, users } from '@shared/schema';
 import { eq, and, sql, inArray, or, isNull } from 'drizzle-orm';
 import { listGmailAccounts, listMessages, getMessage, getHistoryList, normalizeGmailMessage, getAccountLabelMap } from './gmail';
 import type { NormalizedMessage } from './gmail';
@@ -25,8 +25,33 @@ interface EmailAccountOwner {
   principal: Principal;
 }
 
+async function repairConnectedAccountOwnership(accountId: string): Promise<{ ownerUserId: string; principalAccountId: string } | null> {
+  const [row] = await db.select({
+    ownerUserId: users.id,
+    principalAccountId: accounts.id,
+  })
+    .from(connectedAccounts)
+    .innerJoin(users, eq(users.email, connectedAccounts.email))
+    .innerJoin(accounts, and(eq(accounts.ownerUserId, users.id), eq(accounts.kind, 'personal')))
+    .where(and(eq(connectedAccounts.accountId, accountId), eq(connectedAccounts.provider, 'google')))
+    .limit(1);
+
+  if (!row?.ownerUserId || !row?.principalAccountId) return null;
+
+  await db.update(connectedAccounts)
+    .set({
+      ownerUserId: row.ownerUserId,
+      principalAccountId: row.principalAccountId,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .where(and(eq(connectedAccounts.accountId, accountId), eq(connectedAccounts.provider, 'google')));
+
+  log.warn(`[connectedAccountOwnershipBackfill] account=${accountId} ownerUserId=${row.ownerUserId} principalAccountId=${row.principalAccountId}`);
+  return row;
+}
+
 async function resolveEmailAccountOwner(accountId: string): Promise<EmailAccountOwner> {
-  const [account] = await db.select({
+  let [account] = await db.select({
     accountId: connectedAccounts.accountId,
     ownerUserId: connectedAccounts.ownerUserId,
     principalAccountId: connectedAccounts.principalAccountId,
@@ -40,7 +65,11 @@ async function resolveEmailAccountOwner(accountId: string): Promise<EmailAccount
     throw new Error(`No connected Google account found for accountId=${accountId}`);
   }
   if (!account.ownerUserId || !account.principalAccountId) {
-    throw new Error(`Connected Google account accountId=${accountId} is missing sensitive ownership`);
+    const repaired = await repairConnectedAccountOwnership(accountId);
+    if (!repaired) {
+      throw new Error(`Connected Google account accountId=${accountId} is missing sensitive ownership and could not be repaired`);
+    }
+    account = { ...account, ...repaired };
   }
 
   return {
