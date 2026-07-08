@@ -173,6 +173,7 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
   ) {
     const rootRef = useRef<HTMLDivElement>(null);
     const pendingSelectionRef = useRef<number | null>(null);
+    const composingRef = useRef(false);
     const parts = useMemo(() => parseReferenceText(value), [value]);
 
     const commitValue = useCallback((nextValue: string, cursor: number) => {
@@ -194,6 +195,7 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
     }), [setSelectionRange]);
 
     useLayoutEffect(() => {
+      if (composingRef.current) return;
       const pending = pendingSelectionRef.current;
       if (pending === null) return;
       const root = rootRef.current;
@@ -202,20 +204,40 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
       setSelectionAtOffset(root, pending);
     }, [value]);
 
+    /** Sync DOM text back to React state after composition or browser-native edits */
+    const syncFromDOM = useCallback(() => {
+      const root = rootRef.current;
+      if (!root) return;
+      const domValue = extractValue(root);
+      const cursor = selectionOffsetWithin(root);
+      if (domValue !== value) {
+        commitValue(domValue, cursor);
+      }
+    }, [commitValue, value]);
+
     const handleBeforeInput = useCallback((inputEvent: InputEvent) => {
       if (disabled) return;
 
       const root = rootRef.current;
       if (!root) return;
 
+      // During IME composition (autocorrect, predictive text, CJK input),
+      // let the browser handle text mutations natively. We sync on compositionend.
+      if (composingRef.current && inputEvent.inputType === "insertCompositionText") {
+        return;
+      }
+
       const selection = selectionOffsetsWithin(root);
       let inserted: string | null = null;
 
       switch (inputEvent.inputType) {
         case "insertText":
-        case "insertCompositionText":
           inserted = inputEvent.data || "";
           break;
+        case "insertCompositionText":
+          // Not composing but got composition text (e.g. autocorrect replacement).
+          // Let browser handle it natively, sync afterward.
+          return;
         case "insertLineBreak":
         case "insertParagraph":
           inserted = "\n";
@@ -269,12 +291,53 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
       return () => root.removeEventListener("beforeinput", listener);
     }, [handleBeforeInput]);
 
+    /** Track IME composition lifecycle for autocorrect/predictive text support */
+    useEffect(() => {
+      const root = rootRef.current;
+      if (!root) return;
+
+      const onCompositionStart = () => {
+        composingRef.current = true;
+      };
+
+      const onCompositionEnd = () => {
+        composingRef.current = false;
+        // Sync the final composed value from DOM back to React state.
+        // Use rAF to ensure the browser has committed the final text.
+        requestAnimationFrame(() => {
+          const r = rootRef.current;
+          if (!r) return;
+          const domValue = extractValue(r);
+          const cursor = selectionOffsetWithin(r);
+          if (domValue !== value) {
+            commitValue(domValue, cursor);
+          }
+        });
+      };
+
+      root.addEventListener("compositionstart", onCompositionStart);
+      root.addEventListener("compositionend", onCompositionEnd);
+      return () => {
+        root.removeEventListener("compositionstart", onCompositionStart);
+        root.removeEventListener("compositionend", onCompositionEnd);
+      };
+    }, [commitValue, value]);
+
     const handleInput = useCallback(() => {
-      // Canonical React state is the only supported mutation path. Normal text edits,
-      // paste, and delete are handled in beforeinput/paste with native DOM mutation
-      // prevented. Letting a late contenteditable input event re-extract DOM here can
-      // resurrect stale DOM after the parent clears the value on send.
-    }, []);
+      // During composition, the browser mutates the DOM directly. We don't
+      // interfere here — compositionend handles the sync. For non-composition
+      // edits that slip past beforeinput (e.g. autocorrect replacements that
+      // don't fire composition events on some browsers), sync from DOM.
+      if (!composingRef.current) {
+        const root = rootRef.current;
+        if (!root) return;
+        const domValue = extractValue(root);
+        if (domValue !== value) {
+          const cursor = selectionOffsetWithin(root);
+          commitValue(domValue, cursor);
+        }
+      }
+    }, [commitValue, value]);
 
     const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
       onPaste?.(event);
