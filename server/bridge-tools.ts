@@ -15392,18 +15392,19 @@ function requiredCodingReferences(toolName: string, args: Record<string, any>): 
   return [...refs];
 }
 
-function commandTargetsRootInstructionBootstrap(command: string, root: string): boolean {
+function commandTargetsRootInstructionBootstrap(command: string, root: string, fileName = "AGENTS.md"): boolean {
   const trimmed = command.trim();
   if (!trimmed) return false;
 
-  const agentsPath = resolve(root, "AGENTS.md");
-  const escapedAgentsPath = agentsPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const safePath = "(?:AGENTS\\.md|\\./AGENTS\\.md|" + escapedAgentsPath + ")";
+  const instructionPath = resolve(root, fileName);
+  const escapedInstructionPath = instructionPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escapedFileName = fileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const safePath = "(?:" + escapedFileName + "|\\./" + escapedFileName + "|" + escapedInstructionPath + ")";
 
   const rootDiscovery = [
     /^pwd$/,
     /^ls(?:\s+[-A-Za-z0-9.,=\/]+)*$/,
-    /^find\s+\.\s+[^;&|]*AGENTS\.md[^;&|]*$/,
+    new RegExp("^find\\s+\\.\\s+[^;&|]*" + escapedFileName + "[^;&|]*$"),
     /^git\s+rev-parse\s+--show-toplevel$/,
     /^git\s+remote\s+-v$/,
     /^git\s+branch(?:\s+(?:--show-current|-vv|-a))?$/,
@@ -15420,7 +15421,7 @@ function commandTargetsRootInstructionBootstrap(command: string, root: string): 
     new RegExp("^cat\\s+>\\s*" + safePath + "(?:\\s*<<[A-Za-z0-9_-]+)?$"),
     new RegExp("^tee(?:\\s+-a)?\\s+" + safePath + "$"),
     new RegExp("^printf\\s+.+>\\s*" + safePath + "$", "s"),
-    new RegExp("^python3?\\s+.*AGENTS\\.md", "s"),
+    new RegExp("^python3?\\s+.*" + escapedFileName, "s"),
   ];
 
   const allowedPatterns = [...rootDiscovery, ...instructionReads, ...instructionWrites];
@@ -15433,6 +15434,7 @@ function commandTargetsRootInstructionBootstrap(command: string, root: string): 
   if (segments.length === 0) return false;
   return segments.every(segment => allowedPatterns.some(pattern => pattern.test(segment)));
 }
+
 
 async function repoRootLooksVerified(root: string): Promise<boolean> {
   if (root === WORKSPACE_DIR) return true;
@@ -15547,7 +15549,17 @@ ${await readInstructionFile(contextRoot.root, "CODING.md")}`);
       loadedRefs.add("root_coding");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Required coding context missing: root CODING.md under ${contextRoot.root} (${message})`);
+      const bootstrapAllowed = toolName === "shell"
+        && commandTargetsRootInstructionBootstrap(String(args.command || ""), contextRoot.root, "CODING.md")
+        && await repoRootLooksVerified(contextRoot.root);
+      if (!bootstrapAllowed) {
+        throw new Error(`Required coding context missing: root CODING.md under ${contextRoot.root} (${message})`);
+      }
+      parts.push(`
+## CODING.md
+
+_Missing under verified repo root ${contextRoot.root}. Continuing only because this shell command is limited to repo-root discovery or CODING.md bootstrap. This missing reference is not cached; the next engineering command must load the file after creation._`);
+      instructionBootstrapMode = true;
     }
   }
 
