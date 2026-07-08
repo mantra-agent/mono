@@ -1,11 +1,14 @@
 import { createLogger } from './log';
 import { db } from './db';
 import { pool } from './db';
-import { emailMessages, emailSyncCursors, emailDismissals } from '@shared/schema';
-import { eq, and, sql, inArray } from 'drizzle-orm';
+import { connectedAccounts, emailMessages, emailSyncCursors, emailDismissals, emailSyncLog, emailEnrichments, emailDrafts } from '@shared/schema';
+import { eq, and, sql, inArray, or, isNull } from 'drizzle-orm';
 import { listGmailAccounts, listMessages, getMessage, getHistoryList, normalizeGmailMessage, getAccountLabelMap } from './gmail';
 import type { NormalizedMessage } from './gmail';
 import { storage } from './storage';
+import { runWithPrincipal } from './principal-context';
+import { sensitiveOwnershipValues } from './sensitive-scope';
+import type { Principal } from './principal';
 
 const log = createLogger("EmailSync");
 
@@ -14,6 +17,88 @@ const EMAIL_SYNC_STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000;
 
 type EmailPipelineAccountStatus = "healthy" | "stale" | "degraded" | "failed";
 type EmailPipelineStage = "sync";
+
+interface EmailAccountOwner {
+  accountId: string;
+  ownerUserId: string;
+  principalAccountId: string;
+  principal: Principal;
+}
+
+async function resolveEmailAccountOwner(accountId: string): Promise<EmailAccountOwner> {
+  const [account] = await db.select({
+    accountId: connectedAccounts.accountId,
+    ownerUserId: connectedAccounts.ownerUserId,
+    principalAccountId: connectedAccounts.principalAccountId,
+    provider: connectedAccounts.provider,
+  })
+    .from(connectedAccounts)
+    .where(and(eq(connectedAccounts.accountId, accountId), eq(connectedAccounts.provider, 'google')))
+    .limit(1);
+
+  if (!account) {
+    throw new Error(`No connected Google account found for accountId=${accountId}`);
+  }
+  if (!account.ownerUserId || !account.principalAccountId) {
+    throw new Error(`Connected Google account accountId=${accountId} is missing sensitive ownership`);
+  }
+
+  return {
+    accountId,
+    ownerUserId: account.ownerUserId,
+    principalAccountId: account.principalAccountId,
+    principal: {
+      actorType: 'user',
+      userId: account.ownerUserId,
+      accountId: account.principalAccountId,
+      role: 'owner',
+      scopes: ['user:read', 'user:write'],
+      permissions: [],
+      isAdmin: false,
+      impersonation: {
+        impersonatedByActorType: 'system',
+        reason: 'email-sync connected account ownership',
+      },
+      source: 'system',
+    },
+  };
+}
+
+async function backfillEmailOwnership(accountId: string, owner: EmailAccountOwner): Promise<void> {
+  const ownership = { ownerUserId: owner.ownerUserId, principalAccountId: owner.principalAccountId };
+  const missingOwnership = or(isNull(emailMessages.ownerUserId), isNull(emailMessages.principalAccountId));
+  const [messageRows, cursorRows, syncLogRows, enrichmentRows, dismissalRows, draftRows] = await Promise.all([
+    db.update(emailMessages)
+      .set({ ...ownership, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(and(eq(emailMessages.accountId, accountId), missingOwnership!))
+      .returning({ id: emailMessages.id }),
+    db.update(emailSyncCursors)
+      .set({ ...ownership, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(and(eq(emailSyncCursors.accountId, accountId), or(isNull(emailSyncCursors.ownerUserId), isNull(emailSyncCursors.principalAccountId))!))
+      .returning({ id: emailSyncCursors.id }),
+    db.update(emailSyncLog)
+      .set(ownership)
+      .where(and(eq(emailSyncLog.accountId, accountId), or(isNull(emailSyncLog.ownerUserId), isNull(emailSyncLog.principalAccountId))!))
+      .returning({ id: emailSyncLog.id }),
+    db.update(emailEnrichments)
+      .set({ ...ownership, updatedAt: new Date() })
+      .where(and(eq(emailEnrichments.accountId, accountId), or(isNull(emailEnrichments.ownerUserId), isNull(emailEnrichments.principalAccountId))!))
+      .returning({ id: emailEnrichments.id }),
+    db.update(emailDismissals)
+      .set(ownership)
+      .where(and(eq(emailDismissals.accountId, accountId), or(isNull(emailDismissals.ownerUserId), isNull(emailDismissals.principalAccountId))!))
+      .returning({ id: emailDismissals.id }),
+    db.update(emailDrafts)
+      .set({ ...ownership, updatedAt: new Date() })
+      .where(and(eq(emailDrafts.accountId, accountId), or(isNull(emailDrafts.ownerUserId), isNull(emailDrafts.principalAccountId))!))
+      .returning({ id: emailDrafts.id }),
+  ]);
+
+  const total = messageRows.length + cursorRows.length + syncLogRows.length + enrichmentRows.length + dismissalRows.length + draftRows.length;
+  if (total > 0) {
+    log.warn(`[ownershipBackfill] account=${accountId} messages=${messageRows.length} cursors=${cursorRows.length} syncLogs=${syncLogRows.length} enrichments=${enrichmentRows.length} dismissals=${dismissalRows.length} drafts=${draftRows.length}`);
+  }
+}
 
 export interface EmailPipelineAccountHealth {
   accountId: string;
@@ -155,6 +240,7 @@ async function upsertMessage(msg: NormalizedMessage): Promise<{ externallyArchiv
     bodyHtml: msg.bodyHtml,
     isRead: msg.isRead,
     isStarred: msg.isStarred,
+    ...sensitiveOwnershipValues(),
   }).onConflictDoUpdate({
     target: [emailMessages.provider, emailMessages.accountId, emailMessages.providerMessageId],
     set: {
@@ -172,6 +258,7 @@ async function upsertMessage(msg: NormalizedMessage): Promise<{ externallyArchiv
       bodyHtml: msg.bodyHtml,
       isRead: msg.isRead,
       isStarred: msg.isStarred,
+      ...sensitiveOwnershipValues(),
       updatedAt: sql`CURRENT_TIMESTAMP`,
     },
   });
@@ -217,6 +304,7 @@ async function upsertMessage(msg: NormalizedMessage): Promise<{ externallyArchiv
           ? 'Archived externally — Superhuman/Done label applied'
           : 'Archived externally (Gmail/Superhuman) — INBOX label removed',
         dismissedBy: 'external_archive',
+        ...sensitiveOwnershipValues(),
       });
     } catch (err: any) {
       log.debug(`[upsertMessage] dismissal insert failed for msg=${row.id}: ${err.message}`);
@@ -254,6 +342,7 @@ async function upsertCursor(accountId: string, data: {
   await db.insert(emailSyncCursors).values({
     provider: 'gmail',
     accountId,
+    ...sensitiveOwnershipValues(),
     historyId: data.historyId,
     lastFullSyncAt: data.lastFullSyncAt,
     lastIncrementalSyncAt: data.lastIncrementalSyncAt,
@@ -269,6 +358,7 @@ async function upsertCursor(accountId: string, data: {
       lastSyncStatus: data.lastSyncStatus,
       lastSyncError: data.lastSyncError ?? null,
       messagesCached: data.messagesCached !== undefined ? data.messagesCached : sql`email_sync_cursors.messages_cached`,
+      ...sensitiveOwnershipValues(),
       updatedAt: sql`CURRENT_TIMESTAMP`,
     },
   });
@@ -407,6 +497,7 @@ async function markMessagesDone(messageIds: number[], reason: AttentionClearReas
     subject: row.subject || null,
     reason: reasonText(reason),
     dismissedBy: reason,
+    ...sensitiveOwnershipValues(),
   }).catch((err: any) => {
     log.debug(`[reconcile] dismissal insert failed for msg=${row.id}: ${err.message}`);
   })));
@@ -502,6 +593,12 @@ async function reconcileEmailAttentionState(accountId: string): Promise<number> 
 }
 
 async function syncAccount(accountId: string): Promise<{ ok: boolean; error?: string }> {
+  const owner = await resolveEmailAccountOwner(accountId);
+  return runWithPrincipal(owner.principal, async () => syncAccountForOwner(accountId, owner));
+}
+
+async function syncAccountForOwner(accountId: string, owner: EmailAccountOwner): Promise<{ ok: boolean; error?: string }> {
+  await backfillEmailOwnership(accountId, owner);
   const syncLog = await storage.recordSyncStart(accountId);
   const runLabel = `syncId=${syncLog.id} account=${accountId}`;
   const cursor = await getCursor(accountId);
