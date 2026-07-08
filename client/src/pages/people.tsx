@@ -2272,17 +2272,34 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
     <div className="space-y-6" data-testid="person-detail-view">
       <div className="space-y-0">
       <PeopleDetailSection
-        title={(
+        title={editingName ? (
           <Input
             value={editName}
+            autoFocus
             onClick={(event) => event.stopPropagation()}
             onChange={(e) => setEditName(e.target.value)}
-            onBlur={() => { const next = editName.trim(); if (next && next !== person.name) updateMutation.mutate({ name: next }); }}
-            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditName(person.name); }}
+            onBlur={() => {
+              const next = editName.trim();
+              if (next && next !== person.name) updateMutation.mutate({ name: next });
+              else setEditName(person.name);
+              setEditingName(false);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              if (e.key === "Escape") { setEditName(person.name); setEditingName(false); }
+            }}
             placeholder="Name"
             className="h-auto w-full border-0 bg-transparent p-0 text-xs font-bold uppercase leading-none tracking-wider text-muted-foreground shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
             data-testid="input-edit-profile-name"
           />
+        ) : (
+          <span
+            className="block truncate text-xs font-bold uppercase leading-none tracking-wider text-muted-foreground"
+            onDoubleClick={(event) => { event.stopPropagation(); setEditingName(true); }}
+            data-testid="profile-name-heading"
+          >
+            {person.name}
+          </span>
         )}
         headerAction={(
           <DropdownMenu>
@@ -2298,6 +2315,9 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setEditingName(true)} data-testid="menu-edit-person-name">
+                Edit Name
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowEmptyProfileRows(v => !v)} data-testid="menu-toggle-hidden-fields">
                 <CheckCircle2 className={cn("mr-2 h-3.5 w-3.5", showEmptyProfileRows ? "text-cta" : "text-muted-foreground/30")} />
                 {showEmptyProfileRows ? "Hide Hidden Fields" : "Show Hidden Fields"}
