@@ -15102,11 +15102,18 @@ function isSideEffectOnly(toolName: string, args: Record<string, any>): boolean 
 }
 
 
-type CodingReferenceId = "root_agents" | "root_coding" | "subdir_agents" | "design_md";
+type CodingSubdir = "client" | "server" | "mobile";
+type CodingReferenceId = "root_agents" | "root_coding" | "design_md" | `subdir_agents:${CodingSubdir}`;
+
+type EngineeringContextRoot = {
+  root: string;
+  reason: string;
+};
 
 const ENGINEERING_TOOL_NAMES = new Set(["code", "shell", "git", "system", "railway", "sentry"]);
 const ENGINEERING_REF_CACHE = new Map<string, Set<string>>();
 const ENGINEERING_ROOT_REPO_HINTS = ["repos/", "AGENTS.md", "CODING.md", "DESIGN.md", "npm run build", "git ", "server/", "client/", "mobile/", "shared/"];
+const CODING_SUBDIRS: CodingSubdir[] = ["client", "server", "mobile"];
 
 function shouldEnsureCodingContext(toolName: string, args: Record<string, any>): boolean {
   if (toolName === "code" || toolName === "git" || toolName === "railway") return true;
@@ -15137,44 +15144,100 @@ function collectPathHints(value: unknown, paths: Set<string>): void {
   }
 }
 
-function requiredCodingReferences(toolName: string, args: Record<string, any>): CodingReferenceId[] {
-  const refs = new Set<CodingReferenceId>(["root_agents", "root_coding"]);
+function resolveUnderWorkspace(pathValue: string): string | null {
+  const trimmed = pathValue.trim().replace(/^['"]|['"]$/g, "");
+  if (!trimmed) return null;
+  const resolved = resolve(WORKSPACE_DIR, trimmed);
+  if (resolved === WORKSPACE_DIR || resolved.startsWith(`${WORKSPACE_DIR}/`)) return resolved;
+  return null;
+}
+
+function repoRootFromResolvedPath(resolvedPath: string | null): string | null {
+  if (!resolvedPath?.startsWith(`${WORKSPACE_DIR}/repos/`)) return null;
+  const relativeRepoPath = relative(resolve(WORKSPACE_DIR, "repos"), resolvedPath);
+  const [repoDir] = relativeRepoPath.split("/");
+  if (!repoDir || repoDir === ".." || repoDir.includes("..")) return null;
+  return resolve(WORKSPACE_DIR, "repos", repoDir);
+}
+
+function firstRepoPathFromCommand(command: string): string | null {
+  const cdMatch = command.match(/(?:^|[;&|]\s*)cd\s+(['"]?)([^'"`\s;&|]+)\1/);
+  if (cdMatch?.[2]) {
+    const repoRoot = repoRootFromResolvedPath(resolveUnderWorkspace(cdMatch[2]));
+    if (repoRoot) return repoRoot;
+  }
+
+  const absoluteRepoMatch = command.match(/\/app\/repos\/[^\s'"`;&|)]+/);
+  if (absoluteRepoMatch?.[0]) {
+    const repoRoot = repoRootFromResolvedPath(resolveUnderWorkspace(absoluteRepoMatch[0]));
+    if (repoRoot) return repoRoot;
+  }
+
+  const relativeRepoMatch = command.match(/(?:^|[\s'"`])(repos\/[^\s'"`;&|)]+)/);
+  if (relativeRepoMatch?.[1]) {
+    const repoRoot = repoRootFromResolvedPath(resolveUnderWorkspace(relativeRepoMatch[1]));
+    if (repoRoot) return repoRoot;
+  }
+
+  return null;
+}
+
+function resolveEngineeringContextRoot(toolName: string, args: Record<string, any>): EngineeringContextRoot {
+  if (toolName === "shell") {
+    const commandRoot = firstRepoPathFromCommand(String(args.command || ""));
+    if (commandRoot) return { root: commandRoot, reason: "shell command targets repos clone" };
+  }
+
+  if (toolName === "git") {
+    const directory = String(args.directory || "").trim();
+    if (directory && directory !== "." && directory !== "self") {
+      const repoRoot = directory.startsWith("repos/")
+        ? resolveUnderWorkspace(directory)
+        : resolveUnderWorkspace(`repos/${directory}`);
+      if (repoRoot?.startsWith(`${WORKSPACE_DIR}/repos/`)) return { root: repoRoot, reason: "git directory targets repos clone" };
+    }
+  }
+
+  return { root: WORKSPACE_DIR, reason: "workspace root default" };
+}
+
+function touchedCodingSubdirs(args: Record<string, any>): CodingSubdir[] {
   const pathHints = new Set<string>();
   collectPathHints(args, pathHints);
   const combined = [...pathHints, String(args.command || "")].join("\n");
-  if (/(^|[\s'"`])(client|server|mobile)\//.test(combined)) refs.add("subdir_agents");
+  return CODING_SUBDIRS.filter(dir => combined.includes(`${dir}/`));
+}
+
+function requiredCodingReferences(toolName: string, args: Record<string, any>): CodingReferenceId[] {
+  const refs = new Set<CodingReferenceId>(["root_agents", "root_coding"]);
+  for (const dir of touchedCodingSubdirs(args)) refs.add(`subdir_agents:${dir}`);
+
+  const pathHints = new Set<string>();
+  collectPathHints(args, pathHints);
+  const combined = [...pathHints, String(args.command || "")].join("\n");
   if (/(^|[\s'"`])(client|mobile)\//.test(combined) || /context-page|session-details|component|tsx|css|DESIGN\.md/.test(combined)) refs.add("design_md");
   return [...refs];
 }
 
-function cacheKeyForContext(context?: BridgeToolContext): string {
-  return context?.sessionId || context?.sessionKey || "global";
+function cacheKeyForContext(root: string, context?: BridgeToolContext): string {
+  return `${context?.sessionId || context?.sessionKey || "global"}:${root}`;
 }
 
-async function readInstructionFile(relativePath: string): Promise<string> {
-  const absolutePath = join(WORKSPACE_DIR, relativePath);
+async function readInstructionFile(root: string, relativePath: string): Promise<string> {
+  const absolutePath = resolve(root, relativePath);
+  if (absolutePath !== root && !absolutePath.startsWith(`${root}/`)) {
+    throw new Error(`Instruction path escapes context root: ${relativePath}`);
+  }
   return readFile(absolutePath, "utf-8");
 }
 
-async function loadSubdirAgents(args: Record<string, any>): Promise<string[]> {
-  const pathHints = new Set<string>();
-  collectPathHints(args, pathHints);
-  const combined = [...pathHints, String(args.command || "")].join("\n");
-  const subdirs = new Set<string>();
-  for (const dir of ["client", "server", "mobile"]) {
-    if (combined.includes(`${dir}/`)) subdirs.add(dir);
+async function loadSubdirAgent(root: string, dir: CodingSubdir): Promise<string> {
+  const relativePath = `${dir}/AGENTS.md`;
+  const absolutePath = resolve(root, relativePath);
+  if (!(await pathExists(absolutePath))) {
+    return `\n## ${relativePath}\n\n_Not found under effective root ${root}. Continuing because subtree AGENTS files are optional unless repository policy declares them required._`;
   }
-  if (subdirs.size === 0) return [];
-  const docs: string[] = [];
-  for (const dir of subdirs) {
-    try {
-      docs.push(`\n## ${dir}/AGENTS.md\n\n${await readInstructionFile(`${dir}/AGENTS.md`)}`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Required coding context missing: ${dir}/AGENTS.md (${message})`);
-    }
-  }
-  return docs;
+  return `\n## ${relativePath}\n\n${await readInstructionFile(root, relativePath)}`;
 }
 
 async function ensureCodingContextLoaded(
@@ -15184,24 +15247,26 @@ async function ensureCodingContextLoaded(
 ): Promise<string | null> {
   if (!shouldEnsureCodingContext(toolName, args)) return null;
 
+  const contextRoot = resolveEngineeringContextRoot(toolName, args);
   const requiredRefs = requiredCodingReferences(toolName, args);
-  const cacheKey = cacheKeyForContext(context);
+  const cacheKey = cacheKeyForContext(contextRoot.root, context);
   const loadedRefs = ENGINEERING_REF_CACHE.get(cacheKey) || new Set<string>();
   const missing = requiredRefs.filter(ref => !loadedRefs.has(ref));
   if (missing.length === 0) return null;
 
   const parts: string[] = [
     "# Engineering Context Preflight",
-    "The runtime loaded the required coding context before executing this engineering tool.",
+    `The runtime loaded the required coding context before executing this engineering tool.`,
+    `Effective root: ${contextRoot.root} (${contextRoot.reason}).`,
   ];
 
   if (missing.includes("root_agents")) {
     try {
-      parts.push(`\n## AGENTS.md\n\n${await readInstructionFile("AGENTS.md")}`);
+      parts.push(`\n## AGENTS.md\n\n${await readInstructionFile(contextRoot.root, "AGENTS.md")}`);
       loadedRefs.add("root_agents");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Required coding context missing: root AGENTS.md (${message})`);
+      throw new Error(`Required coding context missing: root AGENTS.md under ${contextRoot.root} (${message})`);
     }
   }
 
@@ -15210,29 +15275,28 @@ async function ensureCodingContextLoaded(
       parts.push(`
 ## CODING.md
 
-${await readInstructionFile("CODING.md")}`);
+${await readInstructionFile(contextRoot.root, "CODING.md")}`);
       loadedRefs.add("root_coding");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Required coding context missing: root CODING.md (${message})`);
+      throw new Error(`Required coding context missing: root CODING.md under ${contextRoot.root} (${message})`);
     }
   }
 
-  if (missing.includes("subdir_agents")) {
-    const subdirDocs = await loadSubdirAgents(args);
-    if (subdirDocs.length > 0) {
-      parts.push(...subdirDocs);
-      loadedRefs.add("subdir_agents");
-    }
+  const subdirRefs = missing.filter((ref): ref is `subdir_agents:${CodingSubdir}` => ref.startsWith("subdir_agents:"));
+  for (const ref of subdirRefs) {
+    const dir = ref.slice("subdir_agents:".length) as CodingSubdir;
+    parts.push(await loadSubdirAgent(contextRoot.root, dir));
+    loadedRefs.add(ref);
   }
 
   if (missing.includes("design_md")) {
     try {
-      parts.push(`\n## DESIGN.md\n\n${await readInstructionFile("DESIGN.md")}`);
+      parts.push(`\n## DESIGN.md\n\n${await readInstructionFile(contextRoot.root, "DESIGN.md")}`);
       loadedRefs.add("design_md");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Required coding context missing: DESIGN.md (${message})`);
+      throw new Error(`Required coding context missing: DESIGN.md under ${contextRoot.root} (${message})`);
     }
   }
 
@@ -15240,7 +15304,14 @@ ${await readInstructionFile("CODING.md")}`);
   eventBus.publish({
     category: "agent",
     event: "tool:coding_context_loaded",
-    payload: { toolName, refs: [...loadedRefs], sessionId: context?.sessionId, sessionKey: context?.sessionKey },
+    payload: {
+      toolName,
+      refs: [...loadedRefs],
+      effectiveRoot: contextRoot.root,
+      effectiveRootReason: contextRoot.reason,
+      sessionId: context?.sessionId,
+      sessionKey: context?.sessionKey,
+    },
   });
   return parts.join("\n\n");
 }
