@@ -5,9 +5,11 @@ This file is the canonical planning workflow. Use it for any complex task. For i
 
 ## Work Tracking Invariant
 
-Before doing non-trivial work, create or identify a corresponding task. Attach it to the best existing project and milestone when possible. Prefer existing milestones; create a new milestone only when the work clearly needs one. Do not create new projects unless Ray asks or the need is acute.
+Before doing non-trivial work, create or identify a corresponding task. Every such task must be attached to at least one durable work container: a project or a milestone. Best case: attach it to the right project and the right milestone. Prefer existing projects and milestones. Do not create new projects unless Ray asks or the need is acute.
 
-If the work does not fit cleanly into the current project stack, pause and ask where it belongs before proceeding. That alignment conversation is part of the work.
+If a relevant project exists but no existing milestone fits, keep the task on the relevant project and suggest a new milestone aligned with near-term goals/projects. Create a new milestone only when the work clearly needs one and the placement is obvious; otherwise ask Ray to confirm.
+
+If the work does not fit cleanly into the current project stack, pause and ask where it belongs before proceeding. That alignment conversation is part of the work. Do not do untracked non-trivial work while placement is unclear.
 
 Before ending the work, update the task to the truthful state: completed, blocked, active, or another accurate status. Include the outcome or blocker so the canonical work record reflects reality.
 
