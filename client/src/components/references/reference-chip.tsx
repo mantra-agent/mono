@@ -27,7 +27,7 @@ export function ReferenceChip({ resolved, className }: { resolved: ClientResolve
   const content = (
     <span
       className={cn(
-        "mx-1 inline-flex max-w-full translate-y-[-1px] align-baseline items-center gap-1 whitespace-nowrap break-normal text-xs font-medium underline-offset-4 transition-colors",
+        "mx-1 inline-flex max-w-full align-baseline items-center gap-1 whitespace-nowrap break-normal text-[1em] font-medium leading-[inherit] underline-offset-4 transition-colors",
         isDegraded
           ? "text-muted-foreground"
           : "text-cta hover:text-active",
@@ -37,7 +37,7 @@ export function ReferenceChip({ resolved, className }: { resolved: ClientResolve
       data-testid={`reference-${resolved.ref.type}-${resolved.ref.id}`}
     >
       <Icon className="h-3.5 w-3.5 shrink-0 no-underline" aria-hidden="true" strokeWidth={2} />
-      <span className="min-w-0 truncate border-b border-current leading-tight">{label}</span>
+      <span className="min-w-0 truncate border-b border-current leading-[inherit]">{label}</span>
     </span>
   );
 
