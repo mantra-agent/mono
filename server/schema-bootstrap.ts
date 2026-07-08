@@ -1353,7 +1353,7 @@ export async function runSchemaBootstrap(
         lifecycle_stage TEXT NOT NULL DEFAULT 'extracted',
         lifecycle_stage_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         content_hash TEXT NOT NULL,
-        embedding vector(1536),
+        embedding vector(384),
         source_memory_id INTEGER REFERENCES memory_entries(id) ON DELETE SET NULL,
         source TEXT NOT NULL DEFAULT 'manual',
         source_id TEXT,
@@ -1379,6 +1379,50 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_created_at ON memory_vnext_claims(created_at)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_scope_owner ON memory_vnext_claims(scope, owner_user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_account ON memory_vnext_claims(account_id)`);
+
+    const embeddingType = await pool.query<{ embedding_type: string | null }>(`
+      SELECT format_type(a.atttypid, a.atttypmod) AS embedding_type
+      FROM pg_attribute a
+      JOIN pg_class c ON c.oid = a.attrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relname = 'memory_vnext_claims'
+        AND a.attname = 'embedding'
+        AND NOT a.attisdropped
+      LIMIT 1
+    `);
+    const currentEmbeddingType = embeddingType.rows[0]?.embedding_type ?? null;
+    log(`memory.vnext.schema_check embedding=${currentEmbeddingType || "missing"} expected=vector(384)`, "migration");
+    if (currentEmbeddingType !== "vector(384)") {
+      await pool.query(`DROP INDEX IF EXISTS idx_memory_vnext_claim_embedding`);
+      await pool.query(`ALTER TABLE memory_vnext_claims ALTER COLUMN embedding TYPE vector(384) USING NULL`);
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_embedding
+        ON memory_vnext_claims
+        USING hnsw (embedding vector_cosine_ops)
+        WHERE embedding IS NOT NULL
+      `);
+      const repairedType = await pool.query<{ embedding_type: string | null }>(`
+        SELECT format_type(a.atttypid, a.atttypmod) AS embedding_type
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public'
+          AND c.relname = 'memory_vnext_claims'
+          AND a.attname = 'embedding'
+          AND NOT a.attisdropped
+        LIMIT 1
+      `);
+      log(`memory.vnext.schema_repair embedding_before=${currentEmbeddingType || "missing"} embedding_after=${repairedType.rows[0]?.embedding_type || "missing"}`, "migration");
+    } else {
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_embedding
+        ON memory_vnext_claims
+        USING hnsw (embedding vector_cosine_ops)
+        WHERE embedding IS NOT NULL
+      `);
+      log("memory.vnext.schema_ok embedding=vector(384)", "migration");
+    }
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS memory_vnext_sources (
