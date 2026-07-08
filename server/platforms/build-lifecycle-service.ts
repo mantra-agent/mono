@@ -373,7 +373,7 @@ export async function getEnvironmentBuildStatus(environmentId: number): Promise<
     environment: { id: lifecycle.environment.id, name: lifecycle.environment.name },
     lifecycle: lifecycle.config,
     acceptance: lifecycle.config ? buildLifecycleAcceptanceConfig(lifecycle.config, { hosting }) : null,
-    source: source ? { id: source.id, provider: source.provider, connectionId: source.connectionId, connection: cleanConnection(sourceConnection), owner: source.owner, repo: source.repo, branch: source.branch, autoDeploy: source.autoDeploy } : null,
+    source: source ? { id: source.id, provider: source.provider, connectionId: source.connectionId, connection: cleanConnection(sourceConnection), owner: source.owner, repo: source.repo, branch: source.branch, autoDeploy: source.autoDeploy, codeIndexingEnabled: source.codeIndexingEnabled } : null,
     hosting: hosting ? { id: hosting.id, provider: hosting.provider, connectionId: hosting.connectionId, connection: cleanConnection(hostingConnection), projectId: hosting.projectId, projectName: hosting.projectName, providerEnvironmentId: hosting.providerEnvironmentId, providerEnvironmentName: hosting.providerEnvironmentName, serviceId: hosting.serviceId, serviceName: hosting.serviceName, publicUrl: hosting.publicUrl, staticUrl: hosting.staticUrl } : null,
     providers: { ...(railway ? { railway } : {}), eas, ...(cloudflarePages ? { cloudflare_pages: cloudflarePages } : {}) },
     workflows: { recent: recentWorkflows },
@@ -469,7 +469,7 @@ function buildLifecycleSnapshot(lifecycle: EnvironmentBuildLifecycleContext, bin
       enabled: config.enabled,
       updatedAt: config.updatedAt,
     },
-    source: bindings.source ? { id: bindings.source.id, provider: bindings.source.provider, connectionId: bindings.source.connectionId, owner: bindings.source.owner, repo: bindings.source.repo, branch: bindings.source.branch, autoDeploy: bindings.source.autoDeploy } : null,
+    source: bindings.source ? { id: bindings.source.id, provider: bindings.source.provider, connectionId: bindings.source.connectionId, owner: bindings.source.owner, repo: bindings.source.repo, branch: bindings.source.branch, autoDeploy: bindings.source.autoDeploy, codeIndexingEnabled: bindings.source.codeIndexingEnabled } : null,
     hosting: bindings.hosting ? { id: bindings.hosting.id, provider: bindings.hosting.provider, connectionId: bindings.hosting.connectionId, projectId: bindings.hosting.projectId, projectName: bindings.hosting.projectName, providerEnvironmentId: bindings.hosting.providerEnvironmentId, providerEnvironmentName: bindings.hosting.providerEnvironmentName, serviceId: bindings.hosting.serviceId, serviceName: bindings.hosting.serviceName, publicUrl: bindings.hosting.publicUrl, staticUrl: bindings.hosting.staticUrl } : null,
     deploySemantics: {
       mode: deploymentPolicyMode(config),
