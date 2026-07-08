@@ -1915,13 +1915,13 @@ function ProfileSummaryEditor({
   };
 
   return (
-    <div className="max-h-80 max-w-none overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-[11px] leading-tight text-white scrollbar-thin">
+    <div className="max-h-80 max-w-none overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-[10px] leading-tight text-white scrollbar-thin">
       <Textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={save}
         placeholder="Add summary"
-        className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[11px] leading-tight text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+        className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[10px] leading-tight text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
         data-testid="textarea-quick-summary"
       />
     </div>
