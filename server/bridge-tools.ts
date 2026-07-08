@@ -3907,28 +3907,51 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
   async create_task(args) {
     const { fileTaskStorage } = await import("./file-storage/tasks");
+    const { chatFileStorage } = await import("./chat-file-storage");
 
     const title = args.title;
     if (!title) return { result: "Missing task title", error: true };
     const description = args.description?.trim();
     if (!description) return { result: "Missing task description", error: true };
 
+    const owner = args.owner === "xyz" ? "agent" : (args.owner || "me");
+    const milestoneId = args.milestoneId ?? null;
+    if (milestoneId == null) {
+      return {
+        result: "Missing milestoneId. Every new task must be assigned to a milestone. If the right milestone is unclear, ask Ray which milestone it belongs under before creating the task.",
+        error: true,
+      };
+    }
+
+    const sourceSessionId = typeof args._sessionId === "string" && args._sessionId.trim() ? args._sessionId.trim() : null;
+    let sourceSessionLine = "";
+    if (sourceSessionId) {
+      const sourceSession = await chatFileStorage.getSession(sourceSessionId).catch(() => undefined);
+      const titlePart = sourceSession?.title ? ` (${sourceSession.title})` : "";
+      sourceSessionLine = `Source session: @session:${sourceSessionId}${titlePart}`;
+    }
+
     try {
+      const baseContext = args.context || "";
+      const context = sourceSessionLine && !baseContext.includes(`@session:${sourceSessionId}`)
+        ? [baseContext.trim(), sourceSessionLine].filter(Boolean).join("\n\n")
+        : baseContext;
+
       const taskData = {
         title,
         description,
         priority: args.priority || "mid",
-        owner: args.owner || "me",
+        owner,
         projectId: args.projectId ?? null,
         status: args.status || "ready",
         requiresReview: args.requiresReview ?? false,
         tags: args.tags ?? [],
         impact: args.impact ?? null,
         effort: args.effort ?? null,
-        milestoneId: args.milestoneId ?? null,
+        milestoneId,
         deliverable: args.deliverable || "",
         acceptanceCriteria: args.acceptanceCriteria || "",
-        context: args.context || "",
+        context,
         output: args.output || "",
         estimateLow: args.estimateLow ?? null,
         estimateHigh: args.estimateHigh ?? null,
@@ -3936,7 +3959,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         tokenEstimate: args.tokenEstimate ?? null,
       };
       const task = await fileTaskStorage.createTask(taskData);
-      return { result: `Task created: "${task.title}" (ID: ${task.id}, priority: ${task.priority}, owner: ${task.owner})` };
+      return { result: `Task created: "${task.title}" (ID: ${task.id}, priority: ${task.priority}, owner: ${task.owner}, milestone: ${task.milestoneId})${sourceSessionId ? `, source: @session:${sourceSessionId}` : ""}` };
     } catch (err: any) {
       return { result: `Failed to create task: ${err.message}`, error: true };
     }

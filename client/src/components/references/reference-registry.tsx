@@ -10,6 +10,7 @@ import {
   Heart,
   Link2,
   MessageSquare,
+  MessagesSquare,
   PenLine,
   Radio,
   Rss,
@@ -106,6 +107,12 @@ const registry: Record<string, RegistryEntry> = {
     fallbackLabel: ref => metadataString(ref, "label") || ref.id,
     href: ref => metadataString(ref, "href") || priorityHref(ref),
   },
+  session: {
+    Icon: MessagesSquare,
+    fallbackLabel: ref => metadataString(ref, "label") || `Session ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/session?c=${encodeURIComponent(ref.id)}`,
+  },
+
   file: {
     Icon: Paperclip,
     fallbackLabel: ref => metadataString(ref, "label") || ref.id.split("/").pop() || ref.id,
