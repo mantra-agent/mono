@@ -119,6 +119,7 @@ const INTEGRATIONS: IntegrationDef[] = [
   { id: "automation-auth", name: "Automation Auth", icon: Shield, statusFields: ["automationAuth"], route: "automation-auth" },
   { id: "expo", name: "Expo Mobile", icon: Smartphone, statusFields: ["expo"], route: "expo" },
   { id: "sentry", name: "Sentry", icon: Shield, statusFields: ["sentry"], route: "sentry" },
+  { id: "sendgrid", name: "SendGrid", icon: Mail, statusFields: ["sendgrid"], route: "sendgrid" },
   { id: "meta", name: "Meta", icon: Glasses, statusFields: ["meta"], route: "meta" },
   { id: "oura", name: "Oura Ring", icon: Activity, statusFields: ["oura"], route: "oura" },
 ];
@@ -4829,6 +4830,135 @@ function AutomationAuthSection() {
   );
 }
 
+
+interface SendGridStatus {
+  configured: boolean;
+  hasApiKey: boolean;
+  hasFromEmail: boolean;
+  hasFromName: boolean;
+}
+
+function SendGridDetail() {
+  const { toast } = useToast();
+  const [to, setTo] = useState("");
+  const [subject, setSubject] = useState("Mantra SendGrid test");
+  const [body, setBody] = useState("This is a SendGrid test email from Mantra.");
+
+  const { data: status, isLoading } = useQuery<SendGridStatus>({
+    queryKey: ["/api/notifications/sendgrid/status"],
+  });
+
+  const sendMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/notifications/send", {
+        channel: "email",
+        to,
+        subject,
+        body,
+        metadata: { source: "integrations-ui", provider: "sendgrid" },
+      });
+      return res.json() as Promise<{ ok: boolean; status: string; providerMessageId?: string }>;
+    },
+    onSuccess: (result) => {
+      toast({
+        title: "Test email accepted",
+        description: result.providerMessageId ? `SendGrid message ${result.providerMessageId}` : "SendGrid accepted the email.",
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Test email failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const configured = Boolean(status?.configured);
+  const canSend = configured && to.trim().length > 0 && (body.trim().length > 0) && !sendMutation.isPending;
+
+  return (
+    <div className="space-y-4">
+      <Card data-testid="card-sendgrid-status">
+        <CardHeader>
+          <CardTitle className="text-base font-semibold">SendGrid Email</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {isLoading || !status ? (
+            <Skeleton className="h-20 w-full" />
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant={configured ? "default" : "secondary"} data-testid="badge-sendgrid-configured">
+                  {configured ? "Configured" : "Not configured"}
+                </Badge>
+                <Badge variant={status.hasApiKey ? "default" : "outline"} data-testid="badge-sendgrid-api-key">
+                  API key {status.hasApiKey ? "set" : "missing"}
+                </Badge>
+                <Badge variant={status.hasFromEmail ? "default" : "outline"} data-testid="badge-sendgrid-from-email">
+                  From email {status.hasFromEmail ? "set" : "missing"}
+                </Badge>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Configure Twilio SendGrid for Mantra outbound email. The API key stays server-side;
+                the browser can only trigger authenticated sends through Mantra.
+              </p>
+            </>
+          )}
+          <SecretsForSection section="sendgrid" />
+        </CardContent>
+      </Card>
+
+      <Card data-testid="card-sendgrid-test-email">
+        <CardHeader>
+          <CardTitle className="text-base font-semibold">Send test email</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="input-sendgrid-test-to">To</Label>
+            <Input
+              id="input-sendgrid-test-to"
+              type="email"
+              placeholder="ray@example.com"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              data-testid="input-sendgrid-test-to"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="input-sendgrid-test-subject">Subject</Label>
+            <Input
+              id="input-sendgrid-test-subject"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              data-testid="input-sendgrid-test-subject"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="textarea-sendgrid-test-body">Body</Label>
+            <Textarea
+              id="textarea-sendgrid-test-body"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={4}
+              data-testid="textarea-sendgrid-test-body"
+            />
+          </div>
+          {!configured && (
+            <p className="text-xs text-muted-foreground" data-testid="text-sendgrid-test-disabled">
+              Set `SENDGRID_API_KEY` and `SENDGRID_FROM_EMAIL` before sending a test email.
+            </p>
+          )}
+          <Button
+            onClick={() => sendMutation.mutate()}
+            disabled={!canSend}
+            data-testid="button-sendgrid-send-test"
+          >
+            {sendMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Mail className="h-4 w-4 mr-2" />}
+            Send test email
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 function IntegrationDetail({ provider }: { provider: string }) {
   const [, setLocation] = useLocation();
 
@@ -4969,6 +5099,7 @@ function IntegrationDetail({ provider }: { provider: string }) {
 
       {provider === "expo" && <ExpoDetail />}
       {provider === "sentry" && <SentryDetail />}
+      {provider === "sendgrid" && <SendGridDetail />}
       {provider === "meta" && <MetaDetail />}
 
       {provider === "oura" && <OuraDetail />}

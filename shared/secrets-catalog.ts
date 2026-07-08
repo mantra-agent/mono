@@ -12,6 +12,7 @@ export type SecretSection =
   | "railway"
   | "expo"
   | "sentry"
+  | "sendgrid"
   | "storage";
 
 export interface SecretSpec {
@@ -40,6 +41,9 @@ export const SECRET_CATALOG: SecretSpec[] = [
   { name: "SENTRY_AUTH_TOKEN", section: "sentry", label: "Sentry Auth Token", description: "Secret token used by EAS/Sentry tooling to upload source maps and debug artifacts. Store as an EAS secret too." },
   { name: "SENTRY_ORG", section: "sentry", label: "Sentry Organization Slug", description: "Sentry organization slug used by the Expo/Sentry config plugin and source-map upload tooling." },
   { name: "SENTRY_PROJECT", section: "sentry", label: "Sentry Project Slug", description: "Sentry project slug for the mobile app crash-reporting project." },
+  { name: "SENDGRID_API_KEY", section: "sendgrid", label: "SendGrid API Key", description: "Server-side API key for Twilio SendGrid Mail Send." },
+  { name: "SENDGRID_FROM_EMAIL", section: "sendgrid", label: "Verified From Email", description: "Default verified sender email or authenticated domain sender used for outbound notifications." },
+  { name: "SENDGRID_FROM_NAME", section: "sendgrid", label: "From Name", description: "Optional display name for Mantra outbound notifications." },
   { name: "OURA_CLIENT_ID", section: "oura", label: "Oura Client ID", description: "OAuth client ID from the Oura Cloud API Application settings." },
   { name: "OURA_CLIENT_SECRET", section: "oura", label: "Oura Client Secret", description: "OAuth client secret from the Oura Cloud API Application settings." },
   { name: "OURA_WEBHOOK_VERIFY_TOKEN", section: "oura", label: "Oura Webhook Verify Token", description: "Shared verification token used by the Oura webhook callback. Generate a long random value and configure the same value in Oura Cloud." },

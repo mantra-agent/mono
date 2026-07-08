@@ -112,6 +112,7 @@ export async function registerSetupRoutes(app: Express) {
       railway: !!getSecretSync("RAILWAY_API_TOKEN"),
       expo: !!await getSecret("EXPO_ACCESS_TOKEN"),
       sentry: !!(getSecretSync("EXPO_PUBLIC_SENTRY_DSN") && getSecretSync("SENTRY_AUTH_TOKEN") && getSecretSync("SENTRY_ORG") && getSecretSync("SENTRY_PROJECT")),
+      sendgrid: !!(getSecretSync("SENDGRID_API_KEY") && getSecretSync("SENDGRID_FROM_EMAIL")),
       phone: false,
       meta: !!(await (async () => {
         try {

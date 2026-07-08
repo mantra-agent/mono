@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "../auth";
 import { createLogger } from "../log";
+import { getSecretSync } from "../secrets-store";
 import { sendNotification, type NotificationSendInput } from "../notifications";
 
 const log = createLogger("NotificationRoutes");
@@ -49,6 +50,18 @@ function parseSendRequest(body: Record<string, unknown>): NotificationSendInput 
 
 export function registerNotificationRoutes(app: Express): void {
   app.use("/api/notifications", requireAuth);
+
+  app.get("/api/notifications/sendgrid/status", (_req: Request, res: Response) => {
+    const hasApiKey = Boolean(getSecretSync("SENDGRID_API_KEY")?.trim());
+    const hasFromEmail = Boolean(getSecretSync("SENDGRID_FROM_EMAIL")?.trim());
+    const hasFromName = Boolean(getSecretSync("SENDGRID_FROM_NAME")?.trim());
+    return res.json({
+      configured: hasApiKey && hasFromEmail,
+      hasApiKey,
+      hasFromEmail,
+      hasFromName,
+    });
+  });
 
   app.post("/api/notifications/send", async (req: Request, res: Response) => {
     try {
