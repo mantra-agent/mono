@@ -1133,7 +1133,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
       <button
         type="button"
         onClick={() => setEffectiveShowAdd(v => !v)}
-        className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-xs text-cta transition-colors hover:bg-accent/70 hover:text-cta/80"
+        className="flex items-center gap-2 w-full px-2 py-1.5 text-sm text-cta hover:text-cta/80 hover:bg-accent/70 rounded-md transition-colors"
         data-testid="button-new-log"
       >
         <Plus className={cn("h-3.5 w-3.5 shrink-0 transition-transform", effectiveShowAdd && "rotate-45")} />
@@ -1171,7 +1171,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                   hasValue
                   showEmpty
                   expandedContent={(
-                    <div className="max-h-80 max-w-none overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-xs leading-relaxed text-white scrollbar-thin">
+                    <div className="max-h-80 max-w-none overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-[11px] leading-tight text-white scrollbar-thin">
                       {isNote ? (
                         <div>
                           {editingNoteId === item.id ? (
@@ -1183,13 +1183,13 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                                 if ((event.metaKey || event.ctrlKey) && event.key === "Enter") saveNoteDraft(note);
                                 if (event.key === "Escape") { setEditingNoteId(null); setNoteDraft(""); }
                               }}
-                              className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-xs leading-relaxed text-white shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                              className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[11px] leading-tight text-white shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
                               data-testid={`textarea-note-log-${item.id}`}
                             />
                           ) : (
                             <button
                               type="button"
-                              className="block w-full whitespace-pre-wrap text-left text-xs leading-relaxed text-white"
+                              className="block w-full whitespace-pre-wrap text-left text-[11px] leading-tight text-white"
                               onClick={() => { setEditingNoteId(item.id); setNoteDraft(note?.content || ""); }}
                               data-testid={`note-log-content-${item.id}`}
                             >
@@ -1201,8 +1201,8 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                       ) : isMemory ? (
                         <div>
                           <p className="font-semibold text-white">{memoryTitle}</p>
-                          {memory?.summary && memory.title && <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-white">{memory.summary}</p>}
-                          <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-white">{memory?.content}</p>
+                          {memory?.summary && memory.title && <p className="mt-2 whitespace-pre-wrap text-[11px] leading-tight text-white">{memory.summary}</p>}
+                          <p className="mt-2 whitespace-pre-wrap text-[11px] leading-tight text-white">{memory?.content}</p>
                           <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                             <Badge variant="outline" className="text-[10px] leading-none">{memory?.layer}</Badge>
                             <Badge variant="outline" className="text-[10px] leading-none">{memory?.source}</Badge>
@@ -1212,7 +1212,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                       ) : isRelationshipMemory ? (
                         <div>
                           <p className="font-semibold text-white">{relationshipMemoryTitle}</p>
-                          <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-white">{relationshipMemory?.content}</p>
+                          <p className="mt-2 whitespace-pre-wrap text-[11px] leading-tight text-white">{relationshipMemory?.content}</p>
                           <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                             {relationshipMemory?.category && <Badge variant="outline" className="text-[10px] leading-none">{RM_CATEGORY_MAP[relationshipMemory.category]?.label || relationshipMemory.category}</Badge>}
                             {relationshipMemory?.tags?.map((tag) => <Badge key={tag} variant="outline" className="text-[10px] leading-none">{tag}</Badge>)}
@@ -1220,8 +1220,8 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                         </div>
                       ) : (
                         <>
-                          <p className="whitespace-pre-wrap text-xs leading-relaxed text-white" data-testid={`interaction-summary-${item.id}`}>{interaction?.summary}</p>
-                          {interaction?.context && <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-white">{interaction.context}</p>}
+                          <p className="whitespace-pre-wrap text-[11px] leading-tight text-white" data-testid={`interaction-summary-${item.id}`}>{interaction?.summary}</p>
+                          {interaction?.context && <p className="mt-2 whitespace-pre-wrap text-[11px] leading-tight text-white">{interaction.context}</p>}
                           {(interaction?.capitalImpact && interaction.capitalImpact !== "neutral") || interaction?.responseOwed || interaction?.responseDueBy || interaction?.tags?.length ? (
                             <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                               {interaction?.capitalImpact && interaction.capitalImpact !== "neutral" && <span>{interaction.capitalImpact}</span>}
@@ -1915,13 +1915,13 @@ function ProfileSummaryEditor({
   };
 
   return (
-    <div className="max-h-80 max-w-none overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-xs leading-relaxed text-white scrollbar-thin">
+    <div className="max-h-80 max-w-none overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-[11px] leading-tight text-white scrollbar-thin">
       <Textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={save}
         placeholder="Add summary"
-        className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-xs leading-relaxed text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+        className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[11px] leading-tight text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
         data-testid="textarea-quick-summary"
       />
     </div>
@@ -2280,7 +2280,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
             onBlur={() => { const next = editName.trim(); if (next && next !== person.name) updateMutation.mutate({ name: next }); }}
             onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditName(person.name); }}
             placeholder="Name"
-            className="h-4 w-full border-0 bg-transparent p-0 text-[10px] font-medium uppercase tracking-wider text-muted-foreground shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+            className="h-auto w-full border-0 bg-transparent p-0 text-xs font-bold uppercase leading-none tracking-wider text-muted-foreground shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
             data-testid="input-edit-profile-name"
           />
         )}
