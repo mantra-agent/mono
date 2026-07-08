@@ -248,6 +248,7 @@ The `gitWriteOverride` field on session metadata is retained as an admin escape 
 3. **UI/REST** — `POST /api/agent/tools/:toolName` → `executeBridgeTool()`
 
 ### When Working Here
+- Treat tool arguments as sparse patches, not full records. Optional empty strings, empty arrays, and empty objects are absence unless a handler explicitly allows empties. Destructive clears must flow through an explicit clear contract, never through schema-default blank values.
 - **Never add a handler without also adding it to `TOOLS` in `tool-registry.ts`** — unregistered handlers are invisible to the LLM
 - **New `TOOLS` entries must be top-level keys** — inserting inside an existing tool's object literal silently nests the new entry as a property of that tool instead of registering it. Always verify the new entry is a direct child of the `TOOLS` object (same indentation as `meta:`, `expo:`, `railway:`, etc.) and that the preceding entry's `},` is closed before the new key starts.
 - Tool handlers use lazy dynamic imports for storage modules — `const { foo } = await import("./bar")`
