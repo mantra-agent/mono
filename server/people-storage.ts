@@ -596,7 +596,7 @@ function rowToPerson(row: Record<string, any>): Person {
     socialProfiles: row.socialProfiles || row.social_profiles || {},
     contactInfo: Array.isArray(row.contactInfo || row.contact_info) ? (row.contactInfo || row.contact_info) : [],
     importantDates: Array.isArray(row.importantDates || row.important_dates) ? (row.importantDates || row.important_dates) : [],
-    notes: Array.isArray(row.notes) ? row.notes.map((n: any) => ({ ...n, title: n.title || "Untitled" })) : [],
+    notes: Array.isArray(row.notes) ? row.notes : [],
     interactions: Array.isArray(row.interactions) ? row.interactions : [],
     tags: Array.isArray(row.tags) ? row.tags : [],
     aiSummary: row.aiSummary || row.ai_summary || undefined,
@@ -921,13 +921,13 @@ export class PeopleStorage {
   }
 
   async addNote(personId: string, content: string, title?: string): Promise<Person> {
-    log.debug(`addNote personId=${personId} title="${title || "Untitled"}"`);
+    log.debug(`addNote personId=${personId} title="${title || ""}"`);
     const person = await this.getPerson(personId);
     if (!person) throw new Error(`Person ${personId} not found`);
     const now = new Date().toISOString();
     person.notes.push({
       id: generateId(),
-      title: title || "Untitled",
+      title: title || "",
       content,
       createdAt: now,
       updatedAt: now,
