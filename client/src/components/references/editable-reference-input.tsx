@@ -29,6 +29,11 @@ export type EditableReferenceInputHandle = {
   setSelectionRange: (start: number, end?: number) => void;
 };
 
+type SelectionOffsets = {
+  start: number;
+  end: number;
+};
+
 function extractValue(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
   if (!(node instanceof HTMLElement)) return "";
@@ -41,11 +46,8 @@ function extractValue(node: Node): string {
   return value;
 }
 
-function selectionOffsetWithin(root: HTMLElement): number {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) return 0;
-  const range = selection.getRangeAt(0);
-  if (!root.contains(range.startContainer)) return extractValue(root).length;
+function offsetForBoundary(root: HTMLElement, container: Node, boundaryOffset: number): number {
+  if (!root.contains(container)) return extractValue(root).length;
 
   let offset = 0;
   let found = false;
@@ -53,11 +55,11 @@ function selectionOffsetWithin(root: HTMLElement): number {
   function walk(node: Node): void {
     if (found) return;
 
-    if (node === range.startContainer) {
+    if (node === container) {
       if (node.nodeType === Node.TEXT_NODE) {
-        offset += range.startOffset;
+        offset += boundaryOffset;
       } else {
-        const children = Array.from(node.childNodes).slice(0, range.startOffset);
+        const children = Array.from(node.childNodes).slice(0, boundaryOffset);
         for (const child of children) offset += extractValue(child).length;
       }
       found = true;
@@ -82,6 +84,23 @@ function selectionOffsetWithin(root: HTMLElement): number {
 
   root.childNodes.forEach(walk);
   return offset;
+}
+
+function selectionOffsetsWithin(root: HTMLElement): SelectionOffsets {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) {
+    const end = extractValue(root).length;
+    return { start: end, end };
+  }
+
+  const range = selection.getRangeAt(0);
+  const start = offsetForBoundary(root, range.startContainer, range.startOffset);
+  const end = offsetForBoundary(root, range.endContainer, range.endOffset);
+  return { start: Math.min(start, end), end: Math.max(start, end) };
+}
+
+function selectionOffsetWithin(root: HTMLElement): number {
+  return selectionOffsetsWithin(root).end;
 }
 
 function setSelectionAtOffset(root: HTMLElement, targetOffset: number): void {
@@ -130,6 +149,11 @@ function setSelectionAtOffset(root: HTMLElement, targetOffset: number): void {
   if (!placed) place(root, root.childNodes.length);
 }
 
+function replaceRange(value: string, selection: SelectionOffsets, inserted: string): { value: string; cursor: number } {
+  const nextValue = value.slice(0, selection.start) + inserted + value.slice(selection.end);
+  return { value: nextValue, cursor: selection.start + inserted.length };
+}
+
 export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, EditableReferenceInputProps>(
   function EditableReferenceInput(
     {
@@ -149,6 +173,11 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
     const rootRef = useRef<HTMLDivElement>(null);
     const pendingSelectionRef = useRef<number | null>(null);
     const parts = useMemo(() => parseReferenceText(value), [value]);
+
+    const commitValue = useCallback((nextValue: string, cursor: number) => {
+      pendingSelectionRef.current = cursor;
+      onChange(nextValue, cursor);
+    }, [onChange]);
 
     const setSelectionRange = useCallback((start: number) => {
       pendingSelectionRef.current = start;
@@ -172,14 +201,82 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
       setSelectionAtOffset(root, pending);
     }, [value]);
 
-    const emitChange = useCallback(() => {
+    const handleBeforeInput = useCallback((event: React.FormEvent<HTMLDivElement>) => {
+      if (disabled) return;
+
+      const inputEvent = event.nativeEvent as InputEvent;
+      const root = rootRef.current;
+      if (!root) return;
+
+      const selection = selectionOffsetsWithin(root);
+      let inserted: string | null = null;
+
+      switch (inputEvent.inputType) {
+        case "insertText":
+        case "insertCompositionText":
+          inserted = inputEvent.data || "";
+          break;
+        case "insertLineBreak":
+        case "insertParagraph":
+          inserted = "\n";
+          break;
+        case "deleteContentBackward": {
+          event.preventDefault();
+          if (selection.start !== selection.end) {
+            const next = replaceRange(value, selection, "");
+            commitValue(next.value, next.cursor);
+            return;
+          }
+          const start = Math.max(0, selection.start - 1);
+          const next = replaceRange(value, { start, end: selection.end }, "");
+          commitValue(next.value, next.cursor);
+          return;
+        }
+        case "deleteContentForward": {
+          event.preventDefault();
+          if (selection.start !== selection.end) {
+            const next = replaceRange(value, selection, "");
+            commitValue(next.value, next.cursor);
+            return;
+          }
+          const end = Math.min(value.length, selection.end + 1);
+          const next = replaceRange(value, { start: selection.start, end }, "");
+          commitValue(next.value, next.cursor);
+          return;
+        }
+        default:
+          return;
+      }
+
+      event.preventDefault();
+      const next = replaceRange(value, selection, inserted);
+      commitValue(next.value, next.cursor);
+    }, [commitValue, disabled, value]);
+
+    const handleInput = useCallback(() => {
+      // Contenteditable is rendered from canonical React state. Native DOM mutations are
+      // prevented in beforeinput; this fallback only reconciles unexpected browser paths.
       const root = rootRef.current;
       if (!root) return;
       const nextValue = extractValue(root);
+      if (nextValue === value) return;
       const cursor = selectionOffsetWithin(root);
-      pendingSelectionRef.current = cursor;
-      onChange(nextValue, cursor);
-    }, [onChange]);
+      commitValue(nextValue, cursor);
+    }, [commitValue, value]);
+
+    const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
+      onPaste?.(event);
+      if (event.defaultPrevented || disabled) return;
+
+      const text = event.clipboardData.getData("text/plain");
+      if (!text) return;
+      event.preventDefault();
+
+      const root = rootRef.current;
+      const selection = root ? selectionOffsetsWithin(root) : { start: value.length, end: value.length };
+      const next = replaceRange(value, selection, text);
+      commitValue(next.value, next.cursor);
+    }, [commitValue, disabled, onPaste, value]);
 
     const handleSelect = useCallback(() => {
       const root = rootRef.current;
@@ -196,13 +293,14 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
         suppressContentEditableWarning
         data-placeholder={placeholder}
         data-empty={value.length === 0 ? "true" : undefined}
-        onInput={emitChange}
+        onBeforeInput={handleBeforeInput}
+        onInput={handleInput}
         onKeyUp={handleSelect}
         onMouseUp={handleSelect}
         onFocus={onFocus}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
-        onPaste={onPaste}
+        onPaste={handlePaste}
         className={cn(
           "editable-reference-input w-full min-h-9 whitespace-pre-wrap break-words outline-none empty:before:content-[attr(data-placeholder)]",
           disabled && "pointer-events-none cursor-not-allowed opacity-50",
