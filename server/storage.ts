@@ -156,7 +156,7 @@ export interface IStorage {
   deleteEmailDraft(id: number): Promise<boolean>;
 
   getUnenrichedTriagedEmails(limit?: number): Promise<EmailMessage[]>;
-  getEmailPipelineCounts(): Promise<{ untriaged: number; awaitingEnrichment: number; reviewReady: number }>;
+  getEmailPipelineCounts(): Promise<{ untriaged: number; awaitingEnrichment: number; reviewReady: number; ownerNullEmailMessages: number; systemAwaitingEnrichment: number; visibilityMismatch: boolean }>;
   getLastEmailEnrichment(): Promise<EmailEnrichment | undefined>;
   upsertEmailEnrichment(data: InsertEmailEnrichment): Promise<EmailEnrichment>;
   getEnrichmentsByThreadIds(threadIds: string[], accountId?: string): Promise<EmailEnrichment[]>;
@@ -882,7 +882,7 @@ export class HybridStorage implements IStorage {
         triageReason: reason,
         triagedAt: new Date(),
       })
-      .where(combineWithSensitiveWritable(emailMessageScopeColumns, eq(emailMessages.id, id)))
+      .where(combineWithSensitiveWritable(emailMessageScopeColumns, and(eq(emailMessages.id, id), sql`${emailMessages.ownerUserId} IS NOT NULL`, sql`${emailMessages.principalAccountId} IS NOT NULL`)))
       .returning();
     return updated;
   }
@@ -900,7 +900,7 @@ export class HybridStorage implements IStorage {
           triagedAt: new Date(),
           ...(autoDismiss ? { isDone: true, doneReason: u.tier === "🗑️" ? "auto_noise" : "auto_fyi", doneAt: new Date(), updatedAt: new Date() } : {}),
         })
-        .where(combineWithSensitiveWritable(emailMessageScopeColumns, eq(emailMessages.id, u.id)))
+        .where(combineWithSensitiveWritable(emailMessageScopeColumns, and(eq(emailMessages.id, u.id), sql`${emailMessages.ownerUserId} IS NOT NULL`, sql`${emailMessages.principalAccountId} IS NOT NULL`)))
         .returning();
 
       if (autoDismiss && updated) {
@@ -914,6 +914,7 @@ export class HybridStorage implements IStorage {
           subject: updated.subject || null,
           reason: `Auto-dismissed during triage: ${u.tier === "🗑️" ? "Noise" : "FYI"} tier — ${u.reason}`,
           dismissedBy: "auto",
+          ...sensitiveOwnershipValues(),
         }).catch(() => {});
       }
     }
@@ -1117,6 +1118,8 @@ export class HybridStorage implements IStorage {
       .where(combineWithSensitiveVisible(
         emailMessageScopeColumns,
         sql`${emailMessages.triageStatus} = 'triaged'
+          AND ${emailMessages.ownerUserId} IS NOT NULL
+          AND ${emailMessages.principalAccountId} IS NOT NULL
           AND ${emailMessages.date} > NOW() - INTERVAL '30 days'
           AND (
             NOT EXISTS (
@@ -1137,21 +1140,30 @@ export class HybridStorage implements IStorage {
   }
 
 
-  async getEmailPipelineCounts(): Promise<{ untriaged: number; awaitingEnrichment: number; reviewReady: number }> {
+  async getEmailPipelineCounts(): Promise<{ untriaged: number; awaitingEnrichment: number; reviewReady: number; ownerNullEmailMessages: number; systemAwaitingEnrichment: number; visibilityMismatch: boolean }> {
     // Keep health counts aligned with the actual candidate queries.
     // Outbound messages are audit/history, not triage candidates.
     // Dismissed triage states are terminal and excluded from enrichment/review counts.
+    const scopedRecent = combineWithSensitiveVisible(emailMessageScopeColumns,
+      sql`${emailMessages.date} > NOW() - INTERVAL '30 days'`,
+    );
     const [row] = await db.select({
       untriaged: sql<number>`COUNT(*) FILTER (
         WHERE ${emailMessages.triageStatus} = 'untriaged'
           AND ${emailMessages.direction} <> 'outbound'
+          AND ${emailMessages.ownerUserId} IS NOT NULL
+          AND ${emailMessages.principalAccountId} IS NOT NULL
       )::int`,
       awaitingEnrichment: sql<number>`COUNT(*) FILTER (
         WHERE ${emailMessages.triageStatus} = 'triaged'
+          AND ${emailMessages.ownerUserId} IS NOT NULL
+          AND ${emailMessages.principalAccountId} IS NOT NULL
           AND (${emailEnrichments.id} IS NULL OR ${emailEnrichments.updatedAt} < ${emailMessages.date})
       )::int`,
       reviewReady: sql<number>`COUNT(*) FILTER (
         WHERE ${emailMessages.triageStatus} = 'triaged'
+          AND ${emailMessages.ownerUserId} IS NOT NULL
+          AND ${emailMessages.principalAccountId} IS NOT NULL
           AND ${emailEnrichments.id} IS NOT NULL
           AND ${emailEnrichments.updatedAt} >= ${emailMessages.date}
       )::int`,
@@ -1160,15 +1172,40 @@ export class HybridStorage implements IStorage {
         eq(emailEnrichments.providerThreadId, emailMessages.providerThreadId),
         eq(emailEnrichments.accountId, emailMessages.accountId),
       ))
-      .where(combineWithSensitiveVisible(emailMessageScopeColumns,
-        sql`${emailMessages.date} > NOW() - INTERVAL '30 days'`,
-      ));
+      .where(scopedRecent);
 
-    return {
+    const [diagnostic] = await db.select({
+      ownerNullEmailMessages: sql<number>`COUNT(*) FILTER (
+        WHERE (${emailMessages.ownerUserId} IS NULL OR ${emailMessages.principalAccountId} IS NULL)
+      )::int`,
+      systemAwaitingEnrichment: sql<number>`COUNT(*) FILTER (
+        WHERE ${emailMessages.triageStatus} = 'triaged'
+          AND (${emailEnrichments.id} IS NULL OR ${emailEnrichments.updatedAt} < ${emailMessages.date})
+      )::int`,
+    }).from(emailMessages)
+      .leftJoin(emailEnrichments, and(
+        eq(emailEnrichments.providerThreadId, emailMessages.providerThreadId),
+        eq(emailEnrichments.accountId, emailMessages.accountId),
+      ))
+      .where(sql`${emailMessages.date} > NOW() - INTERVAL '30 days'`);
+
+    const counts = {
       untriaged: Number(row?.untriaged ?? 0),
       awaitingEnrichment: Number(row?.awaitingEnrichment ?? 0),
       reviewReady: Number(row?.reviewReady ?? 0),
+      ownerNullEmailMessages: Number(diagnostic?.ownerNullEmailMessages ?? 0),
+      systemAwaitingEnrichment: Number(diagnostic?.systemAwaitingEnrichment ?? 0),
+      visibilityMismatch: Number(diagnostic?.systemAwaitingEnrichment ?? 0) > Number(row?.awaitingEnrichment ?? 0),
     };
+
+    if (counts.ownerNullEmailMessages > 0) {
+      log.error(`email pipeline invariant violation: owner-null email rows in recent pipeline count=${counts.ownerNullEmailMessages}`);
+    }
+    if (counts.visibilityMismatch) {
+      log.error(`email pipeline visibility mismatch: systemAwaitingEnrichment=${counts.systemAwaitingEnrichment} userVisibleAwaitingEnrichment=${counts.awaitingEnrichment}`);
+    }
+
+    return counts;
   }
 
   async getLastEmailEnrichment(): Promise<EmailEnrichment | undefined> {
@@ -1182,7 +1219,7 @@ export class HybridStorage implements IStorage {
 
   async upsertEmailEnrichment(data: InsertEmailEnrichment): Promise<EmailEnrichment> {
     const [result] = await db.insert(emailEnrichments)
-      .values(data)
+      .values({ ...data, ...sensitiveOwnershipValues() })
       .onConflictDoUpdate({
         target: [emailEnrichments.providerThreadId, emailEnrichments.accountId],
         set: {
@@ -1195,6 +1232,7 @@ export class HybridStorage implements IStorage {
           model: data.model,
           tokensUsed: data.tokensUsed,
           messageId: data.messageId,
+          ...sensitiveOwnershipValues(),
           updatedAt: new Date(),
         },
       })
