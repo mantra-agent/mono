@@ -1,3 +1,4 @@
+import { ListTodo } from "lucide-react";
 import type { SimpleFeedItem } from "@shared/models/simple";
 import { sourceRefToReferenceRef } from "@shared/simple-references";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
@@ -20,6 +21,7 @@ function PriorityTaskInline({ item }: { item: SimpleFeedItem }) {
 
   return (
     <div className="flex items-center gap-1.5">
+      <ListTodo className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
       {reference ? (
         <span className="min-w-0">
           <ReferenceRenderer refValue={reference} surface="simple-row" className={completed ? "text-neutral hover:text-neutral" : undefined} />

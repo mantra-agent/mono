@@ -629,11 +629,8 @@ async function fetchTasks(isWeekend: boolean): Promise<string | null> {
   const highPriority = ready.filter(t => t.priority === "high");
   const normalPriority = ready.filter(t => t.priority !== "high");
   const { formatDeadlineCompact, getDeadlineProximity } = await import("@shared/models/work");
-  let totalEstimatedHours = 0;
   for (const t of [...highPriority, ...normalPriority]) {
-    const est = t.estimateLow != null && t.estimateHigh != null
-      ? ` (~${((t.estimateLow + t.estimateHigh) / 2).toFixed(1)}h)`
-      : '';
+    const est = '';
     let dl = '';
     if (t.deadline) {
       const prox = getDeadlineProximity(t.deadline);
@@ -641,9 +638,6 @@ async function fetchTasks(isWeekend: boolean): Promise<string | null> {
       dl = prox ? ` due ${compact} (${prox.label})` : ` due ${compact}`;
     }
     lines.push(`- [${t.priority}] ${t.title}${est}${dl}${t.projectId ? ` (project #${t.projectId})` : ""}`);
-    if (t.estimateLow != null && t.estimateHigh != null) {
-      totalEstimatedHours += (t.estimateLow + t.estimateHigh) / 2;
-    }
   }
   if (blocked.length > 0) {
     lines.push("");
@@ -1249,7 +1243,6 @@ export async function buildWeeklyPlanningPreContext(): Promise<{ preContext: str
         maxResults: 50,
       });
       if (events.length === 0) return null;
-      let totalHours = 0;
       const lines = events.map(e => {
         const date = e.start.dateTime ? new Date(e.start.dateTime).toLocaleDateString("en-US", { weekday: "short" }) : "All day";
         const time = e.start.dateTime ? new Date(e.start.dateTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
@@ -1267,26 +1260,16 @@ export async function buildWeeklyPlanningPreContext(): Promise<{ preContext: str
       const readyTasks = await fileTaskStorage.getTasks({ status: "ready" });
       const top = readyTasks.slice(0, 15);
       if (top.length === 0) return null;
-      let totalHours = 0;
       const lines = top.map(t => {
-        const est = t.estimateLow != null && t.estimateHigh != null
-          ? ` (~${((t.estimateLow + t.estimateHigh) / 2).toFixed(1)}h)`
-          : '';
+        const est = '';
         let dl = '';
         if (t.deadline) {
           const prox = getDeadlineProximity(t.deadline);
           const compact = formatDeadlineCompact(t.deadline);
           dl = prox ? `, due ${compact} (${prox.label})` : `, due ${compact}`;
         }
-        if (t.estimateLow != null && t.estimateHigh != null) {
-          totalHours += (t.estimateLow + t.estimateHigh) / 2;
-        }
         return `- [${t.priority}] ${t.title}${est}${dl}${t.projectId ? ` (project #${t.projectId})` : ""}`;
       });
-      if (totalHours > 0) {
-        lines.push("");
-        lines.push(`Total estimated: ~${totalHours.toFixed(1)}h`);
-      }
       return lines.join("\n");
     }),
     fetchWithTimeout("wellness", fetchWellnessStatus),

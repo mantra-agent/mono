@@ -1095,9 +1095,7 @@ async function resolveActiveTasks(): Promise<string> {
           ? ` — Project: ${project.title} / Milestone: ${milestoneName}`
           : ` — Project: ${project.title}`;
       }
-      const estStr = t.estimateLow != null && t.estimateHigh != null
-        ? ` — ~${((t.estimateLow + t.estimateHigh) / 2).toFixed(1)}h`
-        : '';
+      const estStr = '';
       let dlStr = '';
       if (t.deadline) {
         const dlProx = getDeadlineProximity(t.deadline);

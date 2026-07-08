@@ -3953,8 +3953,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         acceptanceCriteria: args.acceptanceCriteria || "",
         context,
         output: args.output || "",
-        estimateLow: args.estimateLow ?? null,
-        estimateHigh: args.estimateHigh ?? null,
         deadline: args.deadline ?? null,
         tokenEstimate: args.tokenEstimate ?? null,
       };
@@ -4040,8 +4038,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     if (args.acceptanceCriteria !== undefined) raw.acceptanceCriteria = args.acceptanceCriteria;
     if (args.context !== undefined) raw.context = args.context;
     if (args.output !== undefined) raw.output = args.output;
-    if (args.estimateLow !== undefined) raw.estimateLow = args.estimateLow;
-    if (args.estimateHigh !== undefined) raw.estimateHigh = args.estimateHigh;
     if (args.deadline !== undefined) raw.deadline = args.deadline;
     if (args.tokenEstimate !== undefined) raw.tokenEstimate = args.tokenEstimate;
     if (args.clearFields !== undefined) raw.clearFields = args.clearFields;

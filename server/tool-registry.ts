@@ -474,8 +474,6 @@ export const TOOLS: Record<string, ToolMeta> = {
         acceptanceCriteria: { type: "string", description: "Done criteria" },
         context: { type: "string", description: "Background info" },
         output: { type: "string", description: "Actual result" },
-        estimateLow: { type: "number", description: "Low estimate (hours)" },
-        estimateHigh: { type: "number", description: "High estimate (hours)" },
         deadline: { type: "string", description: "Deadline date (ISO string)" },
         tokenEstimate: { type: "number", description: "Estimated token cost" },
         clearFields: { type: "array", items: { type: "string" }, description: "Fields to explicitly clear (set to null). Allowed: description, context, deliverable, acceptanceCriteria, output, deadline, projectId, milestoneId. (for update)" },

@@ -53,7 +53,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Check,
-  CheckSquare,
   Plus,
   ChevronDown,
   ChevronRight,
@@ -74,8 +73,6 @@ import {
   MessageSquare,
   MoreHorizontal,
   ArrowUpFromLine,
-  Play,
-  Square,
   Link2,
   StickyNote,
   Pencil,
@@ -88,10 +85,10 @@ import {
   ArrowLeft,
   Monitor,
   ClipboardCheck,
+  ListTodo,
   Package,
   FileOutput,
   BookOpen,
-  Clock,
   CalendarDays,
   Calculator,
 } from "lucide-react";
@@ -101,7 +98,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useTimezone, formatDate as tzFormatDate, formatDateTime, formatDateOnly } from "@/hooks/use-timezone";
 import { localDayDiff } from "@/lib/local-date";
-import type { Task, Project, PriorityLevel, TaskStatus, ProjectStatus, ImpactEffort, Milestone, ProjectNote, ProjectFile } from "@shared/models/work";
+import type { Task, Project, PriorityLevel, TaskStatus, ProjectStatus, ImpactEffort, Milestone, MilestoneStatus, ProjectNote, ProjectFile } from "@shared/models/work";
 import { getDeadlineProximity } from "@shared/models/work";
 import type { GoalIndexEntry } from "@shared/schema";
 import {
@@ -118,6 +115,39 @@ const log = createLogger("WorkPage");
 const COLOR_GREEN = "text-success dark:text-success";
 const COLOR_BLUE = "text-info";
 const COLOR_PURPLE = "text-cat-ai";
+
+function formatWorkDueDate(date: string | null | undefined): string | null {
+  if (!date) return null;
+  const parsed = new Date(`${date}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function nearestWorkDueDate(project: Project, tasks: Task[]): string | null {
+  const dates = [
+    project.dueDate,
+    ...(project.milestones || []).map(m => m.dueDate),
+    ...tasks.map(t => t.deadline),
+  ].filter(Boolean) as string[];
+  dates.sort();
+  return dates[0] ?? null;
+}
+
+function WorkCheckCircle({ checked, className, ...props }: { checked: boolean; className?: string } & React.HTMLAttributes<HTMLSpanElement>) {
+  return (
+    <span
+      className={cn(
+        "h-4 w-4 rounded-full border bg-transparent inline-flex items-center justify-center transition-colors shrink-0",
+        checked ? "border-success text-success" : "border-muted-foreground text-muted-foreground",
+        className,
+      )}
+      aria-hidden="true"
+      {...props}
+    >
+      {checked ? <Check className="h-3 w-3" /> : null}
+    </span>
+  );
+}
 const COLOR_RED = "text-error dark:text-error";
 
 const PRIORITY_OPTIONS: { value: PriorityLevel; label: string; color: string }[] = [
@@ -887,7 +917,6 @@ export function TaskDetails({ taskId, onBack }: { taskId: number; onBack: () => 
             <Select
               value={task.effort}
               onValueChange={(v) => updateMutation.mutate({ effort: v as any })}
-              disabled={task.estimateLow != null && task.estimateHigh != null}
             >
               <SelectTrigger className="h-8 text-xs w-auto min-w-[100px]" data-testid="select-detail-effort">
                 <SelectValue />
@@ -953,31 +982,10 @@ export function TaskDetails({ taskId, onBack }: { taskId: number; onBack: () => 
         </div>
       </section>
 
-      {/* Estimates */}
-      <section data-testid="section-task-estimates">
-        <div className={cn(sectionTitleClass, "mb-1")}>Estimates</div>
-        <div className="divide-y divide-border/20">
-          <DetailRow icon={Clock} label="Est. Low" testId="row-estimate-low">
-            <NumericInput
-              value={task.estimateLow}
-              onSave={(val) => updateMutation.mutate({ estimateLow: val } as Partial<Task>)}
-              step="0.5"
-              suffix="h"
-              testId="input-detail-estimate-low"
-            />
-          </DetailRow>
-
-          <DetailRow icon={Clock} label="Est. High" testId="row-estimate-high">
-            <NumericInput
-              value={task.estimateHigh}
-              onSave={(val) => updateMutation.mutate({ estimateHigh: val } as Partial<Task>)}
-              step="0.5"
-              suffix="h"
-              testId="input-detail-estimate-high"
-            />
-          </DetailRow>
-
-          {task.owner === "agent" && (
+      {task.owner === "agent" && (
+        <section data-testid="section-task-agent-estimates">
+          <div className={cn(sectionTitleClass, "mb-1")}>Agent</div>
+          <div className="divide-y divide-border/20">
             <DetailRow icon={Calculator} label="Token Est." testId="row-token-estimate">
               <NumericInput
                 value={task.tokenEstimate}
@@ -986,9 +994,9 @@ export function TaskDetails({ taskId, onBack }: { taskId: number; onBack: () => 
                 testId="input-detail-token-estimate"
               />
             </DetailRow>
-          )}
-        </div>
-      </section>
+          </div>
+        </section>
+      )}
 
       {/* Detail text fields */}
       <section className="space-y-3" data-testid="section-task-details">
@@ -1127,6 +1135,7 @@ function TaskRow({
   onOpenTask?: (id: number) => void;
 }) {
   const [editTitle, setEditTitle] = useState(task.title);
+  const [expanded, setExpanded] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -1147,6 +1156,8 @@ function TaskRow({
 
   const isCompleted = task.status === "done" || isDone;
   const isActive = task.status === "active" && !isCompleted;
+  const dueLabel = formatWorkDueDate(task.deadline);
+  const taskDetailLines = [task.description, task.deliverable, task.context, task.output].map(v => v?.trim()).filter(Boolean);
   const statusTextClass = isActive
     ? "text-foreground font-medium"
     : isCompleted
@@ -1154,17 +1165,19 @@ function TaskRow({
       : "text-muted-foreground";
 
   return (
-    <div
-      className={cn(
-        "group relative flex items-center gap-2 rounded-md px-2 py-1.5 text-sm w-full text-left cursor-pointer select-none transition-colors overflow-hidden",
-        "hover:bg-accent/70",
-        statusTextClass,
-        isCompleted && "line-through"
-      )}
-      onClick={() => onOpenTask ? onOpenTask(task.id) : onStartEdit()}
-      data-testid={`card-task-${task.id}`}
-    >
-      <CheckSquare className="h-3.5 w-3.5 shrink-0" data-testid={`icon-task-${task.id}`} />
+    <div data-testid={`tree-node-task-${task.id}`}>
+      <div
+        className={cn(
+          "group relative flex items-center gap-2 rounded-md px-2 py-1.5 pr-14 text-sm w-full text-left cursor-pointer select-none transition-colors overflow-hidden",
+          "hover:bg-accent/70",
+          statusTextClass,
+          isCompleted && "line-through"
+        )}
+        onClick={() => onOpenTask ? onOpenTask(task.id) : onStartEdit()}
+        data-testid={`card-task-${task.id}`}
+      >
+      <WorkCheckCircle checked={isCompleted} data-testid={`check-task-${task.id}`} />
+      <ListTodo className="h-3.5 w-3.5 shrink-0 text-muted-foreground" data-testid={`icon-task-${task.id}`} />
 
       {isEditing ? (
         <Input
@@ -1179,12 +1192,28 @@ function TaskRow({
         />
       ) : (
         <span
-          className="truncate flex-1 min-w-0 pr-6"
+          className="truncate flex-1 min-w-0"
           data-testid={`text-task-title-${task.id}`}
         >
           {task.title && task.title.length > 30 ? task.title.slice(0, 30) + "…" : task.title}
         </span>
       )}
+
+      {dueLabel && (
+        <span className="shrink-0 text-xs text-muted-foreground/70 tabular-nums" data-testid={`text-task-due-date-${task.id}`}>
+          {dueLabel}
+        </span>
+      )}
+
+      <button
+        type="button"
+        className="absolute right-7 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
+        onClick={(e) => { e.stopPropagation(); setExpanded(value => !value); }}
+        aria-label={expanded ? "Collapse task" : "Expand task"}
+        data-testid={`button-task-twisty-${task.id}`}
+      >
+        <ChevronRight className={cn("h-3 w-3 transition-transform", expanded && "rotate-90")} />
+      </button>
 
       <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
@@ -1198,24 +1227,24 @@ function TaskRow({
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-          {task.status === "ready" && (
-            <DropdownMenuItem
-              onClick={(e) => { e.stopPropagation(); onUpdate({ status: "active" }); }}
-              data-testid={`menu-task-start-${task.id}`}
-            >
-              <Play className="h-3.5 w-3.5 mr-2" />
-              Start
-            </DropdownMenuItem>
-          )}
-          {task.status === "active" && (
-            <DropdownMenuItem
-              onClick={(e) => { e.stopPropagation(); onUpdate({ status: "done" }); }}
-              data-testid={`menu-task-complete-${task.id}`}
-            >
-              <Check className="h-3.5 w-3.5 mr-2" />
-              Complete
-            </DropdownMenuItem>
-          )}
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger data-testid={`menu-task-status-${task.id}`}>
+              <Package className="h-3.5 w-3.5 mr-2" />
+              Status
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              {(["on_hold", "ready", "active", "done"] as TaskStatus[]).map(status => (
+                <DropdownMenuItem
+                  key={status}
+                  onClick={(e) => { e.stopPropagation(); onUpdate({ status }); }}
+                  data-testid={`menu-task-status-${status}-${task.id}`}
+                >
+                  {task.status === status ? <Check className="h-3.5 w-3.5 mr-2" /> : <span className="w-3.5 mr-2" />}
+                  {STATUS_CONFIG[status].label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
           <DropdownMenuItem
             onClick={(e) => { e.stopPropagation(); onStartEdit(); }}
             data-testid={`menu-task-rename-${task.id}`}
@@ -1338,6 +1367,21 @@ function TaskRow({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      </div>
+      {expanded && (
+        <div className="ml-14 mr-2 rounded-md border-l border-border/40 px-3 py-1.5 text-xs text-muted-foreground" data-testid={`tree-task-expanded-${task.id}`}>
+          {taskDetailLines.length > 0 ? (
+            <div className="space-y-1">
+              {task.description?.trim() && <p>{task.description.trim()}</p>}
+              {task.deliverable?.trim() && <p><span className="text-muted-foreground/70">Deliverable:</span> {task.deliverable.trim()}</p>}
+              {task.context?.trim() && <p><span className="text-muted-foreground/70">Context:</span> {task.context.trim()}</p>}
+              {task.output?.trim() && <p><span className="text-muted-foreground/70">Output:</span> {task.output.trim()}</p>}
+            </div>
+          ) : (
+            <span>No details yet.</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1404,6 +1448,15 @@ function ProjectsView({ onOpenTask }: { onOpenTask?: (id: number) => void }) {
       queryClient.invalidateQueries({ queryKey: ["/api/projects/projects", variables.projectId] });
       setAddingMilestoneProjectId(null);
       setNewMilestoneName("");
+    },
+  });
+
+  const updateMilestoneMutation = useMutation({
+    mutationFn: ({ projectId, milestoneId, data }: { projectId: number; milestoneId: number; data: Partial<Milestone> }) =>
+      apiRequest("PATCH", `/api/projects/projects/${projectId}/milestones/${milestoneId}`, data),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects/projects"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects/projects", variables.projectId] });
     },
   });
 
@@ -1535,6 +1588,7 @@ function ProjectsView({ onOpenTask }: { onOpenTask?: (id: number) => void }) {
                     onCancelAddTask={() => { setAddingTaskTarget(null); setNewTaskTitle(""); }}
                     onDeleteProject={() => setPendingDeleteProject({ id: project.id, title: project.title })}
                     onUpdateProject={(data) => updateProjectMutation.mutate({ id: project.id, data })}
+                    onUpdateMilestone={(milestoneId, data) => updateMilestoneMutation.mutate({ projectId: project.id, milestoneId, data })}
                   />
                 ))}
               </CollapsibleWorkSection>
@@ -1652,6 +1706,7 @@ function ProjectTreeNode({
   onCancelAddTask,
   onDeleteProject,
   onUpdateProject,
+  onUpdateMilestone,
 }: {
   project: Project;
   tasks: Task[];
@@ -1677,10 +1732,11 @@ function ProjectTreeNode({
   onCancelAddTask: () => void;
   onDeleteProject: () => void;
   onUpdateProject: (data: any) => void;
+  onUpdateMilestone: (milestoneId: number, data: Partial<Milestone>) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const completed = project.milestones.filter(m => m.status === "completed").length;
-  const total = project.milestones.length;
+  const [expandedMilestones, setExpandedMilestones] = useState<Record<number, boolean>>({});
+  const projectDueLabel = formatWorkDueDate(nearestWorkDueDate(project, tasks));
   const isActive = project.status === "active";
   const isAddingMilestone = addingMilestoneProjectId === project.id;
   const sortedMilestones = [...(project.milestones || [])].sort((a, b) => {
@@ -1701,6 +1757,11 @@ function ProjectTreeNode({
     unassignedTasks.push(task);
   });
   const hasChildren = sortedMilestones.length > 0 || unassignedTasks.length > 0 || isAddingMilestone;
+  const isMilestoneExpanded = (milestone: Milestone) =>
+    expandedMilestones[milestone.id] ?? milestone.status === "active";
+  const toggleMilestoneExpanded = (milestone: Milestone) => {
+    setExpandedMilestones(prev => ({ ...prev, [milestone.id]: !isMilestoneExpanded(milestone) }));
+  };
   const depth = 0;
   const indentPx = Math.min(depth * WORK_INDENT_STEP_PX, WORK_MAX_INDENT_PX);
 
@@ -1721,9 +1782,9 @@ function ProjectTreeNode({
             <span className="truncate flex-1 min-w-0" data-testid={`text-project-title-${project.id}`}>
               {project.title}
             </span>
-            {total > 0 && (
-              <span className="shrink-0 text-xs text-muted-foreground/70 tabular-nums" data-testid={`text-project-milestones-${project.id}`}>
-                {completed}/{total}
+            {projectDueLabel && (
+              <span className="shrink-0 text-xs text-muted-foreground/70 tabular-nums" data-testid={`text-project-due-date-${project.id}`}>
+                {projectDueLabel}
               </span>
             )}
             <div className="absolute right-1 top-1/2 -translate-y-1/2 flex h-6 items-center gap-0.5 pl-1 z-10">
@@ -1806,22 +1867,37 @@ function ProjectTreeNode({
           {sortedMilestones.map(milestone => {
             const milestoneTasks = tasksByMilestone.get(milestone.id) || [];
             const isAddingTask = addingTaskTarget?.projectId === project.id && addingTaskTarget.milestoneId === milestone.id;
+            const milestoneExpanded = isMilestoneExpanded(milestone);
+            const milestoneDueLabel = formatWorkDueDate(milestone.dueDate);
+            const milestoneCompleted = milestone.status === "completed";
             return (
               <div key={milestone.id} className="space-y-0">
                 <div className="flex min-w-0 items-stretch" style={{ paddingLeft: Math.min(WORK_INDENT_STEP_PX, WORK_MAX_INDENT_PX) }}>
                   <WorkTreeIndent depth={1} />
                   <div className="flex-1 min-w-0 relative overflow-hidden">
-                    <div className="group relative flex items-center gap-2 rounded-md px-2 py-1.5 pr-10 text-sm w-full text-left select-none transition-colors overflow-hidden hover:bg-accent/70" data-testid={`tree-node-milestone-${milestone.id}`}>
+                    <div className="group relative flex items-center gap-2 rounded-md px-2 py-1.5 pr-16 text-sm w-full text-left select-none transition-colors overflow-hidden hover:bg-accent/70" data-testid={`tree-node-milestone-${milestone.id}`}>
+                      <WorkCheckCircle checked={milestoneCompleted} data-testid={`check-tree-milestone-${milestone.id}`} />
                       <Flag className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className={cn("truncate flex-1 min-w-0", milestone.status === "completed" && "line-through text-muted-foreground")} data-testid={`text-tree-milestone-name-${milestone.id}`}>
+                      <span className={cn("truncate flex-1 min-w-0", milestoneCompleted && "line-through text-muted-foreground")} data-testid={`text-tree-milestone-name-${milestone.id}`}>
                         {milestone.name}
                       </span>
-                      {milestoneTasks.length > 0 && (
-                        <span className="shrink-0 text-xs text-muted-foreground/70 tabular-nums" data-testid={`text-tree-milestone-task-count-${milestone.id}`}>
-                          {milestoneTasks.length}
+                      {milestoneDueLabel && (
+                        <span className="shrink-0 text-xs text-muted-foreground/70 tabular-nums" data-testid={`text-tree-milestone-due-date-${milestone.id}`}>
+                          {milestoneDueLabel}
                         </span>
                       )}
                       <div className="absolute right-1 top-1/2 -translate-y-1/2 flex h-6 items-center gap-0.5 pl-1 z-10">
+                        {milestoneTasks.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); toggleMilestoneExpanded(milestone); }}
+                            className="h-5 w-5 flex items-center justify-center rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent transition-colors"
+                            aria-label={milestoneExpanded ? "Collapse milestone tasks" : "Expand milestone tasks"}
+                            data-testid={`button-tree-milestone-twisty-${milestone.id}`}
+                          >
+                            <ChevronRight className={cn("h-3 w-3 transition-transform", milestoneExpanded && "rotate-90")} />
+                          </button>
+                        )}
                         <DropdownMenu modal={false}>
                           <DropdownMenuTrigger asChild>
                             <button
@@ -1834,10 +1910,29 @@ function ProjectTreeNode({
                             </button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            <DropdownMenuSub>
+                              <DropdownMenuSubTrigger data-testid={`menu-tree-milestone-status-${milestone.id}`}>
+                                <Package className="h-3.5 w-3.5 mr-2" />
+                                Status
+                              </DropdownMenuSubTrigger>
+                              <DropdownMenuSubContent>
+                                {(["planned", "active", "completed"] as MilestoneStatus[]).map(status => (
+                                  <DropdownMenuItem
+                                    key={status}
+                                    onClick={(e) => { e.stopPropagation(); onUpdateMilestone(milestone.id, { status }); }}
+                                    data-testid={`menu-tree-milestone-status-${status}-${milestone.id}`}
+                                  >
+                                    {milestone.status === status ? <Check className="h-3.5 w-3.5 mr-2" /> : <span className="w-3.5 mr-2" />}
+                                    {status.charAt(0).toUpperCase() + status.slice(1)}
+                                  </DropdownMenuItem>
+                                ))}
+                              </DropdownMenuSubContent>
+                            </DropdownMenuSub>
                             <DropdownMenuItem
                               onClick={(e) => {
                                 e.stopPropagation();
                                 onStartAddTask(project.id, milestone.id);
+                                setExpandedMilestones(prev => ({ ...prev, [milestone.id]: true }));
                               }}
                               data-testid={`menu-tree-milestone-add-task-${milestone.id}`}
                             >
@@ -1871,7 +1966,7 @@ function ProjectTreeNode({
                     </div>
                   </div>
                 )}
-                {milestoneTasks.map(task => (
+                {milestoneExpanded && milestoneTasks.map(task => (
                   <div key={task.id} className="flex min-w-0 items-stretch" style={{ paddingLeft: Math.min(WORK_INDENT_STEP_PX * 2, WORK_MAX_INDENT_PX) }}>
                     <WorkTreeIndent depth={1} />
                     <div className="flex-1 min-w-0 relative overflow-hidden">
