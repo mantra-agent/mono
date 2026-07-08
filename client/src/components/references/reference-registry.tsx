@@ -1,6 +1,6 @@
 import {
   CalendarDays,
-  CheckSquare,
+  ListTodo,
   Diamond,
   FileText,
   Flag,
@@ -63,7 +63,7 @@ const registry: Record<string, RegistryEntry> = {
     href: ref => metadataString(ref, "href") || `/goals?goal=${encodeURIComponent(ref.id)}`,
   },
   task: {
-    Icon: CheckSquare,
+    Icon: ListTodo,
     fallbackLabel: ref => metadataString(ref, "label") || `Task ${ref.id}`,
     href: ref => metadataString(ref, "href") || `/projects?task=${encodeURIComponent(ref.id)}`,
   },
