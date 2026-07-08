@@ -9,6 +9,7 @@ import { db } from "./db";
 import { libraryPages } from "@shared/models/info";
 import { eq, or } from "drizzle-orm";
 import { getEvent, listAllEvents } from "./google-calendar";
+import { chatFileStorage } from "./chat-file-storage";
 
 const log = createLogger("ReferenceRoutes");
 
@@ -78,6 +79,11 @@ export function registerReferenceRoutes(app: Express) {
                 const project = await fileProjectStorage.getProject(numId);
                 if (project) results[key] = project.title;
               }
+              break;
+            }
+            case "session": {
+              const session = await chatFileStorage.getSession(id);
+              if (session) results[key] = session.title || "Untitled session";
               break;
             }
             case "person": {
