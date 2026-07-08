@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { useLocation, useParams } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Pencil, Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, Settings2, ExternalLink, Play, History, ShieldCheck } from "lucide-react";
+import { Pencil, Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, Settings2, ExternalLink, Play, History, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1733,14 +1733,40 @@ function DeploymentStatusCard({
 
 function ConfigCard({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
-    <Card>
-      <CardHeader className="pb-3">
+    <Card className="border-border/40 bg-card/60 shadow-none">
+      <CardHeader className="px-3 pb-2 pt-3">
         <div>
-          <CardTitle className="text-base">{title}</CardTitle>
-          {description && <CardDescription>{description}</CardDescription>}
+          <CardTitle className="text-sm font-medium">{title}</CardTitle>
+          {description && <CardDescription className="text-xs">{description}</CardDescription>}
         </div>
       </CardHeader>
-      <CardContent>{children}</CardContent>
+      <CardContent className="px-3 pb-3">{children}</CardContent>
+    </Card>
+  );
+}
+
+function EnvironmentDetailsConfigureCard({ details, environmentId }: { details: EnvironmentDetails; environmentId: number }) {
+  return (
+    <Card className="border-border/40 bg-card/70 shadow-none">
+      <CardHeader className="px-3 pb-2 pt-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-medium">
+          <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
+          Environment Details / Configure
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="px-3 pb-3">
+        <div className="overflow-hidden rounded-md border border-border/20">
+          <div className="grid gap-2 p-2">
+            <SourceBindingCard binding={details.source} environmentId={environmentId} />
+            <HostingBindingCard binding={details.hosting} environmentId={environmentId} />
+            <ConfigCard title="Promotion">
+              <ValueRow label="Source branch" value={details.promotion.sourceBranch} mono />
+              <ValueRow label="Target branch" value={details.promotion.targetBranch || "—"} mono />
+              <ValueRow label="Mode" value={details.promotion.mode} />
+            </ConfigCard>
+          </div>
+        </div>
+      </CardContent>
     </Card>
   );
 }
@@ -1757,7 +1783,16 @@ export default function PlatformEnvironmentDetailPage() {
     enabled: Number.isFinite(environmentId),
   });
 
-  usePageHeader({ title: data ? `${data.product.name} / ${data.environment.name}` : "Environment" });
+  usePageHeader({
+    title: data ? `Platforms / ${data.product.name} / ${data.environment.name}` : "Environment",
+    customContent: data ? (
+      <div className="flex min-w-0 items-center gap-1 text-sm font-medium text-foreground">
+        <button type="button" className="shrink-0 text-muted-foreground transition-colors hover:text-foreground" onClick={() => setLocation("/platforms")}>Platforms</button>
+        <span className="shrink-0 text-muted-foreground/60">/</span>
+        <span className="truncate">{data.product.name} / {data.environment.name}</span>
+      </div>
+    ) : undefined,
+  });
 
   if (!Number.isFinite(environmentId)) {
     setLocation("/platforms");
@@ -1789,32 +1824,9 @@ export default function PlatformEnvironmentDetailPage() {
 
   return (
     <div className="space-y-4 p-4">
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => setLocation("/platforms")}>
-          <ArrowLeft className="h-4 w-4" /> Platforms
-        </Button>
-      </div>
-
       <div className="grid gap-4">
         <EnvironmentPipelineCard details={data} />
-
-        <details className="rounded-xl border bg-card text-card-foreground shadow-sm">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 text-sm font-medium">
-            <span className="flex items-center gap-2"><Settings2 className="h-4 w-4 text-muted-foreground" /> Environment Details / Configure</span>
-          </summary>
-          <div className="grid gap-4 border-t border-border/50 p-4">
-            <SourceBindingCard binding={data.source} environmentId={environmentId} />
-            <HostingBindingCard binding={data.hosting} environmentId={environmentId} />
-
-            <ConfigCard title="Promotion" description="Branch promotion path for this environment.">
-              <ValueRow label="Source branch" value={data.promotion.sourceBranch} mono />
-              <ValueRow label="Target branch" value={data.promotion.targetBranch || "—"} mono />
-              <ValueRow label="Mode" value={data.promotion.mode} />
-            </ConfigCard>
-          </div>
-        </details>
-
-        <BuildLifecycleCard environmentId={environmentId} details={data} />
+        <EnvironmentDetailsConfigureCard details={data} environmentId={environmentId} />
       </div>
     </div>
   );
