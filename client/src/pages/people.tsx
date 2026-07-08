@@ -52,8 +52,11 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   ArrowLeft,
+  ArrowDownLeft,
+  ArrowUpRight,
   Building2,
   Calendar,
+  CheckCircle2,
   Clock,
   Edit3,
   FileText,
@@ -61,6 +64,7 @@ import {
   Loader2,
   Mail,
   MessageSquare,
+  MoreVertical,
   Phone,
   Play,
   Plus,
@@ -829,6 +833,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
   });
   const [newDirection, setNewDirection] = useState<string>("mutual");
   const [newMeaningfulness, setNewMeaningfulness] = useState<string>("medium");
+  const [pendingDeleteLogItem, setPendingDeleteLogItem] = useState<{ kind: "interaction" | "note" | "memory"; id: string; label: string } | null>(null);
   const [newResponseOwed, setNewResponseOwed] = useState(false);
   const [newResponseDueBy, setNewResponseDueBy] = useState<string>("");
   const [newCapitalImpact, setNewCapitalImpact] = useState<string>("neutral");
@@ -1115,7 +1120,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
             const relationshipMemory = isRelationshipMemory ? item.relationshipMemory : null;
             const Icon = isNote ? FileText : (isMemory || isRelationshipMemory) ? Brain : INTERACTION_ICONS[interaction?.type || ""] || MessageSquare;
             const d = new Date(item.date);
-            const dirColor = interaction?.direction === "inbound" ? "text-info" : interaction?.direction === "outbound" ? "text-success" : "text-muted-foreground";
+            const DirectionIcon = interaction?.direction === "inbound" ? ArrowDownLeft : interaction?.direction === "outbound" ? ArrowUpRight : null;
             const title = d.toLocaleDateString("en-US", { month: "numeric", day: "2-digit" });
             const memoryTitle = memory?.title || memory?.summary || memory?.content || "Memory";
             const relationshipMemoryTitle = relationshipMemory?.title || relationshipMemory?.content || "Relationship memory";
@@ -1124,7 +1129,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
               <Fragment key={`${item.kind}-${item.id}`}>
                 <ProfileTreeRow
                   label={<span>{title}</span>}
-                  icon={<Icon className={cn("h-3.5 w-3.5", isNote || isMemory || isRelationshipMemory ? "text-muted-foreground" : dirColor)} />}
+                  icon={<Icon className="h-3.5 w-3.5 text-muted-foreground" />}
                   hasValue
                   showEmpty
                   expandedContent={(
@@ -1175,21 +1180,19 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                     </div>
                   )}
                   expandedContentClassName="px-2 pb-2 pl-2"
+                  menuContent={!isRelationshipMemory ? (
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onClick={() => setPendingDeleteLogItem({ kind: isNote ? "note" : isMemory ? "memory" : "interaction", id: item.id, label: preview })}
+                    >
+                      Delete
+                    </DropdownMenuItem>
+                  ) : undefined}
                   testId={`${item.kind}-${item.id}`}
                 >
                   <div className="flex min-w-0 items-center justify-end gap-1.5">
                     <span className="truncate text-xs text-foreground/80" data-testid={`log-preview-${item.id}`}>{preview}</span>
-                    {!isRelationshipMemory && (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                        onClick={(e) => { e.stopPropagation(); isNote ? deleteNoteMutation.mutate(item.id) : isMemory ? unlinkMemoryMutation.mutate(Number(item.id)) : deleteMutation.mutate(item.id); }}
-                        data-testid={`button-delete-log-${item.id}`}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    )}
+                    {DirectionIcon && <DirectionIcon className="h-3 w-3 shrink-0 text-muted-foreground" aria-label={interaction?.direction || undefined} />}
                   </div>
                 </ProfileTreeRow>
               </Fragment>
@@ -1198,6 +1201,32 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
             </LogMonthSection>
           ))}        </div>
       )}
+
+      <AlertDialog open={Boolean(pendingDeleteLogItem)} onOpenChange={(open) => !open && setPendingDeleteLogItem(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete log item?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will delete “{pendingDeleteLogItem?.label}”. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (!pendingDeleteLogItem) return;
+                if (pendingDeleteLogItem.kind === "note") deleteNoteMutation.mutate(pendingDeleteLogItem.id);
+                else if (pendingDeleteLogItem.kind === "memory") unlinkMemoryMutation.mutate(Number(pendingDeleteLogItem.id));
+                else deleteMutation.mutate(pendingDeleteLogItem.id);
+                setPendingDeleteLogItem(null);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -1641,6 +1670,7 @@ function ProfileTreeRow({
   expandedContent,
   expandedContentClassName,
   actionContent,
+  menuContent,
   testId,
 }: {
   label: ReactNode;
@@ -1651,6 +1681,7 @@ function ProfileTreeRow({
   expandedContent?: ReactNode;
   expandedContentClassName?: string;
   actionContent?: ReactNode;
+  menuContent?: ReactNode;
   testId?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -1679,9 +1710,7 @@ function ProfileTreeRow({
           >
             {children}
           </div>
-          {actionContent ? (
-            <div className="h-5 w-5 shrink-0">{actionContent}</div>
-          ) : canExpand ? (
+          {canExpand ? (
             <CollapsibleTrigger asChild>
               <Button
                 variant="ghost"
@@ -1692,9 +1721,21 @@ function ProfileTreeRow({
                 <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
               </Button>
             </CollapsibleTrigger>
+          ) : actionContent ? (
+            <div className="h-5 w-5 shrink-0">{actionContent}</div>
           ) : (
             <span className="h-5 w-5 shrink-0" />
           )}
+          {menuContent ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground" aria-label="More actions">
+                  <MoreVertical className="h-3 w-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">{menuContent}</DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
         </div>
         {canExpand && (
           <CollapsibleContent>
@@ -1705,6 +1746,57 @@ function ProfileTreeRow({
         )}
       </div>
     </Collapsible>
+  );
+}
+
+function CombinedRelationshipPicker({
+  person,
+  onUpdate,
+}: {
+  person: Person;
+  onUpdate: (updates: Partial<Person>) => void;
+}) {
+  const selectedProfessional = person.professionalRelations || [];
+  const selected = [...(person.relation ? [person.relation] : []), ...selectedProfessional];
+
+  const togglePersonal = (value: string) => {
+    onUpdate({ relation: person.relation === value ? "" : value });
+  };
+
+  const toggleProfessional = (value: string) => {
+    onUpdate({ professionalRelations: selectedProfessional.includes(value) ? selectedProfessional.filter(item => item !== value) : [...selectedProfessional, value] });
+  };
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className="flex h-5 w-48 items-center justify-end gap-1 overflow-hidden rounded border border-input bg-muted/50 px-1.5 text-right text-xs" data-testid="button-relationship-picker">
+          <span className="truncate">{selected.length > 0 ? selected.join(", ") : "Select"}</span>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Personal</div>
+        {RELATION_OPTIONS.map((option) => {
+          const active = person.relation === option;
+          return (
+            <DropdownMenuItem key={`personal-${option}`} onClick={() => togglePersonal(option)} className="gap-2">
+              <CheckCircle2 className={cn("h-3.5 w-3.5", active ? "text-cta" : "text-muted-foreground/30")} />
+              <span>{option}</span>
+            </DropdownMenuItem>
+          );
+        })}
+        <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Professional</div>
+        {PROFESSIONAL_RELATION_OPTIONS.map((option) => {
+          const active = selectedProfessional.includes(option);
+          return (
+            <DropdownMenuItem key={`professional-${option}`} onClick={() => toggleProfessional(option)} className="gap-2">
+              <CheckCircle2 className={cn("h-3.5 w-3.5", active ? "text-cta" : "text-muted-foreground/30")} />
+              <span>{option}</span>
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -2185,21 +2277,38 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
             <Input key={person.role || "new-role"} defaultValue={person.role || ""} placeholder="Role" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.role || "")) updateMutation.mutate({ role: v || undefined }); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = person.role || ""; }} className="w-48" data-testid="input-edit-role" />
           </ProfileTreeRow>
 
-          <ProfileTreeRow label={<span data-testid="label-professional-relation">Prof. Relation</span>} icon={<Building2 className="h-3.5 w-3.5" />} hasValue={(person.professionalRelations || []).length > 0} showEmpty={showEmptyProfileRows} testId="row-profile-professional-relation">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button type="button" className="flex h-5 w-48 items-center justify-end gap-1 overflow-hidden rounded border border-input bg-muted/50 px-1.5 text-right text-xs" data-testid="button-prof-relation-picker">
-                  <span className="truncate">{(person.professionalRelations || []).join(", ") || "Select"}</span>
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {(person.professionalRelations || []).map((pr) => <DropdownMenuItem key={`remove-${pr}`} onClick={() => updateMutation.mutate({ professionalRelations: (person.professionalRelations || []).filter(r => r !== pr) })}>Remove {pr}</DropdownMenuItem>)}
-                {PROFESSIONAL_RELATION_OPTIONS.filter(o => !(person.professionalRelations || []).includes(o)).map((opt) => <DropdownMenuItem key={opt} onClick={() => updateMutation.mutate({ professionalRelations: [...(person.professionalRelations || []), opt] })} data-testid={`menu-prof-relation-${opt.toLowerCase()}`}>{opt}</DropdownMenuItem>)}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                              <ProfileTreeRow label={<span data-testid="label-relationship">Relationship</span>} icon={<Heart className="h-3.5 w-3.5" />} hasValue={Boolean(person.relation || (person.professionalRelations || []).length)} showEmpty={showEmptyProfileRows} testId="row-profile-relationship">
+            <CombinedRelationshipPicker person={person} onUpdate={(updates) => updateMutation.mutate(updates)} />
           </ProfileTreeRow>
 
-          <ProfileTreeRow label={<span data-testid="label-personal-relation">Personal Relation</span>} icon={<Heart className="h-3.5 w-3.5" />} hasValue={Boolean(person.relation)} showEmpty={showEmptyProfileRows || showRelationSearch} testId="row-profile-personal-relation"><div className="relative flex justify-end">{person.relation ? <Badge variant="outline" className="text-xs" data-testid="badge-relation">{person.relation}<button className="ml-1 inline-flex" onClick={(e) => { e.stopPropagation(); updateMutation.mutate({ relation: "" }); }} data-testid="button-remove-relation"><X className="h-2.5 w-2.5" /></button></Badge> : showRelationSearch ? <div><Input value={relationSearch} onChange={(e) => setRelationSearch(e.target.value)} placeholder="Search relations..." className="w-48" autoFocus onBlur={() => setTimeout(() => { setShowRelationSearch(false); setRelationSearch(""); }, 200)} onKeyDown={(e) => { if (e.key === "Escape") { setShowRelationSearch(false); setRelationSearch(""); } }} data-testid="input-relation-search" />{(() => { const filtered = RELATION_OPTIONS.filter(r => r.toLowerCase().includes(relationSearch.toLowerCase())); return filtered.length > 0 ? <div className="absolute right-0 z-50 mt-1 w-48 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md" data-testid="dropdown-relation">{filtered.map((r) => <button key={r} className="w-full px-3 py-1.5 text-left text-sm hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { updateMutation.mutate({ relation: r }); setShowRelationSearch(false); setRelationSearch(""); }} data-testid={`option-relation-${r.toLowerCase().replace(/\s+/g, '-')}`}>{r}</button>)}</div> : null; })()}</div> : <Button variant="ghost" size="icon" onClick={() => setShowRelationSearch(true)} data-testid="button-add-relation"><Plus className="h-3 w-3" /></Button>}</div></ProfileTreeRow>
+          <ProfileTreeRow label={<span data-testid="label-category">Category</span>} icon={<Shield className="h-3.5 w-3.5" />} hasValue={Boolean(person.cabinetLevel)} showEmpty={showEmptyProfileRows} testId="row-profile-category">
+            <Select value={person.cabinetLevel} onValueChange={(v) => updateMutation.mutate({ cabinetLevel: v })}>
+              <SelectTrigger className="w-48" data-testid="select-cabinet-level"><SelectValue /></SelectTrigger>
+              <SelectContent>{sortedLevels.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent>
+            </Select>
+          </ProfileTreeRow>
+
+          <ProfileTreeRow label={<span data-testid="label-familiarity">Familiarity</span>} icon={<Users className="h-3.5 w-3.5" />} hasValue={Boolean(person.familiarity && person.familiarity !== "none")} showEmpty={showEmptyProfileRows || editingFamiliarity} testId="row-profile-familiarity">
+            {(person.familiarity && person.familiarity !== "none") || editingFamiliarity ? (
+              <Select value={person.familiarity || "none"} onValueChange={(v) => { updateMutation.mutate({ familiarity: v as Person["familiarity"] }); setEditingFamiliarity(false); }}>
+                <SelectTrigger className="w-48" data-testid="select-familiarity"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="none">None</SelectItem><SelectItem value="surface">Surface</SelectItem><SelectItem value="deep">Deep</SelectItem></SelectContent>
+              </Select>
+            ) : <Button variant="ghost" size="icon" onClick={() => setEditingFamiliarity(true)} data-testid="button-add-familiarity"><Plus className="h-3 w-3" /></Button>}
+          </ProfileTreeRow>
+
+          <ProfileTreeRow label={<span data-testid="label-trust">Trust</span>} icon={<Heart className="h-3.5 w-3.5" />} hasValue={Boolean(person.trust && person.trust !== "none")} showEmpty={showEmptyProfileRows || editingTrust} testId="row-profile-trust">
+            {(person.trust && person.trust !== "none") || editingTrust ? (
+              <Select value={person.trust || "none"} onValueChange={(v) => { updateMutation.mutate({ trust: v as Person["trust"] }); setEditingTrust(false); }}>
+                <SelectTrigger className="w-48" data-testid="select-trust"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="ally">Ally</SelectItem><SelectItem value="positive">Positive</SelectItem><SelectItem value="none">None</SelectItem><SelectItem value="negative">Negative</SelectItem><SelectItem value="enemy">Enemy</SelectItem></SelectContent>
+              </Select>
+            ) : <Button variant="ghost" size="icon" onClick={() => setEditingTrust(true)} data-testid="button-add-trust"><Plus className="h-3 w-3" /></Button>}
+          </ProfileTreeRow>
+
+          <ProfileTreeRow label="Temperature" icon={<Heart className="h-3.5 w-3.5" />} hasValue={Boolean(person.relationshipProfile?.state?.temperature)} showEmpty={showEmptyProfileRows} testId="row-profile-temperature">
+            <Input readOnly value={person.relationshipProfile?.state?.temperature || ""} placeholder="—" />
+          </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-introduced-by">Introduced</span>} icon={<Link2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.introducedBy && introducedByPerson)} showEmpty={showEmptyProfileRows || showIntroducedBySearch} actionContent={person.introducedBy && introducedByPerson ? <Button size="icon" variant="ghost" className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => updateMutation.mutate({ introducedBy: "" })} data-testid="button-remove-introduced-by"><X className="h-3 w-3" /></Button> : undefined} testId="row-profile-introduced-by"><div className="relative flex justify-end">{person.introducedBy && introducedByPerson ? <div className="flex w-48 items-center justify-end" data-testid="chip-introduced-by"><ReferenceRenderer refValue={{ type: "person", id: person.introducedBy, canonical: `@person:${person.introducedBy}` }} surface="chat-inline" className="max-w-[12rem]" /></div> : showIntroducedBySearch ? <div><Input value={introducedBySearch} onChange={(e) => setIntroducedBySearch(e.target.value)} placeholder="Search people..." className="w-48" autoFocus onBlur={() => setTimeout(() => { setShowIntroducedBySearch(false); setIntroducedBySearch(""); }, 200)} onKeyDown={(e) => { if (e.key === "Escape") { setShowIntroducedBySearch(false); setIntroducedBySearch(""); } }} data-testid="input-introduced-by-search" />{filteredPeopleForIntroduction.length > 0 && <div className="absolute right-0 z-50 mt-1 w-48 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md" data-testid="dropdown-introduced-by">{filteredPeopleForIntroduction.map((p) => <button key={p.id} className="w-full px-3 py-1.5 text-left text-sm hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { updateMutation.mutate({ introducedBy: p.id }); setShowIntroducedBySearch(false); setIntroducedBySearch(""); }} data-testid={`option-introduced-by-${p.id}`}>{p.name}</button>)}</div>}</div> : <Button variant="ghost" size="icon" onClick={() => setShowIntroducedBySearch(true)} data-testid="button-add-introduced-by"><Plus className="h-3 w-3" /></Button>}</div></ProfileTreeRow>
 
@@ -2228,58 +2337,8 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
 
       </div>
 
-      <PeopleDetailSection
-        title="Relationship"
-        defaultOpen
-        testId="section-relationship"
-      >
-        <div className="overflow-hidden rounded-md border border-border/20">
-          <ProfileTreeRow label={<span data-testid="label-category">Category</span>} icon={<Shield className="h-3.5 w-3.5" />} hasValue={Boolean(person.cabinetLevel)} showEmpty={showEmptyProfileRows} testId="row-relationship-category">
-            <Select value={person.cabinetLevel} onValueChange={(v) => updateMutation.mutate({ cabinetLevel: v })}>
-              <SelectTrigger className="w-48" data-testid="select-cabinet-level"><SelectValue /></SelectTrigger>
-              <SelectContent>{sortedLevels.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent>
-            </Select>
-          </ProfileTreeRow>
-          <ProfileTreeRow label={<span data-testid="label-familiarity">Familiarity</span>} icon={<Users className="h-3.5 w-3.5" />} hasValue={Boolean(person.familiarity && person.familiarity !== "none")} showEmpty={showEmptyProfileRows || editingFamiliarity} testId="row-relationship-familiarity">
-            {(person.familiarity && person.familiarity !== "none") || editingFamiliarity ? (
-              <Select value={person.familiarity || "none"} onValueChange={(v) => { updateMutation.mutate({ familiarity: v as Person["familiarity"] }); setEditingFamiliarity(false); }}>
-                <SelectTrigger className="w-48" data-testid="select-familiarity"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="none">None</SelectItem><SelectItem value="surface">Surface</SelectItem><SelectItem value="deep">Deep</SelectItem></SelectContent>
-              </Select>
-            ) : <Button variant="ghost" size="icon" onClick={() => setEditingFamiliarity(true)} data-testid="button-add-familiarity"><Plus className="h-3 w-3" /></Button>}
-          </ProfileTreeRow>
-          <ProfileTreeRow label={<span data-testid="label-trust">Trust</span>} icon={<Heart className="h-3.5 w-3.5" />} hasValue={Boolean(person.trust && person.trust !== "none")} showEmpty={showEmptyProfileRows || editingTrust} testId="row-relationship-trust">
-            {(person.trust && person.trust !== "none") || editingTrust ? (
-              <Select value={person.trust || "none"} onValueChange={(v) => { updateMutation.mutate({ trust: v as Person["trust"] }); setEditingTrust(false); }}>
-                <SelectTrigger className="w-48" data-testid="select-trust"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="ally">Ally</SelectItem><SelectItem value="positive">Positive</SelectItem><SelectItem value="none">None</SelectItem><SelectItem value="negative">Negative</SelectItem><SelectItem value="enemy">Enemy</SelectItem></SelectContent>
-              </Select>
-            ) : <Button variant="ghost" size="icon" onClick={() => setEditingTrust(true)} data-testid="button-add-trust"><Plus className="h-3 w-3" /></Button>}
-          </ProfileTreeRow>
-          <ProfileTreeRow label="Temperature" icon={<Heart className="h-3.5 w-3.5" />} hasValue={Boolean(person.relationshipProfile?.state?.temperature)} showEmpty={showEmptyProfileRows} testId="row-relationship-temperature">
-            <Input readOnly value={person.relationshipProfile?.state?.temperature || ""} placeholder="—" />
-          </ProfileTreeRow>
-          <ProfileTreeRow label="Momentum" icon={<ArrowUp className="h-3.5 w-3.5" />} hasValue={Boolean(person.relationshipProfile?.state?.momentum)} showEmpty={showEmptyProfileRows} testId="row-relationship-momentum">
-            <Input readOnly value={person.relationshipProfile?.state?.momentum || ""} placeholder="—" />
-          </ProfileTreeRow>
-          <ProfileTreeRow label="Last Contact" icon={<Calendar className="h-3.5 w-3.5" />} hasValue={Boolean(person.relationshipProfile?.rollup?.lastInteractionAt)} showEmpty={showEmptyProfileRows} testId="row-relationship-last-contact">
-            <Input readOnly value={person.relationshipProfile?.rollup?.lastInteractionAt ? formatShortDate(person.relationshipProfile.rollup.lastInteractionAt) : ""} placeholder="—" />
-          </ProfileTreeRow>
-          <ProfileTreeRow label="30d Interactions" icon={<RefreshCw className="h-3.5 w-3.5" />} hasValue={person.relationshipProfile?.rollup?.interactionCount30d !== undefined} showEmpty={showEmptyProfileRows} testId="row-relationship-interactions-30d">
-            <Input readOnly value={person.relationshipProfile?.rollup?.interactionCount30d?.toString() || ""} placeholder="—" />
-          </ProfileTreeRow>
-        </div>
-        <CommitmentsCard person={person} onUpdate={handleRefetch} />
-        <ConnectionsCard person={person} />
-      </PeopleDetailSection>
 
-      <PeopleDetailSection
-        title="Log"
-        defaultOpen
-        testId="section-log"
-      >
-        <InteractionsTab person={person} onUpdate={handleRefetch} showAdd={showNewLog} setShowAdd={setShowNewLog} />
-      </PeopleDetailSection>
+      <InteractionsTab person={person} onUpdate={handleRefetch} showAdd={showNewLog} setShowAdd={setShowNewLog} />
 
       <div className="pt-4 border-t">
         <Button
