@@ -72,7 +72,7 @@ COPY --from=builder /app/shared ./shared
 # Copy package files + full node_modules (including devDependencies) from the
 # builder stage. DevDeps are needed at runtime for implement skill sessions.
 COPY package.json package-lock.json ./
-COPY AGENTS.md CODING.md DESIGN.md GOALS.md ./
+COPY AGENTS.md CODING.md DESIGN.md GOALS.md PLANNING.md ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/scripts ./scripts
 RUN chmod +x ./scripts/*.sh
