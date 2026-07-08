@@ -838,6 +838,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
   const [newResponseOwed, setNewResponseOwed] = useState(false);
   const [newResponseDueBy, setNewResponseDueBy] = useState<string>("");
   const [savedInteractionId, setSavedInteractionId] = useState<string | null>(null);
+  const [newLogOptionsOpen, setNewLogOptionsOpen] = useState(false);
   const summaryInputRef = useRef<HTMLTextAreaElement | null>(null);
   const lastSavedPayloadRef = useRef<string>("");
 
@@ -974,6 +975,77 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
     }
   };
 
+
+  const interactionPatch = (interaction: Interaction, updates: Record<string, unknown>) => {
+    updateInteractionMutation.mutate({ interactionId: interaction.id, data: updates });
+  };
+
+  const ensureFollowUpDueDate = (current?: string) => {
+    if (current) return current;
+    const d = new Date();
+    d.setDate(d.getDate() + 3);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+
+  const renderInteractionOptions = (interaction: Interaction) => (
+    <div className="w-56 space-y-2 p-2">
+      <div className="space-y-1">
+        <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Type</label>
+        <Select value={interaction.type || "note"} onValueChange={(value) => interactionPatch(interaction, { type: value })}>
+          <SelectTrigger className="h-7 text-xs" data-testid={`select-log-type-${interaction.id}`}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="note">Note</SelectItem>
+            <SelectItem value="call">Call</SelectItem>
+            <SelectItem value="meeting">Meeting</SelectItem>
+            <SelectItem value="meetup">Meetup</SelectItem>
+            <SelectItem value="email">Email</SelectItem>
+            <SelectItem value="text">Text</SelectItem>
+            <SelectItem value="in_person">In Person</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-1">
+        <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Date</label>
+        <Input
+          type="date"
+          value={interaction.date?.slice(0, 10) || ""}
+          onChange={(e) => interactionPatch(interaction, { date: e.target.value })}
+          className="h-7 text-xs"
+          data-testid={`input-log-date-${interaction.id}`}
+        />
+      </div>
+      <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+        <input
+          type="checkbox"
+          checked={Boolean(interaction.responseOwed)}
+          onChange={(e) => interactionPatch(interaction, { responseOwed: e.target.checked, responseDueBy: e.target.checked ? ensureFollowUpDueDate(interaction.responseDueBy) : null })}
+          className="rounded"
+          data-testid={`checkbox-log-follow-up-${interaction.id}`}
+        />
+        Follow-up
+      </label>
+      {interaction.responseOwed && (
+        <Input
+          type="date"
+          value={interaction.responseDueBy?.slice(0, 10) || ""}
+          onChange={(e) => interactionPatch(interaction, { responseDueBy: e.target.value })}
+          className="h-7 text-xs"
+          data-testid={`input-log-follow-up-date-${interaction.id}`}
+        />
+      )}
+      <div className="border-t border-border/40 pt-1">
+        <DropdownMenuItem
+          className="text-destructive focus:text-destructive"
+          onClick={() => setPendingDeleteLogItem({ kind: "interaction", id: interaction.id, label: interaction.summary || "Log item" })}
+        >
+          Delete
+        </DropdownMenuItem>
+      </div>
+    </div>
+  );
+
   const { data: linkedMemories = [] } = useQuery<LinkedMemoryEntry[]>({
     queryKey: ["/api/memory/entity-links", "person", person.id],
     queryFn: async () => {
@@ -1042,91 +1114,87 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
   return (
     <div className="space-y-3" data-testid="interactions-tab">
       {effectiveShowAdd ? (
-        <Card>
-          <CardContent className="pt-3 pb-2 space-y-2">
-            <div className="flex items-start gap-2">
-              <div className="max-h-80 max-w-none flex-1 overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-[12px] leading-tight text-white scrollbar-thin">
-                <Textarea
-                  ref={summaryInputRef}
-                  value={newSummary}
-                  onChange={(e) => setNewSummary(e.target.value)}
-                  onBlur={closeNewLogDraft}
-                  placeholder="What happened?"
-                  className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[12px] leading-tight text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[12px]"
-                  data-testid="textarea-interaction-summary"
-                />
-              </div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
-                    aria-label="Log options"
-                    data-testid="button-new-log-options"
-                  >
-                    <MoreHorizontal className="h-3 w-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56 space-y-2 p-2">
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Type</label>
-                    <Select value={newType} onValueChange={setNewType}>
-                      <SelectTrigger data-testid="select-interaction-type" className="h-7 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="note">Note</SelectItem>
-                        <SelectItem value="call">Call</SelectItem>
-                        <SelectItem value="meeting">Meeting</SelectItem>
-                        <SelectItem value="meetup">Meetup</SelectItem>
-                        <SelectItem value="email">Email</SelectItem>
-                        <SelectItem value="text">Text</SelectItem>
-                        <SelectItem value="in_person">In Person</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Date</label>
-                    <Input
-                      type="date"
-                      value={newDate}
-                      onChange={(e) => setNewDate(e.target.value)}
-                      className="h-7 text-xs"
-                      data-testid="input-interaction-date"
-                    />
-                  </div>
-                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={newResponseOwed}
-                      onChange={(e) => {
-                        setNewResponseOwed(e.target.checked);
-                        if (e.target.checked && !newResponseDueBy) {
-                          const d = new Date();
-                          d.setDate(d.getDate() + 3);
-                          setNewResponseDueBy(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
-                        }
-                      }}
-                      className="rounded"
-                      data-testid="checkbox-response-owed"
-                    />
-                    Follow-up
-                  </label>
-                  {newResponseOwed && (
-                    <Input
-                      type="date"
-                      value={newResponseDueBy}
-                      onChange={(e) => setNewResponseDueBy(e.target.value)}
-                      className="h-7 text-xs"
-                      data-testid="input-response-due-by"
-                    />
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="max-h-80 max-w-none overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-[12px] leading-tight text-white scrollbar-thin">
+          <div className="flex items-start gap-2">
+            <Textarea
+              ref={summaryInputRef}
+              value={newSummary}
+              onChange={(e) => setNewSummary(e.target.value)}
+              placeholder="What happened?"
+              className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[12px] leading-tight text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[12px]"
+              data-testid="textarea-interaction-summary"
+            />
+            <DropdownMenu open={newLogOptionsOpen} onOpenChange={setNewLogOptionsOpen}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+                  aria-label="Log options"
+                  data-testid="button-new-log-options"
+                  onMouseDown={(event) => event.preventDefault()}
+                >
+                  <MoreHorizontal className="h-3 w-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56 space-y-2 p-2" onCloseAutoFocus={(event) => event.preventDefault()}>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Type</label>
+                  <Select value={newType} onValueChange={setNewType}>
+                    <SelectTrigger data-testid="select-interaction-type" className="h-7 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="note">Note</SelectItem>
+                      <SelectItem value="call">Call</SelectItem>
+                      <SelectItem value="meeting">Meeting</SelectItem>
+                      <SelectItem value="meetup">Meetup</SelectItem>
+                      <SelectItem value="email">Email</SelectItem>
+                      <SelectItem value="text">Text</SelectItem>
+                      <SelectItem value="in_person">In Person</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Date</label>
+                  <Input
+                    type="date"
+                    value={newDate}
+                    onChange={(e) => setNewDate(e.target.value)}
+                    className="h-7 text-xs"
+                    data-testid="input-interaction-date"
+                  />
+                </div>
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newResponseOwed}
+                    onChange={(e) => {
+                      setNewResponseOwed(e.target.checked);
+                      if (e.target.checked && !newResponseDueBy) {
+                        const d = new Date();
+                        d.setDate(d.getDate() + 3);
+                        setNewResponseDueBy(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+                      }
+                    }}
+                    className="rounded"
+                    data-testid="checkbox-response-owed"
+                  />
+                  Follow-up
+                </label>
+                {newResponseOwed && (
+                  <Input
+                    type="date"
+                    value={newResponseDueBy}
+                    onChange={(e) => setNewResponseDueBy(e.target.value)}
+                    className="h-7 text-xs"
+                    data-testid="input-response-due-by"
+                  />
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
       ) : (
         <button
           type="button"
@@ -1139,11 +1207,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
         </button>
       )}
 
-      {sorted.length === 0 ? (
-        <p className="text-sm text-muted-foreground py-4 text-center" data-testid="text-no-interactions">
-          No log items yet. Click "+ New Log" to record the first one.
-        </p>
-      ) : (
+      {sorted.length > 0 && (
         <div className="overflow-hidden rounded-md border border-border/20" data-testid="interaction-tree">
           {monthGroups.map((group) => (
             <LogMonthSection key={group.monthKey} monthKey={group.monthKey} label={group.label} defaultOpen={group.defaultOpen}>
@@ -1234,10 +1298,10 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                     </div>
                   )}
                   expandedContentClassName="px-2 pb-2 pl-2"
-                  menuContent={!isRelationshipMemory ? (
+                  menuContent={interaction ? renderInteractionOptions(interaction) : !isRelationshipMemory ? (
                     <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
-                      onClick={() => setPendingDeleteLogItem({ kind: isNote ? "note" : isMemory ? "memory" : "interaction", id: item.id, label: preview })}
+                      onClick={() => setPendingDeleteLogItem({ kind: isNote ? "note" : "memory", id: item.id, label: preview })}
                     >
                       Delete
                     </DropdownMenuItem>
