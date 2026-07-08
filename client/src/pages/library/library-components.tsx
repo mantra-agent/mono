@@ -1,6 +1,6 @@
 // Use createLogger for logging ONLY
 import { createLogger } from "@/lib/logger";
-import { useState, useRef, useCallback, useMemo } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -19,7 +19,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
-  Trash2, FileText, BookOpen, ChevronRight, Download, MoreHorizontal, Loader2, FilePlus, ArrowLeft, Search, Info, FolderInput, Globe,
+  Trash2, FileText, BookOpen, Download, MoreHorizontal, Loader2, FilePlus, Search, Info, FolderInput, Globe,
 } from "lucide-react";
 import data from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
@@ -92,14 +92,11 @@ interface LibraryPageEditorProps {
   selectedId: string;
   selectedPage: LibraryPageFull;
   pages: LibraryPage[];
-  isMobile: boolean;
-  onBack: () => void;
-  onSelectPage: (id: string) => void;
   onDeleteRequest: (id: string) => void;
 }
 
 export function LibraryPageEditor({
-  selectedId, selectedPage, pages, isMobile, onBack, onSelectPage, onDeleteRequest,
+  selectedId, selectedPage, pages, onDeleteRequest,
 }: LibraryPageEditorProps) {
   const editorRef = useRef<RichTextEditorHandle>(null);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
@@ -133,7 +130,6 @@ export function LibraryPageEditor({
       return { title, content, plainTextContent, ...(linkPageIds.length > 0 ? { linkPages: linkPageIds } : {}) };
     },
     invalidateKeys: [["/api/info/library"], ["/api/info/library", selectedId]],
-    successMessage: (_result, input) => `${input.title || "Page"} saved`,
     errorTitle: "Save failed",
     onSuccess: (_result, input) => {
       setIsDirty(false);
@@ -175,41 +171,19 @@ export function LibraryPageEditor({
     invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"], ["/api/info/library", selectedId]],
   });
 
-  const buildBreadcrumbs = useCallback((pageId: string): LibraryPage[] => {
-    const trail: LibraryPage[] = [];
-    let current = pages.find(p => p.id === pageId);
-    while (current) {
-      trail.unshift(current);
-      current = current.parentId ? pages.find(p => p.id === current!.parentId) : undefined;
-    }
-    return trail;
-  }, [pages]);
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const isNewUntitledPage = !selectedPage.title && !selectedPage.plainTextContent?.trim();
 
-  const breadcrumbs = buildBreadcrumbs(selectedId);
+  useEffect(() => {
+    if (!isNewUntitledPage) return;
+    const frame = window.requestAnimationFrame(() => titleInputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [isNewUntitledPage, selectedId]);
 
   return (
     <>
-      {isMobile && (
-        <div className="p-2 border-b border-border">
-          <Button size="sm" variant="ghost" onClick={onBack} className="h-7 px-2 text-xs gap-1" data-testid="button-library-back">
-            <ArrowLeft className="h-3.5 w-3.5" /> Pages
-          </Button>
-        </div>
-      )}
-      {breadcrumbs.length > 1 && (
-        <div className="px-3 pt-2 pb-0 flex items-center gap-1 text-xs text-muted-foreground">
-          {breadcrumbs.slice(0, -1).map((crumb, i) => (
-            <span key={crumb.id} className="flex items-center gap-1">
-              {i > 0 && <ChevronRight className="h-2.5 w-2.5" />}
-              <button onClick={() => onSelectPage(crumb.id)} className="hover:text-foreground transition-colors" data-testid={`breadcrumb-${crumb.id}`}>
-                {crumb.title || "Untitled"}
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
       <LinkedSessions slug={selectedPage.slug} />
-      <div className="p-3 border-b border-border flex items-center gap-2">
+      <div className="px-3 py-3 flex items-center gap-2">
         <Popover open={emojiPickerOpen} onOpenChange={setEmojiPickerOpen}>
           <PopoverTrigger asChild>
             <button className="shrink-0 h-7 w-7 flex items-center justify-center rounded hover:bg-accent transition-colors" data-testid="button-emoji-picker" title="Set page icon">
@@ -225,7 +199,7 @@ export function LibraryPageEditor({
             )}
           </PopoverContent>
         </Popover>
-        <Input value={editTitle} onChange={(e) => handleTitleChange(e.target.value)} placeholder="Page title" className="flex-1 h-8 text-sm font-medium border-none shadow-none focus-visible:ring-0 p-0 bg-transparent" data-testid="input-library-title" />
+        <Input ref={titleInputRef} value={editTitle} onChange={(e) => handleTitleChange(e.target.value)} placeholder="New page" className="flex-1 h-8 text-sm font-medium border-none shadow-none focus-visible:ring-0 p-0 bg-transparent placeholder:text-muted-foreground" data-testid="input-library-title" />
         <div className="flex items-center gap-1.5 shrink-0">
           {isDirty && <span className="text-xs text-muted-foreground">unsaved</span>}
           {saveMutation.isPending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
