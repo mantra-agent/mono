@@ -87,6 +87,7 @@ export interface SegmentStreamProps {
  */
 export function SegmentStream({ segments, isStreaming, layer, stripTags = false, suppressTrailingThinking = false, contentClassName, contentCompact = false }: SegmentStreamProps) {
   const renderSegments = useMemo(() => normalizeRenderSegments(segments, layer), [segments, layer]);
+  const hasContent = renderSegments.some(seg => seg.type === "content" && seg.content.length > 0);
 
   useEffect(() => {
     if (!isStreaming || segments.length === 0) return;
