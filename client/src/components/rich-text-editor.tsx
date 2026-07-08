@@ -274,6 +274,15 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     return () => clearTimeout(timer);
   }, [editor]);
 
+  // Close command menu on unmount (e.g. page navigation)
+  useEffect(() => {
+    return () => {
+      setMenuAnchor(null);
+      setCommandQuery("");
+      setSelectedCommandIdx(0);
+    };
+  }, []);
+
   useEffect(() => {
     if (!editor) return;
     if (!value || Object.keys(value).length === 0) return;
@@ -423,6 +432,35 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     setSelectedCommandIdx(0);
   }, [commandQuery]);
 
+  // On mobile, keyDown events are unreliable (key="Unidentified" for IME input).
+  // Watch the editor document text after the slash trigger position to derive the query.
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (!ed || !menuAnchor || menuSource !== "slash" || slashTriggerFromRef.current === null) return;
+    const handler = () => {
+      const from = slashTriggerFromRef.current;
+      if (from === null) return;
+      const docSize = ed.state.doc.content.size;
+      const cursorPos = ed.state.selection.from;
+      // Text between slash position and cursor
+      const slashEnd = Math.min(from + 1, docSize);
+      const queryEnd = Math.min(cursorPos, docSize);
+      if (queryEnd < slashEnd) {
+        // Cursor moved before slash position — slash was deleted or cursor moved away
+        setMenuAnchor(null);
+        setCommandQuery("");
+        setSelectedCommandIdx(0);
+        return;
+      }
+      if (queryEnd <= slashEnd) return;
+      const text = ed.state.doc.textBetween(slashEnd, queryEnd, "");
+      // Only update if different (avoid loops)
+      setCommandQuery((prev) => prev === text ? prev : text);
+    };
+    ed.on("transaction", handler);
+    return () => { ed.off("transaction", handler); };
+  }, [menuAnchor, menuSource]);
+
   if (!editor) {
     if (initFailed) {
       return (
@@ -488,11 +526,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
             closeCommandMenu();
             return;
           }
-          if (menuSource === "slash" && e.key === "Backspace" && commandQuery.length > 0) {
-            setCommandQuery((q) => q.slice(0, -1));
-          } else if (menuSource === "slash" && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
-            setCommandQuery((q) => `${q}${e.key}`);
-          }
+          // Query is derived from document text via transaction watcher (mobile-safe)
         } else if (!readOnly && e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
           window.requestAnimationFrame(() => openCommandMenuAtSelection("slash"));
         }
