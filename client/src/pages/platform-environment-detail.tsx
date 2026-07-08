@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { useLocation, useParams } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, CheckCircle2, CircleDashed, Pencil, Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, Settings2, ExternalLink, Play, History, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Pencil, Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, Settings2, ExternalLink, Play, History, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1786,7 +1786,6 @@ export default function PlatformEnvironmentDetailPage() {
     );
   }
 
-  const configuredVariables = data.runtimeVariables.filter((v) => v.configured).length;
 
   return (
     <div className="space-y-4 p-4">
@@ -1794,38 +1793,18 @@ export default function PlatformEnvironmentDetailPage() {
         <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => setLocation("/platforms")}>
           <ArrowLeft className="h-4 w-4" /> Platforms
         </Button>
-        <div className="min-w-0">
-          <div className="text-xs uppercase tracking-wider text-muted-foreground">{data.platform.name} / {data.product.name}</div>
-          <h1 className="truncate text-2xl font-semibold text-foreground">{data.environment.name}</h1>
-        </div>
       </div>
 
       <div className="grid gap-4">
         <EnvironmentPipelineCard details={data} />
 
-        <ConfigCard title="Identity">
-          <ValueRow label="Platform" value={data.platform.name} />
-          <ValueRow label="Product" value={data.product.name} />
-          <ValueRow label="Environment" value={data.environment.name} />
-          <ValueRow label="Kind" value={data.environment.kind} />
-          <ValueRow label="Status" value={data.environment.status} />
-        </ConfigCard>
-
-        <BuildLifecycleCard environmentId={environmentId} details={data} />
-
         <details className="rounded-xl border bg-card text-card-foreground shadow-sm">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 text-sm font-medium">
             <span className="flex items-center gap-2"><Settings2 className="h-4 w-4 text-muted-foreground" /> Environment Details / Configure</span>
-            <span className="text-xs text-muted-foreground">Bindings, promotion, variables</span>
           </summary>
           <div className="grid gap-4 border-t border-border/50 p-4">
             <SourceBindingCard binding={data.source} environmentId={environmentId} />
             <HostingBindingCard binding={data.hosting} environmentId={environmentId} />
-
-            <DeploymentStatusCard
-              environmentId={environmentId}
-              hasConfiguredHosting={!data.hosting.inferred && !!data.hosting.connection}
-            />
 
             <ConfigCard title="Promotion" description="Branch promotion path for this environment.">
               <ValueRow label="Source branch" value={data.promotion.sourceBranch} mono />
@@ -1835,18 +1814,7 @@ export default function PlatformEnvironmentDetailPage() {
           </div>
         </details>
 
-        <ConfigCard title="Runtime Variables" description={`${configuredVariables} of ${data.runtimeVariables.length} detected from current runtime/secrets.`}>
-          <div className="space-y-1">
-            {data.runtimeVariables.map((variable) => (
-              <div key={variable.key} className="flex items-center gap-3 rounded-md px-2 py-1.5 text-sm hover:bg-accent/40">
-                {variable.configured ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <CircleDashed className="h-4 w-4 text-muted-foreground" />}
-                <span className="min-w-0 flex-1 truncate font-mono text-xs">{variable.key}</span>
-                <Badge variant="outline" className="shrink-0">{variable.category}</Badge>
-                {variable.required && <Badge className="shrink-0">required</Badge>}
-              </div>
-            ))}
-          </div>
-        </ConfigCard>
+        <BuildLifecycleCard environmentId={environmentId} details={data} />
       </div>
     </div>
   );
