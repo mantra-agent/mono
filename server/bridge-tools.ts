@@ -15436,13 +15436,28 @@ async function repoRootLooksVerified(root: string): Promise<boolean> {
   return pathExists(resolve(root, ".git"));
 }
 
+const SAFE_MISSING_AGENTS_GIT_ACTIONS = new Set(["status", "branch", "log", "show", "diff", "push", "create_pr"]);
+
+function isGitContinuationAllowedWithoutRootAgents(args: Record<string, any>): boolean {
+  const action = String(args.action || "").trim();
+  if (!SAFE_MISSING_AGENTS_GIT_ACTIONS.has(action)) return false;
+
+  if (action === "branch") {
+    const branchAction = String(args.branchAction || "").trim();
+    return !branchAction || branchAction === "list";
+  }
+
+  return true;
+}
+
 function isRootInstructionBootstrapAllowed(
   toolName: string,
   args: Record<string, any>,
   contextRoot: EngineeringContextRoot,
 ): boolean {
-  if (toolName !== "shell") return false;
-  return commandTargetsRootInstructionBootstrap(String(args.command || ""), contextRoot.root);
+  if (toolName === "shell") return commandTargetsRootInstructionBootstrap(String(args.command || ""), contextRoot.root);
+  if (toolName === "git") return isGitContinuationAllowedWithoutRootAgents(args);
+  return false;
 }
 
 function cacheKeyForContext(root: string, context?: BridgeToolContext): string {
