@@ -2591,6 +2591,7 @@ async function resolveTools(request: ContextRequest): Promise<string> {
     "- Preference = how Ray likes something done. Rule = governing instruction or boundary.",
     "- Save only specific, explicit, durable, repeated, or clearly action-relevant preferences/rules.",
     "- Check for existing matches before creating new state; reinforce/update rather than duplicate.",
+    "- Treat tool inputs as sparse patches: omit unknown, unchanged, or blank optional fields. Use explicit clearFields/confirmation semantics for destructive clears; never send empty strings, empty arrays, or empty objects as a way to clear persisted data.",
     "- References are fundamental object links, like HTML links for Agent's world. Use typed references whenever you mention durable objects with known IDs.",
     "- Canonical persisted grammar is `@type:id`. Supported types are page, person, goal, task, project, milestone, meeting, decision, wellness_activity, priority, file, news, web_article, x_item, reddit_post, rss_item, and pr. Use the registry/parser rather than hard-coded partial lists when generating or rendering references.",
     "- `#` is a composer/search trigger for references, especially work items; selected mentions still insert canonical `@type:id` text. Do not treat `#goal`/`#task` as the persisted reference grammar unless the shared parser explicitly supports it.",
