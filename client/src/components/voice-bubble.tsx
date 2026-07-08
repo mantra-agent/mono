@@ -30,7 +30,7 @@ export function VoiceBubble() {
         <div className="w-72 max-h-64 bg-card border rounded-md shadow-lg overflow-hidden flex flex-col" data-testid="voice-bubble-panel">
           <div className="flex items-center justify-between gap-2 px-3 py-2 border-b">
             <span className="text-xs font-medium">
-              {isReconnecting ? "Reconnecting..." : isConnecting ? "Connecting..." : isEnding ? "Ending..." : isSpeaking ? "xyz is speaking" : isUserSpeaking ? "Hearing you..." : "Listening"}
+              {isReconnecting ? "Reconnecting..." : isConnecting ? "Connecting..." : isEnding ? "Ending..." : isSpeaking ? "Agent is speaking" : isUserSpeaking ? "Hearing you..." : "Listening"}
             </span>
             <div className="flex items-center gap-0.5">
               <Button size="icon" variant="ghost" onClick={voice.toggleMute} data-testid="button-bubble-mute">

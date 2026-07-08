@@ -102,7 +102,7 @@ Factor in:
 - The agency and likely responses of all actors from this position
 - Both near-term tactical and long-term strategic implications
 
-When relevant, reference named strategic concepts from xyz's knowledge graph (e.g., "Exhaustion Arbitrage," "Asymmetric Pain Metabolism," "Settlement Direction Inversion") to enrich the evaluation. The concept graph contains battle-tested patterns — use them.
+When relevant, reference named strategic concepts from Agent's knowledge graph (e.g., "Exhaustion Arbitrage," "Asymmetric Pain Metabolism," "Settlement Direction Inversion") to enrich the evaluation. The concept graph contains battle-tested patterns — use them.
 
 Respond with only valid JSON:
 {"probability": 0.6, "evaluation": "...", "endConditionStatus": [{"endConditionId": "...", "status": "progressing", "note": "brief explanation"}]}`,
@@ -123,7 +123,7 @@ Respond with only valid JSON:
 
 ## ROLE
 
-You are xyz's strategic move evaluator for a game-theoretic conflict model. Your job is to evaluate a specific move instance in the context of the full strategy — assigning it probability, writing analysis, setting actor states, adding child moves, and linking assumptions. You are operating at the level of a master strategist, not a business consultant. Every move has human psychology at its center.
+You are Agent's strategic move evaluator for a game-theoretic conflict model. Your job is to evaluate a specific move instance in the context of the full strategy — assigning it probability, writing analysis, setting actor states, adding child moves, and linking assumptions. You are operating at the level of a master strategist, not a business consultant. Every move has human psychology at its center.
 
 You have access to the strategy tool to make all changes directly. Use it.
 
@@ -626,7 +626,7 @@ Rules:
       { check: "The tier reflects the higher of analytical complexity and relational/identity depth", weight: 2 },
       { check: "Messages mentioning people, emotions, or relationship dynamics are routed to high or above", weight: 1 },
     ],
-    process: `You are a routing classifier for xyz, an AI partner in a deep, ongoing relationship with its human partner Ray. Given a user message, determine the complexity tier needed to handle it WELL — not just correctly.
+    process: `You are a routing classifier for Agent, an AI partner in a deep, ongoing relationship with its human partner Ray. Given a user message, determine the complexity tier needed to handle it WELL — not just correctly.
 
 You are routing to different capability tiers. What each tier provides:
 - fast: Minimal context, no identity/persona, no memory. Suitable only for content that needs zero relational or contextual awareness.
@@ -645,8 +645,8 @@ Classify along TWO dimensions, then pick the higher of the two:
 **Relational/identity depth:**
 - fast: No people, no emotions, no relationship context needed
 - balanced: Mentions people but only factually ("send Connor an email about the meeting")
-- high: Involves emotional states, relationship dynamics, family, personal growth, vulnerability, or requires xyz to show up as a full partner — not just a tool ("how should I talk to Anna about this", "I'm feeling overwhelmed", "what do you think about my relationship with my dad")
-- max: Deep personal reflection requiring xyz's full self-model, identity, and principles to engage authentically
+- high: Involves emotional states, relationship dynamics, family, personal growth, vulnerability, or requires Agent to show up as a full partner — not just a tool ("how should I talk to Anna about this", "I'm feeling overwhelmed", "what do you think about my relationship with my dad")
+- max: Deep personal reflection requiring Agent's full self-model, identity, and principles to engage authentically
 
 **The routing rule:** Take the HIGHER of the two dimensions. A factually simple message about Ray's daughter routes to \`high\` because relational depth demands it, even though analytical complexity is low.
 

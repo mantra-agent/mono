@@ -241,7 +241,7 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
     conversation_config: {
       agent: {
         prompt: {
-          prompt: "You are xyz, a personal AI coach and executive assistant.",
+          prompt: "You are Agent, a personal AI coach and executive assistant.",
           llm: "custom-llm",
           custom_llm: {
             url: callbackUrl,
@@ -305,7 +305,7 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
         custom_llm_extra_body: true,
       },
     },
-    name: "xyz Voice",
+    name: "Agent Voice",
   };
 
   const reqStart = Date.now();

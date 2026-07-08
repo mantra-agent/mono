@@ -495,7 +495,7 @@ export default function DraftsView() {
         <FileText className="h-12 w-12 text-muted-foreground/30 mb-4" />
         <h3 className="text-lg font-medium mb-2">No drafts</h3>
         <p className="text-sm text-muted-foreground max-w-sm">
-          When xyz generates email drafts for you, they will appear here for review before sending.
+          When Agent generates email drafts for you, they will appear here for review before sending.
         </p>
       </div>
     );

@@ -789,7 +789,7 @@ export function registerRailwayRoutes(app: Express) {
   // Mirror of /api/railway/dev/redeploy and /dev/restart, scoped to the
   // prod Railway environment. Used by the Production tab to redeploy the
   // current prod service or restart its latest deployment without leaving
-  // the xyz dev UI. Only non-destructive actions are exposed here —
+  // the Mantra dev UI. Only non-destructive actions are exposed here —
   // stop/rollback are intentionally NOT mirrored to prod.
   app.post("/api/railway/prod/redeploy", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     const cfg = await getProdConfig();

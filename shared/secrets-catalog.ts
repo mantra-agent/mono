@@ -45,7 +45,7 @@ export const SECRET_CATALOG: SecretSpec[] = [
   { name: "OURA_WEBHOOK_VERIFY_TOKEN", section: "oura", label: "Oura Webhook Verify Token", description: "Shared verification token used by the Oura webhook callback. Generate a long random value and configure the same value in Oura Cloud." },
   // GITHUB_TOKEN removed — migrated to github_credentials table (multi-credential system)
   { name: "RAILWAY_API_TOKEN", section: "railway", label: "Railway API Token", description: "Personal Access Token from railway.com/account/tokens (NOT a project or team token — those can't list projects). Saving here overrides any host RAILWAY_API_TOKEN env var." },
-  { name: "RAILWAY_PROJECT_ID", section: "railway", label: "Railway Project ID", description: "ID of the Railway project that hosts the xyz dev instance." },
+  { name: "RAILWAY_PROJECT_ID", section: "railway", label: "Railway Project ID", description: "ID of the Railway project that hosts the Mantra dev/stage instance." },
   { name: "RAILWAY_DEV_ENVIRONMENT_ID", section: "railway", label: "Railway Dev Environment ID", description: "Environment ID inside the project (e.g. 'dev' or 'preview') that the Dev page should target." },
   { name: "RAILWAY_DEV_SERVICE_ID", section: "railway", label: "Railway Dev Service ID (optional override)", description: "Optional. Auto-resolved from the project + environment when there is exactly one app service. Set this only to pin a specific service when the project has multiple app services." },
   { name: "RAILWAY_DEV_URL", section: "railway", label: "Railway Dev URL (optional override)", description: "Optional. Auto-resolved from the dev service's generated *.up.railway.app domain. Set this only to pin a custom domain or override the auto-detected one." },

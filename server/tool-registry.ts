@@ -257,7 +257,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   code: {
-    description: "Query and navigate the xyz codebase knowledge graph — search, inspect symbols, analyze impact, trace flows, rename, and run Cypher.",
+    description: "Query and navigate the selected Platform codebase knowledge graph — search, inspect symbols, analyze impact, trace flows, rename, and run Cypher.",
     category: "code",
 
     parameters: {
@@ -914,7 +914,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   pronunciation: {
-    description: "Manage pronunciation dictionary entries — teach xyz how to correctly pronounce names, brands, and technical terms. Actions: list, add, update, remove. Entries are case-sensitive.",
+    description: "Manage pronunciation dictionary entries — teach Agent how to correctly pronounce names, brands, and technical terms. Actions: list, add, update, remove. Entries are case-sensitive.",
     category: "voice",
 
     parameters: {
@@ -1064,7 +1064,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   introspection: {
-    description: "Introspect xyz's skill configs and past LLM inference calls. Actions: list_skills, get_skill, list_inference_calls, get_inference_call.",
+    description: "Introspect Agent's skill configs and past LLM inference calls. Actions: list_skills, get_skill, list_inference_calls, get_inference_call.",
     category: "knowledge",
 
     parameters: {
@@ -1151,7 +1151,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   skills: {
-    description: "Manage xyz's skill library — reusable instruction sets. Actions: list, get, create, update, delete, search, run, runs, scores. The 'get' action returns full skill details including the structured weighted checklist used by the scorer. The 'run' action spawns an autonomous skill execution. The 'runs' action returns recent execution history (status, duration, score, timestamps, and failureReason/endReason for failed runs) from skill_runs — same data shown in the dashboard's Run History panel. The 'scores' action returns scored runs from skill_runs (the source of truth).",
+    description: "Manage Agent's skill library — reusable instruction sets. Actions: list, get, create, update, delete, search, run, runs, scores. The 'get' action returns full skill details including the structured weighted checklist used by the scorer. The 'run' action spawns an autonomous skill execution. The 'runs' action returns recent execution history (status, duration, score, timestamps, and failureReason/endReason for failed runs) from skill_runs — same data shown in the dashboard's Run History panel. The 'scores' action returns scored runs from skill_runs (the source of truth).",
     category: "knowledge",
 
     parameters: {
@@ -1190,7 +1190,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   cognition: {
-    description: "Manage xyz's cognitive state — emotional states and personas. Actions: set_emotion (record new state), get_emotion (current), emotion_history (recent), get_persona (current active), list_personas, create_persona, update_persona. Use the `orient` tool to activate/switch personas.",
+    description: "Manage Agent's cognitive state — emotional states and personas. Actions: set_emotion (record new state), get_emotion (current), emotion_history (recent), get_persona (current active), list_personas, create_persona, update_persona. Use the `orient` tool to activate/switch personas.",
     category: "cognition",
     parameters: {
       type: "object",
@@ -1229,7 +1229,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     whenToUse: "When you notice something about how you reasoned, decided, or acted — a pattern, a gap between expectation and reality, a shift, a connection between ideas, or an emerging opportunity. Metacognition, not reasoning.",
   },
   beliefs: {
-    description: "Manage xyz's belief system — claims with confidence scores. Actions: list, get, save, create, update, invalidate.",
+    description: "Manage Agent's belief system — claims with confidence scores. Actions: list, get, save, create, update, invalidate.",
     category: "knowledge",
 
     parameters: {
@@ -1697,7 +1697,7 @@ export async function generateToolsMd(): Promise<string> {
   const skill = tools.filter(t => t.source === "skill");
 
   const lines: string[] = [
-    "# TOOLS.md — xyz's Tool Inventory",
+    "# TOOLS.md — Agent's Tool Inventory",
     "",
     "This file is auto-generated on boot from the unified tool registry (`server/tool-registry.ts`).",
     "",
@@ -1782,13 +1782,13 @@ export async function generateSkillMd(): Promise<string> {
   const bridge = tools.filter(t => t.source === "bridge");
 
   const lines: string[] = [
-    "# Tool Reference — How to Call xyz's Tools",
+    "# Tool Reference — How to Call Agent's Tools",
     "",
     "This file is auto-generated on boot. It shows how to invoke each bridge tool via the agent executor.",
     "",
     "## Calling Bridge Tools",
     "",
-    "Bridge tools are available through the agent executor. You can also call them directly via `curl` against the xyz Dashboard API.",
+    "Bridge tools are available through the agent executor. You can also call them directly via `curl` against the Mantra Dashboard API.",
     "",
     "**Pattern:**",
     "```bash",

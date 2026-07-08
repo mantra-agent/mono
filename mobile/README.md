@@ -1,6 +1,6 @@
 # Agent — Mobile Voice App
 
-Expo React Native companion app for Agent on Meta Ray-Ban smart glasses. Voice-first: the glasses act as a Bluetooth headset, and this app bridges ElevenLabs Conversational AI to the xyz server.
+Expo React Native companion app for Agent on Meta Ray-Ban smart glasses. Voice-first: the glasses act as a Bluetooth headset, and this app bridges ElevenLabs Conversational AI to the Mantra server.
 
 ## Prerequisites
 
@@ -64,7 +64,7 @@ These steps are only for the development-client profile, not preview/production 
 On first launch, go to Settings (gear icon) to configure:
 
 - **Agent ID**: Your ElevenLabs agent ID (pre-configured in `src/config.ts`)
-- **Server URL**: Your xyz server URL (pre-configured)
+- **Server URL**: Your Mantra server URL (pre-configured)
 
 ## Glasses Pairing
 
@@ -103,7 +103,7 @@ The Zero Tab display surface runs as a standalone web app on the Ray-Ban Display
 2. Navigate to: **Devices → [Your Display Glasses] → Web apps → Add**
 3. Configure:
    - **Name**: `Agent`
-   - **URL**: `https://xyz-production-5cad.up.railway.app/glasses`
+   - **URL**: `https://mono-prod-8d22.up.railway.app/glasses`
 4. Save. The web app is now registered on your glasses.
 
 ### Requirements
@@ -123,4 +123,4 @@ The Zero Tab display surface runs as a standalone web app on the Ray-Ban Display
 
 ### Testing Without Hardware
 
-Open `https://xyz-production-5cad.up.railway.app/glasses` in any browser for a pixel-perfect preview of the display surface. The `/zero` route in the main app provides the same preview with dev tools (JSON inspector, Cortex reasoning trace).
+Open `https://mono-prod-8d22.up.railway.app/glasses` in any browser for a pixel-perfect preview of the display surface. The `/zero` route in the main app provides the same preview with dev tools (JSON inspector, Cortex reasoning trace).

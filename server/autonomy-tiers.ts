@@ -7,7 +7,7 @@
 /**
  * Numeric side-effect classification:
  * 0 = Read-only (no state change)
- * 1 = Internal-write (changes xyz's own state, creates internal artifacts)
+ * 1 = Internal-write (changes Agent's own state, creates internal artifacts)
  * 2 = External-effect (touches outside world or creates user notifications)
  */
 export type SideEffectTier = 0 | 1 | 2;

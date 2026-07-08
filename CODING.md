@@ -1,6 +1,6 @@
 # CODING.md — Active Coding Process
 
-This file is the canonical procedural workflow for code changes, debugging, repo/system diagnosis, builds, PRs, merges, deployments, and implementation planning in xyz.
+This file is the canonical procedural workflow for code changes, debugging, repo/system diagnosis, builds, PRs, merges, deployments, and implementation planning in Mantra.
 
 `AGENTS.md` remains canonical for Engineering Principles and repository architecture. Apply those principles while following this process.
 
@@ -125,6 +125,6 @@ Final coding reports include:
 - Impact analysis and change-scope status.
 - Files changed.
 - Build result.
-- PR reference using canonical `@pr:repo/number` syntax (e.g., `@pr:xyz/123`), and target branch.
+- PR reference using canonical `@pr:repo/number` syntax (e.g., `@pr:repo/123`), and target branch.
 - Merge SHA for the merge to `main`, or the explicit merge blocker / Ray-requested PR-only exception.
 - Any degraded or residual enforcement gaps.

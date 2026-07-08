@@ -230,7 +230,7 @@ async function fetchRedditContent(url: string): Promise<RouterResult> {
 
   const response = await fetch(jsonUrl, {
     headers: {
-      "User-Agent": "xyz/1.0 (content research bot)",
+      "User-Agent": "Mantra/1.0 (content research bot)",
       Accept: "application/json",
     },
     signal: AbortSignal.timeout(10_000),

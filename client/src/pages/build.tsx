@@ -1759,7 +1759,7 @@ function DevPreviewIframe({ status }: { status: DevStatusOk }) {
       <iframe
         key={`${dep?.id ?? "no-deployment"}:${url}`}
         src={url}
-        title="Dev xyz Preview"
+        title="Dev Mantra Preview"
         className="w-full h-full border-0 bg-background"
         onLoad={() => setIframeLoaded(true)}
         onError={() => setIframeError(true)}
@@ -4050,7 +4050,7 @@ export function DesignTab() {
             </Badge>
           </div>
           <h1 className="mt-3 text-lg font-semibold tracking-tight">
-            xyz Design System
+            Mantra Design System
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
             Dark-first, frameless, mobile-first. Content sits directly on the
@@ -5510,7 +5510,7 @@ export default function DevPage() {
       <div className="flex flex-col h-full" data-testid="dev-error">
         <div className="flex items-center gap-2 px-4 py-2 bg-warning/10 text-warning dark:text-warning text-sm border-b border-warning/20">
           <span className="flex-1">
-            Couldn't reach xyz's Railway proxy:{" "}
+            Couldn't reach Mantra's Railway proxy:{" "}
             {(error as Error)?.message ?? "unknown error"}
           </span>
           <Button

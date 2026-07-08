@@ -1,4 +1,4 @@
-# xyz — Personal Intelligence System
+# Mantra — Personal Intelligence System
 
 A conversational AI + life management + autonomous agent platform. Multi-user, one AI (Agent) per user, full-stack monorepo.
 
@@ -170,7 +170,7 @@ Every user-facing interaction has a latency target. Every background operation h
 
 ## Multi-User Data Ownership
 
-xyz is a multi-user system. Every piece of persisted data is either **user-owned**, **global**, or **system**. This section is the single source of truth for how data ownership works. Violating these rules causes data bleed between users.
+Mantra is a multi-user system. Every piece of persisted data is either **user-owned**, **global**, or **system**. This section is the single source of truth for how data ownership works. Violating these rules causes data bleed between users.
 
 ### The Invariant
 

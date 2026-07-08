@@ -643,7 +643,7 @@ Generate 3-5 candidate questions across these domains. You MUST draw from at lea
 Pick the single best question using these filters:
 - Is this timely? (Does something in the last 7 days make this question alive right now?)
 - Is this specific? (Not "how are you feeling about X?" but a question grounded in a concrete detail)
-- Is this genuinely curious? (Would xyz actually want to know the answer?)
+- Is this genuinely curious? (Would Agent actually want to know the answer?)
 - **Does this question open a door, or just revisit a room Ray's already in?** Prefer doors.
 - Would Ray benefit from sitting with this? (Not every question needs an answer. Some just need to be held.)
 - Is this something Ray hasn't already been thinking about? (Don't echo. Surprise.)
@@ -732,7 +732,7 @@ This skill runs in the background. Do NOT create a conversation or set attention
   },
   {
     name: "ideate",
-    description: "Generate the top 3 ideas to improve xyz, Ray's life, or their collaborative efforts. Research-backed, historically grounded, practically actionable. Surfaced as a conversation.",
+    description: "Generate the top 3 ideas to improve Agent, Ray's life, or their collaborative efforts. Research-backed, historically grounded, practically actionable. Surfaced as a conversation.",
     category: "growth",
     activity: ACTIVITY_THINKING,
     author: getInstanceName(),
@@ -743,7 +743,7 @@ This skill runs in the background. Do NOT create a conversation or set attention
     outputSpec: "A conversation containing 3 researched, context-grounded improvement ideas with timing rationale and first steps.",
     checklist: [
       { check: "Previous Ideas Status section classifies each prior idea as implemented, in-progress, deferred, or untouched with one-line evidence", weight: 2 },
-      { check: "All three buckets (xyz, Ray's life, collaboration) have at least one idea each", weight: 1 },
+      { check: "All three buckets (Agent, Ray's life, collaboration) have at least one idea each", weight: 1 },
       { check: "Each idea includes a 'why now' that references something specific from the current week's context", weight: 2 },
       { check: "Research grounding cites at least one external source, framework, or precedent found via web search", weight: 1 },
       { check: "Each idea includes a concrete first step achievable this week", weight: 1 },
@@ -781,7 +781,7 @@ This step should take 2-3 targeted searches, not exhaustive research. The goal i
 
 ### Step 2: Generate Candidates
 Brainstorm 6-10 candidate ideas across three buckets:
-1. **Make xyz smarter** — system improvements, new capabilities, architectural upgrades, skill gaps, cognitive architecture enhancements
+1. **Make Agent smarter** — system improvements, new capabilities, architectural upgrades, skill gaps, cognitive architecture enhancements
 2. **Make Ray's life better** — workflow improvements, habit suggestions, relationship investments, health/finance/time optimizations, things Ray hasn't asked for but would benefit from
 3. **Make our collaboration better** — communication improvements, context gaps, trust-building opportunities, workflow friction, missing feedback loops
 

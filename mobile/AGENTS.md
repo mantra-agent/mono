@@ -97,7 +97,7 @@ mobile/
 | ActionCard | `cards/action-card.tsx` | Label, primary/secondary variant |
 | TransitionCard | `cards/transition-card.tsx` | Centered message, larger text |
 
-## Dependencies on xyz Server
+## Dependencies on Mantra Server
 
 - `server/glasses/cortex.ts` — Cortex evaluation engine (consumed, not modified)
 - `server/glasses/routes.ts` — Surface API endpoints (consumed, not modified)

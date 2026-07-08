@@ -48,7 +48,7 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
   },
   {
     id: "world_model.people.self",
-    title: "Self (xyz)",
+    title: "Self (Agent)",
     parentId: "world_model.people",
     sourceType: "dynamic",
     freshnessPolicy: "per-session",

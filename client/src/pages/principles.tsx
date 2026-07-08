@@ -650,7 +650,7 @@ export default function PrinciplesPage({ embedded }: { embedded?: boolean }) {
             </div>
             <h3 className="font-medium text-lg mb-1" data-testid="text-principles-empty-title">No principles yet</h3>
             <p className="text-sm text-muted-foreground max-w-sm mb-6">
-              Principles guide xyz's decisions. Start by forging your first principle from any thought or idea.
+              Principles guide Agent's decisions. Start by forging your first principle from any thought or idea.
             </p>
             <Button onClick={() => setForgeOpen(true)} data-testid="button-forge-first">
               <Sparkles className="h-4 w-4 mr-2" />

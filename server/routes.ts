@@ -87,7 +87,7 @@ export async function registerRoutes(
 
   wss.on("connection", (ws) => {
     setWsConnectionCount(wss.clients.size + eventsWss.clients.size);
-    ws.send(JSON.stringify({ type: "connected", message: "WebSocket connected to xyz Dashboard" }));
+    ws.send(JSON.stringify({ type: "connected", message: "WebSocket connected to Mantra Dashboard" }));
     ws.on("close", () => {
       setWsConnectionCount(wss.clients.size + eventsWss.clients.size);
     });
