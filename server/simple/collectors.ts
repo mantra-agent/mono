@@ -8,6 +8,7 @@ import type { Task, Project, Milestone } from "@shared/models/work";
 import { formatHour, getWindowLabel, inRange } from "@shared/wellness-window";
 import { queryActivityStatus } from "../routes/wellness";
 import { sourceRefsToReferenceRefs } from "@shared/simple-references";
+import { createReferenceRef } from "@shared/references";
 import { listAllEvents, type CalendarEvent } from "../google-calendar";
 import { listMetadataByEvents, classifyEventByTitle, getLinkedArtifactsByMetadataIds } from "../calendar-metadata";
 import { computeAgendaSignals, computeContextBadge, peopleStorage, type Interaction, type ScoredAgendaItem } from "../people-storage";
@@ -577,7 +578,14 @@ function itemFromEmailReview(thread: EmailReviewThread, index: number): SimpleFe
     anchorTime: observedAt,
     time: formatInboxDate(inboxAddedDate),
     sourceRefs: [sourceRef],
-    references: sourceRefsToReferenceRefs([sourceRef]),
+    references: [
+      ...sourceRefsToReferenceRefs([sourceRef]),
+      ...thread.messageIds.slice(0, 1).map(messageId => createReferenceRef({
+        type: "email_message",
+        id: String(messageId),
+        metadata: { label: `${title} latest message`, href: "/comms" },
+      })),
+    ],
     payload: {
       kind: "email_review",
       sender,

@@ -1909,6 +1909,107 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
     return { result: safeStringify({ ...counts, description: "Pipeline counts from getEmailPipelineCounts(). untriaged=non-outbound emails with triageStatus='untriaged' (last 30 days), matching get_untriaged candidate scope. awaitingEnrichment=triageStatus='triaged' with no/stale enrichment (last 30 days). reviewReady=triageStatus='triaged' with current enrichment (last 30 days). triageStatus='dismissed' emails (auto-dismissed noise/FYI) are excluded from enrichment/review counts." }, { label: "bridge.gmail.pipeline_counts" }) };
   }
 
+  if (subAction === "resolve" || subAction === "get_thread") {
+    const rawRef = String(args.ref || args.query || args.thread_id || "").trim();
+    const explicitAccountId = typeof args.account_id === "string" && args.account_id.trim() ? args.account_id.trim() : null;
+    if (!rawRef) {
+      return { result: "Missing email ref. Provide ref, query, or thread_id.", error: true };
+    }
+
+    const withoutAt = rawRef.startsWith("@") ? rawRef.slice(1) : rawRef;
+    const firstColon = withoutAt.indexOf(":");
+    const refType = firstColon > 0 ? withoutAt.slice(0, firstColon) : "email_thread";
+    const refId = firstColon > 0 ? withoutAt.slice(firstColon + 1) : withoutAt;
+
+    const { db } = await import("./db");
+    const { emailMessages, emailEnrichments } = await import("@shared/schema");
+    const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+    const { combineWithVisibleScope } = await import("./scoped-storage");
+    const { and: andOp, asc: ascOp, desc: descOp, eq: eqOp } = await import("drizzle-orm");
+    const principal = getCurrentPrincipalOrSystem();
+    const emailScope = { ownerUserId: emailMessages.ownerUserId, accountId: emailMessages.principalAccountId };
+
+    let accountId = explicitAccountId;
+    let providerThreadId: string | null = null;
+    let messageId: number | null = null;
+
+    if (refType === "email_message") {
+      messageId = Number(refId);
+      if (!Number.isFinite(messageId)) return { result: `Invalid email_message ref: ${rawRef}`, error: true };
+      const [msg] = await db.select({ accountId: emailMessages.accountId, providerThreadId: emailMessages.providerThreadId, providerMessageId: emailMessages.providerMessageId })
+        .from(emailMessages)
+        .where(combineWithVisibleScope(principal, emailScope, eqOp(emailMessages.id, messageId)))
+        .limit(1);
+      if (!msg) return { result: `Email message ${messageId} not found.`, error: true };
+      accountId = msg.accountId;
+      providerThreadId = msg.providerThreadId || msg.providerMessageId;
+    } else {
+      const idColon = refId.indexOf(":");
+      if (idColon > 0) {
+        accountId = refId.slice(0, idColon);
+        providerThreadId = refId.slice(idColon + 1);
+      } else {
+        providerThreadId = refId;
+      }
+    }
+
+    if (!providerThreadId) return { result: `Invalid email thread ref: ${rawRef}`, error: true };
+
+    const threadConditions = [eqOp(emailMessages.providerThreadId, providerThreadId)];
+    if (accountId) threadConditions.push(eqOp(emailMessages.accountId, accountId));
+    const messages = await db.select({
+      id: emailMessages.id,
+      providerMessageId: emailMessages.providerMessageId,
+      providerThreadId: emailMessages.providerThreadId,
+      accountId: emailMessages.accountId,
+      subject: emailMessages.subject,
+      fromAddress: emailMessages.fromAddress,
+      toAddresses: emailMessages.toAddresses,
+      ccAddresses: emailMessages.ccAddresses,
+      date: emailMessages.date,
+      direction: emailMessages.direction,
+      triageStatus: emailMessages.triageStatus,
+      triageTier: emailMessages.triageTier,
+      triageReason: emailMessages.triageReason,
+      snippet: emailMessages.snippet,
+      bodyText: emailMessages.bodyText,
+      isDone: emailMessages.isDone,
+    }).from(emailMessages)
+      .where(combineWithVisibleScope(principal, emailScope, andOp(...threadConditions)))
+      .orderBy(ascOp(emailMessages.date))
+      .limit(50);
+
+    if (messages.length === 0) {
+      return { result: `Email thread ${providerThreadId} not found.`, error: true };
+    }
+
+    const latest = messages[messages.length - 1];
+    const [enrichment] = await db.select().from(emailEnrichments)
+      .where(andOp(eqOp(emailEnrichments.providerThreadId, providerThreadId), eqOp(emailEnrichments.accountId, latest.accountId)))
+      .orderBy(descOp(emailEnrichments.updatedAt))
+      .limit(1);
+
+    return { result: safeStringify({
+      ref: rawRef,
+      type: "email_thread",
+      canonical: `@email_thread:${latest.accountId}:${providerThreadId}`,
+      accountId: latest.accountId,
+      providerThreadId,
+      latestMessageId: latest.id,
+      subject: latest.subject,
+      messageCount: messages.length,
+      messages,
+      enrichment: enrichment ? {
+        id: enrichment.id,
+        summary: enrichment.summary,
+        decisions: enrichment.decisions,
+        actions: enrichment.actions,
+        dismissed: enrichment.dismissed,
+        updatedAt: enrichment.updatedAt,
+      } : null,
+    }, { label: "bridge.gmail.email_ref" }) };
+  }
+
   if (subAction === "get_message") {
     const messageId = args.message_id;
     if (!messageId) {

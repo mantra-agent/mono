@@ -9,6 +9,8 @@ import {
   Globe,
   Heart,
   Link2,
+  Mail,
+  MailOpen,
   MessageSquare,
   MessagesSquare,
   PenLine,
@@ -117,6 +119,17 @@ const registry: Record<string, RegistryEntry> = {
     Icon: Paperclip,
     fallbackLabel: ref => metadataString(ref, "label") || ref.id.split("/").pop() || ref.id,
     href: ref => metadataString(ref, "href") || (ref.id.startsWith("/objects/") ? ref.id : undefined),
+  },
+
+  email_thread: {
+    Icon: Mail,
+    fallbackLabel: ref => metadataString(ref, "label") || `Email thread ${ref.id.split(":").pop() || ref.id}`,
+    href: ref => metadataString(ref, "href") || "/comms",
+  },
+  email_message: {
+    Icon: MailOpen,
+    fallbackLabel: ref => metadataString(ref, "label") || `Email message ${ref.id}`,
+    href: ref => metadataString(ref, "href") || "/comms",
   },
 
   email_draft: {

@@ -6,8 +6,11 @@ import { peopleStorage } from "./people-storage";
 import { fileTaskStorage } from "./file-storage/tasks";
 import { fileProjectStorage } from "./file-storage/projects";
 import { db } from "./db";
+import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { combineWithVisibleScope } from "./scoped-storage";
 import { libraryPages } from "@shared/models/info";
-import { eq, or } from "drizzle-orm";
+import { emailMessages } from "@shared/schema";
+import { and, desc, eq, or } from "drizzle-orm";
 import { getEvent, listAllEvents } from "./google-calendar";
 import { chatFileStorage } from "./chat-file-storage";
 
@@ -20,6 +23,8 @@ const log = createLogger("ReferenceRoutes");
  */
 export function registerReferenceRoutes(app: Express) {
   app.get("/api/references/resolve", requireAuth, async (req, res) => {
+    const principal = getCurrentPrincipalOrSystem();
+    const emailScope = { ownerUserId: emailMessages.ownerUserId, accountId: emailMessages.principalAccountId };
     const refsParam = req.query.refs as string | undefined;
     if (!refsParam) return res.json({});
 
@@ -98,6 +103,33 @@ export function registerReferenceRoutes(app: Express) {
                 .where(or(eq(libraryPages.slug, id), eq(libraryPages.id, id)))
                 .limit(1);
               if (rows[0]) results[key] = rows[0].title;
+              break;
+            }
+            case "email_thread": {
+              const colonIdx = id.indexOf(":");
+              if (colonIdx > 0) {
+                const accountId = id.slice(0, colonIdx);
+                const providerThreadId = id.slice(colonIdx + 1);
+                const rows = await db
+                  .select({ subject: emailMessages.subject, fromAddress: emailMessages.fromAddress })
+                  .from(emailMessages)
+                  .where(combineWithVisibleScope(principal, emailScope, and(eq(emailMessages.accountId, accountId), eq(emailMessages.providerThreadId, providerThreadId))))
+                  .orderBy(desc(emailMessages.date))
+                  .limit(1);
+                if (rows[0]) results[key] = rows[0].subject || rows[0].fromAddress || "Email thread";
+              }
+              break;
+            }
+            case "email_message": {
+              const numId = Number(id);
+              if (!Number.isNaN(numId)) {
+                const rows = await db
+                  .select({ subject: emailMessages.subject, fromAddress: emailMessages.fromAddress })
+                  .from(emailMessages)
+                  .where(combineWithVisibleScope(principal, emailScope, eq(emailMessages.id, numId)))
+                  .limit(1);
+                if (rows[0]) results[key] = rows[0].subject || rows[0].fromAddress || "Email message";
+              }
               break;
             }
           }

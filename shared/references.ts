@@ -18,6 +18,8 @@ export const REFERENCE_TYPES = [
   "reddit_post",
   "rss_item",
   "pr",
+  "email_thread",
+  "email_message",
   "email_draft",
 ] as const;
 
