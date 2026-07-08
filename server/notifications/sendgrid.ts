@@ -1,4 +1,5 @@
 import { createLogger } from "../log";
+import { getSecretSync } from "../secrets-store";
 import type { NotificationSendInput, NotificationSendResult } from "./types";
 
 const log = createLogger("SendGridNotifications");
@@ -11,9 +12,9 @@ interface SendGridConfig {
 }
 
 function readConfig(): SendGridConfig | null {
-  const apiKey = process.env.SENDGRID_API_KEY?.trim();
-  const fromEmail = process.env.SENDGRID_FROM_EMAIL?.trim();
-  const fromName = process.env.SENDGRID_FROM_NAME?.trim();
+  const apiKey = getSecretSync("SENDGRID_API_KEY")?.trim();
+  const fromEmail = getSecretSync("SENDGRID_FROM_EMAIL")?.trim();
+  const fromName = getSecretSync("SENDGRID_FROM_NAME")?.trim();
 
   if (!apiKey || !fromEmail) {
     return null;
@@ -92,8 +93,8 @@ export async function sendSendGridEmail(input: NotificationSendInput): Promise<N
   const config = readConfig();
   if (!config) {
     log.warn("SendGrid email send skipped because configuration is missing", {
-      hasApiKey: Boolean(process.env.SENDGRID_API_KEY?.trim()),
-      hasFromEmail: Boolean(process.env.SENDGRID_FROM_EMAIL?.trim()),
+      hasApiKey: Boolean(getSecretSync("SENDGRID_API_KEY")?.trim()),
+      hasFromEmail: Boolean(getSecretSync("SENDGRID_FROM_EMAIL")?.trim()),
     });
     return {
       ok: false,
