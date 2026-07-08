@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, real, boolean, timestamp, jsonb, customType, unique, index, uniqueIndex, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, real, boolean, timestamp, jsonb, unique, index, uniqueIndex, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { libraryPages } from "./models/info";
@@ -327,22 +327,6 @@ export interface ApiCall {
   metadata?: Record<string, unknown> | null;
 }
 export type InsertApiCall = z.infer<typeof insertApiCallSchema>;
-
-const bytea = customType<{ data: Buffer }>({
-  dataType() {
-    return "bytea";
-  },
-});
-
-export const workspaceBackupFiles = pgTable("workspace_backup_files", {
-  path: text("path").primaryKey(),
-  content: text("content"),
-  binaryContent: bytea("binary_content"),
-  sizeBytes: integer("size_bytes").notNull().default(0),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-});
-
-export type WorkspaceBackupFile = typeof workspaceBackupFiles.$inferSelect;
 
 // SpawnedIntentionSpec removed — intention system deprecated
 

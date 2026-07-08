@@ -39,7 +39,6 @@ import {
   connectedAccounts,
   capabilityCache,
   emailTriageLog,
-  workspaceBackupFiles,
   emailMessages,
   personEmails,
   peopleImportCandidates,
@@ -261,7 +260,6 @@ export const TABLE_REGISTRY: TableRegistryEntry[] = [
   { key: "calendar_event_artifacts", table: calendarEventArtifacts, domain: "calendar", hasSerial: true, dependsOn: ["calendar_event_metadata", "library_pages"] },
 
   { key: "workspace_documents", table: workspaceDocuments, domain: "memory", hasSerial: true },
-  { key: "workspace_backup_files", table: workspaceBackupFiles, domain: "memory", hasSerial: false },
   { key: "memory_entries", table: memoryEntries, domain: "memory", hasSerial: true },
   { key: "memory_sources", table: memorySourceRefs, domain: "memory", hasSerial: true, dependsOn: ["memory_entries"] },
   { key: "memory_links", table: memoryLinks, domain: "memory", hasSerial: true, dependsOn: ["memory_entries"] },
