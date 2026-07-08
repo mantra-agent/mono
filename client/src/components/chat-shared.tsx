@@ -88,10 +88,10 @@ export function filterStepsByLayer(steps: ExecutionStep[], layer: 1 | 2 | 3 | 4,
     }
 
     if (step.type === "thinking") {
-      if (layer === 1) {
-        return isActiveSession && step.status === "active";
+      if (layer <= 2) {
+        return isActiveSession && step.status === "active" && !step.thinking?.trim();
       }
-      return layer >= 2;
+      return layer >= 3;
     }
 
     if (step.type === "tool_call") {
@@ -385,8 +385,6 @@ function ToolStepRow({ step, iconOverrides, summaryOnly, layer }: { step: Execut
   const errorPreview = isError ? truncateResult(errorText) : "";
   const rawToolName = step.toolName || "";
   const effectiveLayer = layer ?? 4;
-  const reasoning = step.arguments?.reasoning;
-  const hasReasoning = typeof reasoning === "string" && reasoning.trim();
   const comment = extractToolComment(rawToolName, step.arguments);
   const toolLabel = (effectiveLayer <= 3 && comment) ? comment : rawToolName;
   const isDetailLayer = effectiveLayer === 2;
@@ -413,18 +411,12 @@ function ToolStepRow({ step, iconOverrides, summaryOnly, layer }: { step: Execut
         <div className="flex-1 min-w-0">
           {isDetailLayer ? (
             <>
-              {hasReasoning ? (
-                <span className={`break-words whitespace-normal block ${isActive ? "text-foreground" : "text-muted-foreground"}`}>
-                  {reasoning}
+              <span className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs text-muted-foreground/40 font-mono">{rawToolName}</span>
+                <span className={`truncate ${isActive ? "text-foreground" : "text-muted-foreground"}`}>
+                  {summary}
                 </span>
-              ) : (
-                <span className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-xs text-muted-foreground/40 font-mono">{rawToolName}</span>
-                  <span className={`truncate ${isActive ? "text-foreground" : "text-muted-foreground"}`}>
-                    {summary}
-                  </span>
-                </span>
-              )}
+              </span>
               {errorPreview && (
                 <span className="text-xs text-error/80 break-words whitespace-normal block" data-testid={`tool-error-${step.id}`}>
                   {errorPreview}
@@ -434,18 +426,10 @@ function ToolStepRow({ step, iconOverrides, summaryOnly, layer }: { step: Execut
           ) : (
             <>
               <span className="flex items-center gap-1.5 flex-wrap">
-                {hasReasoning ? (
-                  <span className={`break-words whitespace-normal ${isActive ? "text-foreground" : "text-muted-foreground"}`}>
-                    {reasoning}
-                  </span>
-                ) : (
-                  <>
-                    <span className="text-xs text-muted-foreground/40 font-mono">{toolLabel}</span>
-                    <span className={`truncate ${isActive ? "text-foreground" : "text-muted-foreground"}`}>
-                      {summary}
-                    </span>
-                  </>
-                )}
+                <span className="text-xs text-muted-foreground/40 font-mono">{toolLabel}</span>
+                <span className={`truncate ${isActive ? "text-foreground" : "text-muted-foreground"}`}>
+                  {summary}
+                </span>
               </span>
               {!expanded && !summaryOnly && resultPreview && (
                 <span className="text-xs text-muted-foreground/50 truncate block" data-testid={`tool-result-${step.id}`}>
@@ -822,9 +806,7 @@ function ToolIconStrip({
         const isError = step.status === "error";
         const iconColor = isError ? "text-error" : isDone ? "text-success" : isActive ? "text-active" : "text-info";
         const bgColor = isError ? "bg-error/10" : isDone ? "bg-success/10" : isActive ? "bg-active/15" : "bg-info/15";
-        const reasoning = typeof step.arguments?.reasoning === "string" && step.arguments.reasoning.trim()
-          ? step.arguments.reasoning
-          : step.toolName || "tool call";
+        const reasoning = step.toolName || "tool call";
 
         return (
           <Tooltip key={step.id}>
