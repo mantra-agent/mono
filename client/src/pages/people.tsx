@@ -1130,6 +1130,16 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
         </Card>
       )}
 
+      <button
+        type="button"
+        onClick={() => setEffectiveShowAdd(v => !v)}
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-xs text-cta transition-colors hover:bg-accent/70 hover:text-cta/80"
+        data-testid="button-new-log"
+      >
+        <Plus className={cn("h-3.5 w-3.5 shrink-0 transition-transform", effectiveShowAdd && "rotate-45")} />
+        <span>New Log</span>
+      </button>
+
       {sorted.length === 0 ? (
         <p className="text-sm text-muted-foreground py-4 text-center" data-testid="text-no-interactions">
           No log items yet. Click "+ New Log" to record the first one.
@@ -2063,22 +2073,27 @@ function PeopleDetailSection({
   defaultOpen = false,
   children,
   testId,
+  headerAction,
 }: {
   title: ReactNode;
   count?: number;
   defaultOpen?: boolean;
   children: ReactNode;
   testId?: string;
+  headerAction?: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
-      <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate">
-        <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
-        <span className="min-w-0 flex-1 text-left">{title}</span>
-        {count !== undefined && <span className="ml-auto text-[10px] font-normal text-muted-foreground/70">{count}</span>}
-      </CollapsibleTrigger>
+      <div className="group flex w-full items-center gap-1.5 px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate">
+        <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+          <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
+          <span className="min-w-0 flex-1 text-left">{title}</span>
+          {count !== undefined && <span className="ml-auto text-[10px] font-normal text-muted-foreground/70">{count}</span>}
+        </CollapsibleTrigger>
+        {headerAction}
+      </div>
       <CollapsibleContent>
         <div className="space-y-1 pt-1">
           {children}
@@ -2256,16 +2271,6 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
   return (
     <div className="space-y-6" data-testid="person-detail-view">
       <div className="space-y-0">
-      <button
-        type="button"
-        onClick={() => setShowNewLog(v => !v)}
-        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80"
-        data-testid="button-new-log"
-      >
-        <Plus className={cn("h-3.5 w-3.5 shrink-0 transition-transform", showNewLog && "rotate-45")} />
-        <span>New Log</span>
-      </button>
-
       <PeopleDetailSection
         title={(
           <Input
@@ -2275,9 +2280,34 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
             onBlur={() => { const next = editName.trim(); if (next && next !== person.name) updateMutation.mutate({ name: next }); }}
             onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditName(person.name); }}
             placeholder="Name"
-            className="h-4 w-full border-0 bg-transparent p-0 text-xs font-bold uppercase tracking-wider text-muted-foreground shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+            className="h-4 w-full border-0 bg-transparent p-0 text-[10px] font-medium uppercase tracking-wider text-muted-foreground shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
             data-testid="input-edit-profile-name"
           />
+        )}
+        headerAction={(
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
+                aria-label="Profile actions"
+                data-testid="button-profile-overflow"
+              >
+                <MoreHorizontal className="h-3 w-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setShowEmptyProfileRows(v => !v)} data-testid="menu-toggle-hidden-fields">
+                <CheckCircle2 className={cn("mr-2 h-3.5 w-3.5", showEmptyProfileRows ? "text-cta" : "text-muted-foreground/30")} />
+                {showEmptyProfileRows ? "Hide Hidden Fields" : "Show Hidden Fields"}
+              </DropdownMenuItem>
+              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteConfirm(true)} data-testid="menu-delete-person">
+                <Trash2 className="mr-2 h-3.5 w-3.5" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
         defaultOpen
         testId="section-profile"
@@ -2412,34 +2442,9 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
           <ProfileTreeRow label="New contact" icon={<Plus className="h-3.5 w-3.5" />} hasValue={showAddContact} showEmpty={showEmptyProfileRows || showAddContact} testId="row-profile-new-contact">{showAddContact ? <div className="flex flex-wrap items-center justify-end gap-1.5"><Select value={newContactType} onValueChange={(v) => setNewContactType(v as any)}><SelectTrigger className="w-48" data-testid="select-contact-type"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="email">Email</SelectItem><SelectItem value="phone">Phone</SelectItem><SelectItem value="social">Social</SelectItem><SelectItem value="other">Other</SelectItem></SelectContent></Select><Input value={newContactLabel} onChange={(e) => setNewContactLabel(e.target.value)} placeholder="Label" className="h-8 w-20 text-right" data-testid="input-contact-label" /><Input value={newContactValue} onChange={(e) => setNewContactValue(e.target.value)} placeholder="Value" className="h-8 min-w-[120px] flex-1 text-right" data-testid="input-contact-value" /><Button size="sm" onClick={() => { if (newContactValue.trim()) { updateMutation.mutate({ contactInfo: [...person.contactInfo, { type: newContactType, label: newContactLabel || contactTypeLabels[newContactType], value: newContactValue }] }); setShowAddContact(false); setNewContactLabel(""); setNewContactValue(""); } }} data-testid="button-save-contact">Add</Button><Button variant="ghost" size="icon" onClick={() => setShowAddContact(false)}><X className="h-3 w-3" /></Button></div> : <Button variant="ghost" size="sm" onClick={() => setShowAddContact(true)} data-testid="button-add-contact"><Plus className="mr-1 h-3 w-3" />Contact info</Button>}</ProfileTreeRow>
         </div>
 
-        <div className="pt-0">
-          <button
-            type="button"
-            onClick={() => setShowEmptyProfileRows(v => !v)}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
-            data-testid="button-toggle-empty-profile-rows"
-          >
-            <Plus className={cn("h-3.5 w-3.5 shrink-0 transition-transform", showEmptyProfileRows && "rotate-45")} />
-            <span>{showEmptyProfileRows ? "Hide Hidden" : "Show Hidden"}</span>
-          </button>
-        </div>
-
+        <InteractionsTab person={person} onUpdate={handleRefetch} showAdd={showNewLog} setShowAdd={setShowNewLog} />
       </PeopleDetailSection>
 
-      </div>
-
-
-      <InteractionsTab person={person} onUpdate={handleRefetch} showAdd={showNewLog} setShowAdd={setShowNewLog} />
-
-      <div className="pt-4 border-t">
-        <Button
-          variant="outline"
-          className="text-destructive border-destructive/30"
-          onClick={() => setDeleteConfirm(true)}
-          data-testid="button-delete-person"
-        >
-          <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
-        </Button>
       </div>
 
       <AlertDialog open={pendingContactDeleteIndex !== null} onOpenChange={(open) => !open && setPendingContactDeleteIndex(null)}>
