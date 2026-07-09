@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import { createLogger } from "../log";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
@@ -61,7 +61,8 @@ export interface VnextClaimSourceInput {
 
 export interface CreateVnextClaimInput {
   claim: ClaimCandidate;
-  sourceMemoryId: number;
+  /** Legacy memory entry ID. Null when claim is not extracted from a memory_entries row. */
+  sourceMemoryId?: number | null;
   source: MemorySource;
   sourceId?: string | null;
   createdAt?: Date;
@@ -76,7 +77,8 @@ export interface VnextExtractionBudgetScope {
   maxClaims: number;
   source: MemorySource;
   sourceId?: string | null;
-  sourceMemoryId: number;
+  /** Legacy memory entry ID. Null/undefined when not extracted from a memory_entries row. */
+  sourceMemoryId?: number | null;
 }
 
 export interface VnextClaimWriteBudgetInput {
@@ -245,7 +247,7 @@ export class MemoryVnextClaimStorage {
 
     const metadata = {
       ...(input.metadata ?? {}),
-      extractedFrom: input.sourceMemoryId,
+      ...(input.sourceMemoryId ? { extractedFrom: input.sourceMemoryId } : {}),
       schema: "memory_vnext_claim",
       embeddingProfile: MEMORY_VNEXT_EMBEDDING_PROFILE,
       embeddingStatus: validatedEmbedding ? "ready" : "unavailable",
@@ -279,7 +281,7 @@ export class MemoryVnextClaimStorage {
         lifecycleStageUpdatedAt: new Date(),
         contentHash,
         embedding: validatedEmbedding,
-        sourceMemoryId: input.sourceMemoryId,
+        sourceMemoryId: input.sourceMemoryId ?? null,
         source: input.source,
         sourceId: input.sourceId ?? null,
         metadata,
@@ -739,7 +741,9 @@ export class MemoryVnextClaimStorage {
 
   private extractionBudgetPredicate(scope: VnextExtractionBudgetScope) {
     const conditions = [
-      eq(memoryVnextClaims.sourceMemoryId, scope.sourceMemoryId),
+      scope.sourceMemoryId
+        ? eq(memoryVnextClaims.sourceMemoryId, scope.sourceMemoryId)
+        : isNull(memoryVnextClaims.sourceMemoryId),
       eq(memoryVnextClaims.source, scope.source),
     ];
     if (scope.sourceId) {
@@ -878,8 +882,8 @@ export interface PersistClaimCandidatesInput {
   claims: ClaimCandidate[];
   source: MemorySource;
   sourceId?: string | null;
-  /** Legacy memory entry ID (0 when not applicable, e.g. source poller) */
-  sourceMemoryId: number;
+  /** Legacy memory entry ID. Null when not extracted from a memory_entries row. */
+  sourceMemoryId?: number | null;
   /** Source refs to attach to each created claim */
   sourceRefs?: VnextClaimSourceInput[];
   /** Optional per-claim write budget metadata */
@@ -969,8 +973,8 @@ export async function persistClaimCandidates(
         ? sourceRefs
         : [
             {
-              sourceType: sourceMemoryId > 0 ? "memory" : "queue",
-              sourceId: sourceMemoryId > 0 ? String(sourceMemoryId) : (sourceId || "unknown"),
+              sourceType: sourceMemoryId ? "memory" : "queue",
+              sourceId: sourceMemoryId ? String(sourceMemoryId) : (sourceId || "unknown"),
               relationship: "extracted_from",
               context: `Extracted from ${source}`,
               strength: 1,

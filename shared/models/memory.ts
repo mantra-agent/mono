@@ -372,9 +372,7 @@ export const memoryVnextClaims = pgTable(
       .notNull(),
     contentHash: text("content_hash").notNull(),
     embedding: vector("embedding", { dimensions: 384 }),
-    sourceMemoryId: integer("source_memory_id").references(() => memoryEntries.id, {
-      onDelete: "set null",
-    }),
+    sourceMemoryId: integer("source_memory_id"),
     source: text("source").notNull().default("manual"),
     sourceId: text("source_id"),
     scope: text("scope").notNull().default("user"),

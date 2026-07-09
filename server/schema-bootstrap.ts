@@ -1643,7 +1643,7 @@ export async function runSchemaBootstrap(
         lifecycle_stage_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         content_hash TEXT NOT NULL,
         embedding vector(384),
-        source_memory_id INTEGER REFERENCES memory_entries(id) ON DELETE SET NULL,
+        source_memory_id INTEGER,
         source TEXT NOT NULL DEFAULT 'manual',
         source_id TEXT,
         scope TEXT NOT NULL DEFAULT 'user',
@@ -1802,6 +1802,18 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_vnext_source_queue_status ON memory_vnext_source_queue(status)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_vnext_source_queue_pending_settle ON memory_vnext_source_queue(status, last_modified_at)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_vnext_source_queue_owner ON memory_vnext_source_queue(owner_user_id)`);
+  });
+
+  await heal("vnext claims drop legacy FK + sentinel cleanup", async () => {
+    // Drop FK constraint from source_memory_id → memory_entries if it exists
+    await pool.query(`
+      ALTER TABLE memory_vnext_claims
+        DROP CONSTRAINT IF EXISTS memory_vnext_claims_source_memory_id_memory_entries_id_fk
+    `);
+    // Convert sentinel 0 values to NULL
+    await pool.query(`
+      UPDATE memory_vnext_claims SET source_memory_id = NULL WHERE source_memory_id = 0
+    `);
   });
 
   await heal("memory_sources table", async () => {

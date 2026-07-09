@@ -13347,7 +13347,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
             content: r.content ? r.content.substring(0, 500) : null,
             claimType: r.claimType,
             confidence: r.confidence,
-            extractedFrom: r.sourceMemoryId,
+            extractedFrom: r.sourceMemoryId ?? null,
             source: r.source,
             sourceId: r.sourceId,
             entityMentions: r.entityMentions || [],
