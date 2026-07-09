@@ -38,7 +38,7 @@ import {
   type ChatMessage as Message,
 } from "@/components/chat-shared";
 import type { SessionStreamMap, SessionStreamState } from "@/hooks/use-session-subscription";
-import { initialStreamingContent, type StreamingContent } from "@shared/streaming-types";
+import { initialStreamingContent } from "@shared/streaming-types";
 import { useExecutorStatus } from "@/hooks/use-executor-status";
 import { useFocusSessionOptional } from "@/hooks/use-focus-session";
 import { emitSessionListChanged, emitSessionChanged } from "@/hooks/use-data-sync";
@@ -52,29 +52,17 @@ import { useWorkflowForSession } from "@/hooks/use-workflow-for-session";
 import { usePinnedScroll } from "@/hooks/use-pinned-scroll";
 import { ActiveStatusSpinner } from "@/components/nav-dot";
 import { ChatEmptyState } from "@/components/chat-empty-state";
+import {
+  buildTranscriptProjection,
+  sortMessagesByCreatedAt,
+  hasCompactionBoundary,
+  summarizeMessageIds,
+  computeStreamingRevision,
+  type FrozenStreamHandoff,
+  type TranscriptSnapshot,
+} from "@/lib/transcript-projection";
 
 const log = createLogger("SessionTranscriptPanel");
-
-function normalizeChatText(value: string): string {
-  return value.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-function getMessageTs(message: Message): number {
-  const ts = new Date(message.createdAt).getTime();
-  return Number.isFinite(ts) ? ts : 0;
-}
-
-function sortMessagesByCreatedAt(messages: Message[]): Message[] {
-  return [...messages].sort((a, b) => getMessageTs(a) - getMessageTs(b));
-}
-
-function summarizeMessageIds(messages: Message[]): string[] {
-  return messages.map((message) => `${message.id}:${message.role}:${message.content?.length ?? 0}:${message.segmentChronology?.length ?? 0}`);
-}
-
-function hasCompactionBoundary(messages: Message[]): boolean {
-  return messages.some((message) => message.model === "compaction-marker");
-}
 
 const ENTITY_CHIP_STYLES: Record<
   LinkedEntity["kind"],
@@ -109,45 +97,6 @@ const ENTITY_CHIP_STYLES: Record<
     iconColor: "text-cat-ai-foreground",
   },
 };
-
-
-type FrozenStreamHandoff = {
-  sessionId: string;
-  renderId: string;
-  streaming: StreamingContent;
-  lowerBound: number | null;
-};
-
-function freezeStreamingContent(streaming: StreamingContent): StreamingContent {
-  return {
-    ...streaming,
-    source: null,
-    segments: streaming.segments.map((segment) => segment.type === "content"
-      ? { ...segment }
-      : { ...segment, steps: segment.steps.map((step) => ({ ...step, status: step.status === "active" ? "done" : step.status })) }
-    ),
-  };
-}
-
-function computeStreamingRevision(streaming: StreamingContent): number {
-  if (streaming.source === null || streaming.segments.length === 0) return 0;
-  return streaming.segments.reduce((total, segment) => {
-    if (segment.type === "content") return total + segment.content.length;
-    return total + segment.steps.reduce((stepTotal, step) => {
-      return stepTotal
-        + step.id.length
-        + step.type.length
-        + (step.status?.length ?? 0)
-        + (step.thinking?.length ?? 0)
-        + (step.toolName?.length ?? 0)
-        + (step.narrative?.length ?? 0)
-        + (step.systemStepName?.length ?? 0)
-        + (step.systemStepDetail?.length ?? 0)
-        + (step.result ? JSON.stringify(step.result).length : 0)
-        + (step.error?.length ?? 0);
-    }, 0);
-  }, 0);
-}
 
 export interface SessionTranscriptPanelProps {
   activeSession: string | null;
@@ -284,25 +233,6 @@ export function SessionTranscriptPanel({
     refetchInterval: 5000,
   });
 
-  // Server-authoritative streaming state from parent subscription, bounded by
-  // Session liveness: WS is the real-time authority, DB poll is the cold-start
-  // fallback. This replaces `durableSessionComplete` which relied solely on the
-  // DB poll and was vulnerable to stale refetch races (React Query's 5s interval
-  // or window-focus refetch could return "saved" while the WS still had live
-  // streaming data, causing a total streaming blackout).
-  const rawStreaming = sessionSub.streamingContent ?? initialStreamingContent;
-  const persistedSessionStatus = sessionData?.status ?? null;
-  const isSessionActive =
-    sessionSub.runActive ||
-    sessionSub.status === "streaming" ||
-    (sessionSub.status === "idle" && persistedSessionStatus === "streaming");
-  // Thinking is turn-scoped, not momentary-step-scoped. As soon as a turn is
-  // active, the transcript needs a stable assistant target so SegmentStream can
-  // show the waiting affordance between model/tool/text phases. Finalization
-  // clears `isSessionActive`; memory ingestion is now async and must not keep
-  // this alive.
-  const streaming = isSessionActive ? rawStreaming : initialStreamingContent;
-
   const persistedMessages = sessionData?.messages || [];
   const activePlanPageId = (sessionData as any)?.activePlan?.pageId ?? null;
   const activeWorkflowId = (sessionData as any)?.activeWorkflow?.id ?? null;
@@ -332,6 +262,8 @@ export function SessionTranscriptPanel({
       window.removeEventListener("focus", handleWindowFocus);
     };
   }, [activeSession]);
+
+  const messages = useMemo(() => sortMessagesByCreatedAt(persistedMessages), [persistedMessages]);
 
   const linkedEntities = useLinkedEntities(persistedMessages);
   const [, setLocation] = useLocation();
@@ -372,13 +304,6 @@ export function SessionTranscriptPanel({
     }
   }, [navigateToLibraryPage, navigateToNote, setLocation]);
 
-  const activeTranscriptRef = useRef<{ sessionId: string | null; messages: Message[] }>({
-    sessionId: null,
-    messages: [],
-  });
-
-  const messages = useMemo(() => sortMessagesByCreatedAt(persistedMessages), [persistedMessages]);
-
   const deleteConversation = useMutation({
     mutationFn: async (id: string) => {
       await apiRequest("DELETE", "/api/sessions/" + id);
@@ -393,8 +318,6 @@ export function SessionTranscriptPanel({
       toast({ title: "Failed to delete session", description: String(err), variant: "destructive" });
     },
   });
-
-  
 
   const renameConversation = useMutation({
     mutationFn: async ({ id, title }: { id: string; title: string }) => {
@@ -421,176 +344,81 @@ export function SessionTranscriptPanel({
     },
   });
 
-
-  const postSending = false;
-
   const clearPendingTurn = useCallback(() => {
     focusCtx?.setPendingTurn(null);
   }, [focusCtx]);
 
+  // --- Transcript projection via pure reducer ---
+  const [frozenStreamHandoff, setFrozenStreamHandoff] = useState<FrozenStreamHandoff | null>(null);
+  const transcriptSnapshotRef = useRef<TranscriptSnapshot | null>(null);
+
+  const rawStreaming = sessionSub.streamingContent ?? initialStreamingContent;
+
+  const projection = useMemo(() => {
+    return buildTranscriptProjection({
+      activeSession,
+      persistedMessages: messages,
+      rawStreaming,
+      persistedSessionStatus: sessionData?.status ?? null,
+      subRunActive: sessionSub.runActive,
+      subStatus: sessionSub.status,
+      subUpdatedAt: sessionSub.updatedAt ?? null,
+      pendingTurn: contextPendingTurn,
+      postSending: false,
+      frozenStreamHandoff,
+      previousTranscript: transcriptSnapshotRef.current,
+      messagesContainCompactionBoundary: hasCompactionBoundary(messages),
+    });
+  }, [activeSession, messages, rawStreaming, sessionData?.status, sessionSub.runActive, sessionSub.status, sessionSub.updatedAt, contextPendingTurn, frozenStreamHandoff]);
+
+  // Update the transcript snapshot ref for next render cycle
+  transcriptSnapshotRef.current = projection.transcriptSnapshot;
+
+  // --- Side effects driven by projection decisions ---
+
+  // Capture frozen stream handoff when projection says to
+  useEffect(() => {
+    if (projection.shouldCaptureFrozenHandoff && projection.newFrozenHandoff) {
+      setFrozenStreamHandoff(projection.newFrozenHandoff);
+    }
+  }, [projection.shouldCaptureFrozenHandoff, projection.newFrozenHandoff]);
+
+  // Clear frozen handoff when projection says to
+  useEffect(() => {
+    if (projection.shouldClearFrozenHandoff) {
+      setFrozenStreamHandoff(null);
+    }
+  }, [projection.shouldClearFrozenHandoff]);
+
+  // Clear pending turn when projection says to
+  useEffect(() => {
+    if (projection.shouldClearPendingTurn) {
+      clearPendingTurn();
+    }
+  }, [projection.shouldClearPendingTurn, clearPendingTurn]);
+
+  // --- Voice revision appended to render revision for scroll pinning ---
+  const voiceRevision = voiceSession
+    ? `${voiceSession.status}:${voiceSession.transcript.length}:${voiceSession.voiceThinking ? 1 : 0}`
+    : "voice:none";
+  const renderRevision = `${projection.renderRevision}::${voiceRevision}`;
+
+  // Destructure projection values for rendering
+  const {
+    displayMessages,
+    displayStreaming,
+    isSessionActive,
+    renderPendingTurn,
+    displayLiveStreamRenderId,
+    isStreaming,
+  } = projection;
+
+  // The visible pending turn for the optimistic user bubble
   const visiblePendingTurn = contextPendingTurn && (
     contextPendingTurn.sessionId === null ||
     contextPendingTurn.sessionId === activeSession ||
     activeSession === null
   ) ? contextPendingTurn : null;
-
-  const visiblePendingTurnPersisted = useMemo(() => {
-    if (!visiblePendingTurn) return false;
-    const submittedAt = new Date(visiblePendingTurn.submittedAt).getTime();
-    const expected = normalizeChatText(visiblePendingTurn.content || "");
-    return messages.some((message) => {
-      if (message.role !== "user" || message.id.startsWith("draft-")) return false;
-      const createdAt = new Date(message.createdAt).getTime();
-      if (Number.isFinite(createdAt) && createdAt < submittedAt - 5000) return false;
-      return normalizeChatText(message.content || "") === expected;
-    });
-  }, [messages, visiblePendingTurn]);
-
-  useEffect(() => {
-    if (!visiblePendingTurn || !visiblePendingTurnPersisted) return;
-    const pendingSubmittedAt = new Date(visiblePendingTurn.submittedAt).getTime();
-    const assistantHasVisiblePersistedReply = messages.some((message) => {
-      if (message.role !== "assistant" || message.id.startsWith("draft-")) return false;
-      if (new Date(message.createdAt).getTime() < pendingSubmittedAt) return false;
-      return (message.content || "").trim().length > 0 || (message.segmentChronology?.length ?? 0) > 0;
-    });
-    if (assistantHasVisiblePersistedReply) clearPendingTurn();
-  }, [clearPendingTurn, messages, visiblePendingTurn, visiblePendingTurnPersisted]);
-
-  // The server snapshot is the only authority for active streaming. Local
-  // pending state is only an affordance before the server stream exists; once a
-  // server stream is active, the pending turn is adopted and must not render a
-  // second assistant target.
-  const pendingSubmittedAtMs = visiblePendingTurn ? new Date(visiblePendingTurn.submittedAt).getTime() : null;
-  const streamUpdatedAt = sessionSub.updatedAt ?? null;
-  const streamIsFreshForPendingTurn =
-    pendingSubmittedAtMs === null ||
-    (streamUpdatedAt !== null && streamUpdatedAt >= pendingSubmittedAtMs);
-  const currentTurnStreaming = streamIsFreshForPendingTurn ? streaming : initialStreamingContent;
-  const serverStreaming = isSessionActive && streamIsFreshForPendingTurn;
-  const hasLiveStreamingState = serverStreaming && currentTurnStreaming.source !== null;
-  const pendingWasAdoptedByServer = visiblePendingTurn?.status === "streaming";
-  const [frozenStreamHandoff, setFrozenStreamHandoff] = useState<FrozenStreamHandoff | null>(null);
-
-  const transcriptStabilizationActive = !!visiblePendingTurn || hasLiveStreamingState || postSending;
-  const messagesContainCompactionBoundary = hasCompactionBoundary(messages);
-  const displayMessages = useMemo(() => {
-    const previous = activeTranscriptRef.current;
-    if (previous.sessionId !== activeSession || !transcriptStabilizationActive || messagesContainCompactionBoundary) {
-      activeTranscriptRef.current = { sessionId: activeSession, messages };
-      return messages;
-    }
-
-    const byId = new Map<string, Message>();
-    for (const message of previous.messages) byId.set(message.id, message);
-    for (const message of messages) byId.set(message.id, message);
-    const merged = sortMessagesByCreatedAt([...byId.values()]);
-
-    if (merged.length !== messages.length) {
-      log.debug("STREAM:TRANSCRIPT:STABILIZE", {
-        activeSession,
-        incomingCount: messages.length,
-        stabilizedCount: merged.length,
-        retainedIds: previous.messages
-          .filter((message) => !messages.some((incoming) => incoming.id === message.id))
-          .map((message) => message.id),
-        incomingTail: summarizeMessageIds(messages).slice(-6),
-        stabilizedTail: summarizeMessageIds(merged).slice(-6),
-      });
-    }
-
-    activeTranscriptRef.current = { sessionId: activeSession, messages: merged };
-    return merged;
-  }, [activeSession, messages, messagesContainCompactionBoundary, transcriptStabilizationActive]);
-
-  // Keep one assistant placeholder alive for the active turn until the server
-  // has visible assistant stream content. User-message persistence only retires
-  // the optimistic user bubble; it must not clear the assistant Thinking state.
-  const serverHasVisibleAssistantStream = hasLiveStreamingState && currentTurnStreaming.segments.length > 0;
-  const renderPendingTurn = serverHasVisibleAssistantStream || serverStreaming
-    ? null
-    : visiblePendingTurn;
-  // The active assistant placeholder must have one stable identity for the
-  // whole turn. Previously this rendered first as `draft-assistant-server-*`
-  // and then flipped to `draft-assistant-${clientTurnId}` after an effect
-  // adopted the pending turn. That deterministic remount happened on every send
-  // and made the bottom transcript visibly tear/re-anchor. Derive the id
-  // synchronously from the pending turn whenever this client owns the send.
-  const liveStreamRenderId = hasLiveStreamingState
-    ? visiblePendingTurn?.clientTurnId
-      ? `draft-assistant-${visiblePendingTurn.clientTurnId}`
-      : activeSession
-        ? `draft-assistant-server-${activeSession}`
-        : null
-    : null;
-
-  useEffect(() => {
-    if (!activeSession || !hasLiveStreamingState || !liveStreamRenderId || currentTurnStreaming.segments.length === 0) return;
-    const lowerBound = visiblePendingTurn
-      ? new Date(visiblePendingTurn.submittedAt).getTime()
-      : displayMessages.length > 0
-        ? [...displayMessages].reverse().find((message) => message.role === "user")
-          ? new Date([...displayMessages].reverse().find((message) => message.role === "user")!.createdAt).getTime()
-          : null
-        : null;
-    setFrozenStreamHandoff({
-      sessionId: activeSession,
-      renderId: liveStreamRenderId,
-      streaming: freezeStreamingContent(currentTurnStreaming),
-      lowerBound: Number.isFinite(lowerBound) ? lowerBound : null,
-    });
-  }, [activeSession, currentTurnStreaming, displayMessages, hasLiveStreamingState, liveStreamRenderId, visiblePendingTurn]);
-
-  const frozenAssistantNowPersisted = frozenStreamHandoff
-    ? displayMessages.some((message) => {
-      if (message.role !== "assistant" || message.id.startsWith("draft-")) return false;
-      if (frozenStreamHandoff.lowerBound !== null && new Date(message.createdAt).getTime() < frozenStreamHandoff.lowerBound) return false;
-      return (message.content || "").trim().length > 0 || (message.segmentChronology?.length ?? 0) > 0;
-    })
-    : false;
-
-  useEffect(() => {
-    setFrozenStreamHandoff((prev) => {
-      if (!prev) return prev;
-      if (prev.sessionId !== activeSession || hasLiveStreamingState || frozenAssistantNowPersisted) return null;
-      return prev;
-    });
-  }, [activeSession, frozenAssistantNowPersisted, hasLiveStreamingState]);
-
-  const displayStreaming = hasLiveStreamingState
-    ? currentTurnStreaming
-    : frozenStreamHandoff?.sessionId === activeSession
-      ? frozenStreamHandoff.streaming
-      : currentTurnStreaming;
-  const displayLiveStreamRenderId = liveStreamRenderId ?? (frozenStreamHandoff?.sessionId === activeSession ? frozenStreamHandoff.renderId : null);
-  const hasFrozenHandoff = !hasLiveStreamingState && frozenStreamHandoff?.sessionId === activeSession;
-  const isStreaming = hasLiveStreamingState || hasFrozenHandoff || postSending || !!renderPendingTurn;
-
-  const renderRevision = useMemo(() => {
-    const messageRevision = displayMessages
-      .map((message) => `${message.id}:${message.createdAt}:${message.role}:${message.content?.length ?? 0}:${message.segmentChronology?.length ?? 0}`)
-      .join("|");
-    const optimisticRevision = visiblePendingTurn
-      ? `optimistic:${visiblePendingTurn.clientTurnId}:${visiblePendingTurn.status}:${visiblePendingTurn.content.length}`
-      : "optimistic:none";
-    const pendingRevision = renderPendingTurn
-      ? `pending:${renderPendingTurn.clientTurnId}:${renderPendingTurn.status}:${renderPendingTurn.content.length}`
-      : "pending:none";
-    const streamRevision = computeStreamingRevision(displayStreaming);
-    const voiceRevision = voiceSession
-      ? `${voiceSession.status}:${voiceSession.transcript.length}:${voiceSession.voiceThinking ? 1 : 0}`
-      : "voice:none";
-    return [
-      activeSession ?? "no-session",
-      messageRevision,
-      optimisticRevision,
-      pendingRevision,
-      displayLiveStreamRenderId ?? "no-live-stream",
-      streamRevision,
-      hasFrozenHandoff ? "frozen" : "live-or-none",
-      voiceRevision,
-    ].join("::");
-  }, [activeSession, displayLiveStreamRenderId, displayMessages, displayStreaming, hasFrozenHandoff, renderPendingTurn, visiblePendingTurn, voiceSession]);
 
   const autoScrollEnabled = enableAutoScroll && !!activeSession && !msgsLoading;
   const { onScroll: handleScroll, onUserScrollIntent: handleUserScrollIntent, forcePin } = usePinnedScroll({
@@ -603,7 +431,6 @@ export function SessionTranscriptPanel({
   useEffect(() => {
     if (!autoScrollEnabled) return;
     if (visiblePendingTurn?.clientTurnId) {
-      const container = scrollContainerRef.current;
       log.verbose(() => `FORCE_PIN_ON_PENDING session=${activeSession} turn=${visiblePendingTurn.clientTurnId}`);
       forcePin();
     }
@@ -635,9 +462,9 @@ export function SessionTranscriptPanel({
       log.debug("CHAT_TRACE:PANEL_RENDER", {
         activeSession,
         isStreaming,
-        postSending,
-        hasLiveStreamingState,
-        hasFrozenHandoff,
+        hasLiveStreamingState: projection.assistantActivity === "streaming",
+        hasFrozenHandoff: projection.assistantActivity === "frozen",
+        assistantActivity: projection.assistantActivity,
         pendingTurn: visiblePendingTurn?.clientTurnId ?? null,
         pendingStatus: visiblePendingTurn?.status ?? null,
         streamSource: displayStreaming.source,
@@ -666,12 +493,6 @@ export function SessionTranscriptPanel({
       clientHeight,
     };
   });
-
-  useEffect(() => {
-    if (!isSessionActive && pendingWasAdoptedByServer && visiblePendingTurnPersisted) {
-      clearPendingTurn();
-    }
-  }, [clearPendingTurn, isSessionActive, pendingWasAdoptedByServer, visiblePendingTurnPersisted]);
 
 
   if (!activeSession) {
