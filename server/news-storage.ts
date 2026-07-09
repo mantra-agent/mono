@@ -40,6 +40,7 @@ function normalizeSignalItemSourceTypes(sourceType: string): string[] {
     case "channel_x": return ["x"];
     case "channel_web": return ["web"];
     case "github_repo": return ["github"];
+    case "youtube_channel": return ["youtube"];
     default: return [sourceType];
   }
 }

@@ -7,7 +7,7 @@ import { z } from "zod";
 export const signalSourceTypes = [
   "x_account", "subreddit", "rss_feed", "pinned_topic",
   "hackernews", "github_repo", "polymarket", "stocktwits",
-  "arxiv",
+  "arxiv", "youtube_channel",
 ] as const;
 export type SignalSourceType = typeof signalSourceTypes[number];
 

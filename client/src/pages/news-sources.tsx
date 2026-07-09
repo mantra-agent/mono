@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Trash2, Clock, Globe, Twitter, MessageSquare, Rss, UserCircle, Newspaper, Github, BarChart3, TrendingUp } from "lucide-react";
+import { Trash2, Clock, Globe, Twitter, MessageSquare, Rss, UserCircle, Newspaper, Github, BarChart3, TrendingUp, Video } from "lucide-react";
 
 interface ChannelSource {
   id: string;
@@ -94,6 +94,13 @@ const DIRECT_SECTIONS: Array<{
     label: "arXiv",
     icon: Newspaper,
     placeholder: "cs.AI (category) or large language models (keyword)",
+    normalize: (v: string) => v.trim(),
+  },
+  {
+    type: "youtube_channel",
+    label: "YouTube Channels",
+    icon: Video,
+    placeholder: "UCHnyfMqiRRG1u-2MsSQLbXA (channel ID)",
     normalize: (v: string) => v.trim(),
   },
 ];

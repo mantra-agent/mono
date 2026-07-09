@@ -183,6 +183,14 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
       } catch (err) { errors.push(`arxiv: ${(err as Error).message}`); }
     }
 
+    const ytSources = enabledSources.filter(s => s.sourceType === "youtube_channel");
+    if (ytSources.length > 0) {
+      try {
+        const ytSignals = await adapters.scanYouTubeChannelSources(ytSources.map(s => ({ id: s.id, value: s.value })));
+        allSignals.push(...ytSignals);
+      } catch (err) { errors.push(`youtube: ${(err as Error).message}`); }
+    }
+
     const preDedup = allSignals.length;
     const storyClusters = adapters.clusterSignalsByStory(allSignals);
     const dedupedSignals = storyClusters.map(cluster => cluster.primary);
