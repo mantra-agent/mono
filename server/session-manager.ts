@@ -319,9 +319,11 @@ class SessionManager {
     }
 
     if (changed) {
-      // Ensure source is set so client-side isActiveStreaming checks pass
+      // Ensure source is set so client-side isActiveStreaming checks pass.
+      // Use the session's registered source (voice or text) — never default to "text"
+      // for a voice-registered session.
       if (!prev.source) {
-        prev = { ...prev, source: "text" };
+        prev = { ...prev, source: session.source ?? "text" };
       }
       session.streamingContent = prev;
     }
