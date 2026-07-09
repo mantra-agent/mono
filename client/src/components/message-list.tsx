@@ -110,6 +110,9 @@ function hasVisibleChronologyPayload(msg: Message): boolean {
 
 function hasRenderableAssistantPayload(msg: Message): boolean {
   if (msg.role !== "assistant") return true;
+  // Structural visibility discriminant — diagnostic messages are never chat-rendered.
+  // Falls through to legacy name-matching for old messages without the field.
+  if (msg.visibility === "diagnostic") return false;
   if ((msg.content || "").trim().length > 0) return true;
   if ((msg.thinking || "").trim().length > 0) return true;
   if (Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0) return true;

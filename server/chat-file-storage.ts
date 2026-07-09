@@ -167,6 +167,15 @@ export type AssistantMessageState =
   | "interrupted"
   | "failed";
 
+/**
+ * Message visibility discriminant. Stored at creation time so renderers
+ * never need to name-match system step names to decide visibility.
+ *   - 'chat': normal user/assistant messages rendered in transcript (default)
+ *   - 'diagnostic': operational lifecycle entries (voice connect/disconnect,
+ *     setup steps) persisted for forensics but hidden from chat UI
+ */
+export type MessageVisibility = "chat" | "diagnostic";
+
 export interface FileMessage {
   id: string;
   sessionId: string;
@@ -193,6 +202,8 @@ export interface FileMessage {
   assistantRunId?: string;
   assistantInterruptedAt?: string;
   voice?: VoiceMessageMeta;
+  /** Visibility discriminant — absent or 'chat' = normal; 'diagnostic' = hidden from transcript */
+  visibility?: MessageVisibility;
 }
 
 interface SessionData {
@@ -937,6 +948,8 @@ export interface IChatFileStorage {
     segmentChronology?: SegmentChronologyEntry[],
     isError?: boolean,
     pageContext?: PageContext,
+    tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number },
+    visibility?: MessageVisibility,
   ): Promise<FileMessage | null>;
   upsertVoiceUserMessage(
     sessionId: string,
@@ -1441,6 +1454,7 @@ export const chatFileStorage: IChatFileStorage = {
       outputTokens: number;
       totalTokens: number;
     },
+    visibility?: MessageVisibility,
   ) {
     return withConvLock(sessionId, async () => {
       const data = await readConv(sessionId);
@@ -1452,15 +1466,18 @@ export const chatFileStorage: IChatFileStorage = {
       }
       const sanitizedContent =
         role === "assistant" ? stripRoleMarkers(content, sessionId) : content;
-      if (role === "assistant" && !hasRenderableAssistantPayload({
+
+      // Diagnostic messages bypass the renderable-payload guard — they are
+      // intentionally stored as non-chat-visible forensic records.
+      if (role === "assistant" && visibility !== "diagnostic" && !hasRenderableAssistantPayload({
         content: sanitizedContent,
         thinking,
         toolCalls,
         systemSteps,
         segmentChronology,
       })) {
-        log.debug(
-          `[ChatFileStorage] createMessage skipped empty assistant no-op sessionId=${sessionId}`,
+        log.warn(
+          `[ChatFileStorage] createMessage rejected empty chat-visible assistant row sessionId=${sessionId}`,
         );
         return null;
       }
@@ -1486,6 +1503,7 @@ export const chatFileStorage: IChatFileStorage = {
             : null,
       };
       if (isError) msg.isError = true;
+      if (visibility && visibility !== "chat") msg.visibility = visibility;
       if (pageContext && role === "user") msg.pageContext = pageContext;
       data.messages.push(msg);
       data.updatedAt = msg.createdAt;

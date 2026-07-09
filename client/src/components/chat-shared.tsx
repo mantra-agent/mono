@@ -201,6 +201,8 @@ export interface ChatMessage {
   compaction?: CompactionMeta | null;
   pageContext?: PageContext | null;
   voice?: VoiceMessageMeta | null;
+  /** Structural visibility discriminant — 'diagnostic' messages are hidden from chat */
+  visibility?: "chat" | "diagnostic";
 }
 
 export type { ChildSessionBlockMeta, CrossSessionMeta };
