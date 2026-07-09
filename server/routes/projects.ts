@@ -19,7 +19,7 @@ import { eq, desc, ilike, type SQL } from "drizzle-orm";
 
 const log = createLogger("WorkRoutes");
 const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
-const libraryScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId };
+const libraryScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
 function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
 function writablePlan(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
 function visibleLibrary(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), libraryScopeColumns, predicate); }

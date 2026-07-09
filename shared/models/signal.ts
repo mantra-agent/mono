@@ -31,6 +31,7 @@ export const signalSources = pgTable("signal_sources", {
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
+  vaultId: text("vault_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_signal_sources_scope_owner").on(table.scope, table.ownerUserId),
@@ -63,6 +64,7 @@ export const signalItems = pgTable("signal_items", {
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
+  vaultId: text("vault_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_signal_items_status").on(table.status),

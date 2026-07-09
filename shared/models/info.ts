@@ -96,6 +96,7 @@ export const libraryPages = pgTable(
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
+    vaultId: text("vault_id"),
     createdByUserId: text("created_by_user_id"),
     updatedByUserId: text("updated_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -113,6 +114,7 @@ export const libraryPages = pgTable(
     index("idx_library_pages_surface_until").on(table.surfaceUntil),
     index("idx_library_pages_scope_owner").on(table.scope, table.ownerUserId),
     index("idx_library_pages_account").on(table.accountId),
+    index("idx_library_pages_vault").on(table.vaultId),
   ],
 );
 

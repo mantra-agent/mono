@@ -65,6 +65,7 @@ const memoryScopeColumns = {
   scope: memoryEntries.scope,
   ownerUserId: memoryEntries.ownerUserId,
   accountId: memoryEntries.accountId,
+  vaultId: memoryEntries.vaultId,
 };
 
 export class DocumentStorage {

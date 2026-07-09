@@ -20,6 +20,7 @@ import { PageHeaderProvider } from "@/hooks/use-page-header";
 import { VoiceSessionProvider } from "@/hooks/use-voice-session";
 import { MyelinationProvider } from "@/hooks/use-myelination";
 import { TopBar } from "@/components/top-bar";
+import { VaultProvider } from "@/hooks/use-vaults";
 import { useDataSync } from "@/hooks/use-data-sync";
 import { useClientPresence } from "@/hooks/use-client-presence";
 import { ExecutorStatusProvider } from "@/hooks/use-executor-status";
@@ -468,7 +469,9 @@ function App() {
           <TooltipProvider>
             <AuthGate>
               <BootGate>
-                <AppShell />
+                <VaultProvider>
+                  <AppShell />
+                </VaultProvider>
               </BootGate>
             </AuthGate>
           </TooltipProvider>

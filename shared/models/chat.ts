@@ -23,6 +23,7 @@ export const chatSessions = pgTable(
     createdByUserId: text("created_by_user_id"),
     updatedByUserId: text("updated_by_user_id"),
     sessionKey: text("session_key"),
+    vaultId: text("vault_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .default(sql`CURRENT_TIMESTAMP`)
       .notNull(),
@@ -33,6 +34,7 @@ export const chatSessions = pgTable(
   (table) => [
     index("idx_sessions_scope_owner").on(table.scope, table.ownerUserId),
     index("idx_sessions_account").on(table.accountId),
+    index("idx_sessions_vault").on(table.vaultId),
   ],
 );
 
@@ -48,6 +50,7 @@ export const messages = pgTable(
     accountId: text("account_id"),
     createdByUserId: text("created_by_user_id"),
     updatedByUserId: text("updated_by_user_id"),
+    vaultId: text("vault_id"),
     role: text("role").notNull(),
     content: text("content").notNull(),
     thinking: text("thinking"),

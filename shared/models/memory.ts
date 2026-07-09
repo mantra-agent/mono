@@ -62,6 +62,7 @@ export const workspaceDocuments = pgTable(
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
+    vaultId: text("vault_id"),
     createdByUserId: text("created_by_user_id"),
     updatedByUserId: text("updated_by_user_id"),
     embedding: vector("embedding", { dimensions: 1536 }),
@@ -78,6 +79,7 @@ export const workspaceDocuments = pgTable(
     index("idx_ws_doc_type").on(table.docType),
     index("idx_ws_doc_scope_owner").on(table.scope, table.ownerUserId),
     index("idx_ws_doc_account").on(table.accountId),
+    index("idx_ws_doc_vault").on(table.vaultId),
   ],
 );
 
@@ -209,6 +211,7 @@ export const memoryEntries = pgTable(
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
+    vaultId: text("vault_id"),
     createdByUserId: text("created_by_user_id"),
     updatedByUserId: text("updated_by_user_id"),
     path: text("path"),
@@ -255,6 +258,7 @@ export const memoryEntries = pgTable(
     index("idx_memory_processing_run").on(table.processingRunId),
     index("idx_memory_scope_owner").on(table.scope, table.ownerUserId),
     index("idx_memory_account").on(table.accountId),
+    index("idx_memory_vault").on(table.vaultId),
   ],
 );
 

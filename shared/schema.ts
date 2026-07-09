@@ -28,6 +28,7 @@ export * from "./models/signal";
 export * from "./models/opportunities";
 export * from "./models/magic-demo";
 export * from "./models/platforms";
+export * from "./models/vaults";
 
 
 export const mobileStartupTelemetry = pgTable("mobile_startup_telemetry", {
@@ -75,6 +76,10 @@ export const users = pgTable("users", {
   inviteExpires: timestamp("invite_expires", { withTimezone: true }),
   resetToken: text("reset_token"),
   resetExpires: timestamp("reset_expires", { withTimezone: true }),
+  activeVaultId: text("active_vault_id"),
+  visibleVaultIds: text("visible_vault_ids")
+    .array()
+    .default(sql`'{}'::text[]`),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 

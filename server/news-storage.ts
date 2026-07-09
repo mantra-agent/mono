@@ -20,8 +20,8 @@ import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 
 const log = createLogger("SignalStorage");
-const sourceScopeColumns = { scope: signalSources.scope, ownerUserId: signalSources.ownerUserId, accountId: signalSources.accountId };
-const itemScopeColumns = { scope: signalItems.scope, ownerUserId: signalItems.ownerUserId, accountId: signalItems.accountId };
+const sourceScopeColumns = { scope: signalSources.scope, ownerUserId: signalSources.ownerUserId, accountId: signalSources.accountId, vaultId: signalSources.vaultId };
+const itemScopeColumns = { scope: signalItems.scope, ownerUserId: signalItems.ownerUserId, accountId: signalItems.accountId, vaultId: signalItems.vaultId };
 const scanScopeColumns = { scope: scanRuns.scope, ownerUserId: scanRuns.ownerUserId, accountId: scanRuns.accountId };
 const sourceDiagnosticScopeColumns = { scope: signalSourceScanDiagnostics.scope, ownerUserId: signalSourceScanDiagnostics.ownerUserId, accountId: signalSourceScanDiagnostics.accountId };
 const INVALID_X_GROK_STORY_URL_PATTERN = "https://x.com/i/articles/%";

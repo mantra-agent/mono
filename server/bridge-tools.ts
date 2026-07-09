@@ -13318,6 +13318,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
             scope: memoryEntries.scope,
             ownerUserId: memoryEntries.ownerUserId,
             accountId: memoryEntries.accountId,
+            vaultId: memoryEntries.vaultId,
           };
 
           legacyRows = await db

@@ -50,6 +50,7 @@ import { migrateProjectsToTable } from "./migrations/migrate-projects-to-table";
 import { migratePrinciplesToTable } from "./migrations/migrate-principles-to-table";
 import { migrateTagsAndPeopleConfig } from "./migrations/migrate-tags-and-people-config";
 import { migratePersonsToTable } from "./migrations/migrate-persons-to-table";
+import { ensureVaults } from "./migrations/ensure-vaults";
 
 const objectAclsMigrationReady = addObjectAclsTable();
 const timerMigrationReady = migrateTimersToTable();
@@ -58,6 +59,7 @@ const projectMigrationReady = migrateProjectsToTable();
 const principleMigrationReady = migratePrinciplesToTable();
 const tagsConfigMigrationReady = migrateTagsAndPeopleConfig();
 const personsMigrationReady = migratePersonsToTable();
+const vaultsMigrationReady = ensureVaults();
 
 const ENABLE_ASSOCIATIVE_RETRIEVAL = process.env.ASSOCIATIVE_RETRIEVAL === "true";
 serverLog.log(`[AssociativeRetrieval] enabled=${ENABLE_ASSOCIATIVE_RETRIEVAL}`);
@@ -493,6 +495,7 @@ app.use((req, res, next) => {
   await principleMigrationReady;
   await tagsConfigMigrationReady;
   await personsMigrationReady;
+  await vaultsMigrationReady;
 
   const tRoutes0 = Date.now();
   await registerRoutes(httpServer, app);
