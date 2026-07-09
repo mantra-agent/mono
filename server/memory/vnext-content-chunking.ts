@@ -120,8 +120,7 @@ interface SessionContentResult {
 /**
  * Load ALL messages from a session and format them for vNext extraction.
  *
- * Unlike the capped `buildVnextSessionExtractionContent`, this loads every
- * message without a 24-message cap or 16K char slice. The caller is expected
+ * Loads every message without caps or slicing. The caller is expected
  * to use `chunkContent` to break the result into extraction-sized batches.
  */
 export async function buildFullSessionContent(
