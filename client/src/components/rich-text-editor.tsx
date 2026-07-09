@@ -421,15 +421,22 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     setBlockHandleAnchor({ top: blockBox.top - containerBox.top + Math.max(0, (blockBox.height - 28) / 2), left: 4 });
   }, [isEditorFocused, menuAnchor, readOnly]);
 
-  const openCommandMenuAtSelection = useCallback((source: EditorMenuSource, slashPos?: number) => {
+  const openCommandMenuAtSelection = useCallback((source: EditorMenuSource, slashPos?: number, anchorOverride?: { top: number; left: number } | null) => {
     const ed = editorRef.current;
     const container = editorContainerRef.current;
     if (!ed || !container || readOnly) return;
-    const coords = ed.view.coordsAtPos(ed.state.selection.from);
-    const box = container.getBoundingClientRect();
+    let anchor: { top: number; left: number };
+    if (anchorOverride) {
+      // Position below the block handle
+      anchor = { top: anchorOverride.top + 32, left: Math.max(8, anchorOverride.left) };
+    } else {
+      const coords = ed.view.coordsAtPos(ed.state.selection.from);
+      const box = container.getBoundingClientRect();
+      anchor = { top: coords.bottom - box.top + 6, left: Math.max(8, coords.left - box.left) };
+    }
     setMenuSource(source);
     slashTriggerFromRef.current = source === "slash" && slashPos != null ? slashPos : null;
-    setMenuAnchor({ top: coords.bottom - box.top + 6, left: Math.max(8, coords.left - box.left) });
+    setMenuAnchor(anchor);
     setCommandQuery("");
     setSelectedCommandIdx(0);
   }, [readOnly]);
@@ -569,7 +576,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
           type="button"
           className="absolute z-20 hidden h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:bg-accent focus:text-foreground md:flex"
           style={{ top: blockHandleAnchor.top, left: blockHandleAnchor.left }}
-          onMouseDown={(e) => { e.preventDefault(); openCommandMenuAtSelection("handle"); }}
+          onMouseDown={(e) => { e.preventDefault(); openCommandMenuAtSelection("handle", undefined, blockHandleAnchor); }}
           title="Open block menu"
           data-editor-block-menu="true"
           onMouseEnter={() => blockHandleAnchor && setBlockHandleAnchor(blockHandleAnchor)}
