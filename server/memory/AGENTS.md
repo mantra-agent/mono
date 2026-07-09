@@ -262,8 +262,24 @@ The active migration target is source-backed, stage-driven memory. Treat this se
 
 ### Claim shape
 
-- Every vNext claim carries a `title` (1-3 word Title Case label) extracted at claim creation alongside the claim sentence. The extraction prompt requests it; `normalizeClaimTitle` in `memory-enrichment.ts` enforces the word cap and derives a fallback from content when the model omits it. UI surfaces (Layers list, graph nodes, tool serializations) display `title` and fall back to `content` for pre-title claims.
+- Every vNext claim carries a `title` (1-3 word Title Case label) extracted at claim creation alongside the claim sentence. The extraction prompt requests it; `normalizeClaimTitle` in `vnext-claim-extraction.ts` enforces the word cap and derives a fallback from content when the model omits it. UI surfaces (Layers list, graph nodes, tool serializations) display `title` and fall back to `content` for pre-title claims.
 - Destructive reset: `POST /api/memory/vnext/claims/nuke` (body `{"confirm":"NUKE"}`) calls `nukeAllClaims()`, which deletes only the current user principal's claims via `writableScopePredicate`; source refs, entity links, and claim links cascade via FK. System principals are rejected.
+
+### vNext module boundaries
+
+All vNext claim logic lives in `server/memory/vnext-*` modules with zero imports from legacy `consolidation.ts` or `memory-enrichment.ts`:
+
+| Module | Responsibility |
+|---|---|
+| `vnext-claim-extraction.ts` | Canonical `ClaimCandidate` type, extraction prompt (v6), chunk-level extraction, cross-chunk dedup, budget scoring/ranking, `processVnextClaimsForSource` entry point, claim persistence with semantic dedup and entity linking |
+| `vnext-claim-storage.ts` | DB CRUD for `memory_vnext_claims`, `memory_vnext_claim_links`, `memory_vnext_source_refs`, semantic search, reinforcement, nuke |
+| `vnext-entity-resolution.ts` | Resolve entity mentions from claims to People/Project/Goal records |
+| `vnext-source-poller.ts` | Queue-based extraction: poll settled sources, chunk, extract via `vnext-claim-extraction`, persist, reconcile stale claims |
+| `vnext-lifecycle.ts` | Lifecycle stage transitions: confidence decay, retirement candidates |
+| `vnext-content-chunking.ts` | Content loading (sessions, library pages) and chunking helpers |
+| `vnext-source-queue.ts` | Source queue DB operations (poll, mark processing/completed, reset stuck) |
+
+`memory-enrichment.ts` re-exports `ClaimCandidate` for backward compatibility but owns only legacy enrichment: title/summary/tags generation, myelination (summarize/embed/link), and batch processing. `consolidation.ts` owns legacy memory tier transitions (short→mid→long), the Stage-1 advancement sweep, and graph enrichment.
 
 ### Ingestion paths
 

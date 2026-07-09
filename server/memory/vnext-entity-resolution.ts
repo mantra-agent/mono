@@ -1,5 +1,5 @@
 import { createLogger } from "../log";
-import type { ClaimCandidate } from "./memory-enrichment";
+import type { ClaimCandidate } from "./vnext-claim-extraction";
 
 const log = createLogger("MemoryVnextEntityResolution");
 
