@@ -1,18 +1,19 @@
 /**
  * /glasses — Meta Ray-Ban Display renderer
  *
+ * Toasts only. The Zero dynamic surface is intentionally not rendered here —
+ * it lives on the in-app /zero page until it is tuned for the glasses.
+ *
  * Auto-pairing flow:
  * 1. Check localStorage for a device token
  * 2. If no token → connect SSE without auth → server auto-pairs and pushes token
  * 3. Store token in localStorage
- * 4. Connect authenticated SSE for surface updates
+ * 4. Connect authenticated SSE for toast updates
  */
 
 import { useState, useEffect, useRef } from "react";
 import { AppToastDisplay } from "@/components/toast-display";
 import { toast } from "@/hooks/use-toast";
-import { SurfaceRenderer } from "./zero/surface-renderer";
-import type { SurfaceDescriptor } from "@shared/models/glasses";
 import "./zero/glasses.css";
 
 const TOKEN_KEY = "glasses_device_token";
@@ -34,7 +35,6 @@ interface GlassesToastPayload {
 }
 
 export default function GlassesStandalone() {
-  const [descriptor, setDescriptor] = useState<SurfaceDescriptor | null>(null);
   const [state, setState] = useState<ConnectionState>("connecting");
   const [error, setError] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(() =>
@@ -42,7 +42,6 @@ export default function GlassesStandalone() {
   );
   const tokenRef = useRef<string | null>(localStorage.getItem(TOKEN_KEY));
   const surfaceRef = useRef<HTMLDivElement>(null);
-  const showSurface = new URLSearchParams(window.location.search).get("surface") === "full";
 
   useEffect(() => {
     let es: EventSource | null = null;
@@ -72,7 +71,7 @@ export default function GlassesStandalone() {
 
       const token = tokenRef.current;
       const params = new URLSearchParams();
-      params.set("surface", showSurface ? "full" : "none");
+      params.set("surface", "none");
       if (token) params.set("dt", token);
       const url = `/api/glasses/events?${params.toString()}`;
 
@@ -102,15 +101,6 @@ export default function GlassesStandalone() {
         }
         setState("paired");
         backoff = SSE_RECONNECT_BASE;
-      });
-
-      es.addEventListener("surface-update", (e) => {
-        try {
-          const data = JSON.parse(e.data) as SurfaceDescriptor;
-          setDescriptor(data);
-        } catch {
-          // ignore
-        }
       });
 
       es.addEventListener("glasses-toast", (e) => {
@@ -151,7 +141,7 @@ export default function GlassesStandalone() {
       es?.close();
       if (reconnectTimer) clearTimeout(reconnectTimer);
     };
-  }, [showSurface]);
+  }, []);
 
   const statusLabel = state === "paired"
     ? `Connected${displayName ? ` · ${displayName}` : ""}`
@@ -229,11 +219,6 @@ export default function GlassesStandalone() {
         }}>
           {error || "Connection error"}
         </div>
-      )}
-
-
-      {showSurface && descriptor && descriptor.components.length > 0 && (
-        <SurfaceRenderer descriptor={descriptor} />
       )}
 
       <style>{`
