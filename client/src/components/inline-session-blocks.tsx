@@ -421,6 +421,7 @@ export function useLiveSessionBlocks(parentSessionId: string | null | undefined)
   return useMemo(() => {
     const childMap = new Map<string, LiveChildBlock>();
     const crossList: LiveCrossMessage[] = [];
+    const seenCrossKeys = new Set<string>();
     if (!parentSessionId) return { childBlocks: [] as LiveChildBlock[], crossMessages: crossList };
 
     for (const ev of events) {
@@ -444,6 +445,9 @@ export function useLiveSessionBlocks(parentSessionId: string | null | undefined)
         const cross = payload.cross as CrossSessionMeta;
         if (cross.fromSessionId !== parentSessionId && cross.toSessionId !== parentSessionId) continue;
         const content = typeof payload.content === "string" ? payload.content : "";
+        const crossKey = `${cross.fromSessionId}:${cross.toSessionId}:${cross.chainId ?? ""}:${cross.depth ?? 0}`;
+        if (seenCrossKeys.has(crossKey)) continue;
+        seenCrossKeys.add(crossKey);
         crossList.push({ id: ev.id, meta: cross, content, receivedAt: ev.timestamp });
       } else if (payload.type === "cross_session_message") {
         const cross: CrossSessionMeta = {
@@ -457,6 +461,9 @@ export function useLiveSessionBlocks(parentSessionId: string | null | undefined)
         };
         if (cross.fromSessionId !== parentSessionId && cross.toSessionId !== parentSessionId) continue;
         const content = typeof payload.content === "string" ? payload.content : "";
+        const crossKey = `${cross.fromSessionId}:${cross.toSessionId}:${cross.chainId ?? ""}:${cross.depth ?? 0}`;
+        if (seenCrossKeys.has(crossKey)) continue;
+        seenCrossKeys.add(crossKey);
         crossList.push({ id: ev.id, meta: cross, content, receivedAt: ev.timestamp });
       }
     }
