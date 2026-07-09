@@ -277,6 +277,17 @@ export function registerPeopleRoutes(app: Express, peopleStorage: PeopleStorage)
     }
   });
 
+  app.post("/api/people/:id/viewed", async (req, res) => {
+    log.debug(`POST /api/people/${req.params.id}/viewed`);
+    try {
+      await peopleStorage.markViewed(req.params.id);
+      res.json({ ok: true });
+    } catch (error: any) {
+      log.error(`POST /api/people/${req.params.id}/viewed error:`, error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.patch("/api/people/:id", async (req, res) => {
     log.log(`PATCH /api/people/${req.params.id} fields=${Object.keys(req.body).join(",")}`);
     try {

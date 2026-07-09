@@ -4732,6 +4732,12 @@ export async function runSchemaBootstrap(
       WHERE spawn_status IN ('pending', 'running')`);
   });
 
+  await heal("persons last_viewed_at column", async () => {
+    await pool.query(
+      `ALTER TABLE persons ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMPTZ`,
+    );
+  });
+
   // Backfill media items from S3 — idempotent, safe to run on every startup
   try {
     const { backfillMediaFromStorage } = await import("./media/media-storage");
