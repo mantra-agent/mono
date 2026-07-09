@@ -44,6 +44,18 @@ function normalizeSignalItemSourceTypes(sourceType: string): string[] {
   switch (sourceType) {
     case "channel_x": return ["x"];
     case "channel_web": return ["web"];
+    case "subreddit": return ["reddit"];
+    case "reddit": return ["reddit"];
+    case "rss_feed": return ["rss"];
+    case "rss": return ["rss"];
+    default: return [sourceType];
+  }
+}
+
+function normalizeSignalSourceTypes(sourceType: string): string[] {
+  switch (sourceType) {
+    case "reddit": return ["subreddit"];
+    case "rss": return ["rss_feed"];
     default: return [sourceType];
   }
 }
@@ -78,8 +90,11 @@ export class SignalStorage {
   async listSources(opts?: { sourceType?: string }): Promise<SignalSource[]> {
     return autoHeal(async () => {
       if (opts?.sourceType) {
+        const sourceTypes = normalizeSignalSourceTypes(opts.sourceType);
         return db.select().from(signalSources)
-          .where(visibleSources(eq(signalSources.sourceType, opts.sourceType)))
+          .where(visibleSources(sourceTypes.length === 1
+            ? eq(signalSources.sourceType, sourceTypes[0])
+            : inArray(signalSources.sourceType, sourceTypes)))
           .orderBy(signalSources.createdAt);
       }
       return db.select().from(signalSources).where(visibleSources()).orderBy(signalSources.createdAt);

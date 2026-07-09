@@ -197,7 +197,7 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
       }
     }
 
-    const qualityCandidates = gateRawSignals(diagnostics, allSignals);
+    const qualityCandidates = gateRawSignals(diagnostics, allSignals, { sources: enabledSources, interestGraph });
     const acceptedSignals = qualityCandidates.map(candidate => candidate.raw);
     const preDedup = acceptedSignals.length;
     const storyClusters = adapters.clusterSignalsByStory(acceptedSignals);
