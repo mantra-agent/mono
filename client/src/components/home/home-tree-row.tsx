@@ -385,10 +385,8 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
 
       {/* Expanded content */}
       {expanded && inlineExpandedContent && (
-        <div className="pb-2 pl-0 pr-1.5" style={{ marginLeft: `${depth * INDENT_PX}px` }}>
-          <div className="pl-[72px]">
-            <SimpleTextFrame content={inlineExpandedContent} />
-          </div>
+        <div className="pb-2 pl-0 pr-1.5">
+          <SimpleTextFrame content={inlineExpandedContent} />
         </div>
       )}
 
