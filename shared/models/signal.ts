@@ -1,4 +1,4 @@
-import { pgTable, text, real, integer, boolean, timestamp, index } from "drizzle-orm/pg-core";
+import { pgTable, text, real, integer, boolean, timestamp, index, jsonb } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -90,6 +90,36 @@ export const scanRuns = pgTable("scan_runs", {
   index("idx_scan_runs_account").on(table.accountId),
 ]);
 
+
+/** Per-source diagnostics for each scan execution */
+export const signalSourceScanDiagnostics = pgTable("signal_source_scan_diagnostics", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  scanRunId: text("scan_run_id").notNull().references(() => scanRuns.id),
+  sourceId: text("source_id").references(() => signalSources.id),
+  sourceType: text("source_type").notNull(),
+  sourceValue: text("source_value").notNull(),
+  adapterStatus: text("adapter_status").notNull(),
+  fetchedCount: integer("fetched_count").notNull().default(0),
+  acceptedCount: integer("accepted_count").notNull().default(0),
+  rejectedCount: integer("rejected_count").notNull().default(0),
+  persistedCount: integer("persisted_count").notNull().default(0),
+  surfacedCount: integer("surfaced_count").notNull().default(0),
+  dedupedCount: integer("deduped_count").notNull().default(0),
+  rejectedByReason: jsonb("rejected_by_reason").notNull().default(sql`'{}'::jsonb`),
+  lastError: text("last_error"),
+  startedAt: timestamp("started_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+}, (table) => [
+  index("idx_signal_source_diag_scan_run").on(table.scanRunId),
+  index("idx_signal_source_diag_source_started").on(table.sourceId, table.startedAt),
+  index("idx_signal_source_diag_scope_owner").on(table.scope, table.ownerUserId),
+  index("idx_signal_source_diag_account").on(table.accountId),
+]);
+
+
 // ── Zod Schemas ────────────────────────────────────────────────────
 
 export const insertSignalSourceSchema = createInsertSchema(signalSources).omit({
@@ -119,6 +149,10 @@ export const insertScanRunSchema = createInsertSchema(scanRuns).omit({
   id: true,
 });
 
+export const insertSignalSourceScanDiagnosticsSchema = createInsertSchema(signalSourceScanDiagnostics).omit({
+  id: true,
+});
+
 // ── Types ──────────────────────────────────────────────────────────
 export type SignalSource = typeof signalSources.$inferSelect;
 export type InsertSignalSource = z.infer<typeof insertSignalSourceSchema>;
@@ -126,3 +160,5 @@ export type SignalItem = typeof signalItems.$inferSelect;
 export type InsertSignalItem = z.infer<typeof insertSignalItemSchema>;
 export type ScanRun = typeof scanRuns.$inferSelect;
 export type InsertScanRun = z.infer<typeof insertScanRunSchema>;
+export type SignalSourceScanDiagnostics = typeof signalSourceScanDiagnostics.$inferSelect;
+export type InsertSignalSourceScanDiagnostics = z.infer<typeof insertSignalSourceScanDiagnosticsSchema>;
