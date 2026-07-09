@@ -311,10 +311,7 @@ export class SignalStorage {
     return autoHeal(async () => {
       const [row] = await db.update(signalItems)
         .set({ status: "surfaced", scannedAt: new Date() })
-        .where(writableItems(and(
-          eq(signalItems.id, id),
-          sql`${signalItems.curatedTitle} IS NOT NULL AND ${signalItems.curatedReason} IS NOT NULL`,
-        )))
+        .where(writableItems(eq(signalItems.id, id)))
         .returning();
       return row;
     });
