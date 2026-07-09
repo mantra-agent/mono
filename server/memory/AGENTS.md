@@ -260,6 +260,39 @@ The active migration target is source-backed, stage-driven memory. Treat this se
 - Stage 2 means shallow-linked/integrated. A memory may reach Stage 2 either because the StageOneSweep created/preserved shallow source refs, or because reconciliation recognizes existing source/link evidence that already satisfies the Stage 2 invariant.
 - Stage 3/4 work belongs to deep integration and sleep/upkeep. Do not put expensive deep LLM or broad graph work in foreground writes or the Stage 1 sweep.
 
+### Claim quality contract
+
+The extraction prompt (v7) enforces a predictive-value filter: every claim must improve Agent's ability to predict the external world or people in it. The scorer (`scoreClaimForBudget`) enforces this structurally.
+
+**Hard rejections (prompt + scorer):**
+
+- Ray's preferences about how Agent should work → stored in preferences system
+- Agent behavioral rules or constraints → stored in rules system
+- Agent/system architecture facts → recoverable from code, docs, tools
+- Implementation summaries (PRs, merges, deploys, builds, row counts, task status)
+- Short-lived calendar/scheduling facts
+- Process status messages with no underlying external fact
+- Near-restatements of the source
+
+**Scorer penalties:**
+
+- State claims matching preference/rule patterns (e.g. "Ray prefers...", "Agent should...") are hard-rejected with `rejectedReason: preference_rule_restatement`
+- Architecture-shaped claims (e.g. "hosted on...", "PR #N merged") are hard-rejected with `rejectedReason: architecture_restatement`
+- Cause claims receive the highest type score (+30), then action (+25), then state (+10)
+- State claims can recover score through entity mentions and topic richness
+
+**What qualifies:**
+
+- People: identity, relationships, motivations, behavior predictions
+- Organizations: dynamics, power structures, incentive alignment
+- Finances: compensation ranges, funding status, deal terms
+- Family: dynamics, conflict, support patterns, health trajectories
+- Strategy: why decisions were made, what pressure created them, binding constraints
+- Commitments: promises between people (not Agent task assignments)
+- Market: industry shifts, competitor moves, pricing dynamics
+
+**Eval evidence (v7 prompt, 2026-07-09):** 12 samples (5 noise sources, 7 positive sources). Noise rejection: 5/5 (100%). External-fact recall: 7/7 (100%). No regression from v6's 18/18 on external facts; self-referential restatements now fully rejected.
+
 ### Claim shape
 
 - Every vNext claim carries a `title` (1-3 word Title Case label) extracted at claim creation alongside the claim sentence. The extraction prompt requests it; `normalizeClaimTitle` in `vnext-claim-extraction.ts` enforces the word cap and derives a fallback from content when the model omits it. UI surfaces (Layers list, graph nodes, tool serializations) display `title` and fall back to `content` for pre-title claims.

@@ -92,40 +92,64 @@ function parseClaimsFromResponse(parsed: Record<string, unknown>): ClaimCandidat
 }
 
 // ---------------------------------------------------------------------------
-// Extraction prompt (v6 — proven 18/18 test cases, do not modify here)
+// Extraction prompt (v7 — predictive-value filter, preference/rule rejection)
 // ---------------------------------------------------------------------------
 
 const VNEXT_CLAIM_EXTRACTION_PROMPT = `You extract durable vNext memory claims. You are not summarizing.
 
 Default to returning no claims. Most sources should produce {"claims": []}.
 
-Goal: extract only memories that improve Agent's future model of the external world: people, relationships, organizations, incentives, constraints, preferences, decisions, commitments, markets, family, money, health, time, logistics, or non-obvious causal dynamics outside the codebase.
+Goal: extract only claims that improve Agent's ability to predict the external world — people's behavior, relationship dynamics, organizational incentives, market forces, financial constraints, family dynamics, health trajectories, or non-obvious causal patterns. Every claim must pass this test: "Does this improve prediction of the external world or people in it?"
 
-Internal system facts are usually not memory. Do not store ordinary facts about code changes, UI behavior, PRs, migrations, deploys, logs, builds, database row counts, task movement, workflow stages, or Agent's own activity. Agent can recover these from code, git, logs, tools, and structured records.
+## Hard rejections — never extract these
 
-Internal facts qualify only when they reveal a durable behavioral rule about Ray or how Agent should work with Ray.
+1. **Ray's preferences about how Agent should work.** These are stored in the preferences system. Examples: "Ray prefers short responses," "Ray wants workflow steps to be self-contained," "Ray considers conservative animations too safe."
+2. **Agent behavioral rules or constraints.** These are stored in the rules system. Examples: "Agent should not force workflow acceptance without approval," "Agent is prohibited from logging wellness activities autonomously."
+3. **Agent/system architecture facts.** Recoverable from code, docs, and tools. Examples: "Lightway is hosted on Cloudflare Pages," "The scan service uses a dispatch table pattern."
+4. **Implementation summaries.** Code changes, PRs, migrations, deploys, builds, database row counts, task/project status snapshots, UI changelog facts.
+5. **Short-lived calendar/scheduling facts.** Specific meeting times and dates that expire within days.
+6. **Process status messages** with no underlying external-world fact.
+7. **Near-restatements of the source.** If the claim just paraphrases a sentence from the source, reject it.
+
+## What to extract
+
+Claims about the external world that Agent cannot recover from structured tools:
+
+- Who a person is, what they do, how they relate to Ray or each other, what motivates them
+- Organizational dynamics, power structures, incentive alignment
+- Financial facts: compensation ranges, funding status, account structures, deal terms
+- Relationship context: trust level shifts, communication patterns, conflict dynamics, family dynamics
+- Strategic context: why a decision was made, what pressure created it, what constraints bind it
+- Commitments and promises between people (not task assignments to Agent)
+- Market signals: industry shifts, competitor moves, pricing dynamics
 
 Extract 0-3 claims. Never extract more than 3.
 
-A claim must be a standalone sentence that would change future prediction, judgment, relationship handling, prioritization, or decision-making. If the source merely says what happened, return no claims.
-
 Claim types:
-- "state": durable external reality about people, relationships, organizations, finances, constraints, preferences, or beliefs. Includes: who works where, who manages what for whom, financial service relationships, account structures, organizational affiliations, team structures, identity facts, and relationship dynamics between named people. These claims serve as anchor nodes for the memory graph — even if the fact exists in another tool, having it as a claim enables fast cross-domain linking in later lifecycle stages.
-- "cause": why an external behavior, decision, pressure, preference, or constraint exists.
-- "action": a commitment, plan, or intended action — including event-specific ones when they reveal strategy, positioning, or relationship-building intent. Reject actions that are purely logistical with no strategic signal.
+- "state": durable external reality about people, relationships, organizations, finances, or constraints. Who works where, who manages what, family relationships, financial structures, identity facts, relationship dynamics. These anchor the memory graph for cross-domain linking.
+- "cause": why an external behavior, decision, pressure, or constraint exists. Causal claims are the most valuable — they explain the mechanism, not just the fact.
+- "action": a commitment, plan, or intended action between people — especially when it reveals strategy, positioning, or relationship-building intent. Reject actions that are purely Agent task assignments.
 
-Extraction principle: look through the process wrapper to the underlying facts. "Enriched 1 email thread about X" is not a claim, but the X itself may contain one. "Agent updated person record with Y" is not a claim, but Y may be. "Consolidation promoted N entries" contains no underlying fact.
+## Negative examples — do NOT extract claims like these
 
-Indexing test: a good claim is one that, if pre-indexed and linked in the memory graph, would accelerate future reasoning about people, relationships, or strategy without requiring deep searches across calendar, tasks, people records, or opportunity pipelines. Think of claims as the fast-lookup index, not a replacement for source-of-truth tools.
+BAD: "Ray prefers Mantra's landing page animations to feel more ambitious and premium." → This is a preference. It belongs in the preferences system.
+BAD: "Agent should not force workflow acceptance past browser evidence gates without Ray's approval." → This is an Agent rule. It belongs in the rules system.
+BAD: "Ray expects implementation reviews to explicitly compare code against engineering principles." → This is a work preference/rule.
+BAD: "The Lightway site is hosted on Cloudflare Pages rather than Railway." → This is an architecture fact recoverable from infrastructure tools.
+BAD: "PR #175 merged at 60e5f30, extending the FTUE flow." → This is an implementation summary.
+BAD: "Workflow child sessions should be spawned with full stage definitions." → This is an Agent architecture preference.
 
-Reject:
-- implementation summaries, UI changelog facts, git/deploy/log/build facts, migration details, runtime errors, row counts, task/project status snapshots
-- short-lived calendar/scheduling facts (specific meeting times, dates that expire within days)
-- generic advice, procedural how-to, and weak restatements of the source
-- claims below 0.4 confidence
-- process status messages with no underlying external fact
+## Positive examples — these ARE worth extracting
 
-For each claim, include a "title": a 1-3 word Title Case label naming the subject of the claim (e.g. "Toku Outreach", "Brand Colors", "Eric Kamont"). Never more than 3 words. It is used as the claim's display name in list and graph UIs.
+GOOD: "Rob Topping just had hip surgery and expects to be mobile again by end of July." → External fact about a person that predicts availability and explains communication gaps.
+GOOD: "Jeremie and Mike have started discussing Mantra funding; Mike is thinking on it." → Relationship dynamic between two external people with strategic implications.
+GOOD: "ServiceNow VP Interactive Experiences base compensation is $355k–$430k." → External market fact that anchors future negotiation.
+GOOD: "Toku McCree is expected to give unusually blunt, skeptical feedback on Mantra." → Prediction about a person's behavior that changes preparation strategy.
+GOOD: "Mom felt off-put by Anna's no-kissing rule and is weighing whether she feels welcome enough to invest deeper in the family." → Causal dynamic between family members that predicts future relationship trajectory.
+
+Extraction principle: look through the process wrapper to the underlying facts. "Enriched 1 email thread about X" is not a claim, but the X itself may contain one. "Agent updated person record with Y" is not a claim, but Y may be.
+
+For each claim, include a "title": a 1-3 word Title Case label naming the subject of the claim (e.g. "Toku Outreach", "Brand Colors", "Eric Kamont"). Never more than 3 words.
 
 For each claim, include 1-4 topics and entityMentions for named people, projects, or goals when present. entityType must be "person", "project", or "goal". If one claim is caused by another claim in this batch, set sourceClaimIndex to that claim's 0-based index; otherwise use null.
 
@@ -228,6 +252,36 @@ function getClaimExtractionBudgetKey(parentEntry: MemoryEntry): string {
   return `memory:${parentEntry.id}`;
 }
 
+// ---------------------------------------------------------------------------
+// Preference/rule pattern detection for scorer penalty
+// ---------------------------------------------------------------------------
+
+const PREFERENCE_RULE_PATTERNS = [
+  /^ray\s+(prefers?|wants?|expects?|considers?|likes?|dislikes?|values?)\b/i,
+  /^agent\s+(should|must|is\s+prohibited|is\s+not\s+allowed|cannot)\b/i,
+  /\bray\s+prefers?\b/i,
+  /\bagent\s+should\b/i,
+  /\bagent\s+is\s+prohibited\b/i,
+  /\bbehavioral\s+rule\b/i,
+  /\bwork(flow|space)\s+(child\s+)?sessions?\s+should\b/i,
+];
+
+const ARCHITECTURE_PATTERNS = [
+  /\bis\s+hosted\s+on\b/i,
+  /\bPR\s+#?\d+\s+merged\b/i,
+  /\bmigration\s+\d+\b/i,
+  /\bbranch\s+(feat|fix|chore)\//i,
+  /\bnpm\s+run\s+build\b/i,
+];
+
+function isPreferenceOrRuleShaped(content: string): boolean {
+  return PREFERENCE_RULE_PATTERNS.some((p) => p.test(content));
+}
+
+function isArchitectureShaped(content: string): boolean {
+  return ARCHITECTURE_PATTERNS.some((p) => p.test(content));
+}
+
 export function scoreClaimForBudget(claim: ClaimCandidate): { score: number; reasons: string[]; rejectedReason?: string } {
   const content = claim.content.trim();
   const wordCount = content.split(/\s+/).filter(Boolean).length;
@@ -239,17 +293,27 @@ export function scoreClaimForBudget(claim: ClaimCandidate): { score: number; rea
   if (wordCount > 80) return { score: 0, reasons: [], rejectedReason: "too_long" };
   if (!/[.!?]$/.test(content) && wordCount < 8) return { score: 0, reasons: [], rejectedReason: "not_claim_shaped" };
 
+  // Hard reject preference/rule restatements and architecture facts
+  if (claim.claimType === "state" && isPreferenceOrRuleShaped(content)) {
+    return { score: 0, reasons: ["preference_or_rule"], rejectedReason: "preference_rule_restatement" };
+  }
+  if (isArchitectureShaped(content)) {
+    return { score: 0, reasons: ["architecture_fact"], rejectedReason: "architecture_restatement" };
+  }
+
   score += Math.max(0, Math.min(1, claim.confidence)) * 40;
   reasons.push("confidence");
 
-  if (claim.claimType === "action") {
+  // Favor cause and action claims over state
+  if (claim.claimType === "cause") {
+    score += 30;
+    reasons.push("causal");
+  } else if (claim.claimType === "action") {
     score += 25;
     reasons.push("action_relevant");
-  } else if (claim.claimType === "cause") {
-    score += 20;
-    reasons.push("causal");
   } else {
-    score += 12;
+    // State claims get a smaller base but can recover through entity/topic richness
+    score += 10;
     reasons.push("state");
   }
 
