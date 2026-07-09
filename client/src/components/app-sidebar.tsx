@@ -5,6 +5,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
+  Activity,
   BookOpen,
   Boxes,
   Brain,
@@ -88,6 +89,7 @@ const navSections: NavSection[] = [
       { title: "Schedule", url: "/schedule", icon: Calendar },
       { title: "Projects", url: "/projects", icon: Briefcase },
       { title: "Pipelines", url: "/pipelines", icon: Target },
+      { title: "Wellness", url: "/wellness", icon: Activity },
     ],
   },
   {
