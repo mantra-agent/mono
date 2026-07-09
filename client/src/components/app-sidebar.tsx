@@ -30,6 +30,7 @@ import {
   Scale,
   ScrollText,
   Search,
+  Settings,
   SlidersHorizontal,
   Swords,
   Target,
@@ -150,6 +151,7 @@ const navSections: NavSection[] = [
     items: [
       { title: "Users", url: "/system?tab=users", icon: Users, permission: "system:read" },
       { title: "Integrations", url: "/integrations", icon: Plug },
+      { title: "Account", url: "/account", icon: Settings },
     ],
   },
 ];
@@ -445,39 +447,8 @@ export function NavPage() {
         )}
       </div>
 
-      {/* Footer */}
-      <div className="p-3 mt-4 border-t border-border/30">
-        <UserFooter />
-      </div>
+
     </div>
   );
 }
 
-function UserFooter() {
-  const { user } = useAuth();
-  const [, setLocation] = useLocation();
-  const { setOpen, setOpenMobile, isMobile } = useSidebar();
-
-  if (!user) return null;
-
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        setLocation("/account");
-        if (isMobile) setOpenMobile(false);
-        else setOpen(false);
-      }}
-      className="flex items-center justify-between gap-2 w-full rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors"
-      data-testid="button-user-menu"
-    >
-      <span
-        className="text-xs text-muted-foreground truncate"
-        data-testid="text-current-user"
-      >
-        {user.email}
-      </span>
-      <ChevronRight className="h-3 w-3 text-muted-foreground/40 shrink-0" />
-    </button>
-  );
-}
