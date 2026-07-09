@@ -76,6 +76,7 @@ async function ensureBrowser(): Promise<Browser> {
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
         "--disable-gpu",
+        "--single-process",
         "--disable-extensions",
         "--disable-background-networking",
         "--disable-sync",
