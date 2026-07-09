@@ -22,12 +22,12 @@ async function publishGoalMutation(action: string, title: string): Promise<void>
     const { invalidateSimpleFeedCache } = await import("./simple/generate-feed");
     invalidateSimpleFeedCache();
     eventBus.publish({
-      category: "session",
-      event: "checkin:updated",
+      category: "goals",
+      event: "data:goals_changed",
       payload: {
         date: today(),
         sessionType: "daily",
-        change: { domain: "goal", action, title, periodLabel: "Daily" },
+        change: { domain: "priority", action, title, periodLabel: "Daily", source: "ftue" },
       },
     });
   } catch (err) {

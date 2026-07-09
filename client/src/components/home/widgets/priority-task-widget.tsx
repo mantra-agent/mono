@@ -23,7 +23,7 @@ function PriorityTaskInline({ item }: { item: SimpleFeedItem }) {
     <div className="flex items-center gap-1.5">
       {reference ? (
         <span className="min-w-0">
-          <ReferenceRenderer refValue={reference} surface="simple-row" className={completed ? "text-neutral hover:text-neutral" : undefined} />
+          <ReferenceRenderer refValue={reference} surface="simple-row" className={completed ? "text-neutral hover:text-neutral line-through decoration-neutral/60" : undefined} />
         </span>
       ) : (
         <>
