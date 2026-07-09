@@ -1686,6 +1686,27 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_links_account ON memory_vnext_claim_links(account_id)`);
   });
 
+  await heal("memory_vnext_source_queue table", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS memory_vnext_source_queue (
+        id SERIAL PRIMARY KEY,
+        source_type TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        last_modified_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        status TEXT NOT NULL DEFAULT 'pending',
+        last_extracted_at TIMESTAMPTZ,
+        content_hash TEXT,
+        owner_user_id TEXT,
+        account_id TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uk_vnext_source_queue_type_id_owner UNIQUE (source_type, source_id, owner_user_id)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_vnext_source_queue_status ON memory_vnext_source_queue(status)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_vnext_source_queue_pending_settle ON memory_vnext_source_queue(status, last_modified_at)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_vnext_source_queue_owner ON memory_vnext_source_queue(owner_user_id)`);
+  });
+
   await heal("memory_sources table", async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS memory_sources (
