@@ -2566,29 +2566,7 @@ ${page.content.trim()}`;
     createLogger("ContextBuilder").warn("Failed to load coding process from environment artifact", { error: err instanceof Error ? err.message : String(err) });
   }
 
-  // Strategy 2: Load from well-known Library page slug 'universal-coding-process'
-  try {
-    const { db } = await import("./db");
-    const { eq } = await import("drizzle-orm");
-    const { libraryPages } = await import("@shared/models/info");
-
-    const [page] = await db
-      .select({ content: libraryPages.plainTextContent })
-      .from(libraryPages)
-      .where(eq(libraryPages.slug, "universal-coding-process"))
-      .limit(1);
-
-    if (page?.content) {
-      return `${header}
-
-${page.content.trim()}`;
-    }
-  } catch (err) {
-    const { createLogger } = await import("./log");
-    createLogger("ContextBuilder").warn("Failed to load coding process from well-known slug", { error: err instanceof Error ? err.message : String(err) });
-  }
-
-  // Strategy 3: Filesystem fallback (CODING.md)
+  // Strategy 2: Filesystem fallback (CODING.md)
   try {
     const codingProcessPath = path.resolve(process.cwd(), "CODING.md");
     const codingProcess = await readFile(codingProcessPath, "utf-8");
@@ -2601,26 +2579,65 @@ ${codingProcess.trim()}`;
     // All strategies failed
   }
 
-  // Strategy 4: Degraded
+  // Strategy 3: Degraded
   return `${header}
 
-WARNING: Coding instructions could not be loaded from any source (environment context artifact, well-known Library page, or filesystem CODING.md). Coding work may proceed with reduced guidance. Report this in the final coding report as a degraded check.`;
+WARNING: Coding instructions could not be loaded from any source (environment context artifact or filesystem CODING.md). Coding work may proceed with reduced guidance. Report this in the final coding report as a degraded check.`;
 }
 
 async function resolvePlanningInstructions(): Promise<string> {
+  const header = `## Planning Instructions
+
+This section is always loaded. Use it for any complex, multi-turn, or cross-domain task.`;
+
+  // Strategy 1: Load from environment context artifact (kind = 'planning_process')
+  try {
+    const { db } = await import("./db");
+    const { eq } = await import("drizzle-orm");
+    const { environmentContextArtifacts } = await import("@shared/models/platforms");
+    const { libraryPages } = await import("@shared/models/info");
+
+    const artifactRows = await db
+      .select({ libraryPageId: environmentContextArtifacts.libraryPageId })
+      .from(environmentContextArtifacts)
+      .where(eq(environmentContextArtifacts.kind, "planning_process"))
+      .limit(1);
+
+    if (artifactRows.length > 0) {
+      const [page] = await db
+        .select({ content: libraryPages.plainTextContent })
+        .from(libraryPages)
+        .where(eq(libraryPages.id, artifactRows[0].libraryPageId))
+        .limit(1);
+
+      if (page?.content) {
+        return `${header}
+
+${page.content.trim()}`;
+      }
+    }
+  } catch (err) {
+    const { createLogger } = await import("./log");
+    createLogger("ContextBuilder").warn("Failed to load planning process from environment artifact", { error: err instanceof Error ? err.message : String(err) });
+  }
+
+  // Strategy 2: Filesystem fallback (PLANNING.md)
   try {
     const planningProcessPath = path.resolve(process.cwd(), "PLANNING.md");
     const planningProcess = await readFile(planningProcessPath, "utf-8");
-    return `## Planning Instructions
-
-This section is always loaded. Use it for any complex, multi-turn, or cross-domain task.
+    const { createLogger } = await import("./log");
+    createLogger("ContextBuilder").warn("Planning instructions loaded from filesystem PLANNING.md (fallback). Prefer linking a Library page as a planning_process context artifact on the platform environment.");
+    return `${header}
 
 ${planningProcess.trim()}`;
-  } catch (error) {
-    return `## Planning Instructions
-
-CRITICAL: Failed to load root PLANNING.md. Error: ${error instanceof Error ? error.message : String(error)}`;
+  } catch {
+    // All strategies failed
   }
+
+  // Strategy 3: Degraded
+  return `${header}
+
+WARNING: Planning instructions could not be loaded from any source (environment context artifact or filesystem PLANNING.md). Planning may proceed with reduced guidance.`;
 }
 
 async function resolveGoalsInstructions(): Promise<string> {
