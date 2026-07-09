@@ -51,7 +51,6 @@ import { useGoalsActivity } from "./goals-activity-indicator";
 import { useSystemActivity } from "./system-alert-indicator";
 import { useWellnessAlerts } from "@/hooks/use-wellness-alerts";
 import { useCommsActivity } from "@/hooks/use-comms-activity";
-import { usePeopleActivity } from "@/hooks/use-people-activity";
 import { useOrientationActivity } from "@/hooks/use-orientation-activity";
 import { useEnvActivity } from "@/hooks/use-env-activity";
 import { ActiveStatusSpinner, getStatusClasses, type NavDotLevel } from "./nav-dot";
@@ -258,7 +257,6 @@ export function NavPage() {
   const systemActive = useSystemActivity();
   const { needsAttention: wellnessNeedsAttention } = useWellnessAlerts();
   const commsActive = useCommsActivity();
-  const peopleActive = usePeopleActivity();
   const worldActive = useOrientationActivity();
   const envActive = useEnvActivity();
 
@@ -268,7 +266,6 @@ export function NavPage() {
     System: systemActive ? "error" : null,
     Wellness: wellnessNeedsAttention ? "attention" : null,
     Email: commsActive,
-    People: peopleActive,
     News: worldActive,
     Build: envActive,
   };
