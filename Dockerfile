@@ -76,6 +76,11 @@ COPY AGENTS.md CODING.md DESIGN.md GOALS.md PLANNING.md ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/scripts ./scripts
 RUN chmod +x ./scripts/*.sh
+
+# Install Playwright's bundled Chrome for Testing. System chromium (v150+ on
+# trixie) crashes with SIGTRAP in Railway's container seccomp profile.
+# Playwright's version-matched Chrome avoids the incompatibility.
+RUN npx playwright install chromium 2>/dev/null || echo "Playwright Chrome install skipped"
 COPY --from=builder /app/mobile ./mobile
 
 # The server runs on port 5000 by default

@@ -29,8 +29,24 @@ let _isLaunching = false;
 
 const pageQueue: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
 
-// Discovers Chromium binary from PATH — relies on chromium installed via apt in the Docker runtime stage
+// Discovers a working Chromium binary. Prefers Playwright's bundled Chrome for
+// Testing (version-matched to playwright-core) over the system chromium package,
+// because system Chromium upgrades (e.g. v150 on Debian trixie) can introduce
+// SIGTRAP crashes in container environments with restrictive seccomp profiles.
 async function getChromiumPath(): Promise<string> {
+  // 1. Playwright's bundled Chrome for Testing (installed via `npx playwright install chromium`)
+  try {
+    const { stdout } = await execAsync(
+      "find /root/.cache/ms-playwright -name 'chrome' -path '*/chrome-linux64/*' 2>/dev/null | head -1"
+    );
+    const path = stdout.trim();
+    if (path) {
+      log.log(`Using Playwright bundled Chrome: ${path}`);
+      return path;
+    }
+  } catch {}
+
+  // 2. System chromium (may not work in all container runtimes)
   try {
     const { stdout } = await execAsync("which chromium");
     const path = stdout.trim();
@@ -41,7 +57,7 @@ async function getChromiumPath(): Promise<string> {
     const path = stdout.trim();
     if (path) return path;
   } catch {}
-  throw new Error("Chromium binary not found. Install chromium system dependency.");
+  throw new Error("Chromium binary not found. Install via `npx playwright install chromium` or apt.");
 }
 
 function resetIdleTimer() {
@@ -76,7 +92,6 @@ async function ensureBrowser(): Promise<Browser> {
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
         "--disable-gpu",
-        "--single-process",
         "--disable-extensions",
         "--disable-background-networking",
         "--disable-sync",
