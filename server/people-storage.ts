@@ -6,6 +6,9 @@ import { personEmails as personEmailsTable, persons } from "@shared/schema";
 import { eq, inArray } from "drizzle-orm";
 import { TTLCache } from "./utils/ttl-cache";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
+
+const personScopeColumns = { scope: persons.scope, ownerUserId: persons.ownerUserId, accountId: persons.accountId };
 
 export interface ContactInfo {
   type: "email" | "phone" | "social" | "other";
@@ -686,6 +689,7 @@ export class PeopleStorage {
     await db.insert(persons)
       .values({
         id: person.id,
+        ...ownedInsertValues(getCurrentPrincipalOrSystem(), personScopeColumns),
         name: person.name,
         nicknames: person.nicknames,
         cabinetLevel: person.cabinetLevel,
@@ -798,7 +802,9 @@ export class PeopleStorage {
 
   async listPeople(): Promise<PersonIndexEntry[]> {
     return this._listCache.getOrFetch(`all:${principalCacheKey()}`, async () => {
-      const rows = await db.select().from(persons);
+      const rows = await db.select().from(persons).where(
+        combineWithVisibleScope(getCurrentPrincipalOrSystem(), personScopeColumns)
+      );
       const entries: PersonIndexEntry[] = [];
       for (const row of rows) {
         const person = rowToPerson(row);
@@ -810,7 +816,9 @@ export class PeopleStorage {
   }
 
   async getPerson(id: string): Promise<Person | null> {
-    const rows = await db.select().from(persons).where(eq(persons.id, id));
+    const rows = await db.select().from(persons).where(
+      combineWithVisibleScope(getCurrentPrincipalOrSystem(), personScopeColumns, eq(persons.id, id))
+    );
     if (rows.length === 0) {
       log.debug(`getPerson id=${id} — not found`);
       return null;
@@ -823,7 +831,9 @@ export class PeopleStorage {
     if (ids.length === 0) return [];
     const uniqueIds = [...new Set(ids)];
     log.debug(`getPeopleByIds count=${ids.length} unique=${uniqueIds.length}`);
-    const rows = await db.select().from(persons).where(inArray(persons.id, uniqueIds));
+    const rows = await db.select().from(persons).where(
+      combineWithVisibleScope(getCurrentPrincipalOrSystem(), personScopeColumns, inArray(persons.id, uniqueIds))
+    );
     const byId = new Map(rows.map(row => [row.id, rowToPerson(row)]));
     return ids.map(id => byId.get(id) ?? null).filter((p): p is Person => p !== null);
   }
@@ -882,7 +892,9 @@ export class PeopleStorage {
 
   async deletePerson(id: string): Promise<void> {
     log.debug(`deletePerson id=${id}`);
-    await db.delete(persons).where(eq(persons.id, id));
+    await db.delete(persons).where(
+      combineWithWritableScope(getCurrentPrincipalOrSystem(), personScopeColumns, eq(persons.id, id))
+    );
     await db.delete(personEmailsTable).where(eq(personEmailsTable.personId, id));
     this.invalidateListCache();
   }
