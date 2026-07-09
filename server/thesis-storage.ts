@@ -19,7 +19,7 @@ import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 
 const log = createLogger("ThesisStorage");
-const thesisScopeColumns = { scope: theses.scope, ownerUserId: theses.ownerUserId, accountId: theses.accountId };
+const thesisScopeColumns = { scope: theses.scope, ownerUserId: theses.ownerUserId, accountId: theses.accountId, vaultId: theses.vaultId };
 function visibleThesis(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), thesisScopeColumns, predicate); }
 function writableThesis(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), thesisScopeColumns, predicate); }
 async function visibleThesisIds(predicate?: SQL): Promise<string[]> {

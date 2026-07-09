@@ -69,11 +69,13 @@ const libraryScopeColumns = {
   scope: libraryPages.scope,
   ownerUserId: libraryPages.ownerUserId,
   accountId: libraryPages.accountId,
+  vaultId: libraryPages.vaultId,
 };
 const memoryScopeColumns = {
   scope: memoryEntries.scope,
   ownerUserId: memoryEntries.ownerUserId,
   accountId: memoryEntries.accountId,
+  vaultId: memoryEntries.vaultId,
 };
 
 const memorySourceScopeColumns = {

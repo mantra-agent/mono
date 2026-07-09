@@ -34,6 +34,7 @@ const libraryScopeColumns = {
   scope: libraryPages.scope,
   ownerUserId: libraryPages.ownerUserId,
   accountId: libraryPages.accountId,
+  vaultId: libraryPages.vaultId,
 };
 
 export function slugifyLibraryTitle(title: string, fallback = "page"): string {

@@ -45,6 +45,7 @@ import { registerProviderConnectionRoutes } from "./provider-connections";
 import { registerOnboardingRoutes } from "../onboarding";
 import { registerMobileTelemetryRoutes } from "./mobile-telemetry";
 import { registerMobileDATDebugRoutes } from "./mobile-dat-debug";
+import { registerVaultRoutes } from "./vault-routes";
 import { registerHomeRoutes } from "./home";
 import { registerNotificationRoutes } from "./notifications";
 import mediaRoutes from "../media/media-routes";
@@ -131,6 +132,7 @@ export async function registerDomainRoutes(
   registerNotificationRoutes(app);
   registerMobileTelemetryRoutes(app);
   registerMobileDATDebugRoutes(app);
+  registerVaultRoutes(app);
   app.use("/api/media", mediaRoutes);
   app.use("/api/render", renderRoutes);
 }

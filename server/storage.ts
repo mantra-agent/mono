@@ -165,9 +165,9 @@ export interface IStorage {
 }
 
 const log = createLogger("Storage");
-const skillScopeColumns = { scope: skills.scope, ownerUserId: skills.ownerUserId, accountId: skills.accountId };
+const skillScopeColumns = { scope: skills.scope, ownerUserId: skills.ownerUserId, accountId: skills.accountId, vaultId: skills.vaultId };
 const promptModuleScopeColumns = { scope: promptModules.scope, ownerUserId: promptModules.ownerUserId, accountId: promptModules.accountId };
-const skillRunScopeColumns = { ownerUserId: skillRuns.ownerUserId, accountId: skillRuns.accountId };
+const skillRunScopeColumns = { ownerUserId: skillRuns.ownerUserId, accountId: skillRuns.accountId, vaultId: skillRuns.vaultId };
 // skillScoreScopeColumns removed — skill_scores superseded by skill_runs
 const skillDismissalScopeColumns = { ownerUserId: skillFailureDismissals.ownerUserId, accountId: skillFailureDismissals.accountId };
 

@@ -1,4 +1,4 @@
-import { and, eq, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import type { AnyColumn } from "drizzle-orm";
 import type { Principal } from "./principal";
 
@@ -9,6 +9,8 @@ export interface ScopeColumns {
   isTemplate?: AnyColumn;
   visibility?: AnyColumn;
   scope?: AnyColumn;
+  /** When present, vault filtering is applied via visibleScopePredicate and ownedInsertValues. */
+  vaultId?: AnyColumn;
 }
 
 export interface ScopedOwnerValues {
@@ -80,7 +82,19 @@ export function visibleScopePredicate(
       : undefined,
     templatePredicate(columns),
   ]);
-  return scoped ?? sql`FALSE`;
+  const basePredicate = scoped ?? sql`FALSE`;
+  // Vault filtering: when the table has a vaultId column and the principal
+  // has a non-empty visibleVaultIds set, additionally require vault_id IN (...).
+  // Empty visibleVaultIds (system principals, or users before vault setup) = no vault filter.
+  // Rows with NULL vault_id pass through (backwards compatibility during backfill).
+  if (columns.vaultId && principal.visibleVaultIds && principal.visibleVaultIds.length > 0) {
+    const vaultFilter = or(
+      inArray(columns.vaultId, principal.visibleVaultIds),
+      sql`${columns.vaultId} IS NULL`,
+    )!;
+    return and(basePredicate, vaultFilter)!;
+  }
+  return basePredicate;
 }
 
 export function writableScopePredicate(
@@ -99,7 +113,16 @@ export function writableScopePredicate(
       ? eq(columns.accountId, principal.accountId)
       : undefined,
   ]);
-  return scoped ?? sql`FALSE`;
+  const basePredicate = scoped ?? sql`FALSE`;
+  // Vault filtering on writes: same logic as reads — restrict to visible vaults.
+  if (columns.vaultId && principal.visibleVaultIds && principal.visibleVaultIds.length > 0) {
+    const vaultFilter = or(
+      inArray(columns.vaultId, principal.visibleVaultIds),
+      sql`${columns.vaultId} IS NULL`,
+    )!;
+    return and(basePredicate, vaultFilter)!;
+  }
+  return basePredicate;
 }
 
 export function ownedInsertValues(
@@ -121,6 +144,11 @@ export function ownedInsertValues(
   if (columns.scope)
     (values as Record<string, unknown>).scope =
       principal.actorType === "system" ? "system" : "user";
+  // Stamp vault_id from principal's activeVaultId when the table has a vaultId column.
+  // System principals without an activeVaultId produce null (backfill assigns later).
+  if (columns.vaultId && principal.activeVaultId) {
+    (values as Record<string, unknown>).vaultId = principal.activeVaultId;
+  }
   return values;
 }
 
@@ -139,21 +167,23 @@ export function rowVisibleToPrincipal(
 ): boolean {
   if (principal.actorType === "system") return true;
   if (rowIsTemplate(row)) return true;
-  if (
-    principal.userId &&
-    (row.userId === principal.userId ||
-      row.user_id === principal.userId ||
-      row.ownerUserId === principal.userId ||
-      row.owner_user_id === principal.userId)
-  )
-    return true;
-  if (
-    principal.accountId &&
-    (row.accountId === principal.accountId ||
-      row.account_id === principal.accountId)
-  )
-    return true;
-  return false;
+  const ownerMatch =
+    (principal.userId &&
+      (row.userId === principal.userId ||
+        row.user_id === principal.userId ||
+        row.ownerUserId === principal.userId ||
+        row.owner_user_id === principal.userId)) ||
+    (principal.accountId &&
+      (row.accountId === principal.accountId ||
+        row.account_id === principal.accountId));
+  if (!ownerMatch) return false;
+  // Vault filter: if principal has visible vaults and row has a vault_id, check membership.
+  // Null vault_id rows pass through (backwards compat).
+  const rowVault = row.vaultId ?? row.vault_id;
+  if (rowVault && principal.visibleVaultIds && principal.visibleVaultIds.length > 0) {
+    return principal.visibleVaultIds.includes(rowVault as string);
+  }
+  return true;
 }
 
 export function rowWritableByPrincipal(
@@ -161,21 +191,22 @@ export function rowWritableByPrincipal(
   row: Record<string, unknown>,
 ): boolean {
   if (principal.actorType === "system") return true;
-  if (
-    principal.userId &&
-    (row.userId === principal.userId ||
-      row.user_id === principal.userId ||
-      row.ownerUserId === principal.userId ||
-      row.owner_user_id === principal.userId)
-  )
-    return true;
-  if (
-    principal.accountId &&
-    (row.accountId === principal.accountId ||
-      row.account_id === principal.accountId)
-  )
-    return true;
-  return false;
+  const ownerMatch =
+    (principal.userId &&
+      (row.userId === principal.userId ||
+        row.user_id === principal.userId ||
+        row.ownerUserId === principal.userId ||
+        row.owner_user_id === principal.userId)) ||
+    (principal.accountId &&
+      (row.accountId === principal.accountId ||
+        row.account_id === principal.accountId));
+  if (!ownerMatch) return false;
+  // Vault filter on writes: same as reads.
+  const rowVault = row.vaultId ?? row.vault_id;
+  if (rowVault && principal.visibleVaultIds && principal.visibleVaultIds.length > 0) {
+    return principal.visibleVaultIds.includes(rowVault as string);
+  }
+  return true;
 }
 
 export function assertVisible<T extends Record<string, unknown>>(

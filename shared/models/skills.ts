@@ -77,6 +77,7 @@ export const skills = pgTable("skills", {
   scope: text("scope").notNull().default("global"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
+  vaultId: text("vault_id"),
 
   sessionType: text("session_type"),
   successCount: integer("success_count").notNull().default(0),
@@ -112,6 +113,7 @@ export const skillRuns = pgTable("skill_runs", {
   failureReason: text("failure_reason"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
+  vaultId: text("vault_id"),
 }, (table) => [
   index("idx_skill_runs_owner_started").on(table.ownerUserId, table.startedAt),
   index("idx_skill_runs_account_started").on(table.accountId, table.startedAt),

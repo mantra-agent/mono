@@ -101,6 +101,7 @@ export const MANAGED_TABLES: string[] = [
   "thoughts",
   "timers",
   "users",
+  "vaults",
   "voice_session_active",
   "wellness_activities",
   "wellness_logs",

@@ -29,6 +29,10 @@ export interface Principal {
   isAdmin: boolean;
   impersonation?: PrincipalImpersonation | null;
   source: "session" | "bearer" | "system";
+  /** Vault IDs the user has toggled visible (read filter). Empty = see all (system principals). */
+  visibleVaultIds: string[];
+  /** The single vault new data lands in. Null for system/service principals. */
+  activeVaultId: string | null;
 }
 
 interface ServiceSessionPrincipal {
@@ -71,6 +75,8 @@ export function createServicePrincipal(
     isAdmin: false,
     impersonation: null,
     source: "bearer",
+    visibleVaultIds: [],
+    activeVaultId: null,
   };
 }
 
@@ -85,6 +91,8 @@ export function createSystemPrincipal(scopes: string[] = ["system:read", "system
     isAdmin: true,
     impersonation: null,
     source: "system",
+    visibleVaultIds: [],
+    activeVaultId: null,
   };
 }
 
@@ -105,6 +113,27 @@ export function setServiceSessionPrincipal(
   const principal = createServicePrincipal(scopes, permissions);
   req.principal = principal;
   return principal;
+}
+
+/**
+ * Create a user principal for autonomous/background use (timers, skills, hooks).
+ * Populates vault fields from the user record so vault-scoped operations work correctly.
+ */
+export function createUserPrincipalFromUser(user: User, accountId: string): Principal {
+  const isAdmin = user.role === "admin";
+  return {
+    actorType: "user",
+    userId: user.id,
+    accountId,
+    role: isAdmin ? "admin" : "member",
+    scopes: isAdmin ? ADMIN_DEFAULT_SCOPES : USER_DEFAULT_SCOPES,
+    permissions: [],
+    isAdmin,
+    impersonation: null,
+    source: "system",
+    visibleVaultIds: user.visibleVaultIds ?? [],
+    activeVaultId: user.activeVaultId ?? null,
+  };
 }
 
 export async function ensureUserIdentityFoundation(user: User): Promise<{ accountId: string; role: PrincipalRole }> {
@@ -324,6 +353,8 @@ export async function attachUserPrincipal(req: Request, user: User): Promise<Pri
     isAdmin,
     impersonation: null,
     source: "session",
+    visibleVaultIds: user.visibleVaultIds ?? [],
+    activeVaultId: user.activeVaultId ?? null,
   };
   req.principal = principal;
   recordPrincipalDiagnosticEvent({

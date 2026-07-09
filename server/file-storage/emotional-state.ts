@@ -11,6 +11,7 @@ const emotionalScopeColumns = {
   scope: emotionalStates.scope,
   ownerUserId: emotionalStates.ownerUserId,
   accountId: emotionalStates.accountId,
+  vaultId: emotionalStates.vaultId,
 };
 
 const STALENESS_MS = 4 * 60 * 60 * 1000; // 4 hours

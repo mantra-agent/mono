@@ -15,6 +15,7 @@ const personaScopeColumns = {
   scope: personas.scope,
   ownerUserId: personas.ownerUserId,
   accountId: personas.accountId,
+  vaultId: personas.vaultId,
 };
 
 export interface PersonaEntry {
