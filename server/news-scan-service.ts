@@ -53,7 +53,7 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
     const enabledSources = allSources.filter(s => s.enabled);
 
     const hasChannels = enabledSources.some(s => s.sourceType === "channel_x" || s.sourceType === "channel_web");
-    const hasDirectSources = enabledSources.some(s => ["subreddit", "rss_feed", "x_account", "hackernews", "github_repo"].includes(s.sourceType));
+    const hasDirectSources = enabledSources.some(s => ["subreddit", "rss_feed", "x_account", "hackernews", "github_repo", "polymarket", "stocktwits"].includes(s.sourceType));
     if (!hasChannels && !hasDirectSources) {
       await signalStorage.completeScanRun(scanRun.id, {
         sourcesScanned: 0,
@@ -87,6 +87,8 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
     const xAccounts = enabledSources.filter(s => s.sourceType === "x_account");
     const hnSources = enabledSources.filter(s => s.sourceType === "hackernews");
     const githubRepos = enabledSources.filter(s => s.sourceType === "github_repo");
+    const polymarketSources = enabledSources.filter(s => s.sourceType === "polymarket");
+    const stocktwitsSources = enabledSources.filter(s => s.sourceType === "stocktwits");
 
     const webQueryItems = channelWeb ? queries.map(q => ({ id: channelWeb.id, value: q })) : [];
     const xQueryItems = channelX ? queries.map(q => ({ id: channelX.id, value: q })) : [];
@@ -157,6 +159,20 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
         const ghSignals = await adapters.scanGitHubRepoSources(githubRepos.map(s => ({ id: s.id, value: s.value })));
         allSignals.push(...ghSignals);
       } catch (err) { errors.push(`github: ${(err as Error).message}`); }
+    }
+
+    if (polymarketSources.length > 0) {
+      try {
+        const pmSignals = await adapters.scanPolymarketSources(polymarketSources.map(s => ({ id: s.id, value: s.value })));
+        allSignals.push(...pmSignals);
+      } catch (err) { errors.push(`polymarket: ${(err as Error).message}`); }
+    }
+
+    if (stocktwitsSources.length > 0) {
+      try {
+        const stSignals = await adapters.scanStockTwitsSources(stocktwitsSources.map(s => ({ id: s.id, value: s.value })));
+        allSignals.push(...stSignals);
+      } catch (err) { errors.push(`stocktwits: ${(err as Error).message}`); }
     }
 
     const preDedup = allSignals.length;

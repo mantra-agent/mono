@@ -9,7 +9,7 @@ const log = createLogger("LandscapeAdapters");
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
 export interface RawSignal {
-  sourceType: "x" | "x_account" | "web" | "reddit" | "rss" | "hackernews" | "github";
+  sourceType: "x" | "x_account" | "web" | "reddit" | "rss" | "hackernews" | "github" | "polymarket" | "stocktwits";
   sourceId: string;
   title: string;
   url: string;
@@ -714,6 +714,168 @@ export async function scanGitHubRepoSources(repos: Array<{ id: string; value: st
       }
     } catch (err) {
       log.warn(`scanGitHubRepoSources: error scanning "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return allSignals;
+}
+
+// ── Polymarket Scanner ─────────────────────────────────────────────
+
+const POLYMARKET_API_BASE = "https://gamma-api.polymarket.com";
+
+export async function scanPolymarketSources(sources: Array<{ id: string; value: string }>): Promise<RawSignal[]> {
+  const allSignals: RawSignal[] = [];
+  for (const source of sources) {
+    try {
+      const tag = source.value.trim();
+      const params = new URLSearchParams({
+        limit: "25",
+        active: "true",
+        order: "volume",
+        ascending: "false",
+      });
+      if (tag && tag !== "*") {
+        params.set("tag", tag);
+      }
+      const url = `${POLYMARKET_API_BASE}/markets?${params}`;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      try {
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: { "User-Agent": BROWSER_USER_AGENT },
+        });
+        if (!response.ok) {
+          log.debug(`scanPolymarketSources: HTTP ${response.status} for tag "${tag}"`);
+          continue;
+        }
+        const markets = await response.json() as Array<{
+          question?: string; slug?: string; description?: string;
+          outcomePrices?: string; volume?: string; volumeNum?: number;
+          endDate?: string; image?: string;
+          events?: Array<{ slug?: string; title?: string }>;
+          active?: boolean; closed?: boolean;
+        }>;
+        if (!Array.isArray(markets)) continue;
+
+        for (const market of markets) {
+          if (!market.question) continue;
+
+          // Parse outcome prices: "[\"0.475\", \"0.525\"]"
+          let yesPrice = "";
+          try {
+            const prices = JSON.parse(market.outcomePrices || "[]") as string[];
+            if (prices.length >= 1) {
+              yesPrice = `${(parseFloat(prices[0]) * 100).toFixed(0)}%`;
+            }
+          } catch { /* ignore parse errors */ }
+
+          const eventSlug = market.events?.[0]?.slug;
+          const marketUrl = eventSlug
+            ? `https://polymarket.com/event/${eventSlug}`
+            : `https://polymarket.com/market/${market.slug || ""}`;
+
+          const volumeStr = market.volumeNum
+            ? `${Math.round(market.volumeNum).toLocaleString()}`
+            : market.volume || "";
+
+          const snippet = [
+            yesPrice ? `Yes: ${yesPrice}` : "",
+            volumeStr ? `Volume: ${volumeStr}` : "",
+            market.description ? market.description.slice(0, 400) : "",
+          ].filter(Boolean).join(" · ");
+
+          allSignals.push({
+            sourceType: "polymarket",
+            sourceId: source.id,
+            title: market.question,
+            url: marketUrl,
+            snippet,
+            publishedAt: null,
+            rawMetadata: {
+              yesPrice: yesPrice || null,
+              volume: market.volumeNum || null,
+              endDate: market.endDate || null,
+              tag,
+            },
+          });
+        }
+        log.log(`scanPolymarketSources: tag "${tag}" returned ${markets.length} markets`);
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (err) {
+      log.warn(`scanPolymarketSources: error scanning "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return allSignals;
+}
+
+// ── StockTwits Scanner ────────────────────────────────────────────
+
+const STOCKTWITS_API_BASE = "https://api.stocktwits.com/api/2";
+
+export async function scanStockTwitsSources(sources: Array<{ id: string; value: string }>): Promise<RawSignal[]> {
+  const allSignals: RawSignal[] = [];
+  for (const source of sources) {
+    try {
+      const symbol = source.value.trim().toUpperCase();
+      const endpoint = symbol === "TRENDING" || symbol === "*"
+        ? `${STOCKTWITS_API_BASE}/streams/trending.json`
+        : `${STOCKTWITS_API_BASE}/streams/symbol/${encodeURIComponent(symbol)}.json`;
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      try {
+        const response = await fetch(endpoint, {
+          signal: controller.signal,
+          headers: { "User-Agent": BROWSER_USER_AGENT },
+        });
+        if (!response.ok) {
+          log.debug(`scanStockTwitsSources: HTTP ${response.status} for "${symbol}"`);
+          continue;
+        }
+        const data = await response.json() as {
+          messages?: Array<{
+            id?: number; body?: string; created_at?: string;
+            user?: { username?: string };
+            symbols?: Array<{ symbol?: string; title?: string }>;
+            sentiment?: { basic?: string };
+          }>;
+        };
+        if (!Array.isArray(data.messages)) continue;
+
+        // Take top 25 messages, each becomes a signal
+        const messages = data.messages.slice(0, 25);
+        for (const msg of messages) {
+          if (!msg.body) continue;
+          const tickers = (msg.symbols || []).map(s => s.symbol).filter(Boolean);
+          const primaryTicker = tickers[0] || symbol;
+          const title = tickers.length > 0
+            ? `${primaryTicker}: ${msg.body.slice(0, 120)}`
+            : msg.body.slice(0, 140);
+
+          allSignals.push({
+            sourceType: "stocktwits",
+            sourceId: source.id,
+            title,
+            url: `https://stocktwits.com/symbol/${primaryTicker}`,
+            snippet: msg.body.slice(0, 500),
+            publishedAt: msg.created_at || null,
+            rawMetadata: {
+              messageId: msg.id,
+              username: msg.user?.username || null,
+              tickers,
+              sentiment: msg.sentiment?.basic || null,
+            },
+          });
+        }
+        log.log(`scanStockTwitsSources: "${symbol}" returned ${messages.length} messages`);
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (err) {
+      log.warn(`scanStockTwitsSources: error scanning "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   return allSignals;

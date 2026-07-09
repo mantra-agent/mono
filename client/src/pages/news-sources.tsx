@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Trash2, Clock, Globe, Twitter, MessageSquare, Rss, UserCircle, Newspaper, Github } from "lucide-react";
+import { Trash2, Clock, Globe, Twitter, MessageSquare, Rss, UserCircle, Newspaper, Github, BarChart3, TrendingUp } from "lucide-react";
 
 interface ChannelSource {
   id: string;
@@ -74,6 +74,20 @@ const DIRECT_SECTIONS: Array<{
     icon: Github,
     placeholder: "anthropics/claude-code",
     normalize: (v: string) => v.replace(/^https?:\/\/github\.com\//, "").trim(),
+  },
+  {
+    type: "polymarket",
+    label: "Polymarket",
+    icon: BarChart3,
+    placeholder: "ai (tag filter) or * for trending",
+    normalize: (v: string) => v.trim(),
+  },
+  {
+    type: "stocktwits",
+    label: "StockTwits",
+    icon: TrendingUp,
+    placeholder: "NVDA (ticker) or TRENDING",
+    normalize: (v: string) => v.trim().toUpperCase(),
   },
 ];
 
