@@ -14985,7 +14985,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         case "add_source": {
           const sourceType = args.source_type as string;
           const value = args.value as string;
-          if (!sourceType) return { result: "Missing 'source_type' parameter. Options: x_account, subreddit, rss_feed, pinned_topic, hackernews, github_repo, polymarket, stocktwits, arxiv", error: true };
+          if (!sourceType) return { result: "Missing 'source_type' parameter. Options: x_account, subreddit, rss_feed, pinned_topic, hackernews, github_repo, polymarket, stocktwits, arxiv, youtube_channel", error: true };
           if (!value) return { result: "Missing 'value' parameter", error: true };
           const source = await signalStorage.addSource({ sourceType, value });
           return { result: `Added source: ${sourceType} = "${value}" (id: ${source.id})` };

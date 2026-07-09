@@ -9,7 +9,7 @@ const log = createLogger("LandscapeAdapters");
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
 export interface RawSignal {
-  sourceType: "x" | "x_account" | "web" | "reddit" | "rss" | "hackernews" | "github" | "polymarket" | "stocktwits" | "arxiv";
+  sourceType: "x" | "x_account" | "web" | "reddit" | "rss" | "hackernews" | "github" | "polymarket" | "stocktwits" | "arxiv" | "youtube";
   sourceId: string;
   title: string;
   url: string;
@@ -1306,4 +1306,78 @@ export async function curateSignalCandidate(signal: ScoredSignal, interestGraph:
       agentSummary: null,
     };
   }
+}
+
+// ── YouTube Channel Scanner ────────────────────────────────────────
+
+const YOUTUBE_RSS_BASE = "https://www.youtube.com/feeds/videos.xml";
+
+export async function scanYouTubeChannelSources(sources: Array<{ id: string; value: string }>): Promise<RawSignal[]> {
+  const allSignals: RawSignal[] = [];
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+  for (const source of sources) {
+    try {
+      const channelId = source.value.trim();
+      if (!channelId) continue;
+
+      const url = `${YOUTUBE_RSS_BASE}?channel_id=${encodeURIComponent(channelId)}`;
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      try {
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: { "User-Agent": BROWSER_USER_AGENT },
+        });
+
+        if (!response.ok) {
+          log.debug(`scanYouTubeChannelSources: HTTP ${response.status} for channel "${channelId}"`);
+          continue;
+        }
+
+        const xml = await response.text();
+        const items = parseRssItems(xml);
+        let count = 0;
+
+        for (const item of items) {
+          if (!item.title || !item.link) continue;
+
+          // Filter to last 7 days
+          if (item.pubDate) {
+            const pubTime = new Date(item.pubDate).getTime();
+            if (!isNaN(pubTime) && pubTime < sevenDaysAgo) continue;
+          }
+
+          // Extract video ID from link if possible
+          const videoIdMatch = item.link.match(/watch\?v=([^&]+)/);
+          const videoId = videoIdMatch?.[1];
+          const videoUrl = videoId
+            ? `https://www.youtube.com/watch?v=${videoId}`
+            : item.link;
+
+          allSignals.push({
+            sourceType: "youtube",
+            sourceId: source.id,
+            title: item.title,
+            url: videoUrl,
+            snippet: (item.description || "").slice(0, 500),
+            publishedAt: item.pubDate || null,
+            rawMetadata: {
+              channelId,
+              videoId: videoId || null,
+            },
+          });
+          count++;
+        }
+        log.log(`scanYouTubeChannelSources: channel "${channelId}" returned ${count} recent videos`);
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (err) {
+      log.warn(`scanYouTubeChannelSources: error scanning "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return allSignals;
 }
