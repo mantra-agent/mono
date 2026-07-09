@@ -747,6 +747,59 @@ export class MemoryVnextClaimStorage {
     return Number(countRow?.count ?? 0) < maxClaims;
   }
 
+  /**
+   * Find all claims originally extracted from a specific source.
+   * Used by the reconciliation loop to identify claims that may
+   * need decay if they are not re-extracted from an edited source.
+   */
+  async findClaimsBySourceOrigin(
+    source: string,
+    sourceId: string,
+  ): Promise<MemoryVnextClaim[]> {
+    const principal = getCurrentPrincipalOrSystem();
+    return db
+      .select()
+      .from(memoryVnextClaims)
+      .where(
+        combineWithVisibleScope(
+          principal,
+          vnextClaimScopeColumns,
+          and(
+            eq(memoryVnextClaims.source, source),
+            eq(memoryVnextClaims.sourceId, sourceId),
+            sql`${memoryVnextClaims.lifecycleStage} <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}`,
+          ),
+        ),
+      )
+      .orderBy(desc(memoryVnextClaims.createdAt));
+  }
+
+  /**
+   * Decay a claim's confidence by a delta (min 0.1).
+   * Returns the updated claim. Used by the reconciliation loop
+   * when a previously-extracted claim is not re-produced.
+   */
+  async decayClaimConfidence(
+    id: number,
+    delta: number,
+  ): Promise<MemoryVnextClaim | null> {
+    const minConfidence = 0.1;
+    const [updated] = await db
+      .update(memoryVnextClaims)
+      .set({
+        confidence: sql`GREATEST(${minConfidence}, ${memoryVnextClaims.confidence} - ${delta})`,
+        updatedAt: new Date(),
+        metadata: sql`jsonb_set(
+          COALESCE(${memoryVnextClaims.metadata}, '{}'),
+          '{lastDecayedAt}',
+          to_jsonb(now()::text)
+        )`,
+      })
+      .where(eq(memoryVnextClaims.id, id))
+      .returning();
+    return updated ?? null;
+  }
+
   async searchClaims(filters: VnextClaimSearchFilters): Promise<MemoryVnextClaim[]> {
     const conditions = [];
     if (typeof filters.claimType === "string") {
