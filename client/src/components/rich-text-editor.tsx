@@ -392,7 +392,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
 
   const BLOCK_SELECTOR = ".ProseMirror p, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror li, .ProseMirror blockquote, .ProseMirror pre";
 
-  const updateBlockHandleFromMouse = useCallback((target: EventTarget | null, clientY?: number) => {
+  const updateBlockHandleFromMouse = useCallback((target: EventTarget | null, clientX?: number, clientY?: number) => {
     const container = editorContainerRef.current;
     if (!container || readOnly || isEditorFocused || menuAnchor) {
       if (blockHandleClearTimer.current) { clearTimeout(blockHandleClearTimer.current); blockHandleClearTimer.current = null; }
@@ -406,14 +406,23 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
       return;
     }
     let block = element?.closest(BLOCK_SELECTOR) ?? null;
-    if ((!block || !container.contains(block)) && clientY != null) {
-      // Mouse is in the margin/gutter — probe for the block at this height
+    if ((!block || !container.contains(block)) && clientX != null && clientY != null) {
+      // The visual gutter is intentionally blank, so elementFromPoint often sees the
+      // editor wrapper instead of a text node/block. Treat the gutter as an explicit
+      // hover zone by matching the nearest block by vertical position.
       const pm = container.querySelector(".ProseMirror");
-      if (pm) {
-        const pmBox = pm.getBoundingClientRect();
-        const probe = document.elementFromPoint(pmBox.left + 20, clientY);
-        const probed = probe instanceof Element ? probe.closest(BLOCK_SELECTOR) : null;
-        if (probed && container.contains(probed)) block = probed;
+      const containerBox = container.getBoundingClientRect();
+      const pmBox = pm?.getBoundingClientRect();
+      const isGutterHover = pmBox
+        ? clientX >= containerBox.left && clientX <= pmBox.left
+        : clientX >= containerBox.left && clientX <= containerBox.left + 72;
+      if (isGutterHover) {
+        const blocks = Array.from(container.querySelectorAll(BLOCK_SELECTOR));
+        const matched = blocks.find((candidate) => {
+          const box = candidate.getBoundingClientRect();
+          return clientY >= box.top && clientY <= box.bottom;
+        });
+        if (matched instanceof Element) block = matched;
       }
     }
     if (!block || !container.contains(block)) {
@@ -426,7 +435,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
       }
       return;
     }
-    // Valid text block hover — cancel any pending clear and update position
+    // Valid text block/gutter hover — cancel any pending clear and update position
     if (blockHandleClearTimer.current) { clearTimeout(blockHandleClearTimer.current); blockHandleClearTimer.current = null; }
     const blockBox = block.getBoundingClientRect();
     const containerBox = container.getBoundingClientRect();
@@ -550,7 +559,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
       onPaste={handlePaste}
       onDrop={handleDrop}
       onDragOver={(e) => { if (!readOnly) e.preventDefault(); }}
-      onMouseMove={(e) => updateBlockHandleFromMouse(e.target, e.clientY)}
+      onMouseMove={(e) => updateBlockHandleFromMouse(e.target, e.clientX, e.clientY)}
       onMouseLeave={() => {
         if (blockHandleClearTimer.current) { clearTimeout(blockHandleClearTimer.current); blockHandleClearTimer.current = null; }
         blockHandleClearTimer.current = setTimeout(() => {
