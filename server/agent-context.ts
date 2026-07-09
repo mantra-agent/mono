@@ -451,29 +451,38 @@ export async function assembleContext(options: {
 
   let systemPrompt = buildSystemPromptFromSpine(spinePrompt);
 
-  // FTUE welcome script injection — structural invariant, bypasses section exclusion.
-  // The script MUST load for FTUE sessions regardless of which sections are included/excluded.
+  // FTUE context injection — structural invariant, bypasses section exclusion.
+  // INTRO.md (welcome script) and PRODUCT.md (product definition) MUST load for
+  // FTUE sessions regardless of which sections are included/excluded.
   if (sessionId) {
     try {
       const { chatFileStorage } = await import("./chat-file-storage");
       const conv = await chatFileStorage.getSession(sessionId);
       if (conv?.ftueWelcome) {
         const { db } = await import("./db");
-        const { eq } = await import("drizzle-orm");
+        const { eq, inArray } = await import("drizzle-orm");
         const { libraryPages } = await import("@shared/models/info");
-        const [scriptPage] = await db
-          .select({ plainTextContent: libraryPages.plainTextContent })
+        const ftueSlugs = ["intro-md", "product-md"] as const;
+        const ftuePages = await db
+          .select({ slug: libraryPages.slug, plainTextContent: libraryPages.plainTextContent })
           .from(libraryPages)
-          .where(eq(libraryPages.slug, "ftue-welcome-script"))
-          .limit(1);
-        if (scriptPage?.plainTextContent) {
-          systemPrompt += `\n\n<ftue_welcome_script>\n${scriptPage.plainTextContent}\n</ftue_welcome_script>`;
+          .where(inArray(libraryPages.slug, [...ftueSlugs]));
+        const pageMap = new Map(ftuePages.map((p) => [p.slug, p.plainTextContent]));
+        const introContent = pageMap.get("intro-md");
+        if (introContent) {
+          systemPrompt += `\n\n<ftue_welcome_script>\n${introContent}\n</ftue_welcome_script>`;
         } else {
-          log.warn("FTUE welcome script page not found (slug: ftue-welcome-script)");
+          log.warn("FTUE welcome script page not found (slug: intro-md)");
+        }
+        const productContent = pageMap.get("product-md");
+        if (productContent) {
+          systemPrompt += `\n\n<ftue_product_definition>\n${productContent}\n</ftue_product_definition>`;
+        } else {
+          log.warn("FTUE product definition page not found (slug: product-md)");
         }
       }
     } catch (ftueErr: unknown) {
-      log.warn(`FTUE welcome script injection failed: ${ftueErr instanceof Error ? ftueErr.message : String(ftueErr)}`);
+      log.warn(`FTUE context injection failed: ${ftueErr instanceof Error ? ftueErr.message : String(ftueErr)}`);
     }
   }
 
