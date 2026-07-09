@@ -19,16 +19,15 @@ import { apiRequest } from "@/lib/queryClient";
 import { createLogger } from "@/lib/logger";
 import { cn } from "@/lib/utils";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
-import { ReferenceText } from "@/components/references/reference-text";
 import { createReferenceRef } from "@shared/references";
 import { SurfacedPersonRow, surfacedDateLabel } from "@/components/people/surfaced-person-row";
 import { SurfacedNewsRow } from "@/components/news/surfaced-news-row";
 import { SurfacedEmailRow } from "@/components/email/surfaced-email-row";
 import { SimpleCheckCircle } from "./home-check-circle";
+import { SimpleTextFrame } from "./simple-text-frame";
 
 const log = createLogger("SimpleFeed");
 
-const HOME_MARKDOWN_COMPONENTS = {};
 
 type CreatedSession = { id: string };
 
@@ -536,21 +535,12 @@ function SurfacedLibraryRow({
 
         <CollapsibleContent>
           <div className="pb-2 pl-0 pr-1.5">
-            <div
-              className="max-h-80 max-w-none overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-xs leading-relaxed text-white prose prose-sm dark:prose-invert [&_*]:text-white [&_p]:my-2 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_ul]:my-0.5 [&_ol]:my-0.5 [&_li]:my-0 [&_pre]:bg-muted [&_pre]:rounded-md [&_pre]:p-2 [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:text-xs [&_code]:font-mono [&_h1]:text-xs [&_h2]:text-xs [&_h3]:text-xs [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_a]:text-cta [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_img]:h-auto [&_img]:max-w-full"
-              onClick={(event) => event.stopPropagation()}
-            >
-              {isLoading ? (
-                <div className="flex items-center justify-center py-4 text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                </div>
-              ) : isError ? (
-                <p className="italic text-muted-foreground">This page could not be loaded.</p>
-              ) : pageContent?.plainTextContent?.trim() ? (
-                <ReferenceText content={pageContent.plainTextContent} markdownComponents={HOME_MARKDOWN_COMPONENTS} />
-              ) : (
-                <p className="italic text-muted-foreground">No content available.</p>
-              )}
+            <div onClick={(event) => event.stopPropagation()}>
+              <SimpleTextFrame
+                content={pageContent?.plainTextContent}
+                loading={isLoading}
+                error={isError ? "This page could not be loaded." : null}
+              />
             </div>
           </div>
         </CollapsibleContent>
