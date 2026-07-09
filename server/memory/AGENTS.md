@@ -260,6 +260,11 @@ The active migration target is source-backed, stage-driven memory. Treat this se
 - Stage 2 means shallow-linked/integrated. A memory may reach Stage 2 either because the StageOneSweep created/preserved shallow source refs, or because reconciliation recognizes existing source/link evidence that already satisfies the Stage 2 invariant.
 - Stage 3/4 work belongs to deep integration and sleep/upkeep. Do not put expensive deep LLM or broad graph work in foreground writes or the Stage 1 sweep.
 
+### Claim shape
+
+- Every vNext claim carries a `title` (1-3 word Title Case label) extracted at claim creation alongside the claim sentence. The extraction prompt requests it; `normalizeClaimTitle` in `memory-enrichment.ts` enforces the word cap and derives a fallback from content when the model omits it. UI surfaces (Layers list, graph nodes, tool serializations) display `title` and fall back to `content` for pre-title claims.
+- Destructive reset: `POST /api/memory/vnext/claims/nuke` (body `{"confirm":"NUKE"}`) calls `nukeAllClaims()`, which deletes only the current user principal's claims via `writableScopePredicate`; source refs, entity links, and claim links cascade via FK. System principals are rejected.
+
 ### Ingestion paths
 
 Session and Library ingestion must follow idempotent source-of-truth sync patterns:

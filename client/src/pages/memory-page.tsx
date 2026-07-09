@@ -193,6 +193,7 @@ interface MemoryLink {
 interface VnextClaim {
   id: number;
   storage: "memory_vnext_claims";
+  title?: string | null;
   content: string;
   claimType: "state" | "cause" | "action" | string;
   confidence: number;
@@ -948,7 +949,7 @@ function VnextClaimRow({ claim, expanded, onToggle, timezone }: { claim: VnextCl
       <button type="button" className={cn(WORKING_TREE_ROW_CLASS, WORKING_TREE_IDLE_CLASS)} onClick={onToggle} aria-expanded={expanded} data-testid={`memory-vnext-claim-toggle-${claim.id}`}>
         <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform text-muted-foreground/70", expanded && "rotate-90")} />
         <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />
-        <span className="min-w-0 flex-1 truncate text-left" data-testid={`memory-vnext-claim-title-${claim.id}`}>{claim.content}</span>
+        <span className="min-w-0 flex-1 truncate text-left" data-testid={`memory-vnext-claim-title-${claim.id}`}>{claim.title ? <>{claim.title}<span className="ml-2 text-muted-foreground/60">{claim.content}</span></> : claim.content}</span>
         <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-xs">{claimTypeLabel(claim.claimType)}</Badge>
         <span className="shrink-0 text-xs text-muted-foreground/60" data-testid={`memory-vnext-claim-time-${claim.id}`}>{relativeTime(updated || undefined)}</span>
       </button>
@@ -2135,6 +2136,20 @@ function LayersTab() {
     },
   });
 
+  const [nukeDialogOpen, setNukeDialogOpen] = useState(false);
+  const [nukeConfirmText, setNukeConfirmText] = useState("");
+  const vnextNukeMutation = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/memory/vnext/claims/nuke", { confirm: "NUKE" })).json() as Promise<{ nuked: boolean; deleted: number }>,
+    onSuccess: (result) => {
+      toast({ title: "vNext memories nuked", description: `${result.deleted} claims permanently deleted.` });
+      setNukeDialogOpen(false);
+      setNukeConfirmText("");
+      queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/claims/counts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/claims"] });
+    },
+    onError: (error: Error) => toast({ title: "Nuke failed", description: error.message, variant: "destructive" }),
+  });
+
   const pendingDeletionCount = useMemo(() => allEntries?.filter(isDeletionScheduled).length ?? 0, [allEntries]);
   const isLoading = storageMode === "legacy" ? statsLoading || entriesLoading : vnextCountsLoading || vnextClaimsLoading;
 
@@ -2252,10 +2267,34 @@ function LayersTab() {
       ) : (
         <div className="flex items-center justify-between gap-2 border-b border-card-border bg-muted/10 px-2 py-1.5 text-xs text-muted-foreground" data-testid="memory-vnext-provenance-note">
           <span>Showing vNext claims only. Legacy source entries appear only inside opened provenance/source refs.</span>
-          <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => vnextLifecycleMutation.mutate()} disabled={vnextLifecycleMutation.isPending} data-testid="button-run-vnext-lifecycle">
-            {vnextLifecycleMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitBranch className="h-3 w-3" />}
-            Run lifecycle
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => vnextLifecycleMutation.mutate()} disabled={vnextLifecycleMutation.isPending} data-testid="button-run-vnext-lifecycle">
+              {vnextLifecycleMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitBranch className="h-3 w-3" />}
+              Run lifecycle
+            </Button>
+            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1 text-destructive hover:text-destructive" onClick={() => { setNukeConfirmText(""); setNukeDialogOpen(true); }} disabled={vnextNukeMutation.isPending} data-testid="button-nuke-vnext">
+              <Trash2 className="h-3 w-3" />
+              Nuke
+            </Button>
+          </div>
+          <AlertDialog open={nukeDialogOpen} onOpenChange={(open) => { setNukeDialogOpen(open); if (!open) setNukeConfirmText(""); }}>
+            <AlertDialogContent data-testid="dialog-nuke-vnext">
+              <AlertDialogHeader>
+                <AlertDialogTitle>Nuke all vNext memories?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This permanently deletes all {vnextCounts?.total ?? 0} vNext claims plus their source refs, entity links, and claim links. Legacy memory is untouched. This cannot be undone. Type NUKE to confirm.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <Input value={nukeConfirmText} onChange={(e) => setNukeConfirmText(e.target.value)} placeholder="Type NUKE to confirm" data-testid="input-nuke-confirm" />
+              <AlertDialogFooter>
+                <AlertDialogCancel data-testid="button-nuke-cancel">Cancel</AlertDialogCancel>
+                <AlertDialogAction disabled={nukeConfirmText !== "NUKE" || vnextNukeMutation.isPending} onClick={(e) => { e.preventDefault(); vnextNukeMutation.mutate(); }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90" data-testid="button-nuke-confirm">
+                  {vnextNukeMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                  Nuke everything
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       )}
 

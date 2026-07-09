@@ -3,7 +3,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import { createLogger } from "../log";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
-import { combineWithVisibleScope, ownedInsertValues } from "../scoped-storage";
+import { combineWithVisibleScope, ownedInsertValues, writableScopePredicate } from "../scoped-storage";
 import {
   MEMORY_VNEXT_LIFECYCLE_STAGE,
   memoryVnextClaimLinks,
@@ -264,6 +264,7 @@ export class MemoryVnextClaimStorage {
     const [claim] = await db
       .insert(memoryVnextClaims)
       .values({
+        title: input.claim.title || null,
         content: input.claim.content,
         claimType: normalizeClaimType(input.claim.claimType),
         confidence: input.claim.confidence,
@@ -287,6 +288,7 @@ export class MemoryVnextClaimStorage {
       .onConflictDoUpdate({
         target: memoryVnextClaims.contentHash,
         set: {
+          title: sql`COALESCE(${memoryVnextClaims.title}, ${input.claim.title || null})`,
           recallCount: sql`${memoryVnextClaims.recallCount} + 1`,
           lastRecalledAt: new Date(),
           updatedAt: new Date(),
@@ -307,6 +309,25 @@ export class MemoryVnextClaimStorage {
   }
 
 
+
+  /**
+   * Permanently delete ALL vNext claims owned by the current principal.
+   * Source refs, entity links, and claim links cascade via FK. Fails closed
+   * for system principals: an explicit user principal is required so one
+   * user's nuke can never touch another user's claims.
+   */
+  async nukeAllClaims(): Promise<{ deleted: number }> {
+    const principal = getCurrentPrincipalOrSystem();
+    if (!principal.userId) {
+      throw new Error("vNext nuke rejected: a user principal is required");
+    }
+    const deleted = await db
+      .delete(memoryVnextClaims)
+      .where(writableScopePredicate(principal, vnextClaimScopeColumns))
+      .returning({ id: memoryVnextClaims.id });
+    log.info(`nukeAllClaims: deleted ${deleted.length} vNext claims for user ${principal.userId}`);
+    return { deleted: deleted.length };
+  }
 
   async listLifecycleCandidates(stages: MemoryVnextLifecycleStage[], limit = 50): Promise<VnextLifecycleCandidate[]> {
     const normalizedStages = stages.map((stage) => normalizeLifecycleStage(stage));
