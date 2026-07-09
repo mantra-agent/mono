@@ -119,7 +119,8 @@ function LogRow({ entry, timezone, wrap, isSeen }: { entry: LogEntry; timezone: 
       data-testid={`log-entry-${entry.line}`}
       data-log-level={entry.level}
     >
-      <div className={`flex items-start gap-1.5 px-3 py-1 text-xs font-mono hover:bg-muted/30 ${wrap ? "" : "whitespace-nowrap"}`}>
+      {/* Desktop: single-line row with inline metadata */}
+      <div className={`hidden sm:flex items-start gap-1.5 px-3 py-1 text-xs font-mono hover:bg-muted/30 ${wrap ? "" : "whitespace-nowrap"}`}>
         <span className="text-muted-foreground/60 w-[85px] shrink-0 text-right tabular-nums">
           {formatLogTime(entry.ts, timezone)}
         </span>
@@ -130,6 +131,23 @@ function LogRow({ entry, timezone, wrap, isSeen }: { entry: LogEntry; timezone: 
           {entry.source}
         </Badge>
         <span className={`text-foreground/80 min-w-0 flex-1 ${wrap ? "break-words" : "truncate"}`}>{entry.message}</span>
+      </div>
+      {/* Mobile: stacked layout — metadata row then full-width message */}
+      <div className="sm:hidden px-2 py-1 font-mono hover:bg-muted/30">
+        <div className="flex items-center gap-1.5 text-[10px]">
+          <span className="text-muted-foreground/60 tabular-nums">
+            {formatLogTime(entry.ts, timezone)}
+          </span>
+          <span className={`uppercase font-semibold ${levelColor}`}>
+            {entry.level}
+          </span>
+          <Badge variant="outline" className={`text-[10px] px-1 py-0 shrink-0 ${isClient ? "text-active border-active/30" : "text-neutral border-neutral/30"}`}>
+            {entry.source}
+          </Badge>
+        </div>
+        <div className={`text-[11px] text-foreground/80 mt-0.5 ${wrap ? "break-words" : "overflow-x-auto whitespace-nowrap"}`}>
+          {entry.message}
+        </div>
       </div>
     </div>
   );
@@ -383,112 +401,111 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
 
   return (
     <div className="flex flex-col h-full min-w-0 overflow-hidden">
-      <div className="flex items-center gap-2 px-4 py-2 border-b flex-wrap shrink-0">
-        <div className="flex items-center gap-1.5 flex-1 min-w-[140px]">
+      <div className="flex flex-col gap-1.5 px-3 sm:px-4 py-2 border-b shrink-0">
+        {/* Row 1: Search + filter selects */}
+        <div className="flex items-center gap-1.5">
           <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <Input
-            placeholder="Filter logs... (text, source)"
+            placeholder="Filter logs..."
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="h-7 text-xs"
+            className="h-7 text-xs flex-1 min-w-0"
             data-testid="input-filter-logs"
           />
+          <Select value={levelFilter} onValueChange={setLevelFilter}>
+            <SelectTrigger className="w-[80px] sm:w-[100px] h-7 text-xs shrink-0" data-testid="select-log-level">
+              <SelectValue placeholder="Level" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Levels</SelectItem>
+              <SelectItem value="error">Error {levelCounts.error ? `(${levelCounts.error})` : ""}</SelectItem>
+              <SelectItem value="warn">Warning {levelCounts.warn ? `(${levelCounts.warn})` : ""}</SelectItem>
+              <SelectItem value="info">Info</SelectItem>
+              <SelectItem value="debug">Debug</SelectItem>
+              <SelectItem value="verbose">Verbose</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={sourceFilter} onValueChange={setSourceFilter}>
+            <SelectTrigger className="w-[80px] sm:w-[120px] h-7 text-xs shrink-0" data-testid="select-log-source">
+              <SelectValue placeholder="Source" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Sources</SelectItem>
+              <SelectItem value="server">Server</SelectItem>
+              <SelectItem value="client">Client</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-
-        <Select value={levelFilter} onValueChange={setLevelFilter}>
-          <SelectTrigger className="w-[100px] h-7 text-xs" data-testid="select-log-level">
-            <SelectValue placeholder="Level" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Levels</SelectItem>
-            <SelectItem value="error">Error {levelCounts.error ? `(${levelCounts.error})` : ""}</SelectItem>
-            <SelectItem value="warn">Warning {levelCounts.warn ? `(${levelCounts.warn})` : ""}</SelectItem>
-            <SelectItem value="info">Info</SelectItem>
-            <SelectItem value="debug">Debug</SelectItem>
-            <SelectItem value="verbose">Verbose</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Select value={sourceFilter} onValueChange={setSourceFilter}>
-          <SelectTrigger className="w-[120px] h-7 text-xs" data-testid="select-log-source">
-            <SelectValue placeholder="Source" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Sources</SelectItem>
-            <SelectItem value="server">Server</SelectItem>
-            <SelectItem value="client">Client</SelectItem>
-          </SelectContent>
-        </Select>
-
-        {errorCount > 0 && (
-          <Badge variant="destructive" className="text-xs gap-1" data-testid="badge-level-error">
-            <AlertCircle className="h-2.5 w-2.5" />
-            {errorCount}
-          </Badge>
-        )}
-        {warnCount > 0 && (
-          <Badge variant="secondary" className="text-xs gap-1 text-warning" data-testid="badge-level-warn">
-            {warnCount}
-          </Badge>
-        )}
-
-        <span className="text-xs text-muted-foreground/50 tabular-nums">
-          {filteredLogs.length}{totalEntries > displayLogs.length ? ` / ${totalEntries}` : ""}
-        </span>
-
-        <div className="flex items-center gap-2 ml-auto">
-          <div className="flex items-center gap-1.5">
-            <Switch
-              id="verbose-toggle"
-              checked={verboseEnabled}
-              onCheckedChange={(checked) => toggleVerbose.mutate(checked)}
-              className="scale-75"
-              data-testid="switch-verbose-logging"
-            />
-            <Label htmlFor="verbose-toggle" className="text-xs text-muted-foreground cursor-pointer">
-              Verbose
-            </Label>
+        {/* Row 2: Badges, count, and action buttons */}
+        <div className="flex items-center gap-1.5">
+          {errorCount > 0 && (
+            <Badge variant="destructive" className="text-xs gap-1" data-testid="badge-level-error">
+              <AlertCircle className="h-2.5 w-2.5" />
+              {errorCount}
+            </Badge>
+          )}
+          {warnCount > 0 && (
+            <Badge variant="secondary" className="text-xs gap-1 text-warning" data-testid="badge-level-warn">
+              {warnCount}
+            </Badge>
+          )}
+          <span className="text-xs text-muted-foreground/50 tabular-nums">
+            {filteredLogs.length}{totalEntries > displayLogs.length ? ` / ${totalEntries}` : ""}
+          </span>
+          <div className="flex items-center gap-1.5 ml-auto">
+            <div className="hidden sm:flex items-center gap-1.5">
+              <Switch
+                id="verbose-toggle"
+                checked={verboseEnabled}
+                onCheckedChange={(checked) => toggleVerbose.mutate(checked)}
+                className="scale-75"
+                data-testid="switch-verbose-logging"
+              />
+              <Label htmlFor="verbose-toggle" className="text-xs text-muted-foreground cursor-pointer">
+                Verbose
+              </Label>
+            </div>
+            <Button
+              size="icon"
+              variant={wrap ? "secondary" : "ghost"}
+              onClick={() => setWrap(!wrap)}
+              className="h-7 w-7"
+              title={wrap ? "Disable text wrap" : "Enable text wrap"}
+              data-testid="button-wrap-logs"
+            >
+              <WrapText className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              size="icon"
+              variant={paused ? "secondary" : "ghost"}
+              onClick={() => setPaused(!paused)}
+              className="h-7 w-7"
+              title={paused ? "Resume live updates" : "Pause live updates"}
+              data-testid="button-pause-logs"
+            >
+              {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={handleCopy}
+              className="h-7 w-7"
+              title="Copy logs"
+              data-testid="button-copy-logs"
+            >
+              <Copy className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={handleDownload}
+              className="h-7 w-7"
+              title="Download logs"
+              data-testid="button-download-logs"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </Button>
           </div>
-          <Button
-            size="icon"
-            variant={wrap ? "secondary" : "ghost"}
-            onClick={() => setWrap(!wrap)}
-            className="h-7 w-7"
-            title={wrap ? "Disable text wrap" : "Enable text wrap"}
-            data-testid="button-wrap-logs"
-          >
-            <WrapText className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            size="icon"
-            variant={paused ? "secondary" : "ghost"}
-            onClick={() => setPaused(!paused)}
-            className="h-7 w-7"
-            title={paused ? "Resume live updates" : "Pause live updates"}
-            data-testid="button-pause-logs"
-          >
-            {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={handleCopy}
-            className="h-7 w-7"
-            title="Copy logs"
-            data-testid="button-copy-logs"
-          >
-            <Copy className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={handleDownload}
-            className="h-7 w-7"
-            title="Download logs"
-            data-testid="button-download-logs"
-          >
-            <Download className="h-3.5 w-3.5" />
-          </Button>
         </div>
       </div>
 
