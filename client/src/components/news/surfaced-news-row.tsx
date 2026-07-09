@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SimpleFeedItem } from "@shared/models/simple";
-import { ChevronRight, ExternalLink, Loader2, MessageSquare, MoreHorizontal, Newspaper, X } from "lucide-react";
+import { Bookmark, ChevronRight, ExternalLink, Loader2, MessageSquare, MoreHorizontal, Newspaper, X } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
@@ -43,10 +43,10 @@ export function SurfacedNewsRow({ item, dateLabel }: SurfacedNewsRowProps) {
   const reason = payloadString(item, "reason");
   const snippet = payloadString(item, "snippet");
 
-  const dismissMutation = useMutation({
-    mutationFn: async () => {
+  const statusMutation = useMutation({
+    mutationFn: async (status: "dismissed" | "saved") => {
       if (!signalId) throw new Error("Missing news signal id");
-      await apiRequest("PATCH", `/api/landscape/signals/${signalId}/status`, { status: "dismissed" });
+      await apiRequest("PATCH", `/api/landscape/signals/${signalId}/status`, { status });
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/simple/feed"] });
@@ -78,8 +78,9 @@ export function SurfacedNewsRow({ item, dateLabel }: SurfacedNewsRowProps) {
     },
   });
 
-  const pending = dismissMutation.isPending;
-  const dismiss = () => dismissMutation.mutate();
+  const pending = statusMutation.isPending;
+  const dismiss = () => statusMutation.mutate("dismissed");
+  const save = () => statusMutation.mutate("saved");
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div className={cn(pending && "opacity-60")}>
@@ -131,6 +132,10 @@ export function SurfacedNewsRow({ item, dateLabel }: SurfacedNewsRowProps) {
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
+              <DropdownMenuItem disabled={!signalId} onClick={(e) => { e.stopPropagation(); save(); setMenuOpen(false); }}>
+                <Bookmark className="h-3.5 w-3.5 mr-2" />
+                Save
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={(e) => { e.stopPropagation(); dismiss(); setMenuOpen(false); }}>
                 <X className="h-3.5 w-3.5 mr-2" />
                 Dismiss
