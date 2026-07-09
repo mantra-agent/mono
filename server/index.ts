@@ -661,21 +661,23 @@ app.use((req, res, next) => {
       }, VOICE_SESSION_PRUNE_INTERVAL_MS).unref();
 
       // vNext source poller: extract claims from settled session/library_page sources.
-      // Runs every 5 minutes. Sources must be quiet for 30 minutes before extraction.
+      // Runs once shortly after boot, then every 5 minutes. Sources must be quiet
+      // for 30 minutes before extraction; the boot run makes the processor visible
+      // immediately and catches any backlog from a restart.
       const VNEXT_SOURCE_POLLER_INTERVAL_MS = 5 * 60 * 1000;
-      setInterval(() => {
+      const runVnextSourcePoller = () => {
         import("./memory/vnext-source-poller").then(async ({ processSettledSources }) => {
           const result = await processSettledSources();
-          if (result.processed > 0) {
-            log(
-              `[scheduled] vnext source poller: processed=${result.processed} created=${result.totalCreated} reinforced=${result.totalReinforced} skipped=${result.totalSkipped} errors=${result.errors}`,
-              "boot",
-            );
-          }
+          log(
+            `[scheduled] vnext source poller: processed=${result.processed} created=${result.totalCreated} reinforced=${result.totalReinforced} skipped=${result.totalSkipped} errors=${result.errors}`,
+            "boot",
+          );
         }).catch((err) => {
           log(`[scheduled] vnext source poller failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
         });
-      }, VNEXT_SOURCE_POLLER_INTERVAL_MS).unref();
+      };
+      setTimeout(runVnextSourcePoller, 30_000).unref();
+      setInterval(runVnextSourcePoller, VNEXT_SOURCE_POLLER_INTERVAL_MS).unref();
 
       getRailwayConfig(process.env.RAILWAY_ENVIRONMENT === "production" ? "prod" : "dev")
         .then(async (cfg) => {

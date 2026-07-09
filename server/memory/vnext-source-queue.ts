@@ -173,6 +173,25 @@ export async function getBySource(
   return rows[0];
 }
 
+
+/**
+ * List source queue entries visible to the current principal. Used by the
+ * Layers page to render vNext Stage 0: source intake before claim extraction.
+ */
+export async function listVisibleSources(
+  principal: Principal,
+  options: { status?: string; limit?: number } = {},
+): Promise<MemoryVnextSourceQueueRow[]> {
+  const limit = Math.max(1, Math.min(options.limit ?? 100, 500));
+  const statusFilter = options.status ? eq(memoryVnextSourceQueue.status, options.status) : undefined;
+  return db
+    .select()
+    .from(memoryVnextSourceQueue)
+    .where(combineWithVisibleScope(principal, scopeColumns, statusFilter))
+    .orderBy(desc(memoryVnextSourceQueue.lastModifiedAt))
+    .limit(limit);
+}
+
 /**
  * Reset a stuck "processing" row back to "pending" (recovery from crashes).
  * Only resets rows that have been processing longer than the given timeout.

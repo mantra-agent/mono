@@ -232,6 +232,24 @@ interface VnextClaimsResponse {
   claims: VnextClaim[];
 }
 
+interface VnextSourceQueueRow {
+  id: number;
+  sourceType: string;
+  sourceId: string;
+  status: "pending" | "processing" | "completed" | string;
+  lastModifiedAt?: string | null;
+  lastExtractedAt?: string | null;
+  contentHash?: string | null;
+  createdAt?: string | null;
+}
+
+interface VnextSourcesResponse {
+  storage: "memory_vnext_source_queue";
+  total: number;
+  byStatus: { pending: number; processing: number; completed: number; total: number };
+  sources: VnextSourceQueueRow[];
+}
+
 interface VnextClaimCounts {
   storage: "memory_vnext_claims";
   total: number;
@@ -865,13 +883,17 @@ const MEMORY_PIPELINE_STAGES = [
   { value: "stage_4", label: "Stage 4", description: "Maintained" },
 ];
 
-const MEMORY_VNEXT_LIFECYCLE_STAGES = [
-  { value: "extracted", label: "Extracted", description: "Claim written" },
-  { value: "sourced", label: "Sourced", description: "Source refs attached" },
-  { value: "linked", label: "Linked", description: "Entities or claims linked" },
-  { value: "canonical", label: "Canonical", description: "Promoted claim" },
+const MEMORY_VNEXT_SOURCE_STAGE = { value: "stage_0", label: "Stage 0", description: "Queued sources" };
+
+const MEMORY_VNEXT_CLAIM_STAGES = [
+  { value: "extracted", label: "Stage 1", description: "Extracted claims" },
+  { value: "sourced", label: "Stage 2", description: "Source refs attached" },
+  { value: "linked", label: "Stage 3", description: "Entities or claims linked" },
+  { value: "canonical", label: "Stage 4", description: "Promoted claims" },
   { value: "retired", label: "Retired", description: "Superseded" },
 ];
+
+const MEMORY_VNEXT_PIPELINE_STAGES = [MEMORY_VNEXT_SOURCE_STAGE, ...MEMORY_VNEXT_CLAIM_STAGES];
 
 function lifecycleLabel(stage?: string | null): string {
   if (!stage) return "unknown";
@@ -2036,7 +2058,7 @@ function LayersTab() {
   const [showPendingDeletions, setShowPendingDeletions] = useState(false);
 
   useEffect(() => {
-    setOpenStages(new Set((storageMode === "legacy" ? MEMORY_PIPELINE_STAGES : MEMORY_VNEXT_LIFECYCLE_STAGES).map(stage => stage.value)));
+    setOpenStages(new Set((storageMode === "legacy" ? MEMORY_PIPELINE_STAGES : MEMORY_VNEXT_PIPELINE_STAGES).map(stage => stage.value)));
   }, [storageMode]);
 
   const { events } = useEventStream();
@@ -2046,6 +2068,7 @@ function LayersTab() {
   const { data: allEntries, isLoading: entriesLoading } = useQuery<MemoryEntry[]>({ queryKey: ["/api/memory/entries"], enabled: storageMode === "legacy" });
   const { data: vnextCounts, isLoading: vnextCountsLoading } = useQuery<VnextClaimCounts>({ queryKey: ["/api/memory/vnext/claims/counts"], enabled: storageMode === "vnext" });
   const { data: vnextClaimsResponse, isLoading: vnextClaimsLoading } = useQuery<VnextClaimsResponse>({ queryKey: ["/api/memory/vnext/claims", "layers", 100], queryFn: async () => { const res = await fetch("/api/memory/vnext/claims?limit=100", { credentials: "include" }); if (!res.ok) throw new Error("Failed to load vNext claims"); return res.json(); }, enabled: storageMode === "vnext" });
+  const { data: vnextSourcesResponse, isLoading: vnextSourcesLoading } = useQuery<VnextSourcesResponse>({ queryKey: ["/api/memory/vnext/sources", "layers", 100], queryFn: async () => { const res = await fetch("/api/memory/vnext/sources?limit=100", { credentials: "include" }); if (!res.ok) throw new Error("Failed to load vNext sources"); return res.json(); }, enabled: storageMode === "vnext" });
 
   useEffect(() => {
     if (events.length === 0) return;
@@ -2059,6 +2082,7 @@ function LayersTab() {
       queryClient.invalidateQueries({ queryKey: ["/api/memory/integration/status"] });
       queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/claims"] });
       queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/claims/counts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/sources"] });
     }
   }, [events]);
 
@@ -2083,6 +2107,11 @@ function LayersTab() {
     return groups;
   }, [pipelineEntries]);
 
+  const vnextSources = useMemo(() => {
+    const sources = vnextSourcesResponse?.sources ?? [];
+    return [...sources].sort((a, b) => new Date(b.lastModifiedAt || b.createdAt || 0).getTime() - new Date(a.lastModifiedAt || a.createdAt || 0).getTime());
+  }, [vnextSourcesResponse]);
+
   const vnextClaims = useMemo(() => {
     const claims = vnextClaimsResponse?.claims ?? [];
     return [...claims].sort((a, b) => {
@@ -2094,7 +2123,7 @@ function LayersTab() {
 
   const vnextClaimsByStage = useMemo(() => {
     const groups = new Map<string, VnextClaim[]>();
-    for (const stage of MEMORY_VNEXT_LIFECYCLE_STAGES) groups.set(stage.value, []);
+    for (const stage of MEMORY_VNEXT_CLAIM_STAGES) groups.set(stage.value, []);
     for (const claim of vnextClaims) {
       const stage = claim.lifecycleStage || "extracted";
       if (!groups.has(stage)) groups.set(stage, []);
@@ -2132,6 +2161,7 @@ function LayersTab() {
     onSuccess: (result) => {
       toast({ title: "vNext lifecycle complete", description: `${result.scanned} scanned · ${result.sourced + result.linked + result.canonicalized + result.retired} advanced · ${result.skipped} skipped` });
       queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/claims/counts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/sources"] });
       queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/claims"] });
     },
   });
@@ -2145,13 +2175,14 @@ function LayersTab() {
       setNukeDialogOpen(false);
       setNukeConfirmText("");
       queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/claims/counts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/sources"] });
       queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/claims"] });
     },
     onError: (error: Error) => toast({ title: "Nuke failed", description: error.message, variant: "destructive" }),
   });
 
   const pendingDeletionCount = useMemo(() => allEntries?.filter(isDeletionScheduled).length ?? 0, [allEntries]);
-  const isLoading = storageMode === "legacy" ? statsLoading || entriesLoading : vnextCountsLoading || vnextClaimsLoading;
+  const isLoading = storageMode === "legacy" ? statsLoading || entriesLoading : vnextCountsLoading || vnextClaimsLoading || vnextSourcesLoading;
 
   if (isLoading) {
     return <div className={cn("p-3 space-y-2", MEMORY_SHELL_CLASS)}><Skeleton className="h-8 w-full rounded-md" /><Skeleton className="h-28 w-full rounded-md" /><Skeleton className="h-28 w-full rounded-md" /></div>;
@@ -2167,8 +2198,27 @@ function LayersTab() {
     setExpandedClaimIds(prev => { const next = new Set(prev); next.has(claimId) ? next.delete(claimId) : next.add(claimId); return next; });
   };
 
+  const renderVnextSourceRow = (source: VnextSourceQueueRow) => {
+    const modified = formatPipelineTime(source.lastModifiedAt, timezone);
+    const extracted = formatPipelineTime(source.lastExtractedAt, timezone);
+    return (
+      <div key={source.id} className="grid grid-cols-[1fr_auto] gap-2 px-2 py-1.5 text-xs hover:bg-muted/30" data-testid={`memory-vnext-source-row-${source.id}`}>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <Badge variant={source.status === "processing" ? "default" : source.status === "pending" ? "secondary" : "outline"} className="h-5 px-1.5 text-[10px] capitalize">{source.status}</Badge>
+            <span className="truncate font-medium">{source.sourceType}:{source.sourceId}</span>
+          </div>
+          <div className="mt-0.5 text-[11px] text-muted-foreground/70">{extracted ? `Last extracted ${extracted}` : modified ? `Queued ${modified}` : "Queued source"}</div>
+        </div>
+        <span className="font-mono text-[11px] text-muted-foreground/60">#{source.id}</span>
+      </div>
+    );
+  };
+
   const renderVnextStageSection = (stage: { value: string; label: string; description: string }) => {
-    const claims = vnextClaimsByStage.get(stage.value) ?? [];
+    const isSourceStage = stage.value === MEMORY_VNEXT_SOURCE_STAGE.value;
+    const claims = isSourceStage ? [] : (vnextClaimsByStage.get(stage.value) ?? []);
+    const count = isSourceStage ? vnextSources.length : claims.length;
     const open = openStages.has(stage.value);
     return (
       <Collapsible key={stage.value} open={open} onOpenChange={() => toggleStage(stage.value)} data-testid={`memory-vnext-stage-${stage.value}`}>
@@ -2176,11 +2226,15 @@ function LayersTab() {
           <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
           <span className="min-w-0 truncate">{stage.label}</span>
           <span className="hidden sm:inline text-[11px] normal-case font-normal tracking-normal text-muted-foreground/60">{stage.description}</span>
-          <span className="ml-auto font-mono text-[11px] text-muted-foreground/70" data-testid={`memory-vnext-stage-count-${stage.value}`}>{claims.length}</span>
+          <span className="ml-auto font-mono text-[11px] text-muted-foreground/70" data-testid={`memory-vnext-stage-count-${stage.value}`}>{count}</span>
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="space-y-0.5 pb-2" data-testid={`memory-vnext-stage-claims-${stage.value}`}>
-            {claims.length === 0 ? <div className="px-2 py-2 text-xs text-muted-foreground/60" data-testid={`memory-vnext-stage-empty-${stage.value}`}>No vNext claims in this stage.</div> : claims.map(claim => <VnextClaimRow key={claim.id} claim={claim} expanded={expandedClaimIds.has(claim.id)} onToggle={() => toggleClaim(claim.id)} timezone={timezone} />)}
+            {isSourceStage ? (
+              vnextSources.length === 0 ? <div className="px-2 py-2 text-xs text-muted-foreground/60" data-testid="memory-vnext-stage-empty-stage_0">No queued vNext sources.</div> : vnextSources.map(renderVnextSourceRow)
+            ) : (
+              claims.length === 0 ? <div className="px-2 py-2 text-xs text-muted-foreground/60" data-testid={`memory-vnext-stage-empty-${stage.value}`}>No vNext claims in this stage.</div> : claims.map(claim => <VnextClaimRow key={claim.id} claim={claim} expanded={expandedClaimIds.has(claim.id)} onToggle={() => toggleClaim(claim.id)} timezone={timezone} />)
+            )}
           </div>
         </CollapsibleContent>
       </Collapsible>
@@ -2302,7 +2356,7 @@ function LayersTab() {
         {storageMode === "legacy" ? (
           pipelineEntries.length === 0 ? <div className={cn("px-6", MEMORY_EMPTY_CLASS)} data-testid="memory-pipeline-empty"><Database className="h-6 w-6 text-muted-foreground" /><p className="text-sm text-muted-foreground">No legacy memories in the pipeline.</p></div> : <div className="space-y-0.5">{MEMORY_PIPELINE_STAGES.map(renderStageSection)}</div>
         ) : (
-          vnextClaims.length === 0 ? <div className={cn("px-6", MEMORY_EMPTY_CLASS)} data-testid="memory-vnext-empty"><GitBranch className="h-6 w-6 text-muted-foreground" /><p className="text-sm text-muted-foreground">No vNext claims found.</p></div> : <div className="space-y-0.5">{MEMORY_VNEXT_LIFECYCLE_STAGES.map(renderVnextStageSection)}</div>
+          (vnextClaims.length === 0 && vnextSources.length === 0) ? <div className={cn("px-6", MEMORY_EMPTY_CLASS)} data-testid="memory-vnext-empty"><GitBranch className="h-6 w-6 text-muted-foreground" /><p className="text-sm text-muted-foreground">No vNext sources or claims found.</p></div> : <div className="space-y-0.5">{MEMORY_VNEXT_PIPELINE_STAGES.map(renderVnextStageSection)}</div>
         )}
       </div>
 

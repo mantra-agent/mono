@@ -24,6 +24,7 @@ import {
   type MemoryVnextSourceRef,
   type MemoryVnextEntityLink,
   type MemoryVnextClaimLink,
+  type MemoryVnextSourceQueueRow,
 } from "@shared/schema";
 import { eventBus } from "../event-bus";
 import { chatCompletion } from "../model-client";
@@ -39,6 +40,7 @@ import { storageBackend, PRIVATE_PREFIX } from "../object_storage/objectStorage"
 import { randomUUID, createHash } from "crypto";
 import { memoryVnextClaimStorage } from "./vnext-claim-storage";
 import { runVnextLifecycle } from "./vnext-lifecycle";
+import { listVisibleSources } from "./vnext-source-queue";
 
 const log = createLogger("MemoryRoutes");
 
@@ -78,6 +80,21 @@ function serializeVnextSourceRef(ref: MemoryVnextSourceRef) {
     id: ref.id, claimId: ref.claimId, sourceType: ref.sourceType, sourceId: ref.sourceId,
     relationship: ref.relationship, context: ref.context, quote: ref.quote, spanStart: ref.spanStart,
     spanEnd: ref.spanEnd, strength: ref.strength, createdAt: serializeDate(ref.createdAt),
+  };
+}
+
+function serializeVnextSourceQueueRow(row: MemoryVnextSourceQueueRow) {
+  return {
+    id: row.id,
+    sourceType: row.sourceType,
+    sourceId: row.sourceId,
+    status: row.status,
+    lastModifiedAt: serializeDate(row.lastModifiedAt),
+    lastExtractedAt: serializeDate(row.lastExtractedAt),
+    contentHash: row.contentHash,
+    ownerUserId: row.ownerUserId,
+    accountId: row.accountId,
+    createdAt: serializeDate(row.createdAt),
   };
 }
 
@@ -1980,6 +1997,30 @@ async function handleNukeVnextClaims(req: Request, res: Response): Promise<void>
   }
 }
 
+async function handleGetVnextSources(req: Request, res: Response): Promise<void> {
+  try {
+    const limit = Math.min(parsePositiveInt(req.query.limit) ?? 100, 500);
+    const status = typeof req.query.status === "string" && req.query.status.trim() ? req.query.status.trim() : undefined;
+    const principal = getCurrentPrincipalOrSystem();
+    const sources = await listVisibleSources(principal, { status, limit });
+    const byStatus = { pending: 0, processing: 0, completed: 0, total: sources.length };
+    for (const source of sources) {
+      if (source.status === "pending") byStatus.pending++;
+      else if (source.status === "processing") byStatus.processing++;
+      else if (source.status === "completed") byStatus.completed++;
+    }
+    log.debug(`[vnext] source_queue total=${sources.length} limit=${limit} status=${status || "all"}`);
+    res.json({
+      storage: "memory_vnext_source_queue",
+      total: sources.length,
+      byStatus,
+      sources: sources.map(serializeVnextSourceQueueRow),
+    });
+  } catch (error: unknown) {
+    res.status(500).json({ error: errorMessage(error) });
+  }
+}
+
 async function handleGetVnextClaimCounts(_req: Request, res: Response): Promise<void> {
   try {
     const counts = await memoryVnextClaimStorage.getCounts();
@@ -2160,6 +2201,7 @@ export function registerMemoryRoutes(app: Express) {
   app.get("/api/memory/vnext/graph", handleGetVnextGraph);
   app.post("/api/memory/vnext/lifecycle/run", handleTriggerVnextLifecycle);
   app.post("/api/memory/vnext/claims/nuke", handleNukeVnextClaims);
+  app.get("/api/memory/vnext/sources", handleGetVnextSources);
   app.get("/api/memory/vnext/claims/counts", handleGetVnextClaimCounts);
   app.get("/api/memory/vnext/claims", handleSearchVnextClaims);
   app.get("/api/memory/vnext/claims/:id", handleGetVnextClaim);
