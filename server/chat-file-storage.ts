@@ -543,46 +543,6 @@ function extractFallbackSessionSummary(data: SessionData): { summary: string | n
   return { summary: null, reason: "no_summary_material" };
 }
 
-function normalizeForVnextExtraction(value: string): string {
-  return value
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function formatMessageForVnextExtraction(message: FileMessage): string | null {
-  if (!message.content?.trim()) return null;
-  if (message.role === "system") return null;
-  if (message.isError) return null;
-  const content = normalizeForVnextExtraction(message.content);
-  if (!content) return null;
-  const role = message.role || "message";
-  return `${role}: ${content.slice(0, 2500)}`;
-}
-
-function buildVnextSessionExtractionContent(data: SessionData, fallbackSummary: string): { content: string; reason: string } {
-  const sections: string[] = [];
-  sections.push(`Session title: ${data.title || "Untitled"}`);
-  if (data.topics?.length) sections.push(`Topics: ${data.topics.join(", ")}`);
-  if (data.memorySummary?.trim()) sections.push(`Existing memory summary: ${data.memorySummary.trim()}`);
-  if (data.summary?.trim()) sections.push(`Session summary: ${data.summary.trim()}`);
-  if (!data.summary?.trim() && fallbackSummary.trim()) sections.push(`Fallback summary: ${fallbackSummary.trim()}`);
-
-  const formattedMessages = data.messages
-    .map(formatMessageForVnextExtraction)
-    .filter((line): line is string => Boolean(line));
-
-  const recentMessages = formattedMessages.slice(-24);
-  if (recentMessages.length > 0) {
-    sections.push(`Recent conversation:\n${recentMessages.join("\n")}`);
-  }
-
-  const content = sections.join("\n\n").slice(0, 16000).trim();
-  return {
-    content,
-    reason: recentMessages.length > 0 ? "session_content" : "session_summary_only",
-  };
-}
-
 function publishSessionStatusChanged(data: SessionData, previousStatus: string | undefined, status: string): void {
   eventBus.publish({
     category: "session",
