@@ -9,9 +9,7 @@
  * processVnextClaimsForSource entry point all live here.
  */
 
-import { executeVnextClaimSemanticSearch, memoryVnextClaimStorage } from "./vnext-claim-storage";
-import { executeSemanticSearch } from "./memory-storage";
-import { resolveVnextEntityMentions } from "./vnext-entity-resolution";
+import { memoryVnextClaimStorage, persistClaimCandidates } from "./vnext-claim-storage";
 import { chatCompletion } from "../model-client";
 import { ACTIVITY_MEMORY } from "../job-profiles";
 import { extractJson } from "../utils/extract-json";
@@ -307,12 +305,6 @@ function logClaimBudgetDecision(event: string, payload: Record<string, unknown>,
 }
 
 // ---------------------------------------------------------------------------
-// Semantic dedup threshold
-// ---------------------------------------------------------------------------
-
-const CLAIM_DEDUP_SIMILARITY_THRESHOLD = 0.9;
-
-// ---------------------------------------------------------------------------
 // Source extraction interface
 // ---------------------------------------------------------------------------
 
@@ -428,38 +420,32 @@ export async function processVnextClaimsForSource(
 }
 
 // ---------------------------------------------------------------------------
-// Process extracted claims (dedup, budget, persist, entity link)
+// Process extracted claims — budget scoring + canonical persist
 // ---------------------------------------------------------------------------
 
 async function processExtractedClaims(
   claims: ClaimCandidate[],
   parentEntry: MemoryEntry,
-  index: number,
-  total: number,
+  _index: number,
+  _total: number,
   options?: {
     sourceRefs?: VnextExtractionSource["sourceRefs"];
     sourceLabel?: string;
   },
 ): Promise<ClaimProcessingResult> {
-  const { generateEmbedding } = await import("./embedding");
-
-  let created = 0;
-  let reinforced = 0;
-  let skipped = 0;
-
   const maxClaims = await getClaimExtractionBudget();
   const budgetKey = getClaimExtractionBudgetKey(parentEntry);
-  const existingAccepted = await memoryVnextClaimStorage.countClaimsForExtractionBudget({
+  const budgetScope = {
     budgetKey,
     maxClaims,
     source: (parentEntry.source || "chat_journal") as MemorySource,
     sourceId: parentEntry.sourceId,
     sourceMemoryId: parentEntry.id,
-  });
+  };
+  const existingAccepted = await memoryVnextClaimStorage.countClaimsForExtractionBudget(budgetScope);
   const remainingBudget = Math.max(0, maxClaims - existingAccepted);
   const ranked = rankClaimsForBudget(claims, remainingBudget);
 
-  skipped += ranked.rejected.length;
   logClaimBudgetDecision("memory.vnext.claim_budget", {
     sourceMemoryId: parentEntry.id,
     source: parentEntry.source || "chat_journal",
@@ -480,166 +466,52 @@ async function processExtractedClaims(
     })),
   }, "info");
 
-  // Track created claim IDs by original batch index for intra-batch linking
-  const createdClaimIds: Map<number, number> = new Map();
+  if (ranked.accepted.length === 0) {
+    return { created: 0, reinforced: 0, skipped: ranked.rejected.length };
+  }
 
-  for (const budgetCandidate of ranked.accepted) {
-    const claimIdx = budgetCandidate.originalIndex;
-    const claim = budgetCandidate.claim;
-    try {
-      // Generate embedding for dedup search
-      const embedding = await generateEmbedding(claim.content);
+  // Build budget metadata for each accepted claim
+  const acceptedClaims = ranked.accepted.map((candidate) => candidate.claim);
 
-      // Vector-search existing vNext claims for near-duplicates. Semantic dedupe is
-      // optional enrichment: if vector search fails, the source-backed vNext claim
-      // must still be durably written through the idempotent vNext storage boundary.
-      let nearDuplicateVnextClaim: Awaited<ReturnType<typeof executeVnextClaimSemanticSearch>>[number] | undefined;
-      try {
-        const similarVnextClaims = await executeVnextClaimSemanticSearch(embedding, 3);
-        nearDuplicateVnextClaim = similarVnextClaims.find(
-          (s) => s.similarity >= CLAIM_DEDUP_SIMILARITY_THRESHOLD,
-        );
-      } catch (semanticErr: unknown) {
-        log.warn(
-          `[${index + 1}/${total}] vNext semantic dedupe failed open for claim "${claim.content.slice(0, 80)}...": ` +
-          `${semanticErr instanceof Error ? semanticErr.message : String(semanticErr)}`,
-        );
-      }
+  // Determine createdAt from parent entry's source session date
+  const parentMeta = (parentEntry.metadata as Record<string, unknown>) || {};
+  const sourceDate = parentMeta.sessionDate
+    ? new Date(parentMeta.sessionDate as string)
+    : parentEntry.createdAt;
 
-      if (nearDuplicateVnextClaim) {
-        await memoryVnextClaimStorage.reinforceClaim(nearDuplicateVnextClaim.row.id);
-        log.debug(`[${index + 1}/${total}] Claim dedup: reinforced existing vNext claim #${nearDuplicateVnextClaim.row.id} (similarity=${nearDuplicateVnextClaim.similarity.toFixed(3)}) for "${claim.content.slice(0, 60)}..."`);
-        reinforced++;
-        continue;
-      }
-
-      let legacyDuplicateSignal: { id: number; similarity: number } | null = null;
-      try {
-        const similarLegacy = await executeSemanticSearch(embedding, 3);
-        const nearDuplicateLegacy = similarLegacy.find(
-          (s) => s.similarity >= CLAIM_DEDUP_SIMILARITY_THRESHOLD && (s.row.metadata as Record<string, unknown> | null)?.claimType,
-        );
-
-        if (nearDuplicateLegacy) {
-          legacyDuplicateSignal = { id: nearDuplicateLegacy.row.id, similarity: nearDuplicateLegacy.similarity };
-          log.debug(`[${index + 1}/${total}] Legacy duplicate signal for vNext claim: legacy #${nearDuplicateLegacy.row.id} (similarity=${nearDuplicateLegacy.similarity.toFixed(3)}) for "${claim.content.slice(0, 60)}..." — inserting vNext claim anyway`);
-        }
-      } catch (legacySemanticErr: unknown) {
-        log.warn(
-          `[${index + 1}/${total}] Legacy semantic dedupe failed open for vNext claim "${claim.content.slice(0, 80)}...": ` +
-          `${legacySemanticErr instanceof Error ? legacySemanticErr.message : String(legacySemanticErr)}`,
-        );
-      }
-
-      // Determine createdAt from parent entry's source session date
-      const parentMeta = (parentEntry.metadata as Record<string, unknown>) || {};
-      const sourceDate = parentMeta.sessionDate
-        ? new Date(parentMeta.sessionDate as string)
-        : parentEntry.createdAt;
-
-      const claimEntry = await memoryVnextClaimStorage.createClaim({
-        claim,
-        sourceMemoryId: parentEntry.id,
-        source: (parentEntry.source || "chat_journal") as MemorySource,
-        sourceId: parentEntry.sourceId,
-        createdAt: sourceDate,
-        embedding,
-        metadata: {
-          confidence: claim.confidence,
-          claimType: claim.claimType,
-          ...(legacyDuplicateSignal
-            ? { legacyDuplicateSignal }
-            : {}),
-        },
-        writeBudget: {
-          budget: {
-            budgetKey,
-            maxClaims,
-            source: (parentEntry.source || "chat_journal") as MemorySource,
-            sourceId: parentEntry.sourceId,
-            sourceMemoryId: parentEntry.id,
+  // Delegate to canonical persist path
+  const result = await persistClaimCandidates({
+    claims: acceptedClaims,
+    source: (parentEntry.source || "chat_journal") as MemorySource,
+    sourceId: parentEntry.sourceId,
+    sourceMemoryId: parentEntry.id,
+    createdAt: sourceDate,
+    sourceRefs: options?.sourceRefs?.length
+      ? options.sourceRefs
+      : [
+          {
+            sourceType: "memory",
+            sourceId: String(parentEntry.id),
+            relationship: "extracted_from",
+            context: "Claim extracted from source memory entry",
+            strength: 1,
           },
-          acceptedRank: ranked.accepted.findIndex((candidate) => candidate.originalIndex === claimIdx) + 1,
-          candidatesSeen: claims.length,
-          candidateIndex: claimIdx,
-          candidateScore: Number(budgetCandidate.score.toFixed(2)),
-          candidateReasons: budgetCandidate.reasons,
-          existingAcceptedAtStart: existingAccepted,
-        },
-        sourceRefs: options?.sourceRefs?.length
-          ? options.sourceRefs
-          : [
-              {
-                sourceType: "memory",
-                sourceId: String(parentEntry.id),
-                relationship: "extracted_from",
-                context: "Claim extracted from source memory entry",
-                strength: 1,
-              },
-            ],
-      });
+        ],
+    writeBudget: {
+      budget: budgetScope,
+      acceptedRank: 1,
+      candidatesSeen: claims.length,
+      candidateIndex: 0,
+      candidateScore: ranked.accepted[0]?.score ? Number(ranked.accepted[0].score.toFixed(2)) : 0,
+      candidateReasons: ranked.accepted[0]?.reasons || [],
+      existingAcceptedAtStart: existingAccepted,
+    },
+    logPrefix: `extraction[${parentEntry.id}]`,
+  });
 
-      // Entity linking
-      const resolvedEntities = await resolveVnextEntityMentions(claim.entityMentions);
-      for (const entity of resolvedEntities) {
-        try {
-          await memoryVnextClaimStorage.linkClaimToEntity(
-            claimEntry.id,
-            entity.entityType,
-            entity.entityId,
-          );
-          log.debug(`Linked vNext claim #${claimEntry.id} to ${entity.entityType}:${entity.entityId}`);
-        } catch (entityErr: unknown) {
-          log.debug(`Entity link failed for vNext claim #${claimEntry.id} → ${entity.entityType}:${entity.entityId}: ${entityErr instanceof Error ? entityErr.message : String(entityErr)}`);
-        }
-      }
-
-      createdClaimIds.set(claimIdx, claimEntry.id);
-      created++;
-      logClaimBudgetDecision("memory.vnext.claim_accepted", {
-        sourceMemoryId: parentEntry.id,
-        claimId: claimEntry.id,
-        budgetKey,
-        candidateIndex: claimIdx,
-        score: Number(budgetCandidate.score.toFixed(2)),
-        reasons: budgetCandidate.reasons,
-        claimType: claim.claimType,
-        confidence: claim.confidence,
-        preview: claim.content.slice(0, 80),
-      });
-    } catch (claimErr: unknown) {
-      skipped++;
-      logClaimBudgetDecision("memory.vnext.claim_failed", {
-        sourceMemoryId: parentEntry.id,
-        budgetKey,
-        candidateIndex: claimIdx,
-        claimType: claim.claimType,
-        confidence: claim.confidence,
-        preview: claim.content.slice(0, 120),
-        error: claimErr instanceof Error ? claimErr.message : String(claimErr),
-        stack: claimErr instanceof Error ? claimErr.stack : undefined,
-      }, "info");
-      log.warn(`[${index + 1}/${total}] Failed to process claim "${claim.content.slice(0, 60)}...": ${claimErr instanceof Error ? claimErr.message : String(claimErr)}`);
-    }
-  }
-
-  // Create intra-batch causal links between claims
-  for (let claimIdx = 0; claimIdx < claims.length; claimIdx++) {
-    const claim = claims[claimIdx];
-    if (claim.sourceClaimIndex == null) continue;
-    const fromId = createdClaimIds.get(claimIdx);
-    const toId = createdClaimIds.get(claim.sourceClaimIndex);
-    if (!fromId || !toId) continue;
-    try {
-      // Link: this claim was caused_by the referenced claim
-      const relationship = claim.claimType === "action" ? "caused_by" :
-                           claim.claimType === "state" ? "resulted_from" : "related_to";
-      await memoryVnextClaimStorage.linkClaims(fromId, toId, relationship, 0.9);
-      log.debug(`[${index + 1}/${total}] Linked vNext claim #${fromId} (${claim.claimType}) → #${toId} via ${relationship}`);
-    } catch (linkErr: unknown) {
-      log.debug(`Failed to create intra-batch link #${fromId} → #${toId}: ${linkErr instanceof Error ? linkErr.message : String(linkErr)}`);
-    }
-  }
-
-  return { created, reinforced, skipped };
+  return {
+    created: result.created,
+    reinforced: result.reinforced,
+    skipped: result.skipped + ranked.rejected.length,
+  };
 }

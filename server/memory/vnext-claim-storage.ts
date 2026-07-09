@@ -19,7 +19,8 @@ import {
   type MemoryVnextClaimLink,
 } from "@shared/schema";
 import type { ClaimCandidate } from "./vnext-claim-extraction";
-import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "./embedding";
+import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, generateEmbedding } from "./embedding";
+import { resolveVnextEntityMentions } from "./vnext-entity-resolution";
 
 const log = createLogger("MemoryVnextClaims");
 
@@ -136,6 +137,9 @@ export interface VnextClaimSearchFilters {
   offset?: number;
   lifecycleStage?: string;
 }
+
+/** Similarity threshold for semantic deduplication against existing claims */
+export const CLAIM_DEDUP_SIMILARITY_THRESHOLD = 0.9;
 
 const MIN_VNEXT_CLAIMS_PER_SESSION = 1;
 const MAX_VNEXT_CLAIMS_PER_SESSION = 3;
@@ -860,4 +864,182 @@ export class MemoryVnextClaimStorage {
 }
 
 export const memoryVnextClaimStorage = new MemoryVnextClaimStorage();
+
+// ---------------------------------------------------------------------------
+// Canonical claim persistence pipeline
+// ---------------------------------------------------------------------------
+
+/**
+ * Input for the canonical claim persistence pipeline.
+ * Both the source poller and the legacy memory-entry extraction path
+ * feed through this single function.
+ */
+export interface PersistClaimCandidatesInput {
+  claims: ClaimCandidate[];
+  source: MemorySource;
+  sourceId?: string | null;
+  /** Legacy memory entry ID (0 when not applicable, e.g. source poller) */
+  sourceMemoryId: number;
+  /** Source refs to attach to each created claim */
+  sourceRefs?: VnextClaimSourceInput[];
+  /** Optional per-claim write budget metadata */
+  writeBudget?: CreateVnextClaimInput["writeBudget"];
+  /** Optional override for createdAt on new claims */
+  createdAt?: Date;
+  /** Optional additional metadata to merge into each claim */
+  metadata?: Record<string, unknown>;
+  /** Log prefix for structured logging */
+  logPrefix?: string;
+}
+
+export interface PersistClaimCandidatesResult {
+  created: number;
+  reinforced: number;
+  skipped: number;
+}
+
+/**
+ * Canonical mutation path for creating/reinforcing vNext claims.
+ *
+ * For each claim candidate:
+ * 1. Generate embedding
+ * 2. Semantic dedup against existing claims (fail open)
+ * 3. If near-duplicate found → reinforce existing claim
+ * 4. Otherwise → create new claim via memoryVnextClaimStorage.createClaim
+ * 5. Resolve entity mentions and link to claim
+ * 6. Create intra-batch causal links between related claims
+ *
+ * All writes go through memoryVnextClaimStorage.createClaim, which is
+ * the single DB insert path for memory_vnext_claims.
+ */
+export async function persistClaimCandidates(
+  input: PersistClaimCandidatesInput,
+): Promise<PersistClaimCandidatesResult> {
+  const {
+    claims,
+    source,
+    sourceId,
+    sourceMemoryId,
+    sourceRefs,
+    writeBudget,
+    createdAt,
+    metadata: extraMetadata,
+    logPrefix = "persistClaimCandidates",
+  } = input;
+
+  let created = 0;
+  let reinforced = 0;
+  let skipped = 0;
+
+  // Track created claim IDs by original batch index for intra-batch linking
+  const createdClaimIds = new Map<number, number>();
+
+  for (let i = 0; i < claims.length; i++) {
+    const claim = claims[i];
+    try {
+      const embedding = await generateEmbedding(claim.content);
+
+      // Semantic dedup against existing vNext claims (fail open)
+      let nearDuplicate: { id: number; similarity: number } | undefined;
+      try {
+        const similar = await executeVnextClaimSemanticSearch(embedding, 3);
+        const match = similar.find(
+          (s) => s.similarity >= CLAIM_DEDUP_SIMILARITY_THRESHOLD,
+        );
+        if (match) {
+          nearDuplicate = { id: match.row.id, similarity: match.similarity };
+        }
+      } catch (err) {
+        log.warn(
+          `${logPrefix}: semantic dedup failed open for "${claim.content.slice(0, 80)}": ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      if (nearDuplicate) {
+        await memoryVnextClaimStorage.reinforceClaim(nearDuplicate.id);
+        log.debug(
+          `${logPrefix}: reinforced claim #${nearDuplicate.id} (similarity=${nearDuplicate.similarity.toFixed(3)}) for "${claim.content.slice(0, 60)}"`,
+        );
+        reinforced++;
+        continue;
+      }
+
+      // Build source refs (default: extracted_from the source)
+      const claimSourceRefs: VnextClaimSourceInput[] = sourceRefs?.length
+        ? sourceRefs
+        : [
+            {
+              sourceType: sourceMemoryId > 0 ? "memory" : "queue",
+              sourceId: sourceMemoryId > 0 ? String(sourceMemoryId) : (sourceId || "unknown"),
+              relationship: "extracted_from",
+              context: `Extracted from ${source}`,
+              strength: 1,
+            },
+          ];
+
+      const claimEntry = await memoryVnextClaimStorage.createClaim({
+        claim,
+        sourceMemoryId,
+        source,
+        sourceId,
+        createdAt,
+        embedding,
+        metadata: {
+          confidence: claim.confidence,
+          claimType: claim.claimType,
+          ...(extraMetadata ?? {}),
+        },
+        sourceRefs: claimSourceRefs,
+        writeBudget,
+      });
+
+      // Entity linking
+      const resolvedEntities = await resolveVnextEntityMentions(claim.entityMentions);
+      for (const entity of resolvedEntities) {
+        try {
+          await memoryVnextClaimStorage.linkClaimToEntity(
+            claimEntry.id,
+            entity.entityType,
+            entity.entityId,
+          );
+        } catch (entityErr) {
+          log.debug(
+            `${logPrefix}: entity link failed claim #${claimEntry.id} → ${entity.entityType}:${entity.entityId}: ${entityErr instanceof Error ? entityErr.message : String(entityErr)}`,
+          );
+        }
+      }
+
+      // Intra-batch causal linking
+      if (claim.sourceClaimIndex != null && createdClaimIds.has(claim.sourceClaimIndex)) {
+        const parentClaimId = createdClaimIds.get(claim.sourceClaimIndex)!;
+        try {
+          const relationship =
+            claim.claimType === "action"
+              ? "caused_by"
+              : claim.claimType === "state"
+                ? "resulted_from"
+                : "related_to";
+          await memoryVnextClaimStorage.linkClaims(parentClaimId, claimEntry.id, relationship, 0.9);
+          log.debug(
+            `${logPrefix}: linked claim #${parentClaimId} → #${claimEntry.id} via ${relationship}`,
+          );
+        } catch (linkErr) {
+          log.debug(
+            `${logPrefix}: causal link failed #${parentClaimId} → #${claimEntry.id}: ${linkErr instanceof Error ? linkErr.message : String(linkErr)}`,
+          );
+        }
+      }
+
+      createdClaimIds.set(i, claimEntry.id);
+      created++;
+    } catch (err) {
+      log.warn(
+        `${logPrefix}: failed claim "${claim.content.slice(0, 80)}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+      skipped++;
+    }
+  }
+
+  return { created, reinforced, skipped };
+}
 

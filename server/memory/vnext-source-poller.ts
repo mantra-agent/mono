@@ -17,15 +17,13 @@ import {
 } from "./vnext-content-chunking";
 import {
   memoryVnextClaimStorage,
-  executeVnextClaimSemanticSearch,
-  type VnextClaimSourceInput,
+  persistClaimCandidates,
 } from "./vnext-claim-storage";
 import {
   extractClaimsFromChunk,
   deduplicateChunkClaims,
   type ClaimCandidate,
 } from "./vnext-claim-extraction";
-import { resolveVnextEntityMentions } from "./vnext-entity-resolution";
 
 const log = createLogger("VnextSourcePoller");
 
@@ -37,9 +35,6 @@ const MAX_SOURCES_PER_RUN = 10;
 
 /** Max claims per source across all chunks */
 const MAX_CLAIMS_PER_SOURCE = 3;
-
-/** Similarity threshold for semantic deduplication */
-const CLAIM_DEDUP_SIMILARITY_THRESHOLD = 0.9;
 
 /** Confidence decay per re-extraction miss */
 const RECONCILIATION_DECAY_DELTA = 0.1;
@@ -144,125 +139,31 @@ async function extractClaimsFromChunks(
 }
 
 // ---------------------------------------------------------------------------
-// Claim persistence with dedup/reinforcement
+// Claim persistence — delegates to canonical persistClaimCandidates
 // ---------------------------------------------------------------------------
 
-async function persistClaims(
+async function persistPollerClaims(
   claims: ClaimCandidate[],
   sourceContent: SourceContent,
   row: MemoryVnextSourceQueueRow,
 ): Promise<{ created: number; reinforced: number; skipped: number }> {
-  const { generateEmbedding } = await import("./embedding");
-
-  let created = 0;
-  let reinforced = 0;
-  let skipped = 0;
-
-  const createdClaimIds = new Map<number, number>();
-
-  for (let i = 0; i < claims.length; i++) {
-    const claim = claims[i];
-    try {
-      const embedding = await generateEmbedding(claim.content);
-
-      // Semantic dedup against existing vNext claims
-      let nearDuplicate: { id: number; similarity: number } | undefined;
-      try {
-        const similar = await executeVnextClaimSemanticSearch(embedding, 3);
-        const match = similar.find(
-          (s) => s.similarity >= CLAIM_DEDUP_SIMILARITY_THRESHOLD,
-        );
-        if (match) {
-          nearDuplicate = { id: match.row.id, similarity: match.similarity };
-        }
-      } catch (err) {
-        log.warn(
-          `persistClaims: semantic dedup failed open for "${claim.content.slice(0, 80)}": ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-
-      if (nearDuplicate) {
-        await memoryVnextClaimStorage.reinforceClaim(nearDuplicate.id);
-        log.debug(
-          `persistClaims: reinforced claim #${nearDuplicate.id} (similarity=${nearDuplicate.similarity.toFixed(3)}) for "${claim.content.slice(0, 60)}"`,
-        );
-        reinforced++;
-        continue;
-      }
-
-      // Create new claim with source ref pointing to the queue source
-      const sourceRefs: VnextClaimSourceInput[] = [
-        {
-          sourceType: row.sourceType,
-          sourceId: row.sourceId,
-          relationship: "extracted_from",
-          context: `Extracted by vNext source poller from ${row.sourceType}`,
-          strength: 1,
-        },
-      ];
-
-      const claimEntry = await memoryVnextClaimStorage.createClaim({
-        claim,
-        sourceMemoryId: 0, // No legacy memory entry parent
-        source: sourceContent.sourceType,
+  return persistClaimCandidates({
+    claims,
+    source: sourceContent.sourceType,
+    sourceId: row.sourceId,
+    sourceMemoryId: 0,
+    sourceRefs: [
+      {
+        sourceType: row.sourceType,
         sourceId: row.sourceId,
-        embedding,
-        metadata: {
-          confidence: claim.confidence,
-          claimType: claim.claimType,
-          extractedBy: "vnext-source-poller",
-        },
-        sourceRefs,
-      });
-
-      // Entity linking
-      const resolvedEntities = await resolveVnextEntityMentions(
-        claim.entityMentions,
-      );
-      for (const entity of resolvedEntities) {
-        try {
-          await memoryVnextClaimStorage.linkClaimToEntity(
-            claimEntry.id,
-            entity.entityType,
-            entity.entityId,
-          );
-        } catch (entityErr) {
-          log.debug(
-            `persistClaims: entity link failed claim #${claimEntry.id} → ${entity.entityType}:${entity.entityId}: ${entityErr instanceof Error ? entityErr.message : String(entityErr)}`,
-          );
-        }
-      }
-
-      // Intra-batch causal linking
-      if (
-        claim.sourceClaimIndex != null &&
-        createdClaimIds.has(claim.sourceClaimIndex)
-      ) {
-        const parentClaimId = createdClaimIds.get(claim.sourceClaimIndex)!;
-        try {
-          await memoryVnextClaimStorage.linkClaims(
-            parentClaimId,
-            claimEntry.id,
-            "causes",
-          );
-        } catch (linkErr) {
-          log.debug(
-            `persistClaims: causal link failed #${parentClaimId} → #${claimEntry.id}: ${linkErr instanceof Error ? linkErr.message : String(linkErr)}`,
-          );
-        }
-      }
-
-      createdClaimIds.set(i, claimEntry.id);
-      created++;
-    } catch (err) {
-      log.warn(
-        `persistClaims: failed claim "${claim.content.slice(0, 80)}": ${err instanceof Error ? err.message : String(err)}`,
-      );
-      skipped++;
-    }
-  }
-
-  return { created, reinforced, skipped };
+        relationship: "extracted_from",
+        context: `Extracted by vNext source poller from ${row.sourceType}`,
+        strength: 1,
+      },
+    ],
+    metadata: { extractedBy: "vnext-source-poller" },
+    logPrefix: "pollerPersist",
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -344,7 +245,7 @@ async function processSource(
 
   let result: ProcessSourceResult = { created: 0, reinforced: 0, skipped: 0, decayed: 0, retirementCandidates: 0 };
   if (claims.length > 0) {
-    const persistResult = await persistClaims(claims, sourceContent, row);
+    const persistResult = await persistPollerClaims(claims, sourceContent, row);
     result.created = persistResult.created;
     result.reinforced = persistResult.reinforced;
     result.skipped = persistResult.skipped;
@@ -378,7 +279,7 @@ async function processSource(
  * After re-extracting claims from an edited source, compare the current
  * set of claims from that source against the pre-existing set.
  *
- * Claims that were reinforced during persistClaims (semantic dedup match)
+ * Claims that were reinforced during persistence (semantic dedup match)
  * will have a bumped recallCount/lastRecalledAt. Claims that were NOT
  * re-produced get their confidence decayed. Claims at or below the
  * retirement threshold become candidates for retirement.
