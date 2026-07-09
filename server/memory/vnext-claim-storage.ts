@@ -20,6 +20,7 @@ import {
 } from "@shared/schema";
 import type { ClaimCandidate } from "./vnext-claim-extraction";
 import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, generateEmbedding } from "./embedding";
+import { cosineSimilarity } from "./graph-walker";
 import { resolveVnextEntityMentions } from "./vnext-entity-resolution";
 
 const log = createLogger("MemoryVnextClaims");
@@ -140,8 +141,23 @@ export interface VnextClaimSearchFilters {
   lifecycleStage?: string;
 }
 
-/** Similarity threshold for semantic deduplication against existing claims */
-export const CLAIM_DEDUP_SIMILARITY_THRESHOLD = 0.9;
+/**
+ * Similarity threshold for semantic deduplication against existing DB claims.
+ * Lowered from 0.9 → 0.85: the original 0.9 let through rephrasings that
+ * share 85-90% embedding similarity (observed in near-dup clusters like
+ * claim ids 326/327/340). At 384-dim MiniLM embeddings, 0.85 still
+ * separates genuinely distinct observations from same-meaning paraphrases.
+ */
+export const CLAIM_DEDUP_SIMILARITY_THRESHOLD = 0.85;
+
+/**
+ * Intra-batch semantic dedup threshold. Applied to candidates within the
+ * same persist call before any DB writes. Same-source candidates are almost
+ * certainly duplicates at 0.85+, so this matches the cross-source threshold.
+ * When a pair merges, the higher-confidence claim survives with unioned
+ * topics and entity mentions.
+ */
+export const CLAIM_INTRA_BATCH_DEDUP_THRESHOLD = 0.85;
 
 const MIN_VNEXT_CLAIMS_PER_SESSION = 1;
 const MAX_VNEXT_CLAIMS_PER_SESSION = 3;
@@ -900,6 +916,8 @@ export interface PersistClaimCandidatesResult {
   created: number;
   reinforced: number;
   skipped: number;
+  /** Number of candidates merged during intra-batch semantic dedup */
+  mergedInBatch: number;
 }
 
 /**
@@ -934,35 +952,106 @@ export async function persistClaimCandidates(
   let created = 0;
   let reinforced = 0;
   let skipped = 0;
+  let mergedInBatch = 0;
+
+  // -----------------------------------------------------------------------
+  // Phase 1: Embed all candidates
+  // -----------------------------------------------------------------------
+  const embeddings: (number[] | null)[] = [];
+  for (const claim of claims) {
+    try {
+      embeddings.push(await generateEmbedding(claim.content));
+    } catch (err) {
+      log.warn(
+        `${logPrefix}: embedding failed for "${claim.content.slice(0, 80)}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+      embeddings.push(null);
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Phase 2: Intra-batch semantic dedup
+  // Merge pairs above CLAIM_INTRA_BATCH_DEDUP_THRESHOLD. The higher-confidence
+  // claim survives with unioned topics/entities. Merged indices are skipped
+  // during the persist loop.
+  // -----------------------------------------------------------------------
+  const mergedInto = new Map<number, number>(); // mergedIndex → survivorIndex
+  for (let i = 0; i < claims.length; i++) {
+    if (mergedInto.has(i)) continue;
+    const embI = embeddings[i];
+    if (!embI) continue;
+    for (let j = i + 1; j < claims.length; j++) {
+      if (mergedInto.has(j)) continue;
+      const embJ = embeddings[j];
+      if (!embJ) continue;
+      const sim = cosineSimilarity(embI, embJ);
+      if (sim >= CLAIM_INTRA_BATCH_DEDUP_THRESHOLD) {
+        // Merge j into i (or i into j if j has higher confidence)
+        const survivorIdx = claims[i].confidence >= claims[j].confidence ? i : j;
+        const mergedIdx = survivorIdx === i ? j : i;
+        const survivor = claims[survivorIdx];
+        const merged = claims[mergedIdx];
+
+        // Union topics and entity mentions
+        const topicSet = new Set([...(survivor.topics ?? []), ...(merged.topics ?? [])]);
+        survivor.topics = [...topicSet];
+        const existingEntities = new Set(survivor.entityMentions?.map((e) => `${e.entityType}:${e.name}`) ?? []);
+        for (const ent of merged.entityMentions ?? []) {
+          if (!existingEntities.has(`${ent.entityType}:${ent.name}`)) {
+            survivor.entityMentions.push(ent);
+          }
+        }
+        // Take the higher confidence
+        survivor.confidence = Math.max(survivor.confidence, merged.confidence);
+
+        mergedInto.set(mergedIdx, survivorIdx);
+        mergedInBatch++;
+        log.debug(
+          `${logPrefix}: intra-batch merge: "${merged.content.slice(0, 50)}" → "${survivor.content.slice(0, 50)}" (similarity=${sim.toFixed(3)}, kept confidence=${survivor.confidence.toFixed(2)})`,
+        );
+      }
+    }
+  }
+
+  if (mergedInBatch > 0) {
+    log.debug(`${logPrefix}: intra-batch dedup merged ${mergedInBatch} candidate(s)`);
+  }
 
   // Track created claim IDs by original batch index for intra-batch linking
   const createdClaimIds = new Map<number, number>();
 
   for (let i = 0; i < claims.length; i++) {
-    const claim = claims[i];
-    try {
-      const embedding = await generateEmbedding(claim.content);
+    // Skip candidates that were merged into another
+    if (mergedInto.has(i)) {
+      skipped++;
+      continue;
+    }
 
+    const claim = claims[i];
+    const embedding = embeddings[i];
+    try {
       // Semantic dedup against existing vNext claims (fail open)
       let nearDuplicate: { id: number; similarity: number } | undefined;
-      try {
-        const similar = await executeVnextClaimSemanticSearch(embedding, 3);
-        const match = similar.find(
-          (s) => s.similarity >= CLAIM_DEDUP_SIMILARITY_THRESHOLD,
-        );
-        if (match) {
-          nearDuplicate = { id: match.row.id, similarity: match.similarity };
+      if (embedding) {
+        try {
+          const similar = await executeVnextClaimSemanticSearch(embedding, 3);
+          const match = similar.find(
+            (s) => s.similarity >= CLAIM_DEDUP_SIMILARITY_THRESHOLD,
+          );
+          if (match) {
+            nearDuplicate = { id: match.row.id, similarity: match.similarity };
+          }
+        } catch (err) {
+          log.warn(
+            `${logPrefix}: semantic dedup failed open for "${claim.content.slice(0, 80)}": ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
-      } catch (err) {
-        log.warn(
-          `${logPrefix}: semantic dedup failed open for "${claim.content.slice(0, 80)}": ${err instanceof Error ? err.message : String(err)}`,
-        );
       }
 
       if (nearDuplicate) {
         await memoryVnextClaimStorage.reinforceClaim(nearDuplicate.id);
         log.debug(
-          `${logPrefix}: reinforced claim #${nearDuplicate.id} (similarity=${nearDuplicate.similarity.toFixed(3)}) for "${claim.content.slice(0, 60)}"`,
+          `${logPrefix}: reinforced existing claim #${nearDuplicate.id} (similarity=${nearDuplicate.similarity.toFixed(3)}) for "${claim.content.slice(0, 60)}"`,
         );
         reinforced++;
         continue;
@@ -987,7 +1076,7 @@ export async function persistClaimCandidates(
         source,
         sourceId,
         createdAt,
-        embedding,
+        embedding: embedding ?? undefined,
         metadata: {
           confidence: claim.confidence,
           claimType: claim.claimType,
@@ -1044,6 +1133,6 @@ export async function persistClaimCandidates(
     }
   }
 
-  return { created, reinforced, skipped };
+  return { created, reinforced, skipped, mergedInBatch };
 }
 
