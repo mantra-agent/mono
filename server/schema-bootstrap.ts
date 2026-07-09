@@ -667,7 +667,7 @@ export async function runSchemaBootstrap(
         id SERIAL PRIMARY KEY,
         environment_id INTEGER NOT NULL REFERENCES platform_product_environments(id) ON DELETE CASCADE,
         kind TEXT NOT NULL,
-        library_page_id UUID NOT NULL,
+        library_page_id TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(environment_id, kind)
@@ -675,6 +675,17 @@ export async function runSchemaBootstrap(
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_environment_context_artifacts_environment ON environment_context_artifacts(environment_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_environment_context_artifacts_kind ON environment_context_artifacts(kind)`);
+  });
+
+  await heal("context artifacts library_page_id UUID to TEXT", async () => {
+    // library_page_id was initially created as UUID but library page IDs are TEXT strings (UUIDs or slugs)
+    const { rows } = await pool.query(`
+      SELECT data_type FROM information_schema.columns
+      WHERE table_name = 'environment_context_artifacts' AND column_name = 'library_page_id'
+    `);
+    if (rows.length > 0 && rows[0].data_type === 'uuid') {
+      await pool.query(`ALTER TABLE environment_context_artifacts ALTER COLUMN library_page_id TYPE TEXT USING library_page_id::text`);
+    }
   });
 
   await heal("multi-user identity foundation tables", async () => {
