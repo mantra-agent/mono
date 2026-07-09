@@ -867,6 +867,10 @@ export async function runSchemaBootstrap(
             UPDATE emotional_states SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
             UPDATE personas SET scope = 'global', owner_user_id = NULL, account_id = NULL WHERE source = 'seed' OR is_default = true;
             UPDATE personas SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
+            UPDATE tasks SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id) WHERE owner_user_id IS NULL;
+            UPDATE projects SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id) WHERE owner_user_id IS NULL;
+            UPDATE persons SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id) WHERE owner_user_id IS NULL;
+            UPDATE principles SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id) WHERE owner_user_id IS NULL;
           END IF;
         END IF;
       END $$;
