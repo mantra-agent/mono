@@ -8,9 +8,12 @@ import type {
 import { createLogger } from "../log";
 import { TTLCache } from "../utils/ttl-cache";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { eventBus } from "../event-bus";
 
 const log = createLogger("StoreProjects");
+
+const projectScopeColumns = { scope: projects.scope, ownerUserId: projects.ownerUserId, accountId: projects.accountId };
 
 function principalCacheKey(): string {
   const principal = getCurrentPrincipalOrSystem();
@@ -63,15 +66,20 @@ export class FileProjectStorage {
   async getProjects(options?: { status?: string }): Promise<Project[]> {
     const cacheKey = `projects:${principalCacheKey()}:${options?.status || "all"}`;
     return this._projectsCache.getOrFetch(cacheKey, async () => {
+      const principal = getCurrentPrincipalOrSystem();
       const conditions = [];
       if (options?.status) {
         const statusVal = options.status === "planned" ? "planning" : options.status;
         conditions.push(eq(projects.status, statusVal));
       }
 
-      const rows = conditions.length > 0
-        ? await db.select().from(projects).where(and(...conditions))
-        : await db.select().from(projects);
+      const scopedWhere = combineWithVisibleScope(
+        principal,
+        projectScopeColumns,
+        conditions.length > 0 ? and(...conditions) : undefined
+      );
+
+      const rows = await db.select().from(projects).where(scopedWhere);
 
       const result = rows.map(rowToProject);
 
@@ -90,7 +98,10 @@ export class FileProjectStorage {
 
   async getProject(id: number): Promise<Project | undefined> {
     return this._singleProjectCache.getOrFetch(`project:${principalCacheKey()}:${id}`, async () => {
-      const rows = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
+      const principal = getCurrentPrincipalOrSystem();
+      const rows = await db.select().from(projects).where(
+        combineWithVisibleScope(principal, projectScopeColumns, eq(projects.id, id))
+      ).limit(1);
       if (rows.length === 0) {
         log.debug(`getProject id=${id} not-found`);
         return undefined;
@@ -130,6 +141,7 @@ export class FileProjectStorage {
       activity: [] as unknown as Record<string, unknown>,
       createdAt: now,
       updatedAt: now,
+      ...ownedInsertValues(getCurrentPrincipalOrSystem(), projectScopeColumns),
     }).returning();
 
     this.invalidateCache();
@@ -174,7 +186,9 @@ export class FileProjectStorage {
     if (updates.tags !== undefined) setValues.tags = updates.tags as unknown as Record<string, unknown>;
     if (updates.people !== undefined) setValues.people = updates.people as unknown as Record<string, unknown>;
 
-    const [row] = await db.update(projects).set(setValues).where(eq(projects.id, id)).returning();
+    const [row] = await db.update(projects).set(setValues).where(
+      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, id))
+    ).returning();
     this.invalidateCache();
     log.debug(`updateProject id=${id} fields=${Object.keys(updates).join(",")}`);
     return rowToProject(row);
@@ -201,7 +215,9 @@ export class FileProjectStorage {
     const [row] = await db.update(projects).set({
       milestones: milestones as unknown as Record<string, unknown>,
       updatedAt: new Date(),
-    }).where(eq(projects.id, projectId)).returning();
+    }).where(
+      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
+    ).returning();
 
     this.invalidateCache();
     log.debug(`addMilestone projectId=${projectId} milestoneId=${newId} name="${input.name}"`);
@@ -223,7 +239,9 @@ export class FileProjectStorage {
     const [row] = await db.update(projects).set({
       milestones: milestones as unknown as Record<string, unknown>,
       updatedAt: new Date(),
-    }).where(eq(projects.id, projectId)).returning();
+    }).where(
+      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
+    ).returning();
 
     this.invalidateCache();
     log.debug(`updateMilestone projectId=${projectId} milestoneId=${milestoneId}`);
@@ -241,7 +259,9 @@ export class FileProjectStorage {
     const [row] = await db.update(projects).set({
       milestones: milestones as unknown as Record<string, unknown>,
       updatedAt: new Date(),
-    }).where(eq(projects.id, projectId)).returning();
+    }).where(
+      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
+    ).returning();
 
     this.invalidateCache();
     log.debug(`removeMilestone projectId=${projectId} milestoneId=${milestoneId}`);
@@ -265,7 +285,9 @@ export class FileProjectStorage {
     const [row] = await db.update(projects).set({
       activity: activity as unknown as Record<string, unknown>,
       updatedAt: new Date(),
-    }).where(eq(projects.id, id)).returning();
+    }).where(
+      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, id))
+    ).returning();
 
     this.invalidateCache();
     log.debug(`addActivity id=${id} author=${author}`);
@@ -287,7 +309,9 @@ export class FileProjectStorage {
     const [row] = await db.update(projects).set({
       notes: notes as unknown as Record<string, unknown>,
       updatedAt: new Date(),
-    }).where(eq(projects.id, projectId)).returning();
+    }).where(
+      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
+    ).returning();
 
     this.invalidateCache();
     log.debug(`addNote projectId=${projectId} noteId=${noteId}`);
@@ -311,7 +335,9 @@ export class FileProjectStorage {
     const [row] = await db.update(projects).set({
       notes: notes as unknown as Record<string, unknown>,
       updatedAt: new Date(),
-    }).where(eq(projects.id, projectId)).returning();
+    }).where(
+      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
+    ).returning();
 
     this.invalidateCache();
     log.debug(`updateNote projectId=${projectId} noteId=${noteId}`);
@@ -329,7 +355,9 @@ export class FileProjectStorage {
     const [row] = await db.update(projects).set({
       notes: notes as unknown as Record<string, unknown>,
       updatedAt: new Date(),
-    }).where(eq(projects.id, projectId)).returning();
+    }).where(
+      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
+    ).returning();
 
     this.invalidateCache();
     log.debug(`removeNote projectId=${projectId} noteId=${noteId}`);
@@ -347,7 +375,9 @@ export class FileProjectStorage {
     const [row] = await db.update(projects).set({
       files: files as unknown as Record<string, unknown>,
       updatedAt: new Date(),
-    }).where(eq(projects.id, projectId)).returning();
+    }).where(
+      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
+    ).returning();
 
     this.invalidateCache();
     log.debug(`addFile projectId=${projectId} fileId=${file.id} name="${file.name}"`);
@@ -371,7 +401,9 @@ export class FileProjectStorage {
     await db.update(projects).set({
       files: files as unknown as Record<string, unknown>,
       updatedAt: new Date(),
-    }).where(eq(projects.id, projectId));
+    }).where(
+      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
+    );
 
     this.invalidateCache();
     log.debug(`removeFile projectId=${projectId} fileId=${fileId}`);
@@ -379,7 +411,9 @@ export class FileProjectStorage {
   }
 
   async deleteProject(id: number): Promise<boolean> {
-    const result = await db.delete(projects).where(eq(projects.id, id));
+    const result = await db.delete(projects).where(
+      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, id))
+    );
     const deleted = (result.rowCount ?? 0) > 0;
     log.debug(`deleteProject id=${id} success=${deleted}`);
     this.invalidateCache();

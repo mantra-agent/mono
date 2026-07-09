@@ -5,9 +5,12 @@ import type { Task, InsertTask, TaskStatus } from "@shared/models/work";
 import { createLogger } from "../log";
 import { TTLCache } from "../utils/ttl-cache";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { eventBus } from "../event-bus";
 
 const log = createLogger("StoreTasks");
+
+const taskScopeColumns = { scope: tasks.scope, ownerUserId: tasks.ownerUserId, accountId: tasks.accountId };
 
 function principalCacheKey(): string {
   const principal = getCurrentPrincipalOrSystem();
@@ -63,9 +66,10 @@ export class FileTaskStorage {
       if (options?.owner) conditions.push(eq(tasks.owner, options.owner));
       if (options?.priority) conditions.push(eq(tasks.priority, options.priority));
 
-      const rows = conditions.length > 0
-        ? await db.select().from(tasks).where(and(...conditions))
-        : await db.select().from(tasks);
+      const predicate = conditions.length > 0 ? and(...conditions) : undefined;
+      const rows = await db.select().from(tasks).where(
+        combineWithVisibleScope(getCurrentPrincipalOrSystem(), taskScopeColumns, predicate),
+      );
 
       const result = rows.map(rowToTask);
 
@@ -84,12 +88,12 @@ export class FileTaskStorage {
 
   async getTodoTasks(): Promise<Task[]> {
     return this._todoCache.getOrFetch(`todo:${principalCacheKey()}`, async () => {
+      const predicate = and(
+        eq(tasks.owner, "me"),
+        sql`${tasks.status} IN ('ready', 'active')`,
+      );
       const rows = await db.select().from(tasks).where(
-        and(
-          eq(tasks.owner, "me"),
-          // status IN ('ready', 'active')
-          sql`${tasks.status} IN ('ready', 'active')`,
-        ),
+        combineWithVisibleScope(getCurrentPrincipalOrSystem(), taskScopeColumns, predicate),
       );
       const todos = rows.map(rowToTask);
       log.log(`getTodoTasks count=${todos.length}`);
@@ -99,7 +103,9 @@ export class FileTaskStorage {
 
   async getTask(id: number): Promise<Task | undefined> {
     return this._singleTaskCache.getOrFetch(`task:${principalCacheKey()}:${id}`, async () => {
-      const rows = await db.select().from(tasks).where(eq(tasks.id, id)).limit(1);
+      const rows = await db.select().from(tasks).where(
+        combineWithVisibleScope(getCurrentPrincipalOrSystem(), taskScopeColumns, eq(tasks.id, id)),
+      ).limit(1);
       if (rows.length === 0) {
         log.log(`getTask id=${id} not-found`);
         return undefined;
@@ -133,6 +139,7 @@ export class FileTaskStorage {
       tokenEstimate: input.tokenEstimate ?? null,
       createdAt: now,
       updatedAt: now,
+      ...ownedInsertValues(getCurrentPrincipalOrSystem(), taskScopeColumns),
     }).returning();
 
     this.invalidateCache();
@@ -167,7 +174,13 @@ export class FileTaskStorage {
     if (updates.deadline !== undefined) setValues.deadline = updates.deadline;
     if (updates.tokenEstimate !== undefined) setValues.tokenEstimate = updates.tokenEstimate;
 
-    const [row] = await db.update(tasks).set(setValues).where(eq(tasks.id, id)).returning();
+    const [row] = await db.update(tasks).set(setValues).where(
+      combineWithWritableScope(getCurrentPrincipalOrSystem(), taskScopeColumns, eq(tasks.id, id)),
+    ).returning();
+    if (!row) {
+      log.log(`updateTask id=${id} not-writable`);
+      return undefined;
+    }
     if (updates.status && updates.status !== existing.status) {
       log.log(`statusChange from=${existing.status} to=${updates.status} taskId=${id} title="${row.title}"`);
     }
@@ -177,7 +190,9 @@ export class FileTaskStorage {
   }
 
   async deleteTask(id: number): Promise<boolean> {
-    const result = await db.delete(tasks).where(eq(tasks.id, id));
+    const result = await db.delete(tasks).where(
+      combineWithWritableScope(getCurrentPrincipalOrSystem(), taskScopeColumns, eq(tasks.id, id)),
+    );
     const deleted = (result.rowCount ?? 0) > 0;
     log.log(`deleteTask id=${id} success=${deleted}`);
     this.invalidateCache();
