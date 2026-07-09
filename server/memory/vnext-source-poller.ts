@@ -41,6 +41,12 @@ const MAX_CLAIMS_PER_SOURCE = 3;
 /** Similarity threshold for semantic deduplication */
 const CLAIM_DEDUP_SIMILARITY_THRESHOLD = 0.9;
 
+/** Confidence decay per re-extraction miss */
+const RECONCILIATION_DECAY_DELTA = 0.1;
+
+/** Confidence at or below which claims become retirement candidates */
+const RETIREMENT_CONFIDENCE_THRESHOLD = 0.1;
+
 /** Stuck processing timeout in minutes */
 const STUCK_PROCESSING_TIMEOUT_MINUTES = 30;
 
@@ -263,9 +269,17 @@ async function persistClaims(
 // Single source processing
 // ---------------------------------------------------------------------------
 
+interface ProcessSourceResult {
+  created: number;
+  reinforced: number;
+  skipped: number;
+  decayed: number;
+  retirementCandidates: number;
+}
+
 async function processSource(
   row: MemoryVnextSourceQueueRow,
-): Promise<{ created: number; reinforced: number; skipped: number }> {
+): Promise<ProcessSourceResult> {
   log.info(
     `processSource: start source=${row.sourceType}:${row.sourceId} queueId=${row.id}`,
   );
@@ -276,7 +290,7 @@ async function processSource(
       `processSource: no content source=${row.sourceType}:${row.sourceId}, marking completed`,
     );
     await markCompleted(row.id, "empty");
-    return { created: 0, reinforced: 0, skipped: 0 };
+    return { created: 0, reinforced: 0, skipped: 0, decayed: 0, retirementCandidates: 0 };
   }
 
   // Hash check — skip if content unchanged since last extraction
@@ -286,7 +300,23 @@ async function processSource(
       `processSource: unchanged source=${row.sourceType}:${row.sourceId} hash=${contentHash.slice(0, 8)}`,
     );
     await markCompleted(row.id, contentHash);
-    return { created: 0, reinforced: 0, skipped: 0 };
+    return { created: 0, reinforced: 0, skipped: 0, decayed: 0, retirementCandidates: 0 };
+  }
+
+  // Detect re-extraction: if lastExtractedAt is set, this source was previously processed
+  const isReExtraction = !!row.lastExtractedAt;
+
+  // Collect existing claim content hashes before extraction for reconciliation
+  let preExistingClaimIds: Set<number> | undefined;
+  if (isReExtraction) {
+    const existingClaims = await memoryVnextClaimStorage.findClaimsBySourceOrigin(
+      sourceContent.sourceType,
+      row.sourceId,
+    );
+    preExistingClaimIds = new Set(existingClaims.map((c) => c.id));
+    log.info(
+      `processSource: re-extraction detected, ${preExistingClaimIds.size} existing claims for source=${row.sourceType}:${row.sourceId}`,
+    );
   }
 
   // Chunk and extract
@@ -312,18 +342,110 @@ async function processSource(
     `processSource: extracted ${claims.length} claims from source=${row.sourceType}:${row.sourceId}`,
   );
 
-  let result = { created: 0, reinforced: 0, skipped: 0 };
+  let result: ProcessSourceResult = { created: 0, reinforced: 0, skipped: 0, decayed: 0, retirementCandidates: 0 };
   if (claims.length > 0) {
-    result = await persistClaims(claims, sourceContent, row);
+    const persistResult = await persistClaims(claims, sourceContent, row);
+    result.created = persistResult.created;
+    result.reinforced = persistResult.reinforced;
+    result.skipped = persistResult.skipped;
+  }
+
+  // Reconciliation: decay claims that were NOT re-produced during re-extraction
+  if (isReExtraction && preExistingClaimIds && preExistingClaimIds.size > 0) {
+    const reconcileResult = await reconcileStaleClaimsAfterReExtraction(
+      preExistingClaimIds,
+      sourceContent.sourceType,
+      row.sourceId,
+    );
+    result.decayed = reconcileResult.decayed;
+    result.retirementCandidates = reconcileResult.retirementCandidates;
   }
 
   await markCompleted(row.id, contentHash);
 
   log.info(
-    `processSource: complete source=${row.sourceType}:${row.sourceId} created=${result.created} reinforced=${result.reinforced} skipped=${result.skipped}`,
+    `processSource: complete source=${row.sourceType}:${row.sourceId} created=${result.created} reinforced=${result.reinforced} skipped=${result.skipped} decayed=${result.decayed} retirementCandidates=${result.retirementCandidates}`,
   );
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Reconciliation: decay unreproduced claims after re-extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * After re-extracting claims from an edited source, compare the current
+ * set of claims from that source against the pre-existing set.
+ *
+ * Claims that were reinforced during persistClaims (semantic dedup match)
+ * will have a bumped recallCount/lastRecalledAt. Claims that were NOT
+ * re-produced get their confidence decayed. Claims at or below the
+ * retirement threshold become candidates for retirement.
+ */
+async function reconcileStaleClaimsAfterReExtraction(
+  preExistingClaimIds: Set<number>,
+  source: string,
+  sourceId: string,
+): Promise<{ decayed: number; retirementCandidates: number }> {
+  // Re-fetch the claims to see which ones were reinforced (updated recently)
+  const currentClaims = await memoryVnextClaimStorage.findClaimsBySourceOrigin(
+    source,
+    sourceId,
+  );
+
+  // Claims that were reinforced will have lastRecalledAt updated during this run
+  // We use a 5-minute window to detect "just reinforced"
+  const recentThreshold = new Date(Date.now() - 5 * 60 * 1000);
+
+  let decayed = 0;
+  let retirementCandidates = 0;
+
+  for (const claim of currentClaims) {
+    if (!preExistingClaimIds.has(claim.id)) {
+      // Newly created claim, not a pre-existing one
+      continue;
+    }
+
+    // Check if this claim was reinforced during the current extraction
+    const wasReinforced =
+      claim.lastRecalledAt && claim.lastRecalledAt > recentThreshold;
+
+    if (wasReinforced) {
+      log.debug(
+        `reconcile: claim #${claim.id} reinforced, skipping decay`,
+      );
+      continue;
+    }
+
+    // This pre-existing claim was NOT re-produced — decay confidence
+    const updated = await memoryVnextClaimStorage.decayClaimConfidence(
+      claim.id,
+      RECONCILIATION_DECAY_DELTA,
+    );
+
+    if (updated) {
+      decayed++;
+      if (updated.confidence <= RETIREMENT_CONFIDENCE_THRESHOLD) {
+        retirementCandidates++;
+        log.info(
+          `reconcile: claim #${claim.id} confidence=${updated.confidence.toFixed(2)} is retirement candidate`,
+        );
+      } else {
+        log.debug(
+          `reconcile: claim #${claim.id} confidence decayed to ${updated.confidence.toFixed(2)}`,
+        );
+      }
+    }
+  }
+
+  if (decayed > 0) {
+    log.info(
+      `reconcile: source=${source}:${sourceId} decayed=${decayed} retirementCandidates=${retirementCandidates}`,
+    );
+  }
+
+  return { decayed, retirementCandidates };
 }
 
 // ---------------------------------------------------------------------------
@@ -371,6 +493,8 @@ export async function processSettledSources(): Promise<{
   totalCreated: number;
   totalReinforced: number;
   totalSkipped: number;
+  totalDecayed: number;
+  totalRetirementCandidates: number;
   errors: number;
 }> {
   // Reset any stuck processing rows first (crash recovery)
@@ -385,6 +509,8 @@ export async function processSettledSources(): Promise<{
       totalCreated: 0,
       totalReinforced: 0,
       totalSkipped: 0,
+      totalDecayed: 0,
+      totalRetirementCandidates: 0,
       errors: 0,
     };
   }
@@ -395,6 +521,8 @@ export async function processSettledSources(): Promise<{
   let totalCreated = 0;
   let totalReinforced = 0;
   let totalSkipped = 0;
+  let totalDecayed = 0;
+  let totalRetirementCandidates = 0;
   let errors = 0;
 
   for (const row of sources) {
@@ -410,6 +538,8 @@ export async function processSettledSources(): Promise<{
       totalCreated += result.created;
       totalReinforced += result.reinforced;
       totalSkipped += result.skipped;
+      totalDecayed += result.decayed;
+      totalRetirementCandidates += result.retirementCandidates;
     } catch (err) {
       errors++;
       log.error(
@@ -420,7 +550,7 @@ export async function processSettledSources(): Promise<{
   }
 
   log.info(
-    `processSettledSources: complete processed=${processed} created=${totalCreated} reinforced=${totalReinforced} skipped=${totalSkipped} errors=${errors}`,
+    `processSettledSources: complete processed=${processed} created=${totalCreated} reinforced=${totalReinforced} skipped=${totalSkipped} decayed=${totalDecayed} retirementCandidates=${totalRetirementCandidates} errors=${errors}`,
   );
 
   return {
@@ -428,6 +558,8 @@ export async function processSettledSources(): Promise<{
     totalCreated,
     totalReinforced,
     totalSkipped,
+    totalDecayed,
+    totalRetirementCandidates,
     errors,
   };
 }
