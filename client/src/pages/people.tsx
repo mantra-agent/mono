@@ -1811,7 +1811,7 @@ function ProfileTreeRow({
   return (
     <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
       <div className="group last:border-b-0">
-        <div className="group relative flex items-center gap-2 rounded-md px-2 py-1.5 text-sm w-full text-left select-none transition-colors overflow-hidden hover:bg-accent/70">
+        <div className="group relative flex items-center gap-2 rounded-md px-2 py-1.5 text-sm w-full text-left select-none transition-colors hover:bg-accent/70">
           <div className="flex min-w-0 flex-1 items-center gap-2 text-muted-foreground">
             <span className="flex items-center justify-center shrink-0 text-muted-foreground">{icon}</span>
             <span className="truncate">{label}</span>
@@ -2425,7 +2425,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
                 variant="ghost"
                 size="icon"
                 className="h-5 w-5 shrink-0 text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground"
-                onClick={() => document.getElementById(`met-picker-${person.id}`)?.click()}
+                onClick={() => { const el = document.getElementById(`met-picker-${person.id}`) as HTMLInputElement | null; if (el) { try { el.showPicker(); } catch { el.click(); } } }}
                 data-testid="button-met-calendar"
               >
                 <Calendar className="h-3 w-3" />
@@ -2450,7 +2450,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
                   id={`met-picker-${person.id}`}
                   type="date"
                   defaultValue={person.met || ""}
-                  className="sr-only"
+                  className="absolute inset-0 opacity-0 pointer-events-none"
                   tabIndex={-1}
                   onChange={(e) => { const v = e.target.value; updateMutation.mutate({ met: v || undefined }); setEditingMet(false); }}
                   aria-hidden="true"
@@ -2501,7 +2501,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
             ) : <Button variant="ghost" size="icon" onClick={() => setEditingTrust(true)} data-testid="button-add-trust"><Plus className="h-3 w-3" /></Button>}
           </ProfileTreeRow>
 
-          <ProfileTreeRow label={<span data-testid="label-introduced-by">Introduced</span>} icon={<Link2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.introducedBy && introducedByPerson)} showEmpty={showEmptyProfileRows || showIntroducedBySearch} actionContent={person.introducedBy && introducedByPerson ? <Button size="icon" variant="ghost" className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => updateMutation.mutate({ introducedBy: "" })} data-testid="button-remove-introduced-by"><X className="h-3 w-3" /></Button> : undefined} testId="row-profile-introduced-by">
+          <ProfileTreeRow label={<span data-testid="label-introduced-by">Intro</span>} icon={<Link2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.introducedBy && introducedByPerson)} showEmpty={showEmptyProfileRows || showIntroducedBySearch} actionContent={person.introducedBy && introducedByPerson ? <Button size="icon" variant="ghost" className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => updateMutation.mutate({ introducedBy: "" })} data-testid="button-remove-introduced-by"><X className="h-3 w-3" /></Button> : undefined} testId="row-profile-introduced-by">
             <div className="relative flex justify-end">
               {showIntroducedBySearch ? (
                 <div>
@@ -2522,7 +2522,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
 
           {person.contactInfo.map((c, i) => <ProfileTreeRow key={`contact-${i}`} label={c.label || contactTypeLabels[c.type] || c.type} icon={c.type === "email" ? <Mail className="h-3.5 w-3.5" /> : c.type === "phone" ? <Phone className="h-3.5 w-3.5" /> : <ContactRound className="h-3.5 w-3.5" />} hasValue={Boolean(c.value)} showEmpty={showEmptyProfileRows} actionContent={<Button size="icon" variant="ghost" className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => setPendingContactDeleteIndex(i)} data-testid={`button-remove-contact-${i}`}><X className="h-3 w-3" /></Button>} testId={`row-profile-contact-${i}`}><Input key={`${c.type}-${c.value}`} defaultValue={c.value} placeholder={c.label || contactTypeLabels[c.type] || c.type} onBlur={(e) => { const v = e.target.value.trim(); if (v !== c.value) updateMutation.mutate({ contactInfo: person.contactInfo.map((item, idx) => idx === i ? { ...item, value: v } : item).filter(item => item.value.trim()) }); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") (e.target as HTMLInputElement).value = c.value; }} data-testid={`input-contact-${i}`} /></ProfileTreeRow>)}
 
-          <ProfileTreeRow label="New contact" icon={<Plus className="h-3.5 w-3.5" />} hasValue={showAddContact} showEmpty={showEmptyProfileRows || showAddContact} testId="row-profile-new-contact">{showAddContact ? <div className="flex flex-wrap items-center justify-end gap-1.5"><Select value={newContactType} onValueChange={(v) => setNewContactType(v as any)}><SelectTrigger className="w-48" data-testid="select-contact-type"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="email">Email</SelectItem><SelectItem value="phone">Phone</SelectItem><SelectItem value="social">Social</SelectItem><SelectItem value="other">Other</SelectItem></SelectContent></Select><Input value={newContactLabel} onChange={(e) => setNewContactLabel(e.target.value)} placeholder="Label" className="h-8 w-20 text-right" data-testid="input-contact-label" /><Input value={newContactValue} onChange={(e) => setNewContactValue(e.target.value)} placeholder="Value" className="h-8 min-w-[120px] flex-1 text-right" data-testid="input-contact-value" /><Button size="sm" onClick={() => { if (newContactValue.trim()) { updateMutation.mutate({ contactInfo: [...person.contactInfo, { type: newContactType, label: newContactLabel || contactTypeLabels[newContactType], value: newContactValue }] }); setShowAddContact(false); setNewContactLabel(""); setNewContactValue(""); } }} data-testid="button-save-contact">Add</Button><Button variant="ghost" size="icon" onClick={() => setShowAddContact(false)}><X className="h-3 w-3" /></Button></div> : <Button variant="ghost" size="sm" onClick={() => setShowAddContact(true)} data-testid="button-add-contact"><Plus className="mr-1 h-3 w-3" />Contact info</Button>}</ProfileTreeRow>
+          {showAddContact ? <ProfileTreeRow label="New contact" icon={<Plus className="h-3.5 w-3.5" />} hasValue={true} showEmpty={true} testId="row-profile-new-contact"><div className="flex flex-wrap items-center justify-end gap-1.5"><Select value={newContactType} onValueChange={(v) => setNewContactType(v as any)}><SelectTrigger className="w-48" data-testid="select-contact-type"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="email">Email</SelectItem><SelectItem value="phone">Phone</SelectItem><SelectItem value="social">Social</SelectItem><SelectItem value="other">Other</SelectItem></SelectContent></Select><Input value={newContactLabel} onChange={(e) => setNewContactLabel(e.target.value)} placeholder="Label" className="h-8 w-20 text-right" data-testid="input-contact-label" /><Input value={newContactValue} onChange={(e) => setNewContactValue(e.target.value)} placeholder="Value" className="h-8 min-w-[120px] flex-1 text-right" data-testid="input-contact-value" /><Button size="sm" onClick={() => { if (newContactValue.trim()) { updateMutation.mutate({ contactInfo: [...person.contactInfo, { type: newContactType, label: newContactLabel || contactTypeLabels[newContactType], value: newContactValue }] }); setShowAddContact(false); setNewContactLabel(""); setNewContactValue(""); } }} data-testid="button-save-contact">Add</Button><Button variant="ghost" size="icon" onClick={() => setShowAddContact(false)}><X className="h-3 w-3" /></Button></div></ProfileTreeRow> : <div className="px-2 py-1"><Button variant="ghost" size="sm" onClick={() => setShowAddContact(true)} data-testid="button-add-contact"><Plus className="mr-1 h-3 w-3" />Contact info</Button></div>}
         </div>
 
         <InteractionsTab person={person} onUpdate={handleRefetch} showAdd={showNewLog} setShowAdd={setShowNewLog} />
