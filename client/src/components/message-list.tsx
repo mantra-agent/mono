@@ -257,6 +257,7 @@ export function MessageList({
   for (const msg of messages) {
     if (msg.role === "assistant" && !msg.id.startsWith("draft-") && !hasRenderableAssistantPayload(msg)) continue;
     if (msg.role === "cross_session" && isOutgoingChildMessage(msg, activeSession)) continue;
+    if (msg.role === "cross_session" && layer < 2) continue;
     if (msg.role === "child_session_block" && hasChildSessionId(msg.childSession)) {
       if (latestPersistedChildMessageId.get(msg.childSession.childSessionId) !== msg.id) continue;
     }
@@ -284,11 +285,13 @@ export function MessageList({
     if (persistedChildIds.has(lc.meta.childSessionId)) continue;
     items.push({ kind: "live_child", meta: lc.meta, ts: getChildSessionChronologyTs(lc.meta, lc.receivedAt, sessionStreams?.[lc.meta.childSessionId]) });
   }
-  for (const cm of crossMessages) {
-    const key = `${cm.meta.fromSessionId}:${cm.meta.toSessionId}:${cm.receivedAt}`;
-    if (persistedCrossKeys.has(key)) continue;
-    if (isOutgoingChildMessage({ crossSession: cm.meta }, activeSession)) continue;
-    items.push({ kind: "live_cross", id: cm.id, meta: cm.meta, content: cm.content, ts: cm.receivedAt });
+  if (layer >= 2) {
+    for (const cm of crossMessages) {
+      const key = `${cm.meta.fromSessionId}:${cm.meta.toSessionId}:${cm.receivedAt}`;
+      if (persistedCrossKeys.has(key)) continue;
+      if (isOutgoingChildMessage({ crossSession: cm.meta }, activeSession)) continue;
+      items.push({ kind: "live_cross", id: cm.id, meta: cm.meta, content: cm.content, ts: cm.receivedAt });
+    }
   }
   items.sort((a, b) => a.ts - b.ts);
   const optimisticUserSubmittedAt = optimisticUserTurn ? getTimestamp(optimisticUserTurn.submittedAt, Date.now()) : null;
