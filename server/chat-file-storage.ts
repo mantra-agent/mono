@@ -677,62 +677,15 @@ async function syncSessionMemoryMirrorIfReady(data: SessionData, options?: { wri
   }
 
   try {
-    const vnextSource = buildVnextSessionExtractionContent(data, fallback.summary);
+    const principal = getCurrentPrincipalOrSystem();
+    const { upsertSource } = await import("./memory/vnext-source-queue");
+    await upsertSource("session", data.id, principal);
     memoryMirrorLog.info(
-      `[vnext_ingest] trigger source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId} ` +
-      `sourceLabel=${vnextSource.reason} contentLength=${vnextSource.content.length} messageCount=${data.messages.length}`,
+      `[vnext_ingest] queued source=session sessionId=${data.id} memoryEntryId=${memEntryId} messageCount=${data.messages.length}`,
     );
-    const { memoryStorage } = await import("./memory/memory-storage");
-    const sourceMemoryEntry = await memoryStorage.getEntry(memEntryId);
-    if (!sourceMemoryEntry) {
-      memoryMirrorLog.warn(`[vnext_ingest] skip source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId} reason=memory_entry_not_found_after_upsert`);
-      return;
-    }
-    const { processVnextClaimsForSource } = await import("./memory/consolidation");
-    const result = await processVnextClaimsForSource({
-      sourceMemoryEntry,
-      content: vnextSource.content,
-      title: data.title,
-      sourceLabel: vnextSource.reason,
-      sourceRefs: [
-        {
-          sourceType: "memory",
-          sourceId: String(memEntryId),
-          relationship: "extracted_from",
-          context: "Legacy session summary mirror retained as provenance for direct vNext session extraction",
-          strength: 1,
-        },
-        {
-          sourceType: "chat_journal",
-          sourceId: data.id,
-          relationship: "extracted_from",
-          context: "Claim extracted directly from saved session content",
-          strength: 1,
-        },
-      ],
-    }, "session_content");
-    memoryMirrorLog.info(
-      `[vnext_ingest] result source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId} sourceLabel=${vnextSource.reason} ` +
-      `created=${result.created} reinforced=${result.reinforced} skipped=${result.skipped}`,
-    );
-
-    const { runVnextLifecycle } = await import("./memory/vnext-lifecycle");
-    const lifecycle = await runVnextLifecycle({ limit: 25, trigger: "session_memory_mirror" });
-    memoryMirrorLog.info(
-      `[vnext_lifecycle] result source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId} ` +
-      `runId=${lifecycle.runId} scanned=${lifecycle.scanned} candidateCounts=${JSON.stringify(lifecycle.candidateCounts)} ` +
-      `sourced=${lifecycle.sourced} linked=${lifecycle.linked} canonicalized=${lifecycle.canonicalized} retired=${lifecycle.retired} ` +
-      `skipped=${lifecycle.skipped} skippedByReason=${JSON.stringify(lifecycle.skippedByReason)} errors=${lifecycle.errors}`,
-    );
-    const { eventBus } = await import("./event-bus");
-    eventBus.publish({
-      category: "memory",
-      event: "entries_changed",
-      payload: { action: "vnext_lifecycle", source: "chat_journal", sessionId: data.id, memoryEntryId: memEntryId, storage: "memory_vnext_claims", ...lifecycle, level: lifecycle.errors > 0 ? "warn" : "info" },
-    });
   } catch (err: unknown) {
     memoryMirrorLog.warn(
-      `[vnext_ingest] failed source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId} ` +
+      `[vnext_ingest] queue_failed source=session sessionId=${data.id} memoryEntryId=${memEntryId} ` +
       `error=${err instanceof Error ? err.message : String(err)}`,
     );
   }
