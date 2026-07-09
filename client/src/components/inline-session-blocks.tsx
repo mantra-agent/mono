@@ -24,7 +24,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { stripMessageTimestamp } from "@/components/chat-shared";
+import { filterStepsByLayer, stripMessageTimestamp } from "@/components/chat-shared";
 import { useEventStream } from "@/hooks/use-event-stream";
 import {
   segmentsFromSavedMessage,
@@ -46,7 +46,7 @@ interface ChildSessionPayload {
   messages?: ChatMessage[];
 }
 
-function latestContentFromSegments(segments: MessageSegment[]): string | null {
+function latestContentFromSegments(segments: MessageSegment[], layer: 1 | 2 | 3 | 4, isActiveSession: boolean): string | null {
   for (const segment of [...segments].reverse()) {
     if (segment.type === "content") {
       const lines = stripMessageTimestamp(segment.content)
@@ -57,7 +57,7 @@ function latestContentFromSegments(segments: MessageSegment[]): string | null {
       if (text) return text;
     }
 
-    const latestStep = [...segment.steps].reverse().find((step) => {
+    const latestStep = [...filterStepsByLayer(segment.steps, layer, isActiveSession)].reverse().find((step) => {
       return Boolean(step.narrative || step.systemStepDetail || step.thinking || step.toolName || step.systemStepName);
     });
     if (!latestStep) continue;
@@ -181,7 +181,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
   }, [hasActiveChildSub, childSub.streamingContent, childMessages]);
 
   const latestLine = useMemo(() => {
-    const fromSegments = latestContentFromSegments(segments);
+    const fromSegments = latestContentFromSegments(segments, layer, hasActiveChildSub);
     if (fromSegments) return fromSegments;
 
     const latest = [...childMessages]
@@ -329,7 +329,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
             <SegmentStream
               segments={segments}
               isStreaming={hasActiveChildSub}
-              layer={Math.max(layer, 2) as 2 | 3 | 4}
+              layer={layer}
             />
           )}
         </div>
