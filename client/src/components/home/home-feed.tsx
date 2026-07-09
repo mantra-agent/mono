@@ -364,6 +364,10 @@ function LibrarySurfaceSnoozed({ peopleItems }: { peopleItems: SimpleFeedItem[] 
     },
   });
 
+  const hasItems = snoozed.length > 0 || peopleItems.length > 0;
+
+  if (!hasItems) return null;
+
   return (
     <section className="scroll-mt-6">
       <button
@@ -374,7 +378,7 @@ function LibrarySurfaceSnoozed({ peopleItems }: { peopleItems: SimpleFeedItem[] 
         <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", expanded && "rotate-90")} />
         Snoozed
       </button>
-      {expanded && (snoozed.length > 0 || peopleItems.length > 0) && (
+      {expanded && (
         <div className="mt-0">
           {peopleItems.map(item => <SurfacedPersonRow key={item.id} item={item} dateLabel={surfacedDateLabel(item)} />)}
           {snoozed.map(page => (
@@ -386,9 +390,6 @@ function LibrarySurfaceSnoozed({ peopleItems }: { peopleItems: SimpleFeedItem[] 
             />
           ))}
         </div>
-      )}
-      {expanded && snoozed.length === 0 && peopleItems.length === 0 && (
-        <div className="px-6 py-2 text-xs text-muted-foreground/60">Nothing snoozed</div>
       )}
     </section>
   );
