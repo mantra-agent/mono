@@ -89,6 +89,13 @@ const DIRECT_SECTIONS: Array<{
     placeholder: "NVDA (ticker) or TRENDING",
     normalize: (v: string) => v.trim().toUpperCase(),
   },
+  {
+    type: "arxiv",
+    label: "arXiv",
+    icon: Newspaper,
+    placeholder: "cs.AI (category) or large language models (keyword)",
+    normalize: (v: string) => v.trim(),
+  },
 ];
 
 export default function LandscapeSources({ embedded }: { embedded?: boolean }) {
