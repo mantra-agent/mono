@@ -57,6 +57,7 @@ import {
 } from "../scoped-storage";
 import { WORKSPACE_DIR } from "../paths";
 import { eventBus } from "../event-bus";
+import { upsertSource as upsertVnextSource } from "../memory/vnext-source-queue";
 
 const log = createLogger("InfoRoutes");
 
@@ -983,6 +984,12 @@ export async function registerLibraryRoutes(app: Express) {
       );
 
       publishLibraryChanged("created", page);
+
+      // Queue for vNext claim extraction
+      upsertVnextSource("library_page", page.id, principal).catch((e) =>
+        log.warn(`vNext source queue upsert failed for new page ${page.id}: ${e.message}`),
+      );
+
       res.status(201).json(page);
     } catch (err: any) {
       if (err.name === "ZodError")
@@ -1066,6 +1073,18 @@ export async function registerLibraryRoutes(app: Express) {
       upsertLibraryPageMemory(updated).catch((e) =>
         log.warn(`Library memory upsert failed: ${e.message}`),
       );
+
+      // Queue for vNext claim extraction on material content changes
+      const hasMaterialChange =
+        updates.content !== undefined ||
+        updates.plainTextContent !== undefined ||
+        updates.title !== undefined;
+      if (hasMaterialChange) {
+        const principal = principalOrThrow(req);
+        upsertVnextSource("library_page", updated.id, principal).catch((e) =>
+          log.warn(`vNext source queue upsert failed for page ${updated.id}: ${e.message}`),
+        );
+      }
 
       publishLibraryChanged("updated", updated);
       res.json(updated);
