@@ -53,7 +53,7 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
     const enabledSources = allSources.filter(s => s.enabled);
 
     const hasChannels = enabledSources.some(s => s.sourceType === "channel_x" || s.sourceType === "channel_web");
-    const hasDirectSources = enabledSources.some(s => ["subreddit", "rss_feed", "x_account"].includes(s.sourceType));
+    const hasDirectSources = enabledSources.some(s => ["subreddit", "rss_feed", "x_account", "hackernews", "github_repo"].includes(s.sourceType));
     if (!hasChannels && !hasDirectSources) {
       await signalStorage.completeScanRun(scanRun.id, {
         sourcesScanned: 0,
@@ -85,6 +85,8 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
     const subreddits = enabledSources.filter(s => s.sourceType === "subreddit");
     const rssFeeds = enabledSources.filter(s => s.sourceType === "rss_feed");
     const xAccounts = enabledSources.filter(s => s.sourceType === "x_account");
+    const hnSources = enabledSources.filter(s => s.sourceType === "hackernews");
+    const githubRepos = enabledSources.filter(s => s.sourceType === "github_repo");
 
     const webQueryItems = channelWeb ? queries.map(q => ({ id: channelWeb.id, value: q })) : [];
     const xQueryItems = channelX ? queries.map(q => ({ id: channelX.id, value: q })) : [];
@@ -141,6 +143,20 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
           await signalStorage.updateSource(sourceId, { cachedUserId: userId });
         }
       } catch (err) { errors.push(`x_accounts: ${(err as Error).message}`); }
+    }
+
+    if (hnSources.length > 0) {
+      try {
+        const hnSignals = await adapters.scanHackerNewsSources(hnSources.map(s => ({ id: s.id, value: s.value })));
+        allSignals.push(...hnSignals);
+      } catch (err) { errors.push(`hackernews: ${(err as Error).message}`); }
+    }
+
+    if (githubRepos.length > 0) {
+      try {
+        const ghSignals = await adapters.scanGitHubRepoSources(githubRepos.map(s => ({ id: s.id, value: s.value })));
+        allSignals.push(...ghSignals);
+      } catch (err) { errors.push(`github: ${(err as Error).message}`); }
     }
 
     const preDedup = allSignals.length;

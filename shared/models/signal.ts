@@ -6,6 +6,7 @@ import { z } from "zod";
 // ── Enums ──────────────────────────────────────────────────────────
 export const signalSourceTypes = [
   "x_account", "subreddit", "rss_feed", "pinned_topic",
+  "hackernews", "github_repo",
 ] as const;
 export type SignalSourceType = typeof signalSourceTypes[number];
 

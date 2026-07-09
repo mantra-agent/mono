@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Trash2, Clock, Globe, Twitter, MessageSquare, Rss, UserCircle } from "lucide-react";
+import { Trash2, Clock, Globe, Twitter, MessageSquare, Rss, UserCircle, Newspaper, Github } from "lucide-react";
 
 interface ChannelSource {
   id: string;
@@ -60,6 +60,20 @@ const DIRECT_SECTIONS: Array<{
     icon: UserCircle,
     placeholder: "@sama",
     normalize: (v: string) => v.replace(/^@/, "").trim(),
+  },
+  {
+    type: "hackernews",
+    label: "Hacker News",
+    icon: Newspaper,
+    placeholder: "AI agents (keyword) or * for top stories",
+    normalize: (v: string) => v.trim(),
+  },
+  {
+    type: "github_repo",
+    label: "GitHub Repos",
+    icon: Github,
+    placeholder: "anthropics/claude-code",
+    normalize: (v: string) => v.replace(/^https?:\/\/github\.com\//, "").trim(),
   },
 ];
 
