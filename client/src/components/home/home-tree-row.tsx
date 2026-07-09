@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { SimpleCheckCircle } from "./home-check-circle";
+import { SimpleTextFrame } from "./simple-text-frame";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
@@ -120,6 +121,31 @@ function entryCopy(kind: EntryKind) {
   return { title: "What are you grateful for today?", label: "Gratitude", placeholder: "I’m grateful for…", endpoint: "/api/wellness/gratitude" };
 }
 
+
+function stringPayload(item: SimpleFeedItem, key: string): string | null {
+  const value = item.payload?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function expandedContent(item: SimpleFeedItem): string | null {
+  const kind = item.payload?.kind;
+
+  if (kind === "meeting_attendee") {
+    const parts: string[] = [];
+    const lastInteraction = stringPayload(item, "lastInteractionContext");
+    const summary = stringPayload(item, "profileSummary");
+    parts.push(`**Last interaction**\n${lastInteraction ?? "No interaction recorded."}`);
+    parts.push(`**Summary**\n${summary ?? "No profile summary available."}`);
+    return parts.join("\n\n");
+  }
+
+  if (kind === "meeting_artifact") {
+    return stringPayload(item, "artifactSummary") ?? stringPayload(item, "artifactOneLiner");
+  }
+
+  return null;
+}
+
 // ─── Tree Row ───
 
 interface SimpleTreeRowProps {
@@ -140,7 +166,9 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
   const { route, setSessionForRoute, setWidgetOpen } = useFocusSession();
   const action = completeAction(item);
   const reference = primaryReference(item);
+  const inlineExpandedContent = expandedContent(item);
   const hasChildren = Boolean(item.children?.length);
+  const canExpand = hasChildren || Boolean(inlineExpandedContent);
   const entryKind = wellnessEntryKind(item);
   const entryUi = useMemo(() => entryKind ? entryCopy(entryKind) : null, [entryKind]);
 
@@ -199,7 +227,7 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
   const displayTitle = mapHref ? placeNameFromAddress(item.title) : item.title;
 
   const toggleExpanded = () => {
-    if (!hasChildren) return;
+    if (!canExpand) return;
     setExpanded(v => !v);
   };
 
@@ -256,17 +284,17 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
         className={cn(
           "group flex items-center py-1 transition-colors duration-200",
           !item.completable && "hover:bg-accent/50 rounded-md",
-          hasChildren && "cursor-pointer",
+          canExpand && "cursor-pointer",
         )}
         style={{ paddingLeft: `${depth * INDENT_PX}px` }}
         onClick={(event) => {
           if (shouldIgnoreRowToggle(event.target)) return;
           toggleExpanded();
         }}
-        role={hasChildren ? "button" : undefined}
-        tabIndex={hasChildren ? 0 : undefined}
+        role={canExpand ? "button" : undefined}
+        tabIndex={canExpand ? 0 : undefined}
         onKeyDown={(event) => {
-          if (!hasChildren) return;
+          if (!canExpand) return;
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             toggleExpanded();
@@ -318,7 +346,7 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
 
         {/* Right control rail: expander immediately left of overflow. */}
         <span className="ml-1 flex w-5 shrink-0 items-center justify-center">
-          {hasChildren ? (
+          {canExpand ? (
             <button
               type="button"
               className="rounded p-0.5 hover:bg-accent/60"
@@ -354,6 +382,15 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {/* Expanded content */}
+      {expanded && inlineExpandedContent && (
+        <div className="pb-2 pl-0 pr-1.5" style={{ marginLeft: `${depth * INDENT_PX}px` }}>
+          <div className="pl-[72px]">
+            <SimpleTextFrame content={inlineExpandedContent} />
+          </div>
+        </div>
+      )}
 
       {/* Expanded children */}
       {expanded && hasChildren && (

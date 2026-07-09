@@ -18,13 +18,14 @@ import type { SignalItem } from "@shared/models/signal";
 import { db } from "../db";
 import { emailMessages, emailEnrichments } from "@shared/schema";
 import { libraryPages } from "@shared/models/info";
-import { sql, inArray } from "drizzle-orm";
+import { and, sql, inArray } from "drizzle-orm";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { visibleScopePredicate } from "../scoped-storage";
 
 const log = createLogger("SimpleCollectors");
 
-type EmailPersonMap = Map<string, { id: string; name: string }>;
-type MeetingArtifactView = { linkId: number; pageId: string; title: string; slug: string; artifactKind: string; source: string | null };
+type EmailPersonMap = Map<string, { id: string; name: string; summary: string | null; lastInteractionContext: string | null }>;
+type MeetingArtifactView = { linkId: number; pageId: string; title: string; slug: string; artifactKind: string; source: string | null; summary: string | null; oneLiner: string | null };
 type MeetingArtifactMap = Map<number, MeetingArtifactView[]>;
 
 async function buildEmailPersonMap(): Promise<EmailPersonMap> {
@@ -35,7 +36,12 @@ async function buildEmailPersonMap(): Promise<EmailPersonMap> {
     for (const person of people) {
       for (const ci of person.contactInfo ?? []) {
         if (ci.type === "email" && ci.value) {
-          map.set(ci.value.toLowerCase(), { id: person.id, name: person.name });
+          map.set(ci.value.toLowerCase(), {
+            id: person.id,
+            name: person.name,
+            summary: person.aiSummary?.trim() || person.quickSummary?.trim() || person.identityContent?.trim() || null,
+            lastInteractionContext: interactionContext(latestInteraction(person.interactions ?? [])),
+          });
         }
       }
     }
@@ -909,10 +915,14 @@ async function buildMeetingArtifactMap(metadataIds: number[]): Promise<MeetingAr
     const links = await getLinkedArtifactsByMetadataIds(metadataIds);
     if (links.length === 0) return map;
     const pageIds = Array.from(new Set(links.map(link => link.libraryPageId)));
+    const principal = getCurrentPrincipalOrSystem();
     const pages = await db
-      .select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug })
+      .select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug, oneLiner: libraryPages.oneLiner, summary: libraryPages.summary, plainTextContent: libraryPages.plainTextContent })
       .from(libraryPages)
-      .where(inArray(libraryPages.id, pageIds));
+      .where(and(
+        inArray(libraryPages.id, pageIds),
+        visibleScopePredicate(principal, { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId }),
+      ));
     const pagesById = new Map(pages.map(page => [page.id, page]));
     for (const link of links) {
       const page = pagesById.get(link.libraryPageId);
@@ -925,6 +935,8 @@ async function buildMeetingArtifactMap(metadataIds: number[]): Promise<MeetingAr
         slug: page.slug,
         artifactKind: link.artifactKind,
         source: link.source,
+        summary: page.summary?.trim() || page.plainTextContent?.trim() || null,
+        oneLiner: page.oneLiner?.trim() || null,
       });
       map.set(link.metadataId, list);
     }
@@ -979,7 +991,14 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
       status: "active",
       sourceRefs: personSourceRef ? [personSourceRef] : [sourceRef],
       ...(personSourceRef ? { references: sourceRefsToReferenceRefs([personSourceRef]) } : {}),
-      payload: { kind: "meeting_attendee", email: attendee.email, responseStatus: attendee.responseStatus || null },
+      payload: {
+        kind: "meeting_attendee",
+        email: attendee.email,
+        responseStatus: attendee.responseStatus || null,
+        personId: matched?.id ?? null,
+        profileSummary: matched?.summary ?? null,
+        lastInteractionContext: matched?.lastInteractionContext ?? null,
+      },
     });
   }
 
@@ -998,7 +1017,15 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
       status: "active",
       sourceRefs: [artifactSourceRef],
       references: [{ type: "page", id: artifact.pageId, canonical: `@page:${artifact.pageId}`, metadata: { title: artifact.title, slug: artifact.slug } }],
-      payload: { kind: "meeting_artifact", artifactKind: artifact.artifactKind, pageId: artifact.pageId, slug: artifact.slug, source: artifact.source },
+      payload: {
+        kind: "meeting_artifact",
+        artifactKind: artifact.artifactKind,
+        pageId: artifact.pageId,
+        slug: artifact.slug,
+        source: artifact.source,
+        artifactSummary: artifact.summary,
+        artifactOneLiner: artifact.oneLiner,
+      },
       actions: [{ id: "open-artifact", label: "Open", type: "navigate", href: `/library/${artifact.pageId}`, sourceRef: artifactSourceRef }],
     });
   }
