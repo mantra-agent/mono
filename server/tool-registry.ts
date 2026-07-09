@@ -1497,7 +1497,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         providerEnvironmentName: { type: "string", description: "Railway environment name (for save_hosting_binding)" },
         serviceName: { type: "string", description: "Railway service name (for save_hosting_binding)" },
         publicUrl: { type: "string", description: "Public URL (for save_hosting_binding)" },
-        kind: { type: "string", description: "Context artifact kind, e.g. coding_process, design_system, planning_process (for save_context_artifact, remove_context_artifact)" },
+        kind: { type: "string", description: "Context artifact kind/category label. Common kinds: coding_process, design_system, planning_process, product_definition. Multiple artifacts per kind are allowed. (for save_context_artifact, remove_context_artifact)" },
         libraryPageId: { type: "string", description: "Library page ID to link (for save_context_artifact)" },
         workflowTemplateId: { type: "string", description: "Workflow template ID for build lifecycle, e.g. build-v1" },
         providerKind: { type: "string", description: "Build provider kind: railway, eas, or manual" },

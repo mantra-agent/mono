@@ -2537,27 +2537,28 @@ This section is always loaded. Use it for code changes, debugging, repo/system d
     const { environmentContextArtifacts } = await import("@shared/models/platforms");
     const { libraryPages } = await import("@shared/models/info");
 
-    // Find active platform environment — check for any environments with a coding_process artifact
+    // Find all coding_process artifacts across environments
     const artifactRows = await db
       .select({
         libraryPageId: environmentContextArtifacts.libraryPageId,
         environmentId: environmentContextArtifacts.environmentId,
       })
       .from(environmentContextArtifacts)
-      .where(eq(environmentContextArtifacts.kind, "coding_process"))
-      .limit(1);
+      .where(eq(environmentContextArtifacts.kind, "coding_process"));
 
     if (artifactRows.length > 0) {
-      const [page] = await db
-        .select({ content: libraryPages.plainTextContent })
+      const { inArray } = await import("drizzle-orm");
+      const pageIds = artifactRows.map(r => r.libraryPageId);
+      const pages = await db
+        .select({ id: libraryPages.id, content: libraryPages.plainTextContent })
         .from(libraryPages)
-        .where(eq(libraryPages.id, artifactRows[0].libraryPageId))
-        .limit(1);
+        .where(inArray(libraryPages.id, pageIds));
 
-      if (page?.content) {
+      const contents = pages.filter(p => p.content).map(p => p.content!.trim());
+      if (contents.length > 0) {
         return `${header}
 
-${page.content.trim()}`;
+${contents.join("\n\n---\n\n")}`;
       }
     }
   } catch (err) {
@@ -2600,20 +2601,21 @@ This section is always loaded. Use it for any complex, multi-turn, or cross-doma
     const artifactRows = await db
       .select({ libraryPageId: environmentContextArtifacts.libraryPageId })
       .from(environmentContextArtifacts)
-      .where(eq(environmentContextArtifacts.kind, "planning_process"))
-      .limit(1);
+      .where(eq(environmentContextArtifacts.kind, "planning_process"));
 
     if (artifactRows.length > 0) {
-      const [page] = await db
-        .select({ content: libraryPages.plainTextContent })
+      const { inArray } = await import("drizzle-orm");
+      const pageIds = artifactRows.map(r => r.libraryPageId);
+      const pages = await db
+        .select({ id: libraryPages.id, content: libraryPages.plainTextContent })
         .from(libraryPages)
-        .where(eq(libraryPages.id, artifactRows[0].libraryPageId))
-        .limit(1);
+        .where(inArray(libraryPages.id, pageIds));
 
-      if (page?.content) {
+      const contents = pages.filter(p => p.content).map(p => p.content!.trim());
+      if (contents.length > 0) {
         return `${header}
 
-${page.content.trim()}`;
+${contents.join("\n\n---\n\n")}`;
       }
     }
   } catch (err) {

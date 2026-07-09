@@ -356,7 +356,7 @@ export const environmentContextArtifacts = pgTable(
   (table) => [
     index("idx_environment_context_artifacts_environment").on(table.environmentId),
     index("idx_environment_context_artifacts_kind").on(table.kind),
-    uniqueIndex("idx_environment_context_artifacts_env_kind").on(table.environmentId, table.kind),
+    index("idx_environment_context_artifacts_env_kind").on(table.environmentId, table.kind),
   ],
 );
 

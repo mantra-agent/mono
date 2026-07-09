@@ -1748,7 +1748,12 @@ const CONTEXT_ARTIFACT_KINDS = [
   { value: "coding_process", label: "Coding Process", description: "Universal engineering process and principles" },
   { value: "design_system", label: "Design System", description: "Visual language, tokens, and component patterns" },
   { value: "planning_process", label: "Planning Process", description: "Planning workflow and review procedures" },
+  { value: "product_definition", label: "Product Definition", description: "Product north star, ICP, value props, and principles" },
 ] as const;
+
+const ARTIFACT_KIND_LABELS: Record<string, string> = Object.fromEntries(
+  CONTEXT_ARTIFACT_KINDS.map((k) => [k.value, k.label]),
+);
 
 function ContextArtifactsCard({ artifacts, environmentId }: { artifacts: ContextArtifact[]; environmentId: number }) {
   const [adding, setAdding] = useState(false);
@@ -1758,8 +1763,8 @@ function ContextArtifactsCard({ artifacts, environmentId }: { artifacts: Context
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const linkedKinds = new Set(artifacts.map((a) => a.kind));
-  const availableKinds = CONTEXT_ARTIFACT_KINDS.filter((k) => !linkedKinds.has(k.value));
+  // All kinds always available — multiple artifacts per kind allowed
+  const availableKinds = [...CONTEXT_ARTIFACT_KINDS];
 
   const saveMutation = useMutation({
     mutationFn: async ({ kind, libraryPageId }: { kind: string; libraryPageId: string }) => {
@@ -1784,8 +1789,8 @@ function ContextArtifactsCard({ artifacts, environmentId }: { artifacts: Context
   });
 
   const removeMutation = useMutation({
-    mutationFn: async (kind: string) => {
-      const res = await fetch(`/api/platforms/environments/${environmentId}/context-artifacts/${encodeURIComponent(kind)}`, { method: "DELETE" });
+    mutationFn: async (artifactId: number) => {
+      const res = await fetch(`/api/platforms/environments/${environmentId}/context-artifacts/${artifactId}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Failed to remove context artifact");
       return res.json();
     },
@@ -1798,7 +1803,7 @@ function ContextArtifactsCard({ artifacts, environmentId }: { artifacts: Context
       <CardHeader className="px-3 pb-2 pt-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm font-medium">Context Artifacts</CardTitle>
-          {!adding && availableKinds.length > 0 && (
+          {!adding && (
             <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setAdding(true)}>
               <Plus className="mr-1 h-3 w-3" /> Add
             </Button>
@@ -1812,12 +1817,10 @@ function ContextArtifactsCard({ artifacts, environmentId }: { artifacts: Context
         )}
         {artifacts.length > 0 && (
           <div className="space-y-1">
-            {artifacts.map((a) => {
-              const kindDef = CONTEXT_ARTIFACT_KINDS.find((k) => k.value === a.kind);
-              return (
+            {artifacts.map((a) => (
                 <div key={a.id} className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs hover:bg-muted/40">
                   <div className="flex items-center gap-2 min-w-0">
-                    <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0">{kindDef?.label ?? a.kind}</Badge>
+                    <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0">{ARTIFACT_KIND_LABELS[a.kind] ?? a.kind}</Badge>
                     <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
                     <span className="truncate">{a.pageTitle}</span>
                   </div>
@@ -1825,14 +1828,13 @@ function ContextArtifactsCard({ artifacts, environmentId }: { artifacts: Context
                     variant="ghost"
                     size="sm"
                     className="h-5 w-5 p-0 shrink-0 text-muted-foreground hover:text-destructive"
-                    onClick={() => removeMutation.mutate(a.kind)}
+                    onClick={() => removeMutation.mutate(a.id)}
                     disabled={removeMutation.isPending}
                   >
                     <Trash2 className="h-3 w-3" />
                   </Button>
                 </div>
-              );
-            })}
+              ))}
           </div>
         )}
         {adding && (
