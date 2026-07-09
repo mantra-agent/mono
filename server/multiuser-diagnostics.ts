@@ -38,6 +38,10 @@ const OWNER_TABLES_WITH_SCOPE = [
   "signal_sources",
   "signal_items",
   "scan_runs",
+  "tasks",
+  "projects",
+  "persons",
+  "principles",
 
 ] as const;
 
