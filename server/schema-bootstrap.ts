@@ -1506,18 +1506,76 @@ export async function runSchemaBootstrap(
       `ALTER TABLE memory_transitions ALTER COLUMN transitioned_at SET DEFAULT CURRENT_TIMESTAMP`,
     );
 
+    // --- signal_sources defaults ---
+    await pool.query(
+      `ALTER TABLE signal_sources ALTER COLUMN id SET DEFAULT gen_random_uuid()::text`,
+    );
+    await pool.query(
+      `ALTER TABLE signal_sources ALTER COLUMN enabled SET DEFAULT true`,
+    );
+    await pool.query(
+      `ALTER TABLE signal_sources ALTER COLUMN signal_count SET DEFAULT 0`,
+    );
+    await pool.query(
+      `ALTER TABLE signal_sources ALTER COLUMN consecutive_failures SET DEFAULT 0`,
+    );
+    await pool.query(
+      `ALTER TABLE signal_sources ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP`,
+    );
+
+    // --- signal_items defaults ---
+    await pool.query(
+      `ALTER TABLE signal_items ALTER COLUMN id SET DEFAULT gen_random_uuid()::text`,
+    );
+    await pool.query(
+      `ALTER TABLE signal_items ALTER COLUMN snippet SET DEFAULT ''`,
+    );
+    await pool.query(
+      `ALTER TABLE signal_items ALTER COLUMN curation_status SET DEFAULT 'unread'`,
+    );
+    await pool.query(
+      `ALTER TABLE signal_items ALTER COLUMN matched_topics SET DEFAULT '{}'::text[]`,
+    );
+    await pool.query(
+      `ALTER TABLE signal_items ALTER COLUMN scanned_at SET DEFAULT CURRENT_TIMESTAMP`,
+    );
+    await pool.query(
+      `ALTER TABLE signal_items ALTER COLUMN relevance_score SET DEFAULT 0`,
+    );
+    await pool.query(
+      `ALTER TABLE signal_items ALTER COLUMN relevance_tags SET DEFAULT '{}'::text[]`,
+    );
+    await pool.query(
+      `ALTER TABLE signal_items ALTER COLUMN matching_skills SET DEFAULT '{}'::text[]`,
+    );
+    await pool.query(
+      `ALTER TABLE signal_items ALTER COLUMN matching_theses SET DEFAULT '{}'::text[]`,
+    );
+    await pool.query(
+      `ALTER TABLE signal_items ALTER COLUMN status SET DEFAULT 'new'`,
+    );
+    await pool.query(
+      `ALTER TABLE signal_items ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP`,
+    );
+
+    // --- scan_runs defaults ---
     await pool.query(
       `ALTER TABLE scan_runs ALTER COLUMN id SET DEFAULT gen_random_uuid()::text`,
     );
     await pool.query(
       `ALTER TABLE scan_runs ALTER COLUMN started_at SET DEFAULT CURRENT_TIMESTAMP`,
     );
-
     await pool.query(
-      `ALTER TABLE signal_sources ALTER COLUMN id SET DEFAULT gen_random_uuid()::text`,
+      `ALTER TABLE scan_runs ALTER COLUMN sources_scanned SET DEFAULT 0`,
     );
     await pool.query(
-      `ALTER TABLE signal_items ALTER COLUMN id SET DEFAULT gen_random_uuid()::text`,
+      `ALTER TABLE scan_runs ALTER COLUMN items_found SET DEFAULT 0`,
+    );
+    await pool.query(
+      `ALTER TABLE scan_runs ALTER COLUMN items_surfaced SET DEFAULT 0`,
+    );
+    await pool.query(
+      `ALTER TABLE scan_runs ALTER COLUMN items_deduped SET DEFAULT 0`,
     );
   });
 
