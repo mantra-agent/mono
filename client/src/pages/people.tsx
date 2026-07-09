@@ -15,6 +15,7 @@ import { SurfacedPersonRow, surfacedDateLabel } from "@/components/people/surfac
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/use-auth";
 import { formatRelativeDate } from "@/lib/local-date";
 import {
   AlertDialog,
@@ -473,6 +474,7 @@ function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOver
   onSelectImportCandidate?: (email: string) => void;
 }) {
   const { toast } = useToast();
+  const { isAdmin } = useAuth();
   const searchQuery = searchOverride ?? "";
   const showQuickAdd = showQuickAddOverride ?? false;
   const [newName, setNewName] = useState("");
@@ -491,11 +493,13 @@ function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOver
   const { data: importStatus } = useQuery<{ pending: number }>({
     queryKey: ["/api/import-queue/status"],
     refetchInterval: 60_000,
+    enabled: isAdmin,
   });
 
   const { data: importCandidatesData } = useQuery<{ candidates: ImportCandidate[] }>({
     queryKey: ["/api/import-queue/candidates"],
     refetchInterval: 60_000,
+    enabled: isAdmin,
   });
 
   const searchResults = useQuery<{ people: PersonIndex[] }>({
@@ -724,7 +728,7 @@ function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOver
         </div>
       )}
 
-      {(importPending > 0 || visibleImportCandidates.length > 0) && (
+      {isAdmin && (importPending > 0 || visibleImportCandidates.length > 0) && (
         <PeopleGroupSection
           label="IMPORT"
           count={importPending}

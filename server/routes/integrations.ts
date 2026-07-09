@@ -525,7 +525,7 @@ export async function registerIntegrationsRoutes(app: Express) {
 
   // === Import Queue Routes ===
 
-  app.get("/api/import-queue/status", async (_req, res) => {
+  app.get("/api/import-queue/status", requireAdmin, async (_req, res) => {
     try {
       const { getQueueSummaryFromDb } = await import("../import-queue");
       res.json(await getQueueSummaryFromDb());
@@ -534,7 +534,7 @@ export async function registerIntegrationsRoutes(app: Express) {
     }
   });
 
-  app.get("/api/import-queue/candidates", async (_req, res) => {
+  app.get("/api/import-queue/candidates", requireAdmin, async (_req, res) => {
     try {
       const { getPendingCandidatesFromDb } = await import("../import-queue");
       const pending = await getPendingCandidatesFromDb();
@@ -545,7 +545,7 @@ export async function registerIntegrationsRoutes(app: Express) {
   });
 
 
-  app.post("/api/import-queue/ios-contacts", async (req, res) => {
+  app.post("/api/import-queue/ios-contacts", requireAdmin, async (req, res) => {
     try {
       const { stageIosContacts } = await import("../import-queue");
       const contacts = Array.isArray(req.body?.contacts) ? req.body.contacts : [];
@@ -562,7 +562,7 @@ export async function registerIntegrationsRoutes(app: Express) {
     }
   });
 
-  app.post("/api/import-queue/scan", async (req, res) => {
+  app.post("/api/import-queue/scan", requireAdmin, async (req, res) => {
     try {
       const { runAutoScan } = await import("../import-queue");
       const mode = req.body.mode as "start" | "continue" | "refresh";
@@ -601,7 +601,7 @@ export async function registerIntegrationsRoutes(app: Express) {
     }
   });
 
-  app.post("/api/import-queue/decide", async (req, res) => {
+  app.post("/api/import-queue/decide", requireAdmin, async (req, res) => {
     try {
       const { getCandidateByEmail, updateCandidateDecision } = await import("../import-queue");
       const { email, decision, cabinetLevel, tags, mergePersonId, name, company, role, relation, professionalRelations, familiarity, trust, met, notes, introducedBy } = req.body;
@@ -749,7 +749,7 @@ export async function registerIntegrationsRoutes(app: Express) {
     }
   });
 
-  app.post("/api/import-queue/cancel", async (_req, res) => {
+  app.post("/api/import-queue/cancel", requireAdmin, async (_req, res) => {
     try {
       const { abortScan, isScanActuallyRunning } = await import("../import-queue");
       if (!isScanActuallyRunning()) {
@@ -762,7 +762,7 @@ export async function registerIntegrationsRoutes(app: Express) {
     }
   });
 
-  app.post("/api/import-queue/reset", async (_req, res) => {
+  app.post("/api/import-queue/reset", requireAdmin, async (_req, res) => {
     try {
       const { saveQueueState } = await import("../import-queue");
       await saveQueueState({
