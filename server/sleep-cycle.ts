@@ -529,6 +529,7 @@ export interface FullSleepCycleResult {
   entryDecay: MemoryDecayResult;
   budget: BudgetEnforcementResult;
   entryReinforcement: MemoryReinforcementResult;
+  vnextLifecycle?: import("./memory/vnext-lifecycle").VnextLifecycleRunResult;
   nrem: import("./memory/sleep-maintenance").NREMResult;
   rem: import("./memory/dream-engine").DreamResult;
   gsi: import("./memory/graph-metrics").GSIScore | null;
@@ -584,6 +585,7 @@ export async function runFullSleepCycle(options?: { includeGSI?: boolean }): Pro
 
     let entryDecay = emptyDecay;
     let entryReinforcement = emptyReinforcement;
+    let vnextLifecycleResult: import("./memory/vnext-lifecycle").VnextLifecycleRunResult | undefined;
     let nrem = emptyNrem;
     let rem = emptyRem;
     let gsi: import("./memory/graph-metrics").GSIScore | null = null;
@@ -628,6 +630,26 @@ export async function runFullSleepCycle(options?: { includeGSI?: boolean }): Pro
       phaseStart = Date.now();
       entryReinforcement = await runMemoryReinforcement();
       phaseDurations.reinforcement = Date.now() - phaseStart;
+
+      if (globalController.signal.aborted) {
+        timedOut = true;
+        throw new Error("Global sleep cycle timeout");
+      }
+
+      // Phase 2.5: vNext claim lifecycle (decay + retirement)
+      await waitForBackpressure("vnext-lifecycle");
+      logPoolHealth("pre-vnext-lifecycle");
+      try {
+        const { runVnextLifecycle } = await import("./memory/vnext-lifecycle");
+        phaseStart = Date.now();
+        const vnextResult = await runVnextLifecycle({ limit: 200, trigger: "sleep_cycle" });
+        phaseDurations.vnextLifecycle = Date.now() - phaseStart;
+        vnextLifecycleResult = vnextResult;
+        log.log(`[Sleep] vNext lifecycle: scanned=${vnextResult.scanned} retired=${vnextResult.retired} decayed=${vnextResult.decayed} canonicalized=${vnextResult.canonicalized} errors=${vnextResult.errors}`);
+      } catch (vnextErr: unknown) {
+        phaseDurations.vnextLifecycle = Date.now() - phaseStart;
+        log.warn(`[Sleep] vNext lifecycle failed (non-fatal): ${vnextErr instanceof Error ? vnextErr.message : String(vnextErr)}`);
+      }
 
       if (globalController.signal.aborted) {
         timedOut = true;
@@ -865,6 +887,19 @@ export async function runFullSleepCycle(options?: { includeGSI?: boolean }): Pro
         `- Flipped uncertain: ${entryDecay.flippedUncertain}`,
         `- Flagged for review: ${entryDecay.flaggedForReview}`,
         "",
+        "## vNext Claims",
+        vnextLifecycleResult
+          ? [
+              `- Scanned: ${vnextLifecycleResult.scanned}`,
+              `- Retired: ${vnextLifecycleResult.retired}${vnextLifecycleResult.retired > 0 ? ` (${Object.entries(vnextLifecycleResult.retiredByReason).map(([r, c]) => `${r}=${c}`).join(", ")})` : ""}`,
+              `- Decayed: ${vnextLifecycleResult.decayed}`,
+              `- Canonicalized: ${vnextLifecycleResult.canonicalized}`,
+              `- Sourced: ${vnextLifecycleResult.sourced}`,
+              `- Linked: ${vnextLifecycleResult.linked}`,
+              `- Errors: ${vnextLifecycleResult.errors}`,
+            ].join("\n")
+          : "- Skipped (phase did not run)",
+        "",
         "## NREM",
         `- Links decayed: ${nrem.linksDecayed}`,
         `- Links pruned: ${nrem.linksPruned}`,
@@ -971,6 +1006,7 @@ export async function runFullSleepCycle(options?: { includeGSI?: boolean }): Pro
         timedOut,
         entryDecay: { decayed: entryDecay.decayed, byLayer: entryDecay.byLayer, byStage: entryDecay.byStage, flippedUncertain: entryDecay.flippedUncertain },
         entryReinforcement: { reinforced: entryReinforcement.reinforced, byLayer: entryReinforcement.byLayer, byStage: entryReinforcement.byStage },
+        vnextLifecycle: vnextLifecycleResult ? { scanned: vnextLifecycleResult.scanned, retired: vnextLifecycleResult.retired, decayed: vnextLifecycleResult.decayed, canonicalized: vnextLifecycleResult.canonicalized, errors: vnextLifecycleResult.errors } : null,
         nrem: { linksDecayed: nrem.linksDecayed, linksPruned: nrem.linksPruned, merged: nrem.entriesMerged, entriesAdvancedToUpkeep: nrem.entriesAdvancedToUpkeep, heuristicMerges: nrem.heuristicMerges },
         rem: { dreamId: rem.dreamEntryId, dreamTitle: rem.dreamTitle, seedStages: rem.seedStages },
         gsiScore: gsi?.overall ?? null,
@@ -978,7 +1014,7 @@ export async function runFullSleepCycle(options?: { includeGSI?: boolean }): Pro
       },
     });
 
-    return { budget, entryDecay, entryReinforcement, nrem, rem, gsi, durationMs, abortedByCircuitBreaker, abortReason, timedOut, phaseDurations };
+    return { budget, entryDecay, entryReinforcement, vnextLifecycle: vnextLifecycleResult, nrem, rem, gsi, durationMs, abortedByCircuitBreaker, abortReason, timedOut, phaseDurations };
   }, "sleep-cycle");
 }
 

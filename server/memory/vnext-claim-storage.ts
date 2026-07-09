@@ -383,7 +383,18 @@ export class MemoryVnextClaimStorage {
       )
       .where(predicate)
       .groupBy(memoryVnextClaims.id)
-      .orderBy(memoryVnextClaims.createdAt)
+      .orderBy(
+        // Process higher lifecycle stages first so canonical claims get decay/retirement checks
+        // before early-stage claims that may be stuck at sourced/linked
+        sql`CASE ${memoryVnextClaims.lifecycleStage}
+          WHEN 'canonical' THEN 0
+          WHEN 'linked' THEN 1
+          WHEN 'sourced' THEN 2
+          WHEN 'extracted' THEN 3
+          ELSE 4
+        END`,
+        memoryVnextClaims.createdAt,
+      )
       .limit(Math.min(Math.max(limit, 1), 200));
 
     return rows.map((row) => ({
@@ -860,6 +871,9 @@ export class MemoryVnextClaimStorage {
     }
     if (typeof filters.lifecycleStage === "string") {
       conditions.push(eq(memoryVnextClaims.lifecycleStage, normalizeLifecycleStage(filters.lifecycleStage)));
+    } else {
+      // Exclude retired claims from default search unless explicitly requested
+      conditions.push(sql`${memoryVnextClaims.lifecycleStage} <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}`);
     }
     if (typeof filters.createdAfter === "string") {
       conditions.push(sql`${memoryVnextClaims.createdAt} > ${filters.createdAfter}::timestamptz`);
