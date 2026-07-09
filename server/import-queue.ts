@@ -15,9 +15,9 @@ function connectedAccountPredicate() {
   return sql`(${peopleImportCandidates.accountId} IS NULL OR ${peopleImportCandidates.accountId} IN (SELECT account_id FROM connected_accounts WHERE ${combineWithSensitiveVisible(connectedAccountScopeColumns)}))`;
 }
 
-/** Visible predicate: all candidates including orphaned ones from disconnected accounts (used for reads) */
+/** Visible predicate: candidates belonging to the current principal's connected accounts (used for reads) */
 function visibleImportAccountPredicate() {
-  return sql`TRUE`;
+  return sql`(${peopleImportCandidates.accountId} IS NULL OR ${peopleImportCandidates.accountId} IN (SELECT account_id FROM connected_accounts WHERE ${combineWithSensitiveVisible(connectedAccountScopeColumns)}))`;
 }
 
 const LEGACY_DB_KEY = "import_queue";
