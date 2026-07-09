@@ -157,6 +157,8 @@ export interface VoiceMessageMeta {
   source: "elevenlabs-voice";
   voiceSessionId: string;
   turnKey: string;
+  /** Canonical per-turn correlation ID minted at turn acceptance. */
+  turnId?: string;
   userOrdinal?: number;
   turnNumber?: number;
 }
@@ -202,6 +204,8 @@ export interface FileMessage {
   assistantRunId?: string;
   assistantInterruptedAt?: string;
   voice?: VoiceMessageMeta;
+  /** Canonical per-turn correlation ID for voice turns. Present on both user and assistant messages. */
+  turnId?: string;
   /** Visibility discriminant — absent or 'chat' = normal; 'diagnostic' = hidden from transcript */
   visibility?: MessageVisibility;
 }
@@ -950,6 +954,7 @@ export interface IChatFileStorage {
     pageContext?: PageContext,
     tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number },
     visibility?: MessageVisibility,
+    turnId?: string,
   ): Promise<FileMessage | null>;
   upsertVoiceUserMessage(
     sessionId: string,
@@ -1455,6 +1460,7 @@ export const chatFileStorage: IChatFileStorage = {
       totalTokens: number;
     },
     visibility?: MessageVisibility,
+    turnId?: string,
   ) {
     return withConvLock(sessionId, async () => {
       const data = await readConv(sessionId);
@@ -1505,6 +1511,7 @@ export const chatFileStorage: IChatFileStorage = {
       if (isError) msg.isError = true;
       if (visibility && visibility !== "chat") msg.visibility = visibility;
       if (pageContext && role === "user") msg.pageContext = pageContext;
+      if (turnId) msg.turnId = turnId;
       data.messages.push(msg);
       data.updatedAt = msg.createdAt;
       await writeConv(data);
@@ -1535,6 +1542,7 @@ export const chatFileStorage: IChatFileStorage = {
       if (existing) {
         if (existing.content !== content) existing.content = content;
         existing.voice = { ...existing.voice, ...voice };
+        if (voice.turnId) existing.turnId = voice.turnId;
         existing.updatedAt = now;
         data.updatedAt = now;
         await writeConv(data);
@@ -1560,6 +1568,7 @@ export const chatFileStorage: IChatFileStorage = {
         totalTokens: null,
         segmentChronology: null,
         voice,
+        ...(voice.turnId ? { turnId: voice.turnId } : {}),
       };
       data.messages.push(msg);
       data.updatedAt = now;
