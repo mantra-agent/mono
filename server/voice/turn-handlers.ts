@@ -60,6 +60,9 @@ export async function handleSuccessfulTurn(
   const turnDuration = Date.now() - ctx.turnStart;
   publishVoiceDiagnostic(session, "turn_complete", `Turn ${currentTurn} done (${turnDuration}ms, ${ctx.chunkCounter.count} chunks, ${result.toolCalls.length} tools)`, { turn: currentTurn, elapsedMs: turnDuration }, ctx);
 
+  // Publish done event to SessionManager — clears streaming state for voice turn
+  writeVoiceJournal(session, "done", {});
+
   const assistantTimestamp = new Date(Date.now()).toISOString();
   await persistAssistantMessage(session, result.content || null, currentTurn, { assistantTimestamp }, ctx);
 }
@@ -76,6 +79,8 @@ export async function handleAbortedTurn(
   log.log(`turn ${currentTurn} aborted after executor session=${session.id}`);
   logTurnForensics(ctx, session);
   publishVoiceDiagnostic(session, "turn_aborted", `Turn ${currentTurn} aborted (superseded, ${abortElapsed}ms)`, { turn: currentTurn, status: "error", elapsedMs: abortElapsed });
+  // Clear SessionManager streaming state on abort
+  writeVoiceJournal(session, "done", {});
 
   await persistOrphanedTurnData(session, currentTurn, "ABORTED", ctx);
   trackedWrite("data: [DONE]\n\n", "done_aborted");
@@ -96,6 +101,8 @@ export async function handleTurnError(
     log.log(`turn ${currentTurn} cancelled (superseded) after ${cancelElapsed}ms session=${session.id}`);
     logTurnForensics(ctx, session);
     publishVoiceDiagnostic(session, "turn_cancelled", `Turn ${currentTurn} cancelled (superseded, ${cancelElapsed}ms)`, { turn: currentTurn, status: "error", elapsedMs: cancelElapsed });
+    // Clear SessionManager streaming state on cancel
+    writeVoiceJournal(session, "done", {});
 
     await persistOrphanedTurnData(session, currentTurn, "CANCELLED", ctx);
     if (res.headersSent) { trackedWrite("data: [DONE]\n\n", "done_cancelled"); res.end(); }
@@ -110,6 +117,8 @@ export async function handleTurnError(
   logTurnForensics(ctx, session);
   writeVoiceJournal(session, "error", { error: `voice_turn_error: turn=${currentTurn} error=${err.message}` });
   publishVoiceDiagnostic(session, "turn_error", `Turn ${currentTurn} failed: ${err.message} (${turnErrorElapsed}ms)`, { turn: currentTurn, status: "error", elapsedMs: turnErrorElapsed });
+  // Note: the "error" journal entry above also drives SessionManager.applyEvent
+  // which handles the terminal event. No separate "done" needed here.
   persistVoiceErrorMessage(session, "I ran into a problem processing that. Could you try again?").catch((e: any) => log.debug(`persistVoiceErrorMessage failed session=${session.id}: ${e?.message}`));
   sendErrorResponse(res, trackedWrite, err, currentTurn, session.id, ctx.lastWrite, ctx.currentToolName);
 }
@@ -183,7 +192,9 @@ export async function runExecutorPhase(
   }, VOICE_TURN_BUDGET_MS);
 
   log.debug(`turn ${currentTurn} VOICE_DIAG systemPromptBytes=${systemPromptBytes} voiceRuns=${getActiveVoiceRunCount()} session=${session.id}`);
-  writeVoiceJournal(session, "thinking", { content: "Processing voice input..." });
+  // Publish thinking journal entry — drives SessionManager streaming projection
+  // so clients see "Thinking" for voice turns just like text chat.
+  writeVoiceJournal(session, "thinking", { content: "" });
   publishVoiceEvent(session, "voice_thinking", { turn: currentTurn });
 
   let toolStartAt: number | null = null;
@@ -260,6 +271,8 @@ export async function runExecutorPhase(
             logPipelineStage(ctx, session, "first_llm_delta", pipelineStart, `llmTtft=${llmTtft}ms`);
           }
           thinkingFilter.filteredSendChunk(event.content);
+          // Publish delta to SessionManager so clients see streaming content
+          writeVoiceJournal(session, "delta", { content: event.content });
         }
         if (event.type === "tool_call") {
           const toolName = event.toolName || "?";
@@ -278,12 +291,24 @@ export async function runExecutorPhase(
           const predictedCallId = `voice-${session.id}-t${currentTurn}-${ctx.toolCallIndex}`;
           ctx.lastToolCallId = predictedCallId;
           log.debug(`turn ${currentTurn} tool_call name=${toolName} callId=${predictedCallId} executorCallId=${event.toolCallId || "?"} session=${session.id}`);
+          // Publish tool_call to SessionManager so clients see tool activity
+          writeVoiceJournal(session, "tool_call", {
+            toolName,
+            toolCallId: predictedCallId,
+            narrative: (event as Record<string, unknown>).narrative as string | undefined,
+          });
         }
         if (event.type === "tool_result") {
           const toolName = event.toolName || "?";
           const toolElapsed = toolStartAt !== null ? Date.now() - toolStartAt : -1;
           const callId = ctx.lastToolCallId || "?";
           log.debug(`turn ${currentTurn} tool_result name=${toolName} callId=${callId} executorCallId=${event.toolCallId || "?"} elapsed=${toolElapsed}ms session=${session.id}`);
+          // Publish tool_result to SessionManager so clients see tool completion
+          writeVoiceJournal(session, "tool_result", {
+            toolName,
+            toolCallId: callId,
+            result: (event as Record<string, unknown>).result,
+          });
           ctx.toolCallActive = false;
           toolStartAt = null;
           ctx.currentToolName = null;

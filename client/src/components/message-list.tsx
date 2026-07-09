@@ -10,7 +10,7 @@ import {
 import type { StreamingContent } from "@shared/streaming-types";
 import type { SessionStreamMap } from "@/hooks/use-session-subscription";
 import type { PendingChatTurn } from "@/hooks/use-chat-send";
-import { VoiceTranscriptBubble, VoiceThinkingBubble } from "@/components/voice-session-ui";
+import { VoiceTranscriptBubble } from "@/components/voice-session-ui";
 import type { VoiceTranscriptEntry } from "@/hooks/use-voice-session";
 import { useVisibilityLayer } from "@/hooks/use-visibility-layer";
 import {
@@ -36,6 +36,7 @@ interface MessageListProps {
   voiceStepsInsertIndex: number;
   voiceStatus: string;
   voiceTranscript: VoiceTranscriptEntry[];
+  /** @deprecated voiceThinking is now voice control chrome only; transcript uses canonical server projection. */
   voiceThinking?: boolean;
   /** Human-readable session titles keyed by session id for legacy cross-session messages without labels. */
   sessionTitleById?: Record<string, string>;
@@ -65,9 +66,13 @@ function transcriptRoleMatchesMessage(entry: VoiceTranscriptEntry, msg: Message)
 
 function transcriptMatchesPersistedMessage(entry: VoiceTranscriptEntry, msg: Message): boolean {
   if (!transcriptRoleMatchesMessage(entry, msg)) return false;
+  // Prefer canonical turnId matching (step 3) over text normalization.
+  // msg.turnId is the canonical turn identity threaded from server acceptance.
+  if (entry.turnId && msg.turnId && entry.turnId === msg.turnId) return true;
   const persistedTurnKey = msg.voice?.turnKey;
   if (entry.turnKey && persistedTurnKey === entry.turnKey) return true;
   if (entry.turnId && persistedTurnKey && (persistedTurnKey === entry.turnId || persistedTurnKey.endsWith(`:${entry.turnId}`))) return true;
+  // Fallback: text normalization for legacy messages without turnId.
   const transcriptText = normalizeTranscriptText(entry.message);
   if (!transcriptText) return false;
   const messageText = normalizeTranscriptText(msg.content || "");
@@ -110,6 +115,9 @@ function hasVisibleChronologyPayload(msg: Message): boolean {
 
 function hasRenderableAssistantPayload(msg: Message): boolean {
   if (msg.role !== "assistant") return true;
+  // Structural visibility discriminant — diagnostic messages are never chat-rendered.
+  // Falls through to legacy name-matching for old messages without the field.
+  if (msg.visibility === "diagnostic") return false;
   if ((msg.content || "").trim().length > 0) return true;
   if ((msg.thinking || "").trim().length > 0) return true;
   if (Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0) return true;
@@ -203,10 +211,9 @@ export function MessageList({
   // ("Rendered more hooks than during the previous render").
   const effectiveStreaming = useMemo(() => {
     if ((isSessionStreaming || pendingTurn) && streaming.segments.length === 0) {
-      return {
-        ...streaming,
-        source: streaming.source ?? "text" as const,
-      };
+      // Source is explicit from the server projection (voice or text).
+      // No fallback — the server always sets it at turn acceptance.
+      return { ...streaming };
     }
     return streaming;
   }, [isSessionStreaming, pendingTurn, streaming]);
@@ -491,6 +498,8 @@ export function MessageList({
         systemSteps: null,
         model: null,
         createdAt: draftCreatedAt,
+        // Thread canonical turnId from server projection when available.
+        ...(effectiveStreaming.turnId ? { turnId: effectiveStreaming.turnId } : {}),
       };
       const insertAt = activeTurnUserItemIndex >= 0 ? activeTurnUserItemIndex + 1 : items.length;
       items.splice(insertAt, 0, { kind: "message", msg: draft, ts: draftTs });
@@ -607,7 +616,8 @@ export function MessageList({
   return (
     <>
       {elements}
-      {voiceThinking && !isSessionStreaming && effectiveStreaming.segments.length === 0 && layer >= 2 && <VoiceThinkingBubble />}
+      {/* Voice thinking now rendered through canonical server projection (visibleAssistantActivity),
+          identical to text chat. voiceThinking demoted to voice control chrome only. */}
     </>
   );
 }

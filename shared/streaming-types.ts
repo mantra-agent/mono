@@ -39,6 +39,8 @@ export interface StreamingContent {
   model?: string | null;
   autoTier?: string | null;
   runId?: string | null;
+  /** Canonical per-turn correlation ID for voice turns. */
+  turnId?: string | null;
   cost?: number | null;
   apiCallCount?: number | null;
   inputTokens?: number | null;
@@ -52,6 +54,7 @@ export const initialStreamingContent: StreamingContent = {
   model: null,
   autoTier: null,
   runId: null,
+  turnId: null,
   cost: null,
   apiCallCount: null,
   inputTokens: null,

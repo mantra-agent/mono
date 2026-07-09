@@ -329,11 +329,13 @@ async function executeVoiceTurn(req: Request, res: Response, session: VoiceSessi
 
   session.turnCount++;
   const currentTurn = session.turnCount;
+  // Mint canonical turnId at acceptance — threaded through every object for this turn.
+  const turnId = `${session.id}-turn-${currentTurn}-${Date.now()}`;
   const userMsgs = messages.filter((m: VoiceMessage) => m.role === "user");
   const lastUserContentFull = (userMsgs[userMsgs.length - 1]?.content || "").trim() || "(none)";
   const lastUserContent = lastUserContentFull.slice(0, 200);
   const sinceLastDataDelivery = Date.now() - session.lastDataDeliveryAt;
-  log.debug(`turn ${currentTurn} START session=${session.id} messages=${messages.length} userMsgs=${userMsgs.length} lastUser="${lastUserContent}" sessionAge=${Date.now() - session.startedAt}ms voiceRuns=${getActiveVoiceRunCount()} sinceLastDataDelivery=${sinceLastDataDelivery}ms`);
+  log.debug(`turn ${currentTurn} START turnId=${turnId} session=${session.id} messages=${messages.length} userMsgs=${userMsgs.length} lastUser="${lastUserContent}" sessionAge=${Date.now() - session.startedAt}ms voiceRuns=${getActiveVoiceRunCount()} sinceLastDataDelivery=${sinceLastDataDelivery}ms`);
 
   // Register with server-authoritative SessionManager (migration: both paths active)
   if (session.chatSessionId) {
@@ -341,6 +343,8 @@ async function executeVoiceTurn(req: Request, res: Response, session: VoiceSessi
       const { sessionManager } = await import("./session-manager");
       const voiceSessionKey = session.chatSessionKey || session.chatSessionId;
       sessionManager.registerSession(session.chatSessionId, voiceSessionKey, "voice");
+      // Set canonical turnId on the streaming projection
+      sessionManager.applyEvent(session.chatSessionId, { type: "turn_start", turnId });
     } catch (regErr) {
       log.debug(`sessionManager.registerSession skipped: ${regErr instanceof Error ? regErr.message : String(regErr)}`);
     }
@@ -444,7 +448,7 @@ async function executeVoiceTurn(req: Request, res: Response, session: VoiceSessi
     }
 
     log.debug(`turn ${currentTurn} TURN_PIPELINE stage=persist_transcript_start elapsed=${Date.now() - pipelineStart}ms session=${session.id}`);
-    await persistUserMessage(session, conversationMessages, currentTurn, new Date(session.lastCallbackAt).toISOString());
+    await persistUserMessage(session, conversationMessages, currentTurn, new Date(session.lastCallbackAt).toISOString(), turnId);
     log.debug(`turn ${currentTurn} TURN_PIPELINE stage=persist_transcript_done elapsed=${Date.now() - pipelineStart}ms session=${session.id}`);
 
     if (checkCircuitBreaker(session, currentTurn)) {
@@ -504,7 +508,7 @@ async function executeVoiceTurn(req: Request, res: Response, session: VoiceSessi
           return;
         }
         turnAbort = new AbortController();
-        ctx = createTurnContext(session, turnAbort);
+        ctx = createTurnContext(session, turnAbort, turnId);
         ctx.systemSteps.push({ name: "voice_turn_boundary", status: "done", detail: `Turn ${currentTurn}` });
         ctx.segmentChronology.push({ s: "system", i: ctx.systemSteps.length - 1 });
         session.inflightAbort = turnAbort;

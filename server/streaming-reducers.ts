@@ -386,5 +386,5 @@ export function settleStream(state: StreamingContent): StreamingContent {
         .filter(s => !(s.type === "thinking" && !s.thinking)),
     };
   }).filter(seg => !(seg.type === "timeline" && seg.steps.length === 0));
-  return { ...state, segments, source: null };
+  return { ...state, segments, source: null, turnId: null };
 }

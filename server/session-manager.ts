@@ -200,6 +200,7 @@ class SessionManager {
     model?: string;
     autoTier?: string;
     runId?: string;
+    turnId?: string;
     step?: string;
     status?: string;
     elapsedMs?: number;
@@ -291,7 +292,11 @@ class SessionManager {
         break;
 
       case "run_start":
-        prev = { ...prev, runId: event.runId || null };
+        prev = { ...prev, runId: event.runId || null, turnId: event.turnId ?? prev.turnId ?? null };
+        break;
+
+      case "turn_start":
+        prev = { ...prev, turnId: event.turnId || null };
         break;
 
       case "saved":
@@ -319,9 +324,11 @@ class SessionManager {
     }
 
     if (changed) {
-      // Ensure source is set so client-side isActiveStreaming checks pass
+      // Ensure source is set so client-side isActiveStreaming checks pass.
+      // Use the session's registered source (voice or text) — never default to "text"
+      // for a voice-registered session.
       if (!prev.source) {
-        prev = { ...prev, source: "text" };
+        prev = { ...prev, source: session.source ?? "text" };
       }
       session.streamingContent = prev;
     }

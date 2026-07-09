@@ -220,6 +220,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
           chatFileStorage.createMessage(
             diagChatSessionId, "assistant", "",
             undefined, undefined, "elevenlabs-voice", [disconnectStep],
+            undefined, undefined, undefined, undefined, undefined, undefined, "diagnostic",
           ).then(() => {
             voiceLog.log(`persisted disconnect lifecycle system step convId=${diagChatSessionId}`);
           }).catch((err: unknown) => {
@@ -578,11 +579,16 @@ export async function registerVoiceSessionRoutes(app: Express) {
 
     try {
       const { chatFileStorage } = await import("../chat-file-storage");
+      // Error and reconnect steps are chat-visible (shouldPersistVoiceSystemSteps gates);
+      // all others are diagnostic-only forensics.
+      const hasUserVisible = systemSteps.some(s => s.status === "error");
       await chatFileStorage.createMessage(
         chatSessionId, "assistant", "",
         undefined, undefined, "elevenlabs-voice", [...systemSteps],
+        undefined, undefined, undefined, undefined, undefined, undefined,
+        hasUserVisible ? undefined : "diagnostic",
       );
-      voiceLog.log(`persisted voice system steps convId=${chatSessionId} systemSteps=${systemSteps.length}`);
+      voiceLog.log(`persisted voice system steps convId=${chatSessionId} systemSteps=${systemSteps.length} visibility=${hasUserVisible ? "chat" : "diagnostic"}`);
       return true;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

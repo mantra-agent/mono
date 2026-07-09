@@ -75,6 +75,13 @@ async function persistStep(ev: DiagEvent): Promise<void> {
         detail: ev.detail || `${ev.step} (v2.5)`,
       },
     ],
+    undefined, // cost
+    undefined, // apiCallCount
+    undefined, // segmentChronology
+    undefined, // isError
+    undefined, // pageContext
+    undefined, // tokenUsage
+    "diagnostic",
   );
 }
 
