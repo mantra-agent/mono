@@ -362,7 +362,7 @@ export const environmentContextArtifacts = pgTable(
 
 export const upsertContextArtifactSchema = z.object({
   kind: z.string().trim().min(1, "Artifact kind is required"),
-  libraryPageId: z.string().uuid("Library page ID must be a UUID"),
+  libraryPageId: z.string().min(1, "Library page ID is required"),
 });
 
 export type EnvironmentContextArtifact = typeof environmentContextArtifacts.$inferSelect;
