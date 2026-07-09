@@ -9,7 +9,7 @@ const log = createLogger("LandscapeAdapters");
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
 export interface RawSignal {
-  sourceType: "x" | "x_account" | "web" | "reddit" | "rss";
+  sourceType: "x" | "x_account" | "web" | "reddit" | "rss" | "hackernews" | "github";
   sourceId: string;
   title: string;
   url: string;
@@ -536,6 +536,187 @@ function extractTag(xml: string, tag: string): string | undefined {
     return cleanHumanText(match[1]);
   }
   return undefined;
+}
+
+// ── Hacker News Scanner ────────────────────────────────────────────
+
+const HN_ALGOLIA_BASE = "https://hn.algolia.com/api/v1";
+const HN_FIREBASE_BASE = "https://hacker-news.firebaseio.com/v0";
+const HN_CONCURRENCY_CAP = 5;
+
+async function fetchHnAlgoliaSearch(query: string, sourceId: string): Promise<RawSignal[]> {
+  const oneDayAgo = Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000);
+  const url = `${HN_ALGOLIA_BASE}/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=25&numericFilters=created_at_i>${oneDayAgo}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(url, { signal: controller.signal, headers: { "User-Agent": BROWSER_USER_AGENT } });
+    if (!response.ok) {
+      log.debug(`fetchHnAlgoliaSearch: HTTP ${response.status} for query "${query}"`);
+      return [];
+    }
+    const data = await response.json() as { hits?: Array<{ title?: string; url?: string; objectID?: string; points?: number; author?: string; created_at?: string; num_comments?: number; story_text?: string }> };
+    if (!Array.isArray(data.hits)) return [];
+    return data.hits
+      .filter(h => h.title && (h.url || h.objectID))
+      .map(h => ({
+        sourceType: "hackernews" as const,
+        sourceId,
+        title: h.title!,
+        url: h.url || `https://news.ycombinator.com/item?id=${h.objectID}`,
+        snippet: h.story_text ? stripHtml(h.story_text).slice(0, 500) : "",
+        publishedAt: h.created_at || null,
+        rawMetadata: { points: h.points, author: h.author, numComments: h.num_comments, objectID: h.objectID },
+      }));
+  } catch (err) {
+    log.warn(`fetchHnAlgoliaSearch: error for query "${query}": ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchHnTopStories(sourceId: string, limit: number = 30): Promise<RawSignal[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(`${HN_FIREBASE_BASE}/topstories.json`, { signal: controller.signal });
+    if (!response.ok) return [];
+    const ids = (await response.json()) as number[];
+    const topIds = ids.slice(0, limit);
+
+    // Batch fetch items with concurrency cap
+    const signals: RawSignal[] = [];
+    for (let i = 0; i < topIds.length; i += HN_CONCURRENCY_CAP) {
+      const batch = topIds.slice(i, i + HN_CONCURRENCY_CAP);
+      const items = await Promise.all(batch.map(async (id) => {
+        try {
+          const itemResp = await fetch(`${HN_FIREBASE_BASE}/item/${id}.json`);
+          if (!itemResp.ok) return null;
+          return await itemResp.json() as { id?: number; title?: string; url?: string; score?: number; by?: string; time?: number; descendants?: number; type?: string };
+        } catch { return null; }
+      }));
+      for (const item of items) {
+        if (!item || !item.title || item.type !== "story") continue;
+        signals.push({
+          sourceType: "hackernews",
+          sourceId,
+          title: item.title,
+          url: item.url || `https://news.ycombinator.com/item?id=${item.id}`,
+          snippet: "",
+          publishedAt: item.time ? new Date(item.time * 1000).toISOString() : null,
+          rawMetadata: { points: item.score, author: item.by, numComments: item.descendants, hnId: item.id },
+        });
+      }
+    }
+    return signals;
+  } catch (err) {
+    log.warn(`fetchHnTopStories: error: ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function scanHackerNewsSources(sources: Array<{ id: string; value: string }>): Promise<RawSignal[]> {
+  const allSignals: RawSignal[] = [];
+  for (const source of sources) {
+    try {
+      const query = source.value.trim();
+      if (query === "*" || query === "") {
+        // Wildcard or empty: fetch top stories
+        const topSignals = await fetchHnTopStories(source.id);
+        allSignals.push(...topSignals);
+        log.log(`scanHackerNewsSources: "${query}" returned ${topSignals.length} top stories`);
+      } else {
+        // Keyword search via Algolia
+        const searchSignals = await fetchHnAlgoliaSearch(query, source.id);
+        allSignals.push(...searchSignals);
+        log.log(`scanHackerNewsSources: "${query}" returned ${searchSignals.length} stories via Algolia`);
+      }
+    } catch (err) {
+      log.warn(`scanHackerNewsSources: error scanning "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return allSignals;
+}
+
+// ── GitHub Repo Scanner ────────────────────────────────────────────
+
+const GITHUB_API_BASE = "https://api.github.com";
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
+function getGitHubHeaders(): Record<string, string> {
+  const token = getSecretSync("GITHUB_TOKEN");
+  const headers: Record<string, string> = {
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "MantraNewsScanner/1.0",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
+}
+
+export async function scanGitHubRepoSources(repos: Array<{ id: string; value: string }>): Promise<RawSignal[]> {
+  const allSignals: RawSignal[] = [];
+  const cutoff = new Date(Date.now() - SEVEN_DAYS_MS);
+  const headers = getGitHubHeaders();
+
+  for (const source of repos) {
+    try {
+      const repoPath = source.value.trim().replace(/^https?:\/\/github\.com\//, "");
+      if (!repoPath.includes("/")) {
+        log.warn(`scanGitHubRepoSources: invalid repo format "${source.value}", expected "owner/repo"`);
+        continue;
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      try {
+        const response = await fetch(`${GITHUB_API_BASE}/repos/${repoPath}/releases?per_page=10`, {
+          signal: controller.signal,
+          headers,
+        });
+
+        if (!response.ok) {
+          log.debug(`scanGitHubRepoSources: HTTP ${response.status} for ${repoPath}/releases`);
+          continue;
+        }
+
+        const releases = await response.json() as Array<{
+          tag_name?: string; name?: string; body?: string;
+          published_at?: string; html_url?: string; draft?: boolean; prerelease?: boolean;
+        }>;
+
+        let count = 0;
+        for (const release of releases) {
+          if (release.draft) continue;
+          const publishedAt = release.published_at ? new Date(release.published_at) : null;
+          if (!publishedAt || publishedAt < cutoff) continue;
+
+          const repoName = repoPath.split("/")[1] || repoPath;
+          const releaseName = release.name || release.tag_name || "release";
+          const tagName = release.tag_name || "";
+
+          allSignals.push({
+            sourceType: "github",
+            sourceId: source.id,
+            title: `${repoName}: ${releaseName}${tagName && tagName !== releaseName ? ` (${tagName})` : ""}`,
+            url: release.html_url || `https://github.com/${repoPath}/releases/tag/${tagName}`,
+            snippet: release.body ? stripHtml(release.body).slice(0, 500) : "",
+            publishedAt: release.published_at || null,
+            rawMetadata: { repo: repoPath, tagName, prerelease: release.prerelease },
+          });
+          count++;
+        }
+        log.log(`scanGitHubRepoSources: ${repoPath} returned ${count} recent releases`);
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (err) {
+      log.warn(`scanGitHubRepoSources: error scanning "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return allSignals;
 }
 
 // ── Interest Graph ─────────────────────────────────────────────────
