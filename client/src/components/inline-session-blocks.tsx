@@ -46,14 +46,14 @@ interface ChildSessionPayload {
   messages?: ChatMessage[];
 }
 
-function hasTimelineActivity(segments: MessageSegment[]): boolean {
-  return segments.some((segment) => segment.type === "timeline" && segment.steps.length > 0);
-}
-
 function latestContentFromSegments(segments: MessageSegment[]): string | null {
   for (const segment of [...segments].reverse()) {
     if (segment.type === "content") {
-      const text = stripMessageTimestamp(segment.content).trim().replace(/\s+/g, " ");
+      const lines = stripMessageTimestamp(segment.content)
+        .split("\n")
+        .map((line) => line.trim().replace(/\s+/g, " "))
+        .filter(Boolean);
+      const text = lines[lines.length - 1];
       if (text) return text;
     }
 
@@ -168,17 +168,19 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
   }, [isChildStreaming, childSub.streamingContent, childMessages]);
 
   const latestLine = useMemo(() => {
-    const streamingLine = isChildStreaming ? latestContentFromSegments(childSub.streamingContent?.segments ?? []) : null;
-    if (streamingLine) return streamingLine;
+    const fromSegments = latestContentFromSegments(segments);
+    if (fromSegments) return fromSegments;
 
     const latest = [...childMessages]
       .reverse()
       .find((message) => message.role === "assistant" || message.role === "user");
-    const text = stripMessageTimestamp(latest?.content || meta.summary || "").trim().replace(/\s+/g, " ");
+    const lines = stripMessageTimestamp(latest?.content || meta.summary || "")
+      .split("\n")
+      .map((line) => line.trim().replace(/\s+/g, " "))
+      .filter(Boolean);
+    const text = lines[lines.length - 1] ?? "";
     return text || (isChildStreaming ? "Starting..." : "Open child session");
-  }, [isChildStreaming, childSub.streamingContent, childMessages, meta.summary]);
-
-  const hasExecutionActivity = useMemo(() => hasTimelineActivity(segments), [segments]);
+  }, [segments, childMessages, meta.summary, isChildStreaming]);
 
   useEffect(() => {
     if (!expanded || !turnsRef.current) return;
@@ -288,20 +290,9 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
 
       {!expanded && (
         <div className="px-8 pb-2 min-h-7" data-testid={`text-child-summary-${meta.childSessionId}`}>
-          {hasExecutionActivity ? (
-            <div className="max-h-7 overflow-hidden">
-              <SegmentStream
-                segments={segments}
-                isStreaming={isChildStreaming && childSub.status === "streaming"}
-                layer={1}
-                suppressTrailingThinking
-              />
-            </div>
-          ) : (
-            <div className="text-xs leading-6 text-muted-foreground truncate">
-              {latestLine}
-            </div>
-          )}
+          <div className="text-xs leading-6 text-muted-foreground truncate">
+            {latestLine}
+          </div>
         </div>
       )}
 
