@@ -43,7 +43,6 @@ const DEFAULT_CLOSED_SECTIONS = new Set([
   "next_year",
   "three_years",
   "lifetime",
-  "done",
   "snoozed",
 ]);
 

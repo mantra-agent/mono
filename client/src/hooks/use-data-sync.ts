@@ -116,6 +116,34 @@ type AutonomousStartedCallback = (payload: { sessionId: string; sessionKey?: str
 let autonomousStartedCallback: AutonomousStartedCallback | null = null;
 
 
+
+function maybeToastGoalChange(payload: Record<string, unknown> | undefined): void {
+  const change = payload?.change as Record<string, unknown> | undefined;
+  if (!change) return;
+
+  const domain = typeof change.domain === "string" ? change.domain : "";
+  if (domain !== "priority" && domain !== "goal") return;
+
+  const action = typeof change.action === "string" ? change.action : "";
+  const title = typeof change.title === "string" ? change.title.trim() : "";
+  const source = typeof change.source === "string" ? change.source : "";
+
+  if (action === "mark_status") {
+    toast({
+      title: "Goal completed",
+      description: title || undefined,
+    });
+    return;
+  }
+
+  if (action === "add" && source === "ftue") {
+    toast({
+      title: "Goal added",
+      description: title || undefined,
+    });
+  }
+}
+
 function maybeToastPreferenceChange(eventName: string, payload: Record<string, unknown> | undefined): void {
   const preference = typeof payload?.preference === "string" ? payload.preference.trim() : "";
   const domain = typeof payload?.domain === "string" ? payload.domain.trim() : "";
@@ -264,6 +292,10 @@ export function useDataSync() {
 
       if (eventName === "data:library_changed") {
         maybeToastLibrarySurface(event.payload as Record<string, unknown> | undefined);
+      }
+
+      if (eventName === "data:goals_changed") {
+        maybeToastGoalChange(event.payload as Record<string, unknown> | undefined);
       }
 
       if (eventName === "data:preference_created" || eventName === "data:preference_updated") {

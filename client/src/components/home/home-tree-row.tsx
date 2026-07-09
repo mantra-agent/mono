@@ -192,7 +192,7 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
 
   const completed = item.status === "completed" || mutation.isSuccess;
   const disabled = (!action && !entryUi) || mutation.isPending || completed;
-  const showCheckCircle = item.completable || item.widgetType === "meeting";
+  const showCheckCircle = completed || item.completable || item.widgetType === "meeting";
 
   const titleHref = firstExternalUrl(item.title);
   const mapHref = isMeetingLocationItem(item) ? mapsSearchHref(item.title) : null;
@@ -287,7 +287,7 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
               checked={completed}
               pending={mutation.isPending}
               disabled={disabled}
-              interactive={item.completable}
+              interactive={item.completable && !completed}
               label={`Complete ${item.title}`}
               onClick={requestCompletion}
             />
