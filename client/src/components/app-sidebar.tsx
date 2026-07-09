@@ -31,6 +31,7 @@ import {
   ScrollText,
   Search,
   Settings,
+  Share2,
   SlidersHorizontal,
   Swords,
   Target,
@@ -116,6 +117,15 @@ const navSections: NavSection[] = [
       { title: "Orientation", url: "/orientation", icon: Globe },
       { title: "Persona", url: "/brain?tab=persona", icon: User },
       { title: "Emotion", url: "/brain?tab=emotion", icon: Heart },
+    ],
+  },
+  {
+    label: "Memory",
+    defaultOpen: false,
+    items: [
+      { title: "Layers", url: "/memory?tab=memories", icon: DatabaseZap },
+      { title: "Graph", url: "/memory?tab=graph", icon: Share2 },
+      { title: "Journal", url: "/memory?tab=maintenance", icon: ScrollText },
     ],
   },
   {
