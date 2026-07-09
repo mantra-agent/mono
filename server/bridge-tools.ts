@@ -10168,8 +10168,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     const { db } = await import("./db");
     const { libraryPages, libraryAnnotations, libraryPageLinks } = await import("@shared/models/info");
     const { eq, desc, asc, ilike, or, and, isNull, sql } = await import("drizzle-orm");
+    const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+    const { combineWithVisibleScope, combineWithWritableScope, visibleScopePredicate } = await import("./scoped-storage");
 
     const action = args.action;
+    const principal = getCurrentPrincipalOrSystem();
+    const libScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId };
+    const visibleLib = (predicate?: SQL) => combineWithVisibleScope(principal, libScopeColumns, predicate);
+    const writableLib = (predicate?: SQL) => combineWithWritableScope(principal, libScopeColumns, predicate);
 
     function publishLibraryChanged(action: string, page?: { id?: string | null; title?: string | null; surface?: boolean | null; surfaceUntil?: Date | string | null }) {
       eventBus.publish({
@@ -10208,7 +10214,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           id: libraryPages.id,
           title: libraryPages.title,
           parentId: libraryPages.parentId,
-        }).from(libraryPages);
+        }).from(libraryPages).where(visibleLib());
         const map = new Map<string, { title: string; parentId: string | null }>();
         for (const p of allPages) map.set(p.id, { title: p.title, parentId: p.parentId });
         return map;
@@ -10236,7 +10242,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           oneLiner: libraryPages.oneLiner,
           summary: libraryPages.summary,
           updatedAt: libraryPages.updatedAt,
-        }).from(libraryPages).orderBy(desc(libraryPages.updatedAt)).limit(50);
+        }).from(libraryPages).where(visibleLib()).orderBy(desc(libraryPages.updatedAt)).limit(50);
         if (pages.length === 0) return { result: "No library pages found." };
         const bcMap = await buildBreadcrumbMap();
         return { result: `Library pages (${pages.length}):\n${pages.map(p => {
@@ -10269,7 +10275,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           oneLiner: libraryPages.oneLiner,
           summary: libraryPages.summary,
           plainTextContent: libraryPages.plainTextContent,
-        }).from(libraryPages).where(whereClause).limit(20);
+        }).from(libraryPages).where(visibleLib(whereClause)).limit(20);
         if (pages.length === 0) return { result: `No library pages matching "${q}".` };
         const bcMap = await buildBreadcrumbMap();
         return { result: `Search results for "${q}":\n${pages.map(p => {
@@ -10290,7 +10296,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           parentId: libraryPages.parentId,
           emoji: libraryPages.emoji,
           oneLiner: libraryPages.oneLiner,
-        }).from(libraryPages).orderBy(asc(libraryPages.sortOrder), asc(libraryPages.title));
+        }).from(libraryPages).where(visibleLib()).orderBy(asc(libraryPages.sortOrder), asc(libraryPages.title));
 
         if (allPages.length === 0) return { result: "No library pages found." };
 
@@ -10319,8 +10325,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       if (action === "get_library_page" || action === "get") {
         const id = args.id;
         if (!id) return { result: "Provide an id or slug.", error: true };
-        const byId = await db.select().from(libraryPages).where(eq(libraryPages.id, id));
-        const page = byId[0] || (await db.select().from(libraryPages).where(eq(libraryPages.slug, id)))[0];
+        const byId = await db.select().from(libraryPages).where(visibleLib(eq(libraryPages.id, id)));
+        const page = byId[0] || (await db.select().from(libraryPages).where(visibleLib(eq(libraryPages.slug, id))))[0];
         if (!page) return { result: `Library page "${id}" not found.` };
         const annotations = await db.select().from(libraryAnnotations).where(eq(libraryAnnotations.pageId, page.id));
         const annotationText = annotations.length > 0
@@ -10405,8 +10411,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       if (action === "update_library_page" || action === "update") {
         const id = args.id;
         if (!id) return { result: "Provide an id to update.", error: true };
-        const byId = await db.select({ id: libraryPages.id, parentId: libraryPages.parentId }).from(libraryPages).where(eq(libraryPages.id, id));
-        const resolved = byId[0] || (await db.select({ id: libraryPages.id, parentId: libraryPages.parentId }).from(libraryPages).where(eq(libraryPages.slug, id)))[0];
+        const byId = await db.select({ id: libraryPages.id, parentId: libraryPages.parentId }).from(libraryPages).where(writableLib(eq(libraryPages.id, id)));
+        const resolved = byId[0] || (await db.select({ id: libraryPages.id, parentId: libraryPages.parentId }).from(libraryPages).where(writableLib(eq(libraryPages.slug, id))))[0];
         if (!resolved) return { result: `Library page "${id}" not found.`, error: true };
         const resolvedId = resolved.id;
         const oldParentId = resolved.parentId;
@@ -10476,8 +10482,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         if (oldString === undefined) return { result: "Missing old_string", error: true };
         if (newString === undefined) return { result: "Missing new_string", error: true };
 
-        const byId = await db.select().from(libraryPages).where(eq(libraryPages.id, id));
-        const page = byId[0] || (await db.select().from(libraryPages).where(eq(libraryPages.slug, id)))[0];
+        const byId = await db.select().from(libraryPages).where(writableLib(eq(libraryPages.id, id)));
+        const page = byId[0] || (await db.select().from(libraryPages).where(writableLib(eq(libraryPages.slug, id))))[0];
         if (!page) return { result: `Library page "${id}" not found.`, error: true };
 
         const { tiptapToMarkdown } = await import("@shared/markdown-tiptap");
@@ -10542,8 +10548,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       if (action === "dismiss_library_page" || action === "desurface_library_page" || action === "dismiss" || action === "desurface") {
         const id = args.id;
         if (!id) return { result: "Provide an id or slug to dismiss.", error: true };
-        const byId = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(eq(libraryPages.id, id));
-        const page = byId[0] || (await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(eq(libraryPages.slug, id)))[0];
+        const byId = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(writableLib(eq(libraryPages.id, id)));
+        const page = byId[0] || (await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(writableLib(eq(libraryPages.slug, id))))[0];
         if (!page) return { result: `Library page "${id}" not found.`, error: true };
         const [updated] = await db.update(libraryPages).set({
           surface: false,
@@ -10560,8 +10566,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       if (action === "delete_library_page" || action === "delete") {
         const id = args.id;
         if (!id) return { result: "Provide an id to delete.", error: true };
-        const byId = await db.select({ id: libraryPages.id, parentId: libraryPages.parentId }).from(libraryPages).where(eq(libraryPages.id, id));
-        const resolved = byId[0] || (await db.select({ id: libraryPages.id, parentId: libraryPages.parentId }).from(libraryPages).where(eq(libraryPages.slug, id)))[0];
+        const byId = await db.select({ id: libraryPages.id, parentId: libraryPages.parentId }).from(libraryPages).where(writableLib(eq(libraryPages.id, id)));
+        const resolved = byId[0] || (await db.select({ id: libraryPages.id, parentId: libraryPages.parentId }).from(libraryPages).where(writableLib(eq(libraryPages.slug, id))))[0];
         if (!resolved) return { result: `Library page "${id}" not found.`, error: true };
         const resolvedId = resolved.id;
         const parentIdOfPage = resolved.parentId;
@@ -10602,8 +10608,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         const id = args.id;
         const content = args.content;
         if (!id || !content) return { result: "Provide id or slug and content for annotation.", error: true };
-        const byId = await db.select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug }).from(libraryPages).where(eq(libraryPages.id, id));
-        const page = byId[0] || (await db.select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug }).from(libraryPages).where(eq(libraryPages.slug, id)))[0];
+        const byId = await db.select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug }).from(libraryPages).where(visibleLib(eq(libraryPages.id, id)));
+        const page = byId[0] || (await db.select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug }).from(libraryPages).where(visibleLib(eq(libraryPages.slug, id))))[0];
         if (!page) return { result: `Library page "${id}" not found.`, error: true };
         const annotationType = args.annotationType || "observation";
         const { getCurrentPrincipalOrSystem: getPrincipalForAnnotation } = await import("./principal-context");
