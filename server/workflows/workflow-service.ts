@@ -26,6 +26,7 @@ import {
   workflowTemplateDefinitionSchema,
   workflowTemplateStatusSchema,
   workflowTransitionTriggerSchema,
+  type WorkflowStageDefinition,
 } from "@shared/schema";
 import {
   environmentHostingBindings,
@@ -188,6 +189,10 @@ type WorkflowStageInputContext = {
   retryContext?: WorkflowRetryContext;
   relevantArtifacts: WorkflowArtifactBrief[];
   instruction: string;
+  entryCriteria?: string[];
+  exitCriteria?: string[];
+  evidenceRequirements?: string[];
+  allowedTransitions?: Array<{ toStageKey: string | null; on: string; reason?: string }>;
 };
 
 function getMaxAttempts(detail: WorkflowRunDetail): number {
@@ -273,11 +278,11 @@ function buildRetryContext(detail: WorkflowRunDetail, stageKey: string, stageTit
   };
 }
 
-function buildStageInputContext(detail: WorkflowRunDetail, stageKey: string, stageTitle: string, attemptNumber: number, extraContext?: unknown): WorkflowStageInputContext & { extraContext?: unknown; environmentTruth?: WorkflowEnvironmentTruth | null; lifecycleSnapshot?: unknown; protocols?: Record<string, unknown> } {
+function buildStageInputContext(detail: WorkflowRunDetail, stageKey: string, stageDef: WorkflowStageDefinition, attemptNumber: number, extraContext?: unknown): WorkflowStageInputContext & { extraContext?: unknown; environmentTruth?: WorkflowEnvironmentTruth | null; lifecycleSnapshot?: unknown; protocols?: Record<string, unknown> } {
   const priorAttempts = detail.stages.find((stage) => stage.key === stageKey)?.attempts || [];
   const retryCount = Math.max(0, attemptNumber - 1);
   const previousFailurePacket = buildPreviousFailurePacket(priorAttempts);
-  const retryContext = retryCount > 0 ? buildRetryContext(detail, stageKey, stageTitle, priorAttempts) : undefined;
+  const retryContext = retryCount > 0 ? buildRetryContext(detail, stageKey, stageDef.title, priorAttempts) : undefined;
   const instruction = retryCount > 0
     ? "This is a retry. The actionable failure packet is included inline under Retry Context. Address that failure directly and try a materially different approach. Do not hunt for the failure packet unless you need archival backup evidence."
     : "Execute this workflow stage in isolation. Use the workflow run artifact as the checkpoint source of truth and report a concise outcome when complete.";
@@ -286,7 +291,7 @@ function buildStageInputContext(detail: WorkflowRunDetail, stageKey: string, sta
     workflowTitle: detail.run.title,
     objective: detail.run.objective,
     stageKey,
-    stageTitle,
+    stageTitle: stageDef.title,
     attemptNumber,
     retryCount,
     maxAttempts: getMaxAttempts(detail),
@@ -294,6 +299,10 @@ function buildStageInputContext(detail: WorkflowRunDetail, stageKey: string, sta
     retryContext,
     relevantArtifacts: stageArtifacts(detail, stageKey),
     instruction,
+    entryCriteria: stageDef.entryCriteria,
+    exitCriteria: stageDef.exitCriteria,
+    evidenceRequirements: stageDef.evidenceRequirements,
+    allowedTransitions: stageDef.allowedTransitions,
     environmentTruth: detail.environmentTruth || null,
     lifecycleSnapshot: detail.lifecycleSnapshot || detail.run.lifecycleSnapshot || null,
     protocols: detail.template.id === BUILD_WORKFLOW_TEMPLATE_ID ? {
@@ -320,6 +329,37 @@ function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: u
   lines.push("");
   lines.push(`## Instruction`);
   lines.push(context.instruction);
+  if (context.entryCriteria?.length) {
+    lines.push("");
+    lines.push(`## Entry Criteria`);
+    lines.push("Before beginning this stage, verify each prerequisite is met:");
+    for (const criterion of context.entryCriteria) {
+      lines.push(`- [ ] ${criterion}`);
+    }
+  }
+  if (context.evidenceRequirements?.length) {
+    lines.push("");
+    lines.push(`## Evidence Requirements`);
+    lines.push("This stage is not complete until every evidence requirement is satisfied. Produce explicit evidence for each:");
+    for (const requirement of context.evidenceRequirements) {
+      lines.push(`- [ ] ${requirement}`);
+    }
+  }
+  if (context.exitCriteria?.length) {
+    lines.push("");
+    lines.push(`## Exit Criteria`);
+    for (const criterion of context.exitCriteria) {
+      lines.push(`- [ ] ${criterion}`);
+    }
+  }
+  if (context.allowedTransitions?.length) {
+    lines.push("");
+    lines.push(`## Allowed Transitions`);
+    for (const t of context.allowedTransitions) {
+      const target = t.toStageKey ? `→ ${t.toStageKey}` : "→ terminal";
+      lines.push(`- On **${t.on}**: ${target}${t.reason ? ` (${t.reason})` : ""}`);
+    }
+  }
   if (context.retryCount > 0) {
     lines.push("");
     lines.push(`## Retry Context`);
@@ -984,7 +1024,7 @@ export async function startStageAttempt(runId: string, stageKey?: string, option
   const mergedInputContext = stageSpecificContext || options.inputContext !== undefined
     ? { ...(typeof stageSpecificContext === "object" ? stageSpecificContext : {}), ...(typeof options.inputContext === "object" && options.inputContext !== null ? options.inputContext as Record<string, unknown> : options.inputContext !== undefined ? { input: options.inputContext } : {}) }
     : undefined;
-  const inputContext = buildStageInputContext(detail, key, stage.title, attemptNumber, mergedInputContext);
+  const inputContext = buildStageInputContext(detail, key, stage, attemptNumber, mergedInputContext);
   const childSessionId = options.childSessionId || (options.spawnChildSession === false ? null : await spawnWorkflowStageChild(parentSessionId, detail, key, stage.title, attemptNumber, inputContext));
 
   const [attempt] = await db.insert(workflowStageAttempts).values({
