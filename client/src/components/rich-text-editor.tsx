@@ -280,6 +280,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
       setMenuAnchor(null);
       setCommandQuery("");
       setSelectedCommandIdx(0);
+      if (blockHandleClearTimer.current) { clearTimeout(blockHandleClearTimer.current); blockHandleClearTimer.current = null; }
     };
   }, []);
 
@@ -372,6 +373,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
   const [blockHandleAnchor, setBlockHandleAnchor] = useState<BlockHandleAnchor | null>(null);
   const [menuSource, setMenuSource] = useState<EditorMenuSource>("slash");
   const slashTriggerFromRef = useRef<number | null>(null);
+  const blockHandleClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [commandQuery, setCommandQuery] = useState("");
   const [selectedCommandIdx, setSelectedCommandIdx] = useState(0);
   const commands = buildEditorCommands(onInsertLink);
@@ -391,16 +393,29 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
   const updateBlockHandleFromMouse = useCallback((target: EventTarget | null) => {
     const container = editorContainerRef.current;
     if (!container || readOnly || isEditorFocused || menuAnchor) {
+      if (blockHandleClearTimer.current) { clearTimeout(blockHandleClearTimer.current); blockHandleClearTimer.current = null; }
       setBlockHandleAnchor(null);
       return;
     }
     const element = target instanceof Element ? target : null;
-    if (element?.closest("[data-editor-block-menu]")) return;
-    const block = element?.closest(".ProseMirror p, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror li, .ProseMirror blockquote, .ProseMirror pre");
-    if (!block || !container.contains(block)) {
-      setBlockHandleAnchor(null);
+    // Hovering the handle itself — cancel any pending clear
+    if (element?.closest("[data-editor-block-menu]")) {
+      if (blockHandleClearTimer.current) { clearTimeout(blockHandleClearTimer.current); blockHandleClearTimer.current = null; }
       return;
     }
+    const block = element?.closest(".ProseMirror p, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror li, .ProseMirror blockquote, .ProseMirror pre");
+    if (!block || !container.contains(block)) {
+      // Delay clearing so the mouse can cross the gap to reach the handle
+      if (!blockHandleClearTimer.current) {
+        blockHandleClearTimer.current = setTimeout(() => {
+          blockHandleClearTimer.current = null;
+          setBlockHandleAnchor(null);
+        }, 150);
+      }
+      return;
+    }
+    // Valid text block hover — cancel any pending clear and update position
+    if (blockHandleClearTimer.current) { clearTimeout(blockHandleClearTimer.current); blockHandleClearTimer.current = null; }
     const blockBox = block.getBoundingClientRect();
     const containerBox = container.getBoundingClientRect();
     setBlockHandleAnchor({ top: blockBox.top - containerBox.top + Math.max(0, (blockBox.height - 28) / 2), left: 4 });
@@ -504,7 +519,13 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
       onDrop={handleDrop}
       onDragOver={(e) => { if (!readOnly) e.preventDefault(); }}
       onMouseMove={(e) => updateBlockHandleFromMouse(e.target)}
-      onMouseLeave={() => setBlockHandleAnchor(null)}
+      onMouseLeave={() => {
+        if (blockHandleClearTimer.current) { clearTimeout(blockHandleClearTimer.current); blockHandleClearTimer.current = null; }
+        blockHandleClearTimer.current = setTimeout(() => {
+          blockHandleClearTimer.current = null;
+          setBlockHandleAnchor(null);
+        }, 150);
+      }}
       onFocusCapture={() => { setIsEditorFocused(true); setBlockHandleAnchor(null); onFocusChange?.(true); }}
       onBlurCapture={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
