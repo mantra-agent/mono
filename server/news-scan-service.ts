@@ -89,6 +89,7 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
     const githubRepos = enabledSources.filter(s => s.sourceType === "github_repo");
     const polymarketSources = enabledSources.filter(s => s.sourceType === "polymarket");
     const stocktwitsSources = enabledSources.filter(s => s.sourceType === "stocktwits");
+    const arxivSources = enabledSources.filter(s => s.sourceType === "arxiv");
 
     const webQueryItems = channelWeb ? queries.map(q => ({ id: channelWeb.id, value: q })) : [];
     const xQueryItems = channelX ? queries.map(q => ({ id: channelX.id, value: q })) : [];
@@ -173,6 +174,13 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
         const stSignals = await adapters.scanStockTwitsSources(stocktwitsSources.map(s => ({ id: s.id, value: s.value })));
         allSignals.push(...stSignals);
       } catch (err) { errors.push(`stocktwits: ${(err as Error).message}`); }
+    }
+
+    if (arxivSources.length > 0) {
+      try {
+        const arxivSignals = await adapters.scanArxivSources(arxivSources.map(s => ({ id: s.id, value: s.value })));
+        allSignals.push(...arxivSignals);
+      } catch (err) { errors.push(`arxiv: ${(err as Error).message}`); }
     }
 
     const preDedup = allSignals.length;

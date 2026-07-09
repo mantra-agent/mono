@@ -9,7 +9,7 @@ const log = createLogger("LandscapeAdapters");
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
 export interface RawSignal {
-  sourceType: "x" | "x_account" | "web" | "reddit" | "rss" | "hackernews" | "github" | "polymarket" | "stocktwits";
+  sourceType: "x" | "x_account" | "web" | "reddit" | "rss" | "hackernews" | "github" | "polymarket" | "stocktwits" | "arxiv";
   sourceId: string;
   title: string;
   url: string;
@@ -876,6 +876,86 @@ export async function scanStockTwitsSources(sources: Array<{ id: string; value: 
       }
     } catch (err) {
       log.warn(`scanStockTwitsSources: error scanning "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return allSignals;
+}
+
+// ── arXiv ──────────────────────────────────────────────────────────
+
+const ARXIV_API_BASE = "https://export.arxiv.org/api/query";
+const ARXIV_RATE_LIMIT_MS = 3500; // arXiv requires ≥3s between requests
+
+export async function scanArxivSources(sources: Array<{ id: string; value: string }>): Promise<RawSignal[]> {
+  const allSignals: RawSignal[] = [];
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+  for (let i = 0; i < sources.length; i++) {
+    const source = sources[i];
+    try {
+      // Rate-limit: wait between requests (skip first)
+      if (i > 0) {
+        await new Promise(resolve => setTimeout(resolve, ARXIV_RATE_LIMIT_MS));
+      }
+
+      const query = source.value.trim();
+      // Detect arXiv category format (e.g., "cs.AI", "math.CO") vs keyword search
+      const isCategory = /^[a-z-]+\.[A-Z]{2,}$/i.test(query);
+      const searchQuery = isCategory
+        ? `cat:${query}`
+        : `all:${encodeURIComponent(query)}`;
+
+      const url = `${ARXIV_API_BASE}?search_query=${searchQuery}&max_results=25&sortBy=submittedDate&sortOrder=descending`;
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 20000);
+      try {
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: { "User-Agent": BROWSER_USER_AGENT },
+        });
+
+        if (!response.ok) {
+          log.debug(`scanArxivSources: HTTP ${response.status} for "${query}"`);
+          continue;
+        }
+
+        const xml = await response.text();
+        const items = parseRssItems(xml);
+        let count = 0;
+
+        for (const item of items) {
+          if (!item.title || !item.link) continue;
+
+          // Filter to last 7 days if pubDate available
+          if (item.pubDate) {
+            const pubTime = new Date(item.pubDate).getTime();
+            if (!isNaN(pubTime) && pubTime < sevenDaysAgo) continue;
+          }
+
+          // Extract arXiv ID from link (e.g., http://arxiv.org/abs/2407.12345v1)
+          const arxivUrl = item.link.replace(/^http:/, "https:");
+
+          allSignals.push({
+            sourceType: "arxiv",
+            sourceId: source.id,
+            title: item.title.replace(/\s+/g, " ").trim(),
+            url: arxivUrl,
+            snippet: (item.description || "").slice(0, 500),
+            publishedAt: item.pubDate || null,
+            rawMetadata: {
+              query,
+              isCategory,
+            },
+          });
+          count++;
+        }
+        log.log(`scanArxivSources: "${query}" returned ${count} recent papers`);
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (err) {
+      log.warn(`scanArxivSources: error scanning "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   return allSignals;
