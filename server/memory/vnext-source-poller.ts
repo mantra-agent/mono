@@ -24,7 +24,7 @@ import {
   extractClaimsFromChunk,
   deduplicateChunkClaims,
   type ClaimCandidate,
-} from "./memory-enrichment";
+} from "./vnext-claim-extraction";
 import { resolveVnextEntityMentions } from "./vnext-entity-resolution";
 
 const log = createLogger("VnextSourcePoller");

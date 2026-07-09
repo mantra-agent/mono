@@ -18,7 +18,7 @@ import {
   type MemoryVnextEntityLink,
   type MemoryVnextClaimLink,
 } from "@shared/schema";
-import type { ClaimCandidate } from "./memory-enrichment";
+import type { ClaimCandidate } from "./vnext-claim-extraction";
 import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "./embedding";
 
 const log = createLogger("MemoryVnextClaims");
