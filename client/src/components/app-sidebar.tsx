@@ -7,28 +7,39 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import {
   BookOpen,
   Boxes,
+  Brain,
   Briefcase,
   BrainCircuit,
   Calendar,
-  ChevronDown,
   ChevronRight,
-  Compass,
+  Clock,
   DatabaseZap,
+  DollarSign,
+  FileText,
+  Gauge,
+  GitBranch,
   Globe,
   Hammer,
-  Newspaper,
   Heart,
   Home,
   Lightbulb,
   Mail,
-  Monitor,
+  Newspaper,
   Palette,
   Plug,
   Scale,
+  ScrollText,
+  Search,
+  SlidersHorizontal,
   Swords,
   Target,
-  Workflow,
+  Terminal,
+  User,
   Users,
+  Workflow,
+  Wrench,
+  X,
+  Zap,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useExecutorStatus } from "@/hooks/use-executor-status";
@@ -44,78 +55,112 @@ import { useOrientationActivity } from "@/hooks/use-orientation-activity";
 import { useEnvActivity } from "@/hooks/use-env-activity";
 import { ActiveStatusSpinner, getStatusClasses, type NavDotLevel } from "./nav-dot";
 import { MantraLogo } from "@/components/mantra-logo";
-
-interface NavChild {
-  title: string;
-  tab: string;
-}
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 
 interface NavItem {
   title: string;
   url: string;
   icon: React.ComponentType<{ className?: string }>;
-  children?: NavChild[];
+  permission?: string;
 }
 
-export const navTree: NavItem[] = [
-  { title: "Home", url: "/home", icon: Home },
-  { title: "Goals", url: "/goals", icon: Target },
-  { title: "Vision", url: "/vision", icon: Palette },
-  { title: "Wellness", url: "/wellness", icon: Heart },
-  { title: "Email", url: "/email", icon: Mail },
-  { title: "News", url: "/news", icon: Newspaper },
-  { title: "Library", url: "/library", icon: BookOpen },
-  { title: "People", url: "/people", icon: Users },
-  { title: "Orientation", url: "/orientation", icon: Globe },
-  { title: "Schedule", url: "/schedule", icon: Calendar },
-  { title: "Profile", url: "/profile", icon: Compass },
-  { title: "Pipelines", url: "/pipelines", icon: Target },
-  { title: "Workflows", url: "/workflows", icon: Workflow },
-  { title: "Projects", url: "/projects", icon: Briefcase },
-  { title: "Strategy", url: "/strategy", icon: Swords },
-  { title: "Decisions", url: "/decisions", icon: Scale },
-  { title: "Platforms", url: "/platforms", icon: Boxes },
-  { title: "Database", url: "/database", icon: DatabaseZap },
-  { title: "Skills", url: "/skills", icon: Lightbulb },
-  { title: "Brain", url: "/brain", icon: BrainCircuit, children: [
-    { title: "Observations", tab: "thoughts" },
-    { title: "Context", tab: "context" },
-    { title: "Emotion", tab: "emotion" },
-    { title: "Persona", tab: "persona" },
-    { title: "Model", tab: "model" },
-    { title: "Plans", tab: "plans" },
-  ]},
-  { title: "System", url: "/system", icon: Monitor, children: [
-    { title: "Performance", tab: "resources" },
-    { title: "Logs", tab: "logs" },
-    { title: "Timers", tab: "timers" },
-    { title: "Tools", tab: "tools" },
-    { title: "Inference", tab: "inference" },
-    { title: "Cost", tab: "cost" },
-    { title: "Events", tab: "events" },
-    { title: "Hooks", tab: "hooks" },
-    { title: "Process", tab: "process" },
-    { title: "Users", tab: "users" },
-  ]},
-  { title: "Memory", url: "/memory", icon: DatabaseZap, children: [
-    { title: "Layers", tab: "layers" },
-    { title: "Graph", tab: "graph" },
-    { title: "Log", tab: "log" },
-    { title: "Query", tab: "query" },
-    { title: "Tags", tab: "tags" },
-  ]},
-  { title: "Build", url: "/build", icon: Hammer, children: [
-    { title: "History", tab: "history" },
-    { title: "Code", tab: "code" },
-    { title: "Issues", tab: "issues" },
-    { title: "Prompts", tab: "prompts" },
-  ]},
-  { title: "Design", url: "/design", icon: Palette },
-  { title: "Integrations", url: "/integrations", icon: Plug },
+interface NavSection {
+  label: string;
+  defaultOpen: boolean;
+  items: NavItem[];
+}
+
+const navSections: NavSection[] = [
+  {
+    label: "Tools",
+    defaultOpen: true,
+    items: [
+      { title: "Home", url: "/home", icon: Home },
+      { title: "News", url: "/news", icon: Newspaper },
+      { title: "Email", url: "/email", icon: Mail },
+      { title: "Library", url: "/library", icon: BookOpen },
+      { title: "People", url: "/people", icon: Users },
+      { title: "Schedule", url: "/schedule", icon: Calendar },
+      { title: "Projects", url: "/projects", icon: Briefcase },
+      { title: "Pipelines", url: "/pipelines", icon: Target },
+    ],
+  },
+  {
+    label: "Planning",
+    defaultOpen: false,
+    items: [
+      { title: "Goals", url: "/goals", icon: Target },
+      { title: "Decisions", url: "/decisions", icon: Scale },
+      { title: "Strategy", url: "/strategy", icon: Swords },
+    ],
+  },
+  {
+    label: "Automation",
+    defaultOpen: false,
+    items: [
+      { title: "Skills", url: "/skills", icon: Lightbulb, permission: "system:read" },
+      { title: "Plans", url: "/brain?tab=plans", icon: FileText },
+      { title: "Workflows", url: "/workflows", icon: Workflow },
+      { title: "Hooks", url: "/system?tab=hooks", icon: GitBranch, permission: "system:read" },
+      { title: "Timers", url: "/system?tab=timers", icon: Clock, permission: "system:read" },
+    ],
+  },
+  {
+    label: "Agent",
+    defaultOpen: false,
+    items: [
+      { title: "Orientation", url: "/orientation", icon: Globe },
+      { title: "Persona", url: "/brain?tab=persona", icon: User },
+      { title: "Emotion", url: "/brain?tab=emotion", icon: Heart },
+    ],
+  },
+  {
+    label: "Build",
+    defaultOpen: false,
+    items: [
+      { title: "Platforms", url: "/platforms", icon: Boxes, permission: "build:read" },
+      { title: "Design", url: "/design", icon: Palette, permission: "build:read" },
+      { title: "Database", url: "/database", icon: DatabaseZap, permission: "build:read" },
+      { title: "Code", url: "/build?tab=code", icon: Terminal, permission: "build:read" },
+      { title: "Issues", url: "/build?tab=issues", icon: Hammer, permission: "build:read" },
+    ],
+  },
+  {
+    label: "System",
+    defaultOpen: false,
+    items: [
+      { title: "Performance", url: "/system?tab=resources", icon: Gauge, permission: "system:read" },
+      { title: "Logs", url: "/system?tab=logs", icon: ScrollText, permission: "system:read" },
+      { title: "Events", url: "/system?tab=events", icon: Zap, permission: "system:read" },
+      { title: "Tools", url: "/system?tab=tools", icon: Wrench, permission: "system:read" },
+      { title: "Prompts", url: "/build?tab=prompts", icon: FileText, permission: "build:read" },
+      { title: "Context", url: "/brain?tab=context", icon: BrainCircuit },
+      { title: "Router", url: "/system?tab=inference", icon: Brain, permission: "system:read" },
+      { title: "Models", url: "/brain?tab=model", icon: SlidersHorizontal },
+      { title: "Cost", url: "/system?tab=cost", icon: DollarSign, permission: "system:read" },
+    ],
+  },
+  {
+    label: "Admin",
+    defaultOpen: false,
+    items: [
+      { title: "Users", url: "/system?tab=users", icon: Users, permission: "system:read" },
+      { title: "Integrations", url: "/integrations", icon: Plug },
+    ],
+  },
 ];
 
-// Legacy flat navItems export for any downstream consumers
-export const navItems = navTree.map(({ title, url, icon }) => ({ title, url, icon }));
+// Build a flat navTree for legacy consumers
+export const navTree = navSections.flatMap((section) =>
+  section.items.map(({ title, url, icon }) => ({ title, url, icon }))
+);
+
+// Legacy flat navItems export
+export const navItems = navTree;
 
 const statusRingColors: Record<string, string> = {
   running: "ring-cta/40",
@@ -154,7 +199,6 @@ export function XyzIconButton() {
   const status = gatewayStatus?.status || "not_installed";
 
   const handleClick = useCallback(() => {
-    // On mobile, opening the nav must dismiss the sessions overlay
     if (isMobile && !openMobile) {
       setWidgetOpen(false);
     }
@@ -164,15 +208,47 @@ export function XyzIconButton() {
   return <XyzIcon status={status} onClick={handleClick} />;
 }
 
+const STORAGE_KEY = "nav-sections-collapsed";
+
+function loadCollapsedState(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return new Set(JSON.parse(raw));
+  } catch { /* ignore */ }
+  return new Set();
+}
+
+function saveCollapsedState(collapsed: Set<string>) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([...collapsed]));
+  } catch { /* ignore */ }
+}
+
+/** Parse a nav item URL into a path and optional tab param */
+function parseNavUrl(url: string): { path: string; tab?: string } {
+  const idx = url.indexOf("?tab=");
+  if (idx === -1) return { path: url };
+  return { path: url.slice(0, idx), tab: url.slice(idx + 5) };
+}
+
+/** Check if a nav item is active given the current location */
+function isItemActive(itemUrl: string, location: string): boolean {
+  const { path, tab } = parseNavUrl(itemUrl);
+  if (!location.startsWith(path)) return false;
+  if (!tab) return true;
+  const params = new URLSearchParams(window.location.search);
+  return params.get("tab") === tab;
+}
 
 /**
  * Full-page navigation view. Replaces the main content area when the sidebar
- * is open. Renders the hierarchical nav tree with expandable parent items.
+ * is open. Renders nav items under collapsible section headers.
  */
 export function NavPage() {
   const [location, navigate] = useLocation();
   const { setOpen, setOpenMobile, isMobile } = useSidebar();
   const { hasPermission } = useAuth();
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Activity indicators
   const workActive = useWorkActivity();
@@ -195,110 +271,171 @@ export function NavPage() {
     Build: envActive,
   };
 
-  const permittedItems = useMemo(() => navTree.filter((item) => {
-    if (item.title === "System") return hasPermission("system:read");
-    if (item.title === "Build" || item.title === "Database") return hasPermission("build:read");
-    return true;
-  }), [hasPermission]);
-
-  // Auto-expand the current page's item
-  const [expanded, setExpanded] = useState<Set<string>>(() => {
-    const current = navTree.find(item => location.startsWith(item.url));
-    return current?.children ? new Set([current.url]) : new Set();
+  // Collapsed state: sections that are explicitly collapsed by the user.
+  // Default: everything collapsed except sections with defaultOpen: true.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    const stored = loadCollapsedState();
+    if (stored.size > 0) return stored;
+    // Initial state: collapse everything except defaultOpen sections
+    return new Set(
+      navSections.filter((s) => !s.defaultOpen).map((s) => s.label)
+    );
   });
+
+  const toggleSection = useCallback((label: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      saveCollapsedState(next);
+      return next;
+    });
+  }, []);
 
   const closeSidebar = useCallback(() => {
     if (isMobile) setOpenMobile(false);
     else setOpen(false);
   }, [isMobile, setOpen, setOpenMobile]);
 
-  const toggleExpand = useCallback((url: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      if (next.has(url)) next.delete(url);
-      else next.add(url);
-      return next;
-    });
-  }, []);
+  const handleNav = useCallback(
+    (url: string) => {
+      navigate(url);
+      closeSidebar();
+    },
+    [navigate, closeSidebar]
+  );
 
-  const handleNav = useCallback((url: string, tab?: string) => {
-    const path = tab ? `${url}?tab=${tab}` : url;
-    navigate(path);
-    closeSidebar();
-  }, [navigate, closeSidebar]);
+  // Filter sections and items by permission and search query
+  const filteredSections = useMemo(() => {
+    const queryTokens = searchQuery
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+
+    return navSections
+      .map((section) => {
+        const items = section.items.filter((item) => {
+          // Permission check
+          if (item.permission && !hasPermission(item.permission)) return false;
+          // Search filter
+          if (queryTokens.length === 0) return true;
+          const haystack = `${item.title} ${section.label}`.toLowerCase();
+          return queryTokens.every((t) => haystack.includes(t));
+        });
+        return { ...section, items };
+      })
+      .filter((section) => section.items.length > 0);
+  }, [hasPermission, searchQuery]);
+
+  // When searching, expand all sections
+  const isSearching = searchQuery.trim().length > 0;
 
   return (
-    <div className="flex-1 overflow-y-auto bg-background scrollbar-thin" data-testid="nav-page">
-      <nav className="p-3 space-y-0.5">
-        {permittedItems.map((item) => {
-          const isActive = location.startsWith(item.url);
-          const level = statusMap[item.title] ?? null;
-          const sc = getStatusClasses(level);
-          const isExpanded = expanded.has(item.url);
-          const hasChildren = !!item.children?.length;
+    <div
+      className="flex-1 overflow-y-auto bg-background scrollbar-thin"
+      data-testid="nav-page"
+    >
+      <div className="p-2 space-y-1">
+        {/* Search bar */}
+        <div className="relative min-w-0 mb-1">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+          <input
+            type="text"
+            placeholder="Search pages…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full h-7 pl-7 pr-7 rounded-md border border-input bg-background text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            data-testid="input-search-nav"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 h-4 w-4 flex items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+              data-testid="button-clear-nav-search"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
 
-          return (
-            <div key={item.url}>
-              <div className="flex items-center">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (hasChildren) {
-                      toggleExpand(item.url);
-                    } else {
-                      handleNav(item.url);
-                    }
-                  }}
-                  className={cn(
-                    "flex items-center gap-2 flex-1 rounded-md px-2 py-1.5 text-sm transition-colors",
-                    isActive
-                      ? "bg-muted font-medium text-foreground"
-                      : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-                  )}
-                  data-testid={`link-nav-${item.title.toLowerCase()}`}
+        {/* Nav sections */}
+        {filteredSections.length === 0 && searchQuery.trim() ? (
+          <div className="py-8 text-center">
+            <Search className="h-8 w-8 text-muted-foreground/50 mx-auto mb-2" />
+            <p className="text-xs text-muted-foreground">
+              No pages match &quot;{searchQuery.trim()}&quot;
+            </p>
+          </div>
+        ) : (
+          filteredSections.map((section) => {
+            const isOpen = isSearching || !collapsed.has(section.label);
+
+            return (
+              <Collapsible
+                key={section.label}
+                open={isOpen}
+                onOpenChange={() => {
+                  if (!isSearching) toggleSection(section.label);
+                }}
+              >
+                <CollapsibleTrigger
+                  className="flex items-center gap-1.5 w-full px-2 py-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider hover-elevate rounded-md"
+                  data-testid={`button-nav-section-${section.label.toLowerCase()}`}
                 >
-                  {level === "active" ? (
-                    <ActiveStatusSpinner className="h-4 w-4" />
-                  ) : (
-                    <item.icon className={cn("h-4 w-4 shrink-0", level ? sc.icon : "")} />
-                  )}
-                  <span className={cn("flex-1 text-left", level ? sc.text : "", level === "active" && "animate-pulse")}>
-                    {item.title}
-                  </span>
-                  {hasChildren && (
-                    isExpanded
-                      ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                      : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  )}
-                </button>
-              </div>
-              {hasChildren && isExpanded && (
-                <div className="ml-6 mt-0.5 space-y-0.5 border-l border-border/50 pl-2">
-                  {item.children!.map((child) => {
-                    const childActive = isActive && new URLSearchParams(window.location.search).get("tab") === child.tab;
-                    return (
-                      <button
-                        key={child.tab}
-                        type="button"
-                        onClick={() => handleNav(item.url, child.tab)}
-                        className={cn(
-                          "block w-full text-left rounded-md px-2 py-1 text-xs transition-colors",
-                          childActive
-                            ? "bg-muted/80 text-foreground font-medium"
-                            : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",
-                        )}
-                        data-testid={`link-nav-${item.title.toLowerCase()}-${child.tab}`}
-                      >
-                        {child.title}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </nav>
+                  <ChevronRight
+                    className={`h-3 w-3 shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`}
+                  />
+                  {section.label}
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="space-y-0.5 mt-0.5">
+                    {section.items.map((item) => {
+                      const active = isItemActive(item.url, location);
+                      const level = statusMap[item.title] ?? null;
+                      const sc = getStatusClasses(level);
+
+                      return (
+                        <button
+                          key={item.url}
+                          type="button"
+                          onClick={() => handleNav(item.url)}
+                          className={cn(
+                            "flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm transition-colors",
+                            active
+                              ? "bg-muted font-medium text-foreground"
+                              : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                          )}
+                          data-testid={`link-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
+                        >
+                          {level === "active" ? (
+                            <ActiveStatusSpinner className="h-4 w-4" />
+                          ) : (
+                            <item.icon
+                              className={cn(
+                                "h-4 w-4 shrink-0",
+                                level ? sc.icon : ""
+                              )}
+                            />
+                          )}
+                          <span
+                            className={cn(
+                              "flex-1 text-left",
+                              level ? sc.text : "",
+                              level === "active" && "animate-pulse"
+                            )}
+                          >
+                            {item.title}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            );
+          })
+        )}
+      </div>
 
       {/* Footer */}
       <div className="p-3 mt-4 border-t border-border/30">
@@ -326,7 +463,10 @@ function UserFooter() {
       className="flex items-center justify-between gap-2 w-full rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors"
       data-testid="button-user-menu"
     >
-      <span className="text-xs text-muted-foreground truncate" data-testid="text-current-user">
+      <span
+        className="text-xs text-muted-foreground truncate"
+        data-testid="text-current-user"
+      >
         {user.email}
       </span>
       <ChevronRight className="h-3 w-3 text-muted-foreground/40 shrink-0" />

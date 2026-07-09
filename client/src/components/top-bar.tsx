@@ -35,9 +35,27 @@ function getPageTitle(pathname: string) {
   );
   if (detailMatch) return detailMatch[1];
 
+  // Try exact tab match first: if the browser URL has ?tab=X, find the
+  // navTree item whose url matches both path and tab param.
+  const currentTab = new URLSearchParams(window.location.search).get("tab");
+  if (currentTab) {
+    const tabMatch = navTree.find((item) => {
+      const qIdx = item.url.indexOf("?tab=");
+      if (qIdx === -1) return false;
+      const itemPath = item.url.slice(0, qIdx);
+      const itemTab = item.url.slice(qIdx + 5);
+      return pathname === itemPath && currentTab === itemTab;
+    });
+    if (tabMatch) return tabMatch.title;
+  }
+
+  // Fall back to path-only matching (longest match wins)
   const navMatch = [...navTree]
     .sort((a, b) => b.url.length - a.url.length)
-    .find((item) => pathname === item.url || pathname.startsWith(`${item.url}/`));
+    .find((item) => {
+      const itemPath = item.url.split("?")[0];
+      return pathname === itemPath || pathname.startsWith(`${itemPath}/`);
+    });
 
   if (!navMatch) return "Home";
   return navMatch.title === "Info" ? "Library" : navMatch.title;
