@@ -62,6 +62,7 @@ import {
   FolderClosed,
   FileText,
   Loader2,
+  CheckCircle2,
   Search,
   Trash2,
   ArrowUpRight,
@@ -104,6 +105,8 @@ import {
   AlertTriangle,
   Circle,
 } from "lucide-react";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import { createReferenceRef } from "@shared/references";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -883,14 +886,14 @@ const MEMORY_PIPELINE_STAGES = [
   { value: "stage_4", label: "Stage 4", description: "Maintained" },
 ];
 
-const MEMORY_VNEXT_SOURCE_STAGE = { value: "stage_0", label: "Stage 0", description: "Queued sources" };
+const MEMORY_VNEXT_SOURCE_STAGE = { value: "stage_0", label: "Sources" };
 
 const MEMORY_VNEXT_CLAIM_STAGES = [
-  { value: "extracted", label: "Stage 1", description: "Extracted claims" },
-  { value: "sourced", label: "Stage 2", description: "Source refs attached" },
-  { value: "linked", label: "Stage 3", description: "Entities or claims linked" },
-  { value: "canonical", label: "Stage 4", description: "Promoted claims" },
-  { value: "retired", label: "Retired", description: "Superseded" },
+  { value: "extracted", label: "Claims" },
+  { value: "sourced", label: "Refs" },
+  { value: "linked", label: "Linked" },
+  { value: "canonical", label: "Promoted" },
+  { value: "retired", label: "Retired" },
 ];
 
 const MEMORY_VNEXT_PIPELINE_STAGES = [MEMORY_VNEXT_SOURCE_STAGE, ...MEMORY_VNEXT_CLAIM_STAGES];
@@ -2198,15 +2201,26 @@ function LayersTab() {
     setExpandedClaimIds(prev => { const next = new Set(prev); next.has(claimId) ? next.delete(claimId) : next.add(claimId); return next; });
   };
 
+  const renderVnextSourceStatusIcon = (status: string, testId: string) => {
+    if (status === "processing") return <Loader2 className="h-3 w-3 shrink-0 animate-spin text-info" data-testid={testId} aria-label="Processing" />;
+    if (status === "pending") return <Clock className="h-3 w-3 shrink-0 text-warning" data-testid={testId} aria-label="Pending" />;
+    return <CheckCircle2 className="h-3 w-3 shrink-0 text-success" data-testid={testId} aria-label="Completed" />;
+  };
+
   const renderVnextSourceRow = (source: VnextSourceQueueRow) => {
     const modified = formatPipelineTime(source.lastModifiedAt, timezone);
     const extracted = formatPipelineTime(source.lastExtractedAt, timezone);
+    const refType = source.sourceType === "session" ? "session" : source.sourceType === "library_page" ? "page" : null;
     return (
       <div key={source.id} className="grid grid-cols-[1fr_auto] gap-2 px-2 py-1.5 text-xs hover:bg-muted/30" data-testid={`memory-vnext-source-row-${source.id}`}>
         <div className="min-w-0">
           <div className="flex items-center gap-2 min-w-0">
-            <Badge variant={source.status === "processing" ? "default" : source.status === "pending" ? "secondary" : "outline"} className="h-5 px-1.5 text-[10px] capitalize">{source.status}</Badge>
-            <span className="truncate font-medium">{source.sourceType}:{source.sourceId}</span>
+            {renderVnextSourceStatusIcon(source.status, `memory-vnext-source-status-${source.id}`)}
+            {refType ? (
+              <ReferenceRenderer refValue={createReferenceRef({ type: refType, id: source.sourceId })} surface="simple-chip" />
+            ) : (
+              <span className="truncate font-medium">{source.sourceType}:{source.sourceId}</span>
+            )}
           </div>
           <div className="mt-0.5 text-[11px] text-muted-foreground/70">{extracted ? `Last extracted ${extracted}` : modified ? `Queued ${modified}` : "Queued source"}</div>
         </div>
@@ -2215,7 +2229,7 @@ function LayersTab() {
     );
   };
 
-  const renderVnextStageSection = (stage: { value: string; label: string; description: string }) => {
+  const renderVnextStageSection = (stage: { value: string; label: string }) => {
     const isSourceStage = stage.value === MEMORY_VNEXT_SOURCE_STAGE.value;
     const claims = isSourceStage ? [] : (vnextClaimsByStage.get(stage.value) ?? []);
     const count = isSourceStage ? vnextSources.length : claims.length;
@@ -2225,7 +2239,6 @@ function LayersTab() {
         <CollapsibleTrigger className={WORKING_SECTION_TRIGGER_CLASS} data-testid={`memory-vnext-stage-trigger-${stage.value}`}>
           <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
           <span className="min-w-0 truncate">{stage.label}</span>
-          <span className="hidden sm:inline text-[11px] normal-case font-normal tracking-normal text-muted-foreground/60">{stage.description}</span>
           <span className="ml-auto font-mono text-[11px] text-muted-foreground/70" data-testid={`memory-vnext-stage-count-${stage.value}`}>{count}</span>
         </CollapsibleTrigger>
         <CollapsibleContent>
@@ -2319,8 +2332,7 @@ function LayersTab() {
           <GraphMyelinationProgressBar status={graphMyelinationStatus} />
         </>
       ) : (
-        <div className="flex items-center justify-between gap-2 border-b border-card-border bg-muted/10 px-2 py-1.5 text-xs text-muted-foreground" data-testid="memory-vnext-provenance-note">
-          <span>Showing vNext claims only. Legacy source entries appear only inside opened provenance/source refs.</span>
+        <div className="flex items-center justify-end gap-2 border-b border-card-border bg-muted/10 px-2 py-1.5 text-xs text-muted-foreground" data-testid="memory-vnext-provenance-note">
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => vnextLifecycleMutation.mutate()} disabled={vnextLifecycleMutation.isPending} data-testid="button-run-vnext-lifecycle">
               {vnextLifecycleMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitBranch className="h-3 w-3" />}
