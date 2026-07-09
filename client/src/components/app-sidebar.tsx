@@ -341,7 +341,7 @@ export function NavPage() {
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
           <input
             type="text"
-            placeholder="Search pages…"
+            placeholder=""
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full h-7 pl-7 pr-7 rounded-md border border-input bg-background text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
@@ -388,45 +388,53 @@ export function NavPage() {
                   {section.label}
                 </CollapsibleTrigger>
                 <CollapsibleContent>
-                  <div className="space-y-0.5 mt-0.5">
-                    {section.items.map((item) => {
+                  <div className="mt-0.5 ml-[11px]">
+                    {section.items.map((item, idx) => {
                       const active = isItemActive(item.url, location);
                       const level = statusMap[item.title] ?? null;
                       const sc = getStatusClasses(level);
+                      const isLast = idx === section.items.length - 1;
 
                       return (
-                        <button
-                          key={item.url}
-                          type="button"
-                          onClick={() => handleNav(item.url)}
-                          className={cn(
-                            "flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm transition-colors",
-                            active
-                              ? "bg-muted font-medium text-foreground"
-                              : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                          )}
-                          data-testid={`link-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
-                        >
-                          {level === "active" ? (
-                            <ActiveStatusSpinner className="h-4 w-4" />
-                          ) : (
-                            <item.icon
-                              className={cn(
-                                "h-4 w-4 shrink-0",
-                                level ? sc.icon : ""
-                              )}
-                            />
-                          )}
-                          <span
+                        <div key={item.url} className="flex items-stretch min-w-0">
+                          {/* L connector gutter */}
+                          <div className="shrink-0 w-5 self-stretch relative mr-1" aria-hidden="true">
+                            <div className={cn("absolute left-1/2 top-0 -translate-x-px border-l border-border", isLast ? "bottom-1/2" : "bottom-0")} />
+                            <div className="absolute left-1/2 top-1/2 right-0 border-t border-border" />
+                          </div>
+                          {/* Nav item */}
+                          <button
+                            type="button"
+                            onClick={() => handleNav(item.url)}
                             className={cn(
-                              "flex-1 text-left",
-                              level ? sc.text : "",
-                              level === "active" && "animate-pulse"
+                              "flex items-center gap-2 flex-1 min-w-0 rounded-md px-2 py-1.5 text-sm transition-colors",
+                              active
+                                ? "bg-muted font-medium text-foreground"
+                                : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
                             )}
+                            data-testid={`link-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
                           >
-                            {item.title}
-                          </span>
-                        </button>
+                            {level === "active" ? (
+                              <ActiveStatusSpinner className="h-4 w-4" />
+                            ) : (
+                              <item.icon
+                                className={cn(
+                                  "h-4 w-4 shrink-0",
+                                  level ? sc.icon : ""
+                                )}
+                              />
+                            )}
+                            <span
+                              className={cn(
+                                "flex-1 text-left truncate",
+                                level ? sc.text : "",
+                                level === "active" && "animate-pulse"
+                              )}
+                            >
+                              {item.title}
+                            </span>
+                          </button>
+                        </div>
                       );
                     })}
                   </div>
