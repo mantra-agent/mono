@@ -306,44 +306,133 @@ export async function scanXAccountTimeline(
 
 // ── Reddit Scanner ─────────────────────────────────────────────────
 
+/**
+ * Fetch posts from a subreddit via its public RSS feed (Atom XML).
+ * Returns parsed signals or null if the fetch fails.
+ */
+async function fetchRedditRss(subreddit: string, sourceId: string): Promise<RawSignal[] | null> {
+  const url = `https://www.reddit.com/r/${subreddit}/.rss`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": BROWSER_USER_AGENT,
+        "Accept": "application/atom+xml, application/xml, text/xml",
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      log.debug(`fetchRedditRss: HTTP ${response.status} for r/${subreddit}`);
+      return null;
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("text/html") && !contentType.includes("xml")) {
+      log.debug(`fetchRedditRss: r/${subreddit} returned HTML instead of XML`);
+      return null;
+    }
+
+    const xml = await response.text();
+    const items = parseRssItems(xml);
+    if (items.length === 0) {
+      log.debug(`fetchRedditRss: r/${subreddit} RSS returned 0 items`);
+      return null;
+    }
+
+    const signals: RawSignal[] = [];
+    for (const item of items.slice(0, 25)) {
+      if (!item.link) continue;
+      signals.push({
+        sourceType: "reddit",
+        sourceId,
+        title: item.title || "",
+        url: item.link,
+        snippet: cleanHumanText(item.description || "", 500),
+        publishedAt: item.pubDate || null,
+        rawMetadata: { subreddit, fetchPath: "rss" },
+      });
+    }
+    return signals;
+  } catch {
+    clearTimeout(timeout);
+    return null;
+  }
+}
+
+/**
+ * Fallback: fetch posts from arctic-shift community API.
+ * Returns parsed signals or null if the fetch fails.
+ */
+async function fetchRedditArcticShift(subreddit: string, sourceId: string): Promise<RawSignal[] | null> {
+  const url = `https://arctic-shift.photon-reddit.com/api/posts/search?subreddit=${encodeURIComponent(subreddit)}&limit=25&sort=desc`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(url, {
+      headers: { "User-Agent": BROWSER_USER_AGENT },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      log.debug(`fetchRedditArcticShift: HTTP ${response.status} for r/${subreddit}`);
+      return null;
+    }
+
+    const data = await response.json() as any;
+    const posts: any[] = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+    if (posts.length === 0) return null;
+
+    const signals: RawSignal[] = [];
+    for (const post of posts) {
+      if (!post || post.stickied) continue;
+      const postUrl = post.url || (post.permalink ? `https://www.reddit.com${post.permalink}` : null);
+      if (!postUrl) continue;
+      signals.push({
+        sourceType: "reddit",
+        sourceId,
+        title: post.title || "",
+        url: postUrl,
+        snippet: cleanHumanText(post.selftext || "", 500),
+        publishedAt: post.created_utc ? new Date(post.created_utc * 1000).toISOString() : null,
+        rawMetadata: { subreddit, score: post.score, numComments: post.num_comments, fetchPath: "arctic-shift" },
+      });
+    }
+    return signals;
+  } catch {
+    clearTimeout(timeout);
+    return null;
+  }
+}
+
 export async function scanRedditSources(subreddits: Array<{ id: string; value: string }>): Promise<RawSignal[]> {
   const signals: RawSignal[] = [];
   for (const source of subreddits) {
     try {
       const subreddit = source.value.replace(/^\/?(r\/)?/, "");
-      const url = `https://www.reddit.com/r/${subreddit}/hot.json?limit=25`;
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
-      // Rate limit: space requests 2s apart to avoid 429
+      // Rate limit: space requests 2s apart
       if (signals.length > 0) await new Promise(r => setTimeout(r, 2000));
-      const response = await fetch(url, {
-        headers: { "User-Agent": BROWSER_USER_AGENT },
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
 
-      if (!response.ok) {
-        log.warn(`scanRedditSources: HTTP ${response.status} for r/${subreddit}`);
+      // Primary: Reddit RSS feed (reliable from server IPs)
+      const rssSignals = await fetchRedditRss(subreddit, source.id);
+      if (rssSignals && rssSignals.length > 0) {
+        signals.push(...rssSignals);
+        log.log(`scanRedditSources: r/${subreddit} returned ${rssSignals.length} posts via RSS`);
         continue;
       }
 
-      const data = await response.json() as any;
-      const posts = data?.data?.children || [];
-      for (const child of posts) {
-        const post = child?.data;
-        if (!post || post.stickied) continue;
-        const postUrl = post.url_overridden_by_dest || `https://www.reddit.com${post.permalink}`;
-        signals.push({
-          sourceType: "reddit",
-          sourceId: source.id,
-          title: post.title || "",
-          url: postUrl,
-          snippet: cleanHumanText(post.selftext || "", 500),
-          publishedAt: post.created_utc ? new Date(post.created_utc * 1000).toISOString() : null,
-          rawMetadata: { subreddit, score: post.score, numComments: post.num_comments },
-        });
+      // Fallback: arctic-shift community API
+      const arcticSignals = await fetchRedditArcticShift(subreddit, source.id);
+      if (arcticSignals && arcticSignals.length > 0) {
+        signals.push(...arcticSignals);
+        log.warn(`scanRedditSources: r/${subreddit} returned ${arcticSignals.length} posts via arctic-shift fallback`);
+        continue;
       }
-      log.log(`scanRedditSources: r/${subreddit} returned ${posts.length} posts`);
+
+      log.warn(`scanRedditSources: r/${subreddit} returned 0 posts from both RSS and arctic-shift`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`scanRedditSources: error scanning "${source.value}": ${msg}`);
