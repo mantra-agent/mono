@@ -2,20 +2,64 @@ import { createLogger } from "./log";
 import { getSecretSync } from "./secrets-store";
 import { createHash } from "crypto";
 import { ACTIVITY_FRAMING } from "./job-profiles";
+import type { SignalSourceType } from "@shared/schema";
 
 const log = createLogger("LandscapeAdapters");
 
 // ── Types ──────────────────────────────────────────────────────────
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
+/**
+ * Adapter-level source types. Channels produce "x" | "web" signals (not stored as source types).
+ * Direct sources use canonical SignalSourceType values from the schema.
+ */
+export type RawSignalSourceType = SignalSourceType | "x" | "web";
+
 export interface RawSignal {
-  sourceType: "x" | "x_account" | "web" | "reddit" | "rss" | "hackernews" | "github" | "polymarket" | "stocktwits" | "arxiv" | "youtube";
+  sourceType: RawSignalSourceType;
   sourceId: string;
   title: string;
   url: string;
   snippet: string;
   publishedAt: string | null;
   rawMetadata: Record<string, unknown>;
+}
+
+// ── Shared Adapter Fetch ───────────────────────────────────────────
+
+interface AdapterFetchOptions {
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+}
+
+/**
+ * Shared fetch utility for news adapters. Handles AbortController, timeout,
+ * User-Agent header, response.ok check, and error logging.
+ * Returns Response on success, null on failure (logged at debug level).
+ */
+async function adapterFetch(url: string, label: string, options?: AdapterFetchOptions): Promise<Response | null> {
+  const controller = new AbortController();
+  const ms = options?.timeoutMs ?? 15000;
+  const timeout = setTimeout(() => controller.abort(), ms);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": BROWSER_USER_AGENT,
+        ...(options?.headers ?? {}),
+      },
+    });
+    if (!response.ok) {
+      log.debug(`${label}: HTTP ${response.status} for ${url.slice(0, 120)}`);
+      return null;
+    }
+    return response;
+  } catch (err) {
+    log.debug(`${label}: fetch error for ${url.slice(0, 120)}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function safeHttpsUrl(value: unknown): string | null {
@@ -356,7 +400,8 @@ async function fetchRedditRss(subreddit: string, sourceId: string): Promise<RawS
       });
     }
     return signals;
-  } catch {
+  } catch (err) {
+    log.debug(`fetchRedditRss: error for r/${subreddit}: ${err instanceof Error ? err.message : String(err)}`);
     clearTimeout(timeout);
     return null;
   }
@@ -402,7 +447,8 @@ async function fetchRedditArcticShift(subreddit: string, sourceId: string): Prom
       });
     }
     return signals;
-  } catch {
+  } catch (err) {
+    log.debug(`fetchRedditArcticShift: error for r/${subreddit}: ${err instanceof Error ? err.message : String(err)}`);
     clearTimeout(timeout);
     return null;
   }
@@ -547,14 +593,9 @@ const HN_CONCURRENCY_CAP = 5;
 async function fetchHnAlgoliaSearch(query: string, sourceId: string): Promise<RawSignal[]> {
   const oneDayAgo = Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000);
   const url = `${HN_ALGOLIA_BASE}/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=25&numericFilters=created_at_i>${oneDayAgo}`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const response = await adapterFetch(url, `fetchHnAlgoliaSearch[${query}]`);
+  if (!response) return [];
   try {
-    const response = await fetch(url, { signal: controller.signal, headers: { "User-Agent": BROWSER_USER_AGENT } });
-    if (!response.ok) {
-      log.debug(`fetchHnAlgoliaSearch: HTTP ${response.status} for query "${query}"`);
-      return [];
-    }
     const data = await response.json() as { hits?: Array<{ title?: string; url?: string; objectID?: string; points?: number; author?: string; created_at?: string; num_comments?: number; story_text?: string }> };
     if (!Array.isArray(data.hits)) return [];
     return data.hits
@@ -569,10 +610,8 @@ async function fetchHnAlgoliaSearch(query: string, sourceId: string): Promise<Ra
         rawMetadata: { points: h.points, author: h.author, numComments: h.num_comments, objectID: h.objectID },
       }));
   } catch (err) {
-    log.warn(`fetchHnAlgoliaSearch: error for query "${query}": ${err instanceof Error ? err.message : String(err)}`);
+    log.warn(`fetchHnAlgoliaSearch: error parsing query "${query}": ${err instanceof Error ? err.message : String(err)}`);
     return [];
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -591,7 +630,7 @@ async function fetchHnTopStories(sourceId: string, limit: number = 30): Promise<
       const batch = topIds.slice(i, i + HN_CONCURRENCY_CAP);
       const items = await Promise.all(batch.map(async (id) => {
         try {
-          const itemResp = await fetch(`${HN_FIREBASE_BASE}/item/${id}.json`);
+          const itemResp = await fetch(`${HN_FIREBASE_BASE}/item/${id}.json`, { signal: controller.signal });
           if (!itemResp.ok) return null;
           return await itemResp.json() as { id?: number; title?: string; url?: string; score?: number; by?: string; time?: number; descendants?: number; type?: string };
         } catch { return null; }
@@ -669,18 +708,13 @@ export async function scanGitHubRepoSources(repos: Array<{ id: string; value: st
         continue;
       }
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
       try {
-        const response = await fetch(`${GITHUB_API_BASE}/repos/${repoPath}/releases?per_page=10`, {
-          signal: controller.signal,
-          headers,
-        });
-
-        if (!response.ok) {
-          log.debug(`scanGitHubRepoSources: HTTP ${response.status} for ${repoPath}/releases`);
-          continue;
-        }
+        const response = await adapterFetch(
+          `${GITHUB_API_BASE}/repos/${repoPath}/releases?per_page=10`,
+          `scanGitHubRepoSources[${repoPath}]`,
+          { headers },
+        );
+        if (!response) continue;
 
         const releases = await response.json() as Array<{
           tag_name?: string; name?: string; body?: string;
@@ -698,7 +732,7 @@ export async function scanGitHubRepoSources(repos: Array<{ id: string; value: st
           const tagName = release.tag_name || "";
 
           allSignals.push({
-            sourceType: "github",
+            sourceType: "github_repo",
             sourceId: source.id,
             title: `${repoName}: ${releaseName}${tagName && tagName !== releaseName ? ` (${tagName})` : ""}`,
             url: release.html_url || `https://github.com/${repoPath}/releases/tag/${tagName}`,
@@ -709,8 +743,8 @@ export async function scanGitHubRepoSources(repos: Array<{ id: string; value: st
           count++;
         }
         log.log(`scanGitHubRepoSources: ${repoPath} returned ${count} recent releases`);
-      } finally {
-        clearTimeout(timeout);
+      } catch (err) {
+        log.warn(`scanGitHubRepoSources: error parsing "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
       }
     } catch (err) {
       log.warn(`scanGitHubRepoSources: error scanning "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
@@ -738,17 +772,9 @@ export async function scanPolymarketSources(sources: Array<{ id: string; value: 
         params.set("tag", tag);
       }
       const url = `${POLYMARKET_API_BASE}/markets?${params}`;
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
       try {
-        const response = await fetch(url, {
-          signal: controller.signal,
-          headers: { "User-Agent": BROWSER_USER_AGENT },
-        });
-        if (!response.ok) {
-          log.debug(`scanPolymarketSources: HTTP ${response.status} for tag "${tag}"`);
-          continue;
-        }
+        const response = await adapterFetch(url, "scanPolymarketSources");
+        if (!response) continue;
         const markets = await response.json() as Array<{
           question?: string; slug?: string; description?: string;
           outcomePrices?: string; volume?: string; volumeNum?: number;
@@ -801,8 +827,8 @@ export async function scanPolymarketSources(sources: Array<{ id: string; value: 
           });
         }
         log.log(`scanPolymarketSources: tag "${tag}" returned ${markets.length} markets`);
-      } finally {
-        clearTimeout(timeout);
+      } catch (err) {
+        log.warn(`scanPolymarketSources: error parsing "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
       }
     } catch (err) {
       log.warn(`scanPolymarketSources: error scanning "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
@@ -824,17 +850,9 @@ export async function scanStockTwitsSources(sources: Array<{ id: string; value: 
         ? `${STOCKTWITS_API_BASE}/streams/trending.json`
         : `${STOCKTWITS_API_BASE}/streams/symbol/${encodeURIComponent(symbol)}.json`;
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
       try {
-        const response = await fetch(endpoint, {
-          signal: controller.signal,
-          headers: { "User-Agent": BROWSER_USER_AGENT },
-        });
-        if (!response.ok) {
-          log.debug(`scanStockTwitsSources: HTTP ${response.status} for "${symbol}"`);
-          continue;
-        }
+        const response = await adapterFetch(endpoint, `scanStockTwitsSources[${symbol}]`);
+        if (!response) continue;
         const data = await response.json() as {
           messages?: Array<{
             id?: number; body?: string; created_at?: string;
@@ -871,8 +889,8 @@ export async function scanStockTwitsSources(sources: Array<{ id: string; value: 
           });
         }
         log.log(`scanStockTwitsSources: "${symbol}" returned ${messages.length} messages`);
-      } finally {
-        clearTimeout(timeout);
+      } catch (err) {
+        log.warn(`scanStockTwitsSources: error parsing "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
       }
     } catch (err) {
       log.warn(`scanStockTwitsSources: error scanning "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
@@ -907,18 +925,9 @@ export async function scanArxivSources(sources: Array<{ id: string; value: strin
 
       const url = `${ARXIV_API_BASE}?search_query=${searchQuery}&max_results=25&sortBy=submittedDate&sortOrder=descending`;
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 20000);
       try {
-        const response = await fetch(url, {
-          signal: controller.signal,
-          headers: { "User-Agent": BROWSER_USER_AGENT },
-        });
-
-        if (!response.ok) {
-          log.debug(`scanArxivSources: HTTP ${response.status} for "${query}"`);
-          continue;
-        }
+        const response = await adapterFetch(url, `scanArxivSources[${query}]`, { timeoutMs: 20000 });
+        if (!response) continue;
 
         const xml = await response.text();
         const items = parseRssItems(xml);
@@ -951,8 +960,8 @@ export async function scanArxivSources(sources: Array<{ id: string; value: strin
           count++;
         }
         log.log(`scanArxivSources: "${query}" returned ${count} recent papers`);
-      } finally {
-        clearTimeout(timeout);
+      } catch (err) {
+        log.warn(`scanArxivSources: error parsing "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
       }
     } catch (err) {
       log.warn(`scanArxivSources: error scanning "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
@@ -1323,18 +1332,9 @@ export async function scanYouTubeChannelSources(sources: Array<{ id: string; val
 
       const url = `${YOUTUBE_RSS_BASE}?channel_id=${encodeURIComponent(channelId)}`;
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
       try {
-        const response = await fetch(url, {
-          signal: controller.signal,
-          headers: { "User-Agent": BROWSER_USER_AGENT },
-        });
-
-        if (!response.ok) {
-          log.debug(`scanYouTubeChannelSources: HTTP ${response.status} for channel "${channelId}"`);
-          continue;
-        }
+        const response = await adapterFetch(url, `scanYouTubeChannelSources[${channelId}]`);
+        if (!response) continue;
 
         const xml = await response.text();
         const items = parseRssItems(xml);
@@ -1357,7 +1357,7 @@ export async function scanYouTubeChannelSources(sources: Array<{ id: string; val
             : item.link;
 
           allSignals.push({
-            sourceType: "youtube",
+            sourceType: "youtube_channel",
             sourceId: source.id,
             title: item.title,
             url: videoUrl,
@@ -1371,8 +1371,8 @@ export async function scanYouTubeChannelSources(sources: Array<{ id: string; val
           count++;
         }
         log.log(`scanYouTubeChannelSources: channel "${channelId}" returned ${count} recent videos`);
-      } finally {
-        clearTimeout(timeout);
+      } catch (err) {
+        log.warn(`scanYouTubeChannelSources: error parsing "${source.value}": ${err instanceof Error ? err.message : String(err)}`);
       }
     } catch (err) {
       log.warn(`scanYouTubeChannelSources: error scanning "${source.value}": ${err instanceof Error ? err.message : String(err)}`);

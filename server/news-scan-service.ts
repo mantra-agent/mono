@@ -53,7 +53,7 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
     const enabledSources = allSources.filter(s => s.enabled);
 
     const hasChannels = enabledSources.some(s => s.sourceType === "channel_x" || s.sourceType === "channel_web");
-    const hasDirectSources = enabledSources.some(s => ["subreddit", "rss_feed", "x_account", "hackernews", "github_repo", "polymarket", "stocktwits"].includes(s.sourceType));
+    const hasDirectSources = enabledSources.some(s => !s.sourceType.startsWith("channel_") && s.sourceType !== "pinned_topic");
     if (!hasChannels && !hasDirectSources) {
       await signalStorage.completeScanRun(scanRun.id, {
         sourcesScanned: 0,
@@ -90,6 +90,7 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
     const polymarketSources = enabledSources.filter(s => s.sourceType === "polymarket");
     const stocktwitsSources = enabledSources.filter(s => s.sourceType === "stocktwits");
     const arxivSources = enabledSources.filter(s => s.sourceType === "arxiv");
+    const ytSources = enabledSources.filter(s => s.sourceType === "youtube_channel");
 
     const webQueryItems = channelWeb ? queries.map(q => ({ id: channelWeb.id, value: q })) : [];
     const xQueryItems = channelX ? queries.map(q => ({ id: channelX.id, value: q })) : [];
@@ -123,16 +124,33 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
       } catch (err) { errors.push(`x_discovery: ${(err as Error).message}`); }
     }
 
-    try {
-      const redditSignals = await adapters.scanRedditSources(subreddits.map(s => ({ id: s.id, value: s.value })));
-      allSignals.push(...redditSignals);
-    } catch (err) { errors.push(`reddit: ${(err as Error).message}`); }
+    // ── Direct source dispatch table ──────────────────────────────
+    // Each entry: label for error tracking, sources array, adapter function.
+    // Adding a new source type = one new entry here.
+    const directDispatches: Array<{
+      label: string;
+      sources: typeof subreddits;
+      adapter: (items: Array<{ id: string; value: string }>) => Promise<adapters.RawSignal[]>;
+    }> = [
+      { label: "reddit", sources: subreddits, adapter: adapters.scanRedditSources },
+      { label: "rss", sources: rssFeeds, adapter: adapters.scanRssSources },
+      { label: "hackernews", sources: hnSources, adapter: adapters.scanHackerNewsSources },
+      { label: "github_repo", sources: githubRepos, adapter: adapters.scanGitHubRepoSources },
+      { label: "polymarket", sources: polymarketSources, adapter: adapters.scanPolymarketSources },
+      { label: "stocktwits", sources: stocktwitsSources, adapter: adapters.scanStockTwitsSources },
+      { label: "arxiv", sources: arxivSources, adapter: adapters.scanArxivSources },
+      { label: "youtube_channel", sources: ytSources, adapter: adapters.scanYouTubeChannelSources },
+    ];
 
-    try {
-      const rssSignals = await adapters.scanRssSources(rssFeeds.map(s => ({ id: s.id, value: s.value })));
-      allSignals.push(...rssSignals);
-    } catch (err) { errors.push(`rss: ${(err as Error).message}`); }
+    for (const { label, sources, adapter } of directDispatches) {
+      if (sources.length === 0) continue;
+      try {
+        const signals = await adapter(sources.map(s => ({ id: s.id, value: s.value })));
+        allSignals.push(...signals);
+      } catch (err) { errors.push(`${label}: ${(err as Error).message}`); }
+    }
 
+    // X account timeline has a special return shape (resolvedIds), so it stays inline
     if (xAccounts.length > 0) {
       try {
         const { signals: xAccountSignals, resolvedIds } =
@@ -146,49 +164,6 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
           await signalStorage.updateSource(sourceId, { cachedUserId: userId });
         }
       } catch (err) { errors.push(`x_accounts: ${(err as Error).message}`); }
-    }
-
-    if (hnSources.length > 0) {
-      try {
-        const hnSignals = await adapters.scanHackerNewsSources(hnSources.map(s => ({ id: s.id, value: s.value })));
-        allSignals.push(...hnSignals);
-      } catch (err) { errors.push(`hackernews: ${(err as Error).message}`); }
-    }
-
-    if (githubRepos.length > 0) {
-      try {
-        const ghSignals = await adapters.scanGitHubRepoSources(githubRepos.map(s => ({ id: s.id, value: s.value })));
-        allSignals.push(...ghSignals);
-      } catch (err) { errors.push(`github: ${(err as Error).message}`); }
-    }
-
-    if (polymarketSources.length > 0) {
-      try {
-        const pmSignals = await adapters.scanPolymarketSources(polymarketSources.map(s => ({ id: s.id, value: s.value })));
-        allSignals.push(...pmSignals);
-      } catch (err) { errors.push(`polymarket: ${(err as Error).message}`); }
-    }
-
-    if (stocktwitsSources.length > 0) {
-      try {
-        const stSignals = await adapters.scanStockTwitsSources(stocktwitsSources.map(s => ({ id: s.id, value: s.value })));
-        allSignals.push(...stSignals);
-      } catch (err) { errors.push(`stocktwits: ${(err as Error).message}`); }
-    }
-
-    if (arxivSources.length > 0) {
-      try {
-        const arxivSignals = await adapters.scanArxivSources(arxivSources.map(s => ({ id: s.id, value: s.value })));
-        allSignals.push(...arxivSignals);
-      } catch (err) { errors.push(`arxiv: ${(err as Error).message}`); }
-    }
-
-    const ytSources = enabledSources.filter(s => s.sourceType === "youtube_channel");
-    if (ytSources.length > 0) {
-      try {
-        const ytSignals = await adapters.scanYouTubeChannelSources(ytSources.map(s => ({ id: s.id, value: s.value })));
-        allSignals.push(...ytSignals);
-      } catch (err) { errors.push(`youtube: ${(err as Error).message}`); }
     }
 
     const preDedup = allSignals.length;
@@ -348,23 +323,35 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
       }
     }
 
+    // ── Per-source status tracking ──────────────────────────────────
+    // Build dispatched IDs from all source arrays (channels + direct + x_accounts)
     const allDispatchedIds = new Set<string>();
     if (channelWeb) allDispatchedIds.add(channelWeb.id);
     if (channelX) allDispatchedIds.add(channelX.id);
-    for (const s of [...subreddits, ...rssFeeds, ...xAccounts]) {
-      allDispatchedIds.add(s.id);
+    for (const { sources } of directDispatches) {
+      for (const s of sources) allDispatchedIds.add(s.id);
     }
+    for (const s of xAccounts) allDispatchedIds.add(s.id);
 
     const signalsBySource = new Map<string, number>();
     for (const s of allSignals) {
       signalsBySource.set(s.sourceId, (signalsBySource.get(s.sourceId) || 0) + 1);
     }
 
+    // Map dispatch labels to source IDs for reliable error-to-source matching
+    const sourceIdToErrorLabel = new Map<string, string>();
+    for (const { label, sources } of directDispatches) {
+      for (const s of sources) sourceIdToErrorLabel.set(s.id, label);
+    }
+    for (const s of xAccounts) sourceIdToErrorLabel.set(s.id, "x_accounts");
+    if (channelWeb) sourceIdToErrorLabel.set(channelWeb.id, "web");
+    if (channelX) sourceIdToErrorLabel.set(channelX.id, "x");
+
     for (const sourceId of allDispatchedIds) {
       const count = signalsBySource.get(sourceId) || 0;
-      const source = enabledSources.find(s => s.id === sourceId);
-      const sourceError = source ? errors.find(e =>
-        e.toLowerCase().startsWith(source.sourceType.replace(/_/g, ""))
+      const errorLabel = sourceIdToErrorLabel.get(sourceId);
+      const sourceError = errorLabel ? errors.find(e =>
+        e.startsWith(`${errorLabel}:`)
       ) : undefined;
 
       await signalStorage.touchSourceAttempt(sourceId, sourceError || undefined);
@@ -375,7 +362,8 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
 
     await signalStorage.archiveStaleSignals(30);
 
-    const sourcesScannedCount = (channelWeb ? 1 : 0) + (channelX ? 1 : 0) + subreddits.length + rssFeeds.length + xAccounts.length;
+    // Count all dispatched sources (channels + direct + x_accounts)
+    const sourcesScannedCount = allDispatchedIds.size;
     const actualSurfaced = await signalStorage.countSurfacedSince(scanStartedAt);
     if (actualSurfaced !== itemsSurfaced) {
       log.warn(`scan: surfaced counter reconciled from ${itemsSurfaced} to actual stored count ${actualSurfaced}`);
