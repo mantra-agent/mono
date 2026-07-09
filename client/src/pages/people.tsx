@@ -1814,7 +1814,7 @@ function ProfileTreeRow({
             <span className="h-5 w-5 shrink-0" />
           )}
           {menuContent ? (
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100" aria-label="More actions">
                   <MoreHorizontal className="h-3 w-3" />
@@ -2341,7 +2341,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
           </span>
         )}
         headerAction={(
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
