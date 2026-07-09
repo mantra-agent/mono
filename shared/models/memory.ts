@@ -827,3 +827,55 @@ export const insertCodeEmbeddingSchema = createInsertSchema(
 
 export type CodeEmbedding = typeof codeEmbeddings.$inferSelect;
 export type InsertCodeEmbedding = z.infer<typeof insertCodeEmbeddingSchema>;
+
+// ─── vNext Source Queue ───────────────────────────────────────────────
+// Debounce queue for source-watching extraction pipeline.
+// Sources (sessions, library pages) are queued here on edit,
+// settled after a configurable quiet period, then batch-extracted.
+
+export const VNEXT_SOURCE_TYPES = ["session", "library_page"] as const;
+export type VnextSourceType = (typeof VNEXT_SOURCE_TYPES)[number];
+
+export const VNEXT_SOURCE_QUEUE_STATUSES = ["pending", "processing", "completed"] as const;
+export type VnextSourceQueueStatus = (typeof VNEXT_SOURCE_QUEUE_STATUSES)[number];
+
+export const memoryVnextSourceQueue = pgTable(
+  "memory_vnext_source_queue",
+  {
+    id: serial("id").primaryKey(),
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    lastModifiedAt: timestamp("last_modified_at", {
+      withTimezone: true,
+      precision: 6,
+    })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    status: text("status").notNull().default("pending"),
+    lastExtractedAt: timestamp("last_extracted_at", {
+      withTimezone: true,
+      precision: 6,
+    }),
+    contentHash: text("content_hash"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (table) => [
+    unique("uk_vnext_source_queue_type_id_owner").on(
+      table.sourceType,
+      table.sourceId,
+      table.ownerUserId,
+    ),
+    index("idx_vnext_source_queue_status").on(table.status),
+    index("idx_vnext_source_queue_pending_settle").on(
+      table.status,
+      table.lastModifiedAt,
+    ),
+    index("idx_vnext_source_queue_owner").on(table.ownerUserId),
+  ],
+);
+
+export type MemoryVnextSourceQueueRow = typeof memoryVnextSourceQueue.$inferSelect;
