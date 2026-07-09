@@ -390,7 +390,9 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     setSelectedCommandIdx(0);
   }, []);
 
-  const updateBlockHandleFromMouse = useCallback((target: EventTarget | null) => {
+  const BLOCK_SELECTOR = ".ProseMirror p, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror li, .ProseMirror blockquote, .ProseMirror pre";
+
+  const updateBlockHandleFromMouse = useCallback((target: EventTarget | null, clientY?: number) => {
     const container = editorContainerRef.current;
     if (!container || readOnly || isEditorFocused || menuAnchor) {
       if (blockHandleClearTimer.current) { clearTimeout(blockHandleClearTimer.current); blockHandleClearTimer.current = null; }
@@ -403,7 +405,17 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
       if (blockHandleClearTimer.current) { clearTimeout(blockHandleClearTimer.current); blockHandleClearTimer.current = null; }
       return;
     }
-    const block = element?.closest(".ProseMirror p, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror li, .ProseMirror blockquote, .ProseMirror pre");
+    let block = element?.closest(BLOCK_SELECTOR) ?? null;
+    if ((!block || !container.contains(block)) && clientY != null) {
+      // Mouse is in the margin/gutter — probe for the block at this height
+      const pm = container.querySelector(".ProseMirror");
+      if (pm) {
+        const pmBox = pm.getBoundingClientRect();
+        const probe = document.elementFromPoint(pmBox.left + 20, clientY);
+        const probed = probe instanceof Element ? probe.closest(BLOCK_SELECTOR) : null;
+        if (probed && container.contains(probed)) block = probed;
+      }
+    }
     if (!block || !container.contains(block)) {
       // Delay clearing so the mouse can cross the gap to reach the handle
       if (!blockHandleClearTimer.current) {
@@ -453,6 +465,19 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
   useEffect(() => {
     setSelectedCommandIdx(0);
   }, [commandQuery]);
+
+  // Close the command menu when clicking anywhere outside it
+  useEffect(() => {
+    if (!menuAnchor) return;
+    const handler = (e: MouseEvent) => {
+      const el = e.target instanceof Element ? e.target : null;
+      if (el?.closest('[data-testid="editor-command-menu"]')) return;
+      if (el?.closest("[data-editor-block-menu]")) return;
+      closeCommandMenu();
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [menuAnchor, closeCommandMenu]);
 
   // Detect "/" typed anywhere (mobile-safe: doesn't rely on keyDown).
   // Also tracks the query text after the slash while the menu is open.
@@ -525,7 +550,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
       onPaste={handlePaste}
       onDrop={handleDrop}
       onDragOver={(e) => { if (!readOnly) e.preventDefault(); }}
-      onMouseMove={(e) => updateBlockHandleFromMouse(e.target)}
+      onMouseMove={(e) => updateBlockHandleFromMouse(e.target, e.clientY)}
       onMouseLeave={() => {
         if (blockHandleClearTimer.current) { clearTimeout(blockHandleClearTimer.current); blockHandleClearTimer.current = null; }
         blockHandleClearTimer.current = setTimeout(() => {
@@ -574,7 +599,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
       {!readOnly && blockHandleAnchor && !isEditorFocused && !menuAnchor && (
         <button
           type="button"
-          className="absolute z-20 hidden h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:bg-accent focus:text-foreground md:flex"
+          className="absolute z-20 hidden h-7 w-7 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-accent hover:text-muted-foreground focus:bg-accent focus:text-muted-foreground md:flex"
           style={{ top: blockHandleAnchor.top, left: blockHandleAnchor.left }}
           onMouseDown={(e) => { e.preventDefault(); openCommandMenuAtSelection("handle", undefined, blockHandleAnchor); }}
           title="Open block menu"
