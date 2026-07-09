@@ -1820,7 +1820,7 @@ function ProfileTreeRow({
                   <MoreHorizontal className="h-3 w-3" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">{menuContent}</DropdownMenuContent>
+              <DropdownMenuContent align="end" onCloseAutoFocus={(e) => e.preventDefault()}>{menuContent}</DropdownMenuContent>
             </DropdownMenu>
           ) : null}
         </div>
@@ -2353,7 +2353,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
                 <MoreHorizontal className="h-3 w-3" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" onCloseAutoFocus={(e) => e.preventDefault()}>
               <DropdownMenuItem onClick={() => setEditingName(true)} data-testid="menu-edit-person-name">
                 Edit Name
               </DropdownMenuItem>
