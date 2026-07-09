@@ -151,7 +151,7 @@ async function persistPollerClaims(
     claims,
     source: sourceContent.sourceType,
     sourceId: row.sourceId,
-    sourceMemoryId: 0,
+    sourceMemoryId: null,
     sourceRefs: [
       {
         sourceType: row.sourceType,
