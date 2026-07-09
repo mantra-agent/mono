@@ -226,6 +226,12 @@ export function registerPlatformRoutes(app: Express): void {
           .select()
           .from(environmentCapabilityBindings)
           .where(eq(environmentCapabilityBindings.environmentId, environmentId));
+      } catch (err) {
+        log.debug("Binding table query failed, using inferred config", { error: err instanceof Error ? err.message : String(err) });
+      }
+
+      // Context artifacts in a separate try/catch so binding failures don't silently kill artifact loading
+      try {
         const { libraryPages } = await import("@shared/models/info");
         contextArtifactRows = await db
           .select({
@@ -241,7 +247,7 @@ export function registerPlatformRoutes(app: Express): void {
           .leftJoin(libraryPages, eq(environmentContextArtifacts.libraryPageId, libraryPages.id))
           .where(eq(environmentContextArtifacts.environmentId, environmentId));
       } catch (err) {
-        log.debug("Binding table query failed, using inferred config", { error: err instanceof Error ? err.message : String(err) });
+        log.warn("Context artifact query failed", { error: err instanceof Error ? err.message : String(err), environmentId });
       }
 
       const inferred = inferredEnvironmentConfig(row.platform_product_environments.name);

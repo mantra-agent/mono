@@ -8786,7 +8786,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
     try {
       const { db } = await import("./db");
-      const { eq, sql: sqlTag, desc } = await import("drizzle-orm");
+      const { eq, and, sql: sqlTag, desc } = await import("drizzle-orm");
       const {
         providerConnections,
         environmentSourceBindings,
