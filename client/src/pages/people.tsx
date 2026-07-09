@@ -806,6 +806,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   });
   const [pendingDeleteLogItem, setPendingDeleteLogItem] = useState<{ kind: "interaction" | "note" | "memory"; id: string; label: string } | null>(null);
+  const [deleteLogDialogOpen, setDeleteLogDialogOpen] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [newResponseOwed, setNewResponseOwed] = useState(false);
@@ -1008,7 +1009,10 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
       <DropdownMenuSeparator />
       <DropdownMenuItem
         className="text-destructive focus:text-destructive"
-        onClick={() => setPendingDeleteLogItem({ kind: "interaction", id: interaction.id, label: interaction.summary || "Log item" })}
+        onClick={() => {
+          setPendingDeleteLogItem({ kind: "interaction", id: interaction.id, label: interaction.summary || "Log item" });
+          setDeleteLogDialogOpen(true);
+        }}
       >
         Delete
       </DropdownMenuItem>
@@ -1264,7 +1268,10 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                   menuContent={interaction ? renderInteractionOptions(interaction) : !isRelationshipMemory ? (
                     <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
-                      onClick={() => setPendingDeleteLogItem({ kind: isNote ? "note" : "memory", id: item.id, label: preview })}
+                      onClick={() => {
+                        setPendingDeleteLogItem({ kind: isNote ? "note" : "memory", id: item.id, label: preview });
+                        setDeleteLogDialogOpen(true);
+                      }}
                     >
                       Delete
                     </DropdownMenuItem>
@@ -1283,7 +1290,13 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
           ))}        </div>
       )}
 
-      <AlertDialog open={Boolean(pendingDeleteLogItem)} onOpenChange={(open) => !open && setPendingDeleteLogItem(null)}>
+      <AlertDialog
+        open={deleteLogDialogOpen}
+        onOpenChange={(open) => {
+          setDeleteLogDialogOpen(open);
+          if (!open) window.setTimeout(() => setPendingDeleteLogItem(null), 0);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete log item?</AlertDialogTitle>
@@ -1295,12 +1308,17 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => {
-                if (!pendingDeleteLogItem) return;
-                if (pendingDeleteLogItem.kind === "note") deleteNoteMutation.mutate(pendingDeleteLogItem.id);
-                else if (pendingDeleteLogItem.kind === "memory") unlinkMemoryMutation.mutate(Number(pendingDeleteLogItem.id));
-                else deleteMutation.mutate(pendingDeleteLogItem.id);
-                setPendingDeleteLogItem(null);
+              onClick={(event) => {
+                event.preventDefault();
+                const target = pendingDeleteLogItem;
+                if (!target) return;
+                setDeleteLogDialogOpen(false);
+                window.setTimeout(() => {
+                  if (target.kind === "note") deleteNoteMutation.mutate(target.id);
+                  else if (target.kind === "memory") unlinkMemoryMutation.mutate(Number(target.id));
+                  else deleteMutation.mutate(target.id);
+                  setPendingDeleteLogItem(null);
+                }, 0);
               }}
             >
               Delete
