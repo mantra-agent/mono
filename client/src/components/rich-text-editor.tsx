@@ -406,14 +406,14 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     setBlockHandleAnchor({ top: blockBox.top - containerBox.top + Math.max(0, (blockBox.height - 28) / 2), left: 4 });
   }, [isEditorFocused, menuAnchor, readOnly]);
 
-  const openCommandMenuAtSelection = useCallback((source: EditorMenuSource) => {
+  const openCommandMenuAtSelection = useCallback((source: EditorMenuSource, slashPos?: number) => {
     const ed = editorRef.current;
     const container = editorContainerRef.current;
     if (!ed || !container || readOnly) return;
     const coords = ed.view.coordsAtPos(ed.state.selection.from);
     const box = container.getBoundingClientRect();
     setMenuSource(source);
-    slashTriggerFromRef.current = source === "slash" ? Math.max(0, ed.state.selection.from - 1) : null;
+    slashTriggerFromRef.current = source === "slash" && slashPos != null ? slashPos : null;
     setMenuAnchor({ top: coords.bottom - box.top + 6, left: Math.max(8, coords.left - box.left) });
     setCommandQuery("");
     setSelectedCommandIdx(0);
@@ -432,34 +432,45 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     setSelectedCommandIdx(0);
   }, [commandQuery]);
 
-  // On mobile, keyDown events are unreliable (key="Unidentified" for IME input).
-  // Watch the editor document text after the slash trigger position to derive the query.
+  // Detect "/" typed anywhere (mobile-safe: doesn't rely on keyDown).
+  // Also tracks the query text after the slash while the menu is open.
   useEffect(() => {
     const ed = editorRef.current;
-    if (!ed || !menuAnchor || menuSource !== "slash" || slashTriggerFromRef.current === null) return;
+    if (!ed || readOnly) return;
     const handler = () => {
-      const from = slashTriggerFromRef.current;
-      if (from === null) return;
-      const docSize = ed.state.doc.content.size;
       const cursorPos = ed.state.selection.from;
-      // Text between slash position and cursor
-      const slashEnd = Math.min(from + 1, docSize);
-      const queryEnd = Math.min(cursorPos, docSize);
-      if (queryEnd < slashEnd) {
-        // Cursor moved before slash position — slash was deleted or cursor moved away
-        setMenuAnchor(null);
-        setCommandQuery("");
-        setSelectedCommandIdx(0);
+      const docSize = ed.state.doc.content.size;
+
+      // If menu is already open in slash mode, track the query
+      if (slashTriggerFromRef.current !== null) {
+        const slashEnd = Math.min(slashTriggerFromRef.current + 1, docSize);
+        const queryEnd = Math.min(cursorPos, docSize);
+        if (queryEnd < slashEnd) {
+          // Cursor moved before slash — close menu
+          closeCommandMenu();
+          return;
+        }
+        if (queryEnd > slashEnd) {
+          const text = ed.state.doc.textBetween(slashEnd, queryEnd, "");
+          setCommandQuery((prev) => prev === text ? prev : text);
+        }
         return;
       }
-      if (queryEnd <= slashEnd) return;
-      const text = ed.state.doc.textBetween(slashEnd, queryEnd, "");
-      // Only update if different (avoid loops)
-      setCommandQuery((prev) => prev === text ? prev : text);
+
+      // Not in slash mode — check if a "/" was just typed at cursor
+      if (cursorPos < 1 || cursorPos > docSize) return;
+      const charBefore = ed.state.doc.textBetween(cursorPos - 1, cursorPos, "");
+      if (charBefore !== "/") return;
+      // Only trigger at start of line or after whitespace
+      if (cursorPos >= 2) {
+        const prev = ed.state.doc.textBetween(cursorPos - 2, cursorPos - 1, "");
+        if (prev && prev !== " " && prev !== "\n" && prev !== "\t") return;
+      }
+      openCommandMenuAtSelection("slash", cursorPos - 1);
     };
     ed.on("transaction", handler);
     return () => { ed.off("transaction", handler); };
-  }, [menuAnchor, menuSource]);
+  }, [readOnly, openCommandMenuAtSelection, closeCommandMenu]);
 
   if (!editor) {
     if (initFailed) {
@@ -527,9 +538,8 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
             return;
           }
           // Query is derived from document text via transaction watcher (mobile-safe)
-        } else if (!readOnly && e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
-          window.requestAnimationFrame(() => openCommandMenuAtSelection("slash"));
         }
+        // Slash detection moved to transaction watcher (mobile-safe)
         handleWikiKeyDown(e, editor);
       }}
     >
