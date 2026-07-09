@@ -99,16 +99,29 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
   const { data: childSession, isLoading: childSessionLoading, isFetching: childSessionFetching } = useQuery<ChildSessionPayload>({
     queryKey: ["/api/sessions", meta.childSessionId],
     enabled: !deleted,
-    refetchInterval: (childSession) => childSession.state.data?.status === "streaming" || expanded ? 3000 : false,
+    refetchInterval: (childSession) => (
+      childSession.state.data?.status === "streaming" ||
+      childStream?.status === "streaming" ||
+      childStream?.runActive ||
+      expanded
+    ) ? 3000 : false,
   });
 
-  const isChildStreaming = childSession?.status === "streaming" || childStream?.status === "streaming";
+  const hasLiveChildStream = childStream?.status === "streaming" || childStream?.runActive;
+  const isChildStreaming = childSession?.status === "streaming" || hasLiveChildStream;
 
   // Active child sessions must update their collapsed preview too.
   // The persisted session row status is the activity authority, matching the Session Menu.
   const subscriptionId = isChildStreaming && depth < 2 && !childStream ? meta.childSessionId : null;
   const fallbackChildSub = useSessionSubscription(subscriptionId);
   const childSub = childStream ?? fallbackChildSub;
+  const hasActiveChildSub = childSub.status === "streaming" || childSub.runActive;
+
+  useEffect(() => {
+    if (!childSub.updatedAt) return;
+    if (childSub.status === "streaming" || childSub.runActive) return;
+    queryClient.invalidateQueries({ queryKey: ["/api/sessions", meta.childSessionId] });
+  }, [childSub.status, childSub.runActive, childSub.updatedAt, meta.childSessionId]);
 
   const deleteChildSession = useMutation({
     mutationFn: async () => {
@@ -156,7 +169,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
       : "";
 
   const segments: MessageSegment[] = useMemo(() => {
-    if (isChildStreaming && childSub.streamingContent) {
+    if (hasActiveChildSub && childSub.streamingContent) {
       return childSub.streamingContent.segments;
     }
     if (childMessages.length > 0) {
@@ -165,7 +178,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
         .flatMap(m => segmentsFromSavedMessage(m));
     }
     return [];
-  }, [isChildStreaming, childSub.streamingContent, childMessages]);
+  }, [hasActiveChildSub, childSub.streamingContent, childMessages]);
 
   const latestLine = useMemo(() => {
     const fromSegments = latestContentFromSegments(segments);
@@ -315,7 +328,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
           ) : (
             <SegmentStream
               segments={segments}
-              isStreaming={isChildStreaming && childSub.status === "streaming"}
+              isStreaming={hasActiveChildSub}
               layer={Math.max(layer, 2) as 2 | 3 | 4}
             />
           )}
