@@ -660,6 +660,23 @@ app.use((req, res, next) => {
         });
       }, VOICE_SESSION_PRUNE_INTERVAL_MS).unref();
 
+      // vNext source poller: extract claims from settled session/library_page sources.
+      // Runs every 5 minutes. Sources must be quiet for 30 minutes before extraction.
+      const VNEXT_SOURCE_POLLER_INTERVAL_MS = 5 * 60 * 1000;
+      setInterval(() => {
+        import("./memory/vnext-source-poller").then(async ({ processSettledSources }) => {
+          const result = await processSettledSources();
+          if (result.processed > 0) {
+            log(
+              `[scheduled] vnext source poller: processed=${result.processed} created=${result.totalCreated} reinforced=${result.totalReinforced} skipped=${result.totalSkipped} errors=${result.errors}`,
+              "boot",
+            );
+          }
+        }).catch((err) => {
+          log(`[scheduled] vnext source poller failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
+        });
+      }, VNEXT_SOURCE_POLLER_INTERVAL_MS).unref();
+
       getRailwayConfig(process.env.RAILWAY_ENVIRONMENT === "production" ? "prod" : "dev")
         .then(async (cfg) => {
           const serviceId = process.env.RAILWAY_SERVICE_ID || cfg.serviceId;
