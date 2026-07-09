@@ -15531,13 +15531,49 @@ async function ensureCodingContextLoaded(
   }
 
   if (missing.includes("design_md")) {
+    let designLoaded = false;
+
+    // Strategy 1: Load from environment context artifact (kind = 'design_system')
     try {
-      parts.push(`\n## DESIGN.md\n\n${await readInstructionFile(contextRoot.root, "DESIGN.md")}`);
-      loadedRefs.add("design_md");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Required coding context missing: DESIGN.md under ${contextRoot.root} (${message})`);
+      const { db } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const { environmentContextArtifacts } = await import("@shared/models/platforms");
+      const { libraryPages } = await import("@shared/models/info");
+
+      const artifactRows = await db
+        .select({ libraryPageId: environmentContextArtifacts.libraryPageId })
+        .from(environmentContextArtifacts)
+        .where(eq(environmentContextArtifacts.kind, "design_system"))
+        .limit(1);
+
+      if (artifactRows.length > 0) {
+        const [page] = await db
+          .select({ content: libraryPages.plainTextContent })
+          .from(libraryPages)
+          .where(eq(libraryPages.id, artifactRows[0].libraryPageId))
+          .limit(1);
+
+        if (page?.content) {
+          parts.push(`\n## DESIGN.md\n\n${page.content.trim()}`);
+          designLoaded = true;
+        }
+      }
+    } catch {
+      // Fall through to filesystem
     }
+
+    // Strategy 2: Filesystem fallback
+    if (!designLoaded) {
+      try {
+        parts.push(`\n## DESIGN.md\n\n${await readInstructionFile(contextRoot.root, "DESIGN.md")}`);
+        designLoaded = true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`Required coding context missing: DESIGN.md under ${contextRoot.root} (${message})`);
+      }
+    }
+
+    if (designLoaded) loadedRefs.add("design_md");
   }
 
   ENGINEERING_REF_CACHE.set(cacheKey, loadedRefs);
