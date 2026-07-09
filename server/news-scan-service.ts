@@ -8,6 +8,7 @@ import { eq, or } from "drizzle-orm";
 import * as adapters from "./news-adapters";
 import * as ranking from "./news-ranking";
 import { executeAutonomousSkillRun } from "./autonomous-skill-runner";
+import { SourceDiagnosticsAccumulator, gateRawSignals } from "./news-quality";
 
 const log = createLogger("LandscapeScanService");
 
@@ -41,6 +42,7 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
 
   const scanRun = await signalStorage.startScanRun();
   const scanStartedAt = scanRun.startedAt ?? new Date();
+  const diagnostics = new SourceDiagnosticsAccumulator(scanRun.id);
 
   try {
     await signalStorage.migrateChannelsAndTopics();
@@ -99,18 +101,32 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
     const allSignals: adapters.RawSignal[] = [];
     const errors: string[] = [];
 
+    for (const source of enabledSources.filter(s => s.sourceType !== "pinned_topic")) {
+      diagnostics.registerSource(source, scanStartedAt);
+    }
+
     if (channelWeb && webQueryItems.length > 0) {
       try {
         const webSignals = await adapters.scanWebSources(webQueryItems.slice(0, ranking.LANDSCAPE_SCAN_BUDGET.maxSearchQueries));
         allSignals.push(...webSignals);
-      } catch (err) { errors.push(`web: ${(err as Error).message}`); }
+        diagnostics.recordAdapterResult([channelWeb.id], "success");
+      } catch (err) {
+        const message = (err as Error).message;
+        errors.push(`web: ${message}`);
+        diagnostics.recordAdapterResult([channelWeb.id], "failed", message);
+      }
     }
 
     if (channelX && xQueryItems.length > 0) {
       try {
         const xSignals = await adapters.scanXSources(xQueryItems.slice(0, ranking.LANDSCAPE_SCAN_BUDGET.maxSearchQueries));
         allSignals.push(...xSignals);
-      } catch (err) { errors.push(`x: ${(err as Error).message}`); }
+        diagnostics.recordAdapterResult([channelX.id], "success");
+      } catch (err) {
+        const message = (err as Error).message;
+        errors.push(`x: ${message}`);
+        diagnostics.recordAdapterResult([channelX.id], "failed", message);
+      }
     }
 
     if (channelX && xDiscoveryQueryItems.length > 0) {
@@ -121,7 +137,12 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
           sourceId: channelX.id,
           rawMetadata: { ...signal.rawMetadata, discoveryMode: "x_news_discovery" },
         })));
-      } catch (err) { errors.push(`x_discovery: ${(err as Error).message}`); }
+        diagnostics.recordAdapterResult([channelX.id], "success");
+      } catch (err) {
+        const message = (err as Error).message;
+        errors.push(`x_discovery: ${message}`);
+        diagnostics.recordAdapterResult([channelX.id], "partial", message);
+      }
     }
 
     // ── Direct source dispatch table ──────────────────────────────
@@ -147,7 +168,12 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
       try {
         const signals = await adapter(sources.map(s => ({ id: s.id, value: s.value })));
         allSignals.push(...signals);
-      } catch (err) { errors.push(`${label}: ${(err as Error).message}`); }
+        diagnostics.recordAdapterResult(sources.map(s => s.id), "success");
+      } catch (err) {
+        const message = (err as Error).message;
+        errors.push(`${label}: ${message}`);
+        diagnostics.recordAdapterResult(sources.map(s => s.id), "failed", message);
+      }
     }
 
     // X account timeline has a special return shape (resolvedIds), so it stays inline
@@ -160,17 +186,29 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
             cachedUserId: s.cachedUserId ?? undefined,
           })));
         allSignals.push(...xAccountSignals);
+        diagnostics.recordAdapterResult(xAccounts.map(s => s.id), "success");
         for (const [sourceId, userId] of resolvedIds) {
           await signalStorage.updateSource(sourceId, { cachedUserId: userId });
         }
-      } catch (err) { errors.push(`x_accounts: ${(err as Error).message}`); }
+      } catch (err) {
+        const message = (err as Error).message;
+        errors.push(`x_accounts: ${message}`);
+        diagnostics.recordAdapterResult(xAccounts.map(s => s.id), "failed", message);
+      }
     }
 
-    const preDedup = allSignals.length;
-    const storyClusters = adapters.clusterSignalsByStory(allSignals);
+    const qualityCandidates = gateRawSignals(diagnostics, allSignals);
+    const acceptedSignals = qualityCandidates.map(candidate => candidate.raw);
+    const preDedup = acceptedSignals.length;
+    const storyClusters = adapters.clusterSignalsByStory(acceptedSignals);
     const dedupedSignals = storyClusters.map(cluster => cluster.primary);
     const clusterByUrl = new Map(storyClusters.map(cluster => [cluster.primary.url, cluster]));
     const storyDeduped = preDedup - dedupedSignals.length;
+    for (const cluster of storyClusters) {
+      for (const duplicate of cluster.signals.filter(signal => signal !== cluster.primary)) {
+        diagnostics.recordDeduped(duplicate.sourceId);
+      }
+    }
     log.log(`scan: story dedup removed ${storyDeduped} duplicates (${preDedup} → ${dedupedSignals.length})`);
 
     const activeTheses = await thesisStorage.list({ status: "active" });
@@ -189,7 +227,6 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
     }
 
     const scoredSignals = dedupedSignals
-      .filter(raw => raw.url && raw.title)
       .map(raw => {
         const fingerprint = adapters.computeFingerprint(raw.url);
         const scored = adapters.scoreSignalRelevance(
@@ -310,13 +347,17 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
         status,
       });
 
+      diagnostics.recordPersisted(raw.sourceId);
+
       if (isNew && status === "surfaced") {
+        diagnostics.recordSurfaced(raw.sourceId);
         itemsSurfaced++;
         remainingSurfaceSlots--;
       } else if (!isNew) {
         itemsDeduped++;
         if (qualifiesForSurface && item.status === "new" && remainingSurfaceSlots > 0) {
           await signalStorage.surfaceSignal(item.id);
+          diagnostics.recordSurfaced(raw.sourceId);
           itemsSurfaced++;
           remainingSurfaceSlots--;
         }
@@ -368,6 +409,24 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
     if (actualSurfaced !== itemsSurfaced) {
       log.warn(`scan: surfaced counter reconciled from ${itemsSurfaced} to actual stored count ${actualSurfaced}`);
     }
+    await signalStorage.saveSourceScanDiagnostics(diagnostics.finalize().map(row => ({
+      scanRunId: row.scanRunId,
+      sourceId: row.sourceId,
+      sourceType: row.sourceType,
+      sourceValue: row.sourceValue,
+      adapterStatus: row.adapterStatus,
+      fetchedCount: row.fetchedCount,
+      acceptedCount: row.acceptedCount,
+      rejectedCount: row.rejectedCount,
+      persistedCount: row.persistedCount,
+      surfacedCount: row.surfacedCount,
+      dedupedCount: row.dedupedCount,
+      rejectedByReason: row.rejectedByReason,
+      lastError: row.lastError ?? null,
+      startedAt: row.startedAt,
+      completedAt: row.completedAt ?? new Date(),
+    })));
+
     await signalStorage.completeScanRun(scanRun.id, {
       sourcesScanned: sourcesScannedCount,
       itemsFound: allSignals.length,
@@ -380,6 +439,27 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
     return { sourcesScanned: sourcesScannedCount, itemsFound: allSignals.length, itemsSurfaced: actualSurfaced, itemsDeduped, errors, message };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    try {
+      await signalStorage.saveSourceScanDiagnostics(diagnostics.finalize().map(row => ({
+        scanRunId: row.scanRunId,
+        sourceId: row.sourceId,
+        sourceType: row.sourceType,
+        sourceValue: row.sourceValue,
+        adapterStatus: row.lastError ? row.adapterStatus : "failed",
+        fetchedCount: row.fetchedCount,
+        acceptedCount: row.acceptedCount,
+        rejectedCount: row.rejectedCount,
+        persistedCount: row.persistedCount,
+        surfacedCount: row.surfacedCount,
+        dedupedCount: row.dedupedCount,
+        rejectedByReason: row.rejectedByReason,
+        lastError: row.lastError ?? msg,
+        startedAt: row.startedAt,
+        completedAt: row.completedAt ?? new Date(),
+      })));
+    } catch (diagnosticsErr) {
+      log.warn(`scan: failed to persist source diagnostics after scan failure (${diagnosticsErr instanceof Error ? diagnosticsErr.message : String(diagnosticsErr)})`);
+    }
     await signalStorage.completeScanRun(scanRun.id, {
       sourcesScanned: 0,
       itemsFound: 0,
