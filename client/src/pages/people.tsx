@@ -37,9 +37,12 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Tooltip,
   TooltipContent,
@@ -987,64 +990,60 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   };
 
+  const interactionTypeLabels: Record<string, string> = { note: "Note", call: "Call", meeting: "Meeting", meetup: "Meetup", email: "Email", text: "Text", in_person: "In Person" };
+
   const renderInteractionOptions = (interaction: Interaction) => (
-    <div className="space-y-2">
-      <div className="space-y-1">
-        <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Type</label>
-        <Select value={interaction.type || "note"} onValueChange={(value) => interactionPatch(interaction, { type: value })}>
-          <SelectTrigger className="h-7 text-xs" data-testid={`select-log-type-${interaction.id}`}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="note">Note</SelectItem>
-            <SelectItem value="call">Call</SelectItem>
-            <SelectItem value="meeting">Meeting</SelectItem>
-            <SelectItem value="meetup">Meetup</SelectItem>
-            <SelectItem value="email">Email</SelectItem>
-            <SelectItem value="text">Text</SelectItem>
-            <SelectItem value="in_person">In Person</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-1">
-        <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Date</label>
-        <Input
-          type="date"
-          value={interaction.date?.slice(0, 10) || ""}
-          onChange={(e) => interactionPatch(interaction, { date: e.target.value })}
-          className="h-7 text-xs"
-          data-testid={`input-log-date-${interaction.id}`}
-        />
-      </div>
-      <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
-        <input
-          type="checkbox"
-          checked={Boolean(interaction.responseOwed)}
-          onChange={(e) => interactionPatch(interaction, { responseOwed: e.target.checked, responseDueBy: e.target.checked ? ensureFollowUpDueDate(interaction.responseDueBy) : null })}
-          className="rounded"
-          data-testid={`checkbox-log-follow-up-${interaction.id}`}
-        />
-        Follow-up
-      </label>
+    <>
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>Type: {interactionTypeLabels[interaction.type || "note"] || "Note"}</DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          {Object.entries(interactionTypeLabels).map(([value, label]) => (
+            <DropdownMenuItem key={value} onClick={() => interactionPatch(interaction, { type: value })}>
+              {interaction.type === value ? `\u2713 ${label}` : label}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>Date: {interaction.date ? new Date(interaction.date).toLocaleDateString() : "Not set"}</DropdownMenuSubTrigger>
+        <DropdownMenuSubContent className="p-2" onCloseAutoFocus={(e) => e.preventDefault()}>
+          <input
+            type="date"
+            value={interaction.date?.slice(0, 10) || ""}
+            onChange={(e) => interactionPatch(interaction, { date: e.target.value })}
+            className="h-7 w-full rounded border border-border bg-background px-2 text-xs text-foreground"
+            data-testid={`input-log-date-${interaction.id}`}
+          />
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+      <DropdownMenuItem onClick={() => {
+        const next = !interaction.responseOwed;
+        interactionPatch(interaction, { responseOwed: next, responseDueBy: next ? ensureFollowUpDueDate(interaction.responseDueBy) : null });
+      }}>
+        {interaction.responseOwed ? "\u2713 Follow-up" : "Follow-up"}
+      </DropdownMenuItem>
       {interaction.responseOwed && (
-        <Input
-          type="date"
-          value={interaction.responseDueBy?.slice(0, 10) || ""}
-          onChange={(e) => interactionPatch(interaction, { responseDueBy: e.target.value })}
-          className="h-7 text-xs"
-          data-testid={`input-log-follow-up-date-${interaction.id}`}
-        />
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>Due: {interaction.responseDueBy ? new Date(interaction.responseDueBy).toLocaleDateString() : "Not set"}</DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="p-2" onCloseAutoFocus={(e) => e.preventDefault()}>
+            <input
+              type="date"
+              value={interaction.responseDueBy?.slice(0, 10) || ""}
+              onChange={(e) => interactionPatch(interaction, { responseDueBy: e.target.value })}
+              className="h-7 w-full rounded border border-border bg-background px-2 text-xs text-foreground"
+              data-testid={`input-log-follow-up-date-${interaction.id}`}
+            />
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
       )}
-      <div className="border-t border-border/40 pt-1">
-        <button
-          type="button"
-          className="flex w-full items-center rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent hover:text-destructive"
-          onClick={() => setPendingDeleteLogItem({ kind: "interaction", id: interaction.id, label: interaction.summary || "Log item" })}
-        >
-          Delete
-        </button>
-      </div>
-    </div>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem
+        className="text-destructive focus:text-destructive"
+        onClick={() => setPendingDeleteLogItem({ kind: "interaction", id: interaction.id, label: interaction.summary || "Log item" })}
+      >
+        Delete
+      </DropdownMenuItem>
+    </>
   );
 
   const { data: linkedMemories = [] } = useQuery<LinkedMemoryEntry[]>({
@@ -1125,8 +1124,8 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
               className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[14px] leading-tight text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]"
               data-testid="textarea-interaction-summary"
             />
-            <Popover>
-              <PopoverTrigger asChild>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -1136,63 +1135,57 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                 >
                   <MoreHorizontal className="h-3 w-3" />
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="w-56 space-y-2 p-2">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Type</label>
-                  <Select value={newType} onValueChange={setNewType}>
-                    <SelectTrigger data-testid="select-interaction-type" className="h-7 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="note">Note</SelectItem>
-                      <SelectItem value="call">Call</SelectItem>
-                      <SelectItem value="meeting">Meeting</SelectItem>
-                      <SelectItem value="meetup">Meetup</SelectItem>
-                      <SelectItem value="email">Email</SelectItem>
-                      <SelectItem value="text">Text</SelectItem>
-                      <SelectItem value="in_person">In Person</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Date</label>
-                  <Input
-                    type="date"
-                    value={newDate}
-                    onChange={(e) => setNewDate(e.target.value)}
-                    className="h-7 text-xs"
-                    data-testid="input-interaction-date"
-                  />
-                </div>
-                <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={newResponseOwed}
-                    onChange={(e) => {
-                      setNewResponseOwed(e.target.checked);
-                      if (e.target.checked && !newResponseDueBy) {
-                        const d = new Date();
-                        d.setDate(d.getDate() + 3);
-                        setNewResponseDueBy(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
-                      }
-                    }}
-                    className="rounded"
-                    data-testid="checkbox-response-owed"
-                  />
-                  Follow-up
-                </label>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>Type: {interactionTypeLabels[newType] || "Note"}</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {Object.entries(interactionTypeLabels).map(([value, label]) => (
+                      <DropdownMenuItem key={value} onClick={() => setNewType(value)}>
+                        {newType === value ? "\u2713 " + label : label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>Date: {newDate ? new Date(newDate + "T12:00").toLocaleDateString() : "Today"}</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="p-2" onCloseAutoFocus={(e) => e.preventDefault()}>
+                    <input
+                      type="date"
+                      value={newDate}
+                      onChange={(e) => setNewDate(e.target.value)}
+                      className="h-7 w-full rounded border border-border bg-background px-2 text-xs text-foreground"
+                      data-testid="input-interaction-date"
+                    />
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuItem onClick={() => {
+                  const next = !newResponseOwed;
+                  setNewResponseOwed(next);
+                  if (next && !newResponseDueBy) {
+                    const d = new Date();
+                    d.setDate(d.getDate() + 3);
+                    setNewResponseDueBy(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+                  }
+                }}>
+                  {newResponseOwed ? "\u2713 Follow-up" : "Follow-up"}
+                </DropdownMenuItem>
                 {newResponseOwed && (
-                  <Input
-                    type="date"
-                    value={newResponseDueBy}
-                    onChange={(e) => setNewResponseDueBy(e.target.value)}
-                    className="h-7 text-xs"
-                    data-testid="input-response-due-by"
-                  />
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger>Due: {newResponseDueBy ? new Date(newResponseDueBy + "T12:00").toLocaleDateString() : "Not set"}</DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="p-2" onCloseAutoFocus={(e) => e.preventDefault()}>
+                      <input
+                        type="date"
+                        value={newResponseDueBy}
+                        onChange={(e) => setNewResponseDueBy(e.target.value)}
+                        className="h-7 w-full rounded border border-border bg-background px-2 text-xs text-foreground"
+                        data-testid="input-response-due-by"
+                      />
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
                 )}
-              </PopoverContent>
-            </Popover>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       ) : (
@@ -1299,7 +1292,6 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                     </div>
                   )}
                   expandedContentClassName="px-2 pb-2 pl-2"
-                  usePopoverMenu={!!interaction}
                   menuContent={interaction ? renderInteractionOptions(interaction) : !isRelationshipMemory ? (
                     <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
@@ -1797,7 +1789,6 @@ function ProfileTreeRow({
   expandedContentClassName,
   actionContent,
   menuContent,
-  usePopoverMenu,
   testId,
 }: {
   label: ReactNode;
@@ -1809,7 +1800,6 @@ function ProfileTreeRow({
   expandedContentClassName?: string;
   actionContent?: ReactNode;
   menuContent?: ReactNode;
-  usePopoverMenu?: boolean;
   testId?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -1855,16 +1845,6 @@ function ProfileTreeRow({
             <span className="h-5 w-5 shrink-0" />
           )}
           {menuContent ? (
-            usePopoverMenu ? (
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100" aria-label="More actions">
-                  <MoreHorizontal className="h-3 w-3" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="w-56 p-2">{menuContent}</PopoverContent>
-            </Popover>
-            ) : (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100" aria-label="More actions">
@@ -1873,7 +1853,6 @@ function ProfileTreeRow({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">{menuContent}</DropdownMenuContent>
             </DropdownMenu>
-            )
           ) : null}
         </div>
         {canExpand && (
