@@ -1490,6 +1490,20 @@ export async function runSchemaBootstrap(
     await pool.query(
       `ALTER TABLE memory_transitions ALTER COLUMN transitioned_at SET DEFAULT CURRENT_TIMESTAMP`,
     );
+
+    await pool.query(
+      `ALTER TABLE scan_runs ALTER COLUMN id SET DEFAULT gen_random_uuid()::text`,
+    );
+    await pool.query(
+      `ALTER TABLE scan_runs ALTER COLUMN started_at SET DEFAULT CURRENT_TIMESTAMP`,
+    );
+
+    await pool.query(
+      `ALTER TABLE signal_sources ALTER COLUMN id SET DEFAULT gen_random_uuid()::text`,
+    );
+    await pool.query(
+      `ALTER TABLE signal_items ALTER COLUMN id SET DEFAULT gen_random_uuid()::text`,
+    );
   });
 
   await heal("messages table column drift", async () => {
