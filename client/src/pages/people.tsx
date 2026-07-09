@@ -130,6 +130,7 @@ interface PersonIndex {
   lastInteractionDate?: string;
   createdAt?: string;
   updatedAt?: string;
+  lastViewedAt?: string;
   private: boolean;
 }
 
@@ -424,42 +425,7 @@ function fuzzyMatchPeople(query: string, people: PersonIndex[], limit: number): 
 
 type SortMode = "lastInteraction" | "name";
 
-type AgendaSectionKey = "commitments" | "invest" | "nurture";
-
-type AgendaItem = {
-  personId?: string;
-  reason?: string;
-  suggestedAction?: string;
-  contextBadge?: { label: string; color: string };
-};
-
-type AgendaData = {
-  commitments?: AgendaItem[];
-  invest?: AgendaItem[];
-  nurture?: AgendaItem[];
-  agenda?: AgendaItem[];
-};
-
-const AGENDA_SECTION_META: Record<AgendaSectionKey, { label: string; color: string; icon: typeof MessageSquare }> = {
-  commitments: { label: "Commitments", color: "text-error-foreground", icon: Shield },
-  invest: { label: "Invest", color: "text-info-foreground", icon: TrendingUp },
-  nurture: { label: "Nurture", color: "text-warning-foreground", icon: Heart },
-};
-
-function getAgendaItemsForPerson(data: AgendaData | undefined, personId: string) {
-  if (!data) return [];
-  return (Object.keys(AGENDA_SECTION_META) as AgendaSectionKey[]).flatMap(section =>
-    (data[section] || [])
-      .filter(item => item.personId === personId)
-      .map(item => ({ ...item, section }))
-  );
-}
-
-function hasAgendaNotification(agendaData: AgendaData | undefined, personId: string) {
-  return getAgendaItemsForPerson(agendaData, personId).length > 0;
-}
-
-function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOverride, onQuickAddClose, onRequestQuickAdd, sortMode, agendaData, simpleFeed, selectedImportEmail, onSelectImportCandidate }: {
+function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOverride, onQuickAddClose, onRequestQuickAdd, sortMode, simpleFeed, selectedImportEmail, onSelectImportCandidate }: {
   selectedId: string | null;
   onSelect: (id: string) => void;
   searchOverride?: string;
@@ -467,7 +433,6 @@ function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOver
   onQuickAddClose?: () => void;
   onRequestQuickAdd?: () => void;
   sortMode: SortMode;
-  agendaData?: AgendaData;
   simpleFeed?: SimpleFeed;
   selectedImportEmail?: string | null;
   onSelectImportCandidate?: (email: string) => void;
@@ -587,8 +552,8 @@ function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOver
     const isSelected = selectedId === person.id;
     const isNew = person.createdAt && person.updatedAt &&
       Math.abs(new Date(person.createdAt).getTime() - new Date(person.updatedAt).getTime()) < 5000;
-    const hasNotification = hasAgendaNotification(agendaData, person.id);
-    const titleClass = hasNotification ? "text-cta" : isNew ? "text-foreground" : isSelected ? "text-foreground" : "text-muted-foreground";
+    const isUnread = !person.lastViewedAt || (person.updatedAt && new Date(person.updatedAt) > new Date(person.lastViewedAt));
+    const titleClass = isUnread ? "text-foreground" : isNew ? "text-foreground" : isSelected ? "text-foreground" : "text-muted-foreground";
     return (
       <div
         key={person.id}
@@ -608,7 +573,7 @@ function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOver
         )}
       </div>
     );
-  }, [selectedId, onSelect, agendaData]);
+  }, [selectedId, onSelect]);
 
   return (
     <div className="space-y-1" data-testid="people-list-view">
@@ -3913,6 +3878,10 @@ export default function PeoplePage() {
     setSelectedImportEmail(null);
     if (id) {
       setLocation(`/people/${id}`);
+      // Mark person as viewed to clear unread state
+      apiRequest("POST", `/api/people/${id}/viewed`).then(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/people"] });
+      }).catch(() => { /* non-critical */ });
     } else {
       setLocation(`/people`);
     }
@@ -3930,6 +3899,10 @@ export default function PeoplePage() {
       setActiveTabRaw("contacts");
       setSelectedImportEmail(null);
       setSelectedPersonIdRaw(params.id);
+      // Mark person as viewed on direct navigation
+      apiRequest("POST", `/api/people/${params.id}/viewed`).then(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/people"] });
+      }).catch(() => { /* non-critical */ });
     }
   }, [params?.id, selectedPersonId, setLocation]);
 
@@ -3937,11 +3910,6 @@ export default function PeoplePage() {
     setActiveTabRaw("contacts");
     setLocation(selectedPersonId ? `/people/${selectedPersonId}` : "/people");
   }, [selectedPersonId, setLocation]);
-
-  const { data: pageAgendaData } = useQuery<AgendaData>({
-    queryKey: ["/api/people/agenda"],
-    refetchInterval: 60_000,
-  });
 
   const { data: simpleFeed } = useQuery<SimpleFeed>({
     queryKey: ["/api/simple/feed"],
@@ -4043,7 +4011,6 @@ export default function PeoplePage() {
               onQuickAddClose={() => setShowQuickAdd(false)}
               onRequestQuickAdd={() => setShowQuickAdd(true)}
               sortMode={sortMode}
-              agendaData={pageAgendaData}
               simpleFeed={simpleFeed}
               selectedImportEmail={selectedImportEmail}
               onSelectImportCandidate={(email) => {

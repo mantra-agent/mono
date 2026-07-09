@@ -156,6 +156,7 @@ export interface Person {
   networkProfile?: NetworkProfile;
   dailyContact?: boolean;
   private: boolean;
+  lastViewedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -171,6 +172,7 @@ export interface PersonIndexEntry {
   lastInteractionDate?: string;
   createdAt?: string;
   updatedAt?: string;
+  lastViewedAt?: string;
   private: boolean;
 }
 
@@ -609,6 +611,7 @@ function rowToPerson(row: Record<string, any>): Person {
     networkProfile: row.networkProfile || row.network_profile || undefined,
     dailyContact: !!(row.dailyContact ?? row.daily_contact),
     private: row.private ?? false,
+    lastViewedAt: row.lastViewedAt || row.last_viewed_at ? (typeof (row.lastViewedAt || row.last_viewed_at) === "string" ? (row.lastViewedAt || row.last_viewed_at) : new Date(row.lastViewedAt || row.last_viewed_at).toISOString()) : undefined,
     createdAt: row.createdAt ? (typeof row.createdAt === "string" ? row.createdAt : new Date(row.createdAt).toISOString()) : new Date().toISOString(),
     updatedAt: row.updatedAt ? (typeof row.updatedAt === "string" ? row.updatedAt : new Date(row.updatedAt).toISOString()) : new Date().toISOString(),
   };
@@ -896,6 +899,17 @@ export class PeopleStorage {
       combineWithWritableScope(getCurrentPrincipalOrSystem(), personScopeColumns, eq(persons.id, id))
     );
     await db.delete(personEmailsTable).where(eq(personEmailsTable.personId, id));
+    this.invalidateListCache();
+  }
+
+  async markViewed(id: string): Promise<void> {
+    log.debug(`markViewed id=${id}`);
+    const now = new Date();
+    await db.update(persons)
+      .set({ lastViewedAt: now })
+      .where(
+        combineWithWritableScope(getCurrentPrincipalOrSystem(), personScopeColumns, eq(persons.id, id))
+      );
     this.invalidateListCache();
   }
 
@@ -1191,6 +1205,7 @@ export class PeopleStorage {
       tags: person.tags || [],
       lastInteractionDate: sorted[0]?.date,
       private: person.private,
+      lastViewedAt: person.lastViewedAt,
       createdAt: person.createdAt,
       updatedAt: person.updatedAt,
     };

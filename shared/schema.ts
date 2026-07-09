@@ -546,6 +546,7 @@ export const persons = pgTable("persons", {
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
+  lastViewedAt: timestamp("last_viewed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
