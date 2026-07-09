@@ -1155,7 +1155,7 @@ export function MarkdownContent({ content, stripTags = false, compact = false, r
   return (
     <div className={cn(
       "prose prose-sm dark:prose-invert max-w-none break-words overflow-hidden [&_pre]:bg-card/70 [&_pre]:rounded-md [&_pre]:border [&_pre]:border-primary/20 [&_pre]:p-3 [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:text-xs [&_code]:font-mono [&_code]:break-all [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-sm [&_blockquote]:bg-card/70 [&_blockquote]:rounded-md [&_blockquote]:border-l-primary/20 [&_blockquote]:px-3 [&_blockquote]:py-2 [&_a]:text-cta [&_a]:break-all [&_a]:transition-colors [&_a:hover]:text-active",
-      compact ? "[&_p]:my-2 [&_ul]:my-0 [&_ol]:my-0 [&_li]:my-0" : "[&_p]:my-2 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0",
+      compact ? "[&_p]:my-2 [&_ul]:my-0 [&_ol]:my-0 [&_li]:my-0 [&>:first-child]:mt-0 [&>:last-child]:mb-0" : "[&_p]:my-2 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0",
       tags.length > 0 && "[&>p:first-of-type]:inline [&>p:first-of-type]:my-0"
     )}>
       {tags.length > 0 && (
