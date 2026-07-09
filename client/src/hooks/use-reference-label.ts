@@ -14,6 +14,7 @@ export function useReferenceLabel(
   // Raw IDs look like UUIDs, numbers, or "Task 42" / "Project 7" patterns.
   const looksUnresolved =
     staticLabel === id ||
+    /^\d+$/.test(staticLabel) ||
     /^(Task|Project|Milestone|Intention|Event) \S+$/.test(staticLabel);
 
   const { data } = useQuery<string>({

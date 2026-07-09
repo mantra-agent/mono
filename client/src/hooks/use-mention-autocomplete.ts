@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { serializeReference, type ReferenceType } from "@shared/references";
+import { useQueryClient } from "@tanstack/react-query";
+import { normalizeReferenceType, serializeReference, type ReferenceType } from "@shared/references";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger("MentionAutocomplete");
@@ -296,6 +297,7 @@ export function useMentionAutocomplete(
   options: MentionAutocompleteOptions,
 ): MentionAutocompleteResult {
   const { value, onChange } = options;
+  const queryClient = useQueryClient();
 
   const [trigger, setTrigger] = useState<ReferenceTrigger | null>(null);
   const [suggestions, setSuggestions] = useState<ReferenceSuggestion[]>([]);
@@ -352,14 +354,18 @@ export function useMentionAutocomplete(
       const currentTrigger = triggerRef.current;
       if (!currentTrigger) return;
       const currentValue = valueRef.current;
-      const token = serializeReference({ type: suggestion.type, id: suggestion.id });
+      const normalizedType = normalizeReferenceType(suggestion.type);
+      const token = serializeReference({ type: normalizedType, id: suggestion.id });
+      if (suggestion.label && suggestion.label !== suggestion.id) {
+        queryClient.setQueryData(["reference-label", normalizedType, suggestion.id], suggestion.label);
+      }
       const nextValue = `${currentValue.slice(0, currentTrigger.start)}${token} ${currentValue.slice(currentTrigger.start + 1 + currentTrigger.query.length)}`;
       const nextCursor = currentTrigger.start + token.length + 1;
       setTrigger(null);
       setSuggestions([]);
       onChange(nextValue, nextCursor);
     },
-    [onChange],
+    [onChange, queryClient],
   );
 
   const dismiss = useCallback(() => {
