@@ -32,6 +32,8 @@ const CHUNK_MIN = 5_000;           // minimum chunk size — merge trailing runt
 // --- Claim Extraction Types ---
 
 export interface ClaimCandidate {
+  /** 1-3 word display title for UI visibility (Layers page, graph) */
+  title: string;
   content: string;
   claimType: "state" | "cause" | "action";
   confidence: number;
@@ -386,10 +388,12 @@ Reject:
 - claims below 0.4 confidence
 - process status messages with no underlying external fact
 
+For each claim, include a "title": a 1-3 word Title Case label naming the subject of the claim (e.g. "Toku Outreach", "Brand Colors", "Eric Kamont"). Never more than 3 words. It is used as the claim's display name in list and graph UIs.
+
 For each claim, include 1-4 topics and entityMentions for named people, projects, or goals when present. entityType must be "person", "project", or "goal". If one claim is caused by another claim in this batch, set sourceClaimIndex to that claim's 0-based index; otherwise use null.
 
 Respond with only valid JSON:
-{"claims":[{"content":"...","claimType":"state|cause|action","confidence":0.0,"topics":["..."],"entityMentions":[{"name":"...","entityType":"person|project|goal"}],"sourceClaimIndex":null}],"reasoning":"short reason, or why no claims were worth storing"}`;
+{"claims":[{"title":"1-3 Word Title","content":"...","claimType":"state|cause|action","confidence":0.0,"topics":["..."],"entityMentions":[{"name":"...","entityType":"person|project|goal"}],"sourceClaimIndex":null}],"reasoning":"short reason, or why no claims were worth storing"}`;
 
 export async function extractClaimsFromChunk(
   chunk: string,
@@ -434,6 +438,21 @@ export function deduplicateChunkClaims(allClaims: ClaimCandidate[]): ClaimCandid
   }
   return seen.slice(0, 3);
 }
+const CLAIM_TITLE_STOPWORDS = new Set(["the", "a", "an", "is", "are", "was", "were", "has", "have", "and", "or", "of", "to", "for", "in", "on", "that", "with", "as", "his", "her", "its", "their"]);
+
+/** Normalize an LLM-provided claim title to 1-3 words; derive from content when missing. */
+export function normalizeClaimTitle(rawTitle: string, content: string): string {
+  const cleaned = rawTitle.trim().replace(/[.,;:!?"]+$/, "");
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  if (words.length >= 1 && words.length <= 3) return words.join(" ");
+  if (words.length > 3) return words.slice(0, 3).join(" ");
+  const significant = content
+    .split(/\s+/)
+    .map((w) => w.replace(/[^\p{L}\p{N}'-]/gu, ""))
+    .filter((w) => w.length > 1 && !CLAIM_TITLE_STOPWORDS.has(w.toLowerCase()));
+  return significant.slice(0, 3).join(" ") || "Claim";
+}
+
 function parseClaimsFromResponse(parsed: Record<string, unknown>): ClaimCandidate[] {
   if (!Array.isArray(parsed.claims)) return [];
 
@@ -445,6 +464,7 @@ function parseClaimsFromResponse(parsed: Record<string, unknown>): ClaimCandidat
     .filter((c): c is Record<string, unknown> => c != null && typeof c === "object")
     .map((c) => {
       const content = typeof c.content === "string" ? c.content.trim() : "";
+      const title = normalizeClaimTitle(typeof c.title === "string" ? c.title : "", content);
       const rawType = typeof c.claimType === "string" ? c.claimType : "";
       const claimType = validTypes.has(rawType)
         ? (rawType as ClaimCandidate["claimType"])
@@ -460,7 +480,7 @@ function parseClaimsFromResponse(parsed: Record<string, unknown>): ClaimCandidat
             .map((e) => ({ name: (e.name as string).trim(), entityType: (e.entityType as string).trim() }))
         : [];
       const sourceClaimIndex = typeof c.sourceClaimIndex === "number" ? c.sourceClaimIndex : undefined;
-      return { content, claimType, confidence, topics, entityMentions, sourceClaimIndex } as ClaimCandidate & { claimType: ClaimCandidate["claimType"] | null };
+      return { title, content, claimType, confidence, topics, entityMentions, sourceClaimIndex } as ClaimCandidate & { claimType: ClaimCandidate["claimType"] | null };
     })
     .filter((c): c is ClaimCandidate => !!c.content && c.claimType !== null && c.confidence >= 0.4)
     .slice(0, 7);

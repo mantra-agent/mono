@@ -53,6 +53,7 @@ function serializeVnextClaim(claim: MemoryVnextClaim) {
   return {
     id: claim.id,
     storage: "memory_vnext_claims",
+    title: claim.title,
     content: claim.content,
     claimType: claim.claimType,
     confidence: claim.confidence,
@@ -1856,7 +1857,7 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
     const entries: VnextGraphNode[] = claims.map((claim) => ({
       id: claim.id,
       content: claim.content,
-      title: claim.content.length > 80 ? `${claim.content.slice(0, 77)}...` : claim.content,
+      title: claim.title || (claim.content.length > 80 ? `${claim.content.slice(0, 77)}...` : claim.content),
       summary: `${claim.claimType} claim · ${(claim.confidence * 100).toFixed(0)}% confidence · ${claim.lifecycleStage}`,
       layer: "long",
       source: claim.claimType || "claim",
@@ -1954,6 +1955,26 @@ async function handleTriggerVnextLifecycle(req: Request, res: Response): Promise
     });
     log.info(`[vnext] lifecycle_trigger runId=${result.runId} scanned=${result.scanned} sourced=${result.sourced} linked=${result.linked} canonicalized=${result.canonicalized} retired=${result.retired} skipped=${result.skipped} errors=${result.errors}`);
     res.json({ triggered: true, storage: "memory_vnext_claims", ...result });
+  } catch (error: unknown) {
+    res.status(500).json({ error: errorMessage(error) });
+  }
+}
+
+async function handleNukeVnextClaims(req: Request, res: Response): Promise<void> {
+  try {
+    const confirm = typeof req.body?.confirm === "string" ? req.body.confirm : "";
+    if (confirm !== "NUKE") {
+      res.status(400).json({ error: 'vNext nuke requires body {"confirm":"NUKE"}' });
+      return;
+    }
+    const result = await memoryVnextClaimStorage.nukeAllClaims();
+    eventBus.publish({
+      category: "memory",
+      event: "entries_changed",
+      payload: { action: "vnext_nuke", storage: "memory_vnext_claims", deleted: result.deleted, level: "warn" },
+    });
+    log.warn(`[vnext] nuke deleted=${result.deleted} claims (user-initiated reset)`);
+    res.json({ nuked: true, storage: "memory_vnext_claims", deleted: result.deleted });
   } catch (error: unknown) {
     res.status(500).json({ error: errorMessage(error) });
   }
@@ -2138,6 +2159,7 @@ export function registerMemoryRoutes(app: Express) {
 
   app.get("/api/memory/vnext/graph", handleGetVnextGraph);
   app.post("/api/memory/vnext/lifecycle/run", handleTriggerVnextLifecycle);
+  app.post("/api/memory/vnext/claims/nuke", handleNukeVnextClaims);
   app.get("/api/memory/vnext/claims/counts", handleGetVnextClaimCounts);
   app.get("/api/memory/vnext/claims", handleSearchVnextClaims);
   app.get("/api/memory/vnext/claims/:id", handleGetVnextClaim);

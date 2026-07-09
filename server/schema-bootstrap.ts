@@ -1638,6 +1638,7 @@ export async function runSchemaBootstrap(
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_type ON memory_vnext_claims(claim_type)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_source_memory ON memory_vnext_claims(source_memory_id)`);
+    await pool.query(`ALTER TABLE memory_vnext_claims ADD COLUMN IF NOT EXISTS title TEXT`);
     await pool.query(`ALTER TABLE memory_vnext_claims ADD COLUMN IF NOT EXISTS lifecycle_stage TEXT NOT NULL DEFAULT 'extracted'`);
     await pool.query(`ALTER TABLE memory_vnext_claims ADD COLUMN IF NOT EXISTS lifecycle_stage_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_source ON memory_vnext_claims(source, source_id)`);

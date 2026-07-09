@@ -354,6 +354,7 @@ export const memoryVnextClaims = pgTable(
   "memory_vnext_claims",
   {
     id: serial("id").primaryKey(),
+    title: text("title"),
     content: text("content").notNull(),
     claimType: text("claim_type").notNull(),
     confidence: real("confidence").notNull().default(0.5),

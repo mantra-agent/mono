@@ -13337,7 +13337,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           ...vnextRows.map(r => ({
             id: r.id,
             storage: "memory_vnext_claims",
-            title: r.content,
+            title: r.title || r.content,
             content: r.content ? r.content.substring(0, 500) : null,
             claimType: r.claimType,
             confidence: r.confidence,
