@@ -46,16 +46,9 @@ export const REFERENCE_TYPE_LABELS: Record<string, string> = {
 // API response interfaces (minimal shapes consumed by this hook)
 // ---------------------------------------------------------------------------
 
-interface LibrarySearchResult {
-  entry?: {
-    metadata?: { slug?: string; title?: string };
-    slug?: string;
-    id?: string;
-    title?: string;
-    oneLiner?: string;
-  };
-  slug?: string;
+interface LibraryPageResult {
   id?: string;
+  slug?: string;
   title?: string;
   oneLiner?: string;
 }
@@ -187,7 +180,7 @@ async function loadReferenceSuggestions(
   const [library, people, goals, tasks, projects, wellnessActivities] =
     await Promise.all([
       query
-        ? fetchJson<LibrarySearchResult[]>(`/api/info/search?q=${encoded}`, signal)
+        ? fetchJson<LibraryPageResult[]>(`/api/info/library?search=${encoded}`, signal)
         : Promise.resolve(null),
       query
         ? fetchJson<{ people?: PersonResult[] }>(`/api/people/search?q=${encoded}`, signal)
@@ -203,15 +196,13 @@ async function loadReferenceSuggestions(
 
   const suggestions: ReferenceSuggestion[] = [];
 
-  for (const result of library || []) {
-    const entry = result.entry || result;
-    const metadata = entry.metadata || {};
-    const slug = metadata.slug || entry.slug || entry.id;
-    const title = metadata.title || entry.title || entry.oneLiner || slug;
+  for (const page of library || []) {
+    const refId = page.slug || page.id;
+    if (!refId) continue;
     suggestions.push({
       type: "page",
-      id: String(slug),
-      label: String(title),
+      id: String(refId),
+      label: String(page.title || page.oneLiner || refId),
       description: "Library page",
     });
   }

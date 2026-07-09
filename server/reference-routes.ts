@@ -9,7 +9,9 @@ import { db } from "./db";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { libraryPages } from "@shared/models/info";
+import { wellnessActivities } from "@shared/models/health";
 import { emailMessages } from "@shared/schema";
+import { decisionsStorage } from "./decisions-storage";
 import { and, desc, eq, or } from "drizzle-orm";
 import { getEvent, listAllEvents } from "./google-calendar";
 import { chatFileStorage } from "./chat-file-storage";
@@ -97,12 +99,50 @@ export function registerReferenceRoutes(app: Express) {
               break;
             }
             case "page": {
+              const pageScope = { ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, scope: libraryPages.scope };
+              const matchers = [eq(libraryPages.slug, id), eq(libraryPages.id, id)];
+              // Heal legacy refs authored with a memory entry ID instead of a page slug/id.
+              const numId = Number(id);
+              if (Number.isInteger(numId)) matchers.push(eq(libraryPages.memoryEntryId, numId));
               const rows = await db
                 .select({ title: libraryPages.title })
                 .from(libraryPages)
-                .where(or(eq(libraryPages.slug, id), eq(libraryPages.id, id)))
+                .where(combineWithVisibleScope(principal, pageScope, or(...matchers)))
                 .limit(1);
-              if (rows[0]) results[key] = rows[0].title;
+              if (rows[0]?.title) results[key] = rows[0].title;
+              break;
+            }
+            case "wellness_activity":
+            case "health_activity": {
+              const numId = Number(id);
+              if (!Number.isNaN(numId)) {
+                const activityScope = { ownerUserId: wellnessActivities.ownerUserId, accountId: wellnessActivities.principalAccountId };
+                const rows = await db
+                  .select({ name: wellnessActivities.name })
+                  .from(wellnessActivities)
+                  .where(combineWithVisibleScope(principal, activityScope, eq(wellnessActivities.id, numId)))
+                  .limit(1);
+                if (rows[0]) results[key] = rows[0].name;
+              }
+              break;
+            }
+            case "decision": {
+              const decision = await decisionsStorage.getDecision(id);
+              if (decision) results[key] = decision.title;
+              break;
+            }
+            case "milestone": {
+              const numId = Number(id);
+              if (!Number.isNaN(numId)) {
+                const projects = await fileProjectStorage.getProjects();
+                for (const project of projects) {
+                  const milestone = project.milestones?.find((m) => m.id === numId);
+                  if (milestone) {
+                    results[key] = milestone.name;
+                    break;
+                  }
+                }
+              }
               break;
             }
             case "email_thread": {
