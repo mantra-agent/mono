@@ -2135,6 +2135,7 @@ function PeopleDetailSection({
   count,
   defaultOpen = false,
   children,
+  collapsedContent,
   testId,
   headerAction,
 }: {
@@ -2142,6 +2143,7 @@ function PeopleDetailSection({
   count?: number;
   defaultOpen?: boolean;
   children: ReactNode;
+  collapsedContent?: ReactNode;
   testId?: string;
   headerAction?: ReactNode;
 }) {
@@ -2157,6 +2159,11 @@ function PeopleDetailSection({
         </CollapsibleTrigger>
         {headerAction}
       </div>
+      {!open && collapsedContent && (
+        <div className="px-2 pb-1">
+          {collapsedContent}
+        </div>
+      )}
       <CollapsibleContent>
         <div className="space-y-1 pt-1">
           {children}
@@ -2392,8 +2399,12 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
             </DropdownMenuContent>
           </DropdownMenu>
         )}
-        defaultOpen
         testId="section-profile"
+        collapsedContent={!person.private && person.quickSummary ? (
+          <div className="text-[14px] leading-tight text-white/80 whitespace-pre-wrap" data-testid="profile-summary-collapsed">
+            {person.quickSummary}
+          </div>
+        ) : undefined}
       >
         <div className="overflow-hidden rounded-md border border-border/20">
           {!person.private && (
@@ -2525,8 +2536,9 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
           {showAddContact ? <ProfileTreeRow label="New contact" icon={<Plus className="h-3.5 w-3.5" />} hasValue={true} showEmpty={true} testId="row-profile-new-contact"><div className="flex flex-wrap items-center justify-end gap-1.5"><Select value={newContactType} onValueChange={(v) => setNewContactType(v as any)}><SelectTrigger className="w-48" data-testid="select-contact-type"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="email">Email</SelectItem><SelectItem value="phone">Phone</SelectItem><SelectItem value="social">Social</SelectItem><SelectItem value="other">Other</SelectItem></SelectContent></Select><Input value={newContactLabel} onChange={(e) => setNewContactLabel(e.target.value)} placeholder="Label" className="h-8 w-20 text-right" data-testid="input-contact-label" /><Input value={newContactValue} onChange={(e) => setNewContactValue(e.target.value)} placeholder="Value" className="h-8 min-w-[120px] flex-1 text-right" data-testid="input-contact-value" /><Button size="sm" onClick={() => { if (newContactValue.trim()) { updateMutation.mutate({ contactInfo: [...person.contactInfo, { type: newContactType, label: newContactLabel || contactTypeLabels[newContactType], value: newContactValue }] }); setShowAddContact(false); setNewContactLabel(""); setNewContactValue(""); } }} data-testid="button-save-contact">Add</Button><Button variant="ghost" size="icon" onClick={() => setShowAddContact(false)}><X className="h-3 w-3" /></Button></div></ProfileTreeRow> : <div className="px-2 py-1"><Button variant="ghost" size="sm" onClick={() => setShowAddContact(true)} data-testid="button-add-contact"><Plus className="mr-1 h-3 w-3" />Contact info</Button></div>}
         </div>
 
-        <InteractionsTab person={person} onUpdate={handleRefetch} showAdd={showNewLog} setShowAdd={setShowNewLog} />
       </PeopleDetailSection>
+
+      <InteractionsTab person={person} onUpdate={handleRefetch} showAdd={showNewLog} setShowAdd={setShowNewLog} />
 
       </div>
 
