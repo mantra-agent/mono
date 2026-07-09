@@ -3950,6 +3950,10 @@ export async function runSchemaBootstrap(
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_signal_items_account ON signal_items(account_id)`,
     );
+    // The onConflictDoNothing({ target: fingerprint }) in news-storage requires this
+    await pool.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS signal_items_fingerprint_key ON signal_items(fingerprint)`,
+    );
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_scan_runs_scope_owner ON scan_runs(scope, owner_user_id)`,
     );
