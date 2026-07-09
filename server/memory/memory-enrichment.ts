@@ -391,7 +391,7 @@ For each claim, include 1-4 topics and entityMentions for named people, projects
 Respond with only valid JSON:
 {"claims":[{"content":"...","claimType":"state|cause|action","confidence":0.0,"topics":["..."],"entityMentions":[{"name":"...","entityType":"person|project|goal"}],"sourceClaimIndex":null}],"reasoning":"short reason, or why no claims were worth storing"}`;
 
-async function extractClaimsFromChunk(
+export async function extractClaimsFromChunk(
   chunk: string,
   index: number,
   total: number,
@@ -424,7 +424,7 @@ async function extractClaimsFromChunk(
   }
 }
 
-function deduplicateChunkClaims(allClaims: ClaimCandidate[]): ClaimCandidate[] {
+export function deduplicateChunkClaims(allClaims: ClaimCandidate[]): ClaimCandidate[] {
   const seen: ClaimCandidate[] = [];
   for (const claim of allClaims) {
     const isDupe = seen.some(
