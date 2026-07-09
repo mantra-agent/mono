@@ -669,12 +669,35 @@ export async function runSchemaBootstrap(
         kind TEXT NOT NULL,
         library_page_id TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(environment_id, kind)
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_environment_context_artifacts_environment ON environment_context_artifacts(environment_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_environment_context_artifacts_kind ON environment_context_artifacts(kind)`);
+  });
+
+  await heal("context artifacts drop unique env+kind constraint", async () => {
+    // Allow multiple artifacts per kind per environment (e.g. multiple design_system pages)
+    const { rows } = await pool.query(`
+      SELECT indexname FROM pg_indexes
+      WHERE tablename = 'environment_context_artifacts'
+        AND indexdef ILIKE '%unique%'
+        AND indexname = 'idx_environment_context_artifacts_env_kind'
+    `);
+    if (rows.length > 0) {
+      await pool.query(`DROP INDEX idx_environment_context_artifacts_env_kind`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_environment_context_artifacts_env_kind ON environment_context_artifacts(environment_id, kind)`);
+    }
+    // Also drop the inline UNIQUE constraint if it exists as a named constraint
+    const { rows: constraints } = await pool.query(`
+      SELECT constraint_name FROM information_schema.table_constraints
+      WHERE table_name = 'environment_context_artifacts'
+        AND constraint_type = 'UNIQUE'
+        AND constraint_name != 'environment_context_artifacts_pkey'
+    `);
+    for (const c of constraints) {
+      await pool.query(`ALTER TABLE environment_context_artifacts DROP CONSTRAINT ${c.constraint_name}`);
+    }
   });
 
   await heal("context artifacts library_page_id UUID to TEXT", async () => {

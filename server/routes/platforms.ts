@@ -933,62 +933,76 @@ export function registerPlatformRoutes(app: Express): void {
     try {
       const environmentId = platformIdParam(req.params.environmentId);
       const env = await ensureEnvironmentWritable(environmentId);
-      if (!env) return res.status(404).json({ error: `Environment ${environmentId} not found`, operation: "upsert_context_artifact" });
+      if (!env) return res.status(404).json({ error: `Environment ${environmentId} not found`, operation: "save_context_artifact" });
 
       const parsed = upsertContextArtifactSchema.parse(req.body);
 
       // Verify library page exists
       const { libraryPages } = await import("@shared/models/info");
       const [page] = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(eq(libraryPages.id, parsed.libraryPageId)).limit(1);
-      if (!page) return res.status(404).json({ error: `Library page ${parsed.libraryPageId} not found`, operation: "upsert_context_artifact" });
+      if (!page) return res.status(404).json({ error: `Library page ${parsed.libraryPageId} not found`, operation: "save_context_artifact" });
 
-      const [existing] = await db
+      // Prevent duplicate: same environment + kind + libraryPageId
+      const [existingDup] = await db
         .select({ id: environmentContextArtifacts.id })
         .from(environmentContextArtifacts)
         .where(and(
           eq(environmentContextArtifacts.environmentId, environmentId),
           eq(environmentContextArtifacts.kind, parsed.kind),
+          eq(environmentContextArtifacts.libraryPageId, parsed.libraryPageId),
         ))
         .limit(1);
 
-      let saved;
-      if (existing) {
-        [saved] = await db
-          .update(environmentContextArtifacts)
-          .set({ libraryPageId: parsed.libraryPageId, updatedAt: sql`CURRENT_TIMESTAMP` })
-          .where(eq(environmentContextArtifacts.id, existing.id))
-          .returning();
-      } else {
-        [saved] = await db
-          .insert(environmentContextArtifacts)
-          .values({ environmentId, kind: parsed.kind, libraryPageId: parsed.libraryPageId })
-          .returning();
+      if (existingDup) {
+        // Already linked — return existing without error
+        return res.json({ ...existingDup, kind: parsed.kind, libraryPageId: parsed.libraryPageId, pageTitle: page.title || "Untitled", environmentId });
       }
+
+      const [saved] = await db
+        .insert(environmentContextArtifacts)
+        .values({ environmentId, kind: parsed.kind, libraryPageId: parsed.libraryPageId })
+        .returning();
 
       res.json({ ...saved, pageTitle: page.title || "Untitled" });
     } catch (error: unknown) {
-      const err = routeError(error, "upsert_context_artifact");
+      const err = routeError(error, "save_context_artifact");
       res.status(400).json({ error: err.message, operation: err.operation });
     }
   });
 
-  // Delete context artifact by kind for an environment
-  app.delete("/api/platforms/environments/:environmentId/context-artifacts/:kind", async (req, res) => {
+  // Delete context artifact by ID or by (kind + libraryPageId) for an environment
+  app.delete("/api/platforms/environments/:environmentId/context-artifacts/:kindOrId", async (req, res) => {
     try {
       const environmentId = platformIdParam(req.params.environmentId);
-      const kind = req.params.kind;
+      const kindOrId = req.params.kindOrId;
       const env = await ensureEnvironmentWritable(environmentId);
       if (!env) return res.status(404).json({ error: `Environment ${environmentId} not found`, operation: "delete_context_artifact" });
 
-      const [deleted] = await db
-        .delete(environmentContextArtifacts)
-        .where(and(
-          eq(environmentContextArtifacts.environmentId, environmentId),
-          eq(environmentContextArtifacts.kind, kind),
-        ))
-        .returning({ id: environmentContextArtifacts.id });
+      // Try numeric ID first
+      const numericId = parseInt(kindOrId, 10);
+      let deleted;
+      if (!isNaN(numericId)) {
+        [deleted] = await db
+          .delete(environmentContextArtifacts)
+          .where(and(
+            eq(environmentContextArtifacts.id, numericId),
+            eq(environmentContextArtifacts.environmentId, environmentId),
+          ))
+          .returning({ id: environmentContextArtifacts.id });
+      }
 
-      if (!deleted) return res.status(404).json({ error: `Context artifact kind '${kind}' not found for environment ${environmentId}`, operation: "delete_context_artifact" });
+      // Fallback: delete by kind (backward compat — deletes first match)
+      if (!deleted) {
+        [deleted] = await db
+          .delete(environmentContextArtifacts)
+          .where(and(
+            eq(environmentContextArtifacts.environmentId, environmentId),
+            eq(environmentContextArtifacts.kind, kindOrId),
+          ))
+          .returning({ id: environmentContextArtifacts.id });
+      }
+
+      if (!deleted) return res.status(404).json({ error: `Context artifact '${kindOrId}' not found for environment ${environmentId}`, operation: "delete_context_artifact" });
 
       res.json({ success: true });
     } catch (error: unknown) {

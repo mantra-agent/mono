@@ -9382,12 +9382,13 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         const [page] = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(eq(libraryPages.id, libraryPageId)).limit(1);
         if (!page) return { result: `Library page ${libraryPageId} not found`, error: true };
 
-        const [existing] = await db.select({ id: environmentContextArtifacts.id }).from(environmentContextArtifacts)
-          .where(and(eq(environmentContextArtifacts.environmentId, envId), eq(environmentContextArtifacts.kind, kind))).limit(1);
+        // Dedup: same environment + kind + libraryPageId = already linked
+        const [existingDup] = await db.select({ id: environmentContextArtifacts.id }).from(environmentContextArtifacts)
+          .where(and(eq(environmentContextArtifacts.environmentId, envId), eq(environmentContextArtifacts.kind, kind), eq(environmentContextArtifacts.libraryPageId, libraryPageId))).limit(1);
 
         let saved;
-        if (existing) {
-          [saved] = await db.update(environmentContextArtifacts).set({ libraryPageId, updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(eq(environmentContextArtifacts.id, existing.id)).returning();
+        if (existingDup) {
+          saved = existingDup;
         } else {
           [saved] = await db.insert(environmentContextArtifacts).values({ environmentId: envId, kind, libraryPageId }).returning();
         }
@@ -9419,6 +9420,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       if (action === "remove_context_artifact") {
         const envId = typeof args.id === "number" ? args.id : null;
         const kind = typeof args.kind === "string" ? args.kind.trim() : null;
+        const libraryPageId = typeof args.libraryPageId === "string" ? args.libraryPageId.trim() : null;
         if (!envId) return { result: "Missing 'id' (environment ID) for remove_context_artifact", error: true };
         if (!kind) return { result: "Missing 'kind' for remove_context_artifact", error: true };
 
@@ -9429,12 +9431,16 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         const [plat] = await db.select().from(platformsTable).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), platScopeColumns, eq(platformsTable.id, prod.platformId))).limit(1);
         if (!plat) return { result: `No write access to platform for environment ${envId}`, error: true };
 
-        const [deleted] = await db.delete(environmentContextArtifacts)
-          .where(and(eq(environmentContextArtifacts.environmentId, envId), eq(environmentContextArtifacts.kind, kind)))
+        // If libraryPageId provided, remove the specific artifact; otherwise remove all of that kind
+        const conditions = [eq(environmentContextArtifacts.environmentId, envId), eq(environmentContextArtifacts.kind, kind)];
+        if (libraryPageId) conditions.push(eq(environmentContextArtifacts.libraryPageId, libraryPageId));
+
+        const deleted = await db.delete(environmentContextArtifacts)
+          .where(and(...conditions))
           .returning({ id: environmentContextArtifacts.id });
 
-        if (!deleted) return { result: `Context artifact kind '${kind}' not found for environment ${envId}`, error: true };
-        return { result: JSON.stringify({ removed: true, kind }) };
+        if (deleted.length === 0) return { result: `Context artifact kind '${kind}'${libraryPageId ? ` with page ${libraryPageId}` : ""} not found for environment ${envId}`, error: true };
+        return { result: JSON.stringify({ removed: true, kind, count: deleted.length }) };
       }
 
       return { result: `Unhandled platforms action: ${action}`, error: true };
@@ -15549,18 +15555,19 @@ async function ensureCodingContextLoaded(
       const artifactRows = await db
         .select({ libraryPageId: environmentContextArtifacts.libraryPageId })
         .from(environmentContextArtifacts)
-        .where(eq(environmentContextArtifacts.kind, "design_system"))
-        .limit(1);
+        .where(eq(environmentContextArtifacts.kind, "design_system"));
 
       if (artifactRows.length > 0) {
-        const [page] = await db
-          .select({ content: libraryPages.plainTextContent })
+        const { inArray } = await import("drizzle-orm");
+        const pageIds = artifactRows.map(r => r.libraryPageId);
+        const pages = await db
+          .select({ id: libraryPages.id, content: libraryPages.plainTextContent })
           .from(libraryPages)
-          .where(eq(libraryPages.id, artifactRows[0].libraryPageId))
-          .limit(1);
+          .where(inArray(libraryPages.id, pageIds));
 
-        if (page?.content) {
-          parts.push(`\n## DESIGN.md\n\n${page.content.trim()}`);
+        const contents = pages.filter(p => p.content).map(p => p.content!.trim());
+        if (contents.length > 0) {
+          parts.push(`\n## DESIGN.md\n\n${contents.join("\n\n---\n\n")}`);
           designLoaded = true;
         }
       }
