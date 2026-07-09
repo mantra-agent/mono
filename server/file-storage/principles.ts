@@ -9,6 +9,13 @@ import { generateId } from "./utils";
 import { createLogger } from "../log";
 import { TTLCache } from "../utils/ttl-cache";
 import { principalCacheKey } from "./base";
+import { getCurrentPrincipalOrSystem } from "../principal-context";
+import {
+  combineWithVisibleScope,
+  combineWithWritableScope,
+  ownedInsertValues,
+  type ScopeColumns,
+} from "../scoped-storage";
 
 export interface Principle {
   id: string;
@@ -35,6 +42,12 @@ export interface PrincipleIndex {
 }
 
 const log = createLogger("StorePrinciples");
+
+const principlesScopeColumns: ScopeColumns = {
+  scope: principles.scope,
+  ownerUserId: principles.ownerUserId,
+  accountId: principles.accountId,
+};
 
 const PRINCIPLE_FORGE_PROMPT = `You are a principle architect. The user will provide raw thoughts, ideas, or principles. Your job is to distill them into a precisely structured principle with two layers:
 
@@ -96,8 +109,10 @@ export class FilePrincipleStorage {
   }
 
   async getPrinciples(): Promise<Principle[]> {
+    const principal = getCurrentPrincipalOrSystem();
     return this._principlesCache.getOrFetch(principalCacheKey("principles"), async () => {
-      const rows = await db.select().from(principles);
+      const rows = await db.select().from(principles)
+        .where(combineWithVisibleScope(principal, principlesScopeColumns));
       const result = rows.map(rowToPrinciple);
       result.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
       log.log(`getPrinciples count=${result.length}`);
@@ -106,7 +121,10 @@ export class FilePrincipleStorage {
   }
 
   async getPrinciple(id: string): Promise<Principle | null> {
-    const rows = await db.select().from(principles).where(eq(principles.id, id)).limit(1);
+    const principal = getCurrentPrincipalOrSystem();
+    const rows = await db.select().from(principles)
+      .where(combineWithVisibleScope(principal, principlesScopeColumns, eq(principles.id, id)))
+      .limit(1);
     if (rows.length === 0) {
       log.log(`getPrinciple id=${id} not-found`);
       return null;
@@ -123,6 +141,7 @@ export class FilePrincipleStorage {
     manualTags?: string[];
     relatedIds?: string[];
   }): Promise<Principle> {
+    const principal = getCurrentPrincipalOrSystem();
     const now = new Date();
     const id = generateId();
 
@@ -134,6 +153,7 @@ export class FilePrincipleStorage {
       autoTags: input.autoTags || [],
       manualTags: input.manualTags || [],
       relatedIds: input.relatedIds || [],
+      ...ownedInsertValues(principal, principlesScopeColumns),
       createdAt: now,
       updatedAt: now,
     }).returning();
@@ -156,6 +176,7 @@ export class FilePrincipleStorage {
       return null;
     }
 
+    const principal = getCurrentPrincipalOrSystem();
     const setValues: Record<string, unknown> = { updatedAt: new Date() };
     if (updates.title !== undefined) setValues.title = updates.title;
     if (updates.layer1 !== undefined) setValues.layer1 = updates.layer1;
@@ -164,7 +185,14 @@ export class FilePrincipleStorage {
     if (updates.manualTags !== undefined) setValues.manualTags = updates.manualTags;
     if (updates.relatedIds !== undefined) setValues.relatedIds = updates.relatedIds;
 
-    const [row] = await db.update(principles).set(setValues).where(eq(principles.id, id)).returning();
+    const [row] = await db.update(principles).set(setValues)
+      .where(combineWithWritableScope(principal, principlesScopeColumns, eq(principles.id, id)))
+      .returning();
+
+    if (!row) {
+      log.log(`updatePrinciple id=${id} not-writable`);
+      return null;
+    }
 
     const merged = rowToPrinciple(row);
     const allTags = [...merged.autoTags, ...merged.manualTags];
@@ -176,7 +204,9 @@ export class FilePrincipleStorage {
   }
 
   async deletePrinciple(id: string): Promise<boolean> {
-    const result = await db.delete(principles).where(eq(principles.id, id));
+    const principal = getCurrentPrincipalOrSystem();
+    const result = await db.delete(principles)
+      .where(combineWithWritableScope(principal, principlesScopeColumns, eq(principles.id, id)));
     const deleted = (result.rowCount ?? 0) > 0;
     if (!deleted) {
       log.log(`deletePrinciple id=${id} not-found`);
@@ -184,7 +214,7 @@ export class FilePrincipleStorage {
     }
     this.invalidateCache();
 
-    // Remove this id from relatedIds of other principles
+    // Remove this id from relatedIds of other principles (scoped to visible)
     const all = await this.getPrinciples();
     for (const p of all) {
       if (p.relatedIds.includes(id)) {
@@ -192,7 +222,7 @@ export class FilePrincipleStorage {
         await db.update(principles).set({
           relatedIds: newRelated,
           updatedAt: new Date(),
-        }).where(eq(principles.id, p.id));
+        }).where(combineWithWritableScope(principal, principlesScopeColumns, eq(principles.id, p.id)));
       }
     }
 
