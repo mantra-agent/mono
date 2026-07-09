@@ -168,7 +168,6 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     enabled: true,
     timezone: "__USER_TZ__",
   },
-  // Intentions Prioritize and Advance removed — replaced by autonomy skill
   {
     legacyMatch: (t) =>
       t.type === "skill" &&
@@ -527,26 +526,6 @@ const RETIRED_SYSTEM_TIMERS: Array<{
   legacyMatch: (timer: Timer) => boolean;
   description: string;
 }> = [
-  {
-    systemKey: "intentions-advance",
-    legacyMatch: (t) =>
-      t.type === "skill" &&
-      (t.name === "Intentions Advance" ||
-        t.skillId === "advance" ||
-        t.systemKey === "intentions-advance"),
-    description:
-      "Deprecated orphaned timer: intentions system removed; replaced by autonomy skill.",
-  },
-  {
-    systemKey: "intentions-prioritize",
-    legacyMatch: (t) =>
-      t.type === "skill" &&
-      (t.name === "Intentions Prioritize" ||
-        t.skillId === "prioritize" ||
-        t.systemKey === "intentions-prioritize"),
-    description:
-      "Deprecated orphaned timer: intentions/prioritize system removed; replaced by autonomy skill.",
-  },
 ];
 const TIMER_SCHEDULE_MIGRATIONS: Array<{
   match: (t: Timer) => boolean;
