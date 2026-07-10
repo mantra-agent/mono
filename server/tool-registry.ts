@@ -306,13 +306,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   goals: {
-    description: "Manage life goals — unified system covering all horizons from daily goals (today) to lifetime aspirations. Horizons: today, this_week, this_month, this_quarter, this_year, three_year, ten_year, lifetime. Short horizons support periodDate for date-scoped queries. This is the canonical tool for all goal and priority operations. Actions: list, get, create, update, delete, search, set_parent, unlink_parent. Use canonical @goal:id syntax in messages to link to goals. Legacy [goal:id] syntax is accepted during migration.",
+    description: "Manage life goals — unified system covering all horizons from daily goals (today) to lifetime aspirations. Horizons: today, this_week, this_month, this_quarter, this_year, three_year, ten_year, lifetime. Short horizons support periodDate for date-scoped queries. This is the canonical tool for all goal and priority operations. Actions: list, get, create, update, delete, search, set_parent, unlink_parent, set_review, set_daily_plan, get_daily_artifacts, set_weekly/monthly/quarterly plan+reflection. Use canonical @goal:id syntax in messages to link to goals. Legacy [goal:id] syntax is accepted during migration.",
     category: "work",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list", "get", "create", "update", "delete", "search", "set_parent", "unlink_parent"], description: "The action to perform" },
+        action: { type: "string", enum: ["list", "get", "create", "update", "delete", "search", "set_parent", "unlink_parent", "set_review", "set_daily_plan", "get_daily_artifacts", "set_weekly_reflection", "set_weekly_plan", "set_monthly_plan", "set_monthly_reflection", "set_quarterly_plan", "set_quarterly_reflection"], description: "The action to perform" },
         id: { type: "string", description: "Goal ID (required for get, update, delete, set_parent, unlink_parent)" },
         shortName: { type: "string", description: "Short goal name (required for create)" },
         description: { type: "string", description: "Full description (for create/update)" },
@@ -327,6 +327,11 @@ export const TOOLS: Record<string, ToolMeta> = {
         periodWeek: { type: "string", description: "Period week YYYY-Www for weekly goals (for create/update)" },
         periodMonth: { type: "string", description: "Period month YYYY-MM for monthly goals (for create/update)" },
         source: { type: "string", description: "Source of the goal (for create/update)" },
+        libraryPageId: { type: "string", description: "Library page ID to link as review/plan/reflection (for set_review, set_daily_plan, set_weekly/monthly/quarterly actions)" },
+        date: { type: "string", description: "Date in YYYY-MM-DD format (for set_review, set_daily_plan, get_daily_artifacts; defaults to today)" },
+        week: { type: "string", description: "Any date within the target week in YYYY-MM-DD format (for set_weekly_plan/set_weekly_reflection; defaults to current week)" },
+        month: { type: "string", description: "Target month in YYYY-MM format (for set_monthly_plan/set_monthly_reflection; defaults to current month)" },
+        quarter: { type: "string", description: "Target quarter in YYYY-QN format (for set_quarterly_plan/set_quarterly_reflection; defaults to current quarter)" },
       },
       required: ["action"],
     },
@@ -965,24 +970,19 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   priorities: {
-    description: "DEPRECATED — compatibility alias for the goals tool. All priority operations delegate to GoalsService. Use the goals tool directly for new work. Artifact metadata actions (set_review, set_daily_plan, get_daily_artifacts, set_weekly_reflection/plan, set_monthly_plan/reflection, set_quarterly_plan/reflection) remain here for check-in artifact linking.",
+    description: "DEPRECATED — compatibility alias for the goals tool. All priority operations delegate to GoalsService. Use the goals tool directly for new work and check-in artifact linking.",
     category: "work",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["add", "update", "remove", "mark_status", "link_parent", "set_review", "set_daily_plan", "get_daily_artifacts", "set_weekly_reflection", "set_weekly_plan", "set_monthly_plan", "set_monthly_reflection", "set_quarterly_plan", "set_quarterly_reflection"], description: "The action to perform. set_brief is intentionally no longer advertised; use library surfacing for Daily Brief visibility." },
+        action: { type: "string", enum: ["add", "update", "remove", "mark_status", "link_parent"], description: "The action to perform. set_brief is intentionally no longer advertised; use library surfacing for Daily Brief visibility." },
         period: { type: "string", enum: ["daily", "weekly", "monthly", "next_day", "next_week", "next_month"], description: "Priority period (default: daily). Use next_day/next_week/next_month for future planning." },
         title: { type: "string", description: "Priority title (for add/remove/mark_status/link_parent). For add, exact normalized duplicates in the same period are rejected; update the existing priority instead." },
         oldTitle: { type: "string", description: "Current priority title to find (for update)" },
         newTitle: { type: "string", description: "New corrected title (for update)" },
         status: { type: "string", enum: ["completed", "partial", "missed"], description: "Completion status (for mark_status)" },
         parentId: { type: ["string", "null"], description: "Parent priority or goal ID to link to (for link_parent). Pass null to unlink." },
-        libraryPageId: { type: "string", description: "Library page ID to link as review/plan/reflection (for set_review, set_weekly_reflection, set_weekly_plan, set_monthly_plan, set_monthly_reflection, set_quarterly_plan, set_quarterly_reflection)" },
-        date: { type: "string", description: "Date in YYYY-MM-DD format (for set_review/get_daily_artifacts, defaults to today)" },
-        week: { type: "string", description: "Any date within the target week in YYYY-MM-DD format (for set_weekly_plan/set_weekly_reflection, defaults to current week)" },
-        month: { type: "string", description: "Target month in YYYY-MM format (for set_monthly_plan/set_monthly_reflection, defaults to current month)" },
-        quarter: { type: "string", description: "Target quarter in YYYY-QN format (for set_quarterly_plan/set_quarterly_reflection, defaults to current quarter)" },
       },
       required: ["action"],
     },
