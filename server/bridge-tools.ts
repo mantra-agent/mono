@@ -178,7 +178,7 @@ const PEOPLE_QUERY_FIELDS = new Set<PeopleField>(["id", "name", "email", "compan
 const PEOPLE_QUERY_OPERATORS = new Set<PeopleOperator>(["equals", "empty", "not_empty", "contains", "fuzzy", "in"]);
 
 function normalizePeopleFields(fields: unknown): PeopleField[] {
-  if (!Array.isArray(fields)) return ["id", "name", "cabinetLevel", "company", "role", "relation", "tags", "lastInteractionDate"];
+  if (!Array.isArray(fields)) return ["id", "name", "email", "cabinetLevel", "company", "role", "relation", "tags", "lastInteractionDate"];
   const normalized = fields.filter((field): field is PeopleField => typeof field === "string" && PEOPLE_QUERY_FIELDS.has(field as PeopleField));
   return normalized.length > 0 ? normalized : ["id", "name", "cabinetLevel"];
 }
@@ -265,6 +265,20 @@ async function handlePeopleGet(args: Record<string, any>): Promise<ToolHandlerRe
   if (!person) return { result: `Person ${resolved.id} not found`, error: true };
   const nicknameStr = person.nicknames?.length ? ` ("${person.nicknames.join('", "')}")` : "";
   const parts = [`**${person.name}** [person:${person.id}]${nicknameStr} — ${person.cabinetLevel}`];
+  const contactLines = (person.contactInfo || [])
+    .filter(contact => contact.value)
+    .map(contact => `  - ${contact.label || contact.type}: ${contact.value}`);
+  const operationalLines = [
+    person.company ? `Company: ${person.company}` : null,
+    person.role ? `Role: ${person.role}` : null,
+    person.relation ? `Relation: ${person.relation}` : null,
+    person.introducedBy ? `Introduced by: ${person.introducedBy}` : null,
+    person.familiarity ? `Familiarity: ${person.familiarity}` : null,
+    person.trust ? `Trust: ${person.trust}` : null,
+    person.met ? `Met: ${person.met}` : null,
+  ].filter(Boolean);
+  if (contactLines.length > 0) parts.push(`Contact:\n${contactLines.join("\n")}`);
+  if (operationalLines.length > 0) parts.push(`Operational:\n${operationalLines.map(line => `  - ${line}`).join("\n")}`);
   if (person.notes.length > 0) parts.push(`Notes:\n${person.notes.map(n => `  - [id: ${n.id}]${n.title ? ` ${n.title} —` : ""} ${n.content}`).join("\n")}`);
   if (person.interactions.length > 0) {
     const recent = [...person.interactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 10);
