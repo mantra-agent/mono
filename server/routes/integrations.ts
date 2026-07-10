@@ -199,19 +199,7 @@ export async function registerIntegrationsRoutes(app: Express) {
     }
   });
 
-  app.post("/api/gmail/send", async (req, res) => {
-    try {
-      const { sendEmail } = await import("../gmail");
-      const { to, subject, body } = req.body;
-      if (!to || !subject || !body) {
-        return res.status(400).json({ error: "to, subject, and body are required" });
-      }
-      const result = await sendEmail(to, subject, body);
-      res.json({ sent: true, id: result.id });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
+  // Email sending removed from routes — the only send path is POST /api/email-drafts/:id/send (human-only).
 
   app.get("/api/gmail/accounts", async (_req, res) => {
     try {

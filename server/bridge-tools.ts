@@ -1216,18 +1216,6 @@ async function handleGmailRead(args: Record<string, any>): Promise<ToolHandlerRe
   return { result };
 }
 
-async function handleGmailSend(args: Record<string, any>): Promise<ToolHandlerResult> {
-  const permCheck = await checkGmailPermission(args.account, "gmailSend", "send emails");
-  if (permCheck.denied) return permCheck.result;
-
-  const { sendEmail } = await import("./gmail");
-  const { to, subject, body } = args;
-  if (!to || !subject || !body) return { result: "Missing to, subject, or body", error: true };
-  const sendAccountId = permCheck.resolvedAccountId || await resolveGmailAccountId(args.account);
-  const result = await sendEmail(to, subject, body, sendAccountId);
-  return { result: `Email sent to ${to} (ID: ${result.id})` };
-}
-
 async function handleGmailRecent(args: Record<string, any>): Promise<ToolHandlerResult> {
   const permCheck = await checkGmailPermission(args.account, "gmailRead", "read emails");
   if (permCheck.denied) return permCheck.result;
@@ -2082,7 +2070,6 @@ const gmailSubHandlers: Record<string, (args: Record<string, any>) => Promise<To
   search: handleGmailSearch,
   read: handleGmailRead,
   batch_read: handleGmailBatchRead,
-  send: handleGmailSend,
   draft: handleGmailDraft,
   recent: handleGmailRecent,
   download_attachment: handleGmailDownloadAttachment,
@@ -4379,7 +4366,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
   async gmail(args) {
     const action = args.action || "status";
     const handler = gmailSubHandlers[action];
-    if (!handler) return { result: `Unknown gmail action: ${action}. Available: status, search, read, send, draft, recent, download_attachment`, error: true };
+    if (!handler) return { result: `Unknown gmail action: ${action}. Available: status, search, read, batch_read, draft, recent, download_attachment, triage_log, email_cache`, error: true };
     try {
       return await handler(args);
     } catch (err: any) {

@@ -568,7 +568,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   gmail: {
-    description: "Read, search, and send emails via Gmail. Supports multiple accounts. Actions: status, search, read, batch_read, send, draft, recent, download_attachment, triage_log, email_cache.",
+    description: "Read, search, and draft emails via Gmail. Supports multiple accounts. Actions: status, search, read, batch_read, draft, recent, download_attachment, triage_log, email_cache. The draft action creates a persisted email draft that renders as an inline widget; the human sends via the widget's Send button. There is no tool-level send action.",
     category: "communication",
     parameters: {
       type: "object",
