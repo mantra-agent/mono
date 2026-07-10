@@ -1,12 +1,12 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
 import { db } from "../db";
 import { vaults, users } from "@shared/schema";
 import { getPrincipal } from "../principal";
-import { assertVisible } from "../scoped-storage";
+import { assertVisible, assertWritable } from "../scoped-storage";
 
 const log = createLogger("VaultRoutes");
 
@@ -15,6 +15,7 @@ export function registerVaultRoutes(app: Express) {
 
   /**
    * GET /api/vaults — list the user's vaults plus their visible set and active vault.
+   * Excludes archived vaults by default.
    */
   app.get("/api/vaults", async (req, res) => {
     try {
@@ -189,6 +190,254 @@ export function registerVaultRoutes(app: Express) {
         error: error instanceof Error ? error.message : String(error),
       });
       res.status(500).json({ error: "Failed to set active vault" });
+    }
+  });
+
+  // --- Management endpoints (registered after /toggle and /active to avoid :id collision) ---
+
+  const createVaultSchema = z.object({
+    name: z.string().min(1).max(100),
+    color: z.string().max(20).optional(),
+    icon: z.string().max(4).optional(),
+    purpose: z.string().max(500).optional(),
+  });
+
+  /**
+   * POST /api/vaults — create a new vault for the principal's account.
+   *
+   * The new vault is added to the user's visible set but does NOT become
+   * active automatically (the active vault remains unchanged).
+   * Enforces unique name per account via DB constraint.
+   */
+  app.post("/api/vaults", async (req, res) => {
+    try {
+      const principal = getPrincipal(req);
+      if (!principal || !principal.userId || !principal.accountId) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const parsed = createVaultSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      }
+
+      const { name, color, icon, purpose } = parsed.data;
+
+      // Determine position: next after the highest existing position
+      const [maxPos] = await db
+        .select({ maxPosition: sql<number>`COALESCE(MAX(${vaults.position}), -1)` })
+        .from(vaults)
+        .where(eq(vaults.accountId, principal.accountId));
+
+      const nextPosition = (maxPos?.maxPosition ?? -1) + 1;
+
+      // Insert the new vault
+      const [newVault] = await db
+        .insert(vaults)
+        .values({
+          accountId: principal.accountId,
+          name,
+          color: color || null,
+          icon: icon || name.slice(0, 2).toUpperCase(),
+          purpose: purpose || null,
+          position: nextPosition,
+          isDefault: false,
+          isArchived: false,
+        })
+        .returning();
+
+      // Add to the user's visible set (invariant: new vault is visible but not active)
+      const currentVisible = new Set(principal.visibleVaultIds);
+      currentVisible.add(newVault.id);
+      const updatedVisibleIds = Array.from(currentVisible);
+
+      await db
+        .update(users)
+        .set({ visibleVaultIds: updatedVisibleIds })
+        .where(eq(users.id, principal.userId));
+
+      log.info("vault created", {
+        userId: principal.userId,
+        vaultId: newVault.id,
+        name,
+        visibleVaultIds: updatedVisibleIds,
+      });
+
+      res.status(201).json({ vault: newVault, visibleVaultIds: updatedVisibleIds });
+    } catch (error: unknown) {
+      // Handle unique constraint violation (duplicate name)
+      if (
+        error instanceof Error &&
+        error.message.includes("idx_vaults_account_name_unique")
+      ) {
+        return res.status(409).json({ error: "A vault with that name already exists" });
+      }
+      log.error("POST /api/vaults failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: "Failed to create vault" });
+    }
+  });
+
+  const updateVaultSchema = z.object({
+    name: z.string().min(1).max(100).optional(),
+    color: z.string().max(20).optional(),
+    icon: z.string().max(4).optional(),
+    purpose: z.string().max(500).optional(),
+  });
+
+  /**
+   * PATCH /api/vaults/:id — rename or update vault properties (color, icon, purpose).
+   *
+   * Uses assertWritable to ensure the vault belongs to the requesting user's account.
+   */
+  app.patch("/api/vaults/:id", async (req, res) => {
+    try {
+      const principal = getPrincipal(req);
+      if (!principal || !principal.userId || !principal.accountId) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const vaultId = req.params.id;
+
+      const parsed = updateVaultSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      }
+
+      // Fetch the vault
+      const [vault] = await db
+        .select()
+        .from(vaults)
+        .where(and(eq(vaults.id, vaultId), eq(vaults.accountId, principal.accountId)))
+        .limit(1);
+
+      assertWritable(principal, vault as Record<string, unknown> | undefined, "vault");
+
+      // Build update set from provided fields only (safe partial update)
+      const updates: Record<string, unknown> = { updatedAt: new Date() };
+      if (parsed.data.name !== undefined) updates.name = parsed.data.name;
+      if (parsed.data.color !== undefined) updates.color = parsed.data.color;
+      if (parsed.data.icon !== undefined) updates.icon = parsed.data.icon;
+      if (parsed.data.purpose !== undefined) updates.purpose = parsed.data.purpose;
+
+      const [updated] = await db
+        .update(vaults)
+        .set(updates)
+        .where(eq(vaults.id, vaultId))
+        .returning();
+
+      log.info("vault updated", {
+        userId: principal.userId,
+        vaultId,
+        fields: Object.keys(updates).filter((k) => k !== "updatedAt"),
+      });
+
+      res.json({ vault: updated });
+    } catch (error: unknown) {
+      if (error && typeof error === "object" && "status" in error) {
+        const statusError = error as { status: number; message: string };
+        return res.status(statusError.status).json({ error: statusError.message });
+      }
+      if (
+        error instanceof Error &&
+        error.message.includes("idx_vaults_account_name_unique")
+      ) {
+        return res.status(409).json({ error: "A vault with that name already exists" });
+      }
+      log.error("PATCH /api/vaults/:id failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: "Failed to update vault" });
+    }
+  });
+
+  /**
+   * DELETE /api/vaults/:id — archive a vault (soft delete).
+   *
+   * Archive semantics: the vault's isArchived flag is set to true.
+   * Archived vaults are excluded from GET /api/vaults default listing
+   * and removed from the user's visible set. Data inside the vault
+   * remains intact and hidden (the vault becomes invisible to queries).
+   *
+   * Guards:
+   * - Cannot archive the active vault ("Switch active vault first")
+   * - Cannot archive the last remaining non-archived vault
+   */
+  app.delete("/api/vaults/:id", async (req, res) => {
+    try {
+      const principal = getPrincipal(req);
+      if (!principal || !principal.userId || !principal.accountId) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const vaultId = req.params.id;
+
+      // Fetch the vault
+      const [vault] = await db
+        .select()
+        .from(vaults)
+        .where(and(eq(vaults.id, vaultId), eq(vaults.accountId, principal.accountId)))
+        .limit(1);
+
+      assertWritable(principal, vault as Record<string, unknown> | undefined, "vault");
+
+      // Guard: cannot archive the active vault
+      if (principal.activeVaultId === vaultId) {
+        return res.status(400).json({
+          error: "Switch active vault first",
+        });
+      }
+
+      // Guard: cannot archive the last remaining non-archived vault
+      const [countResult] = await db
+        .select({ count: sql<number>`COUNT(*)` })
+        .from(vaults)
+        .where(
+          and(
+            eq(vaults.accountId, principal.accountId),
+            eq(vaults.isArchived, false),
+          ),
+        );
+
+      if ((countResult?.count ?? 0) <= 1) {
+        return res.status(400).json({
+          error: "Cannot archive your last vault",
+        });
+      }
+
+      // Archive the vault
+      await db
+        .update(vaults)
+        .set({ isArchived: true, updatedAt: new Date() })
+        .where(eq(vaults.id, vaultId));
+
+      // Remove from visible set
+      const currentVisible = new Set(principal.visibleVaultIds);
+      currentVisible.delete(vaultId);
+      const updatedVisibleIds = Array.from(currentVisible);
+
+      await db
+        .update(users)
+        .set({ visibleVaultIds: updatedVisibleIds })
+        .where(eq(users.id, principal.userId));
+
+      log.info("vault archived", {
+        userId: principal.userId,
+        vaultId,
+        visibleVaultIds: updatedVisibleIds,
+      });
+
+      res.json({ archived: true, visibleVaultIds: updatedVisibleIds });
+    } catch (error: unknown) {
+      if (error && typeof error === "object" && "status" in error) {
+        const statusError = error as { status: number; message: string };
+        return res.status(statusError.status).json({ error: statusError.message });
+      }
+      log.error("DELETE /api/vaults/:id failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: "Failed to archive vault" });
     }
   });
 }
