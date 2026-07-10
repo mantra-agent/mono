@@ -6,7 +6,8 @@
  * pattern used by plans/workflows.
  */
 import { useEffect, useState } from "react";
-import { Hourglass, Radio, Users } from "lucide-react";
+import { AlertCircle, FileText, Hourglass, Loader2, Radio, Users } from "lucide-react";
+import { Link } from "wouter";
 import { cn } from "@/lib/utils";
 import type { MeetingSessionMeta, MeetingBotStatus } from "@shared/models/chat";
 
@@ -136,6 +137,56 @@ export function MeetingHeaderBar({
         </div>
       )}
     </div>
+    {meeting.recap?.status === "generating" && (
+      <div
+        className="flex items-center gap-2 px-4 py-1.5 text-xs text-muted-foreground"
+        data-testid="banner-meeting-recap-generating"
+      >
+        <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+        <span>Generating recap…</span>
+      </div>
+    )}
+    {meeting.recap?.status === "ready" && meeting.recap.pageSlug && (
+      <div
+        className="flex flex-wrap items-center gap-2 px-4 py-2"
+        data-testid="card-meeting-recap-ready"
+      >
+        <Link
+          href={`/info#library?page=${encodeURIComponent(meeting.recap.pageSlug)}`}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2.5 py-1 text-xs font-medium hover-elevate"
+          data-testid="link-meeting-recap-page"
+        >
+          <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span>Recap ready</span>
+          {meeting.recap.pageTitle && (
+            <span className="text-muted-foreground truncate max-w-[16rem]">
+              {meeting.recap.pageTitle}
+            </span>
+          )}
+        </Link>
+        {(meeting.recap.interactionsLogged ?? 0) > 0 && (
+          <span
+            className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground"
+            data-testid="chip-meeting-recap-interactions"
+          >
+            <Users className="h-3 w-3 shrink-0" />
+            {meeting.recap.interactionsLogged} interaction
+            {meeting.recap.interactionsLogged === 1 ? "" : "s"} logged
+          </span>
+        )}
+      </div>
+    )}
+    {meeting.recap?.status === "failed" && (
+      <div
+        className="flex items-center gap-2 px-4 py-1.5 text-xs text-destructive bg-destructive/10"
+        data-testid="banner-meeting-recap-failed"
+      >
+        <AlertCircle className="h-3 w-3 shrink-0" />
+        <span>
+          Recap failed{meeting.recap.error ? `: ${meeting.recap.error}` : ""}
+        </span>
+      </div>
+    )}
     {banner && (
       <div
         className={cn(

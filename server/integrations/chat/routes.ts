@@ -2476,6 +2476,22 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       botStatus: "live" as const,
     };
 
+    // M2: fire end-of-meeting finalization exactly once on the ended
+    // transition. The recap claim in storage is atomic, so duplicate end
+    // events (e.g. Recall bot.call_ended + bot.done) are no-ops.
+    const endedNow =
+      event.botStatus === "ended" && meeting.botStatus !== "ended";
+    const kickFinalization = () => {
+      if (!endedNow) return;
+      import("../../meeting/recap")
+        .then(({ finalizeMeetingSession }) => finalizeMeetingSession(sessionId))
+        .catch((err) =>
+          chatLog.error(
+            `meeting ingest: finalization kickoff failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+    };
+
     // Status-only update (no transcript text)
     if (!event.text) {
       const patch: Partial<MeetingSessionMeta> = {};
@@ -2496,6 +2512,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           `meeting ingest: status update sessionId=${sessionId} botStatus=${event.botStatus || "-"} detail=${event.statusDetail || "-"}`,
         );
       }
+      kickFinalization();
       return { ok: true, sessionId, sessionKey, queued: false };
     }
 
@@ -2517,6 +2534,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       });
       if (updated) session = updated;
     }
+    kickFinalization();
 
     await chatStorage.createMeetingUserMessage(
       sessionId,

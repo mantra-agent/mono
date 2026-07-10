@@ -1,0 +1,269 @@
+/**
+ * End-of-meeting lifecycle (M2).
+ *
+ * When a meeting session transitions to botStatus "ended", `finalizeMeetingSession`
+ * claims the recap atomically (idempotent against duplicate end events), generates
+ * a Library recap page through the tracked LLM boundary, links it as a session
+ * artifact, logs an interaction on each identified participant, and records the
+ * recap state on the meeting session meta (single source of truth).
+ *
+ * Ownership: webhook-driven finalization has no user principal, so the owning
+ * user is captured structurally on MeetingSessionMeta at session creation and
+ * reconstructed here via runWithPrincipal (same pattern as auto-join).
+ */
+import { createLogger } from "../log";
+import { chatStorage } from "../integrations/chat/storage";
+import { chatCompletion } from "../model-client";
+import { ACTIVITY_FRAMING } from "../job-profiles";
+import { createFiledLibraryPage } from "../library-save";
+import { recordSessionArtifact } from "../session-artifacts";
+import { peopleStorage } from "../people-storage";
+import { storage } from "../storage";
+import { createUserPrincipalFromUser } from "../principal";
+import { runWithPrincipal } from "../principal-context";
+import { getDateInTimezone } from "../timezone";
+import { eventBus } from "../event-bus";
+import type { MeetingParticipant, MeetingSessionMeta } from "@shared/models/chat";
+
+const log = createLogger("MeetingRecap");
+
+/** Cap transcript size fed to the model. Head+tail split keeps openings and closings. */
+const TRANSCRIPT_CHAR_BUDGET = 150_000;
+
+interface RecapContent {
+  title: string;
+  summary: string;
+  decisions: string[];
+  actionItems: string[];
+}
+
+/**
+ * Finalize an ended meeting session. Safe to call multiple times — the atomic
+ * recap claim makes duplicate calls no-ops. Never throws.
+ */
+export async function finalizeMeetingSession(sessionId: string): Promise<void> {
+  let claimed;
+  try {
+    claimed = await chatStorage.claimMeetingRecap(sessionId);
+  } catch (err) {
+    log.error(`Recap claim failed for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+  if (!claimed?.meeting) {
+    log.debug(`Recap claim not won for session ${sessionId} (already generating/ready or not a meeting)`);
+    return;
+  }
+  const meeting = claimed.meeting;
+
+  const run = () => generateRecap(sessionId, claimed.title, meeting);
+
+  try {
+    // Reconstruct the owning user principal so library page + interactions are
+    // user-owned, not system orphans.
+    if (meeting.ownerUserId) {
+      const user = await storage.getUser(meeting.ownerUserId);
+      if (user && meeting.principalAccountId) {
+        const principal = createUserPrincipalFromUser(user, meeting.principalAccountId);
+        await runWithPrincipal(principal, run);
+        return;
+      }
+      log.warn(
+        `Meeting ${sessionId} owner ${meeting.ownerUserId} could not be resolved to a principal (user=${!!user}, accountId=${meeting.principalAccountId ?? "none"}); using ambient principal`,
+      );
+    } else {
+      log.warn(`Meeting ${sessionId} has no captured owner; recap will run under ambient principal`);
+    }
+    await run();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.error(`Meeting recap failed for session ${sessionId}: ${message}`);
+    await chatStorage
+      .updateMeetingMeta(sessionId, { recap: { status: "failed", error: message.slice(0, 500) } })
+      .catch((e) =>
+        log.error(`Failed to record recap failure for session ${sessionId}: ${e instanceof Error ? e.message : String(e)}`),
+      );
+  }
+}
+
+async function generateRecap(sessionId: string, sessionTitle: string, meeting: MeetingSessionMeta): Promise<void> {
+  const transcript = await buildTranscript(sessionId);
+  if (!transcript) {
+    log.warn(`Meeting ${sessionId} ended with no transcript; marking recap failed`);
+    await chatStorage.updateMeetingMeta(sessionId, {
+      recap: { status: "failed", error: "No transcript captured" },
+    });
+    return;
+  }
+
+  const recap = await generateRecapContent(sessionId, sessionTitle, meeting, transcript);
+  const markdown = buildRecapMarkdown(recap, meeting);
+
+  const page = await createFiledLibraryPage({
+    title: recap.title,
+    markdown,
+    purpose: "meeting-notes",
+    contentSummary: recap.summary.slice(0, 500),
+    tags: ["meeting", "recap"],
+    createdBySessionId: sessionId,
+    surface: true,
+    surfaceDurationHours: 48,
+    surfaceReason: `Meeting recap: ${recap.title}`,
+  });
+
+  await recordSessionArtifact(sessionId, "library_page", page.slug, {
+    title: page.title,
+    pageId: page.id,
+  });
+
+  const interactionsLogged = await logParticipantInteractions(meeting.participants, recap, page.slug);
+
+  await chatStorage.updateMeetingMeta(sessionId, {
+    recap: {
+      status: "ready",
+      pageId: page.id,
+      pageSlug: page.slug,
+      pageTitle: page.title,
+      interactionsLogged,
+    },
+  });
+  log.info(
+    `Meeting recap ready for session ${sessionId}: page=${page.slug}, interactions=${interactionsLogged}`,
+  );
+}
+
+async function buildTranscript(sessionId: string): Promise<string | null> {
+  const messages = await chatStorage.getMessagesBySession(sessionId);
+  const lines: string[] = [];
+  for (const msg of messages) {
+    if (msg.visibility === "diagnostic") continue;
+    const text = (msg.content || "").trim();
+    if (!text) continue;
+    if (msg.role === "user") {
+      lines.push(`[${msg.speaker?.label || "Unknown speaker"}] ${text}`);
+    } else if (msg.role === "assistant") {
+      lines.push(`[Mantra Agent] ${text}`);
+    }
+  }
+  if (lines.length === 0) return null;
+  let transcript = lines.join("\n");
+  if (transcript.length > TRANSCRIPT_CHAR_BUDGET) {
+    log.warn(
+      `Meeting ${sessionId} transcript ${transcript.length} chars exceeds budget ${TRANSCRIPT_CHAR_BUDGET}; using head/tail`,
+    );
+    const half = Math.floor(TRANSCRIPT_CHAR_BUDGET / 2);
+    transcript = `${transcript.slice(0, half)}\n\n[... transcript truncated ...]\n\n${transcript.slice(-half)}`;
+  }
+  return transcript;
+}
+
+async function generateRecapContent(
+  sessionId: string,
+  sessionTitle: string,
+  meeting: MeetingSessionMeta,
+  transcript: string,
+): Promise<RecapContent> {
+  const participantList = meeting.participants.map((p) => p.label).join(", ") || "unknown";
+  const result = await chatCompletion({
+    activity: ACTIVITY_FRAMING,
+    jsonMode: true,
+    maxTokens: 2500,
+    temperature: 0.2,
+    metadata: { source: "meeting-recap", sessionId, activity: ACTIVITY_FRAMING },
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You write concise meeting recaps. Given a meeting transcript, return JSON with:",
+          '{"title": string, "summary": string, "decisions": string[], "actionItems": string[]}',
+          "- title: short descriptive meeting title (3-8 words), no dates",
+          "- summary: 2-5 sentence factual summary of what was discussed",
+          "- decisions: key decisions made (empty array if none)",
+          "- actionItems: concrete action items with owner when stated (empty array if none)",
+          "Only report what the transcript supports. Never invent decisions or action items.",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: `Meeting: ${meeting.title || sessionTitle}\nParticipants: ${participantList}\n\nTranscript:\n${transcript}`,
+      },
+    ],
+  });
+
+  let parsed: Partial<RecapContent>;
+  try {
+    parsed = JSON.parse(result.content);
+  } catch {
+    throw new Error("Recap model returned unparseable JSON");
+  }
+  const toStrings = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0) : [];
+  const title = typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : (meeting.title || sessionTitle || "Meeting Recap");
+  const summary = typeof parsed.summary === "string" && parsed.summary.trim() ? parsed.summary.trim() : "";
+  if (!summary) throw new Error("Recap model returned no summary");
+  return { title, summary, decisions: toStrings(parsed.decisions), actionItems: toStrings(parsed.actionItems) };
+}
+
+function participantRef(p: MeetingParticipant): string {
+  return p.personId ? `@person:${p.personId}` : p.label;
+}
+
+function buildRecapMarkdown(recap: RecapContent, meeting: MeetingSessionMeta): string {
+  const parts: string[] = [];
+  const participants = meeting.participants.map(participantRef).join(", ");
+  if (participants) parts.push(`**Participants:** ${participants}`);
+  if (meeting.startedAt) {
+    const started = new Date(meeting.startedAt);
+    if (!Number.isNaN(started.getTime())) {
+      parts.push(`**Date:** ${started.toISOString().slice(0, 10)}`);
+    }
+  }
+  parts.push(`## Summary\n\n${recap.summary}`);
+  if (recap.decisions.length > 0) {
+    parts.push(`## Decisions\n\n${recap.decisions.map((d) => `- ${d}`).join("\n")}`);
+  }
+  if (recap.actionItems.length > 0) {
+    parts.push(`## Action Items\n\n${recap.actionItems.map((a) => `- ${a}`).join("\n")}`);
+  }
+  return parts.join("\n\n");
+}
+
+/**
+ * Log a "meeting" interaction on each identified participant. Unknown speakers
+ * (no personId) are skipped, never fabricated. Per-person failures degrade to
+ * warnings so one bad record cannot block the recap.
+ */
+async function logParticipantInteractions(
+  participants: MeetingParticipant[],
+  recap: RecapContent,
+  pageSlug: string,
+): Promise<number> {
+  const seen = new Set<string>();
+  let logged = 0;
+  const date = getDateInTimezone();
+  for (const p of participants) {
+    if (!p.personId || seen.has(p.personId)) continue;
+    seen.add(p.personId);
+    try {
+      await peopleStorage.addInteraction(p.personId, {
+        date,
+        type: "meeting",
+        direction: "mutual",
+        summary: `${recap.title}: ${recap.summary}`.slice(0, 1000),
+        context: `@page:${pageSlug}`,
+      });
+      logged += 1;
+    } catch (err) {
+      log.warn(
+        `Failed to log meeting interaction for person ${p.personId} (${p.label}): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  if (logged > 0) {
+    eventBus.publish({
+      category: "agent",
+      event: "data:people_changed",
+      payload: { source: "meeting_recap", action: "log_interaction", count: logged },
+    });
+  }
+  return logged;
+}
