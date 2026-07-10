@@ -733,7 +733,7 @@ export default function ProjectsPage() {
   }, [urlTaskId, openTaskModal]);
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto overflow-x-hidden">
+    <div className="flex h-full min-w-0 max-w-full flex-col overflow-y-auto overflow-x-hidden">
       <ProjectsView selectedProjectId={urlProjectId ? Number(urlProjectId) : null} />
     </div>
   );
@@ -773,7 +773,7 @@ function CollapsibleWorkSection({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
+    <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 max-w-full overflow-hidden" data-testid={testId}>
       <CollapsibleTrigger asChild>
         <button
           type="button"
@@ -784,8 +784,8 @@ function CollapsibleWorkSection({
           <span>{label}</span>
         </button>
       </CollapsibleTrigger>
-      <CollapsibleContent>
-        <div className="space-y-0 mt-0">{children}</div>
+      <CollapsibleContent className="min-w-0 max-w-full overflow-hidden">
+        <div className="mt-0 min-w-0 max-w-full space-y-0 overflow-hidden">{children}</div>
       </CollapsibleContent>
     </Collapsible>
   );
@@ -852,7 +852,7 @@ function TaskRow({
     <div data-testid={`tree-node-task-${task.id}`}>
       <div
         className={cn(
-          "group relative flex items-center gap-2 rounded-md px-2 py-1.5 pr-16 text-sm w-full text-left cursor-pointer select-none transition-colors overflow-hidden",
+          "group relative flex w-full min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm cursor-pointer select-none transition-colors",
           "hover:bg-accent/70",
           statusTextClass,
           isCompleted && "line-through"
@@ -920,9 +920,10 @@ function TaskRow({
         </button>
       )}
 
+      <div className="ml-auto flex h-6 shrink-0 items-center gap-0.5">
       <button
         type="button"
-        className="absolute right-7 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 opacity-100 transition-opacity hover:bg-accent hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
         onClick={(e) => { e.stopPropagation(); setExpanded(value => !value); }}
         aria-label={expanded ? "Collapse task" : "Expand task"}
         data-testid={`button-task-twisty-${task.id}`}
@@ -934,7 +935,7 @@ function TaskRow({
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center h-6 w-6 rounded-md opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-accent"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-100 transition-opacity hover:bg-accent sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
             onClick={(e) => e.stopPropagation()}
             data-testid={`button-task-menu-${task.id}`}
           >
@@ -1082,6 +1083,7 @@ function TaskRow({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      </div>
       </div>
       {expanded && (
         <div className="ml-6 mr-2 border-l border-border/40 pl-2" data-testid={`tree-task-expanded-${task.id}`}>
@@ -1296,8 +1298,8 @@ function ProjectsView({ selectedProjectId }: { selectedProjectId?: number | null
 
 
   return (
-    <div className="min-h-full bg-background px-2 py-3 @sm:px-4 @sm:py-4">
-      <div className="grid gap-3">
+    <div className="min-h-full min-w-0 max-w-full overflow-x-hidden bg-background px-2 py-3 @sm:px-4 @sm:py-4">
+      <div className="grid min-w-0 max-w-full grid-cols-[minmax(0,1fr)] gap-3 overflow-hidden">
         <WorkNewRow onClick={() => setShowCreate(true)} testId="button-create-project">
           New Project
         </WorkNewRow>
@@ -1313,7 +1315,7 @@ function ProjectsView({ selectedProjectId }: { selectedProjectId?: number | null
         )}
 
         {groupedProjects.length > 0 && (
-          <div className="grid gap-1">
+          <div className="grid min-w-0 max-w-full grid-cols-[minmax(0,1fr)] gap-1 overflow-hidden">
             {groupedProjects.map(group => (
               <CollapsibleWorkSection
                 key={group.status}
@@ -1667,7 +1669,7 @@ function ProjectTreeNode({
   const indentPx = Math.min(depth * WORK_INDENT_STEP_PX, WORK_MAX_INDENT_PX);
 
   return (
-    <div className="min-w-0" data-testid={`tree-node-project-${project.id}`}>
+    <div className="min-w-0 max-w-full overflow-hidden" data-testid={`tree-node-project-${project.id}`}>
       <ProjectPagePickerDialog
         open={pagePickerOpen}
         onOpenChange={setPagePickerOpen}
@@ -1685,11 +1687,11 @@ function ProjectTreeNode({
           setFilePickerOpen(false);
         }}
       />
-      <div className="flex min-w-0 items-stretch" style={{ paddingLeft: indentPx }}>
+      <div className="flex min-w-0 max-w-full items-stretch overflow-hidden" style={{ paddingLeft: indentPx }}>
         <div className="flex-1 min-w-0 relative overflow-hidden">
           <div
             className={cn(
-              "group relative flex items-center gap-2 rounded-md px-2 py-1.5 pr-16 text-sm w-full text-left cursor-pointer select-none transition-colors overflow-hidden",
+              "group relative flex w-full min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm cursor-pointer select-none transition-colors",
               "hover:bg-accent/70",
               isActive ? "text-foreground font-medium" : "text-muted-foreground"
             )}
@@ -1752,7 +1754,7 @@ function ProjectTreeNode({
                 <CalendarDays className="h-3 w-3" />
               </button>
             )}
-            <div className="absolute right-1 top-1/2 -translate-y-1/2 flex h-6 items-center gap-0.5 pl-1 z-10">
+            <div className="z-10 ml-auto flex h-6 shrink-0 items-center gap-0.5 pl-1">
               {hasChildren && (
                 <button
                   type="button"
@@ -1771,7 +1773,7 @@ function ProjectTreeNode({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="flex items-center justify-center h-6 w-6 rounded-md text-muted-foreground/70 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground hover:bg-accent transition-opacity transition-colors"
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 opacity-100 transition-colors transition-opacity hover:bg-accent hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
                     onClick={(e) => e.stopPropagation()}
                     data-testid={`button-project-menu-${project.id}`}
                   >
@@ -1944,10 +1946,10 @@ function ProjectTreeNode({
             const milestoneCompleted = milestone.status === "completed";
             return (
               <div key={milestone.id} className="space-y-0">
-                <div className="flex min-w-0 items-stretch" style={{ paddingLeft: Math.min(WORK_INDENT_STEP_PX, WORK_MAX_INDENT_PX) }}>
+                <div className="flex min-w-0 max-w-full items-stretch overflow-hidden" style={{ paddingLeft: Math.min(WORK_INDENT_STEP_PX, WORK_MAX_INDENT_PX) }}>
                   <WorkTreeIndent depth={1} />
                   <div className="flex-1 min-w-0 relative overflow-hidden">
-                    <div className="group relative flex items-center gap-2 rounded-md px-2 py-1.5 pr-16 text-sm w-full text-left select-none transition-colors overflow-hidden hover:bg-accent/70" data-testid={`tree-node-milestone-${milestone.id}`}>
+                    <div className="group relative flex w-full min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm select-none transition-colors hover:bg-accent/70" data-testid={`tree-node-milestone-${milestone.id}`}>
                       <WorkCheckCircle checked={milestoneCompleted} data-testid={`check-tree-milestone-${milestone.id}`} />
                       <Flag className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                       {editingMilestoneId === milestone.id ? (
@@ -2013,7 +2015,7 @@ function ProjectTreeNode({
                           <CalendarDays className="h-3 w-3" />
                         </button>
                       )}
-                      <div className="absolute right-1 top-1/2 -translate-y-1/2 flex h-6 items-center gap-0.5 pl-1 z-10">
+                      <div className="z-10 ml-auto flex h-6 shrink-0 items-center gap-0.5 pl-1">
                         {milestoneTasks.length > 0 && (
                           <button
                             type="button"
@@ -2029,7 +2031,7 @@ function ProjectTreeNode({
                           <DropdownMenuTrigger asChild>
                             <button
                               type="button"
-                              className="flex items-center justify-center h-6 w-6 rounded-md text-muted-foreground/70 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground hover:bg-accent transition-opacity transition-colors"
+                              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 opacity-100 transition-colors transition-opacity hover:bg-accent hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
                               onClick={(e) => e.stopPropagation()}
                               data-testid={`button-tree-milestone-menu-${milestone.id}`}
                             >
@@ -2114,7 +2116,7 @@ function ProjectTreeNode({
                   </div>
                 )}
                 {milestoneExpanded && milestoneTasks.map(task => (
-                  <div key={task.id} className="flex min-w-0 items-stretch" style={{ paddingLeft: Math.min(WORK_INDENT_STEP_PX * 2, WORK_MAX_INDENT_PX) }}>
+                  <div key={task.id} className="flex min-w-0 max-w-full items-stretch overflow-hidden" style={{ paddingLeft: Math.min(WORK_INDENT_STEP_PX * 2, WORK_MAX_INDENT_PX) }}>
                     <WorkTreeIndent depth={1} />
                     <div className="flex-1 min-w-0 relative overflow-hidden">
                       <TaskRow
