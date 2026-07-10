@@ -52,7 +52,7 @@ import { migrateProjectNotesSpecToLibrary } from "./migrations/migrate-project-n
 const objectAclsMigrationReady = addObjectAclsTable();
 const principleMigrationReady = migratePrinciplesToTable();
 const tagsConfigMigrationReady = migrateTagsAndPeopleConfig();
-const vaultsMigrationReady = ensureVaults();
+const vaultsMigrationReady = objectAclsMigrationReady.then(() => ensureVaults());
 
 const ENABLE_ASSOCIATIVE_RETRIEVAL = process.env.ASSOCIATIVE_RETRIEVAL === "true";
 serverLog.log(`[AssociativeRetrieval] enabled=${ENABLE_ASSOCIATIVE_RETRIEVAL}`);
