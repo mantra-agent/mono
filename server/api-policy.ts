@@ -113,6 +113,7 @@ const PERSONAL_RULES: ApiPolicyRule[] = [
       "/api/preferences",
       "/api/rules",
       "/api/beliefs",
+      "/api/vaults",
 
       "/api/email",
       "/api/gmail",
