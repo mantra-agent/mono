@@ -118,16 +118,6 @@ function formatWorkDueDate(date: string | null | undefined): string | null {
   return parsed.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function nearestWorkDueDate(project: Project, tasks: Task[]): string | null {
-  const dates = [
-    project.dueDate,
-    ...(project.milestones || []).map(m => m.dueDate),
-    ...tasks.map(t => t.deadline),
-  ].filter(Boolean) as string[];
-  dates.sort();
-  return dates[0] ?? null;
-}
-
 function WorkCheckCircle({ checked, className, ...props }: { checked: boolean; className?: string } & React.HTMLAttributes<HTMLSpanElement>) {
   return (
     <span
@@ -717,6 +707,8 @@ function TaskRow({
   const { openTaskModal } = useTaskModal();
   const [editTitle, setEditTitle] = useState(task.title);
   const [expanded, setExpanded] = useState(false);
+  const [editingDeadline, setEditingDeadline] = useState(false);
+  const [deadlineDraft, setDeadlineDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -780,10 +772,41 @@ function TaskRow({
         </span>
       )}
 
-      {dueLabel && (
-        <span className="shrink-0 text-xs text-muted-foreground/70 tabular-nums" data-testid={`text-task-due-date-${task.id}`}>
+      {editingDeadline ? (
+        <Input
+          type="date"
+          value={deadlineDraft}
+          onChange={e => setDeadlineDraft(e.target.value)}
+          onBlur={() => {
+            onUpdate({ deadline: deadlineDraft || null });
+            setEditingDeadline(false);
+          }}
+          onKeyDown={e => {
+            if (e.key === "Enter") { onUpdate({ deadline: deadlineDraft || null }); setEditingDeadline(false); }
+            if (e.key === "Escape") setEditingDeadline(false);
+          }}
+          onClick={e => e.stopPropagation()}
+          className="h-6 text-xs w-32 shrink-0"
+          autoFocus
+          data-testid={`input-task-deadline-${task.id}`}
+        />
+      ) : dueLabel ? (
+        <span
+          className="shrink-0 text-xs text-muted-foreground/70 tabular-nums cursor-pointer rounded px-1 -mx-1 hover:bg-accent/70"
+          onClick={e => { e.stopPropagation(); setDeadlineDraft(task.deadline || ""); setEditingDeadline(true); }}
+          data-testid={`text-task-due-date-${task.id}`}
+        >
           {dueLabel}
         </span>
+      ) : (
+        <button
+          type="button"
+          className="shrink-0 text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity rounded p-0.5 hover:bg-accent/70 hover:text-muted-foreground"
+          onClick={e => { e.stopPropagation(); setDeadlineDraft(""); setEditingDeadline(true); }}
+          data-testid={`button-task-set-deadline-${task.id}`}
+        >
+          <CalendarDays className="h-3 w-3" />
+        </button>
       )}
 
       <button
@@ -1305,7 +1328,11 @@ function ProjectTreeNode({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [expandedMilestones, setExpandedMilestones] = useState<Record<number, boolean>>({});
-  const projectDueLabel = formatWorkDueDate(nearestWorkDueDate(project, tasks));
+  const [editingProjectDue, setEditingProjectDue] = useState(false);
+  const [projectDueDraft, setProjectDueDraft] = useState("");
+  const [editingMilestoneDueId, setEditingMilestoneDueId] = useState<number | null>(null);
+  const [milestoneDueDraft, setMilestoneDueDraft] = useState("");
+  const projectDueLabel = formatWorkDueDate(project.dueDate);
   const isActive = project.status === "active";
   const isAddingMilestone = addingMilestoneProjectId === project.id;
   const sortedMilestones = [...(project.milestones || [])].sort((a, b) => {
@@ -1351,10 +1378,41 @@ function ProjectTreeNode({
             <span className="truncate flex-1 min-w-0" data-testid={`text-project-title-${project.id}`}>
               {project.title}
             </span>
-            {projectDueLabel && (
-              <span className="shrink-0 text-xs text-muted-foreground/70 tabular-nums" data-testid={`text-project-due-date-${project.id}`}>
+            {editingProjectDue ? (
+              <Input
+                type="date"
+                value={projectDueDraft}
+                onChange={e => setProjectDueDraft(e.target.value)}
+                onBlur={() => {
+                  onUpdateProject({ dueDate: projectDueDraft || null });
+                  setEditingProjectDue(false);
+                }}
+                onKeyDown={e => {
+                  if (e.key === "Enter") { onUpdateProject({ dueDate: projectDueDraft || null }); setEditingProjectDue(false); }
+                  if (e.key === "Escape") setEditingProjectDue(false);
+                }}
+                onClick={e => e.stopPropagation()}
+                className="h-6 text-xs w-32 shrink-0"
+                autoFocus
+                data-testid={`input-project-due-date-${project.id}`}
+              />
+            ) : projectDueLabel ? (
+              <span
+                className="shrink-0 text-xs text-muted-foreground/70 tabular-nums cursor-pointer rounded px-1 -mx-1 hover:bg-accent/70"
+                onClick={e => { e.stopPropagation(); setProjectDueDraft(project.dueDate || ""); setEditingProjectDue(true); }}
+                data-testid={`text-project-due-date-${project.id}`}
+              >
                 {projectDueLabel}
               </span>
+            ) : (
+              <button
+                type="button"
+                className="shrink-0 text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity rounded p-0.5 hover:bg-accent/70 hover:text-muted-foreground"
+                onClick={e => { e.stopPropagation(); setProjectDueDraft(""); setEditingProjectDue(true); }}
+                data-testid={`button-project-set-due-date-${project.id}`}
+              >
+                <CalendarDays className="h-3 w-3" />
+              </button>
             )}
             <div className="absolute right-1 top-1/2 -translate-y-1/2 flex h-6 items-center gap-0.5 pl-1 z-10">
               {hasChildren && (
@@ -1450,10 +1508,41 @@ function ProjectTreeNode({
                       <span className={cn("truncate flex-1 min-w-0", milestoneCompleted && "line-through text-muted-foreground")} data-testid={`text-tree-milestone-name-${milestone.id}`}>
                         {milestone.name}
                       </span>
-                      {milestoneDueLabel && (
-                        <span className="shrink-0 text-xs text-muted-foreground/70 tabular-nums" data-testid={`text-tree-milestone-due-date-${milestone.id}`}>
+                      {editingMilestoneDueId === milestone.id ? (
+                        <Input
+                          type="date"
+                          value={milestoneDueDraft}
+                          onChange={e => setMilestoneDueDraft(e.target.value)}
+                          onBlur={() => {
+                            onUpdateMilestone(milestone.id, { dueDate: milestoneDueDraft || null });
+                            setEditingMilestoneDueId(null);
+                          }}
+                          onKeyDown={e => {
+                            if (e.key === "Enter") { onUpdateMilestone(milestone.id, { dueDate: milestoneDueDraft || null }); setEditingMilestoneDueId(null); }
+                            if (e.key === "Escape") setEditingMilestoneDueId(null);
+                          }}
+                          onClick={e => e.stopPropagation()}
+                          className="h-6 text-xs w-32 shrink-0"
+                          autoFocus
+                          data-testid={`input-tree-milestone-due-${milestone.id}`}
+                        />
+                      ) : milestoneDueLabel ? (
+                        <span
+                          className="shrink-0 text-xs text-muted-foreground/70 tabular-nums cursor-pointer rounded px-1 -mx-1 hover:bg-accent/70"
+                          onClick={e => { e.stopPropagation(); setMilestoneDueDraft(milestone.dueDate || ""); setEditingMilestoneDueId(milestone.id); }}
+                          data-testid={`text-tree-milestone-due-date-${milestone.id}`}
+                        >
                           {milestoneDueLabel}
                         </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="shrink-0 text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity rounded p-0.5 hover:bg-accent/70 hover:text-muted-foreground"
+                          onClick={e => { e.stopPropagation(); setMilestoneDueDraft(""); setEditingMilestoneDueId(milestone.id); }}
+                          data-testid={`button-tree-milestone-set-due-${milestone.id}`}
+                        >
+                          <CalendarDays className="h-3 w-3" />
+                        </button>
                       )}
                       <div className="absolute right-1 top-1/2 -translate-y-1/2 flex h-6 items-center gap-0.5 pl-1 z-10">
                         {milestoneTasks.length > 0 && (
