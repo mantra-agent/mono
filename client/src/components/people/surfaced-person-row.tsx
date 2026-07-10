@@ -177,7 +177,7 @@ export function SurfacedPersonRow({ item, onSurfaceChange, dateLabel }: Surfaced
                     snoozedUntil: fireAt,
                   })}
                   invalidateKeys={[["/api/home/feed"]]}
-                  allowNextBoot={false}
+                  allowNextBuild={false}
                   onReminderSet={() => setMenuOpen(false)}
                 />
               )}

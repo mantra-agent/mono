@@ -189,7 +189,7 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
                 Open in Comms
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <ReminderPopover title={item.title} onSelect={handleSnooze} allowNextBoot={false} />
+              <ReminderPopover title={item.title} onSelect={handleSnooze} allowNextBuild={false} />
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={(e) => { e.stopPropagation(); dismiss(); setMenuOpen(false); }} disabled={markDone.isPending || messageIds.length === 0}>
                 <X className="mr-2 h-3.5 w-3.5" />
