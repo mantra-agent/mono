@@ -107,6 +107,20 @@ import {
 } from "lucide-react";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
+
+const SOURCE_REF_TYPE_MAP: Record<string, "session" | "page"> = {
+  session: "session",
+  library_page: "page",
+  library: "page",
+};
+
+function SourceRefLabel({ sourceType, sourceId, className }: { sourceType: string; sourceId: string; className?: string }) {
+  const refType = SOURCE_REF_TYPE_MAP[sourceType];
+  if (refType) {
+    return <ReferenceRenderer refValue={createReferenceRef({ type: refType, id: sourceId })} surface="simple-chip" className={className} />;
+  }
+  return <span className={className ?? "font-mono text-muted-foreground truncate"}>{sourceId}</span>;
+}
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -1025,7 +1039,7 @@ function VnextSourceRefsSection({ claimId }: { claimId: number }) {
           <div key={ref.id} className="rounded-md border border-card-border bg-muted/10 p-2" data-testid={`memory-vnext-source-ref-${ref.id}`}>
             <div className="flex items-center gap-2 text-xs">
               <Badge variant="outline" className="px-1.5 py-0">{ref.sourceType}</Badge>
-              <span className="font-mono text-muted-foreground truncate">{ref.sourceId}</span>
+              <SourceRefLabel sourceType={ref.sourceType} sourceId={ref.sourceId} className="truncate" />
               <span className="ml-auto text-muted-foreground">{ref.relationship} · {Math.round(Number(ref.strength ?? 0) * 100)}%</span>
             </div>
             {ref.context && <p className="mt-1 text-xs text-foreground/75 whitespace-pre-wrap">{ref.context}</p>}
@@ -1057,7 +1071,7 @@ function SourceRefsSection({ entryId }: { entryId: number }) {
           <div key={ref.id} className="rounded-md border border-card-border bg-muted/10 p-2" data-testid={`memory-source-ref-${ref.id}`}>
             <div className="flex items-center gap-2 text-xs">
               <Badge variant="outline" className="px-1.5 py-0">{ref.sourceType}</Badge>
-              <span className="font-mono text-muted-foreground truncate">{ref.sourceId}</span>
+              <SourceRefLabel sourceType={ref.sourceType} sourceId={ref.sourceId} className="truncate" />
               <span className="ml-auto text-muted-foreground">{ref.relationship} · {Math.round(Number(ref.strength ?? 0) * 100)}%</span>
             </div>
             {ref.context && <p className="mt-1 text-xs text-foreground/75 whitespace-pre-wrap">{ref.context}</p>}
@@ -1967,8 +1981,12 @@ function MemoryEntryDetailDialog({ entry, open, onOpenChange }: {
 
           {entry.sourceId && (
             <div>
-              <p className="text-xs font-medium text-muted-foreground mb-1">Source ID</p>
-              <span className="text-xs font-mono text-foreground/70" data-testid="detail-source-id">{entry.sourceId}</span>
+              <p className="text-xs font-medium text-muted-foreground mb-1">Source</p>
+              {SOURCE_REF_TYPE_MAP[entry.source] ? (
+                <span data-testid="detail-source-id"><SourceRefLabel sourceType={entry.source} sourceId={entry.sourceId} /></span>
+              ) : (
+                <span className="text-xs font-mono text-foreground/70" data-testid="detail-source-id">{entry.sourceId}</span>
+              )}
             </div>
           )}
 
@@ -2210,7 +2228,7 @@ function LayersTab() {
   const renderVnextSourceRow = (source: VnextSourceQueueRow) => {
     const modified = formatPipelineTime(source.lastModifiedAt, timezone);
     const extracted = formatPipelineTime(source.lastExtractedAt, timezone);
-    const refType = source.sourceType === "session" ? "session" : source.sourceType === "library_page" ? "page" : null;
+    const refType = SOURCE_REF_TYPE_MAP[source.sourceType] ?? null;
     return (
       <div key={source.id} className="grid grid-cols-[1fr_auto] gap-2 px-2 py-1.5 text-xs hover:bg-muted/30" data-testid={`memory-vnext-source-row-${source.id}`}>
         <div className="min-w-0">
