@@ -56,6 +56,14 @@ export const projectFileSchema = z.object({
 });
 export type ProjectFile = z.infer<typeof projectFileSchema>;
 
+export const projectPageSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  slug: z.string().optional(),
+  addedAt: z.string(),
+});
+export type ProjectPage = z.infer<typeof projectPageSchema>;
+
 export const activityEntrySchema = z.object({
   timestamp: z.string(),
   author: ownerEnum,
@@ -158,6 +166,7 @@ export interface Project {
   goalId: string | null;
   notes: ProjectNote[];
   files: ProjectFile[];
+  pages: ProjectPage[];
   activity: ActivityEntry[];
   createdAt: string;
   updatedAt: string;

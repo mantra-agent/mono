@@ -488,6 +488,7 @@ export const projects = pgTable("projects", {
   people: jsonb("people").notNull().default([]),
   notes: jsonb("notes").notNull().default([]),
   files: jsonb("files").notNull().default([]),
+  pages: jsonb("pages").notNull().default([]),
   activity: jsonb("activity").notNull().default([]),
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),

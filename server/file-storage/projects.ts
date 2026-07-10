@@ -2,7 +2,7 @@ import { db } from "../db";
 import { projects } from "@shared/schema";
 import { eq, and, sql } from "drizzle-orm";
 import type {
-  Project, InsertProject, ActivityEntry, Milestone, ProjectNote, ProjectFile,
+  Project, InsertProject, ActivityEntry, Milestone, ProjectNote, ProjectFile, ProjectPage,
   ProjectStatus, PriorityLevel,
 } from "@shared/models/work";
 import { createLogger } from "../log";
@@ -48,6 +48,7 @@ function rowToProject(row: typeof projects.$inferSelect): Project {
     people: (row.people as string[]) || [],
     notes: (row.notes as ProjectNote[]) || [],
     files: (row.files as ProjectFile[]) || [],
+    pages: (row.pages as ProjectPage[]) || [],
     activity: (row.activity as ActivityEntry[]) || [],
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -141,6 +142,7 @@ export class FileProjectStorage {
       people: (input.people || []) as unknown as Record<string, unknown>,
       notes: [] as unknown as Record<string, unknown>,
       files: [] as unknown as Record<string, unknown>,
+      pages: [] as unknown as Record<string, unknown>,
       activity: [] as unknown as Record<string, unknown>,
       createdAt: now,
       updatedAt: now,
@@ -199,6 +201,7 @@ export class FileProjectStorage {
     if (updates.goalId !== undefined) setValues.goalId = updates.goalId;
     if (updates.tags !== undefined) setValues.tags = updates.tags as unknown as Record<string, unknown>;
     if (updates.people !== undefined) setValues.people = updates.people as unknown as Record<string, unknown>;
+    if (updates.pages !== undefined) setValues.pages = updates.pages as unknown as Record<string, unknown>;
 
     const [row] = await db.update(projects).set(setValues).where(
       combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, id))
@@ -380,6 +383,30 @@ export class FileProjectStorage {
 
     this.invalidateCache();
     log.debug(`removeNote projectId=${projectId} noteId=${noteId}`);
+    return rowToProject(row);
+  }
+
+
+  async addPage(projectId: number, page: ProjectPage): Promise<Project | undefined> {
+    const existing = await this.getProject(projectId);
+    if (!existing) {
+      log.debug(`addPage projectId=${projectId} not-found`);
+      return undefined;
+    }
+
+    const pages = [
+      ...existing.pages.filter(p => p.id !== page.id),
+      page,
+    ];
+    const [row] = await db.update(projects).set({
+      pages: pages as unknown as Record<string, unknown>,
+      updatedAt: new Date(),
+    }).where(
+      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
+    ).returning();
+
+    this.invalidateCache();
+    log.debug(`addPage projectId=${projectId} pageId=${page.id} title="${page.title}"`);
     return rowToProject(row);
   }
 
