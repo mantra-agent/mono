@@ -4145,6 +4145,124 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
     const action = args.action || "list";
 
+    async function resolveLibraryPageUUID(rawId: string): Promise<{ uuid: string } | { error: string }> {
+      const { db } = await import("./db");
+      const { libraryPages } = await import("@shared/models/info");
+      const { eq } = await import("drizzle-orm");
+      const byId = await db.select({ id: libraryPages.id }).from(libraryPages).where(eq(libraryPages.id, rawId));
+      if (byId[0]) return { uuid: byId[0].id };
+      const bySlug = await db.select({ id: libraryPages.id }).from(libraryPages).where(eq(libraryPages.slug, rawId));
+      if (bySlug[0]) return { uuid: bySlug[0].id };
+      return { error: `Library page "${rawId}" not found. Use the exact id or slug returned by the library tool when creating/updating the page.` };
+    }
+
+    function parseLocalDate(date: string, label: string): { date: Date } | { error: string } {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: `Invalid '${label}' format: expected YYYY-MM-DD` };
+      const [year, month, day] = date.split("-").map(Number);
+      const parsed = new Date(date + "T12:00:00");
+      if (isNaN(parsed.getTime()) || parsed.getFullYear() !== year || parsed.getMonth() + 1 !== month || parsed.getDate() !== day) {
+        return { error: `Invalid '${label}' value: date does not exist` };
+      }
+      return { date: parsed };
+    }
+
+    async function setCheckInArtifact(
+      artifactAction: string,
+      args: Record<string, any>,
+    ): Promise<ToolHandlerResult> {
+      const rawPageId = args.libraryPageId;
+      if (!rawPageId) return { result: "Missing libraryPageId parameter", error: true };
+      const resolved = await resolveLibraryPageUUID(String(rawPageId));
+      if ("error" in resolved) return { result: resolved.error, error: true };
+      const libraryPageId = resolved.uuid;
+      const { setArtifact } = await import("./period-artifact-storage");
+      const { getDateInTimezone } = await import("./timezone");
+      const { invalidateSimpleFeedCache } = await import("./simple/generate-feed");
+
+      if (artifactAction === "set_review" || artifactAction === "set_daily_plan") {
+        const date = args.date ? String(args.date) : getDateInTimezone();
+        const parsed = parseLocalDate(date, "date");
+        if ("error" in parsed) return { result: parsed.error, error: true };
+        const updates = artifactAction === "set_review" ? { reviewPageId: libraryPageId } : { dailyPlanPageId: libraryPageId };
+        await setArtifact(date, "daily", updates);
+        invalidateSimpleFeedCache();
+        const field = artifactAction === "set_review" ? "reviewPageId" : "dailyPlanPageId";
+        return { result: `${field} set for ${date}: ${libraryPageId}` };
+      }
+
+      if (artifactAction === "set_weekly_reflection" || artifactAction === "set_weekly_plan") {
+        const baseStr = args.week ? String(args.week) : getDateInTimezone();
+        const parsed = parseLocalDate(baseStr, "week");
+        if ("error" in parsed) return { result: parsed.error, error: true };
+        const d = parsed.date;
+        const day = d.getDay();
+        const diff = day === 0 ? 6 : day - 1;
+        const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - diff);
+        const mondayDate = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`;
+        const field = artifactAction === "set_weekly_reflection" ? "weeklyReflectionPageId" : "weeklyPlanPageId";
+        await setArtifact(mondayDate, "weekly", { [field]: libraryPageId });
+        invalidateSimpleFeedCache();
+        return { result: `${field} set for week of ${mondayDate}: ${libraryPageId}` };
+      }
+
+      if (artifactAction === "set_monthly_plan" || artifactAction === "set_monthly_reflection") {
+        let firstOfMonth: string;
+        if (args.month) {
+          const monthStr = String(args.month);
+          if (!/^\d{4}-\d{2}$/.test(monthStr)) return { result: "Invalid 'month' format: expected YYYY-MM", error: true };
+          const parsed = new Date(monthStr + "-01T12:00:00");
+          if (isNaN(parsed.getTime()) || parsed.getMonth() !== parseInt(monthStr.slice(5, 7), 10) - 1) {
+            return { result: "Invalid 'month' value: month does not exist", error: true };
+          }
+          firstOfMonth = `${monthStr}-01`;
+        } else {
+          const todayStr = getDateInTimezone();
+          const d = new Date(todayStr + "T12:00:00");
+          firstOfMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+        }
+        const field = artifactAction === "set_monthly_plan" ? "monthlyPlanPageId" : "monthlyReflectionPageId";
+        await setArtifact(firstOfMonth, "monthly", { [field]: libraryPageId });
+        invalidateSimpleFeedCache();
+        return { result: `${field} set for month of ${firstOfMonth}: ${libraryPageId}` };
+      }
+
+      if (artifactAction === "set_quarterly_plan" || artifactAction === "set_quarterly_reflection") {
+        let firstOfQuarter: string;
+        if (args.quarter) {
+          const quarterStr = String(args.quarter);
+          const match = quarterStr.match(/^(\d{4})-Q([1-4])$/);
+          if (!match) return { result: "Invalid 'quarter' format: expected YYYY-QN", error: true };
+          const year = Number(match[1]);
+          const q = Number(match[2]);
+          firstOfQuarter = `${year}-${String((q - 1) * 3 + 1).padStart(2, "0")}-01`;
+        } else {
+          const todayStr = getDateInTimezone();
+          const d = new Date(todayStr + "T12:00:00");
+          const startMonth = Math.floor(d.getMonth() / 3) * 3 + 1;
+          firstOfQuarter = `${d.getFullYear()}-${String(startMonth).padStart(2, "0")}-01`;
+        }
+        const field = artifactAction === "set_quarterly_plan" ? "quarterlyPlanPageId" : "quarterlyReflectionPageId";
+        await setArtifact(firstOfQuarter, "quarterly", { [field]: libraryPageId });
+        invalidateSimpleFeedCache();
+        return { result: `${field} set for quarter of ${firstOfQuarter}: ${libraryPageId}` };
+      }
+
+      return { result: `Unknown goals artifact action: ${artifactAction}`, error: true };
+    }
+
+    async function getDailyArtifacts(args: Record<string, any>): Promise<ToolHandlerResult> {
+      const { getArtifacts } = await import("./period-artifact-storage");
+      const date = args.date || (await import("./timezone")).getDateInTimezone();
+      const parsed = parseLocalDate(String(date), "date");
+      if ("error" in parsed) return { result: parsed.error, error: true };
+      const artifacts = await getArtifacts(String(date), "daily");
+      const lines: string[] = [`Daily artifacts for ${date}:`];
+      lines.push(artifacts?.briefPageId ? `- Brief: ${artifacts.briefPageId}${artifacts.briefViewedAt ? ` (viewed ${artifacts.briefViewedAt})` : ""}` : "- Brief: not set");
+      lines.push(artifacts?.reviewPageId ? `- Review: ${artifacts.reviewPageId}${artifacts.reviewViewedAt ? ` (viewed ${artifacts.reviewViewedAt})` : ""}` : "- Review: not set");
+      if (artifacts?.dailyPlanPageId) lines.push(`- Daily plan: ${artifacts.dailyPlanPageId}`);
+      return { result: lines.join("\n") };
+    }
+
     try {
       switch (action) {
         case "list": {
@@ -4238,8 +4356,19 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           await goalsService.delete(id);
           return { result: `Goal deleted: "${goal.shortName}" [goal:${id}]` };
         }
+        case "set_review":
+        case "set_daily_plan":
+        case "set_weekly_reflection":
+        case "set_weekly_plan":
+        case "set_monthly_plan":
+        case "set_monthly_reflection":
+        case "set_quarterly_plan":
+        case "set_quarterly_reflection":
+          return await setCheckInArtifact(action, args);
+        case "get_daily_artifacts":
+          return await getDailyArtifacts(args);
         default:
-          return { result: `Unknown goals action: ${action}. Available: list, get, create, update, delete, search, set_parent, unlink_parent`, error: true };
+          return { result: `Unknown goals action: ${action}. Available: list, get, create, update, delete, search, set_parent, unlink_parent, set_review, set_daily_plan, get_daily_artifacts, set_weekly_reflection, set_weekly_plan, set_monthly_plan, set_monthly_reflection, set_quarterly_plan, set_quarterly_reflection`, error: true };
       }
     } catch (err: any) {
       return { result: `Goals tool error: ${err.message}`, error: true };
@@ -13376,208 +13505,19 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
     const action = args.action;
     if (!action) return { result: "Missing action parameter", error: true };
 
-    // Shared helper: validate libraryPageId resolves to a real page, return canonical UUID
-    async function resolveLibraryPageUUID(rawId: string): Promise<{ uuid: string } | { error: string }> {
-      const { db } = await import("./db");
-      const { libraryPages } = await import("@shared/models/info");
-      const { eq } = await import("drizzle-orm");
-      const byId = await db.select({ id: libraryPages.id }).from(libraryPages).where(eq(libraryPages.id, rawId));
-      if (byId[0]) return { uuid: byId[0].id };
-      const bySlug = await db.select({ id: libraryPages.id }).from(libraryPages).where(eq(libraryPages.slug, rawId));
-      if (bySlug[0]) return { uuid: bySlug[0].id };
-      return { error: `Library page "${rawId}" not found. Use the exact id or slug returned by the library tool when creating/updating the page.` };
-    }
-
-
-    if (action === "set_daily_plan") {
-      const rawPageId = args.libraryPageId;
-      if (!rawPageId) return { result: "Missing libraryPageId parameter", error: true };
-      const resolved = await resolveLibraryPageUUID(rawPageId);
-      if ("error" in resolved) return { result: resolved.error, error: true };
-      const libraryPageId = resolved.uuid;
-      try {
-        const { setArtifact } = await import("./period-artifact-storage");
-        const { getDateInTimezone } = await import("./timezone");
-        const date = args.date ? String(args.date) : getDateInTimezone();
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-          return { result: "Invalid 'date' format: expected YYYY-MM-DD", error: true };
-        }
-        const parsed = new Date(date + "T12:00:00");
-        if (isNaN(parsed.getTime())) return { result: "Invalid 'date' value: date does not exist", error: true };
-        await setArtifact(date, "daily", { dailyPlanPageId: libraryPageId });
-        const { invalidateSimpleFeedCache } = await import("./simple/generate-feed");
-        invalidateSimpleFeedCache();
-        return { result: `dailyPlanPageId set for ${date}: ${libraryPageId}` };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { result: `${action} error: ${msg}`, error: true };
-      }
-    }
-
-    if (action === "set_weekly_reflection" || action === "set_weekly_plan") {
-      const rawPageId = args.libraryPageId;
-      if (!rawPageId) return { result: "Missing libraryPageId parameter", error: true };
-      const resolved = await resolveLibraryPageUUID(rawPageId);
-      if ("error" in resolved) return { result: resolved.error, error: true };
-      const libraryPageId = resolved.uuid;
-      try {
-        const { setArtifact } = await import("./period-artifact-storage");
-        const { getDateInTimezone } = await import("./timezone");
-        if (args.week) {
-          const weekStr = String(args.week);
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStr)) {
-            return { result: "Invalid 'week' format: expected YYYY-MM-DD", error: true };
-          }
-          const [wy, wm, wd] = weekStr.split("-").map(Number);
-          const parsed = new Date(weekStr + "T12:00:00");
-          if (isNaN(parsed.getTime()) || parsed.getFullYear() !== wy || parsed.getMonth() + 1 !== wm || parsed.getDate() !== wd) {
-            return { result: "Invalid 'week' value: date does not exist", error: true };
-          }
-        }
-        const baseStr = args.week ? String(args.week) : getDateInTimezone();
-        const d = new Date(baseStr + "T12:00:00");
-        const day = d.getDay();
-        const diff = day === 0 ? 6 : day - 1;
-        const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - diff);
-        const mm = String(monday.getMonth() + 1).padStart(2, "0");
-        const dd = String(monday.getDate()).padStart(2, "0");
-        const mondayDate = `${monday.getFullYear()}-${mm}-${dd}`;
-
-        const field = action === "set_weekly_reflection" ? "weeklyReflectionPageId" : "weeklyPlanPageId";
-        await setArtifact(mondayDate, "weekly", { [field]: libraryPageId });
-        const { invalidateSimpleFeedCache } = await import("./simple/generate-feed");
-        invalidateSimpleFeedCache();
-
-        return { result: `${field} set for week of ${mondayDate}: ${libraryPageId}` };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { result: `${action} error: ${msg}`, error: true };
-      }
-    }
-
-    if (action === "set_monthly_plan" || action === "set_monthly_reflection") {
-      const rawPageId = args.libraryPageId;
-      if (!rawPageId) return { result: "Missing libraryPageId parameter", error: true };
-      const resolved = await resolveLibraryPageUUID(rawPageId);
-      if ("error" in resolved) return { result: resolved.error, error: true };
-      const libraryPageId = resolved.uuid;
-      try {
-        const { setArtifact } = await import("./period-artifact-storage");
-        const { getDateInTimezone } = await import("./timezone");
-        if (args.month) {
-          const monthStr = String(args.month);
-          if (!/^\d{4}-\d{2}$/.test(monthStr)) {
-            return { result: "Invalid 'month' format: expected YYYY-MM", error: true };
-          }
-          const parsed = new Date(monthStr + "-01T12:00:00");
-          if (isNaN(parsed.getTime()) || parsed.getMonth() !== parseInt(monthStr.slice(5, 7), 10) - 1) {
-            return { result: "Invalid 'month' value: month does not exist", error: true };
-          }
-        }
-        let firstOfMonth: string;
-        if (args.month) {
-          firstOfMonth = `${String(args.month)}-01`;
-        } else {
-          const todayStr = getDateInTimezone();
-          const d = new Date(todayStr + "T12:00:00");
-          const mm = String(d.getMonth() + 1).padStart(2, "0");
-          firstOfMonth = `${d.getFullYear()}-${mm}-01`;
-        }
-
-        const field = action === "set_monthly_plan" ? "monthlyPlanPageId" : "monthlyReflectionPageId";
-        await setArtifact(firstOfMonth, "monthly", { [field]: libraryPageId });
-        const { invalidateSimpleFeedCache } = await import("./simple/generate-feed");
-        invalidateSimpleFeedCache();
-
-        return { result: `${field} set for month of ${firstOfMonth}: ${libraryPageId}` };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { result: `${action} error: ${msg}`, error: true };
-      }
-    }
-
-    if (action === "set_quarterly_plan" || action === "set_quarterly_reflection") {
-      const rawPageId = args.libraryPageId;
-      if (!rawPageId) return { result: "Missing libraryPageId parameter", error: true };
-      const resolved = await resolveLibraryPageUUID(rawPageId);
-      if ("error" in resolved) return { result: resolved.error, error: true };
-      const libraryPageId = resolved.uuid;
-      try {
-        const { setArtifact } = await import("./period-artifact-storage");
-        const { getDateInTimezone } = await import("./timezone");
-        let firstOfQuarter: string;
-        if (args.quarter) {
-          const quarterStr = String(args.quarter);
-          const match = quarterStr.match(/^(\d{4})-Q([1-4])$/);
-          if (!match) return { result: "Invalid 'quarter' format: expected YYYY-QN", error: true };
-          const year = Number(match[1]);
-          const q = Number(match[2]);
-          firstOfQuarter = `${year}-${String((q - 1) * 3 + 1).padStart(2, "0")}-01`;
-        } else {
-          const todayStr = getDateInTimezone();
-          const d = new Date(todayStr + "T12:00:00");
-          const startMonth = Math.floor(d.getMonth() / 3) * 3 + 1;
-          firstOfQuarter = `${d.getFullYear()}-${String(startMonth).padStart(2, "0")}-01`;
-        }
-
-        const field = action === "set_quarterly_plan" ? "quarterlyPlanPageId" : "quarterlyReflectionPageId";
-        await setArtifact(firstOfQuarter, "quarterly", { [field]: libraryPageId });
-        const { invalidateSimpleFeedCache } = await import("./simple/generate-feed");
-        invalidateSimpleFeedCache();
-
-        return { result: `${field} set for quarter of ${firstOfQuarter}: ${libraryPageId}` };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { result: `${action} error: ${msg}`, error: true };
-      }
-    }
-
-    if (action === "set_brief" || action === "set_review") {
-      const rawPageId = args.libraryPageId;
-      if (!rawPageId) return { result: "Missing libraryPageId parameter", error: true };
-      const resolved = await resolveLibraryPageUUID(rawPageId);
-      if ("error" in resolved) return { result: resolved.error, error: true };
-      const libraryPageId = resolved.uuid;
-      try {
-        const { setArtifact } = await import("./period-artifact-storage");
-        const date = args.date || (await import("./timezone")).getDateInTimezone();
-        const type = action === "set_brief" ? "brief" : "review";
-
-        const updates = type === "brief"
-          ? { briefPageId: libraryPageId }
-          : { reviewPageId: libraryPageId };
-
-        await setArtifact(date, "daily", updates);
-
-        return { result: `${type} set for ${date}: ${libraryPageId}` };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { result: `${action} error: ${msg}`, error: true };
-      }
-    }
-
-    if (action === "get_daily_artifacts") {
-      try {
-        const { getArtifacts } = await import("./period-artifact-storage");
-        const date = args.date || (await import("./timezone")).getDateInTimezone();
-        const artifacts = await getArtifacts(date, "daily");
-
-        const lines: string[] = [`Daily artifacts for ${date}:`];
-        if (artifacts?.briefPageId) {
-          lines.push(`- Brief: ${artifacts.briefPageId}${artifacts.briefViewedAt ? ` (viewed ${artifacts.briefViewedAt})` : ""}`);
-        } else {
-          lines.push("- Brief: not set");
-        }
-        if (artifacts?.reviewPageId) {
-          lines.push(`- Review: ${artifacts.reviewPageId}${artifacts.reviewViewedAt ? ` (viewed ${artifacts.reviewViewedAt})` : ""}`);
-        } else {
-          lines.push("- Review: not set");
-        }
-        return { result: lines.join("\n") };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { result: `get_daily_artifacts error: ${msg}`, error: true };
-      }
+    const migratedArtifactActions = new Set([
+      "set_review",
+      "set_daily_plan",
+      "get_daily_artifacts",
+      "set_weekly_reflection",
+      "set_weekly_plan",
+      "set_monthly_plan",
+      "set_monthly_reflection",
+      "set_quarterly_plan",
+      "set_quarterly_reflection",
+    ]);
+    if (migratedArtifactActions.has(action)) {
+      return bridgeHandlers.goals(args);
     }
 
     const period = args.period || "daily";
@@ -13599,7 +13539,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       link_parent: `link_${prefix}parent`,
     };
     const handlerName = actionMap[action];
-    if (!handlerName) return { result: `Unknown priorities action: ${action}. Available: add, update, remove, mark_status, link_parent, set_brief, set_review, set_daily_plan, get_daily_artifacts, set_weekly_reflection, set_weekly_plan, set_monthly_plan, set_monthly_reflection, set_quarterly_plan, set_quarterly_reflection`, error: true };
+    if (!handlerName) return { result: `Unknown priorities action: ${action}. Available: add, update, remove, mark_status, link_parent. Use goals for check-in artifact linking.`, error: true };
     const allPriority = { ...priorityTools, ...weeklyPriorityTools, ...monthlyPriorityTools, ...nextDayPriorityTools, ...nextWeekPriorityTools, ...nextMonthPriorityTools };
     const handler = allPriority[handlerName];
     if (!handler) return { result: `Handler not found for ${handlerName}`, error: true };

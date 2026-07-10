@@ -1013,7 +1013,7 @@ Save to Library:
 - parent: \`weekly-reflections\`
 - title: \`Weekly Reflection — YYYY-WXX\` unless the existing convention requires \`Weekly Planning — YYYY-WXX\`
 - tags: [\`weekly-reflection\`, \`reflection\`, \`planning\`]
-- after create, call \`priorities(action: "set_weekly_reflection", week: <period date>, libraryPageId: <id>)\` when available.
+- after create, call \`goals(action: "set_weekly_reflection", week: <period date>, libraryPageId: <id>)\` when available.
 
 ### Monthly
 Purpose: month-scale synthesis without the five-step monthly planning interview.
@@ -1036,7 +1036,7 @@ Save to Library:
 - parent: \`monthly-reflections\`
 - title: \`Monthly Reflection — Month YYYY\` or existing collection convention \`Monthly Planning — Month YYYY\`
 - tags: [\`monthly-reflection\`, \`reflection\`, \`planning\`]
-- after create, call \`priorities(action: "set_monthly_reflection", month: YYYY-MM, libraryPageId: <id>)\` when available.
+- after create, call \`goals(action: "set_monthly_reflection", month: YYYY-MM, libraryPageId: <id>)\` when available.
 
 ### Quarterly
 Purpose: synthesize the prior three monthly reflections into a goal/project/principle altitude brief. Identity-level Voice changes belong to annual unless the caller explicitly asks.
@@ -1129,7 +1129,7 @@ If the page has already been created but you later decide it should be surfaced,
       { check: "Past reflection artifacts are not loaded unless Ray explicitly asks or preContext provides a specific reflection page", weight: 3 },
       { check: "Financial transactions or finance snapshots are not loaded unless Ray explicitly asks for financial planning", weight: 3 },
       { check: "After confirmation, no more than 3 active target-horizon goals are selected/created and parent links are created where clear", weight: 3 },
-      { check: "After confirmation, the plan artifact is saved and linked via supported check-in metadata such as set_daily_plan, set_weekly_plan, set_monthly_plan, or set_quarterly_plan", weight: 3 },
+      { check: "After confirmation, the plan artifact is saved and linked via supported check-in metadata such as goals.set_daily_plan, goals.set_weekly_plan, goals.set_monthly_plan, or goals.set_quarterly_plan", weight: 3 },
     ],
     process: `You are Plan, the parameterized planning skill. Your job is to run a short conversation with Ray to align on the target period's canonical goals. Use goals vocabulary only. Do not create a separate list of outcomes, priorities, themes, or commitments that competes with goals.
 
@@ -1240,10 +1240,10 @@ Page structure:
 
 After creating the page:
 
-- weekly: call \`priorities(action: "set_weekly_plan", week: <period date>, libraryPageId: <id>)\`.
-- monthly: call \`priorities(action: "set_monthly_plan", month: YYYY-MM, libraryPageId: <id>)\`.
-- quarterly: call \`priorities(action: "set_quarterly_plan", quarter: YYYY-QN, libraryPageId: <id>)\`.
-- daily: call \`priorities(action: "set_daily_plan", date: YYYY-MM-DD, libraryPageId: <id>)\`.
+- weekly: call \`goals(action: "set_weekly_plan", week: <period date>, libraryPageId: <id>)\`.
+- monthly: call \`goals(action: "set_monthly_plan", month: YYYY-MM, libraryPageId: <id>)\`.
+- quarterly: call \`goals(action: "set_quarterly_plan", quarter: YYYY-QN, libraryPageId: <id>)\`.
+- daily: call \`goals(action: "set_daily_plan", date: YYYY-MM-DD, libraryPageId: <id>)\`.
 
 There is no supported annual check-in metadata action. Do not invent one.
 
