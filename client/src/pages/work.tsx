@@ -842,7 +842,7 @@ function TaskRow({
   const isCompleted = task.status === "done" || isDone;
   const isActive = task.status === "active" && !isCompleted;
   const dueLabel = formatWorkDueDate(task.deadline);
-  const taskDetailLines = [task.description, task.deliverable, task.context, task.output].map(v => v?.trim()).filter(Boolean);
+  const taskDetailLines = [task.description, task.context, task.output].map(v => v?.trim()).filter(Boolean);
   const statusTextClass = isActive
     ? "text-foreground font-medium"
     : isCompleted

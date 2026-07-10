@@ -42,7 +42,6 @@ import {
   CalendarDays,
   FolderKanban,
   Package,
-  ClipboardCheck,
   BookOpen,
   FileOutput,
   Calculator,
@@ -417,8 +416,6 @@ export function TaskWidget({ taskId, defaultExpanded = false, showHeader = true,
 
   const textFieldRows = [
     { icon: AlignLeft, label: "Description", field: "description" as const, value: task.description, placeholder: "Add a description..." },
-    { icon: Package, label: "Deliverable", field: "deliverable" as const, value: task.deliverable, placeholder: "What should this task produce?" },
-    { icon: ClipboardCheck, label: "Acceptance Criteria", field: "acceptanceCriteria" as const, value: task.acceptanceCriteria, placeholder: "How do we know it's done correctly?" },
     { icon: BookOpen, label: "Context", field: "context" as const, value: task.context, placeholder: "Background info, links, or references..." },
     { icon: FileOutput, label: "Output", field: "output" as const, value: task.output, placeholder: "Result or output once completed..." },
   ];

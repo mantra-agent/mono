@@ -83,8 +83,6 @@ export const insertTaskSchema = z.object({
   projectId: z.number().nullable().optional().default(null),
   milestoneId: z.number().nullable().optional().default(null),
   tags: z.array(z.string()).optional().default([]),
-  deliverable: z.string().optional().default(""),
-  acceptanceCriteria: z.string().optional().default(""),
   context: z.string().optional().default(""),
   output: z.string().optional().default(""),
   deadline: z.string().nullable().optional().default(null),
@@ -105,8 +103,6 @@ export interface Task {
   projectId: number | null;
   milestoneId: number | null;
   tags: string[];
-  deliverable: string;
-  acceptanceCriteria: string;
   context: string;
   output: string;
   deadline: string | null;
