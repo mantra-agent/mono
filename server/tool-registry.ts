@@ -582,7 +582,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   gmail: {
-    description: "Read, search, and draft emails via Gmail. Supports multiple accounts. Actions: status, search, read, batch_read, draft, update_draft, recent, download_attachment, triage_log, email_cache. The draft action creates a persisted email draft that renders as an inline widget; update_draft safely updates non-empty editable fields on that same draft. The human sends via the widget's Send button. There is no tool-level send action.",
+    description: "Read, search, and draft emails via Gmail. Supports multiple accounts. Actions: status, search, read, batch_read, draft, update_draft, recent, download_attachment, triage_log, email_cache. When creating an email intended for Ray to review or send, use draft or update_draft so the persisted draft renders as an inline widget; plain chat email text is only for brainstorming or explicit copy-only requests. The human sends via the widget's Send button. There is no tool-level send action.",
     category: "communication",
     parameters: {
       type: "object",

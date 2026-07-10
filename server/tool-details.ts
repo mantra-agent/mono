@@ -172,9 +172,9 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: 'List projects: { "action": "list_projects" }\nGet project details: { "action": "get_project", "id": 1 }',
   },
   gmail: {
-    description: "Read, search, and send emails via Gmail. Supports multiple accounts. Actions: status, search, read, send, draft, recent, download_attachment.",
-    whenToUse: "User asks about email, wants to check inbox, search for messages, or send an email.",
-    example: 'Search: { "action": "search", "query": "from:sarah", "account": "Work" }',
+    description: "Read, search, and draft emails via Gmail. Supports multiple accounts. Actions: status, search, read, batch_read, draft, update_draft, recent, download_attachment, triage_log, email_cache. There is no tool-level send action.",
+    whenToUse: "User asks about email, wants to check inbox, search for messages, or create an email for review/send. When creating an email intended for Ray to review or send, use gmail.draft or gmail.update_draft so the inline draft widget appears; plain chat email text is only for brainstorming or explicit copy-only requests.",
+    example: 'Search: { "action": "search", "query": "from:sarah", "account": "Work" }\nDraft: { "action": "draft", "to": "sarah@example.com", "subject": "Following up", "body": "..." }',
   },
   git: {
     description: "Interact with Git repositories — clone, pull, browse history, diff, branch, checkout, show, and write changes (add, commit, push, create_pr, merge_pr, delete_branch). Write actions (add, commit, push, create_pr) only work on cloned repos in repos/, not the workspace root.",
