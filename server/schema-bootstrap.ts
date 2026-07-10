@@ -3929,6 +3929,13 @@ export async function runSchemaBootstrap(
     log("auto-heal: ensured core scoped table columns", "migration");
   });
 
+  await heal("projects completed_at column", async () => {
+    await ensureColumns("projects", [
+      { name: "completed_at", type: "TIMESTAMPTZ" },
+    ]);
+    log("auto-heal: ensured projects completed_at column", "migration");
+  });
+
   await heal("timer system key column", async () => {
     await ensureColumns("timers", [
       { name: "system_key", type: "TEXT" },

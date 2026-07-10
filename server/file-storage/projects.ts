@@ -40,6 +40,7 @@ function rowToProject(row: typeof projects.$inferSelect): Project {
     owner: row.owner as Project["owner"],
     requiresReview: row.requiresReview,
     dueDate: row.dueDate || null,
+    completedAt: row.completedAt ? row.completedAt.toISOString() : null,
     spec: row.spec,
     goalId: row.goalId || null,
     milestones: (row.milestones as Milestone[]) || [],
@@ -121,6 +122,7 @@ export class FileProjectStorage {
       order: m.order ?? idx,
       startDate: m.startDate || null,
       dueDate: m.dueDate || null,
+      completedAt: (m.status || "planned") === "completed" ? m.completedAt ?? now.toISOString() : null,
     }));
 
     const [row] = await db.insert(projects).values({
@@ -131,6 +133,7 @@ export class FileProjectStorage {
       owner: input.owner || "me",
       requiresReview: input.requiresReview ?? false,
       dueDate: input.dueDate ?? null,
+      completedAt: (input.status || "idea") === "completed" ? now : null,
       spec: input.spec || "",
       goalId: input.goalId || null,
       milestones: milestones as unknown as Record<string, unknown>,
@@ -159,14 +162,21 @@ export class FileProjectStorage {
 
     let milestones = existing.milestones;
     if (updates.milestones) {
-      milestones = (updates.milestones as Milestone[]).map((m: Milestone, idx: number) => ({
-        id: m.id ?? getNextMilestoneId(existing.milestones) + idx,
-        name: m.name || "Unnamed",
-        status: m.status || "planned",
-        order: m.order ?? idx,
-        startDate: m.startDate || null,
-        dueDate: m.dueDate || null,
-      }));
+      const nowIso = new Date().toISOString();
+      const priorById = new Map(existing.milestones.map(m => [m.id, m]));
+      milestones = (updates.milestones as Milestone[]).map((m: Milestone, idx: number) => {
+        const id = m.id ?? getNextMilestoneId(existing.milestones) + idx;
+        const status = m.status || "planned";
+        return {
+          id,
+          name: m.name || "Unnamed",
+          status,
+          order: m.order ?? idx,
+          startDate: m.startDate || null,
+          dueDate: m.dueDate || null,
+          completedAt: status === "completed" ? m.completedAt ?? priorById.get(id)?.completedAt ?? nowIso : null,
+        };
+      });
     }
 
     const setValues: Record<string, unknown> = {
@@ -176,7 +186,11 @@ export class FileProjectStorage {
 
     if (updates.title !== undefined) setValues.title = updates.title;
     if (updates.description !== undefined) setValues.description = updates.description;
-    if (updates.status !== undefined) setValues.status = updates.status;
+    if (updates.status !== undefined) {
+      setValues.status = updates.status;
+      if (updates.status === "completed" && existing.status !== "completed") setValues.completedAt = new Date();
+      else if (updates.status !== "completed") setValues.completedAt = null;
+    }
     if (updates.priority !== undefined) setValues.priority = updates.priority;
     if (updates.owner !== undefined) setValues.owner = updates.owner;
     if (updates.requiresReview !== undefined) setValues.requiresReview = updates.requiresReview;
@@ -202,13 +216,15 @@ export class FileProjectStorage {
     }
 
     const newId = getNextMilestoneId(existing.milestones);
+    const status = (input.status as Milestone["status"]) || "planned";
     const milestone: Milestone = {
       id: newId,
       name: input.name,
-      status: (input.status as Milestone["status"]) || "planned",
+      status,
       order: existing.milestones.length,
       startDate: input.startDate || null,
       dueDate: input.dueDate || null,
+      completedAt: status === "completed" ? new Date().toISOString() : null,
     };
 
     const milestones = [...existing.milestones, milestone];
@@ -232,8 +248,11 @@ export class FileProjectStorage {
     }
 
     const milestones = existing.milestones.map(m => {
-      if (m.id === milestoneId) return { ...m, ...updates, id: m.id };
-      return m;
+      if (m.id !== milestoneId) return m;
+      const next = { ...m, ...updates, id: m.id };
+      if (next.status === "completed" && m.status !== "completed") next.completedAt = updates.completedAt ?? new Date().toISOString();
+      if (next.status !== "completed") next.completedAt = null;
+      return next;
     });
 
     const [row] = await db.update(projects).set({
