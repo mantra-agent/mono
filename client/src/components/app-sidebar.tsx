@@ -39,6 +39,7 @@ import {
   Terminal,
   User,
   Users,
+  Vault,
   Workflow,
   Wrench,
   X,
@@ -161,6 +162,7 @@ const navSections: NavSection[] = [
     defaultOpen: false,
     items: [
       { title: "Users", url: "/system?tab=users", icon: Users, permission: "system:read" },
+      { title: "Vaults", url: "/system?tab=vaults", icon: Vault },
       { title: "Integrations", url: "/integrations", icon: Plug },
       { title: "Account", url: "/account", icon: Settings },
     ],
