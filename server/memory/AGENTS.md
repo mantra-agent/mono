@@ -370,6 +370,8 @@ Raw session transcripts, archived workspace/session rows, and legacy exchange ro
 
 When adding a new memory source, decide explicitly whether it is graph eligible, search visible by default, myelination eligible, or archive-only. Store that decision in metadata rather than relying on route-level heuristics.
 
+Autonomous chat sessions are not durable memory sources. Enforce that invariant at the canonical vNext source upsert boundary using the persisted `ChatSession.sessionType`, not labels or route-local guards. Maintenance cleanup must be bounded, idempotent, principal-aware, remove source refs before deleting claims, and preserve claims that retain any other valid source.
+
 ## Prompt Modules Used by Memory
 
 Memory/myelination prompt templates live in Prompt Modules, not Skills. They have zero `skill_runs` by design because memory code loads them internally. Do not migrate them back to runnable Skills. Runtime prompt lookup should fail closed if a required module is missing.

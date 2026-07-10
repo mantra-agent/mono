@@ -16,6 +16,7 @@ import {
   memoryVnextClaims,
   memoryVnextEntityLinks,
   memoryVnextClaimLinks,
+  memoryVnextSourceRefs,
   relationshipTypes,
   type MemoryLayer,
   type MemoryEntry,
@@ -44,6 +45,7 @@ import { runVnextLifecycle } from "./vnext-lifecycle";
 import { listVisibleSources } from "./vnext-source-queue";
 import { peopleStorage } from "../people-storage";
 import { libraryPages } from "@shared/models/info";
+import { chatFileStorage } from "../chat-file-storage";
 
 const log = createLogger("MemoryRoutes");
 
@@ -1827,6 +1829,11 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       ownerUserId: memoryVnextEntityLinks.ownerUserId,
       accountId: memoryVnextEntityLinks.accountId,
     };
+    const sourceRefScopeColumns = {
+      scope: memoryVnextSourceRefs.scope,
+      ownerUserId: memoryVnextSourceRefs.ownerUserId,
+      accountId: memoryVnextSourceRefs.accountId,
+    };
     const claimLinkScopeColumns = {
       scope: memoryVnextClaimLinks.scope,
       ownerUserId: memoryVnextClaimLinks.ownerUserId,
@@ -1861,18 +1868,16 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
         ),
       );
 
-    const entityLinks = await db
-      .select()
-      .from(memoryVnextEntityLinks)
-      .where(
-        combineWithVisibleScope(
-          principal,
-          entityLinkScopeColumns,
-          inArray(memoryVnextEntityLinks.claimId, claimIds),
-        ),
-      );
+    const [entityLinks, sourceRefs] = await Promise.all([
+      db.select().from(memoryVnextEntityLinks).where(
+        combineWithVisibleScope(principal, entityLinkScopeColumns, inArray(memoryVnextEntityLinks.claimId, claimIds)),
+      ),
+      db.select().from(memoryVnextSourceRefs).where(
+        combineWithVisibleScope(principal, sourceRefScopeColumns, inArray(memoryVnextSourceRefs.claimId, claimIds)),
+      ),
+    ]);
 
-    // Resolve human-readable titles for entity nodes (person names, page titles).
+    // Resolve human-readable titles for entity and source nodes in bounded batches.
     const entityTitleByKey = new Map<string, string>();
     const personEntityIds = [...new Set(entityLinks.filter((l) => l.entityType === "person").map((l) => l.entityId))];
     const pageEntityIds = [...new Set(entityLinks.filter((l) => l.entityType === "page" || l.entityType === "library_page").map((l) => l.entityId))];
@@ -1895,8 +1900,31 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       }
     }
 
+    const sourcePageIds = [...new Set(sourceRefs.filter((ref) => ref.sourceType === "library_page" || ref.sourceType === "library").map((ref) => ref.sourceId))];
+    const sourceSessionIds = [...new Set(sourceRefs.filter((ref) => ref.sourceType === "session").map((ref) => ref.sourceId))];
+    const pageScope = { ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, scope: libraryPages.scope };
+    const [sourcePageRows, allSessions] = await Promise.all([
+      sourcePageIds.length > 0
+        ? db.select({ id: libraryPages.id, slug: libraryPages.slug, title: libraryPages.title, plainTextContent: libraryPages.plainTextContent, summary: libraryPages.summary, createdAt: libraryPages.createdAt, updatedAt: libraryPages.updatedAt })
+          .from(libraryPages)
+          .where(combineWithVisibleScope(principal, pageScope, or(inArray(libraryPages.id, sourcePageIds), inArray(libraryPages.slug, sourcePageIds))))
+        : Promise.resolve([]),
+      sourceSessionIds.length > 0 ? chatFileStorage.getAllSessions() : Promise.resolve([]),
+    ]);
+    const sourcePageById = new Map<string, typeof sourcePageRows[number]>();
+    for (const page of sourcePageRows) {
+      sourcePageById.set(page.id, page);
+      sourcePageById.set(page.slug, page);
+    }
+    const sourceSessionById = new Map(
+      allSessions
+        .filter((session) => sourceSessionIds.includes(session.id) && session.sessionType !== "agent" && session.sessionType !== "autonomous")
+        .map((session) => [session.id, session]),
+    );
+
     const entityNodeIds = new Map<string, number>();
-    let nextEntityNodeId = -1;
+    const sourceNodeIds = new Map<string, number>();
+    let nextSyntheticNodeId = -1;
     const entries: VnextGraphNode[] = claims.map((claim) => ({
       id: claim.id,
       content: claim.content,
@@ -1925,7 +1953,7 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       if (!visibleClaimIds.has(link.claimId)) continue;
       const key = `${link.entityType}:${link.entityId}`;
       if (!entityNodeIds.has(key)) {
-        const entityNodeId = nextEntityNodeId--;
+        const entityNodeId = nextSyntheticNodeId--;
         entityNodeIds.set(key, entityNodeId);
         const entityTitle = entityTitleByKey.get(key) || link.entityId;
         entries.push({
@@ -1950,6 +1978,42 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       }
     }
 
+
+    for (const ref of sourceRefs) {
+      if (!visibleClaimIds.has(ref.claimId)) continue;
+      const normalizedType = ref.sourceType === "library_page" || ref.sourceType === "library" ? "page" : ref.sourceType;
+      if (normalizedType !== "page" && normalizedType !== "session") continue;
+      const key = `${normalizedType}:${ref.sourceId}`;
+      if (sourceNodeIds.has(key)) continue;
+
+      const page = normalizedType === "page" ? sourcePageById.get(ref.sourceId) : undefined;
+      const session = normalizedType === "session" ? sourceSessionById.get(ref.sourceId) : undefined;
+      if (!page && !session) continue;
+      const sourceNodeId = nextSyntheticNodeId--;
+      sourceNodeIds.set(key, sourceNodeId);
+      const title = page?.title || session?.title || ref.sourceId;
+      const content = page?.plainTextContent || session?.summary || ref.context || ref.quote || "";
+      entries.push({
+        id: sourceNodeId,
+        content,
+        title,
+        summary: page?.summary || session?.summary || undefined,
+        layer: "long",
+        source: normalizedType,
+        sourceId: page?.slug || session?.id || ref.sourceId,
+        tags: [normalizedType],
+        graphed: true,
+        metadata: {
+          graphStorage: "vnext",
+          nodeKind: "source",
+          nodeType: normalizedType,
+          reference: `@${normalizedType}:${page?.slug || session?.id || ref.sourceId}`,
+        },
+        createdAt: serializeDate(page?.createdAt || session?.createdAt || ref.createdAt),
+        updatedAt: serializeDate(page?.updatedAt || session?.updatedAt || ref.createdAt),
+      });
+    }
+
     const links: VnextGraphLink[] = claimLinks
       .filter((link) => visibleClaimIds.has(link.fromClaimId) && visibleClaimIds.has(link.toClaimId))
       .map((link) => ({
@@ -1961,6 +2025,21 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
         createdAt: serializeDate(link.createdAt),
         relationshipType: "claim_link",
       }));
+
+    for (const ref of sourceRefs) {
+      const normalizedType = ref.sourceType === "library_page" || ref.sourceType === "library" ? "page" : ref.sourceType;
+      const sourceNodeId = sourceNodeIds.get(`${normalizedType}:${ref.sourceId}`);
+      if (!sourceNodeId || !visibleClaimIds.has(ref.claimId)) continue;
+      links.push({
+        id: -(1_000_000 + ref.id),
+        fromId: sourceNodeId,
+        toId: ref.claimId,
+        relationship: ref.relationship,
+        strength: ref.strength,
+        createdAt: serializeDate(ref.createdAt),
+        relationshipType: "source_ref",
+      });
+    }
 
     for (const link of entityLinks) {
       const entityNodeId = entityNodeIds.get(`${link.entityType}:${link.entityId}`);
@@ -1976,7 +2055,7 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       });
     }
 
-    log.debug(`[vnext] graph claims=${claims.length} claimLinks=${claimLinks.length} entityLinks=${entityLinks.length} nodes=${entries.length} links=${links.length}`);
+    log.debug(`[vnext] graph claims=${claims.length} claimLinks=${claimLinks.length} entityLinks=${entityLinks.length} sourceRefs=${sourceRefs.length} nodes=${entries.length} links=${links.length}`);
     res.json({ storage: "memory_vnext", entries, links, linkSource: "claim_links", semantics: "claim-centric" });
   } catch (error: unknown) {
     res.status(500).json({ error: errorMessage(error) });

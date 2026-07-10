@@ -724,6 +724,8 @@ function SourceIcon({ source, className = "h-2.5 w-2.5" }: { source: string; cla
     case "library":
     case "page":
       return <FileText className={className} />;
+    case "session": return <MessageSquare className={className} />;
+    case "claim": return <Lightbulb className={className} />;
     case "goal": return <Target className={className} />;
     case "person": return <User className={className} />;
     case "project": return <Database className={className} />;
@@ -2426,6 +2428,9 @@ const sourceColorMap: Record<string, { fill: string; stroke: string }> = {
   tool: { fill: "hsl(210, 15%, 35%)", stroke: "hsl(210, 15%, 25%)" },
   identity: { fill: "hsl(50, 50%, 32%)", stroke: "hsl(50, 50%, 24%)" },
   belief: { fill: "hsl(300, 55%, 40%)", stroke: "hsl(300, 55%, 30%)" },
+  claim: { fill: "hsl(200, 70%, 38%)", stroke: "hsl(200, 70%, 28%)" },
+  page: { fill: "hsl(145, 45%, 32%)", stroke: "hsl(145, 45%, 23%)" },
+  session: { fill: "hsl(270, 45%, 38%)", stroke: "hsl(270, 45%, 28%)" },
 };
 const defaultNodeColor = { fill: "hsl(210, 10%, 35%)", stroke: "hsl(210, 10%, 25%)" };
 
@@ -2783,7 +2788,7 @@ function GraphTab({ inFullscreenModal = false }: { inFullscreenModal?: boolean }
       return {
         id: e.id,
         label: e.title || (e.summary || e.content || "").slice(0, 20),
-        source: e.source || "manual",
+        source: String(((e.metadata || {}) as Record<string, unknown>).nodeType || ((e.metadata || {}) as Record<string, unknown>).entityType || ((e.metadata || {}) as Record<string, unknown>).nodeKind || e.source || "manual"),
         x: w / 2 + (Math.random() - 0.5) * w * 0.8,
         y: h / 2 + (Math.random() - 0.5) * h * 0.8,
         vx: 0,
@@ -3581,36 +3586,28 @@ function GraphTab({ inFullscreenModal = false }: { inFullscreenModal?: boolean }
             const hovEntry = entryMap.get(hoveredNodeId);
             if (!hovEntry) return null;
             const displayTitle = hovEntry.title || hovEntry.summary?.split('\n')[0]?.slice(0, 60) || `Entry #${hovEntry.id}`;
-            const sourceLabel = hovEntry.source.charAt(0).toUpperCase() + hovEntry.source.slice(1);
-            const summaryText = hovEntry.summary || hovEntry.content?.slice(0, 150);
+            const meta = (hovEntry.metadata || {}) as Record<string, unknown>;
+            const nodeType = String(meta.nodeType || meta.entityType || meta.nodeKind || hovEntry.source);
+            const referenceType = nodeType === "person" ? "person" : nodeType === "page" ? "page" : nodeType === "session" ? "session" : null;
+            const summaryText = hovEntry.content || hovEntry.summary;
+            const dateText = hovEntry.updatedAt || hovEntry.createdAt;
             return (
               <div
-                className="absolute z-50 pointer-events-none max-w-xs rounded-md border border-card-border bg-popover p-3 shadow-md"
+                className="absolute z-50 max-w-xs rounded-md border border-card-border bg-popover p-3 shadow-md"
                 style={{ left: tooltipPos.x, top: tooltipPos.y, transform: 'translateY(-50%)' }}
                 data-testid={`palace-node-tooltip-${hoveredNodeId}`}
               >
-                <p className="text-sm font-semibold text-popover-foreground leading-tight mb-1" data-testid="tooltip-title">{displayTitle}</p>
-                <p className="text-xs text-muted-foreground mb-1.5" data-testid="tooltip-source">{sourceLabel}</p>
-                {(() => {
-                  const meta = (hovEntry.metadata || {}) as Record<string, unknown>;
-                  const ds = meta.decay_score != null ? Number(meta.decay_score) : null;
-                  if (ds === null) return null;
-                  return (
-                    <div className="flex items-center gap-1.5 mb-1.5" data-testid="tooltip-decay">
-                      <span className="text-xs text-muted-foreground">Decay:</span>
-                      <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden max-w-[60px]">
-                        <div
-                          className={`h-full rounded-full ${ds > 0.6 ? "bg-success" : ds > 0.3 ? "bg-warning" : "bg-error"}`}
-                          style={{ width: `${ds * 100}%` }}
-                        />
-                      </div>
-                      <span className="text-xs font-medium">{(ds * 100).toFixed(0)}%</span>
-                    </div>
-                  );
-                })()}
-                {summaryText && (
-                  <p className="text-xs text-popover-foreground/80 leading-relaxed line-clamp-4" data-testid="tooltip-summary">{summaryText}</p>
+                <div className="flex items-center gap-2 text-sm font-semibold text-popover-foreground leading-tight mb-2" data-testid="tooltip-title">
+                  <SourceIcon source={nodeType} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{displayTitle}</span>
+                </div>
+                {referenceType && hovEntry.sourceId && (
+                  <div className="mb-2" data-testid="tooltip-reference">
+                    <ReferenceRenderer refValue={createReferenceRef({ type: referenceType, id: hovEntry.sourceId })} surface="simple-chip" />
+                  </div>
                 )}
+                {summaryText && <p className="text-xs text-popover-foreground/80 leading-relaxed line-clamp-4" data-testid="tooltip-summary">{summaryText}</p>}
+                {dateText && <p className="mt-2 text-xs text-muted-foreground" data-testid="tooltip-date">{new Date(dateText).toLocaleDateString()}</p>}
               </div>
             );
           })()}
