@@ -1,8 +1,21 @@
 import { useState, useCallback } from "react";
 import { useLocation, useParams } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, Settings2, ChevronRight, ExternalLink, Play, History, ShieldCheck, Trash2, FileText, Search } from "lucide-react";
+import { Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, Settings2, ChevronRight, ExternalLink, Play, History, ShieldCheck, Trash2, FileText, Search, Cable, Link2, User, FolderGit2, GitBranch, GitMerge, Zap, Code2, Server, Hash, Layers, Cpu } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import { createReferenceRef } from "@shared/references";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -301,29 +314,47 @@ function ValueRow({ label, value, mono }: { label: string; value?: string | numb
   );
 }
 
-function EditableRow({
-  label,
+// --- Inline field helpers (People profile editor pattern) ---
+
+function FieldValue({ value, mono }: { value?: string | number | boolean | null; mono?: boolean }) {
+  const display = value === true ? "Yes" : value === false ? "No" : (value ?? "") === "" ? "Not configured" : String(value);
+  return <span className={cn("truncate text-xs text-foreground", mono && "font-mono")}>{display}</span>;
+}
+
+function FieldInput({
   value,
-  onChange,
-  mono,
   placeholder,
+  mono,
+  onSave,
 }: {
-  label: string;
   value: string;
-  onChange: (v: string) => void;
-  mono?: boolean;
   placeholder?: string;
+  mono?: boolean;
+  onSave: (v: string) => void;
 }) {
   return (
-    <div className="grid grid-cols-[9rem_1fr] gap-3 border-b border-border/40 py-2 last:border-0 items-center">
-      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
-      <Input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder || label}
-        className={cn("h-8 text-sm", mono && "font-mono text-xs")}
-      />
-    </div>
+    <Input
+      key={value}
+      defaultValue={value}
+      placeholder={placeholder}
+      className={cn(mono && "font-mono")}
+      onBlur={(e) => {
+        const next = e.target.value.trim();
+        if (next && next !== value) {
+          onSave(next);
+        } else if (!next) {
+          e.target.value = value;
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.currentTarget.blur();
+        } else if (e.key === "Escape") {
+          e.currentTarget.value = value;
+          e.currentTarget.blur();
+        }
+      }}
+    />
   );
 }
 
@@ -544,13 +575,11 @@ function ConnectionSelect({
   value,
   onChange,
   onNewConnection,
-  onUpdateCredential,
 }: {
   provider: string;
   value: string;
   onChange: (connectionId: string) => void;
   onNewConnection: () => void;
-  onUpdateCredential?: () => void;
 }) {
   const { data: connections } = useQuery<ProviderConnection[]>({
     queryKey: ["/api/provider-connections"],
@@ -559,64 +588,40 @@ function ConnectionSelect({
   const filtered = (connections || []).filter((c) => c.provider === provider);
 
   return (
-    <div className="grid grid-cols-[9rem_1fr] gap-3 border-b border-border/40 py-2 last:border-0 items-center">
-      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Connection</div>
-      <div className="flex items-center gap-2">
-        <Select
-          value={value}
-          onValueChange={(v) => {
-            if (v === "__new__") {
-              onNewConnection();
-            } else {
-              onChange(v);
-            }
-          }}
-        >
-          <SelectTrigger className="h-8 flex-1 text-sm">
-            <SelectValue placeholder="Select connection" />
-          </SelectTrigger>
-          <SelectContent>
-            {filtered.length === 0 && (
-              <div className="px-3 py-2 text-xs text-muted-foreground">No {provider} connections</div>
-            )}
-            {filtered.map((c) => (
-              <SelectItem key={c.id} value={String(c.id)}>
-                {c.label}
-              </SelectItem>
-            ))}
-            <SelectSeparator />
-            <SelectItem value="__new__">
-              <span className="flex items-center gap-1.5">
-                <Plus className="h-3.5 w-3.5" /> New connection
-              </span>
-            </SelectItem>
-          </SelectContent>
-        </Select>
-        {value && onUpdateCredential && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-            onClick={onUpdateCredential}
-            title="Update API token"
-          >
-            <KeyRound className="h-3.5 w-3.5" />
-          </Button>
+    <Select
+      value={value}
+      onValueChange={(v) => {
+        if (v === "__new__") {
+          onNewConnection();
+        } else {
+          onChange(v);
+        }
+      }}
+    >
+      <SelectTrigger>
+        <SelectValue placeholder="Select connection" />
+      </SelectTrigger>
+      <SelectContent>
+        {filtered.length === 0 && (
+          <div className="px-3 py-2 text-xs text-muted-foreground">No {provider} connections</div>
         )}
-      </div>
-    </div>
+        {filtered.map((c) => (
+          <SelectItem key={c.id} value={String(c.id)}>
+            {c.label}
+          </SelectItem>
+        ))}
+        <SelectSeparator />
+        <SelectItem value="__new__">
+          <span className="flex items-center gap-1.5">
+            <Plus className="h-3.5 w-3.5" /> New connection
+          </span>
+        </SelectItem>
+      </SelectContent>
+    </Select>
   );
 }
 
 // --- Source Binding Card ---
-
-interface SourceDraft {
-  connectionId: string;
-  owner: string;
-  repo: string;
-  branch: string;
-  codeIndexingEnabled: boolean;
-}
 
 function SourceBindingCard({
   binding,
@@ -628,38 +633,13 @@ function SourceBindingCard({
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: allConnections } = useQuery<ProviderConnection[]>({ queryKey: ["/api/provider-connections"] });
-  const [editing, setEditing] = useState(false);
   const [showNewConn, setShowNewConn] = useState(false);
   const [showUpdateToken, setShowUpdateToken] = useState(false);
-  const [draft, setDraft] = useState<SourceDraft>({
-    connectionId: binding.connection?.id ? String(binding.connection.id) : "",
-    owner: binding.owner || "",
-    repo: binding.repo || "",
-    branch: binding.branch || "",
-    codeIndexingEnabled: Boolean(binding.codeIndexingEnabled),
-  });
 
-  const resetDraft = useCallback(() => {
-    setDraft({
-      connectionId: binding.connection?.id ? String(binding.connection.id) : "",
-      owner: binding.owner || "",
-      repo: binding.repo || "",
-      branch: binding.branch || "",
-      codeIndexingEnabled: Boolean(binding.codeIndexingEnabled),
-    });
-    setShowNewConn(false);
-    setShowUpdateToken(false);
-  }, [binding]);
+  const connectionId = binding.connection?.id ? String(binding.connection.id) : "";
 
   const saveMutation = useMutation({
-    mutationFn: async () => {
-      const body: Record<string, unknown> = {};
-      if (draft.connectionId) body.connectionId = Number(draft.connectionId);
-      if (draft.owner) body.owner = draft.owner;
-      if (draft.repo) body.repo = draft.repo;
-      if (draft.branch) body.branch = draft.branch;
-      body.codeIndexingEnabled = draft.codeIndexingEnabled;
-
+    mutationFn: async (body: Record<string, unknown>) => {
       const res = await fetch(`/api/platforms/environments/${environmentId}/source-binding`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -673,8 +653,6 @@ function SourceBindingCard({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/platforms/environments", environmentId, "details"] });
-      setEditing(false);
-      setShowNewConn(false);
       toast({ title: "Source binding saved" });
     },
     onError: (err: Error) => {
@@ -682,108 +660,100 @@ function SourceBindingCard({
     },
   });
 
-  const handleCancel = () => {
-    resetDraft();
-    setEditing(false);
-  };
-
   const handleNewConnectionCreated = (conn: ProviderConnection) => {
     queryClient.invalidateQueries({ queryKey: ["/api/provider-connections"] });
-    setDraft((d) => ({ ...d, connectionId: String(conn.id) }));
     setShowNewConn(false);
+    saveMutation.mutate({ connectionId: conn.id });
   };
 
-  if (!editing) {
-    return (
-      <div>
-        <div className="flex items-center justify-end gap-2 px-2 pb-1">
-          {binding.inferred && <Badge variant="outline">inferred</Badge>}
-          <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => { resetDraft(); setEditing(true); }}>
-            <Pencil className="h-3.5 w-3.5" /> Edit
-          </Button>
-        </div>
-        <div>
-          <ValueRow label="Provider" value={binding.provider} />
-          <ValueRow label="Connection" value={binding.connection?.label || "No connection selected"} />
-          <ValueRow label="Repository" value={`${binding.owner || ""}/${binding.repo || ""}`} mono />
-          <ValueRow label="Branch" value={binding.branch} mono />
-          <ValueRow label="Auto deploy" value={binding.autoDeploy} />
-          <ValueRow label="Code indexing" value={binding.codeIndexingEnabled ? "Enabled" : "Disabled"} />
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-0">
-        <ValueRow label="Provider" value={binding.provider} />
+    <div>
+      {binding.inferred && (
+        <div className="flex justify-end px-2 pb-1">
+          <Badge variant="outline">inferred</Badge>
+        </div>
+      )}
+      <ProfileTreeRow label="Provider" icon={<Cable className="h-3.5 w-3.5" />} hasValue showEmpty>
+        <FieldValue value={humanize(binding.provider || "github")} />
+      </ProfileTreeRow>
+      <ProfileTreeRow
+        label="Connection"
+        icon={<Link2 className="h-3.5 w-3.5" />}
+        hasValue
+        showEmpty
+        actionContent={connectionId ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-5 w-5 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+            onClick={() => { setShowUpdateToken((v) => !v); setShowNewConn(false); }}
+            title="Update API token"
+            aria-label="Update API token"
+          >
+            <KeyRound className="h-3 w-3" />
+          </Button>
+        ) : undefined}
+      >
         <ConnectionSelect
           provider="github"
-          value={draft.connectionId}
-          onChange={(id) => { setDraft((d) => ({ ...d, connectionId: id })); setShowUpdateToken(false); }}
+          value={connectionId}
+          onChange={(id) => { setShowUpdateToken(false); saveMutation.mutate({ connectionId: Number(id) }); }}
           onNewConnection={() => { setShowNewConn(true); setShowUpdateToken(false); }}
-          onUpdateCredential={() => { setShowUpdateToken(true); setShowNewConn(false); }}
         />
-        {showNewConn && (
-          <div className="py-2">
-            <InlineConnectionForm
-              provider="github"
-              onCreated={handleNewConnectionCreated}
-              onCancel={() => setShowNewConn(false)}
-            />
-          </div>
-        )}
-        {showUpdateToken && draft.connectionId && (
-          <div className="py-2">
-            <UpdateCredentialForm
-              connectionId={Number(draft.connectionId)}
-              connectionLabel={allConnections?.find((c) => c.id === Number(draft.connectionId))?.label || "Connection"}
-              provider="github"
-              onDone={() => setShowUpdateToken(false)}
-            />
-          </div>
-        )}
-        <EditableRow label="Owner" value={draft.owner} onChange={(v) => setDraft((d) => ({ ...d, owner: v }))} mono placeholder="e.g. mantra-agent" />
-        <EditableRow label="Repository" value={draft.repo} onChange={(v) => setDraft((d) => ({ ...d, repo: v }))} mono placeholder="e.g. mono" />
-        <EditableRow label="Branch" value={draft.branch} onChange={(v) => setDraft((d) => ({ ...d, branch: v }))} mono placeholder="e.g. main" />
-        <div className="grid grid-cols-[9rem_1fr] gap-3 border-b border-border/40 py-3 items-start">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Code indexing</div>
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1">
-              <div className="text-sm text-foreground">Enable GitNexus for this environment</div>
-              <p className="text-xs text-muted-foreground">Turn this on only for the canonical repo/branch you want indexed. Duplicate live/main environments and small repos can stay off.</p>
-            </div>
-            <Switch
-              checked={draft.codeIndexingEnabled}
-              onCheckedChange={(checked) => setDraft((d) => ({ ...d, codeIndexingEnabled: checked }))}
-            />
-          </div>
+      </ProfileTreeRow>
+      {showNewConn && (
+        <div className="px-2 py-2">
+          <InlineConnectionForm
+            provider="github"
+            onCreated={handleNewConnectionCreated}
+            onCancel={() => setShowNewConn(false)}
+          />
         </div>
-        <div className="flex items-center gap-2 pt-3">
-          <Button variant="ghost" size="sm" onClick={handleCancel}>Cancel</Button>
-          <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
-            {saveMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
-            Save
-          </Button>
+      )}
+      {showUpdateToken && connectionId && (
+        <div className="px-2 py-2">
+          <UpdateCredentialForm
+            connectionId={Number(connectionId)}
+            connectionLabel={allConnections?.find((c) => c.id === Number(connectionId))?.label || "Connection"}
+            provider="github"
+            onDone={() => setShowUpdateToken(false)}
+          />
         </div>
+      )}
+      <ProfileTreeRow label="Owner" icon={<User className="h-3.5 w-3.5" />} hasValue showEmpty>
+        <FieldInput value={binding.owner || ""} mono placeholder="e.g. mantra-agent" onSave={(v) => saveMutation.mutate({ owner: v })} />
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Repository" icon={<FolderGit2 className="h-3.5 w-3.5" />} hasValue showEmpty>
+        <FieldInput value={binding.repo || ""} mono placeholder="e.g. mono" onSave={(v) => saveMutation.mutate({ repo: v })} />
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Branch" icon={<GitBranch className="h-3.5 w-3.5" />} hasValue showEmpty>
+        <FieldInput value={binding.branch || ""} mono placeholder="e.g. main" onSave={(v) => saveMutation.mutate({ branch: v })} />
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Auto deploy" icon={<Zap className="h-3.5 w-3.5" />} hasValue showEmpty>
+        <FieldValue value={binding.autoDeploy} />
+      </ProfileTreeRow>
+      <ProfileTreeRow
+        label="Code indexing"
+        icon={<Code2 className="h-3.5 w-3.5" />}
+        hasValue
+        showEmpty
+        expandedContent={
+          <p className="text-xs text-muted-foreground">
+            Enable GitNexus for this environment. Turn this on only for the canonical repo/branch you want indexed. Duplicate live/main environments and small repos can stay off.
+          </p>
+        }
+      >
+        <Switch
+          checked={Boolean(binding.codeIndexingEnabled)}
+          disabled={saveMutation.isPending}
+          onCheckedChange={(checked) => saveMutation.mutate({ codeIndexingEnabled: checked })}
+        />
+      </ProfileTreeRow>
     </div>
   );
 }
 
 // --- Hosting Binding Card ---
-
-interface HostingDraft {
-  hostingProvider: string;
-  connectionId: string;
-  projectId: string;
-  projectName: string;
-  providerEnvironmentId: string;
-  providerEnvironmentName: string;
-  serviceId: string;
-  serviceName: string;
-  publicUrl: string;
-  staticUrl: string;
-}
 
 function HostingBindingCard({
   binding,
@@ -795,53 +765,17 @@ function HostingBindingCard({
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: allConnections } = useQuery<ProviderConnection[]>({ queryKey: ["/api/provider-connections"] });
-  const [editing, setEditing] = useState(false);
   const [showNewConn, setShowNewConn] = useState(false);
   const [showUpdateToken, setShowUpdateToken] = useState(false);
   const resolvedProvider = binding.provider || binding.connection?.provider || "railway";
-  const [draft, setDraft] = useState<HostingDraft>({
-    hostingProvider: resolvedProvider,
-    connectionId: binding.connection?.id ? String(binding.connection.id) : "",
-    projectId: binding.projectId || "",
-    projectName: binding.projectName || "",
-    providerEnvironmentId: binding.providerEnvironmentId || "",
-    providerEnvironmentName: binding.providerEnvironmentName || "",
-    serviceId: binding.serviceId || "",
-    serviceName: binding.serviceName || "",
-    publicUrl: binding.publicUrl || "",
-    staticUrl: binding.staticUrl || "",
-  });
+  // Provider select is client-local: the server infers provider from the bound connection.
+  const [hostingProvider, setHostingProvider] = useState(resolvedProvider);
 
-  const resetDraft = useCallback(() => {
-    setDraft({
-      hostingProvider: binding.provider || binding.connection?.provider || "railway",
-      connectionId: binding.connection?.id ? String(binding.connection.id) : "",
-      projectId: binding.projectId || "",
-      projectName: binding.projectName || "",
-      providerEnvironmentId: binding.providerEnvironmentId || "",
-      providerEnvironmentName: binding.providerEnvironmentName || "",
-      serviceId: binding.serviceId || "",
-      serviceName: binding.serviceName || "",
-      publicUrl: binding.publicUrl || "",
-      staticUrl: binding.staticUrl || "",
-    });
-    setShowNewConn(false);
-    setShowUpdateToken(false);
-  }, [binding]);
+  const connectionId = binding.connection?.id ? String(binding.connection.id) : "";
+  const isCloudflare = hostingProvider === "cloudflare";
 
   const saveMutation = useMutation({
-    mutationFn: async () => {
-      const body: Record<string, unknown> = {};
-      if (draft.connectionId) body.connectionId = Number(draft.connectionId);
-      if (draft.projectId) body.projectId = draft.projectId;
-      if (draft.projectName) body.projectName = draft.projectName;
-      if (draft.providerEnvironmentId) body.providerEnvironmentId = draft.providerEnvironmentId;
-      if (draft.providerEnvironmentName) body.providerEnvironmentName = draft.providerEnvironmentName;
-      if (draft.serviceId) body.serviceId = draft.serviceId;
-      if (draft.serviceName) body.serviceName = draft.serviceName;
-      if (draft.publicUrl) body.publicUrl = draft.publicUrl;
-      if (draft.staticUrl) body.staticUrl = draft.staticUrl;
-
+    mutationFn: async (body: Record<string, unknown>) => {
       const res = await fetch(`/api/platforms/environments/${environmentId}/hosting-binding`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -855,8 +789,6 @@ function HostingBindingCard({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/platforms/environments", environmentId, "details"] });
-      setEditing(false);
-      setShowNewConn(false);
       toast({ title: "Hosting binding saved" });
     },
     onError: (err: Error) => {
@@ -864,112 +796,117 @@ function HostingBindingCard({
     },
   });
 
-  const handleCancel = () => {
-    resetDraft();
-    setEditing(false);
-  };
-
   const handleNewConnectionCreated = (conn: ProviderConnection) => {
     queryClient.invalidateQueries({ queryKey: ["/api/provider-connections"] });
-    setDraft((d) => ({ ...d, connectionId: String(conn.id) }));
     setShowNewConn(false);
+    saveMutation.mutate({ connectionId: conn.id });
   };
 
-  if (!editing) {
-    return (
-      <div>
-        <div className="flex items-center justify-end gap-2 px-2 pb-1">
-          {binding.inferred && <Badge variant="outline">inferred</Badge>}
-          <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => { resetDraft(); setEditing(true); }}>
-            <Pencil className="h-3.5 w-3.5" /> Edit
-          </Button>
-        </div>
-        <div>
-          <ValueRow label="Provider" value={humanize(resolvedProvider)} />
-          <ValueRow label="Connection" value={binding.connection?.label || "No connection selected"} />
-          {resolvedProvider === "cloudflare" ? (
-            <>
-              <ValueRow label="Account ID" value={binding.projectId} mono />
-              <ValueRow label="Pages project" value={binding.projectName} />
-              <ValueRow label="Environment" value={binding.providerEnvironmentId || "production"} />
-            </>
-          ) : (
-            <>
-              <ValueRow label="Project" value={binding.projectName || binding.projectId} />
-              <ValueRow label="Environment" value={binding.providerEnvironmentName || binding.providerEnvironmentId} />
-              <ValueRow label="Service" value={binding.serviceName || binding.serviceId} />
-            </>
-          )}
-          <ValueRow label="Public URL" value={binding.publicUrl} mono />
-          {binding.staticUrl && <ValueRow label="Static URL" value={binding.staticUrl} mono />}
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-0">
-        <div className="grid grid-cols-[9rem_1fr] gap-3 border-b border-border/40 py-2 items-center">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Provider</div>
-          <Select value={draft.hostingProvider} onValueChange={(v) => { setDraft((d) => ({ ...d, hostingProvider: v, connectionId: "" })); setShowNewConn(false); setShowUpdateToken(false); }}>
-            <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="railway">Railway</SelectItem>
-              <SelectItem value="cloudflare">Cloudflare</SelectItem>
-            </SelectContent>
-          </Select>
+    <div>
+      {binding.inferred && (
+        <div className="flex justify-end px-2 pb-1">
+          <Badge variant="outline">inferred</Badge>
         </div>
-        <ConnectionSelect
-          provider={draft.hostingProvider}
-          value={draft.connectionId}
-          onChange={(id) => { setDraft((d) => ({ ...d, connectionId: id })); setShowUpdateToken(false); }}
-          onNewConnection={() => { setShowNewConn(true); setShowUpdateToken(false); }}
-          onUpdateCredential={() => { setShowUpdateToken(true); setShowNewConn(false); }}
-        />
-        {showNewConn && (
-          <div className="py-2">
-            <InlineConnectionForm
-              provider={draft.hostingProvider}
-              onCreated={handleNewConnectionCreated}
-              onCancel={() => setShowNewConn(false)}
-            />
-          </div>
-        )}
-        {showUpdateToken && draft.connectionId && (
-          <div className="py-2">
-            <UpdateCredentialForm
-              connectionId={Number(draft.connectionId)}
-              connectionLabel={allConnections?.find((c) => c.id === Number(draft.connectionId))?.label || "Connection"}
-              provider={draft.hostingProvider}
-              onDone={() => setShowUpdateToken(false)}
-            />
-          </div>
-        )}
-        {draft.hostingProvider === "cloudflare" ? (
-          <>
-            <EditableRow label="Account ID" value={draft.projectId} onChange={(v) => setDraft((d) => ({ ...d, projectId: v }))} mono placeholder="Cloudflare account ID" />
-            <EditableRow label="Pages project" value={draft.projectName} onChange={(v) => setDraft((d) => ({ ...d, projectName: v }))} placeholder="e.g. website" />
-            <EditableRow label="Environment" value={draft.providerEnvironmentId} onChange={(v) => setDraft((d) => ({ ...d, providerEnvironmentId: v }))} placeholder="e.g. production" />
-          </>
-        ) : (
-          <>
-            <EditableRow label="Project ID" value={draft.projectId} onChange={(v) => setDraft((d) => ({ ...d, projectId: v }))} mono placeholder="Railway project UUID" />
-            <EditableRow label="Project name" value={draft.projectName} onChange={(v) => setDraft((d) => ({ ...d, projectName: v }))} placeholder="e.g. mantra" />
-            <EditableRow label="Env ID" value={draft.providerEnvironmentId} onChange={(v) => setDraft((d) => ({ ...d, providerEnvironmentId: v }))} mono placeholder="Railway environment UUID" />
-            <EditableRow label="Env name" value={draft.providerEnvironmentName} onChange={(v) => setDraft((d) => ({ ...d, providerEnvironmentName: v }))} placeholder="e.g. production" />
-            <EditableRow label="Service ID" value={draft.serviceId} onChange={(v) => setDraft((d) => ({ ...d, serviceId: v }))} mono placeholder="Railway service UUID" />
-            <EditableRow label="Service name" value={draft.serviceName} onChange={(v) => setDraft((d) => ({ ...d, serviceName: v }))} placeholder="e.g. mono-prod" />
-          </>
-        )}
-        <EditableRow label="Public URL" value={draft.publicUrl} onChange={(v) => setDraft((d) => ({ ...d, publicUrl: v }))} mono placeholder="https://..." />
-        <EditableRow label="Static URL" value={draft.staticUrl} onChange={(v) => setDraft((d) => ({ ...d, staticUrl: v }))} mono placeholder="https://..." />
-        <div className="flex items-center gap-2 pt-3">
-          <Button variant="ghost" size="sm" onClick={handleCancel}>Cancel</Button>
-          <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
-            {saveMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
-            Save
+      )}
+      <ProfileTreeRow label="Provider" icon={<Server className="h-3.5 w-3.5" />} hasValue showEmpty>
+        <Select
+          value={hostingProvider}
+          onValueChange={(v) => { setHostingProvider(v); setShowNewConn(false); setShowUpdateToken(false); }}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="railway">Railway</SelectItem>
+            <SelectItem value="cloudflare">Cloudflare</SelectItem>
+          </SelectContent>
+        </Select>
+      </ProfileTreeRow>
+      <ProfileTreeRow
+        label="Connection"
+        icon={<Link2 className="h-3.5 w-3.5" />}
+        hasValue
+        showEmpty
+        actionContent={connectionId ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-5 w-5 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+            onClick={() => { setShowUpdateToken((v) => !v); setShowNewConn(false); }}
+            title="Update API token"
+            aria-label="Update API token"
+          >
+            <KeyRound className="h-3 w-3" />
           </Button>
+        ) : undefined}
+      >
+        <ConnectionSelect
+          provider={hostingProvider}
+          value={connectionId}
+          onChange={(id) => { setShowUpdateToken(false); saveMutation.mutate({ connectionId: Number(id) }); }}
+          onNewConnection={() => { setShowNewConn(true); setShowUpdateToken(false); }}
+        />
+      </ProfileTreeRow>
+      {showNewConn && (
+        <div className="px-2 py-2">
+          <InlineConnectionForm
+            provider={hostingProvider}
+            onCreated={handleNewConnectionCreated}
+            onCancel={() => setShowNewConn(false)}
+          />
         </div>
+      )}
+      {showUpdateToken && connectionId && (
+        <div className="px-2 py-2">
+          <UpdateCredentialForm
+            connectionId={Number(connectionId)}
+            connectionLabel={allConnections?.find((c) => c.id === Number(connectionId))?.label || "Connection"}
+            provider={hostingProvider}
+            onDone={() => setShowUpdateToken(false)}
+          />
+        </div>
+      )}
+      {isCloudflare ? (
+        <>
+          <ProfileTreeRow label="Account ID" icon={<Hash className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <FieldInput value={binding.projectId || ""} mono placeholder="Cloudflare account ID" onSave={(v) => saveMutation.mutate({ projectId: v })} />
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Pages project" icon={<FolderGit2 className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <FieldInput value={binding.projectName || ""} placeholder="e.g. website" onSave={(v) => saveMutation.mutate({ projectName: v })} />
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Environment" icon={<Layers className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <FieldInput value={binding.providerEnvironmentId || ""} placeholder="e.g. production" onSave={(v) => saveMutation.mutate({ providerEnvironmentId: v })} />
+          </ProfileTreeRow>
+        </>
+      ) : (
+        <>
+          <ProfileTreeRow label="Project ID" icon={<Hash className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <FieldInput value={binding.projectId || ""} mono placeholder="Railway project UUID" onSave={(v) => saveMutation.mutate({ projectId: v })} />
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Project name" icon={<FolderGit2 className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <FieldInput value={binding.projectName || ""} placeholder="e.g. mantra" onSave={(v) => saveMutation.mutate({ projectName: v })} />
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Env ID" icon={<Layers className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <FieldInput value={binding.providerEnvironmentId || ""} mono placeholder="Railway environment UUID" onSave={(v) => saveMutation.mutate({ providerEnvironmentId: v })} />
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Env name" icon={<Layers className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <FieldInput value={binding.providerEnvironmentName || ""} placeholder="e.g. production" onSave={(v) => saveMutation.mutate({ providerEnvironmentName: v })} />
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Service ID" icon={<Cpu className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <FieldInput value={binding.serviceId || ""} mono placeholder="Railway service UUID" onSave={(v) => saveMutation.mutate({ serviceId: v })} />
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Service name" icon={<Cpu className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <FieldInput value={binding.serviceName || ""} placeholder="e.g. mono-prod" onSave={(v) => saveMutation.mutate({ serviceName: v })} />
+          </ProfileTreeRow>
+        </>
+      )}
+      <ProfileTreeRow label="Public URL" icon={<Globe className="h-3.5 w-3.5" />} hasValue showEmpty>
+        <FieldInput value={binding.publicUrl || ""} mono placeholder="https://..." onSave={(v) => saveMutation.mutate({ publicUrl: v })} />
+      </ProfileTreeRow>
+      <ProfileTreeRow label="Static URL" icon={<ExternalLink className="h-3.5 w-3.5" />} hasValue={Boolean(binding.staticUrl)} showEmpty>
+        <FieldInput value={binding.staticUrl || ""} mono placeholder="https://..." onSave={(v) => saveMutation.mutate({ staticUrl: v })} />
+      </ProfileTreeRow>
     </div>
   );
 }
@@ -1720,11 +1657,23 @@ const ARTIFACT_KIND_LABELS: Record<string, string> = Object.fromEntries(
   CONTEXT_ARTIFACT_KINDS.map((k) => [k.value, k.label]),
 );
 
+function contextPageReference(artifact: ContextArtifact) {
+  return createReferenceRef({
+    type: "page",
+    id: artifact.libraryPageId,
+    metadata: {
+      label: artifact.pageTitle,
+      href: `/info#library?page=${encodeURIComponent(artifact.libraryPageId)}`,
+    },
+  });
+}
+
 function ContextArtifactsCard({ artifacts, environmentId }: { artifacts: ContextArtifact[]; environmentId: number }) {
   const [adding, setAdding] = useState(false);
   const [newKind, setNewKind] = useState("");
   const [selectedPage, setSelectedPage] = useState<{ id: string; title: string } | null>(null);
   const [pagePickerOpen, setPagePickerOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<ContextArtifact | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -1765,30 +1714,18 @@ function ContextArtifactsCard({ artifacts, environmentId }: { artifacts: Context
 
   return (
     <div>
-      {artifacts.length > 0 && (
-        <div className="space-y-1">
-          {artifacts.map((a) => (
-              <div key={a.id} className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs hover:bg-muted/40">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0">{ARTIFACT_KIND_LABELS[a.kind] ?? a.kind}</Badge>
-                  <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  <span className="truncate">{a.pageTitle}</span>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-5 w-5 p-0 shrink-0 text-muted-foreground hover:text-destructive"
-                  onClick={() => removeMutation.mutate(a.id)}
-                  disabled={removeMutation.isPending}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-              </div>
-            ))}
-        </div>
+      {!adding && (
+        <button
+          type="button"
+          onClick={() => setAdding(true)}
+          className="flex items-center gap-2 w-full px-2 py-1.5 text-sm text-cta hover:text-cta/80 hover:bg-accent/70 rounded-md transition-colors"
+        >
+          <Plus className="h-3.5 w-3.5 shrink-0" />
+          <span>New Context</span>
+        </button>
       )}
       {adding && (
-        <div className="mt-2 space-y-2 rounded border border-border/30 p-2">
+        <div className="mb-2 space-y-2 rounded border border-border/30 p-2">
           <div className="grid gap-1.5">
             <Label className="text-xs">Kind</Label>
             <Select value={newKind} onValueChange={setNewKind}>
@@ -1841,16 +1778,51 @@ function ContextArtifactsCard({ artifacts, environmentId }: { artifacts: Context
           </div>
         </div>
       )}
-      {!adding && (
-        <button
-          type="button"
-          onClick={() => setAdding(true)}
-          className="flex items-center gap-2 w-full px-2 py-1.5 text-sm text-cta hover:text-cta/80 hover:bg-accent/70 rounded-md transition-colors"
-        >
-          <Plus className="h-3.5 w-3.5 shrink-0" />
-          <span>New Context</span>
-        </button>
+      {artifacts.length > 0 && (
+        <div className="space-y-1">
+          {artifacts.map((a) => {
+            const ref = contextPageReference(a);
+            return (
+              <div key={a.id} className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs hover:bg-muted/40">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0">{ARTIFACT_KIND_LABELS[a.kind] ?? a.kind}</Badge>
+                  <ReferenceRenderer key={ref.canonical} refValue={ref} surface="simple-row" className="max-w-[14rem]" />
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 w-5 p-0 shrink-0 text-muted-foreground hover:text-destructive"
+                  onClick={() => setPendingDelete(a)}
+                  disabled={removeMutation.isPending}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
+            );
+          })}
+        </div>
       )}
+      <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => !open && setPendingDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove context artifact?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove “{pendingDelete?.pageTitle}” from this environment’s context. The Library page itself is not deleted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingDelete) removeMutation.mutate(pendingDelete.id);
+                setPendingDelete(null);
+              }}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <LibraryPagePickerDialog
         open={pagePickerOpen}
         onOpenChange={setPagePickerOpen}
@@ -1976,9 +1948,15 @@ function EnvironmentDetailsConfigureCard({ details, environmentId }: { details: 
       </EnvironmentSection>
       <EnvironmentSection label="Promotion">
         <div>
-          <ValueRow label="Source branch" value={details.promotion.sourceBranch} mono />
-          <ValueRow label="Target branch" value={details.promotion.targetBranch || "—"} mono />
-          <ValueRow label="Mode" value={details.promotion.mode} />
+          <ProfileTreeRow label="Source branch" icon={<GitBranch className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <FieldValue value={details.promotion.sourceBranch} mono />
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Target branch" icon={<GitMerge className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <FieldValue value={details.promotion.targetBranch || "—"} mono />
+          </ProfileTreeRow>
+          <ProfileTreeRow label="Mode" icon={<Waypoints className="h-3.5 w-3.5" />} hasValue showEmpty>
+            <FieldValue value={humanize(details.promotion.mode)} />
+          </ProfileTreeRow>
         </div>
       </EnvironmentSection>
       <EnvironmentSection label="Context">
