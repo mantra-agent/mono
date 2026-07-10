@@ -267,6 +267,27 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
+
+  app.post("/api/work/projects/:id/pages", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const { pageId, title, slug } = req.body;
+      if (!pageId || typeof pageId !== "string") return res.status(400).json({ error: "Page id is required", operation: "add_page" });
+      if (!title || typeof title !== "string") return res.status(400).json({ error: "Page title is required", operation: "add_page" });
+      const project = await fileProjectStorage.addPage(id, {
+        id: pageId,
+        title,
+        slug: typeof slug === "string" ? slug : undefined,
+        addedAt: new Date().toISOString(),
+      });
+      if (!project) return res.status(404).json({ error: `Project ${id} not found`, operation: "add_page" });
+      res.json(project);
+    } catch (error: unknown) {
+      const err = routeError(error, "add_page");
+      res.status(500).json({ error: err.message, operation: err.operation });
+    }
+  });
+
   app.post("/api/work/projects/:id/notes", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);

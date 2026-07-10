@@ -38,6 +38,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
@@ -85,11 +86,13 @@ import {
   ListTodo,
   Package,
   CalendarDays,
+  Search as SearchIcon,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { useTimezone, formatDate as tzFormatDate, formatDateTime, formatDateOnly } from "@/hooks/use-timezone";
 import { localDayDiff } from "@/lib/local-date";
 import type { Task, Project, PriorityLevel, TaskStatus, ProjectStatus, ImpactEffort, Milestone, MilestoneStatus, ProjectNote, ProjectFile } from "@shared/models/work";
@@ -544,6 +547,111 @@ function TagPicker({
   );
 }
 
+
+interface LibraryPickerPage {
+  id: string;
+  title: string;
+  slug: string;
+  oneLiner?: string;
+}
+
+function ProjectPagePickerDialog({
+  open,
+  onOpenChange,
+  onSelect,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSelect: (page: LibraryPickerPage) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const { data: pages } = useQuery<LibraryPickerPage[]>({
+    queryKey: ["/api/info/library", "project-page-picker"],
+    queryFn: async () => {
+      const res = await fetch("/api/info/library", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: open,
+  });
+
+  const filtered = (pages ?? []).filter(page => {
+    const q = query.toLowerCase();
+    return !q || page.title.toLowerCase().includes(q) || page.slug.toLowerCase().includes(q) || page.oneLiner?.toLowerCase().includes(q);
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Add Page</DialogTitle>
+          <DialogDescription>Link an existing Library page to this project.</DialogDescription>
+        </DialogHeader>
+        <div className="relative">
+          <SearchIcon className="absolute left-2 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search pages..."
+            className="pl-7 h-8 text-sm"
+            autoFocus
+            data-testid="input-project-page-search"
+          />
+        </div>
+        <ScrollArea className="max-h-64">
+          {filtered.map(page => (
+            <button
+              key={page.id}
+              type="button"
+              className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-accent/50 flex items-center gap-2"
+              onClick={() => onSelect(page)}
+              data-testid={`button-project-page-pick-${page.id}`}
+            >
+              <FileText className="h-3 w-3 text-muted-foreground shrink-0" />
+              <div className="min-w-0 flex-1">
+                <span className="truncate block">{page.title}</span>
+                {page.oneLiner && <span className="truncate block text-muted-foreground text-[10px]">{page.oneLiner}</span>}
+              </div>
+            </button>
+          ))}
+          {filtered.length === 0 && (
+            <p className="text-xs text-muted-foreground text-center py-3">{query ? "No matching pages" : "No pages found"}</p>
+          )}
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ProjectFileUploadDialog({
+  open,
+  onOpenChange,
+  uploading,
+  onFileSelected,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  uploading: boolean;
+  onFileSelected: (event: React.ChangeEvent<HTMLInputElement>) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Add File</DialogTitle>
+          <DialogDescription>Upload a file and link it to this project.</DialogDescription>
+        </DialogHeader>
+        <label className="flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border/60 bg-card px-4 py-6 text-center hover:bg-accent/50">
+          {uploading ? <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /> : <Upload className="h-5 w-5 text-muted-foreground" />}
+          <span className="text-sm font-medium">{uploading ? "Uploading..." : "Choose a file"}</span>
+          <span className="text-xs text-muted-foreground">The file is stored with the project.</span>
+          <input type="file" className="sr-only" disabled={uploading} onChange={onFileSelected} data-testid="input-project-file-upload" />
+        </label>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function formatRelativeDate(dateStr: string | null, timezone: string, isCompleted?: boolean): string {
   if (!dateStr) return "";
   // Date-only strings ("YYYY-MM-DD") get pinned to local midday so they parse
@@ -992,6 +1100,7 @@ function ProjectsView() {
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [pendingDeleteProject, setPendingDeleteProject] = useState<{ id: number; title: string } | null>(null);
   const [pendingDeleteTask, setPendingDeleteTask] = useState<{ id: number; title: string } | null>(null);
+  const [pendingDeleteMilestone, setPendingDeleteMilestone] = useState<{ projectId: number; milestoneId: number; name: string } | null>(null);
 
   const { data: projects, isLoading } = useQuery<Project[]>({
     queryKey: ["/api/projects/projects"],
@@ -1065,6 +1174,36 @@ function ProjectsView() {
     },
   });
 
+  const deleteMilestoneMutation = useMutation({
+    mutationFn: ({ projectId, milestoneId }: { projectId: number; milestoneId: number }) =>
+      apiRequest("DELETE", `/api/projects/projects/${projectId}/milestones/${milestoneId}`),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects/projects"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects/projects", variables.projectId] });
+      toast({ title: "Milestone deleted" });
+    },
+  });
+
+  const addProjectPageMutation = useMutation({
+    mutationFn: ({ projectId, page }: { projectId: number; page: LibraryPickerPage }) =>
+      apiRequest("POST", `/api/projects/projects/${projectId}/pages`, { pageId: page.id, title: page.title, slug: page.slug }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects/projects"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects/projects", variables.projectId] });
+      toast({ title: "Page linked" });
+    },
+  });
+
+  const addProjectFileMutation = useMutation({
+    mutationFn: ({ projectId, file }: { projectId: number; file: { name: string; mimeType: string; objectKey: string; size: number } }) =>
+      apiRequest("POST", `/api/projects/projects/${projectId}/files`, file),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects/projects"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects/projects", variables.projectId] });
+      toast({ title: "File linked" });
+    },
+  });
+
   if (isLoading || tasksLoading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -1130,6 +1269,25 @@ function ProjectsView() {
     createTaskMutation.mutate({ ...addingTaskTarget, title: newTaskTitle.trim() });
   };
 
+  const uploadProjectFile = async (project: Project, event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      const urlRes = await apiRequest("POST", `/api/projects/projects/${project.id}/files/upload-url`);
+      const { uploadURL, objectPath } = await urlRes.json();
+      await fetch(uploadURL, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
+      await addProjectFileMutation.mutateAsync({
+        projectId: project.id,
+        file: { name: file.name, mimeType: file.type || "application/octet-stream", objectKey: objectPath, size: file.size },
+      });
+    } catch (err: any) {
+      log.error("project file upload failed:", err);
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+    }
+  };
+
+
   return (
     <div className="min-h-full bg-background px-2 py-3 @sm:px-4 @sm:py-4">
       <div className="grid gap-3">
@@ -1181,8 +1339,11 @@ function ProjectsView() {
                     onSaveTask={saveTask}
                     onCancelAddTask={() => { setAddingTaskTarget(null); setNewTaskTitle(""); }}
                     onDeleteProject={() => setPendingDeleteProject({ id: project.id, title: project.title })}
+                    onDeleteMilestone={(milestone) => setPendingDeleteMilestone({ projectId: project.id, milestoneId: milestone.id, name: milestone.name })}
                     onUpdateProject={(data) => updateProjectMutation.mutate({ id: project.id, data })}
                     onUpdateMilestone={(milestoneId, data) => updateMilestoneMutation.mutate({ projectId: project.id, milestoneId, data })}
+                    onAddProjectPage={(targetProject, page) => addProjectPageMutation.mutate({ projectId: targetProject.id, page })}
+                    onUploadProjectFile={uploadProjectFile}
                   />
                 ))}
               </CollapsibleWorkSection>
@@ -1234,6 +1395,31 @@ function ProjectsView() {
                 if (id) deleteTaskMutation.mutate(id);
               }}
               data-testid="button-confirm-delete-project-task"
+            >
+              Delete
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!pendingDeleteMilestone} onOpenChange={(open) => { if (!open) setPendingDeleteMilestone(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete milestone</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete "{pendingDeleteMilestone?.name}". Existing tasks stay on the project.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete-project-milestone">Cancel</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const pending = pendingDeleteMilestone;
+                setPendingDeleteMilestone(null);
+                if (pending) deleteMilestoneMutation.mutate({ projectId: pending.projectId, milestoneId: pending.milestoneId });
+              }}
+              data-testid="button-confirm-delete-project-milestone"
             >
               Delete
             </Button>
@@ -1298,8 +1484,11 @@ function ProjectTreeNode({
   onSaveTask,
   onCancelAddTask,
   onDeleteProject,
+  onDeleteMilestone,
   onUpdateProject,
   onUpdateMilestone,
+  onAddProjectPage,
+  onUploadProjectFile,
 }: {
   project: Project;
   tasks: Task[];
@@ -1323,15 +1512,34 @@ function ProjectTreeNode({
   onSaveTask: () => void;
   onCancelAddTask: () => void;
   onDeleteProject: () => void;
+  onDeleteMilestone: (milestone: Milestone) => void;
   onUpdateProject: (data: any) => void;
   onUpdateMilestone: (milestoneId: number, data: Partial<Milestone>) => void;
+  onAddProjectPage: (project: Project, page: LibraryPickerPage) => void;
+  onUploadProjectFile: (project: Project, event: React.ChangeEvent<HTMLInputElement>) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [expandedMilestones, setExpandedMilestones] = useState<Record<number, boolean>>({});
   const [editingProjectDue, setEditingProjectDue] = useState(false);
   const [projectDueDraft, setProjectDueDraft] = useState("");
+  const [editingProjectTitle, setEditingProjectTitle] = useState(false);
+  const [projectTitleDraft, setProjectTitleDraft] = useState(project.title);
+  const [pagePickerOpen, setPagePickerOpen] = useState(false);
+  const [filePickerOpen, setFilePickerOpen] = useState(false);
   const [editingMilestoneDueId, setEditingMilestoneDueId] = useState<number | null>(null);
   const [milestoneDueDraft, setMilestoneDueDraft] = useState("");
+  const [editingMilestoneId, setEditingMilestoneId] = useState<number | null>(null);
+  const [milestoneNameDraft, setMilestoneNameDraft] = useState("");
+  useEffect(() => {
+    if (!editingProjectTitle) setProjectTitleDraft(project.title);
+  }, [editingProjectTitle, project.title]);
+
+  const saveProjectTitle = () => {
+    const nextTitle = projectTitleDraft.trim();
+    if (nextTitle && nextTitle !== project.title) onUpdateProject({ title: nextTitle });
+    setEditingProjectTitle(false);
+  };
+
   const projectDueLabel = formatWorkDueDate(project.dueDate);
   const isActive = project.status === "active";
   const isAddingMilestone = addingMilestoneProjectId === project.id;
@@ -1363,6 +1571,23 @@ function ProjectTreeNode({
 
   return (
     <div className="min-w-0" data-testid={`tree-node-project-${project.id}`}>
+      <ProjectPagePickerDialog
+        open={pagePickerOpen}
+        onOpenChange={setPagePickerOpen}
+        onSelect={(page) => {
+          onAddProjectPage(project, page);
+          setPagePickerOpen(false);
+        }}
+      />
+      <ProjectFileUploadDialog
+        open={filePickerOpen}
+        onOpenChange={setFilePickerOpen}
+        uploading={false}
+        onFileSelected={(event) => {
+          onUploadProjectFile(project, event);
+          setFilePickerOpen(false);
+        }}
+      />
       <div className="flex min-w-0 items-stretch" style={{ paddingLeft: indentPx }}>
         <div className="flex-1 min-w-0 relative overflow-hidden">
           <div
@@ -1375,9 +1600,25 @@ function ProjectTreeNode({
             data-testid={`card-project-${project.id}`}
           >
             <FolderKanban className="h-3.5 w-3.5 shrink-0" data-testid={`icon-project-${project.id}`} />
-            <span className="truncate flex-1 min-w-0" data-testid={`text-project-title-${project.id}`}>
-              {project.title}
-            </span>
+            {editingProjectTitle ? (
+              <Input
+                value={projectTitleDraft}
+                onChange={e => setProjectTitleDraft(e.target.value)}
+                onBlur={saveProjectTitle}
+                onKeyDown={e => {
+                  if (e.key === "Enter") saveProjectTitle();
+                  if (e.key === "Escape") { setProjectTitleDraft(project.title); setEditingProjectTitle(false); }
+                }}
+                onClick={e => e.stopPropagation()}
+                className="h-7 flex-1 bg-transparent text-sm"
+                autoFocus
+                data-testid={`input-project-title-${project.id}`}
+              />
+            ) : (
+              <span className="truncate flex-1 min-w-0" data-testid={`text-project-title-${project.id}`}>
+                {project.title}
+              </span>
+            )}
             {editingProjectDue ? (
               <Input
                 type="date"
@@ -1442,6 +1683,15 @@ function ProjectTreeNode({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuSub>
+                    <DropdownMenuSubTrigger data-testid={`menu-project-goal-${project.id}`}>
+                      <Target className="h-3.5 w-3.5 mr-2" />
+                      Goal
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="w-64 p-2">
+                      <GoalSelector goalId={project.goalId} onChange={(goalId) => onUpdateProject({ goalId })} />
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                  <DropdownMenuSub>
                     <DropdownMenuSubTrigger data-testid={`menu-project-status-${project.id}`}>
                       <Package className="h-3.5 w-3.5 mr-2" />
                       Status
@@ -1463,6 +1713,42 @@ function ProjectTreeNode({
                       ))}
                     </DropdownMenuSubContent>
                   </DropdownMenuSub>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger data-testid={`menu-project-tags-${project.id}`}>
+                      <Tag className="h-3.5 w-3.5 mr-2" />
+                      Tags
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="w-40">
+                      <TagMenuItems selectedTags={project.tags} onChange={(tags) => onUpdateProject({ tags })} />
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger data-testid={`menu-project-owner-${project.id}`}>
+                      {project.owner === "me" ? <User className="h-3.5 w-3.5 mr-2" /> : <Bot className="h-3.5 w-3.5 mr-2" />}
+                      Owner
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent>
+                      <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onUpdateProject({ owner: "me" }); }} data-testid={`menu-project-owner-me-${project.id}`}>
+                        <User className="h-3.5 w-3.5 mr-2" />
+                        <span className={cn(project.owner === "me" && "font-medium")}>Me</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onUpdateProject({ owner: "agent" }); }} data-testid={`menu-project-owner-agent-${project.id}`}>
+                        <Bot className="h-3.5 w-3.5 mr-2" />
+                        <span className={cn(project.owner === "agent" && "font-medium")}>{getInstanceName()}</span>
+                      </DropdownMenuItem>
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setProjectTitleDraft(project.title);
+                      setEditingProjectTitle(true);
+                    }}
+                    data-testid={`menu-project-rename-${project.id}`}
+                  >
+                    <Pencil className="h-3.5 w-3.5 mr-2" />
+                    Rename
+                  </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={(e) => {
                       e.stopPropagation();
@@ -1473,6 +1759,30 @@ function ProjectTreeNode({
                   >
                     <Plus className="h-3.5 w-3.5 mr-2" />
                     Add Milestone
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={(e) => { e.stopPropagation(); setPagePickerOpen(true); }}
+                    data-testid={`menu-project-add-page-${project.id}`}
+                  >
+                    <FileText className="h-3.5 w-3.5 mr-2" />
+                    Add Page
+                  </DropdownMenuItem>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger data-testid={`menu-project-add-people-${project.id}`}>
+                      <Users className="h-3.5 w-3.5 mr-2" />
+                      Add People
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="w-64 p-2">
+                      <PeopleSelector selected={project.people} onChange={(people) => onUpdateProject({ people })} />
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                  <DropdownMenuItem
+                    onClick={(e) => { e.stopPropagation(); setFilePickerOpen(true); }}
+                    data-testid={`menu-project-add-file-${project.id}`}
+                  >
+                    <FileIcon className="h-3.5 w-3.5 mr-2" />
+                    Add File
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
@@ -1505,9 +1815,33 @@ function ProjectTreeNode({
                     <div className="group relative flex items-center gap-2 rounded-md px-2 py-1.5 pr-16 text-sm w-full text-left select-none transition-colors overflow-hidden hover:bg-accent/70" data-testid={`tree-node-milestone-${milestone.id}`}>
                       <WorkCheckCircle checked={milestoneCompleted} data-testid={`check-tree-milestone-${milestone.id}`} />
                       <Flag className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className={cn("truncate flex-1 min-w-0", milestoneCompleted && "line-through text-muted-foreground")} data-testid={`text-tree-milestone-name-${milestone.id}`}>
-                        {milestone.name}
-                      </span>
+                      {editingMilestoneId === milestone.id ? (
+                        <Input
+                          value={milestoneNameDraft}
+                          onChange={e => setMilestoneNameDraft(e.target.value)}
+                          onBlur={() => {
+                            const nextName = milestoneNameDraft.trim();
+                            if (nextName && nextName !== milestone.name) onUpdateMilestone(milestone.id, { name: nextName });
+                            setEditingMilestoneId(null);
+                          }}
+                          onKeyDown={e => {
+                            if (e.key === "Enter") {
+                              const nextName = milestoneNameDraft.trim();
+                              if (nextName && nextName !== milestone.name) onUpdateMilestone(milestone.id, { name: nextName });
+                              setEditingMilestoneId(null);
+                            }
+                            if (e.key === "Escape") setEditingMilestoneId(null);
+                          }}
+                          onClick={e => e.stopPropagation()}
+                          className="h-7 flex-1 bg-transparent text-sm"
+                          autoFocus
+                          data-testid={`input-tree-milestone-name-${milestone.id}`}
+                        />
+                      ) : (
+                        <span className={cn("truncate flex-1 min-w-0", milestoneCompleted && "line-through text-muted-foreground")} data-testid={`text-tree-milestone-name-${milestone.id}`}>
+                          {milestone.name}
+                        </span>
+                      )}
                       {editingMilestoneDueId === milestone.id ? (
                         <Input
                           type="date"
@@ -1589,6 +1923,17 @@ function ProjectTreeNode({
                             <DropdownMenuItem
                               onClick={(e) => {
                                 e.stopPropagation();
+                                setMilestoneNameDraft(milestone.name);
+                                setEditingMilestoneId(milestone.id);
+                              }}
+                              data-testid={`menu-tree-milestone-rename-${milestone.id}`}
+                            >
+                              <Pencil className="h-3.5 w-3.5 mr-2" />
+                              Rename
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 onStartAddTask(project.id, milestone.id);
                                 setExpandedMilestones(prev => ({ ...prev, [milestone.id]: true }));
                               }}
@@ -1596,6 +1941,15 @@ function ProjectTreeNode({
                             >
                               <Plus className="h-3.5 w-3.5 mr-2" />
                               Add Task
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-error-foreground"
+                              onClick={(e) => { e.stopPropagation(); onDeleteMilestone(milestone); }}
+                              data-testid={`menu-tree-milestone-delete-${milestone.id}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 mr-2" />
+                              Delete
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
