@@ -609,7 +609,7 @@ export default function GoalDetail() {
               </div>
               <div className="flex flex-wrap gap-1">
                 {linkedProjects.map(p => (
-                  <span key={p.id} className="inline-flex items-center gap-1 bg-cat-channel/15 text-cat-channel-foreground border border-cat-channel/30 rounded-sm text-xs font-medium px-2 py-0.5 cursor-pointer" data-testid={`badge-project-${p.id}`} onClick={() => navigate(`/projects/${p.id}`)}>
+                  <span key={p.id} className="inline-flex items-center gap-1 bg-cat-channel/15 text-cat-channel-foreground border border-cat-channel/30 rounded-sm text-xs font-medium px-2 py-0.5 cursor-pointer" data-testid={`badge-project-${p.id}`} onClick={() => navigate(`/projects?project=${p.id}`)}>
                     {p.title}
                   </span>
                 ))}

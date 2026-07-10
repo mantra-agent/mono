@@ -411,13 +411,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   work: {
-    description: "Manage projects and work status — create projects, list/get with tasks, manage notes, files, milestones, goal links. Use `tasks` for individual task operations.",
+    description: "Manage projects and work status — create projects, list/get with tasks, manage files, milestones, goal links. Use `tasks` for individual task operations.",
     category: "work",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["create_project", "update_project", "set_status", "delete_project", "status", "list_projects", "get_project", "list_tasks", "set_goal", "add_note", "update_note", "remove_note", "add_file", "read_file", "remove_file", "add_milestone", "update_milestone", "remove_milestone"], description: "The action to perform" },
+        action: { type: "string", enum: ["create_project", "update_project", "set_status", "delete_project", "status", "list_projects", "get_project", "list_tasks", "set_goal", "add_file", "read_file", "remove_file", "add_milestone", "update_milestone", "remove_milestone"], description: "The action to perform" },
         id: { type: "number", description: "Project ID" },
         title: { type: "string", description: "Project title (for create_project)" },
         description: { type: "string", description: "Project description (for create_project)" },
@@ -425,11 +425,8 @@ export const TOOLS: Record<string, ToolMeta> = {
         owner: { type: "string", description: "Owner: me, agent (xyz is accepted as an alias for agent)" },
         tags: { type: "array", items: { type: "string" }, description: "Tags" },
         people: { type: "array", items: { type: "string" }, description: "People (for create_project)" },
-        spec: { type: "string", description: "Project spec (for create_project)" },
         status: { type: "string", enum: ["idea", "planning", "active", "on_hold", "completed"], description: "Project status (for set_status) or status filter (for list_projects)" },
         goalId: { type: ["string", "null"], description: "Goal ID (for set_goal/create_project)" },
-        noteId: { type: "string", description: "Note ID (for update_note/remove_note)" },
-        content: { type: "string", description: "Content (for add_note/update_note)" },
         fileId: { type: "string", description: "File ID (for read_file/remove_file)" },
         fileName: { type: "string", description: "File name (for add_file)" },
         fileMimeType: { type: "string", description: "MIME type (for add_file)" },
@@ -442,7 +439,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         dueDate: { type: "string", description: "Due date YYYY-MM-DD" },
         milestoneStatus: { type: "string", description: "Milestone status: planned, active, completed" },
         order: { type: "number", description: "Display order" },
-        clearFields: { type: "array", items: { type: "string" }, description: "Fields to explicitly clear (set to null). Allowed: description, spec. (for update_project)" },
+        clearFields: { type: "array", items: { type: "string" }, description: "Fields to explicitly clear (set to null). Allowed: description. (for update_project)" },
         confirmDestructiveUpdate: { type: "boolean", description: "Required confirmation when clearing destructive fields like description (for update_project)" },
         destructiveUpdateReason: { type: "string", description: "Reason for destructive clear — required with confirmDestructiveUpdate (for update_project)" },
       },

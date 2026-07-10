@@ -17,7 +17,7 @@ import { safeStringify } from "./utils/safe-stringify";
 import { eventBus } from "./event-bus";
 import type { Interaction, Mobilization, RelationshipProfile, NetworkProfile, ScoredAgendaItem, Person, PersonIndexEntry } from "./people-storage";
 import { ACTIVITY_CHAT, ACTIVITY_FRAMING, ACTIVITY_MEMORY, ACTIVITY_THINKING, ACTIVITY_WORK, type ActivityId } from "./job-profiles";
-import { formatTaskForBridge, formatTaskForProjectDetail } from "./lib/task-format";
+import { formatTaskForBridge } from "./lib/task-format";
 import { WORKSPACE_DIR } from "./paths";
 import { pathExists, resolveWorkspacePath } from "./fs-utils";
 import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
@@ -5141,7 +5141,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             ...(args.dueDate !== undefined && { dueDate: args.dueDate }),
             ...(args.tags !== undefined && { tags: args.tags }),
             ...(args.people !== undefined && { people: args.people }),
-            ...(args.spec !== undefined && { spec: args.spec }),
             ...(args.goalId !== undefined && { goalId: args.goalId }),
           });
           const project = await fileProjectStorage.createProject(input);
@@ -5201,7 +5200,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             parts.push(`Milestones: ${project.milestones.map((m: any) => `[${m.id}] ${m.name} (${m.status || "pending"})`).join(", ")}`);
           }
           if (tasks.length > 0) {
-            const taskLines = tasks.map((t: any) => formatTaskForProjectDetail(t));
+            const taskLines = tasks.map((t: any) => formatTaskForBridge(t));
             parts.push(`Tasks (${tasks.length}):\n${taskLines.join("\n")}`);
           } else {
             parts.push("No tasks.");
@@ -5225,44 +5224,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           if (tasks.length === 0) return { result: projectId ? `No tasks for project ${projectId}.` : "No tasks found." };
           const lines = tasks.map((t: any) => formatTaskForBridge(t));
           return { result: `${tasks.length} tasks:\n${lines.join("\n")}` };
-        }
-        case "add_note": {
-          const projectId = args.id;
-          if (!projectId) return { result: "Missing project id", error: true };
-          const content = args.content;
-          if (!content) return { result: "Missing content", error: true };
-          const noteProject = await fileProjectStorage.addNote(Number(projectId), content);
-          if (!noteProject) return { result: `Project ${projectId} not found`, error: true };
-          const addedNote = noteProject.notes[noteProject.notes.length - 1];
-          return { result: `Note added to project ${projectId} (note id: ${addedNote.id})` };
-        }
-        case "update_note": {
-          const projectId = args.id;
-          const noteId = args.noteId;
-          const content = args.content;
-          if (!projectId || !noteId) return { result: "Missing project id or note id", error: true };
-          if (!content) return { result: "Missing content", error: true };
-          const updatedNoteProject = await fileProjectStorage.updateNote(Number(projectId), noteId, content);
-          if (!updatedNoteProject) return { result: `Project ${projectId} or note ${noteId} not found`, error: true };
-          return { result: `Note ${noteId} updated on project ${projectId}` };
-        }
-        case "remove_note": {
-          const projectId = args.id;
-          const noteId = args.noteId;
-          if (!projectId || !noteId) return { result: "Missing project id or note id", error: true };
-          const removedNoteProject = await fileProjectStorage.removeNote(Number(projectId), noteId);
-          if (!removedNoteProject) return { result: `Project ${projectId} or note ${noteId} not found`, error: true };
-          return { result: `Note ${noteId} removed from project ${projectId}` };
-        }
-        case "read_note": {
-          const projectId = args.id;
-          const noteId = args.noteId;
-          if (!projectId || !noteId) return { result: "Missing project id or note id", error: true };
-          const noteProject = await fileProjectStorage.getProject(Number(projectId));
-          if (!noteProject) return { result: `Project ${projectId} not found`, error: true };
-          const note = noteProject.notes.find((n: any) => n.id === noteId);
-          if (!note) return { result: `Note ${noteId} not found in project ${projectId}`, error: true };
-          return { result: `Note ${note.id} (created: ${note.createdAt}, updated: ${note.updatedAt}):\n${note.content}` };
         }
         case "add_file": {
           const projectId = args.id;
@@ -5446,7 +5407,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           if (args.dueDate !== undefined) raw.dueDate = args.dueDate;
           if (args.tags !== undefined) raw.tags = args.tags;
           if (args.people !== undefined) raw.people = args.people;
-          if (args.spec !== undefined) raw.spec = args.spec;
           if (args.goalId !== undefined) raw.goalId = args.goalId;
           if (args.clearFields !== undefined) raw.clearFields = args.clearFields;
           if (args.confirmDestructiveUpdate !== undefined) raw.confirmDestructiveUpdate = args.confirmDestructiveUpdate;
@@ -5454,8 +5414,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
           try {
             const { patch: updates, clearFields, destructiveUpdateReason } = sanitizePatch(raw, {
-              protectedFields: ['title', 'description', 'spec'] as Array<keyof any>,
-              clearableFields: ['description', 'spec'] as Array<keyof any>,
+              protectedFields: ['title', 'description'] as Array<keyof any>,
+              clearableFields: ['description'] as Array<keyof any>,
               destructiveFields: ['description'] as Array<keyof any>,
             });
 
