@@ -350,50 +350,6 @@ export async function registerRoutes(
     }
   });
 
-  // Legacy token endpoints — redirect to credential system
-  app.post("/api/integrations/github/token", requireAuth, requireAdmin, async (req: Request, res: Response) => {
-    const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
-    if (!token) return res.status(400).json({ ok: false, error: "Missing 'token' in request body" });
-
-    const { validateGitHubPAT, addCredential, listCredentials } = await import("./github-credentials");
-    const validation = await validateGitHubPAT(token);
-    if (!validation.ok) return res.status(400).json({ ok: false, error: validation.error });
-
-    try {
-      // If there's already a default credential, update its token. Otherwise add new.
-      const existing = await listCredentials();
-      const defaultCred = existing.find((c) => c.isDefault);
-      if (defaultCred) {
-        const { updateCredential } = await import("./github-credentials");
-        await updateCredential(defaultCred.id, { token });
-        routesLog.log(`POST /api/integrations/github/token (legacy): rotated default credential`);
-      } else {
-        const urlPattern = validation.login ? `github.com/${validation.login}/*` : "github.com/*";
-        await addCredential(token, validation.login || "Default", [urlPattern], true, validation.login);
-        routesLog.log(`POST /api/integrations/github/token (legacy): created default credential`);
-      }
-      res.json({ ok: true, login: validation.login });
-    } catch (err: any) {
-      res.status(500).json({ ok: false, error: err?.message || "Failed to save token" });
-    }
-  });
-
-  app.delete("/api/integrations/github/token", requireAuth, requireAdmin, async (req: Request, res: Response) => {
-    try {
-      const { listCredentials, removeCredential } = await import("./github-credentials");
-      const creds = await listCredentials();
-      const defaultCred = creds.find((c) => c.isDefault);
-      if (defaultCred && creds.length > 1) {
-        await removeCredential(defaultCred.id);
-        res.json({ ok: true, removed: true });
-      } else {
-        res.json({ ok: true, removed: false, message: "Cannot remove the only credential" });
-      }
-    } catch (err: any) {
-      res.status(500).json({ ok: false, error: err?.message || "Failed to clear token" });
-    }
-  });
-
   app.post("/api/integrations/github/repo-url", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
     if (url && !url.startsWith("https://")) {
@@ -427,24 +383,6 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/gitnexus/indexing-enabled", async (_req: Request, res: Response) => {
-    try {
-      const { getStatus } = await import("./gitnexus-bridge");
-      const status = await getStatus();
-      res.json({ enabled: status.phase !== "disabled", source: status.source || null, phase: status.phase, message: status.message });
-    } catch (err: any) {
-      res.status(500).json({ enabled: true, error: err.message });
-    }
-  });
-
-  app.post("/api/gitnexus/indexing-enabled", async (req: Request, res: Response) => {
-    try {
-      res.status(410).json({ ok: false, error: "GitNexus indexing is configured per Platform environment source binding. Use the environment Source Binding code indexing toggle." });
-    } catch (err: any) {
-      res.status(500).json({ ok: false, error: err.message });
-    }
-  });
-
   app.post("/api/gitnexus/restart", async (_req: Request, res: Response) => {
     try {
       const { resetGitNexus, startGitNexus } = await import("./gitnexus-bridge");
@@ -456,16 +394,6 @@ export async function registerRoutes(
       res.status(202).json({ ok: true, message: "GitNexus indexing restarted" });
     } catch (err: any) {
       res.status(500).json({ ok: false, error: err.message });
-    }
-  });
-
-  app.get("/api/gitnexus/overview", async (_req: Request, res: Response) => {
-    try {
-      const { getOverview } = await import("./gitnexus-bridge");
-      const data = await getOverview();
-      res.json(data);
-    } catch (err: any) {
-      res.status(503).json({ error: err.message || "Overview request failed" });
     }
   });
 

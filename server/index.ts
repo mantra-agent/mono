@@ -44,22 +44,14 @@ migrateWorkspaceData();
 
 
 import { addObjectAclsTable } from "./migrations/add-object-acls";
-import { migrateTimersToTable } from "./migrations/migrate-timers-to-table";
-import { migrateTasksToTable } from "./migrations/migrate-tasks-to-table";
-import { migrateProjectsToTable } from "./migrations/migrate-projects-to-table";
 import { migratePrinciplesToTable } from "./migrations/migrate-principles-to-table";
 import { migrateTagsAndPeopleConfig } from "./migrations/migrate-tags-and-people-config";
-import { migratePersonsToTable } from "./migrations/migrate-persons-to-table";
 import { ensureVaults } from "./migrations/ensure-vaults";
 import { migrateProjectNotesSpecToLibrary } from "./migrations/migrate-project-notes-spec-to-library";
 
 const objectAclsMigrationReady = addObjectAclsTable();
-const timerMigrationReady = migrateTimersToTable();
-const taskMigrationReady = migrateTasksToTable();
-const projectMigrationReady = migrateProjectsToTable();
 const principleMigrationReady = migratePrinciplesToTable();
 const tagsConfigMigrationReady = migrateTagsAndPeopleConfig();
-const personsMigrationReady = migratePersonsToTable();
 const vaultsMigrationReady = ensureVaults();
 
 const ENABLE_ASSOCIATIVE_RETRIEVAL = process.env.ASSOCIATIVE_RETRIEVAL === "true";
@@ -490,13 +482,9 @@ app.use((req, res, next) => {
 
 
   await objectAclsMigrationReady;
-  await timerMigrationReady;
-  await taskMigrationReady;
-  await projectMigrationReady;
   await migrateProjectNotesSpecToLibrary();
   await principleMigrationReady;
   await tagsConfigMigrationReady;
-  await personsMigrationReady;
   await vaultsMigrationReady;
 
   const tRoutes0 = Date.now();
