@@ -61,6 +61,8 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getStatusClasses } from "@/components/nav-dot";
 import { MantraLogo } from "@/components/mantra-logo";
+import { InlineDatePicker } from "@/components/inline-date-picker";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -4025,6 +4027,10 @@ export function DesignTab() {
   const [hierarchyMeetingOpen, setHierarchyMeetingOpen] = useState(false);
   const [hierarchySelected, setHierarchySelected] = useState("parent");
   const [hierarchySearch, setHierarchySearch] = useState("");
+  const [hierarchyTitle, setHierarchyTitle] = useState("Launch Mantra");
+  const [hierarchyDate, setHierarchyDate] = useState("2026-07-15");
+  const [hierarchyReferenceOpen, setHierarchyReferenceOpen] = useState(true);
+  const [hierarchyShowItems, setHierarchyShowItems] = useState(true);
   const [hierarchyChecked, setHierarchyChecked] = useState({
     priority: true,
     mobility: false,
@@ -4315,6 +4321,13 @@ export function DesignTab() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => setHierarchyShowItems((visible) => !visible)}
+                  className="mb-1 ml-2 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {hierarchyShowItems ? "Show zero state" : "Show rich rows"}
+                </button>
+                <button
+                  type="button"
                   className="flex w-full min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover:bg-accent/70 hover:text-foreground"
                   onClick={() => setHierarchySectionOpen((open) => !open)}
                   aria-expanded={hierarchySectionOpen}
@@ -4323,6 +4336,7 @@ export function DesignTab() {
                   <span className="truncate">Today</span>
                 </button>
                 {hierarchySectionOpen ? (
+                  hierarchyShowItems ? (
                   <>
                     <div className="flex min-w-0 items-stretch">
                       <div className="relative min-w-0 flex-1 overflow-hidden">
@@ -4342,7 +4356,13 @@ export function DesignTab() {
                           }}
                         >
                           <Bot className="h-3.5 w-3.5 shrink-0" />
-                          <span className="min-w-0 flex-1 truncate">Parent</span>
+                          <input
+                            value={hierarchyTitle}
+                            onChange={(event) => setHierarchyTitle(event.target.value)}
+                            onClick={(event) => event.stopPropagation()}
+                            className="h-5 min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm text-foreground outline-none focus:ring-0"
+                            aria-label="Editable hierarchy title"
+                          />
                           <button
                             type="button"
                             className="absolute right-8 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
@@ -4434,7 +4454,15 @@ export function DesignTab() {
                                 </button>
                               )}
                               <span className={cn("min-w-0 flex-1 truncate", checked && "text-neutral line-through decoration-neutral/60")}>{item.label}</span>
-                              <span className="hidden min-w-0 max-w-[4.5rem] shrink truncate text-xs text-muted-foreground min-[390px]:block">{item.meta}</span>
+                              {item.id === "meeting" ? (
+                                <InlineDatePicker value={hierarchyDate} onCommit={(value) => setHierarchyDate(value || "")}>
+                                  <span className="hidden min-w-0 max-w-[5.5rem] shrink truncate text-xs tabular-nums text-muted-foreground min-[390px]:block">
+                                    {hierarchyDate || "Set date"}
+                                  </span>
+                                </InlineDatePicker>
+                              ) : (
+                                <span className="hidden min-w-0 max-w-[4.5rem] shrink truncate text-xs text-muted-foreground min-[390px]:block">{item.meta}</span>
+                              )}
                               {item.expandable ? (
                                 <button
                                   type="button"
@@ -4486,14 +4514,43 @@ export function DesignTab() {
                         </div>
                       );
                     })) : null}
+                    <div className="flex min-w-0 max-w-full items-stretch pl-4">
+                      <div className="relative mr-1 w-5 shrink-0 self-stretch" aria-hidden="true">
+                        <div className="absolute bottom-1/2 left-1/2 top-0 -translate-x-px border-l border-border" />
+                        <div className="absolute left-1/2 right-0 top-1/2 border-t border-border" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-h-8 items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent/70">
+                          <ReferenceRenderer
+                            refValue={{ type: "page", id: "design-system", canonical: "@page:design-system" }}
+                            surface="simple-row"
+                            className="mx-0"
+                          />
+                          <button
+                            type="button"
+                            className="ml-auto flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                            onClick={() => setHierarchyReferenceOpen((open) => !open)}
+                            aria-label={hierarchyReferenceOpen ? "Collapse reference context" : "Expand reference context"}
+                          >
+                            <ChevronRight className={cn("h-3 w-3 transition-transform", hierarchyReferenceOpen && "rotate-90")} />
+                          </button>
+                        </div>
+                        {hierarchyReferenceOpen ? (
+                          <div className="mb-1 ml-2 border-l border-border py-1 pl-3 text-xs leading-relaxed text-muted-foreground">
+                            References retain their inline link while revealing useful Simple-view context directly in the tree.
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
                   </>
+                  ) : (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">No items yet.</div>
+                  )
                 ) : null}
               </div>
               <p className="max-w-full break-words text-xs leading-relaxed text-muted-foreground">
                 Hierarchy Tree is the primary modality for surfacing UI objects: search first, then the + New Item
-                action, then collapsible sections. Click rows to select, twisties
-                to expand/collapse, check circles to toggle completion, and …
-                menus for row actions. Keep row labels short. No badges or long labels inside tree rows.
+                action, then collapsible sections. Edit the parent title and meeting date in place, expand the reference for Simple-view context, and use “Show zero state” to inspect the canonical empty form. Click rows to select, twisties to expand/collapse, check circles to toggle completion, and … menus for row actions.
               </p>
             </div>
 
@@ -4511,6 +4568,30 @@ export function DesignTab() {
 
         <DesignSection
           number="07"
+          eyebrow="Zero State"
+          title="Keep the surface, quiet the absence"
+        >
+          <div className="grid gap-6 @lg:grid-cols-[1fr_0.9fr]">
+            <div className="w-full min-w-0 overflow-hidden rounded-md bg-background p-2">
+              <div className="relative mb-1">
+                <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <input readOnly placeholder="Search things" className="h-7 w-full rounded-md border border-input bg-background pl-7 text-xs placeholder:text-muted-foreground" />
+              </div>
+              <button type="button" className="mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta hover:bg-accent/70">
+                <Plus className="h-3.5 w-3.5" />
+                <span>New Thing</span>
+              </button>
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">No things yet.</div>
+            </div>
+            <div className="space-y-3 text-xs leading-relaxed text-muted-foreground">
+              <p>Zero states are the ordinary empty form of a surface. Search, the blue + New Thing action, and useful section structure remain visible.</p>
+              <p>No hero icon, centered marketing copy, decorative card, or second CTA. Chat remains the explicit exception.</p>
+            </div>
+          </div>
+        </DesignSection>
+
+        <DesignSection
+          number="08"
           eyebrow="Spacing"
           title="Rhythm"
         >
@@ -4550,7 +4631,7 @@ export function DesignTab() {
           </div>
         </DesignSection>
 
-        <DesignSection number="08" eyebrow="Motion" title="Animation with purpose">
+        <DesignSection number="09" eyebrow="Motion" title="Animation with purpose">
           <div className="grid gap-4 @lg:grid-cols-3">
             {[
               {
@@ -4595,7 +4676,7 @@ export function DesignTab() {
         </DesignSection>
 
         <DesignSection
-          number="09"
+          number="10"
           eyebrow="Components"
           title="Component exemplars"
         >
@@ -4752,7 +4833,7 @@ export function DesignTab() {
         </DesignSection>
 
         <DesignSection
-          number="10"
+          number="11"
           eyebrow="Status"
           title="Icon-as-status language"
         >
@@ -4822,7 +4903,7 @@ export function DesignTab() {
           </div>
         </DesignSection>
 
-        <DesignSection number="11" eyebrow="Icons" title="Iconography rules">
+        <DesignSection number="12" eyebrow="Icons" title="Iconography rules">
           <div className="grid gap-4 grid-cols-2 @md:grid-cols-4">
             {[
               {
@@ -4864,7 +4945,7 @@ export function DesignTab() {
         </DesignSection>
 
         <DesignSection
-          number="12"
+          number="13"
           eyebrow="References"
           title="Typed reference links"
         >
@@ -4963,7 +5044,7 @@ export function DesignTab() {
         </DesignSection>
 
         <DesignSection
-          number="13"
+          number="14"
           eyebrow="Simple Home"
           title="Feed widget types"
         >
@@ -5027,7 +5108,7 @@ export function DesignTab() {
         </DesignSection>
 
         <DesignSection
-          number="14"
+          number="15"
           eyebrow="Scrollbars"
           title="Invisible until scrolling"
         >
@@ -5091,7 +5172,7 @@ export function DesignTab() {
           </div>
         </DesignSection>
 
-        <DesignSection number="15" eyebrow="Guardrails" title="Do and don't">
+        <DesignSection number="16" eyebrow="Guardrails" title="Do and don't">
           <div className="grid gap-4 @lg:grid-cols-2">
             <DoDontCard kind="do" title="Do use the system">
               <div className="space-y-3">
@@ -5138,7 +5219,7 @@ export function DesignTab() {
         </DesignSection>
 
         <DesignSection
-          number="16"
+          number="17"
           eyebrow="Access"
           title="Accessibility exemplars"
         >
@@ -5192,7 +5273,7 @@ export function DesignTab() {
         </DesignSection>
 
         <DesignSection
-          number="17"
+          number="18"
           eyebrow="Doctrine"
           title="Design roles and scopes"
         >
@@ -5248,7 +5329,7 @@ export function DesignTab() {
         </DesignSection>
 
         <DesignSection
-          number="18"
+          number="19"
           eyebrow="Audit"
           title="Application suite rubric"
         >
