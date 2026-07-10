@@ -308,7 +308,7 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
 
         {/* Checkbox column (always rendered for vertical alignment) */}
         <span className="w-4 shrink-0 flex items-center justify-center">
-          {item.payload?.needsDate ? (
+          {item.payload?.needsDate && !completed ? (
             <SimpleCheckCircle variant="caution" tooltip="Missing Due Date" />
           ) : showCheckCircle ? (
             <SimpleCheckCircle

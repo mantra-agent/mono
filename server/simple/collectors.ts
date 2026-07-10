@@ -867,6 +867,7 @@ function resolveTaskDeadline(task: Task, milestoneMap: Map<string, Milestone>): 
 
 /** Check if a task needs a date flag (dateless task in an active project without milestone date). */
 function taskNeedsDate(task: Task, milestoneMap: Map<string, Milestone>): boolean {
+  if (task.status === "done") return false; // completed work never warns about missing dates
   if (dateOnlyString(task.deadline)) return false;
   if (task.milestoneId) {
     const milestone = milestoneMap.get(`${task.projectId}-${task.milestoneId}`);
@@ -1158,7 +1159,7 @@ function itemFromStandaloneMilestone(milestone: Milestone, project: Project, tod
     label: milestone.name,
     href: `/projects?project=${project.id}&milestone=${milestone.id}`,
   };
-  const needsDate = !milestone.dueDate;
+  const needsDate = milestone.status !== "completed" && !milestone.dueDate;
   const timeLabel = milestone.dueDate ? dateLabelForSection(milestone.dueDate, section) : undefined;
   return {
     id: `milestone-${project.id}-${milestone.id}`,
