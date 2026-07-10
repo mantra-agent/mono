@@ -1077,7 +1077,7 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
       type: "artifact",
       id: artifact.pageId,
       label: artifact.title,
-      href: `/library/${artifact.pageId}`,
+      href: `/info#library?page=${encodeURIComponent(artifact.slug)}`,
     };
     children.push({
       id: `meeting-${event.accountId}-${event.id}-artifact-${artifact.linkId}`,
@@ -1096,7 +1096,7 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
         artifactSummary: artifact.summary,
         artifactOneLiner: artifact.oneLiner,
       },
-      actions: [{ id: "open-artifact", label: "Open", type: "navigate", href: `/library/${artifact.pageId}`, sourceRef: artifactSourceRef }],
+      actions: [{ id: "open-artifact", label: "Open", type: "navigate", href: `/info#library?page=${encodeURIComponent(artifact.slug)}`, sourceRef: artifactSourceRef }],
     });
   }
 

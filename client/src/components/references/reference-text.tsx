@@ -9,6 +9,21 @@ import { ReferenceRenderer, type ReferenceSurface } from "./reference-renderer";
 const REF_PROTOCOL = "ref://";
 const CODE_WRAPPED_CANONICAL_REF = /`(@([A-Za-z_][A-Za-z0-9_]*):([^`\s\]<>]+))`/g;
 
+const LIBRARY_PAGE_URL_SOURCE = String.raw`(?:https?:\/\/[^\/\s)]+)?\/(?:info|library)#library\?page=([A-Za-z0-9_-]+)`;
+const LINKED_LIBRARY_PAGE = new RegExp(String.raw`\[[^\]]*\]\(\s*${LIBRARY_PAGE_URL_SOURCE}\s*\)`, "g");
+const BARE_LIBRARY_PAGE = new RegExp(LIBRARY_PAGE_URL_SOURCE, "g");
+
+/**
+ * Normalize authored library-page URLs (markdown links or bare URLs pointing
+ * at /info#library?page=<slug> or /library#library?page=<slug>) into canonical
+ * @page: reference tokens so they render as proper chips with correct hrefs.
+ */
+function normalizeLibraryPageLinks(content: string): string {
+  return content
+    .replace(LINKED_LIBRARY_PAGE, (_m, slug: string) => `@page:${slug}`)
+    .replace(BARE_LIBRARY_PAGE, (_m, slug: string) => `@page:${slug}`);
+}
+
 function unwrapCodeWrappedReferenceTokens(content: string): string {
   return content.replace(CODE_WRAPPED_CANONICAL_REF, (match, canonical: string, type: string, id: string) => {
     if (!id) return match;
@@ -65,7 +80,7 @@ export function ReferenceText({
   markdownComponents: Record<string, any>;
   referenceSurface?: ReferenceSurface;
 }) {
-  const normalizedContent = unwrapCodeWrappedReferenceTokens(content);
+  const normalizedContent = unwrapCodeWrappedReferenceTokens(normalizeLibraryPageLinks(content));
   const parts = parseReferenceText(normalizedContent);
   const hasReferences = parts.some(part => part.kind === "reference");
 
