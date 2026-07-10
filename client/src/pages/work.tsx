@@ -1168,7 +1168,7 @@ function TaskRow({
     <div data-testid={`tree-node-task-${task.id}`}>
       <div
         className={cn(
-          "group relative flex items-center gap-2 rounded-md px-2 py-1.5 pr-14 text-sm w-full text-left cursor-pointer select-none transition-colors overflow-hidden",
+          "group relative flex items-center gap-2 rounded-md px-2 py-1.5 pr-16 text-sm w-full text-left cursor-pointer select-none transition-colors overflow-hidden",
           "hover:bg-accent/70",
           statusTextClass,
           isCompleted && "line-through"
@@ -1195,7 +1195,7 @@ function TaskRow({
           className="truncate flex-1 min-w-0"
           data-testid={`text-task-title-${task.id}`}
         >
-          {task.title && task.title.length > 30 ? task.title.slice(0, 30) + "…" : task.title}
+          {task.title}
         </span>
       )}
 
