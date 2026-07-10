@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef, Fragment, type ReactNode } from "react";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { InlineDatePicker } from "@/components/inline-date-picker";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, useLocation, Link } from "wouter";
 import { getInstanceName } from "@/lib/instance-config";
@@ -2332,20 +2333,24 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
             hasValue={Boolean(person.met)}
             showEmpty={showEmptyProfileRows || editingMet}
             actionContent={person.met || editingMet ? (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-5 w-5 shrink-0 text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground"
-                onClick={() => { const el = document.getElementById(`met-picker-${person.id}`) as HTMLInputElement | null; if (el) { try { el.showPicker(); } catch { el.click(); } } }}
-                data-testid="button-met-calendar"
+              <InlineDatePicker
+                value={person.met || ""}
+                onCommit={(v) => { updateMutation.mutate({ met: v || undefined }); setEditingMet(false); }}
               >
-                <Calendar className="h-3 w-3" />
-              </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5 shrink-0 text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground"
+                  data-testid="button-met-calendar"
+                >
+                  <Calendar className="h-3 w-3" />
+                </Button>
+              </InlineDatePicker>
             ) : undefined}
             testId="row-profile-met"
           >
             {person.met || editingMet ? (
-              <div className="relative flex justify-end">
+              <div className="flex justify-end">
                 <Input
                   key={person.met || "new-met"}
                   type="text"
@@ -2356,15 +2361,6 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
                   onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { (e.target as HTMLInputElement).value = person.met || ""; setEditingMet(false); } }}
                   className="w-48 text-right"
                   data-testid="input-met"
-                />
-                <input
-                  id={`met-picker-${person.id}`}
-                  type="date"
-                  defaultValue={person.met || ""}
-                  className="absolute inset-0 opacity-0 pointer-events-none"
-                  tabIndex={-1}
-                  onChange={(e) => { const v = e.target.value; updateMutation.mutate({ met: v || undefined }); setEditingMet(false); }}
-                  aria-hidden="true"
                 />
               </div>
             ) : <Button variant="ghost" size="icon" onClick={() => setEditingMet(true)} data-testid="button-add-met"><Plus className="h-3 w-3" /></Button>}

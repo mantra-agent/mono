@@ -52,6 +52,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { InlineDatePicker } from "@/components/inline-date-picker";
 import type { Task, Project, PriorityLevel, TaskStatus, ImpactEffort } from "@shared/models/work";
 import { getDeadlineProximity } from "@shared/models/work";
 import { STATUS_CONFIG } from "@/lib/task-utils";
@@ -294,7 +295,7 @@ function InlineTagPicker({
   );
 }
 
-/** Deadline input with proximity label */
+/** Deadline picker with proximity label */
 function DeadlineField({
   value,
   onSave,
@@ -302,25 +303,28 @@ function DeadlineField({
   value: string;
   onSave: (val: string | null) => void;
 }) {
-  const [localValue, setLocalValue] = useState(value);
-  useEffect(() => { setLocalValue(value); }, [value]);
-  const dlProx = getDeadlineProximity(localValue || null);
+  const dlProx = getDeadlineProximity(value || null);
   const dlColor = dlProx?.urgency === "overdue" ? "text-error" :
     dlProx?.urgency === "urgent" ? "text-warning" :
     dlProx?.urgency === "soon" ? "text-warning" : "";
 
   return (
     <div className="flex items-center gap-1.5">
-      <Input
-        type="date"
-        value={localValue}
-        onChange={e => setLocalValue(e.target.value)}
-        onBlur={() => {
-          const committed = localValue === "" ? null : localValue;
-          if (committed !== (value || null)) onSave(committed);
-        }}
-        className={cn("h-5 text-xs w-auto bg-muted/50", dlColor)}
-      />
+      <InlineDatePicker
+        value={value}
+        onCommit={(v) => { if (v !== (value || null)) onSave(v); }}
+        testId="picker-task-widget-deadline"
+      >
+        <span
+          className={cn(
+            "h-5 rounded bg-muted/50 px-1.5 text-xs leading-5 hover:bg-accent/70",
+            dlColor,
+            !value && "text-muted-foreground/60",
+          )}
+        >
+          {value || "Set date"}
+        </span>
+      </InlineDatePicker>
       {dlProx && (
         <span className={cn("text-[10px] whitespace-nowrap", dlColor)}>
           {dlProx.label}

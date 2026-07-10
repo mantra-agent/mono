@@ -426,6 +426,21 @@ hierarchy-tree:
 - Search inputs should include a left search icon and a clear action when populated.
 - Labels stay close to the control they describe.
 
+### Inline date editing
+
+- The canonical inline date-editing pattern is `InlineDatePicker` (`client/src/components/inline-date-picker.tsx`).
+- The trigger is the date itself (or a calendar icon when unset). Clicking it opens the OS-native date picker directly via `showPicker()`; choosing a date commits immediately. No intermediate edit box, no edit-mode toggle.
+- Do not render a visible `<Input type="date">` for inline date edits in rows, widgets, or profile fields. Visible date inputs are acceptable only inside explicit creation/edit forms.
+- Usage: wrap the display element.
+
+```tsx
+<InlineDatePicker value={task.deadline || ""} onCommit={(v) => update({ deadline: v })}>
+  <span className="text-xs text-muted-foreground/70 tabular-nums">{dueLabel}</span>
+</InlineDatePicker>
+```
+
+- Consumers: People profile "Met" field, Projects view rows (project due, milestone due, task deadline), TaskWidget deadline field.
+
 ### Checkboxes and check controls
 
 - Boolean form fields use normal checkboxes.
