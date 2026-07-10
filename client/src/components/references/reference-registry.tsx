@@ -55,7 +55,7 @@ const registry: Record<string, RegistryEntry> = {
   person: {
     Icon: User,
     fallbackLabel: ref => metadataString(ref, "label") || ref.id,
-    href: ref => metadataString(ref, "href") || `/people?person=${encodeURIComponent(ref.id)}`,
+    href: ref => metadataString(ref, "href") || `/people/${encodeURIComponent(ref.id)}`,
   },
   goal: {
     Icon: Target,
