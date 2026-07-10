@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SimpleFeedItem } from "@shared/models/simple";
-import { Bookmark, ChevronRight, ExternalLink, Loader2, MessageSquare, MoreHorizontal, Newspaper, X } from "lucide-react";
+import { Bookmark, ChevronRight, ExternalLink, Loader2, MessageSquare, MoreHorizontal, X } from "lucide-react";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
@@ -27,6 +28,11 @@ function payloadString(item: SimpleFeedItem, key: string): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function payloadStrings(item: SimpleFeedItem, key: string): string[] {
+  const value = item.payload?.[key];
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string" && Boolean(entry.trim())) : [];
+}
+
 function newsSignalId(item: SimpleFeedItem): string | null {
   const value = payloadString(item, "signalId");
   return value ?? item.sourceRefs.find(ref => ref.type === "news")?.id ?? null;
@@ -40,8 +46,11 @@ export function SurfacedNewsRow({ item, dateLabel }: SurfacedNewsRowProps) {
   const signalId = newsSignalId(item);
   const url = payloadString(item, "url") ?? item.sourceRefs[0]?.href ?? null;
   const sourceLabel = payloadString(item, "sourceLabel") ?? "News";
+  const summary = payloadString(item, "summary");
   const reason = payloadString(item, "reason");
-  const snippet = payloadString(item, "snippet");
+  const originalTitle = payloadString(item, "originalTitle");
+  const matchedTopics = payloadStrings(item, "matchedTopics");
+  const reference = item.references?.[0] ?? null;
 
   const statusMutation = useMutation({
     mutationFn: async (status: "dismissed" | "saved") => {
@@ -61,8 +70,8 @@ export function SurfacedNewsRow({ item, dateLabel }: SurfacedNewsRowProps) {
       const parts = [
         `Let's discuss this Simple inbox news item: **${item.title}**`,
         `Source: ${sourceLabel}`,
-        reason ? `Reason: ${reason}` : null,
-        snippet ? `Snippet: ${snippet}` : null,
+        summary ? `Summary: ${summary}` : null,
+        reason ? `Analysis: ${reason}` : null,
         url ? `URL: ${url}` : null,
         signalId ? `News signal ID: ${signalId}` : null,
       ].filter(Boolean);
@@ -102,13 +111,12 @@ export function SurfacedNewsRow({ item, dateLabel }: SurfacedNewsRowProps) {
           <span className="w-4 shrink-0 flex items-center justify-center">
             <SimpleCheckCircle pending={pending} disabled={pending || !signalId} label={`Dismiss ${item.title} from inbox`} onClick={dismiss} />
           </span>
-          <div className="relative min-w-0 flex-1 pl-2">
-            <span className="inline-flex max-w-full items-center gap-1 text-sm">
-              <Newspaper className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              <span className="shrink-0 text-muted-foreground">News</span>
-              <span className="min-w-0 truncate font-medium">{item.title}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">{sourceLabel}</span>
-            </span>
+          <div className="relative min-w-0 flex-1 pl-2" onClick={(event) => event.stopPropagation()}>
+            {reference ? (
+              <ReferenceRenderer refValue={reference} surface="simple-row" className="mx-0 max-w-full text-sm font-medium" />
+            ) : (
+              <span className="min-w-0 truncate text-sm font-medium">{item.title}</span>
+            )}
           </div>
           <CollapsibleTrigger type="button" className="ml-1 p-0.5 shrink-0 rounded hover:bg-accent/60" aria-label={`${open ? "Collapse" : "Expand"} ${item.title}`} onClick={(event) => event.stopPropagation()}>
             <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", open && "rotate-90")} />
@@ -144,10 +152,13 @@ export function SurfacedNewsRow({ item, dateLabel }: SurfacedNewsRowProps) {
         </div>
         <CollapsibleContent>
           <div className="pb-2 pl-0 pr-1.5">
-            <div className="max-w-none rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-xs leading-relaxed text-white">
-              {reason && <p className="my-0"><span className="font-semibold">Why surfaced:</span> {reason}</p>}
-              {snippet && <p className="my-1"><span className="font-semibold">Snippet:</span> {snippet}</p>}
-              {url && <a href={url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1 text-primary hover:underline">Open source <ExternalLink className="h-3 w-3" /></a>}
+            <div className="rounded-md border border-border/40 bg-card/40 p-3 text-sm">
+              {summary && <p className="text-foreground">{summary}</p>}
+              {reason && <p className={cn("text-muted-foreground", summary && "mt-2")}>{reason}</p>}
+              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                {originalTitle && <div className="font-medium text-foreground/80">{originalTitle}</div>}
+                {matchedTopics.length > 0 && <div>Topics: {matchedTopics.join(", ")}</div>}
+              </div>
             </div>
           </div>
         </CollapsibleContent>
