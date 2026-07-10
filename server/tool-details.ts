@@ -259,7 +259,7 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     },
   },
   priorities: {
-    description: "DEPRECATED — compatibility alias for the goals tool. Use goals for all goal CRUD and check-in artifact linking.",
+    description: "DEPRECATED — compatibility shim for check-in artifact metadata only. Use goals for all goal and priority operations.",
     whenToUse: "Avoid for new work. Use the goals tool instead.",
     example: 'Use goals: { "action": "list", "filters": { "horizon": "today" } }',
   },

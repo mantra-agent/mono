@@ -13,8 +13,8 @@ function stripContext(thought: Thought): Omit<Thought, "context"> {
 }
 
 export function registerObservationRoutes(app: Express): void {
-  app.use("/api/thoughts", requireAuth);
-  app.get("/api/thoughts", async (_req, res) => {
+  app.use("/api/observations", requireAuth);
+  app.get("/api/observations", async (_req, res) => {
     try {
       const limit = parseInt(_req.query.limit as string) || 50;
       const offset = parseInt(_req.query.offset as string) || 0;
@@ -22,22 +22,22 @@ export function registerObservationRoutes(app: Express): void {
       const paginated = all.slice(offset, offset + limit).map(stripContext);
       res.json({ thoughts: paginated, total: all.length });
     } catch (err: unknown) {
-      log.error("GET /api/thoughts error:", err instanceof Error ? err.message : String(err));
+      log.error("GET /api/observations error:", err instanceof Error ? err.message : String(err));
       res.status(500).json({ error: "Failed to fetch thoughts" });
     }
   });
 
-  app.get("/api/thoughts/active", async (_req, res) => {
+  app.get("/api/observations/active", async (_req, res) => {
     try {
       const active = await getRecentThoughts(25 * 60 * 1000, 5);
       res.json({ thoughts: active.map(stripContext), count: active.length });
     } catch (err: unknown) {
-      log.error("GET /api/thoughts/active error:", err instanceof Error ? err.message : String(err));
+      log.error("GET /api/observations/active error:", err instanceof Error ? err.message : String(err));
       res.status(500).json({ error: "Failed to fetch active thoughts" });
     }
   });
 
-  app.get("/api/thoughts/:id/context", async (req, res) => {
+  app.get("/api/observations/:id/context", async (req, res) => {
     try {
       const thought = await getThoughtById(req.params.id);
       if (!thought) {
@@ -49,12 +49,12 @@ export function registerObservationRoutes(app: Express): void {
         hasContext: !!thought.context,
       });
     } catch (err: unknown) {
-      log.error("GET /api/thoughts/:id/context error:", err instanceof Error ? err.message : String(err));
+      log.error("GET /api/observations/:id/context error:", err instanceof Error ? err.message : String(err));
       res.status(500).json({ error: "Failed to fetch thought context" });
     }
   });
 
-  app.delete("/api/thoughts/:id", async (req, res) => {
+  app.delete("/api/observations/:id", async (req, res) => {
     try {
       const deleted = await deleteThought(req.params.id);
       if (deleted) {
@@ -63,17 +63,17 @@ export function registerObservationRoutes(app: Express): void {
         res.status(404).json({ error: "Thought not found" });
       }
     } catch (err: unknown) {
-      log.error("DELETE /api/thoughts/:id error:", err instanceof Error ? err.message : String(err));
+      log.error("DELETE /api/observations/:id error:", err instanceof Error ? err.message : String(err));
       res.status(500).json({ error: "Failed to delete thought" });
     }
   });
 
-  app.delete("/api/thoughts", async (_req, res) => {
+  app.delete("/api/observations", async (_req, res) => {
     try {
       const count = await deleteAllThoughts();
       res.json({ success: true, deleted: count });
     } catch (err: unknown) {
-      log.error("DELETE /api/thoughts error:", err instanceof Error ? err.message : String(err));
+      log.error("DELETE /api/observations error:", err instanceof Error ? err.message : String(err));
       res.status(500).json({ error: "Failed to delete all thoughts" });
     }
   });

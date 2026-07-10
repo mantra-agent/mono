@@ -12513,166 +12513,6 @@ async function getFirstOfNextMonth(): Promise<string> {
   return `${next.getFullYear()}-${mm}-01`;
 }
 
-/** GoalsService-backed priority handlers */
-
-import { goalsService } from "./goals-service";
-import type { GoalHorizon } from "@shared/schema";
-
-function makePriorityHandlers(
-  horizon: GoalHorizon,
-  getDate: () => Promise<string>,
-  label: string,
-  toolPrefix: string,
-): Record<string, ToolHandler> {
-  const maxPriorities = 3;
-
-  async function publishPriorityMutation(date: string, action: "add" | "update" | "remove" | "mark_status" | "link_parent", title: string) {
-    try {
-      const { invalidateSimpleFeedCache } = await import("./simple/generate-feed");
-      invalidateSimpleFeedCache();
-      eventBus.publish({
-        category: "goals",
-        event: "data:goals_changed",
-        payload: {
-          date,
-          horizon,
-          change: { domain: "priority", action, title, periodLabel: label },
-        },
-      });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      toolExec.warn(`priority mutation notification failed: ${message}`);
-    }
-  }
-
-  async function currentPriorities(date: string) {
-    return goalsService.listPrioritiesForPeriod(horizon, date);
-  }
-
-  const handlers: Record<string, ToolHandler> = {};
-
-  handlers[`add_${toolPrefix}priority`] = async (args) => {
-    const title = args.title;
-    if (!title) return { result: "Missing priority title", error: true };
-    try {
-      const date = await getDate();
-      const existing = await currentPriorities(date);
-      if (existing.length >= maxPriorities) return { result: `Maximum ${maxPriorities} ${label} priorities allowed. Update or remove an existing one first.`, error: true };
-
-      const { goal, created, duplicate } = await goalsService.createPriority(title, horizon, date);
-      if (!created && duplicate) {
-        return {
-          result: [
-            `DUPLICATE_PRIORITY: ${label} priority "${title}" already exists as "${duplicate.title}" (id: ${duplicate.id}).`,
-            "Do not add a duplicate priority. Use priorities.update, priorities.mark_status, or priorities.link_parent against the existing priority instead.",
-            `Existing priority: ${JSON.stringify(duplicate)}`,
-          ].join("\n"),
-          error: true,
-        };
-      }
-
-      const priorities = await currentPriorities(date);
-      await publishPriorityMutation(date, "add", title);
-      return { result: `${label} priority added: "${title}" (id: ${goal.id})\nCurrent priorities: ${JSON.stringify(priorities)}` };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { result: `add_${toolPrefix}priority error: ${message}`, error: true };
-    }
-  };
-
-  handlers[`update_${toolPrefix}priority`] = async (args) => {
-    const oldTitle = args.oldTitle;
-    const newTitle = args.newTitle;
-    if (!oldTitle || !newTitle) return { result: "Missing oldTitle or newTitle", error: true };
-    try {
-      const date = await getDate();
-      const result = await goalsService.renamePriority(oldTitle, newTitle, horizon, date);
-      if ("error" in result) return { result: `${label} priority: ${result.error}`, error: true };
-
-      const priorities = await currentPriorities(date);
-      await publishPriorityMutation(date, "update", newTitle);
-      return { result: `${label} priority updated: "${oldTitle}" → "${newTitle}"\nCurrent priorities: ${JSON.stringify(priorities)}` };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { result: `update_${toolPrefix}priority error: ${message}`, error: true };
-    }
-  };
-
-  handlers[`remove_${toolPrefix}priority`] = async (args) => {
-    const title = args.title;
-    if (!title) return { result: "Missing priority title", error: true };
-    try {
-      const date = await getDate();
-      const result = await goalsService.removePriority(title, horizon, date);
-      if ("error" in result) return { result: `${label} priority: ${result.error}`, error: true };
-
-      await publishPriorityMutation(date, "remove", title);
-      return { result: `${label} priority removed: "${title}"` };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { result: `remove_${toolPrefix}priority error: ${message}`, error: true };
-    }
-  };
-
-  handlers[`mark_${toolPrefix}priority_status`] = async (args) => {
-    const title = args.title;
-    const status = args.status;
-    if (!title) return { result: "Missing priority title", error: true };
-    if (!status || !["completed", "partial", "missed"].includes(status)) {
-      return { result: "Invalid status. Use: completed, partial, or missed", error: true };
-    }
-    try {
-      const date = await getDate();
-      const result = await goalsService.markPriorityStatus(title, status, horizon, date);
-      if ("error" in result) return { result: `${label} priority: ${result.error}`, error: true };
-
-      if (result.alreadySet) {
-        const priorities = await currentPriorities(date);
-        return { result: `${label} priority "${title}" was already marked as ${status}\nCurrent priorities: ${JSON.stringify(priorities)}` };
-      }
-
-      const priorities = await currentPriorities(date);
-      await publishPriorityMutation(date, "mark_status", title);
-      return { result: `${label} priority "${title}" marked as ${status}\nCurrent priorities: ${JSON.stringify(priorities)}` };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { result: `mark_${toolPrefix}priority_status error: ${message}`, error: true };
-    }
-  };
-
-  handlers[`link_${toolPrefix}parent`] = async (args) => {
-    const title = args.title;
-    if (!title) return { result: "Missing priority title", error: true };
-    if (!("parentId" in args)) return { result: "Missing parentId parameter. Pass a parent ID string to link, or null to unlink.", error: true };
-    const parentId = args.parentId ?? null;
-    try {
-      const date = await getDate();
-      const result = await goalsService.linkPriorityParent(title, parentId, horizon, date);
-      if ("error" in result) return { result: `${label} priority: ${result.error}`, error: true };
-
-      const priorities = await currentPriorities(date);
-      await publishPriorityMutation(date, "link_parent", title);
-      if (parentId) {
-        return { result: `${label} priority "${title}" linked to parent ${parentId}\nCurrent priorities: ${JSON.stringify(priorities)}` };
-      }
-      return { result: `${label} priority "${title}" unlinked from parent\nCurrent priorities: ${JSON.stringify(priorities)}` };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { result: `link_${toolPrefix}parent error: ${message}`, error: true };
-    }
-  };
-
-  return handlers;
-}
-
-const priorityTools = makePriorityHandlers("today", getTodayDate, "Daily", "");
-const weeklyPriorityTools = makePriorityHandlers("this_week", getMondayOfCurrentWeek, "Weekly", "weekly_");
-const monthlyPriorityTools = makePriorityHandlers("this_month", getFirstOfCurrentMonth, "Monthly", "monthly_");
-const nextDayPriorityTools = makePriorityHandlers("today", getTomorrowDate, "Tomorrow", "next_day_");
-const nextWeekPriorityTools = makePriorityHandlers("this_week", getMondayOfNextWeek, "Next Week", "next_week_");
-const nextMonthPriorityTools = makePriorityHandlers("this_month", getFirstOfNextMonth, "Next Month", "next_month_");
-
-
 async function gitnexusBridgeCall<T>(fn: () => Promise<T>): Promise<{ ok: boolean; result?: T; error?: string }> {
   try {
     const { isGitNexusReady, getStatus } = await import("./gitnexus-bridge");
@@ -13520,30 +13360,10 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       return bridgeHandlers.goals(args);
     }
 
-    const period = args.period || "daily";
-    const prefixMap: Record<string, string> = {
-      daily: "",
-      weekly: "weekly_",
-      monthly: "monthly_",
-      next_day: "next_day_",
-      next_week: "next_week_",
-      next_month: "next_month_",
+    return {
+      result: `priorities.${action} has been removed. Use goals for goal and priority operations; check-in artifact actions still redirect through this deprecated compatibility shim.`,
+      error: true,
     };
-    const prefix = prefixMap[period];
-    if (prefix === undefined) return { result: `Unknown period: ${period}. Available: daily, weekly, monthly, next_day, next_week, next_month`, error: true };
-    const actionMap: Record<string, string> = {
-      add: `add_${prefix}priority`,
-      update: `update_${prefix}priority`,
-      remove: `remove_${prefix}priority`,
-      mark_status: `mark_${prefix}priority_status`,
-      link_parent: `link_${prefix}parent`,
-    };
-    const handlerName = actionMap[action];
-    if (!handlerName) return { result: `Unknown priorities action: ${action}. Available: add, update, remove, mark_status, link_parent. Use goals for check-in artifact linking.`, error: true };
-    const allPriority = { ...priorityTools, ...weeklyPriorityTools, ...monthlyPriorityTools, ...nextDayPriorityTools, ...nextWeekPriorityTools, ...nextMonthPriorityTools };
-    const handler = allPriority[handlerName];
-    if (!handler) return { result: `Handler not found for ${handlerName}`, error: true };
-    return handler(args);
   },
   async observe(args) {
     const type = args.type as string;
@@ -15091,9 +14911,6 @@ const localHandlers: Record<string, ToolHandler> = {
   ...systemTools,
   ...webTools,
   ...memoryTools,
-  ...priorityTools,
-  ...weeklyPriorityTools,
-  ...monthlyPriorityTools,
   ...codeIntelTools,
   ...umbrellaHandlers,
   ...cognitionTools,

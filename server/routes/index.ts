@@ -51,36 +51,12 @@ import { registerNotificationRoutes } from "./notifications";
 import mediaRoutes from "../media/media-routes";
 import renderRoutes from "../media/render-routes";
 
-/**
- * API path aliases — canonical new names rewrite to legacy handler paths.
- * Old paths remain for backward compatibility (mobile, stored references).
- * Remove aliases once all consumers migrate to canonical paths.
- */
-const API_PATH_ALIASES: [string, string][] = [
-  ["/api/projects", "/api/work"],       // Domain 2: Work → Projects
-  ["/api/observations", "/api/thoughts"], // Domain 6: Thoughts → Observations
-  ["/api/home", "/api/simple"],          // Domain 1: Simple → Home
-];
-
 export async function registerDomainRoutes(
   app: Express,
   serverStartTime: Date,
   wss: WebSocketServer,
   eventsWss: WebSocketServer
 ) {
-  // Rewrite canonical API paths to legacy handler paths before any route matching.
-  // Both old and new paths work; old paths are kept for mobile/stored-reference compat.
-  app.use((req, _res, next) => {
-    for (const [canonical, legacy] of API_PATH_ALIASES) {
-      if (req.url.startsWith(canonical + "/") || req.url === canonical) {
-        req.url = legacy + req.url.slice(canonical.length);
-        req.originalUrl = legacy + req.originalUrl.slice(req.originalUrl.indexOf(canonical) + canonical.length);
-        break;
-      }
-    }
-    next();
-  });
-
   await registerSetupRoutes(app);
   registerOnboardingRoutes(app);
   await registerGatewayRoutes(app);

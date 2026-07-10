@@ -31,9 +31,9 @@ function routeError(error: unknown, operation: string): { message: string; opera
 }
 
 export async function registerProjectsRoutes(app: Express) {
-  app.use("/api/work", requireAuth);
+  app.use("/api/projects", requireAuth);
 
-  app.get("/api/work/todo", async (_req, res) => {
+  app.get("/api/projects/todo", async (_req, res) => {
     try {
       const rawTasks = await fileTaskStorage.getTodoTasks();
       const tasks = await Promise.all(rawTasks.map(async t => {
@@ -62,7 +62,7 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.get("/api/work/tasks", async (req, res) => {
+  app.get("/api/projects/tasks", async (req, res) => {
     try {
       const { status, projectId } = req.query;
       const options: any = {};
@@ -76,7 +76,7 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.get("/api/work/tasks/:id", async (req, res) => {
+  app.get("/api/projects/tasks/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       const task = await fileTaskStorage.getTask(id);
@@ -88,7 +88,7 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.post("/api/work/tasks", async (req, res) => {
+  app.post("/api/projects/tasks", async (req, res) => {
     try {
       const parsed = insertTaskSchema.parse(req.body);
       const task = await fileTaskStorage.createTask(parsed);
@@ -99,7 +99,7 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/work/tasks/:id", async (req, res) => {
+  app.patch("/api/projects/tasks/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       const { patch: updates, clearFields, destructiveUpdateReason } = sanitizePatch(req.body, {
@@ -126,7 +126,7 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.delete("/api/work/tasks/:id", async (req, res) => {
+  app.delete("/api/projects/tasks/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       const deleted = await fileTaskStorage.deleteTask(id);
@@ -138,7 +138,7 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.get("/api/work/projects", async (req, res) => {
+  app.get("/api/projects/projects", async (req, res) => {
     try {
       const { status } = req.query;
       const options: any = {};
@@ -151,7 +151,7 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.get("/api/work/projects/:id", async (req, res) => {
+  app.get("/api/projects/projects/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       const project = await fileProjectStorage.getProject(id);
@@ -163,7 +163,7 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.post("/api/work/projects", async (req, res) => {
+  app.post("/api/projects/projects", async (req, res) => {
     try {
       const parsed = insertProjectSchema.parse(req.body);
       const project = await fileProjectStorage.createProject(parsed);
@@ -174,7 +174,7 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/work/projects/:id", async (req, res) => {
+  app.patch("/api/projects/projects/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       const { patch: updates, clearFields, destructiveUpdateReason } = sanitizePatch(req.body, {
@@ -201,7 +201,7 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.delete("/api/work/projects/:id", async (req, res) => {
+  app.delete("/api/projects/projects/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       const deleted = await fileProjectStorage.deleteProject(id);
@@ -214,7 +214,7 @@ export async function registerProjectsRoutes(app: Express) {
   });
 
 
-  app.post("/api/work/projects/:id/milestones", async (req, res) => {
+  app.post("/api/projects/projects/:id/milestones", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       const { name, status, startDate, dueDate } = req.body;
@@ -228,7 +228,7 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/work/projects/:id/milestones/:milestoneId", async (req, res) => {
+  app.patch("/api/projects/projects/:id/milestones/:milestoneId", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       const milestoneId = parseInt(req.params.milestoneId, 10);
@@ -241,7 +241,7 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.delete("/api/work/projects/:id/milestones/:milestoneId", async (req, res) => {
+  app.delete("/api/projects/projects/:id/milestones/:milestoneId", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       const milestoneId = parseInt(req.params.milestoneId, 10);
@@ -255,7 +255,7 @@ export async function registerProjectsRoutes(app: Express) {
   });
 
 
-  app.post("/api/work/projects/:id/pages", async (req, res) => {
+  app.post("/api/projects/projects/:id/pages", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       const { pageId, title, slug } = req.body;
@@ -316,13 +316,13 @@ export async function registerProjectsRoutes(app: Express) {
         log.warn(`Wrote stub for ${file.name}: ${err instanceof Error ? err.message : String(err)}`);
       }
     } else {
-      const stub = `# ${file.name}\n\nType: ${file.mimeType}\nSize: ${file.size} bytes\nStored in: object storage (${file.objectKey})\nUploaded: ${new Date().toISOString()}\n\nThis is a binary file. Access it through the project files UI or the /api/work/projects/${projectId}/files endpoint.`;
+      const stub = `# ${file.name}\n\nType: ${file.mimeType}\nSize: ${file.size} bytes\nStored in: object storage (${file.objectKey})\nUploaded: ${new Date().toISOString()}\n\nThis is a binary file. Access it through the project files UI or the /api/projects/projects/${projectId}/files endpoint.`;
       await fs.writeFile(join(dir, safeName + ".ref.md"), stub, "utf-8");
       log.log(`Wrote reference stub for binary ${file.name}`);
     }
   }
 
-  app.post("/api/work/projects/:id/files/upload-url", async (req, res) => {
+  app.post("/api/projects/projects/:id/files/upload-url", async (req, res) => {
     try {
       const { ObjectStorageService } = await import("../object_storage");
       const { extname } = await import("path");
@@ -341,7 +341,7 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.post("/api/work/projects/:id/files", async (req, res) => {
+  app.post("/api/projects/projects/:id/files", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       const { name, mimeType, objectKey, size } = req.body;
@@ -369,7 +369,7 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.delete("/api/work/projects/:id/files/:fileId", async (req, res) => {
+  app.delete("/api/projects/projects/:id/files/:fileId", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       const { fileId } = req.params;
@@ -400,7 +400,7 @@ export async function registerProjectsRoutes(app: Express) {
   });
 
 
-  app.get("/api/work/tags", async (_req, res) => {
+  app.get("/api/projects/tags", async (_req, res) => {
     try {
       const tasks = await fileTaskStorage.getTasks({});
       const tagSet: Record<string, boolean> = {};
@@ -412,7 +412,7 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.get("/api/work/context", async (_req, res) => {
+  app.get("/api/projects/context", async (_req, res) => {
     try {
       const rawTodo = await fileTaskStorage.getTodoTasks();
       const todoTasks = await Promise.all(rawTodo.map(async t => {

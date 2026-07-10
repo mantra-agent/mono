@@ -49,7 +49,6 @@ export function SurfacedNewsRow({ item, dateLabel }: SurfacedNewsRowProps) {
       await apiRequest("PATCH", `/api/landscape/signals/${signalId}/status`, { status });
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/simple/feed"] });
       queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
       queryClient.invalidateQueries({ queryKey: ["/api/landscape/signals"] });
     },

@@ -190,8 +190,8 @@ async function loadReferenceSuggestions(
         `/api/life-goals${query ? `?search=${encoded}` : ""}`,
         signal,
       ),
-      fetchJson<TaskResult[]>(`/api/work/tasks`, signal),
-      fetchJson<ProjectResult[]>(`/api/work/projects`, signal),
+      fetchJson<TaskResult[]>(`/api/projects/tasks`, signal),
+      fetchJson<ProjectResult[]>(`/api/projects/projects`, signal),
       fetchJson<WellnessActivityResult[]>(`/api/wellness/activities`, signal),
     ]);
 
