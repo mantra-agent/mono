@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { useLocation, useParams } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, Settings2, ChevronRight, ExternalLink, Play, History, ShieldCheck, Trash2, FileText, Search, Cable, Link2, User, FolderGit2, GitBranch, GitMerge, Zap, Code2, Server, Hash, Layers, Cpu } from "lucide-react";
+import { Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, Settings2, ChevronRight, ExternalLink, Play, History, ShieldCheck, Trash2, FileText, Search, Cable, Link2, User, FolderGit2, GitBranch, GitMerge, Zap, Code2, Server, Hash, Layers, Cpu, PenTool, ClipboardList, PackageOpen, type LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   AlertDialog,
@@ -1657,6 +1657,13 @@ const ARTIFACT_KIND_LABELS: Record<string, string> = Object.fromEntries(
   CONTEXT_ARTIFACT_KINDS.map((k) => [k.value, k.label]),
 );
 
+const ARTIFACT_KIND_ICONS: Record<string, LucideIcon> = {
+  coding_process: Code2,
+  design_system: PenTool,
+  planning_process: ClipboardList,
+  product_definition: PackageOpen,
+};
+
 function contextPageReference(artifact: ContextArtifact) {
   return createReferenceRef({
     type: "page",
@@ -1782,10 +1789,12 @@ function ContextArtifactsCard({ artifacts, environmentId }: { artifacts: Context
         <div className="space-y-1">
           {artifacts.map((a) => {
             const ref = contextPageReference(a);
+            const KindIcon = ARTIFACT_KIND_ICONS[a.kind] ?? FileText;
+            const kindLabel = ARTIFACT_KIND_LABELS[a.kind] ?? a.kind;
             return (
               <div key={a.id} className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs hover:bg-muted/40">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0">{ARTIFACT_KIND_LABELS[a.kind] ?? a.kind}</Badge>
+                <div className="flex min-w-0 items-center gap-2">
+                  <KindIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label={kindLabel} />
                   <ReferenceRenderer key={ref.canonical} refValue={ref} surface="simple-row" className="max-w-[14rem]" />
                 </div>
                 <Button
@@ -1914,16 +1923,31 @@ function ConfigCard({ title, description, children }: { title: string; descripti
 function EnvironmentSection({
   label,
   defaultOpen = true,
+  storageKey,
   children,
 }: {
   label: string;
   defaultOpen?: boolean;
+  storageKey?: string;
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useState(() => {
+    if (!storageKey || typeof window === "undefined") return defaultOpen;
+    const stored = window.localStorage.getItem(storageKey);
+    if (stored === "true") return true;
+    if (stored === "false") return false;
+    return defaultOpen;
+  });
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (storageKey && typeof window !== "undefined") {
+      window.localStorage.setItem(storageKey, String(nextOpen));
+    }
+  };
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
+    <Collapsible open={open} onOpenChange={handleOpenChange}>
       <CollapsibleTrigger className="flex items-center gap-1.5 w-full px-2 py-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider hover-elevate rounded-md">
         <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
         {label}
@@ -1940,13 +1964,13 @@ function EnvironmentSection({
 function EnvironmentDetailsConfigureCard({ details, environmentId }: { details: EnvironmentDetails; environmentId: number }) {
   return (
     <div className="space-y-1">
-      <EnvironmentSection label="Source">
+      <EnvironmentSection label="Source" defaultOpen={false} storageKey={`platform-environment:${environmentId}:section:source`}>
         <SourceBindingCard binding={details.source} environmentId={environmentId} />
       </EnvironmentSection>
-      <EnvironmentSection label="Hosting">
+      <EnvironmentSection label="Hosting" defaultOpen={false} storageKey={`platform-environment:${environmentId}:section:hosting`}>
         <HostingBindingCard binding={details.hosting} environmentId={environmentId} />
       </EnvironmentSection>
-      <EnvironmentSection label="Promotion">
+      <EnvironmentSection label="Promotion" defaultOpen={false} storageKey={`platform-environment:${environmentId}:section:promotion`}>
         <div>
           <ProfileTreeRow label="Source branch" icon={<GitBranch className="h-3.5 w-3.5" />} hasValue showEmpty>
             <FieldValue value={details.promotion.sourceBranch} mono />
