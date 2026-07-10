@@ -39,19 +39,11 @@ process.on("unhandledRejection", (reason, promise) => {
   serverLog.error(`[FATAL] unhandledRejection:`, msg);
 });
 
-import { migrateWorkspaceData } from "./migrate-workspace";
-migrateWorkspaceData();
-
-
 import { addObjectAclsTable } from "./migrations/add-object-acls";
-import { migratePrinciplesToTable } from "./migrations/migrate-principles-to-table";
-import { migrateTagsAndPeopleConfig } from "./migrations/migrate-tags-and-people-config";
 import { ensureVaults } from "./migrations/ensure-vaults";
 import { migrateProjectNotesSpecToLibrary } from "./migrations/migrate-project-notes-spec-to-library";
 
 const objectAclsMigrationReady = addObjectAclsTable();
-const principleMigrationReady = migratePrinciplesToTable();
-const tagsConfigMigrationReady = migrateTagsAndPeopleConfig();
 const vaultsMigrationReady = objectAclsMigrationReady.then(() => ensureVaults());
 
 const ENABLE_ASSOCIATIVE_RETRIEVAL = process.env.ASSOCIATIVE_RETRIEVAL === "true";
@@ -483,8 +475,6 @@ app.use((req, res, next) => {
 
   await objectAclsMigrationReady;
   await migrateProjectNotesSpecToLibrary();
-  await principleMigrationReady;
-  await tagsConfigMigrationReady;
   await vaultsMigrationReady;
 
   const tRoutes0 = Date.now();
