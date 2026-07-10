@@ -33,8 +33,6 @@ export async function migrateTasksToTable(): Promise<void> {
         "acceptance_criteria" text DEFAULT '' NOT NULL,
         "context" text DEFAULT '' NOT NULL,
         "output" text DEFAULT '' NOT NULL,
-        "estimate_low" real,
-        "estimate_high" real,
         "deadline" text,
         "token_estimate" integer,
         "scope" text DEFAULT 'user' NOT NULL,
@@ -83,7 +81,7 @@ export async function migrateTasksToTable(): Promise<void> {
         await db.execute(sql`
           INSERT INTO "tasks" ("id", "title", "description", "status", "priority", "impact", "effort",
             "owner", "requires_review", "project_id", "milestone_id", "tags", "deliverable",
-            "acceptance_criteria", "context", "output", "estimate_low", "estimate_high",
+            "acceptance_criteria", "context", "output",
             "deadline", "token_estimate", "created_at", "updated_at")
           VALUES (
             ${id},
@@ -102,8 +100,6 @@ export async function migrateTasksToTable(): Promise<void> {
             ${String(meta.acceptanceCriteria || "")},
             ${String(meta.context || "")},
             ${String(meta.output || "")},
-            ${meta.estimateLow != null ? Number(meta.estimateLow) : null},
-            ${meta.estimateHigh != null ? Number(meta.estimateHigh) : null},
             ${meta.deadline ? String(meta.deadline) : null},
             ${meta.tokenEstimate != null ? Number(meta.tokenEstimate) : null},
             ${meta.createdAt ? new Date(String(meta.createdAt)) : new Date()},

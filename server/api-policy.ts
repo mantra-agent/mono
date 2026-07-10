@@ -68,7 +68,6 @@ const PERSONAL_RULES: ApiPolicyRule[] = [
       "/api/sessions",
       "/api/messages",
       "/api/chat",
-      "/api/captures",
       "/api/client-presence",
       "/api/content",
       "/api/personas",
