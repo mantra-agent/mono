@@ -15,8 +15,10 @@ import { libraryPages } from "@shared/models/info";
 import { eq } from "drizzle-orm";
 import {
   getMetadata, setMetadata, linkTask, unlinkTask, getLinkedTasks, getLinkedPeople, linkArtifact, unlinkArtifact, getLinkedArtifacts,
-  autoLogMeetingInteractions, EVENT_TYPES, CAPACITY_TYPES, type EventType, type CapacityType
+  autoLogMeetingInteractions, EVENT_TYPES, CAPACITY_TYPES, type EventType, type CapacityType,
+  setAgentJoin,
 } from "./calendar-metadata";
+import { extractMeetingUrl } from "./meeting/join";
 import { getBandwidthSummary } from "./calendar-bandwidth";
 
 const log = createLogger("CalendarRoutes");
@@ -496,6 +498,55 @@ export function registerCalendarRoutes(app: Express): void {
 
       res.json({ metadata: meta, tasks, people, artifacts, autoLoggedInteractions: autoLoggedCount });
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  const agentJoinSchema = z.object({
+    googleEventId: z.string().min(1),
+    accountId: z.string().min(1),
+    calendarId: z.string().min(1),
+    enabled: z.boolean(),
+  });
+
+  // Per-event agent auto-join toggle (M1.5). Enabling schedules the Recall.ai
+  // bot to join at the event's start time via the meeting auto-join scheduler.
+  app.post("/api/calendar/agent-join", async (req, res) => {
+    try {
+      const parsed = agentJoinSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      }
+      const { googleEventId, accountId, calendarId, enabled } = parsed.data;
+
+      if (!enabled) {
+        const meta = await setAgentJoin(googleEventId, accountId, calendarId, false, {});
+        return res.json({ metadata: meta });
+      }
+
+      const event = await getEvent(accountId, calendarId, googleEventId);
+      const startDateTime = event.start?.dateTime;
+      if (!startDateTime) {
+        return res.status(400).json({ error: "This event has no start time (all-day events can't be auto-joined)." });
+      }
+      const startAt = new Date(startDateTime);
+      if (Number.isNaN(startAt.getTime())) {
+        return res.status(400).json({ error: "Could not parse the event start time." });
+      }
+      if (startAt.getTime() < Date.now() - 10 * 60_000) {
+        return res.status(400).json({ error: "This event already started more than 10 minutes ago." });
+      }
+
+      const meetingUrl = extractMeetingUrl(event.location, event.description, event.summary);
+      const meta = await setAgentJoin(googleEventId, accountId, calendarId, true, {
+        status: meetingUrl ? "scheduled" : "no_link",
+        detail: meetingUrl ? null : "No Zoom or Google Meet link found on this event",
+        startAt,
+        attemptedAt: null,
+      });
+      res.json({ metadata: meta });
+    } catch (error: any) {
+      log.error(`agent-join toggle failed: ${error.message}`);
       res.status(500).json({ error: error.message });
     }
   });

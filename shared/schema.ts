@@ -821,6 +821,15 @@ export const calendarEventMetadata = pgTable("calendar_event_metadata", {
   eventType: text("event_type").notNull().default("meeting"),
   capacityType: text("capacity_type"),
   notes: text("notes"),
+  // Meeting agent auto-join (per-event toggle). Status discriminant computed at
+  // the source: scheduled | no_link | joined | failed. Detail carries the
+  // human-visible reason for no_link/failed.
+  agentJoinEnabled: boolean("agent_join_enabled").notNull().default(false),
+  agentJoinStatus: text("agent_join_status"),
+  agentJoinDetail: text("agent_join_detail"),
+  agentJoinSessionId: text("agent_join_session_id"),
+  agentJoinStartAt: timestamp("agent_join_start_at", { withTimezone: true }),
+  agentJoinAttemptedAt: timestamp("agent_join_attempted_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [

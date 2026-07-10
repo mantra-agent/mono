@@ -205,6 +205,120 @@ export async function linkTask(
   return rows[0];
 }
 
+// ─── Agent auto-join (per-event meeting bot toggle) ───
+
+export type AgentJoinStatus = "scheduled" | "no_link" | "joined" | "failed";
+
+export interface AgentJoinPatch {
+  status?: AgentJoinStatus | null;
+  detail?: string | null;
+  sessionId?: string | null;
+  startAt?: Date | null;
+  attemptedAt?: Date | null;
+}
+
+/**
+ * Upsert the per-event agent auto-join toggle. Preserves the existing
+ * eventType (defaulting to "meeting" for new rows). Toggling on rearms the
+ * schedule by clearing attemptedAt unless the patch says otherwise.
+ */
+export async function setAgentJoin(
+  googleEventId: string,
+  accountId: string,
+  calendarId: string,
+  enabled: boolean,
+  patch: AgentJoinPatch = {}
+): Promise<CalendarEventMetadata> {
+  log.log(`setAgentJoin event=${googleEventId} enabled=${enabled} status=${patch.status ?? "-"}`);
+  const existing = await getMetadata(googleEventId, accountId, calendarId);
+  const joinFields = {
+    agentJoinEnabled: enabled,
+    agentJoinStatus: enabled ? patch.status ?? null : null,
+    agentJoinDetail: enabled ? patch.detail ?? null : null,
+    agentJoinSessionId: patch.sessionId !== undefined ? patch.sessionId : existing?.agentJoinSessionId ?? null,
+    agentJoinStartAt: patch.startAt !== undefined ? patch.startAt : existing?.agentJoinStartAt ?? null,
+    agentJoinAttemptedAt: patch.attemptedAt !== undefined ? patch.attemptedAt : null,
+  };
+
+  const rows = await db
+    .insert(calendarEventMetadata)
+    .values({
+      googleEventId,
+      accountId,
+      calendarId,
+      eventType: existing?.eventType ?? "meeting",
+      capacityType: existing?.capacityType ?? null,
+      notes: existing?.notes ?? null,
+      ...joinFields,
+      createdAt: sql`CURRENT_TIMESTAMP`,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+      ...sensitiveOwnershipValues(),
+    })
+    .onConflictDoUpdate({
+      target: [calendarEventMetadata.googleEventId, calendarEventMetadata.accountId, calendarEventMetadata.calendarId],
+      set: {
+        ...joinFields,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+        ...sensitiveOwnershipValues(),
+      },
+    })
+    .returning();
+
+  invalidateCalendarCache();
+  return rows[0];
+}
+
+/**
+ * System-scheduler scan: all enabled, unattempted auto-joins due to fire.
+ * Deliberately unscoped — the caller runs without a user principal and wraps
+ * all per-row work in runWithPrincipal using the row's owner columns.
+ */
+export async function listDueAgentJoins(now: Date, graceMs: number, leadMs: number): Promise<CalendarEventMetadata[]> {
+  return db
+    .select()
+    .from(calendarEventMetadata)
+    .where(and(
+      eq(calendarEventMetadata.agentJoinEnabled, true),
+      sql`${calendarEventMetadata.agentJoinAttemptedAt} IS NULL`,
+      sql`${calendarEventMetadata.agentJoinStartAt} IS NOT NULL`,
+      sql`${calendarEventMetadata.agentJoinStartAt} <= ${new Date(now.getTime() + leadMs)}`,
+      sql`${calendarEventMetadata.agentJoinStartAt} >= ${new Date(now.getTime() - graceMs)}`,
+    ));
+}
+
+/**
+ * Atomically claim a due auto-join so overlapping scheduler ticks can't
+ * double-dispatch a bot. Returns false if another tick already claimed it.
+ */
+export async function claimAgentJoin(metadataId: number, now: Date): Promise<boolean> {
+  const rows = await db
+    .update(calendarEventMetadata)
+    .set({ agentJoinAttemptedAt: now, updatedAt: sql`CURRENT_TIMESTAMP` })
+    .where(and(
+      eq(calendarEventMetadata.id, metadataId),
+      eq(calendarEventMetadata.agentJoinEnabled, true),
+      sql`${calendarEventMetadata.agentJoinAttemptedAt} IS NULL`,
+    ))
+    .returning({ id: calendarEventMetadata.id });
+  return rows.length > 0;
+}
+
+/** Record the outcome of an auto-join attempt (or reschedule by clearing the claim). */
+export async function updateAgentJoinOutcome(metadataId: number, patch: AgentJoinPatch): Promise<void> {
+  await db
+    .update(calendarEventMetadata)
+    .set({
+      ...(patch.status !== undefined ? { agentJoinStatus: patch.status } : {}),
+      ...(patch.detail !== undefined ? { agentJoinDetail: patch.detail } : {}),
+      ...(patch.sessionId !== undefined ? { agentJoinSessionId: patch.sessionId } : {}),
+      ...(patch.startAt !== undefined ? { agentJoinStartAt: patch.startAt } : {}),
+      ...(patch.attemptedAt !== undefined ? { agentJoinAttemptedAt: patch.attemptedAt } : {}),
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .where(eq(calendarEventMetadata.id, metadataId));
+  invalidateCalendarCache();
+}
+
 // ─── getLinkedTaskById ───
 
 export async function getLinkedTaskById(linkId: number): Promise<CalendarEventTask | null> {

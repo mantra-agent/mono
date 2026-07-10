@@ -662,6 +662,17 @@ app.use((req, res, next) => {
       setTimeout(runVnextSourcePoller, 30_000).unref();
       setInterval(runVnextSourcePoller, VNEXT_SOURCE_POLLER_INTERVAL_MS).unref();
 
+      // Meeting auto-join scheduler: joins the Recall.ai bot to calendar
+      // events whose per-event agent toggle is enabled, at start time.
+      // Ticks every minute; each tick atomically claims due rows.
+      const runMeetingAutoJoin = () => {
+        import("./meeting/auto-join").then(({ runMeetingAutoJoinTick }) => runMeetingAutoJoinTick()).catch((err) => {
+          log(`[scheduled] meeting auto-join tick failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
+        });
+      };
+      setTimeout(runMeetingAutoJoin, 20_000).unref();
+      setInterval(runMeetingAutoJoin, 60_000).unref();
+
       getRailwayConfig(process.env.RAILWAY_ENVIRONMENT === "production" ? "prod" : "dev")
         .then(async (cfg) => {
           const serviceId = process.env.RAILWAY_SERVICE_ID || cfg.serviceId;

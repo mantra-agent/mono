@@ -2,7 +2,7 @@ import type { SimpleAction, SimpleFeedItem, SimpleSection, SimpleSourceRef } fro
 import { fileTaskStorage } from "../file-storage/tasks";
 import { fileProjectStorage } from "../file-storage/projects";
 import { createLogger } from "../log";
-import type { GoalIndexEntry } from "@shared/schema";
+import type { GoalIndexEntry, CalendarEventMetadata } from "@shared/schema";
 import { goalsService } from "../goals-service";
 import type { Task, Project, Milestone } from "@shared/models/work";
 import { formatHour, getWindowLabel, inRange } from "@shared/wellness-window";
@@ -1017,7 +1017,7 @@ async function buildMeetingArtifactMap(metadataIds: number[]): Promise<MeetingAr
   return map;
 }
 
-function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: number, timezone: string, emailMap: EmailPersonMap, artifacts: MeetingArtifactView[] = []): SimpleFeedItem {
+function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: number, timezone: string, emailMap: EmailPersonMap, artifacts: MeetingArtifactView[] = [], meta?: CalendarEventMetadata): SimpleFeedItem {
   const sourceRef: SimpleSourceRef = {
     type: "calendar",
     id: `${event.accountId}:${event.id}`,
@@ -1124,6 +1124,13 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
       startDateTime: event.start.dateTime || null,
       endDateTime: event.end.dateTime || null,
       allDay: !event.start.dateTime,
+      googleEventId: event.id,
+      accountId: event.accountId,
+      calendarId: event.calendarId,
+      agentJoinEnabled: meta?.agentJoinEnabled ?? false,
+      agentJoinStatus: meta?.agentJoinStatus ?? null,
+      agentJoinDetail: meta?.agentJoinDetail ?? null,
+      agentJoinSessionId: meta?.agentJoinSessionId ?? null,
     },
     actions: [
       { id: `open-meeting-${event.id}`, label: "Open in Calendar", type: "navigate", href: `/calendar`, sourceRef },
@@ -1452,7 +1459,7 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
         const section = meetingSection(event, today, tomorrow, weekEnd);
         const meta = metaByKey.get(`${event.id}::${event.accountId}::${event.calendarId}`);
         const artifacts = meta ? artifactsByMetadataId.get(meta.id) ?? [] : [];
-        items.push(itemFromMeeting(event, section, index, timezone, emailMap, artifacts));
+        items.push(itemFromMeeting(event, section, index, timezone, emailMap, artifacts, meta));
       });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

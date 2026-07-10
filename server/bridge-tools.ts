@@ -8536,22 +8536,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       return { result: JSON.stringify({ sessionId, botStatus: "ended", left: true }) };
     }
 
-    // join
-    const recall = await import("./integrations/recall/client");
-    const cfg = await recall.getRecallConfig();
-    if (!recall.isRecallConfigured(cfg)) {
-      return {
-        result:
-          "Recall.ai is not configured. Ray must enter the RECALL_API_KEY and RECALL_REGION in Settings → Integrations → Recall.ai (the key is never entered through chat). Once connected, retry the join.",
-        error: true,
-      };
-    }
-    const publicUrl = process.env.PUBLIC_URL?.replace(/\/$/, "");
-    if (!publicUrl) {
-      return { result: "PUBLIC_URL is not set — the Recall transcript webhook needs a stable public URL. Configure PUBLIC_URL and retry.", error: true };
-    }
+    // join — delegates to the canonical join path in server/meeting/join.ts
+    const { extractMeetingUrl, joinMeetingByUrl, MeetingJoinError, MEETING_URL_RE } = await import("./meeting/join");
 
-    const MEETING_URL_RE = /https?:\/\/[^\s<>"']*(?:zoom\.us\/j\/|zoom\.us\/wc\/|meet\.google\.com\/)[^\s<>"')]+/i;
     let meetingUrl = typeof args.url === "string" ? args.url.trim() : "";
     let resolvedTitle = typeof args.title === "string" && args.title.trim() ? args.title.trim() : "";
 
@@ -8575,10 +8562,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           return ta - tb;
         });
         for (const ev of sorted) {
-          const haystack = [ev.location, ev.description, ev.summary].filter(Boolean).join("\n");
-          const match = haystack.match(MEETING_URL_RE);
-          if (match) {
-            meetingUrl = match[0];
+          const found = extractMeetingUrl(ev.location, ev.description, ev.summary);
+          if (found) {
+            meetingUrl = found;
             if (!resolvedTitle) resolvedTitle = ev.summary || "";
             break;
           }
@@ -8591,50 +8577,24 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       }
     }
 
-    const platform = /zoom\.us/i.test(meetingUrl)
-      ? "zoom"
-      : /meet\.google\.com/i.test(meetingUrl)
-        ? "meet"
-        : "unknown";
-    const title = resolvedTitle || "Meeting";
-
-    // Create the meeting session first so the bot carries the session id in
-    // its metadata — the webhook receiver routes events by bot.metadata.sessionId.
-    const session = await chatStorage.createMeetingSession(title, {
-      title,
-      platform,
-      participants: [],
-      botStatus: "dialing",
-      meetingUrl,
-    });
-
-    let bot;
+    let joined;
     try {
-      bot = await recall.createRecallBot({
-        meetingUrl,
-        botName: "Mantra Agent",
-        webhookUrl: `${publicUrl}/api/webhooks/recall/transcript`,
-        metadata: { sessionId: session.id },
-      });
+      joined = await joinMeetingByUrl({ meetingUrl, title: resolvedTitle || "Meeting" });
     } catch (err) {
-      await chatStorage.updateMeetingMeta(session.id, {
-        botStatus: "failed",
-        statusDetail: err instanceof Error ? err.message : String(err),
-        endedAt: new Date().toISOString(),
-      });
-      return { result: `Recall bot creation failed: ${err instanceof Error ? err.message : String(err)}`, error: true };
+      if (err instanceof MeetingJoinError) {
+        return { result: err.message, error: true };
+      }
+      return { result: `Meeting join failed: ${err instanceof Error ? err.message : String(err)}`, error: true };
     }
-
-    await chatStorage.updateMeetingMeta(session.id, { botId: bot.id });
 
     return {
       result: JSON.stringify({
-        sessionId: session.id,
-        botId: bot.id,
+        sessionId: joined.sessionId,
+        botId: joined.botId,
         botStatus: "dialing",
-        platform,
-        title,
-        link: `/session?c=${session.id}`,
+        platform: joined.platform,
+        title: joined.title,
+        link: `/session?c=${joined.sessionId}`,
         note: "Bot 'Mantra Agent' is joining the call. If it lands in the waiting room, admit it from the participants panel. Live attributed transcript streams into the linked meeting session.",
       }),
     };
