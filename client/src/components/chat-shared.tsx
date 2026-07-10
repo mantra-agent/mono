@@ -205,6 +205,8 @@ export interface ChatMessage {
   compaction?: CompactionMeta | null;
   pageContext?: PageContext | null;
   voice?: VoiceMessageMeta | null;
+  /** Speaker attribution for meeting transcript messages. */
+  speaker?: { label: string; personId?: string } | null;
   /** Canonical per-turn correlation ID for voice turns. */
   turnId?: string;
   /** Structural visibility discriminant — 'diagnostic' messages are hidden from chat */
@@ -1449,6 +1451,23 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
     return (
       <div className="flex justify-end" data-testid={`message-user-${message.id}`}>
         <div className="max-w-[75%]">
+          {message.speaker && (
+            <div
+              className="mb-0.5 text-xs font-medium text-muted-foreground text-right"
+              data-testid={`text-speaker-${message.id}`}
+            >
+              {message.speaker.personId ? (
+                <MarkdownContent
+                  content={`@person:${message.speaker.personId}`}
+                  stripTags
+                  compact
+                  referenceSurface="simple-chip"
+                />
+              ) : (
+                message.speaker.label
+              )}
+            </div>
+          )}
           <div className="bg-muted text-foreground rounded-2xl rounded-br-sm px-4 py-2.5">
             {displayUserContent && (
               <div className="text-sm" data-testid="text-user-message">

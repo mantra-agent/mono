@@ -2412,6 +2412,149 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     },
   );
 
+  // M0 meeting spine — dev loopback transport.
+  // POST attributed transcript text into a meeting session. Creates the
+  // meeting session on first call, resolves the speaker (known → person,
+  // unknown → "Speaker N"), persists the attributed message, and triggers an
+  // agent response through the same canonical flow as normal user messages.
+  app.post("/api/dev/meeting/loopback", async (req: Request, res: Response) => {
+    try {
+      const {
+        sessionId: incomingSessionId,
+        title,
+        platform,
+        speaker: speakerLabel,
+        text,
+        botStatus,
+      } = req.body || {};
+
+      if (!text || typeof text !== "string") {
+        return res.status(400).json({ error: "text is required" });
+      }
+
+      const { resolveSpeaker } = await import("../../meeting/speakers");
+
+      // Resolve or create the meeting session
+      let session = incomingSessionId
+        ? await chatStorage.getSession(incomingSessionId)
+        : null;
+      if (incomingSessionId && !session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+      if (session && session.type !== "meeting") {
+        return res
+          .status(400)
+          .json({ error: "Session is not a meeting session" });
+      }
+      if (!session) {
+        const meetingTitle =
+          (typeof title === "string" && title.trim()) || "Meeting";
+        session = await chatStorage.createMeetingSession(meetingTitle, {
+          title: meetingTitle,
+          platform: typeof platform === "string" ? platform : undefined,
+          participants: [],
+          botStatus: botStatus || "live",
+        });
+        chatLog.log(
+          `meeting loopback: created session ${session.id} title="${meetingTitle}" platform=${platform || "-"}`,
+        );
+      }
+      const sessionId = session.id;
+
+      // Speaker attribution against the session's participant roster
+      const meeting = session.meeting || {
+        participants: [],
+        botStatus: "live" as const,
+      };
+      const resolution = await resolveSpeaker(
+        typeof speakerLabel === "string" ? speakerLabel : undefined,
+        meeting.participants,
+      );
+      if (resolution.added || (botStatus && botStatus !== meeting.botStatus)) {
+        const updated = await chatStorage.updateMeetingMeta(sessionId, {
+          participants: resolution.participants,
+          ...(botStatus ? { botStatus } : {}),
+          ...(botStatus === "ended"
+            ? { endedAt: new Date().toISOString() }
+            : {}),
+        });
+        if (updated) session = updated;
+      }
+
+      await chatStorage.createMeetingUserMessage(
+        sessionId,
+        text,
+        resolution.speaker,
+      );
+
+      const sessionKey = session.sessionKey || `meeting:${sessionId}`;
+      publishChatStreamEvent(sessionKey, sessionId, {
+        type: "user_message",
+        content: text,
+        sessionId,
+        title: session.title || undefined,
+      });
+
+      // If a run is already active, the transcript line is persisted and
+      // visible; the agent finishes its current turn (no abort in meetings).
+      const isInFlight =
+        inFlightSessions.has(sessionId) ||
+        agentExecutor.hasActiveRunForSession(sessionId);
+      if (isInFlight) {
+        chatLog.log(
+          `meeting loopback: run in flight sessionId=${sessionId}, message queued`,
+        );
+        return res.status(202).json({
+          sessionId,
+          sessionKey,
+          speaker: resolution.speaker,
+          queued: true,
+        });
+      }
+
+      inFlightSessions.set(sessionId, { startedAt: Date.now(), sessionKey });
+      try {
+        const { sessionManager } = await import("../../session-manager");
+        sessionManager.registerSession(sessionId, sessionKey, "meeting");
+      } catch (regErr) {
+        chatLog.debug(
+          `sessionManager.registerSession skipped: ${regErr instanceof Error ? regErr.message : String(regErr)}`,
+        );
+      }
+      await chatStorage
+        .updateSessionStatus(sessionId, "streaming")
+        .catch((err) =>
+          chatLog.warn(
+            `status update to streaming failed sessionId=${sessionId}`,
+            err,
+          ),
+        );
+
+      const streamStartedAt = Date.now();
+      res.json({
+        sessionId,
+        sessionKey,
+        speaker: resolution.speaker,
+        status: "streaming",
+        streamStartedAt,
+      });
+
+      // The agent sees the attributed line; persisted content stays raw.
+      processChatStream(
+        sessionKey,
+        sessionId,
+        `[${resolution.speaker.label}] ${text}`,
+      ).catch((err) => {
+        chatLog.error("meeting loopback processChatStream error:", err);
+      });
+    } catch (error) {
+      chatLog.error("Error in meeting loopback:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to process meeting loopback" });
+      }
+    }
+  });
+
   app.post("/api/sessions/:id/abort", async (req: Request, res: Response) => {
     const routeStartAt = Date.now();
     const sessionId = req.params.id as string;

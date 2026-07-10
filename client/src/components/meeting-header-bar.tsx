@@ -1,0 +1,125 @@
+/**
+ * MeetingHeaderBar — sticky header for meeting sessions.
+ *
+ * Shows meeting title, platform, elapsed time, participant chips, and the
+ * bot status pill. Renders above the transcript, mirroring the sticky-bar
+ * pattern used by plans/workflows.
+ */
+import { useEffect, useState } from "react";
+import { Radio, Users } from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { MeetingSessionMeta, MeetingBotStatus } from "@shared/models/chat";
+
+const STATUS_LABEL: Record<MeetingBotStatus, string> = {
+  dialing: "Dialing",
+  in_lobby: "In lobby",
+  live: "Live",
+  ended: "Ended",
+};
+
+const STATUS_CLASS: Record<MeetingBotStatus, string> = {
+  dialing: "bg-warning/10 text-warning-foreground border-warning/30",
+  in_lobby: "bg-warning/10 text-warning-foreground border-warning/30",
+  live: "bg-active/10 text-active border-active/30",
+  ended: "bg-muted text-muted-foreground border-border",
+};
+
+function formatElapsed(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function useElapsed(startedAt?: string, endedAt?: string): string | null {
+  const [now, setNow] = useState(() => Date.now());
+  const running = !!startedAt && !endedAt;
+
+  useEffect(() => {
+    if (!running) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [running]);
+
+  if (!startedAt) return null;
+  const end = endedAt ? new Date(endedAt).getTime() : now;
+  return formatElapsed(end - new Date(startedAt).getTime());
+}
+
+export function MeetingHeaderBar({
+  meeting,
+  sessionTitle,
+}: {
+  meeting: MeetingSessionMeta;
+  sessionTitle?: string;
+}) {
+  const elapsed = useElapsed(meeting.startedAt, meeting.endedAt);
+  const isLive = meeting.botStatus === "live";
+
+  return (
+    <div
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2 border-b border-border bg-card/60"
+      data-testid="meeting-header-bar"
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <Radio
+          className={cn(
+            "h-3.5 w-3.5 shrink-0",
+            isLive ? "text-active animate-pulse" : "text-muted-foreground",
+          )}
+        />
+        <span
+          className="text-sm font-medium truncate"
+          data-testid="text-meeting-title"
+        >
+          {meeting.title || sessionTitle || "Meeting"}
+        </span>
+      </div>
+      {meeting.platform && (
+        <span
+          className="text-xs text-muted-foreground"
+          data-testid="text-meeting-platform"
+        >
+          {meeting.platform}
+        </span>
+      )}
+      {elapsed && (
+        <span
+          className="text-xs tabular-nums text-muted-foreground"
+          data-testid="text-meeting-elapsed"
+        >
+          {elapsed}
+        </span>
+      )}
+      <span
+        className={cn(
+          "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium",
+          STATUS_CLASS[meeting.botStatus],
+        )}
+        data-testid="badge-meeting-bot-status"
+      >
+        {STATUS_LABEL[meeting.botStatus]}
+      </span>
+      {meeting.participants.length > 0 && (
+        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+          <Users className="h-3 w-3 shrink-0 text-muted-foreground" />
+          {meeting.participants.map((p) => (
+            <span
+              key={p.label}
+              className={cn(
+                "inline-flex items-center rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs",
+                p.personId ? "text-foreground" : "text-muted-foreground",
+              )}
+              title={p.personId ? `Known person: ${p.label}` : p.label}
+              data-testid={`chip-participant-${p.label.replace(/\s+/g, "-").toLowerCase()}`}
+            >
+              {p.label}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
