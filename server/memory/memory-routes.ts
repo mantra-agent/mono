@@ -36,7 +36,8 @@ import { requireAuth } from "../auth";
 import { requirePermission } from "../permissions";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { combineWithVisibleScope } from "../scoped-storage";
-import { storageBackend, PRIVATE_PREFIX } from "../object_storage/objectStorage";
+import { storageBackend } from "../object_storage/objectStorage";
+import { vaultObjectKeyAuto } from "../object_storage/vault-keys";
 import { randomUUID, createHash } from "crypto";
 import { memoryVnextClaimStorage } from "./vnext-claim-storage";
 import { runVnextLifecycle } from "./vnext-lifecycle";
@@ -262,7 +263,7 @@ async function createRetentionArchive(request: Parameters<typeof memoryStorage.b
   const { createdAt: _createdAt, ...stableArchive } = archive;
   const archiveHash = createHash("sha256").update(JSON.stringify(stableArchive)).digest("hex");
   const objectId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID()}`;
-  const key = `${PRIVATE_PREFIX}memory-retention-purge/${objectId}.json`;
+  const key = vaultObjectKeyAuto("memory-retention-purge", `${objectId}.json`);
   await storageBackend.putObject(key, Buffer.from(body, "utf8"), { contentType: "application/json; charset=utf-8" });
   return { archive, archiveHash, archiveObjectPath: `/objects/memory-retention-purge/${objectId}.json` };
 }

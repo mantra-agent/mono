@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { randomUUID } from "crypto";
-import { storageBackend, PRIVATE_PREFIX } from "../object_storage/s3-backend";
+import { storageBackend } from "../object_storage/s3-backend";
+import { vaultObjectKeyFromPrincipal } from "../object_storage/vault-keys";
 import { setObjectAclPolicy } from "../object_storage/objectAcl";
 import { requireAuth } from "../auth";
 import { getPrincipal } from "../principal";
@@ -123,7 +124,7 @@ export function registerMobileDATDebugRoutes(app: Express) {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const objectId = `${timestamp}-${randomUUID().slice(0, 8)}`;
       const fileName = `glasses-capture-${objectId}${ext}`;
-      const key = `${PRIVATE_PREFIX}users/${principal.userId}/uploads/${objectId}${ext}`;
+      const key = vaultObjectKeyFromPrincipal(principal, `users/${principal.userId}/uploads`, `${objectId}${ext}`);
       await storageBackend.putObject(key, buffer, { contentType });
       await setObjectAclPolicy(key, {
         owner: principal.userId,

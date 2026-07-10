@@ -6,6 +6,7 @@ import { storageBackend } from "../object_storage/s3-backend";
 import { requireAuth, requireAdmin } from "../auth";
 import { getPrincipal } from "../principal";
 import { setObjectAclPolicy } from "../object_storage/objectAcl";
+import { vaultObjectKeyFromPrincipal } from "../object_storage/vault-keys";
 
 const log = createLogger("MediaRoutes");
 const router = Router();
@@ -152,9 +153,10 @@ async function generateThumbnailAsync(mediaId: string, objectPath: string, princ
   await fs.mkdir(tmpDir, { recursive: true });
 
   try {
-    // Download video from object storage
-    const key = objectPath.startsWith("/objects/") ? `private/${objectPath.slice("/objects/".length)}` : objectPath;
-    const buffer = await storageBackend.getObjectBuffer(key);
+    // Download video from object storage (try vault-prefixed key via getObjectEntityFile fallback)
+    const { objectStorageService } = await import("../object_storage");
+    const objRef = await objectStorageService.getObjectEntityFile(objectPath, principal);
+    const [buffer] = await objRef.download();
     const inputPath = path.join(tmpDir, "input.mp4");
     await fs.writeFile(inputPath, buffer);
 
@@ -163,14 +165,14 @@ async function generateThumbnailAsync(mediaId: string, objectPath: string, princ
     const thumbPath = path.join(tmpDir, thumbFilename);
     await extractThumbnail(inputPath, thumbPath, 1);
 
-    // Upload thumbnail to object storage
+    // Upload thumbnail to object storage with vault prefix
     const thumbBuffer = await fs.readFile(thumbPath);
-    const thumbKey = `private/uploads/thumbs/${mediaId}.jpg`;
-    await storageBackend.putObject(thumbKey, thumbBuffer, "image/jpeg");
+    const thumbKey = vaultObjectKeyFromPrincipal(principal, "uploads/thumbs", `${mediaId}.jpg`);
+    await storageBackend.putObject(thumbKey, thumbBuffer, { contentType: "image/jpeg" });
 
     // Set ACL so thumbnails are accessible
-    const { setObjectAclPolicy } = await import("../object_storage/objectAcl");
-    await setObjectAclPolicy(thumbKey, principal?.userId ? { owner: principal.userId, ownerUserId: principal.userId, accountId: principal.accountId ?? null, createdByUserId: principal.userId, scope: "user", visibility: "private" } : { owner: "system", scope: "system", visibility: "private" });
+    const { setObjectAclPolicy: setAcl } = await import("../object_storage/objectAcl");
+    await setAcl(thumbKey, principal?.userId ? { owner: principal.userId, ownerUserId: principal.userId, accountId: principal.accountId ?? null, createdByUserId: principal.userId, scope: "user", visibility: "private", vaultId: principal.activeVaultId ?? undefined } : { owner: "system", scope: "system", visibility: "private" });
 
     // Update media item with thumbnail path
     const thumbObjectPath = `/objects/uploads/thumbs/${mediaId}.jpg`;
@@ -190,12 +192,13 @@ async function generateImageThumbnailAsync(mediaId: string, objectPath: string, 
   await fs.mkdir(tmpDir, { recursive: true });
 
   try {
-    const key = objectPath.startsWith("/objects/") ? `private/${objectPath.slice("/objects/".length)}` : objectPath;
-    const buffer = await storageBackend.getObjectBuffer(key);
+    const { objectStorageService } = await import("../object_storage");
+    const objRef = await objectStorageService.getObjectEntityFile(objectPath, principal);
+    const [imgBuffer] = await objRef.download();
 
     const ext = path.extname(objectPath).toLowerCase() || ".png";
     const inputPath = path.join(tmpDir, `input${ext}`);
-    await fs.writeFile(inputPath, buffer);
+    await fs.writeFile(inputPath, imgBuffer);
 
     const thumbPath = path.join(tmpDir, "thumb.jpg");
 
@@ -215,12 +218,12 @@ async function generateImageThumbnailAsync(mediaId: string, objectPath: string, 
     });
 
     const thumbBuffer = await fs.readFile(thumbPath);
-    const thumbKey = `private/uploads/thumbs/${mediaId}.jpg`;
-    await storageBackend.putObject(thumbKey, thumbBuffer, "image/jpeg");
+    const thumbKey = vaultObjectKeyFromPrincipal(principal, "uploads/thumbs", `${mediaId}.jpg`);
+    await storageBackend.putObject(thumbKey, thumbBuffer, { contentType: "image/jpeg" });
 
     // Set ACL so thumbnails are accessible
-    const { setObjectAclPolicy } = await import("../object_storage/objectAcl");
-    await setObjectAclPolicy(thumbKey, principal?.userId ? { owner: principal.userId, ownerUserId: principal.userId, accountId: principal.accountId ?? null, createdByUserId: principal.userId, scope: "user", visibility: "private" } : { owner: "system", scope: "system", visibility: "private" });
+    const { setObjectAclPolicy: setAcl } = await import("../object_storage/objectAcl");
+    await setAcl(thumbKey, principal?.userId ? { owner: principal.userId, ownerUserId: principal.userId, accountId: principal.accountId ?? null, createdByUserId: principal.userId, scope: "user", visibility: "private", vaultId: principal.activeVaultId ?? undefined } : { owner: "system", scope: "system", visibility: "private" });
 
     const thumbObjectPath = `/objects/uploads/thumbs/${mediaId}.jpg`;
     await updateMediaItem(mediaId, { thumbPath: thumbObjectPath } as any, principal);

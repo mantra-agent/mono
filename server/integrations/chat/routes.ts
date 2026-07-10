@@ -26,9 +26,9 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   storageBackend,
-  PRIVATE_PREFIX,
 } from "../../object_storage/s3-backend";
 import { setObjectAclPolicy } from "../../object_storage/objectAcl";
+import { vaultObjectKeyFromPrincipal } from "../../object_storage/vault-keys";
 import multer from "multer";
 import {
   writeJournal,
@@ -965,7 +965,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             try {
               const objectId = randomUUID();
               const suffix = ext || "";
-              const key = `${PRIVATE_PREFIX}uploads/${objectId}${suffix}`;
+              const principal = getPrincipal(req);
+              const key = vaultObjectKeyFromPrincipal(principal, "uploads", `${objectId}${suffix}`);
               const fileBuffer = fs.readFileSync(f.path);
               await storageBackend.putObject(key, fileBuffer, {
                 contentType: f.mimetype || "application/octet-stream",
@@ -973,6 +974,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
               await setObjectAclPolicy(key, {
                 owner: req.session.userId || "system",
                 visibility: "public",
+                vaultId: principal?.activeVaultId ?? undefined,
               });
               objectPath = `/objects/uploads/${objectId}${suffix}`;
               chatLog.log(

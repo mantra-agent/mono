@@ -12,7 +12,8 @@ import { requireAuth } from "../auth";
 import { getPrincipal, type Principal } from "../principal";
 import { visibleScopePredicate, writableScopePredicate } from "../scoped-storage";
 import { setObjectAclPolicy } from "../object_storage/objectAcl";
-import { storageBackend, PRIVATE_PREFIX } from "../object_storage/s3-backend";
+import { storageBackend } from "../object_storage/s3-backend";
+import { vaultObjectKeyFromPrincipal } from "../object_storage/vault-keys";
 import {
   insertMagicDemoSessionEventSchema,
   insertMagicDemoSessionSchema,
@@ -340,8 +341,9 @@ export function registerMagicDemoRoutes(app: Express): void {
 
         const suffix = extensionForImage(contentType, req.file.originalname);
         const objectId = randomUUID();
-        const objectPath = `/objects/users/${principal.userId}/magic-demo/${params.data.id}/vision/${objectId}${suffix}`;
-        const key = `${PRIVATE_PREFIX}${objectPath.slice("/objects/".length)}`;
+        const entityPath = `users/${principal.userId}/magic-demo/${params.data.id}/vision/${objectId}${suffix}`;
+        const objectPath = `/objects/${entityPath}`;
+        const key = vaultObjectKeyFromPrincipal(principal, `users/${principal.userId}/magic-demo/${params.data.id}/vision`, `${objectId}${suffix}`);
 
         await storageBackend.putObject(key, fileBuffer, { contentType });
         await setObjectAclPolicy(key, {
@@ -351,6 +353,7 @@ export function registerMagicDemoRoutes(app: Express): void {
           createdByUserId: principal.userId,
           scope: "user",
           visibility: "private",
+          vaultId: principal.activeVaultId ?? undefined,
         });
 
         const capturedAt = parsed.data.capturedAt ?? new Date();

@@ -24,14 +24,14 @@ export interface IndexedReference {
 
 export async function persistToObjectStorage(content: string, category: string): Promise<string | null> {
   try {
-    const { storageBackend, PRIVATE_PREFIX } = await import("./object_storage");
+    const { storageBackend, vaultObjectKeyAuto } = await import("./object_storage");
     const { randomUUID } = await import("crypto");
     const fileId = randomUUID();
-    const entityId = `${category}/${fileId}.txt`;
-    const key = `${PRIVATE_PREFIX}${entityId}`;
+    const filename = `${fileId}.txt`;
+    const key = vaultObjectKeyAuto(category, filename);
     const buffer = Buffer.from(content, "utf-8");
     await storageBackend.putObject(key, buffer, { contentType: "text/plain; charset=utf-8" });
-    const objectKey = `/objects/${entityId}`;
+    const objectKey = `/objects/${category}/${filename}`;
     log.log(`persistToObjectStorage: stored ${buffer.length} bytes at ${objectKey} (category=${category})`);
     return objectKey;
   } catch (err: any) {
@@ -354,16 +354,16 @@ export interface IndexAndArchiveFromFileOptions {
 
 async function persistFileToObjectStorage(filePath: string, category: string): Promise<string | null> {
   try {
-    const { storageBackend, PRIVATE_PREFIX } = await import("./object_storage");
+    const { storageBackend, vaultObjectKeyAuto } = await import("./object_storage");
     const { randomUUID } = await import("crypto");
     const fs = await import("fs");
     const fileId = randomUUID();
-    const entityId = `${category}/${fileId}.txt`;
-    const key = `${PRIVATE_PREFIX}${entityId}`;
+    const filename = `${fileId}.txt`;
+    const key = vaultObjectKeyAuto(category, filename);
     // Stream the file directly from disk so we don't load it into a Buffer.
     const stream = fs.createReadStream(filePath);
     await storageBackend.putObject(key, stream, { contentType: "text/plain; charset=utf-8" });
-    const objectKey = `/objects/${entityId}`;
+    const objectKey = `/objects/${category}/${filename}`;
     log.log(`persistFileToObjectStorage: streamed file from ${filePath} to ${objectKey} (category=${category})`);
     return objectKey;
   } catch (err: any) {

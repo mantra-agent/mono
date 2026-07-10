@@ -4,6 +4,7 @@ import {
   GetObjectCommand,
   PutObjectCommand,
   DeleteObjectCommand,
+  CopyObjectCommand,
   ListObjectsV2Command,
   type PutObjectCommandInput,
 } from "@aws-sdk/client-s3";
@@ -398,6 +399,17 @@ export const storageBackend = {
       ContentType: opts.contentType,
     });
     return getSignedUrl(client, cmd, { expiresIn: opts.ttlSec ?? 900 });
+  },
+
+  async copyObject(sourceKey: string, destKey: string): Promise<void> {
+    const { client, config } = getClient();
+    await client.send(
+      new CopyObjectCommand({
+        Bucket: config.bucket,
+        CopySource: `${config.bucket}/${sourceKey}`,
+        Key: destKey,
+      }),
+    );
   },
 
   async getSignedGetUrl(

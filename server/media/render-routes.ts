@@ -6,6 +6,7 @@ import { storageBackend } from "../object_storage/s3-backend";
 import { requireAuth } from "../auth";
 import { getPrincipal, type Principal } from "../principal";
 import { setObjectAclPolicy } from "../object_storage/objectAcl";
+import { vaultObjectKeyFromPrincipal } from "../object_storage/vault-keys";
 import { createLogger } from "../log";
 
 const log = createLogger("RenderRoutes");
@@ -205,13 +206,13 @@ async function runRender(
       },
     });
 
-    // Upload output to object storage
+    // Upload output to object storage with vault prefix
     const outputBuffer = await fs.readFile(outputPath);
     const ownerPrefix = principal.userId ? `users/${principal.userId}` : "system";
-    const outputKey = `private/${ownerPrefix}/renders/${jobId}.mp4`;
-    await storageBackend.putObject(outputKey, outputBuffer, "video/mp4");
+    const outputKey = vaultObjectKeyFromPrincipal(principal, `${ownerPrefix}/renders`, `${jobId}.mp4`);
+    await storageBackend.putObject(outputKey, outputBuffer, { contentType: "video/mp4" });
     const outputObjectPath = `/objects/${ownerPrefix}/renders/${jobId}.mp4`;
-    await setObjectAclPolicy(outputKey, principal.userId ? { owner: principal.userId, ownerUserId: principal.userId, accountId: principal.accountId ?? null, createdByUserId: principal.userId, scope: "user", visibility: "private" } : { owner: "system", scope: "system", visibility: "private" });
+    await setObjectAclPolicy(outputKey, principal.userId ? { owner: principal.userId, ownerUserId: principal.userId, accountId: principal.accountId ?? null, createdByUserId: principal.userId, scope: "user", visibility: "private", vaultId: principal.activeVaultId ?? undefined } : { owner: "system", scope: "system", visibility: "private" });
 
     // Register output as media item
     const outputMedia = await registerMediaItem({
