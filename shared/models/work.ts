@@ -25,6 +25,7 @@ export const milestoneSchema = z.object({
   order: z.number().optional().default(0),
   startDate: z.string().nullable().optional().default(null),
   dueDate: z.string().nullable().optional().default(null),
+  completedAt: z.string().nullable().optional().default(null),
 });
 export type Milestone = z.infer<typeof milestoneSchema>;
 
@@ -149,6 +150,7 @@ export interface Project {
   owner: Owner;
   requiresReview: boolean;
   dueDate: string | null;
+  completedAt: string | null;
   milestones: Milestone[];
   spec: string;
   tags: string[];

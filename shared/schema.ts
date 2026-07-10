@@ -480,6 +480,7 @@ export const projects = pgTable("projects", {
   owner: text("owner").notNull().default("me"),
   requiresReview: boolean("requires_review").notNull().default(false),
   dueDate: text("due_date"),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
   spec: text("spec").notNull().default(""),
   goalId: text("goal_id"),
   milestones: jsonb("milestones").notNull().default([]),

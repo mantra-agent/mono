@@ -480,6 +480,7 @@ interface EmailReviewThread {
   unreadCount: number;
   enrichmentSummary: string | null;
   enrichmentActions: string[] | null;
+  doneAt?: string | null;
 }
 
 async function collectEmailReviewThreads(): Promise<EmailReviewThread[]> {
@@ -555,6 +556,73 @@ async function collectEmailReviewThreads(): Promise<EmailReviewThread[]> {
   }
 }
 
+const EMAIL_DONE_LIMIT = 8;
+
+/**
+ * Threads the user explicitly marked done today (done_reason='user_done').
+ * Auto-done (noise/FYI/archive sync) and dismissals are intentionally excluded —
+ * DONE is a win list, not a discard log.
+ */
+async function collectEmailDoneToday(): Promise<EmailReviewThread[]> {
+  try {
+    const principal = getCurrentPrincipalOrSystem();
+    const ownerConditions: string[] = [];
+    if (principal.actorType !== "system") {
+      if (principal.userId) ownerConditions.push(`em.owner_user_id = '${principal.userId}'`);
+      if (principal.accountId) ownerConditions.push(`em.principal_account_id = '${principal.accountId}'`);
+    }
+    const ownerWhere = ownerConditions.length > 0
+      ? `(${ownerConditions.join(" OR ")})`
+      : "TRUE";
+
+    const result = await db.execute(sql.raw(`
+      SELECT DISTINCT ON (em.account_id, em.provider, COALESCE(em.provider_thread_id, em.provider_message_id))
+        em.id,
+        COALESCE(em.provider_thread_id, em.provider_message_id) AS provider_thread_id,
+        em.account_id,
+        em.subject,
+        em.from_address,
+        em.snippet,
+        em.date::text,
+        em.triage_tier,
+        em.triage_reason,
+        em.done_at::text AS done_at,
+        ee.summary AS enrichment_summary,
+        ee.actions AS enrichment_actions
+      FROM email_messages em
+      LEFT JOIN email_enrichments ee ON ee.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id) AND ee.account_id = em.account_id
+      WHERE ${ownerWhere}
+        AND em.is_done = true
+        AND em.done_reason = 'user_done'
+        AND em.done_at IS NOT NULL
+        AND (em.done_at AT TIME ZONE 'America/Chicago')::date = (NOW() AT TIME ZONE 'America/Chicago')::date
+      ORDER BY em.account_id, em.provider, COALESCE(em.provider_thread_id, em.provider_message_id), em.done_at DESC
+      LIMIT ${EMAIL_DONE_LIMIT}
+    `));
+
+    return (result.rows as any[]).map(row => ({
+      id: row.id,
+      providerThreadId: row.provider_thread_id,
+      accountId: row.account_id,
+      subject: row.subject,
+      fromAddress: row.from_address,
+      snippet: row.snippet,
+      date: row.date,
+      triageTier: row.triage_tier,
+      triageReason: row.triage_reason,
+      messageIds: [],
+      messageCount: 1,
+      unreadCount: 0,
+      enrichmentSummary: row.enrichment_summary,
+      enrichmentActions: row.enrichment_actions,
+      doneAt: row.done_at,
+    }));
+  } catch (err) {
+    log.error(`collectEmailDoneToday failed: ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
+}
+
 function emailSenderName(fromAddress: string | null): string {
   if (!fromAddress) return "Unknown";
   // Parse "Name <email>" or just "email"
@@ -563,7 +631,8 @@ function emailSenderName(fromAddress: string | null): string {
   return fromAddress.split("@")[0];
 }
 
-function itemFromEmailReview(thread: EmailReviewThread, index: number): SimpleFeedItem {
+function itemFromEmailReview(thread: EmailReviewThread, index: number, options?: { done?: boolean }): SimpleFeedItem {
+  const done = options?.done === true;
   const title = thread.subject || "(no subject)";
   const sender = emailSenderName(thread.fromAddress);
   const observedAt = thread.date || new Date().toISOString();
@@ -577,10 +646,11 @@ function itemFromEmailReview(thread: EmailReviewThread, index: number): SimpleFe
   const inboxAddedDate = dateInTimezone(observedAt);
   return {
     id: `email-review-${thread.accountId}-${thread.providerThreadId}`,
-    section: "inbox",
+    section: done ? "done" : "inbox",
     widgetType: "inbox_item",
     title,
-    status: "active",
+    status: done ? "completed" : "active",
+    completedAt: done ? thread.doneAt ?? undefined : undefined,
     priority: 40 + index,
     anchorTime: observedAt,
     time: formatInboxDate(inboxAddedDate),
@@ -1081,7 +1151,7 @@ function milestoneSection(milestone: Milestone, today: string, weekEnd: string, 
 }
 
 function itemFromStandaloneMilestone(milestone: Milestone, project: Project, today: string, weekEnd: string, monthEnd: string, quarterEnd: string, yearEnd: string, nextYearEnd: string): SimpleFeedItem {
-  const section = milestoneSection(milestone, today, weekEnd, monthEnd, quarterEnd, yearEnd, nextYearEnd);
+  const section: SimpleSection = milestone.status === "completed" ? "done" : milestoneSection(milestone, today, weekEnd, monthEnd, quarterEnd, yearEnd, nextYearEnd);
   const milestoneSourceRef: SimpleSourceRef = {
     type: "milestone",
     id: `${project.id}-${milestone.id}`,
@@ -1096,6 +1166,7 @@ function itemFromStandaloneMilestone(milestone: Milestone, project: Project, tod
     widgetType: "generic",
     title: milestone.name,
     status: milestone.status === "completed" ? "completed" : "active",
+    completedAt: milestone.status === "completed" ? milestone.completedAt ?? undefined : undefined,
     sourceRefs: [milestoneSourceRef],
     references: sourceRefsToReferenceRefs([milestoneSourceRef]),
     completable: milestone.status !== "completed",
@@ -1159,6 +1230,7 @@ function itemFromProject(project: Project, section: SimpleSection, index: number
     widgetType: "project",
     title: project.title,
     status: project.status === "completed" ? "completed" : "active",
+    completedAt: project.status === "completed" ? project.completedAt ?? undefined : undefined,
     priority: 30 + index,
     sourceRefs: [sourceRef],
     references: sourceRefsToReferenceRefs([sourceRef]),
@@ -1212,7 +1284,10 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
       goalsService.listAll({ horizon: "lifetime", periodScoped: true }),
     ]);
 
-    dailyGoals.forEach((goal, index) => items.push(itemFromGoal(goal, index, "now")));
+    // Achieved goals stay in DONE only until the next calendar day, then drop from the feed.
+    const doneVisible = (goal: GoalIndexEntry) => goal.status !== "achieved" || isTodayInTimezone(goal.completedAt, timezone);
+
+    dailyGoals.filter(doneVisible).forEach((goal, index) => items.push(itemFromGoal(goal, index, "now")));
 
     // GoalStorage period filters intentionally carry active daily goals forward. That is
     // correct for the daily planning APIs, but Simple's TOMORROW lane is a calendar
@@ -1223,13 +1298,13 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
       .forEach((goal, index) => {
         if (goal.status !== "achieved") items.push(itemFromGoal(goal, 5 + index, "tomorrow"));
       });
-    weeklyGoals.forEach((goal, index) => items.push(itemFromGoal(goal, 10 + index, "this_week")));
-    monthlyGoals.forEach((goal, index) => items.push(itemFromGoal(goal, 20 + index, "this_month")));
-    quarterlyGoals.forEach((goal, index) => items.push(itemFromGoal(goal, 30 + index)));
-    yearlyGoals.forEach((goal, index) => items.push(itemFromGoal(goal, 40 + index)));
-    threeYearGoals.forEach((goal, index) => items.push(itemFromGoal(goal, 50 + index)));
-    tenYearGoals.forEach((goal, index) => items.push(itemFromGoal(goal, 60 + index)));
-    lifetimeGoals.forEach((goal, index) => items.push(itemFromGoal(goal, 70 + index)));
+    weeklyGoals.filter(doneVisible).forEach((goal, index) => items.push(itemFromGoal(goal, 10 + index, "this_week")));
+    monthlyGoals.filter(doneVisible).forEach((goal, index) => items.push(itemFromGoal(goal, 20 + index, "this_month")));
+    quarterlyGoals.filter(doneVisible).forEach((goal, index) => items.push(itemFromGoal(goal, 30 + index)));
+    yearlyGoals.filter(doneVisible).forEach((goal, index) => items.push(itemFromGoal(goal, 40 + index)));
+    threeYearGoals.filter(doneVisible).forEach((goal, index) => items.push(itemFromGoal(goal, 50 + index)));
+    tenYearGoals.filter(doneVisible).forEach((goal, index) => items.push(itemFromGoal(goal, 60 + index)));
+    lifetimeGoals.filter(doneVisible).forEach((goal, index) => items.push(itemFromGoal(goal, 70 + index)));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error(`goal collection failed: ${message}`);
@@ -1239,9 +1314,11 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
   // Build milestone lookup map from active projects (needed by tasks and milestones)
   let milestoneMap = new Map<string, Milestone>();
   let activeProjects: Project[] = [];
+  let completedTodayProjects: Project[] = [];
   try {
     const allProjects = await fileProjectStorage.getProjects();
     activeProjects = allProjects.filter(p => p.status === "active" || p.status === "planning");
+    completedTodayProjects = allProjects.filter(p => p.status === "completed" && isTodayInTimezone(p.completedAt, timezone));
     for (const project of activeProjects) {
       for (const milestone of project.milestones ?? []) {
         milestoneMap.set(`${project.id}-${milestone.id}`, milestone);
@@ -1257,7 +1334,7 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
   try {
     const [tasks, completedTasks] = await Promise.all([
       fileTaskStorage.getTodoTasks(),
-      fileTaskStorage.getTasks({ status: "done", owner: "me" }),
+      fileTaskStorage.getTasks({ status: "done" }),
     ]);
     tasks
       .filter(task => {
@@ -1272,6 +1349,7 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
       .forEach((task, index) => items.push(itemFromTask(task, today, tomorrow, weekEnd, monthEnd, quarterEnd, yearEnd, index, milestoneMap)));
     completedTasks
       .filter(task => isTodayInTimezone(task.updatedAt, timezone))
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
       .slice(0, 8)
       .forEach((task, index) => items.push({ ...itemFromTask(task, today, tomorrow, weekEnd, monthEnd, quarterEnd, yearEnd, 80 + index, milestoneMap), section: "done", status: "completed", completedAt: task.updatedAt }));
   } catch (err) {
@@ -1324,6 +1402,8 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
   try {
     const emailReviewThreads = await collectEmailReviewThreads();
     emailReviewThreads.forEach((thread, index) => items.push(itemFromEmailReview(thread, index)));
+    const emailDoneThreads = await collectEmailDoneToday();
+    emailDoneThreads.forEach((thread, index) => items.push(itemFromEmailReview(thread, index, { done: true })));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error(`email review collection failed: ${message}`);
@@ -1385,6 +1465,8 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
       const section = projectSection(project, today, monthEnd, quarterEnd, yearEnd, nextYearEnd);
       items.push(itemFromProject(project, section, index));
     });
+    // Projects completed today land in DONE until the next calendar day.
+    completedTodayProjects.forEach((project, index) => items.push(itemFromProject(project, "done", index)));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error(`project collection failed: ${message}`);
@@ -1395,7 +1477,8 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
   try {
     for (const project of activeProjects) {
       for (const milestone of project.milestones ?? []) {
-        if (milestone.status === "completed") continue;
+        // Milestones completed today land in DONE until the next calendar day; older completions drop out.
+        if (milestone.status === "completed" && !isTodayInTimezone(milestone.completedAt, timezone)) continue;
         items.push(itemFromStandaloneMilestone(milestone, project, today, weekEnd, monthEnd, quarterEnd, yearEnd, nextYearEnd));
       }
     }
