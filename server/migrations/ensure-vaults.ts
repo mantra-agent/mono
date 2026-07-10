@@ -92,6 +92,8 @@ export async function ensureVaults(): Promise<void> {
       "manual_401k_accounts",
       "future_cash_events",
       "transaction_amortizations",
+      // Phase 2: Object storage ACLs (written by setObjectAclPolicy)
+      "object_acls",
     ];
 
     for (const table of vaultIdTables) {
@@ -211,6 +213,27 @@ export async function ensureVaults(): Promise<void> {
       `);
       if (rowCount && rowCount > 0) {
         log.log(`Backfilled ${rowCount} rows in ${table}`);
+      }
+    }
+
+    // Backfill object_acls: account lives inside the policy JSONB (owner = user id).
+    // Rows owned by "system" or unknown users keep NULL vault_id.
+    {
+      const { rows: aclTable } = await pool.query(
+        `SELECT to_regclass('public.object_acls') AS t`,
+      );
+      if (aclTable[0]?.t) {
+        const { rowCount } = await pool.query(`
+          UPDATE object_acls t
+          SET vault_id = v.id
+          FROM memberships m
+          JOIN vaults v ON v.account_id = m.account_id AND v.is_default = true
+          WHERE m.user_id = t.policy->>'owner'
+            AND t.vault_id IS NULL
+        `);
+        if (rowCount && rowCount > 0) {
+          log.log(`Backfilled ${rowCount} rows in object_acls`);
+        }
       }
     }
 
