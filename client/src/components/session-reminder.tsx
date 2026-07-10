@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { CalendarIcon, Clock, X, Check, Power } from "lucide-react";
+import { CalendarIcon, Clock, X, Check, Power, Hammer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenuSub,
@@ -17,6 +17,7 @@ interface ReminderState {
   timerId?: string;
   fireAt?: string | null;
   nextBoot?: boolean;
+  nextBuild?: boolean;
 }
 
 interface SessionReminderMenuItemProps {
@@ -99,6 +100,7 @@ function buildReminderToastTitle(sessionTitle: string | null | undefined, timeLa
 interface SetReminderInput {
   fireAt?: string;
   nextBoot?: boolean;
+  nextBuild?: boolean;
   toastTimeLabel: string;
 }
 
@@ -158,6 +160,10 @@ export function SessionReminderPopover({ sessionId, sessionTitle, onOpenChange, 
     setReminderMutation.mutate({ nextBoot: true, toastTimeLabel: "Next Boot" });
   };
 
+  const handleNextBuild = () => {
+    setReminderMutation.mutate({ nextBuild: true, toastTimeLabel: "Next Build" });
+  };
+
   const handleCustomSubmit = () => {
     if (!customDate || !customTime) return;
     const [hours, minutes] = customTime.split(":").map(Number);
@@ -182,6 +188,21 @@ export function SessionReminderPopover({ sessionId, sessionTitle, onOpenChange, 
     >
       <Power className="h-3 w-3" />
       Next boot
+    </button>
+  );
+
+  const renderNextBuildOption = () => (
+    <button
+      className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-accent transition-colors flex items-center gap-2"
+      onClick={(e) => {
+        e.stopPropagation();
+        handleNextBuild();
+      }}
+      disabled={isPending}
+      data-testid="button-preset-next-build"
+    >
+      <Hammer className="h-3 w-3" />
+      Next build
     </button>
   );
 
@@ -286,13 +307,13 @@ export function SessionReminderPopover({ sessionId, sessionTitle, onOpenChange, 
           <div className="flex items-center justify-center py-4 text-sm text-muted-foreground" data-testid="reminder-loading">
             Loading...
           </div>
-        ) : reminder?.active && (reminder.fireAt || reminder.nextBoot) ? (
+        ) : reminder?.active && (reminder.fireAt || reminder.nextBoot || reminder.nextBuild) ? (
           <div className="space-y-2">
             <div className="text-sm font-medium px-2 pt-1" data-testid="reminder-active-label">
               Reminder set
             </div>
             <div className="text-xs text-muted-foreground px-2" data-testid="reminder-active-time">
-              {reminder.nextBoot ? "Fires next time the app starts" : `Fires ${formatReminderTime(reminder.fireAt!)}`}
+              {reminder.nextBuild ? "Fires next time a new build boots" : reminder.nextBoot ? "Fires next time the app starts" : `Fires ${formatReminderTime(reminder.fireAt!)}`}
             </div>
             <div className="flex gap-1 px-2 pb-1">
               <Button
@@ -328,6 +349,7 @@ export function SessionReminderPopover({ sessionId, sessionTitle, onOpenChange, 
             {showCustom && (
               <div className="border-t pt-2 space-y-1">
                 {renderNextBootOption()}
+                {renderNextBuildOption()}
                 {renderPresetOptions()}
                 {renderCustomOption()}
               </div>
@@ -336,6 +358,7 @@ export function SessionReminderPopover({ sessionId, sessionTitle, onOpenChange, 
         ) : (
           <div className="space-y-1">
             {renderNextBootOption()}
+            {renderNextBuildOption()}
             {renderPresetOptions()}
             {renderCustomOption()}
           </div>

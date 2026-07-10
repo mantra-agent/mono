@@ -614,6 +614,7 @@ export interface ChatSession {
     timerId?: string;
     fireAt?: string | null;
     nextBoot?: boolean;
+    nextBuild?: boolean;
   };
   // Memory index writeback (populated by consolidation pipeline)
   memoryOneLiner?: string | null;

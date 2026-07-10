@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { CalendarIcon, Clock, X, Check, Power } from "lucide-react";
+import { CalendarIcon, Clock, X, Check, Power, Hammer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenuSub,
@@ -17,6 +17,7 @@ interface ReminderState {
   timerId?: string;
   fireAt?: string | null;
   nextBoot?: boolean;
+  nextBuild?: boolean;
 }
 
 interface ReminderPopoverProps {
@@ -26,7 +27,7 @@ interface ReminderPopoverProps {
   postUrl?: string;
   postMethod?: "POST" | "PATCH";
   deleteUrl?: string;
-  buildPayload?: (input: { fireAt?: string; nextBoot?: boolean }) => Record<string, unknown>;
+  buildPayload?: (input: { fireAt?: string; nextBoot?: boolean; nextBuild?: boolean }) => Record<string, unknown>;
   invalidateKeys?: unknown[][];
   allowNextBoot?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -108,6 +109,7 @@ function buildReminderToastTitle(title: string | null | undefined, timeLabel: st
 interface SetReminderInput {
   fireAt?: string;
   nextBoot?: boolean;
+  nextBuild?: boolean;
   toastTimeLabel: string;
 }
 
@@ -165,6 +167,7 @@ export function ReminderPopover({ title, queryKey, getUrl, postUrl, postMethod =
     setReminderMutation.mutate({ fireAt, toastTimeLabel: label });
   };
   const handleNextBoot = () => setReminderMutation.mutate({ nextBoot: true, toastTimeLabel: "Next Boot" });
+  const handleNextBuild = () => setReminderMutation.mutate({ nextBuild: true, toastTimeLabel: "Next Build" });
 
   const handleCustomSubmit = () => {
     if (!customDate || !customTime) return;
@@ -191,11 +194,11 @@ export function ReminderPopover({ title, queryKey, getUrl, postUrl, postMethod =
       <DropdownMenuSubContent className="w-64 p-2">
         {isLoading ? (
           <div className="flex items-center justify-center py-4 text-sm text-muted-foreground">Loading...</div>
-        ) : deleteUrl && reminder?.active && (reminder.fireAt || reminder.nextBoot) ? (
+        ) : deleteUrl && reminder?.active && (reminder.fireAt || reminder.nextBoot || reminder.nextBuild) ? (
           <div className="space-y-2">
             <div className="text-sm font-medium px-2 pt-1">Reminder set</div>
             <div className="text-xs text-muted-foreground px-2">
-              {reminder.nextBoot ? "Will remind on next boot" : reminder.fireAt ? `Coming back ${formatReminderTime(reminder.fireAt)}` : "Active"}
+              {reminder.nextBuild ? "Will remind on next new build" : reminder.nextBoot ? "Will remind on next boot" : reminder.fireAt ? `Coming back ${formatReminderTime(reminder.fireAt)}` : "Active"}
             </div>
             <button className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-destructive/10 text-destructive transition-colors flex items-center gap-2" onClick={(e) => { e.stopPropagation(); cancelMutation.mutate(); }} disabled={isPending}>
               <X className="h-3 w-3" />
@@ -211,10 +214,16 @@ export function ReminderPopover({ title, queryKey, getUrl, postUrl, postMethod =
             ))}
             <div className="border-t border-border/30 my-1" />
             {allowNextBoot && (
-              <button className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-accent transition-colors flex items-center gap-2" onClick={(e) => { e.stopPropagation(); handleNextBoot(); }} disabled={isPending}>
-                <Power className="h-3 w-3" />
-                Next boot
-              </button>
+              <>
+                <button className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-accent transition-colors flex items-center gap-2" onClick={(e) => { e.stopPropagation(); handleNextBoot(); }} disabled={isPending}>
+                  <Power className="h-3 w-3" />
+                  Next boot
+                </button>
+                <button className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-accent transition-colors flex items-center gap-2" onClick={(e) => { e.stopPropagation(); handleNextBuild(); }} disabled={isPending}>
+                  <Hammer className="h-3 w-3" />
+                  Next build
+                </button>
+              </>
             )}
             <div className="space-y-2">
               <button className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-accent transition-colors flex items-center gap-2" onClick={(e) => { e.stopPropagation(); setShowCustom(!showCustom); }} disabled={isPending}>

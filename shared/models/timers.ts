@@ -35,6 +35,7 @@ export const scheduleSchema = z.object({
   cronExpression: z.string().optional(),
   fireAt: z.string().optional(),
   fireOnNextBoot: z.boolean().optional(),
+  fireOnNextBuild: z.boolean().optional(),
 });
 export type Schedule = z.infer<typeof scheduleSchema>;
 
