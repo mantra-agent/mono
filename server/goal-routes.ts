@@ -18,6 +18,9 @@ export function registerGoalRoutes(app: Express): void {
       // Period-scoped by default: completed goals only visible within their completion period.
       // Pass ?periodScoped=false to see all goals including prior-period completions.
       filters.periodScoped = req.query.periodScoped !== "false";
+      // The Goals management page must see dormant goals so they can be managed/reactivated.
+      // Pass ?includeDormant=false to get the display-default (dormant hidden) behavior.
+      filters.includeDormant = req.query.includeDormant !== "false";
       const goals = await goalsService.listAll(filters);
       res.json({ goals });
     } catch (error: any) {

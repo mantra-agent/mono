@@ -4314,7 +4314,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     try {
       switch (action) {
         case "list": {
-          const goals = await goalsService.listAll(args.filters || {});
+          // The agent goals tool is a management surface: it must see dormant goals to update/reactivate them.
+          const goals = await goalsService.listAll({ ...(args.filters || {}), includeDormant: true });
           if (goals.length === 0) return { result: "No goals in the system yet." };
           const lines = goals.map(g => `- ${g.shortName} [goal:${g.id}] (${g.horizon}, ${g.status || "active"}${(g.tags || []).length > 0 ? `, tags: ${g.tags.join(", ")}` : ""})`);
           return { result: `${goals.length} goals:\n${lines.join("\n")}` };
@@ -4371,7 +4372,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         case "search": {
           const query = args.query;
           if (!query) return { result: "Missing search query", error: true };
-          const results = await goalsService.listAll({ search: query });
+          const results = await goalsService.listAll({ search: query, includeDormant: true });
           if (results.length === 0) return { result: `No goals matching "${query}"` };
           const lines = results.map(g => `- ${g.shortName} [goal:${g.id}] (${g.horizon}, ${g.status || "active"}${(g.tags || []).length > 0 ? `, tags: ${g.tags.join(", ")}` : ""})`);
           return { result: `Found ${results.length} goals:\n${lines.join("\n")}` };
@@ -5328,7 +5329,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const statusFilter = args.status || undefined;
           const projects = await fileProjectStorage.getProjects(statusFilter ? { status: statusFilter } : undefined);
           if (projects.length === 0) return { result: statusFilter ? `No ${statusFilter} projects.` : "No projects found." };
-          const allGoals = await goalsServiceWork.listAll({});
+          const allGoals = await goalsServiceWork.listAll({ includeDormant: true });
           const goalMap = new Map(allGoals.map((g: any) => [g.id, g.shortName]));
 
           const projectsByStatus = new Map<string, any[]>();
@@ -10193,7 +10194,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
       try {
         const { goalsService: goalsServiceState } = await import("./goals-service");
-        const goals = await goalsServiceState.listAll();
+        const goals = await goalsServiceState.listAll({ includeDormant: true });
         parts.push(`**Goals:** ${goals.length} total`);
       } catch { parts.push("**Goals:** unavailable"); }
 

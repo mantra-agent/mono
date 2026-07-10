@@ -46,7 +46,7 @@ export async function resolveVnextEntityMentions(
         }
       } else if (mention.entityType === "goal") {
         const { goalStorage } = await import("../goal-storage");
-        const goals = await goalStorage.listGoals({ search: mention.name });
+        const goals = await goalStorage.listGoals({ search: mention.name, includeDormant: true });
         if (goals.length === 1) {
           resolved.push({ entityType: "goal", entityId: goals[0].id });
         }
