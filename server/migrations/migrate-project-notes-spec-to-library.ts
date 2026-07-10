@@ -108,6 +108,10 @@ async function createMigrationPage(project: ProjectRow, kind: MigrationKind, par
   return page;
 }
 
+async function ensureProjectPagesColumn(): Promise<void> {
+  await db.execute(sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS pages JSONB NOT NULL DEFAULT '[]'::jsonb`);
+}
+
 async function linkPageToProject(project: ProjectRow, page: { id: string; title: string; slug: string }): Promise<boolean> {
   const [freshProject] = await db.select({ pages: projects.pages }).from(projects).where(eq(projects.id, project.id)).limit(1);
   const pages = normalizePages(freshProject?.pages ?? project.pages);
@@ -128,6 +132,7 @@ export async function migrateProjectNotesSpecToLibrary(): Promise<MigrationStats
   };
 
   try {
+    await ensureProjectPagesColumn();
     const parentId = await resolveLibraryParent("notes");
     const rows = await db.select().from(projects).where(or(sql`jsonb_array_length(${projects.notes}) > 0`, sql`length(trim(${projects.spec})) > 0`));
     stats.projectsScanned = rows.length;
