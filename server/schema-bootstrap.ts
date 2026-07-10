@@ -1028,6 +1028,25 @@ export async function runSchemaBootstrap(
     `);
   });
 
+  await heal("calendar metadata agent auto-join columns", async () => {
+    await pool.query(`
+      DO $migration$
+      BEGIN
+        IF to_regclass('public.calendar_event_metadata') IS NOT NULL THEN
+          ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agent_join_enabled BOOLEAN NOT NULL DEFAULT false;
+          ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agent_join_status TEXT;
+          ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agent_join_detail TEXT;
+          ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agent_join_session_id TEXT;
+          ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agent_join_start_at TIMESTAMPTZ;
+          ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agent_join_attempted_at TIMESTAMPTZ;
+          CREATE INDEX IF NOT EXISTS idx_calendar_event_metadata_agent_join_due
+            ON calendar_event_metadata(agent_join_start_at)
+            WHERE agent_join_enabled = true AND agent_join_attempted_at IS NULL;
+        END IF;
+      END $migration$;
+    `);
+  });
+
   await heal("calendar metadata upsert constraint", async () => {
     await pool.query(`
       DO $migration$

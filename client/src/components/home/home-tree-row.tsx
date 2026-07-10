@@ -15,6 +15,7 @@ import { SimpleCheckCircle } from "./home-check-circle";
 import { SimpleTextFrame } from "./simple-text-frame";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { MeetingAgentToggle } from "./widgets/meeting-agent-toggle";
 
 // ─── Helpers ───
 
@@ -344,7 +345,8 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
           {children ?? defaultContent}
         </div>
 
-        {/* Right control rail: expander immediately left of overflow. */}
+        {/* Right control rail: agent toggle (meetings), expander, then overflow. */}
+        {item.widgetType === "meeting" && <MeetingAgentToggle item={item} />}
         <span className="ml-1 flex w-5 shrink-0 items-center justify-center">
           {canExpand ? (
             <button
