@@ -213,19 +213,6 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.post("/api/work/projects/:id/activity", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id, 10);
-      const { message, author } = req.body;
-      if (!message) return res.status(400).json({ error: "Message is required", operation: "add_activity" });
-      const project = await fileProjectStorage.addActivity(id, author || "me", message);
-      if (!project) return res.status(404).json({ error: `Project ${id} not found`, operation: "add_activity" });
-      res.json(project);
-    } catch (error: unknown) {
-      const err = routeError(error, "add_activity");
-      res.status(500).json({ error: err.message, operation: err.operation });
-    }
-  });
 
   app.post("/api/work/projects/:id/milestones", async (req, res) => {
     try {
@@ -288,47 +275,6 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
-  app.post("/api/work/projects/:id/notes", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id, 10);
-      const { content } = req.body;
-      if (!content || typeof content !== "string") return res.status(400).json({ error: "Note content is required", operation: "add_note" });
-      const project = await fileProjectStorage.addNote(id, content);
-      if (!project) return res.status(404).json({ error: `Project ${id} not found`, operation: "add_note" });
-      res.json(project);
-    } catch (error: unknown) {
-      const err = routeError(error, "add_note");
-      res.status(500).json({ error: err.message, operation: err.operation });
-    }
-  });
-
-  app.patch("/api/work/projects/:id/notes/:noteId", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id, 10);
-      const { noteId } = req.params;
-      const { content } = req.body;
-      if (!content || typeof content !== "string") return res.status(400).json({ error: "Note content is required", operation: "update_note" });
-      const project = await fileProjectStorage.updateNote(id, noteId, content);
-      if (!project) return res.status(404).json({ error: `Project ${id} or note ${noteId} not found`, operation: "update_note" });
-      res.json(project);
-    } catch (error: unknown) {
-      const err = routeError(error, "update_note");
-      res.status(500).json({ error: err.message, operation: err.operation });
-    }
-  });
-
-  app.delete("/api/work/projects/:id/notes/:noteId", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id, 10);
-      const { noteId } = req.params;
-      const project = await fileProjectStorage.removeNote(id, noteId);
-      if (!project) return res.status(404).json({ error: `Project ${id} or note ${noteId} not found`, operation: "remove_note" });
-      res.json(project);
-    } catch (error: unknown) {
-      const err = routeError(error, "remove_note");
-      res.status(500).json({ error: err.message, operation: err.operation });
-    }
-  });
 
   const MAX_TEXT_SYNC_SIZE = 2 * 1024 * 1024;
 

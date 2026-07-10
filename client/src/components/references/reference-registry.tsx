@@ -70,7 +70,7 @@ const registry: Record<string, RegistryEntry> = {
   project: {
     Icon: FolderKanban,
     fallbackLabel: ref => metadataString(ref, "label") || `Project ${ref.id}`,
-    href: ref => metadataString(ref, "href") || `/projects/${encodeURIComponent(ref.id)}`,
+    href: ref => metadataString(ref, "href") || `/projects?project=${encodeURIComponent(ref.id)}`,
   },
   milestone: {
     Icon: Diamond,

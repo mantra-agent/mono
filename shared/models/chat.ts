@@ -402,7 +402,7 @@ const FOCUS_TRACE_BACK_RECIPES: Record<string, FocusTraceBackRecipe> = {
   project: {
     tool: "work",
     example: "work action=get_project id=<id>",
-    route: (id) => `/projects/${id}`,
+    route: (id) => `/projects?project=${encodeURIComponent(id)}`,
   },
   task: { tool: "tasks", route: () => `/work` },
   goal: {

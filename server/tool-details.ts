@@ -158,7 +158,7 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: 'Search: { "action": "search", "query": "Sarah" }\nAdd note: { "action": "add_note", "id": "person-id", "content": "..." }',
   },
   work: {
-    description: "Manage projects and work status — create projects, list/get projects with tasks, manage notes, files, milestones, and goal links. Actions: create_project, status, list_projects, get_project, list_tasks, set_goal, add_note, update_note, remove_note, add_file, read_file, remove_file, add_milestone, update_milestone, remove_milestone.",
+    description: "Manage projects and work status — create projects, list/get projects with tasks, manage files, milestones, and goal links. Actions: create_project, status, list_projects, get_project, list_tasks, set_goal, add_file, read_file, remove_file, add_milestone, update_milestone, remove_milestone.",
     whenToUse: "User asks about projects, work status, or wants to manage project-level resources. For individual task operations, use the `tasks` tool instead.",
     example: 'List projects: { "action": "list_projects" }\nGet project details: { "action": "get_project", "id": 1 }',
   },

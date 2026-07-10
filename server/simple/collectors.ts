@@ -1156,7 +1156,7 @@ function itemFromStandaloneMilestone(milestone: Milestone, project: Project, tod
     type: "milestone",
     id: `${project.id}-${milestone.id}`,
     label: milestone.name,
-    href: `/projects/${project.id}?milestone=${milestone.id}`,
+    href: `/projects?project=${project.id}&milestone=${milestone.id}`,
   };
   const needsDate = !milestone.dueDate;
   const timeLabel = milestone.dueDate ? dateLabelForSection(milestone.dueDate, section) : undefined;
@@ -1218,7 +1218,7 @@ function itemFromProject(project: Project, section: SimpleSection, index: number
     type: "project",
     id: String(project.id),
     label: project.title,
-    href: `/projects/${project.id}`,
+    href: `/projects?project=${project.id}`,
     observedAt: project.updatedAt,
   };
   const needsDate = !project.dueDate && project.status === "active";

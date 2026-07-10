@@ -46,7 +46,6 @@ const HomePage = lazyWithRetry(() => import("@/pages/simple"));
 const SessionPage = lazyWithRetry(() => import("@/pages/session"));
 const GoalDetail = lazyWithRetry(() => import("@/pages/goal-detail"));
 const ProjectsPage = lazyWithRetry(() => import("@/pages/work"));
-const ProjectDetailPage = lazyWithRetry(() => import("@/pages/project-detail"));
 const IssueDetailPage = lazyWithRetry(() => import("@/pages/issue-detail"));
 const IssueCaptureDialog = lazyWithRetry(() => import("@/components/issue-capture").then(m => ({ default: m.IssueCaptureDialog })));
 const LogsPage = lazyWithRetry(() => import("@/pages/logs"));
@@ -253,7 +252,6 @@ function Router() {
         <Route path="/calendar">{() => <Redirect to="/schedule" />}</Route>
         <Route path="/social">{() => <Redirect to="/create" />}</Route>
         <Route path="/create" component={CreatePage} />
-        <Route path="/projects/:id" component={ProjectDetailPage} />
         <Route path="/projects" component={ProjectsPage} />
         <Route path="/work">{() => <Redirect to="/projects" />}</Route>
         <Route path="/platforms/environments/:id" component={PlatformEnvironmentDetailPage} />

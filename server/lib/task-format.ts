@@ -12,8 +12,3 @@ export function formatTaskForBridge(t: Task): string {
   const dl = deadlineStr(t.deadline);
   return `- [${t.status}] ${t.title} (id: ${t.id}, ${t.priority}, owner: ${t.owner}${dl})${t.projectId ? ` — project ${t.projectId}` : ""}`;
 }
-
-export function formatTaskForProjectDetail(t: Task): string {
-  const dl = deadlineStr(t.deadline);
-  return `  - [${t.id}] [${t.status}] ${t.title} (${t.priority}, owner: ${t.owner}${t.milestoneId ? `, milestone: ${t.milestoneId}` : ""}${dl})`;
-}

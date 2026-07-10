@@ -51,6 +51,7 @@ import { migratePrinciplesToTable } from "./migrations/migrate-principles-to-tab
 import { migrateTagsAndPeopleConfig } from "./migrations/migrate-tags-and-people-config";
 import { migratePersonsToTable } from "./migrations/migrate-persons-to-table";
 import { ensureVaults } from "./migrations/ensure-vaults";
+import { migrateProjectNotesSpecToLibrary } from "./migrations/migrate-project-notes-spec-to-library";
 
 const objectAclsMigrationReady = addObjectAclsTable();
 const timerMigrationReady = migrateTimersToTable();
@@ -492,6 +493,7 @@ app.use((req, res, next) => {
   await timerMigrationReady;
   await taskMigrationReady;
   await projectMigrationReady;
+  await migrateProjectNotesSpecToLibrary();
   await principleMigrationReady;
   await tagsConfigMigrationReady;
   await personsMigrationReady;
