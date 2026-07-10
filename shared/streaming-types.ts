@@ -31,7 +31,7 @@ export type MessageSegment =
   | { type: "timeline"; steps: ExecutionStep[] }
   | { type: "content"; content: string };
 
-export type StreamingSource = "text" | "voice" | null;
+export type StreamingSource = "text" | "voice" | "meeting" | null;
 
 export interface StreamingContent {
   segments: MessageSegment[];

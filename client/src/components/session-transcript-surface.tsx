@@ -1,8 +1,10 @@
 import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MessageList } from "@/components/message-list";
+import { MeetingHeaderBar } from "@/components/meeting-header-bar";
 import { PlanStickyBar } from "@/components/plan-sticky-bar";
 import { WorkflowStickyBar } from "@/components/workflow-sticky-bar";
+import type { MeetingSessionMeta } from "@shared/models/chat";
 import type { ChatMessage as Message } from "@/components/chat-shared";
 import type { PendingChatTurn } from "@/hooks/use-chat-send";
 import type { SessionStreamMap } from "@/hooks/use-session-subscription";
@@ -35,6 +37,8 @@ export interface SessionTranscriptSurfaceProps {
   sessionStatus?: string | null;
   plan?: ActivePlan | null;
   workflow?: ActiveWorkflow | null;
+  meeting?: MeetingSessionMeta | null;
+  sessionTitle?: string;
   scrollContainerRef: React.RefObject<HTMLDivElement>;
   onScroll: React.UIEventHandler<HTMLDivElement>;
   onUserScrollIntent: React.UIEventHandler<HTMLDivElement>;
@@ -69,6 +73,8 @@ export function SessionTranscriptSurface({
   sessionStatus,
   plan,
   workflow,
+  meeting,
+  sessionTitle,
   scrollContainerRef,
   onScroll,
   onUserScrollIntent,
@@ -82,6 +88,7 @@ export function SessionTranscriptSurface({
 
   return (
     <div className={cn("flex flex-col flex-1 min-h-0 overflow-hidden", className)} data-testid="session-transcript-surface">
+      {meeting && <MeetingHeaderBar meeting={meeting} sessionTitle={sessionTitle} />}
       {!wsConnected && sessionStatus === "streaming" && !voiceActive && (
         <div
           className="flex items-center gap-2 px-4 py-2 bg-warning/5 dark:bg-warning/5 border-b border-warning/20 text-warning-foreground text-xs"

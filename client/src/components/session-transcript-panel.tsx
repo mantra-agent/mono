@@ -736,6 +736,8 @@ export function SessionTranscriptPanel({
         sessionStatus={sessionData?.status}
         plan={plan}
         workflow={workflow}
+        meeting={sessionData?.meeting}
+        sessionTitle={sessionData?.title}
         scrollContainerRef={scrollContainerRef}
         onUserScrollIntent={handleUserScrollIntent}
         onScroll={handleScroll}

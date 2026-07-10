@@ -12,6 +12,8 @@ import { getCurrentPrincipalOrSystem } from "./principal-context";
 import type {
   ChildSessionBlockMeta,
   CompactionMeta,
+  MeetingSessionMeta,
+  MessageSpeakerMeta,
 } from "@shared/models/chat";
 
 const log = createLogger("ChatStorage");
@@ -204,6 +206,8 @@ export interface FileMessage {
   assistantRunId?: string;
   assistantInterruptedAt?: string;
   voice?: VoiceMessageMeta;
+  /** Speaker attribution for meeting transcript messages. */
+  speaker?: MessageSpeakerMeta;
   /** Canonical per-turn correlation ID for voice turns. Present on both user and assistant messages. */
   turnId?: string;
   /** Visibility discriminant — absent or 'chat' = normal; 'diagnostic' = hidden from transcript */
@@ -222,7 +226,7 @@ interface SessionData {
   updatedAt: string;
   messages: FileMessage[];
   lastMessageRole?: LastMessageRole;
-  type?: "text" | "voice";
+  type?: "text" | "voice" | "meeting";
   sessionType: SessionType;
   isPinned: boolean;
   pinReason?: string;
@@ -232,6 +236,7 @@ interface SessionData {
   hasUnreadResult?: boolean;
   intentionId?: string;
   voiceSessionId?: string;
+  meeting?: MeetingSessionMeta;
   initialSystemPrompt?: string | null;
   topics?: string[];
   runStatus?: RunStatus;
@@ -718,6 +723,7 @@ function convToMeta(data: SessionData): FileSession {
     hasUnreadResult: data.hasUnreadResult || false,
     intentionId: data.intentionId,
     voiceSessionId: data.voiceSessionId,
+    meeting: data.meeting,
     messageCount: data.messages.length,
     lastMessageRole: getLastMessageRole(data.messages),
     topics: data.topics || [],
@@ -960,6 +966,20 @@ export interface IChatFileStorage {
     sessionId: string,
     content: string,
     voice: VoiceMessageMeta,
+  ): Promise<FileMessage | null>;
+  createMeetingSession(
+    title: string,
+    meeting: MeetingSessionMeta,
+    sessionKey?: string,
+  ): Promise<FileSession>;
+  updateMeetingMeta(
+    sessionId: string,
+    patch: Partial<MeetingSessionMeta>,
+  ): Promise<FileSession | null>;
+  createMeetingUserMessage(
+    sessionId: string,
+    content: string,
+    speaker: MessageSpeakerMeta,
   ): Promise<FileMessage | null>;
   createAssistantDraft(
     sessionId: string,
@@ -1520,6 +1540,109 @@ export const chatFileStorage: IChatFileStorage = {
     });
   },
 
+
+  async createMeetingSession(
+    title: string,
+    meeting: MeetingSessionMeta,
+    sessionKey?: string,
+  ) {
+    const id = generateId();
+    const now = new Date().toISOString();
+    const data: SessionData = {
+      id,
+      title,
+      status: "saved",
+      sessionKey: sessionKey || `meeting:${id}`,
+      modelTier: null,
+      createdAt: now,
+      updatedAt: now,
+      messages: [],
+      type: "meeting",
+      sessionType: "user",
+      isPinned: false,
+      meeting: {
+        ...meeting,
+        startedAt: meeting.startedAt || now,
+      },
+      triggerType: "meeting",
+      triggerId: id,
+      triggerName: title,
+      rootSessionId: id,
+      depth: 0,
+    };
+    await writeConv(data);
+    const meta = convToMeta(data);
+    invalidateSessionsCache({ action: "created", sessionId: id, session: meta });
+    return meta;
+  },
+
+  async updateMeetingMeta(
+    sessionId: string,
+    patch: Partial<MeetingSessionMeta>,
+  ) {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data) {
+        log.warn(
+          `[ChatFileStorage] updateMeetingMeta: session ${sessionId} not found, skipping`,
+        );
+        return null;
+      }
+      const existing: MeetingSessionMeta = data.meeting || {
+        participants: [],
+        botStatus: "live",
+      };
+      data.meeting = {
+        ...existing,
+        ...patch,
+        participants: patch.participants ?? existing.participants,
+      };
+      data.updatedAt = new Date().toISOString();
+      await writeConv(data);
+      const meta = convToMeta(data);
+      invalidateSessionsCache({
+        action: "updated",
+        sessionId,
+        session: meta,
+      });
+      return meta;
+    });
+  },
+
+  async createMeetingUserMessage(
+    sessionId: string,
+    content: string,
+    speaker: MessageSpeakerMeta,
+  ) {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data) {
+        log.warn(
+          `[ChatFileStorage] createMeetingUserMessage: session ${sessionId} not found, skipping`,
+        );
+        return null;
+      }
+      const now = new Date().toISOString();
+      const msg: FileMessage = {
+        id: generateId(),
+        sessionId,
+        role: "user",
+        content,
+        thinking: null,
+        toolCalls: null,
+        systemSteps: null,
+        model: null,
+        createdAt: now,
+        updatedAt: now,
+        speaker,
+      };
+      data.messages.push(msg);
+      data.updatedAt = now;
+      await writeConv(data);
+      invalidateSessionsCache();
+      return msg;
+    });
+  },
 
   async upsertVoiceUserMessage(
     sessionId: string,

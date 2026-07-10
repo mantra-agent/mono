@@ -32,6 +32,7 @@ import {
   User,
   Pin,
   MessageSquare,
+  Radio,
 } from "lucide-react";
 import type { ChatSession } from "@shared/models/chat";
 import { SessionActionsMenuItems } from "@/components/session-actions-menu";
@@ -288,6 +289,17 @@ export function ConversationItem({
         />
       );
     }
+    if (conv.type === "meeting") {
+      return (
+        <Radio
+          className={cn(
+            "h-3.5 w-3.5 shrink-0",
+            conv.meeting?.botStatus === "live" ? "text-active" : "text-muted-foreground",
+          )}
+          data-testid={`icon-conversation-meeting-${conv.id}`}
+        />
+      );
+    }
     if (conv.errorSeverity === "error") {
       return isLastSenderAgent
         ? <Bot className="h-3.5 w-3.5 shrink-0 text-destructive" data-testid={`icon-conversation-xyz-${conv.id}`} />
@@ -490,7 +502,7 @@ export function SessionTreeNode({
           <ConversationItem
             conv={conv}
             isActive={activeSession === conv.id}
-            isLive={conv.status === "streaming"}
+            isLive={conv.status === "streaming" || (conv.type === "meeting" && conv.meeting?.botStatus === "live")}
             childCount={childCount}
             onSelect={onSelect}
             onDelete={onDelete}

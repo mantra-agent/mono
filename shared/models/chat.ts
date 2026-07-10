@@ -529,7 +529,36 @@ export type TriggerType =
   | "skill"
   | "plan"
   | "spawn"
-  | "voice";
+  | "voice"
+  | "meeting";
+
+/** Bot lifecycle for a meeting session. Single discriminant for meeting state. */
+export type MeetingBotStatus = "dialing" | "in_lobby" | "live" | "ended";
+
+/** A meeting participant. Known speakers carry a personId (renders as @person). */
+export interface MeetingParticipant {
+  label: string;
+  personId?: string;
+}
+
+/**
+ * Meeting metadata on a chat session. A meeting IS a session — this is the
+ * only extra state, stored on the session document (single source of truth).
+ */
+export interface MeetingSessionMeta {
+  title?: string;
+  platform?: string;
+  participants: MeetingParticipant[];
+  botStatus: MeetingBotStatus;
+  startedAt?: string;
+  endedAt?: string;
+}
+
+/** Speaker attribution for inbound meeting transcript messages. */
+export interface MessageSpeakerMeta {
+  label: string;
+  personId?: string;
+}
 
 export interface ChatSession {
   id: string;
@@ -540,13 +569,14 @@ export interface ChatSession {
   sessionKey: string | null;
   createdAt: string;
   updatedAt: string;
-  type?: "text" | "voice";
+  type?: "text" | "voice" | "meeting";
   sessionType: SessionType;
   isPinned: boolean;
   pinReason?: string;
   hasUnreadResult?: boolean;
   intentionId?: string;
   voiceSessionId?: string;
+  meeting?: MeetingSessionMeta;
   messageCount?: number;
   lastMessageRole?: LastMessageRole;
   topics?: string[];
