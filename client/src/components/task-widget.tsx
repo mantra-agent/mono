@@ -28,6 +28,7 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  AlignLeft,
   Check,
   ChevronRight,
   Loader2,
@@ -45,7 +46,6 @@ import {
   BookOpen,
   FileOutput,
   Calculator,
-  Pencil,
   Trash2,
   ListTodo,
 } from "lucide-react";
@@ -97,14 +97,12 @@ function TaskFieldRow({
   label,
   children,
   expandedContent,
-  hasValue = true,
   testId,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   children: React.ReactNode;
   expandedContent?: React.ReactNode;
-  hasValue?: boolean;
   testId?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -334,44 +332,18 @@ function DeadlineField({
   );
 }
 
-// ─── Section wrapper (matches PeopleDetailSection) ───────────────────
-
-function TaskSection({
-  title,
-  defaultOpen = false,
-  children,
-  testId,
-}: {
-  title: string;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-  testId?: string;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-
-  return (
-    <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
-      <div className="group flex w-full items-center gap-1.5 px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate">
-        <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
-          <span className="min-w-0 flex-1 text-left">{title}</span>
-        </CollapsibleTrigger>
-      </div>
-      <CollapsibleContent>
-        <div className="space-y-0 pt-0.5">
-          {children}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
 // ─── TaskWidget ──────────────────────────────────────────────────────
 
 export interface TaskWidgetProps {
   taskId: number;
   /** Whether to show the expanded detail fields initially */
   defaultExpanded?: boolean;
+  /**
+   * Render the widget header (editable title + status badge + menu).
+   * Pass false when the host surface (e.g. an expanded tree row) already
+   * renders the title and actions — the widget then shows detail fields only.
+   */
+  showHeader?: boolean;
   /** Called when the task is deleted */
   onDelete?: () => void;
 }
@@ -380,11 +352,10 @@ export interface TaskWidgetProps {
  * Reusable task detail widget following the Person profile inline pattern.
  *
  * Collapsed: title + status badge
- * Expanded: all detail fields using Person-profile-style editable rows
- *
- * Description is hidden until expanded (then shown as an editable field).
+ * Expanded: all detail fields rendered flat using Person-profile-style
+ * editable rows (no subgroup headers).
  */
-export function TaskWidget({ taskId, defaultExpanded = false, onDelete }: TaskWidgetProps) {
+export function TaskWidget({ taskId, defaultExpanded = false, showHeader = true, onDelete }: TaskWidgetProps) {
   const { toast } = useToast();
   const [expanded, setExpanded] = useState(defaultExpanded);
 
@@ -444,7 +415,8 @@ export function TaskWidget({ taskId, defaultExpanded = false, onDelete }: TaskWi
   const milestone = project?.milestones?.find(m => m.id === task.milestoneId);
   const statusCfg = STATUS_CONFIG[task.status];
 
-  const textFieldSections = [
+  const textFieldRows = [
+    { icon: AlignLeft, label: "Description", field: "description" as const, value: task.description, placeholder: "Add a description..." },
     { icon: Package, label: "Deliverable", field: "deliverable" as const, value: task.deliverable, placeholder: "What should this task produce?" },
     { icon: ClipboardCheck, label: "Acceptance Criteria", field: "acceptanceCriteria" as const, value: task.acceptanceCriteria, placeholder: "How do we know it's done correctly?" },
     { icon: BookOpen, label: "Context", field: "context" as const, value: task.context, placeholder: "Background info, links, or references..." },
@@ -453,241 +425,221 @@ export function TaskWidget({ taskId, defaultExpanded = false, onDelete }: TaskWi
 
   return (
     <div className="w-full" data-testid={`task-widget-${taskId}`}>
-      {/* Header: editable title + status badge + menu */}
-      <div className="flex items-start gap-2 px-2 py-1.5">
-        <ListTodo className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <EditableText
-            value={task.title}
-            onSave={(val) => updateMutation.mutate({ title: val })}
-            placeholder="Task title"
-            testId={`input-task-widget-title-${taskId}`}
-          />
-        </div>
-        <Badge
-          variant="outline"
-          className={cn("shrink-0 text-[10px] mt-0.5", statusCfg.className)}
-        >
-          {statusCfg.label}
-        </Badge>
-        <DropdownMenu modal={false}>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
-              data-testid={`button-task-widget-menu-${taskId}`}
-            >
-              <MoreHorizontal className="h-3 w-3" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <Package className="h-3.5 w-3.5 mr-2" />
-                Status
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
-                {(["on_hold", "ready", "active", "done"] as TaskStatus[]).map(s => (
-                  <DropdownMenuItem key={s} onClick={() => updateMutation.mutate({ status: s })}>
-                    {task.status === s ? <Check className="h-3.5 w-3.5 mr-2" /> : <span className="w-3.5 mr-2" />}
-                    {STATUS_CONFIG[s].label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="text-error-foreground"
-              onClick={() => deleteMutation.mutate()}
-            >
-              <Trash2 className="h-3.5 w-3.5 mr-2" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
-          onClick={() => setExpanded(v => !v)}
-          aria-label={expanded ? "Collapse task details" : "Expand task details"}
-        >
-          <ChevronRight className={cn("h-3 w-3 transition-transform", expanded && "rotate-90")} />
-        </Button>
-      </div>
-
-      {/* Expanded detail fields */}
-      {expanded && (
-        <div className="space-y-0.5 pb-2" data-testid={`task-widget-expanded-${taskId}`}>
-          {/* Description (hidden until expanded) */}
-          <TaskSection title="Description" defaultOpen={Boolean(task.description)} testId="section-task-description">
-            <div className="px-2">
-              <EditableText
-                value={task.description}
-                onSave={(val) => updateMutation.mutate({ description: val })}
-                placeholder="Add a description..."
-                multiline
-                testId={`input-task-widget-description-${taskId}`}
-              />
-            </div>
-          </TaskSection>
-
-          {/* Properties — ProfileTreeRow-style */}
-          <TaskSection title="Properties" defaultOpen testId="section-task-properties">
-            <TaskFieldRow icon={Flag} label="Status" testId="row-task-status">
-              <Select value={task.status} onValueChange={(v) => updateMutation.mutate({ status: v as TaskStatus })}>
-                <SelectTrigger className="h-5 text-xs w-auto min-w-[80px]" data-testid="select-task-widget-status">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="on_hold">On Hold</SelectItem>
-                  <SelectItem value="ready">Ready</SelectItem>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="done">Done</SelectItem>
-                </SelectContent>
-              </Select>
-            </TaskFieldRow>
-
-            <TaskFieldRow icon={Flag} label="Priority" testId="row-task-priority">
-              <Select value={task.priority} onValueChange={(v) => updateMutation.mutate({ priority: v as PriorityLevel })}>
-                <SelectTrigger className={cn("h-5 text-xs w-auto min-w-[80px]", getColorForOption(task.priority, PRIORITY_OPTIONS))} data-testid="select-task-widget-priority">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PRIORITY_OPTIONS.map(opt => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      <span className={opt.color}>{opt.label}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </TaskFieldRow>
-
-            <TaskFieldRow icon={task.owner === "me" ? User : Bot} label="Owner" testId="row-task-owner">
-              <Select value={task.owner} onValueChange={(v) => updateMutation.mutate({ owner: v as "me" | "agent" })}>
-                <SelectTrigger className="h-5 text-xs w-auto min-w-[80px]" data-testid="select-task-widget-owner">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="me">Me</SelectItem>
-                  <SelectItem value="agent">{getInstanceName()}</SelectItem>
-                </SelectContent>
-              </Select>
-            </TaskFieldRow>
-
-            <TaskFieldRow icon={Target} label="Impact" testId="row-task-impact">
-              <Select value={task.impact as string} onValueChange={(v) => updateMutation.mutate({ impact: v as ImpactEffort })}>
-                <SelectTrigger className={cn("h-5 text-xs w-auto min-w-[80px]", getColorForOption(task.impact as string, IMPACT_OPTIONS))} data-testid="select-task-widget-impact">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {IMPACT_OPTIONS.map(opt => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      <span className={opt.color}>{opt.label}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </TaskFieldRow>
-
-            <TaskFieldRow icon={Gauge} label="Effort" testId="row-task-effort">
-              <Select value={task.effort as string} onValueChange={(v) => updateMutation.mutate({ effort: v as ImpactEffort })}>
-                <SelectTrigger className={cn("h-5 text-xs w-auto min-w-[80px]", getColorForOption(task.effort as string, EFFORT_OPTIONS))} data-testid="select-task-widget-effort">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {EFFORT_OPTIONS.map(opt => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      <span className={opt.color}>{opt.label}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </TaskFieldRow>
-
-            <TaskFieldRow icon={CalendarDays} label="Deadline" testId="row-task-deadline">
-              <DeadlineField
-                value={task.deadline ?? ""}
-                onSave={(val) => updateMutation.mutate({ deadline: val } as Partial<Task>)}
-              />
-            </TaskFieldRow>
-
-            <TaskFieldRow icon={FolderKanban} label="Project" testId="row-task-project">
-              <Select
-                value={task.projectId ? String(task.projectId) : "none"}
-                onValueChange={(v) => updateMutation.mutate({ projectId: v === "none" ? null : parseInt(v, 10) })}
+      {/* Header: editable title + status badge + menu (hidden when host renders its own) */}
+      {showHeader && (
+        <div className="flex items-start gap-2 px-2 py-1.5">
+          <ListTodo className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <EditableText
+              value={task.title}
+              onSave={(val) => { if (val) updateMutation.mutate({ title: val }); }}
+              placeholder="Task title"
+              testId={`input-task-widget-title-${taskId}`}
+            />
+          </div>
+          <Badge
+            variant="outline"
+            className={cn("shrink-0 text-[10px] mt-0.5", statusCfg.className)}
+          >
+            {statusCfg.label}
+          </Badge>
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+                data-testid={`button-task-widget-menu-${taskId}`}
               >
-                <SelectTrigger className="h-5 text-xs w-auto min-w-[80px] max-w-[160px]" data-testid="select-task-widget-project">
+                <MoreHorizontal className="h-3 w-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <Package className="h-3.5 w-3.5 mr-2" />
+                  Status
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  {(["on_hold", "ready", "active", "done"] as TaskStatus[]).map(s => (
+                    <DropdownMenuItem key={s} onClick={() => updateMutation.mutate({ status: s })}>
+                      {task.status === s ? <Check className="h-3.5 w-3.5 mr-2" /> : <span className="w-3.5 mr-2" />}
+                      {STATUS_CONFIG[s].label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-error-foreground"
+                onClick={() => deleteMutation.mutate()}
+              >
+                <Trash2 className="h-3.5 w-3.5 mr-2" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+            onClick={() => setExpanded(v => !v)}
+            aria-label={expanded ? "Collapse task details" : "Expand task details"}
+          >
+            <ChevronRight className={cn("h-3 w-3 transition-transform", expanded && "rotate-90")} />
+          </Button>
+        </div>
+      )}
+
+      {/* Detail fields — flat, Person-profile-style rows */}
+      {(!showHeader || expanded) && (
+        <div className="space-y-0.5 pb-2" data-testid={`task-widget-expanded-${taskId}`}>
+          <TaskFieldRow icon={Flag} label="Status" testId="row-task-status">
+            <Select value={task.status} onValueChange={(v) => updateMutation.mutate({ status: v as TaskStatus })}>
+              <SelectTrigger className="h-5 text-xs w-auto min-w-[80px]" data-testid="select-task-widget-status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="on_hold">On Hold</SelectItem>
+                <SelectItem value="ready">Ready</SelectItem>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="done">Done</SelectItem>
+              </SelectContent>
+            </Select>
+          </TaskFieldRow>
+
+          <TaskFieldRow icon={Flag} label="Priority" testId="row-task-priority">
+            <Select value={task.priority} onValueChange={(v) => updateMutation.mutate({ priority: v as PriorityLevel })}>
+              <SelectTrigger className={cn("h-5 text-xs w-auto min-w-[80px]", getColorForOption(task.priority, PRIORITY_OPTIONS))} data-testid="select-task-widget-priority">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PRIORITY_OPTIONS.map(opt => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    <span className={opt.color}>{opt.label}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </TaskFieldRow>
+
+          <TaskFieldRow icon={task.owner === "me" ? User : Bot} label="Owner" testId="row-task-owner">
+            <Select value={task.owner} onValueChange={(v) => updateMutation.mutate({ owner: v as "me" | "agent" })}>
+              <SelectTrigger className="h-5 text-xs w-auto min-w-[80px]" data-testid="select-task-widget-owner">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="me">Me</SelectItem>
+                <SelectItem value="agent">{getInstanceName()}</SelectItem>
+              </SelectContent>
+            </Select>
+          </TaskFieldRow>
+
+          <TaskFieldRow icon={Target} label="Impact" testId="row-task-impact">
+            <Select value={task.impact as string} onValueChange={(v) => updateMutation.mutate({ impact: v as ImpactEffort })}>
+              <SelectTrigger className={cn("h-5 text-xs w-auto min-w-[80px]", getColorForOption(task.impact as string, IMPACT_OPTIONS))} data-testid="select-task-widget-impact">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {IMPACT_OPTIONS.map(opt => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    <span className={opt.color}>{opt.label}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </TaskFieldRow>
+
+          <TaskFieldRow icon={Gauge} label="Effort" testId="row-task-effort">
+            <Select value={task.effort as string} onValueChange={(v) => updateMutation.mutate({ effort: v as ImpactEffort })}>
+              <SelectTrigger className={cn("h-5 text-xs w-auto min-w-[80px]", getColorForOption(task.effort as string, EFFORT_OPTIONS))} data-testid="select-task-widget-effort">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {EFFORT_OPTIONS.map(opt => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    <span className={opt.color}>{opt.label}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </TaskFieldRow>
+
+          <TaskFieldRow icon={CalendarDays} label="Deadline" testId="row-task-deadline">
+            <DeadlineField
+              value={task.deadline ?? ""}
+              onSave={(val) => updateMutation.mutate({ deadline: val } as Partial<Task>)}
+            />
+          </TaskFieldRow>
+
+          <TaskFieldRow icon={FolderKanban} label="Project" testId="row-task-project">
+            <Select
+              value={task.projectId ? String(task.projectId) : "none"}
+              onValueChange={(v) => updateMutation.mutate({ projectId: v === "none" ? null : parseInt(v, 10) })}
+            >
+              <SelectTrigger className="h-5 text-xs w-auto min-w-[80px] max-w-[160px]" data-testid="select-task-widget-project">
+                <SelectValue placeholder="None" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None</SelectItem>
+                {projects?.filter(p => p.status !== "completed").map(p => (
+                  <SelectItem key={p.id} value={String(p.id)}>{p.title}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </TaskFieldRow>
+
+          {project && project.milestones && project.milestones.length > 0 && (
+            <TaskFieldRow icon={Target} label="Milestone" testId="row-task-milestone">
+              <Select
+                value={task.milestoneId ? String(task.milestoneId) : "none"}
+                onValueChange={(v) => updateMutation.mutate({ milestoneId: v === "none" ? null : parseInt(v, 10) } as Partial<Task>)}
+              >
+                <SelectTrigger className="h-5 text-xs w-auto min-w-[80px] max-w-[160px]" data-testid="select-task-widget-milestone">
                   <SelectValue placeholder="None" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">None</SelectItem>
-                  {projects?.filter(p => p.status !== "completed").map(p => (
-                    <SelectItem key={p.id} value={String(p.id)}>{p.title}</SelectItem>
+                  {project.milestones.map(m => (
+                    <SelectItem key={m.id} value={String(m.id)}>{m.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </TaskFieldRow>
-
-            {project && project.milestones && project.milestones.length > 0 && (
-              <TaskFieldRow icon={Target} label="Milestone" testId="row-task-milestone">
-                <Select
-                  value={task.milestoneId ? String(task.milestoneId) : "none"}
-                  onValueChange={(v) => updateMutation.mutate({ milestoneId: v === "none" ? null : parseInt(v, 10) } as Partial<Task>)}
-                >
-                  <SelectTrigger className="h-5 text-xs w-auto min-w-[80px] max-w-[160px]" data-testid="select-task-widget-milestone">
-                    <SelectValue placeholder="None" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">None</SelectItem>
-                    {project.milestones.map(m => (
-                      <SelectItem key={m.id} value={String(m.id)}>{m.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </TaskFieldRow>
-            )}
-
-            <TaskFieldRow icon={Tag} label="Tags" testId="row-task-tags">
-              <InlineTagPicker
-                tags={task.tags}
-                onChange={(tags) => updateMutation.mutate({ tags })}
-              />
-            </TaskFieldRow>
-          </TaskSection>
-
-          {/* Agent section (only for agent-owned tasks) */}
-          {task.owner === "agent" && (
-            <TaskSection title="Agent" testId="section-task-agent">
-              <TaskFieldRow icon={Calculator} label="Token Est." testId="row-task-token-estimate">
-                <span className="text-xs text-muted-foreground">
-                  {task.tokenEstimate != null ? `${task.tokenEstimate.toLocaleString()} tok` : "—"}
-                </span>
-              </TaskFieldRow>
-            </TaskSection>
           )}
 
-          {/* Detail text fields */}
-          <TaskSection title="Details" defaultOpen={textFieldSections.some(s => Boolean(s.value))} testId="section-task-details">
-            {textFieldSections.map(({ icon: Icon, label, field, value, placeholder }) => (
-              <TaskFieldRow key={field} icon={Icon} label={label} hasValue={Boolean(value)} testId={`row-task-${field}`}
-                expandedContent={
-                  <EditableText
-                    value={value}
-                    onSave={(val) => updateMutation.mutate({ [field]: val })}
-                    placeholder={placeholder}
-                    multiline
-                    testId={`input-task-widget-${field}-${taskId}`}
-                  />
-                }
-              >
-                <span className="text-xs text-muted-foreground truncate max-w-[160px]">
-                  {value ? value.slice(0, 40) + (value.length > 40 ? "…" : "") : "—"}
-                </span>
-              </TaskFieldRow>
-            ))}
-          </TaskSection>
+          <TaskFieldRow icon={Tag} label="Tags" testId="row-task-tags">
+            <InlineTagPicker
+              tags={task.tags}
+              onChange={(tags) => updateMutation.mutate({ tags })}
+            />
+          </TaskFieldRow>
+
+          {task.owner === "agent" && (
+            <TaskFieldRow icon={Calculator} label="Token Est." testId="row-task-token-estimate">
+              <span className="text-xs text-muted-foreground">
+                {task.tokenEstimate != null ? `${task.tokenEstimate.toLocaleString()} tok` : "—"}
+              </span>
+            </TaskFieldRow>
+          )}
+
+          {textFieldRows.map(({ icon: Icon, label, field, value, placeholder }) => (
+            <TaskFieldRow key={field} icon={Icon} label={label} testId={`row-task-${field}`}
+              expandedContent={
+                <EditableText
+                  value={value}
+                  onSave={(val) => updateMutation.mutate({ [field]: val })}
+                  placeholder={placeholder}
+                  multiline
+                  testId={`input-task-widget-${field}-${taskId}`}
+                />
+              }
+            >
+              <span className="text-xs text-muted-foreground truncate max-w-[160px]">
+                {value ? value.slice(0, 40) + (value.length > 40 ? "…" : "") : "—"}
+              </span>
+            </TaskFieldRow>
+          ))}
         </div>
       )}
     </div>
