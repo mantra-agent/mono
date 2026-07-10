@@ -533,7 +533,13 @@ export type TriggerType =
   | "meeting";
 
 /** Bot lifecycle for a meeting session. Single discriminant for meeting state. */
-export type MeetingBotStatus = "dialing" | "in_lobby" | "live" | "ended";
+export type MeetingBotStatus =
+  | "dialing"
+  | "in_lobby"
+  | "live"
+  | "denied"
+  | "failed"
+  | "ended";
 
 /** A meeting participant. Known speakers carry a personId (renders as @person). */
 export interface MeetingParticipant {
@@ -552,6 +558,12 @@ export interface MeetingSessionMeta {
   botStatus: MeetingBotStatus;
   startedAt?: string;
   endedAt?: string;
+  /** Recall.ai bot id when this meeting is driven by a Recall bot. */
+  botId?: string;
+  /** Original meeting join URL (Zoom/Meet). */
+  meetingUrl?: string;
+  /** Human-readable detail for denied/failed states (e.g. sub_code). */
+  statusDetail?: string;
 }
 
 /** Speaker attribution for inbound meeting transcript messages. */

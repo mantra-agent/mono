@@ -54,12 +54,14 @@ import {
   normalizePageContext,
   type SystemNotice,
   type ErrorSeverity,
+  type MeetingBotStatus,
+  type MeetingSessionMeta,
+  type MessageSpeakerMeta,
 } from "@shared/models/chat";
 import { db } from "../../db";
 import { and, eq, inArray, isNull, notInArray, sql as drizzleSql } from "drizzle-orm";
 import { visibleScopePredicate } from "../../scoped-storage";
 import { libraryPages } from "@shared/models/info";
-import { planExecutions } from "@shared/schema";
 import { planExecutions, workflowRuns } from "@shared/schema";
 import { createLogger } from "../../log";
 import { requireAuth } from "../../auth";
@@ -2412,11 +2414,179 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     },
   );
 
-  // M0 meeting spine — dev loopback transport.
-  // POST attributed transcript text into a meeting session. Creates the
-  // meeting session on first call, resolves the speaker (known → person,
-  // unknown → "Speaker N"), persists the attributed message, and triggers an
-  // agent response through the same canonical flow as normal user messages.
+  // M0/M1 meeting spine — canonical meeting ingest.
+  // Single mutation path for meeting transcript lines and bot status updates.
+  // Shared by the dev loopback transport and the Recall.ai webhook receiver.
+  async function ingestMeetingEvent(event: {
+    sessionId?: string;
+    create?: {
+      title?: string;
+      platform?: string;
+      botId?: string;
+      meetingUrl?: string;
+    };
+    speakerLabel?: string;
+    text?: string;
+    botStatus?: MeetingBotStatus;
+    statusDetail?: string;
+  }): Promise<
+    | {
+        ok: true;
+        sessionId: string;
+        sessionKey: string;
+        speaker?: MessageSpeakerMeta;
+        queued: boolean;
+      }
+    | { ok: false; status: number; error: string }
+  > {
+    const { resolveSpeaker } = await import("../../meeting/speakers");
+
+    // Resolve or create the meeting session
+    let session = event.sessionId
+      ? await chatStorage.getSession(event.sessionId)
+      : null;
+    if (event.sessionId && !session) {
+      return { ok: false, status: 404, error: "Session not found" };
+    }
+    if (session && session.type !== "meeting") {
+      return { ok: false, status: 400, error: "Session is not a meeting session" };
+    }
+    if (!session) {
+      const meetingTitle = event.create?.title?.trim() || "Meeting";
+      session = await chatStorage.createMeetingSession(meetingTitle, {
+        title: meetingTitle,
+        platform: event.create?.platform,
+        participants: [],
+        botStatus: event.botStatus || "live",
+        botId: event.create?.botId,
+        meetingUrl: event.create?.meetingUrl,
+      });
+      chatLog.log(
+        `meeting ingest: created session ${session.id} title="${meetingTitle}" platform=${event.create?.platform || "-"}`,
+      );
+    }
+    const sessionId = session.id;
+    const sessionKey = session.sessionKey || `meeting:${sessionId}`;
+    const meeting = session.meeting || {
+      participants: [],
+      botStatus: "live" as const,
+    };
+
+    // Status-only update (no transcript text)
+    if (!event.text) {
+      const patch: Partial<MeetingSessionMeta> = {};
+      if (event.botStatus && event.botStatus !== meeting.botStatus) {
+        patch.botStatus = event.botStatus;
+        if (
+          event.botStatus === "ended" ||
+          event.botStatus === "failed" ||
+          event.botStatus === "denied"
+        ) {
+          patch.endedAt = new Date().toISOString();
+        }
+      }
+      if (event.statusDetail) patch.statusDetail = event.statusDetail;
+      if (Object.keys(patch).length > 0) {
+        await chatStorage.updateMeetingMeta(sessionId, patch);
+        chatLog.log(
+          `meeting ingest: status update sessionId=${sessionId} botStatus=${event.botStatus || "-"} detail=${event.statusDetail || "-"}`,
+        );
+      }
+      return { ok: true, sessionId, sessionKey, queued: false };
+    }
+
+    // Speaker attribution against the session's participant roster
+    const resolution = await resolveSpeaker(
+      event.speakerLabel,
+      meeting.participants,
+    );
+    if (
+      resolution.added ||
+      (event.botStatus && event.botStatus !== meeting.botStatus)
+    ) {
+      const updated = await chatStorage.updateMeetingMeta(sessionId, {
+        participants: resolution.participants,
+        ...(event.botStatus ? { botStatus: event.botStatus } : {}),
+        ...(event.botStatus === "ended"
+          ? { endedAt: new Date().toISOString() }
+          : {}),
+      });
+      if (updated) session = updated;
+    }
+
+    await chatStorage.createMeetingUserMessage(
+      sessionId,
+      event.text,
+      resolution.speaker,
+    );
+
+    publishChatStreamEvent(sessionKey, sessionId, {
+      type: "user_message",
+      content: event.text,
+      sessionId,
+      title: session.title || undefined,
+    });
+
+    // If a run is already active, the transcript line is persisted and
+    // visible; the agent finishes its current turn (no abort in meetings).
+    const isInFlight =
+      inFlightSessions.has(sessionId) ||
+      agentExecutor.hasActiveRunForSession(sessionId);
+    if (isInFlight) {
+      chatLog.log(
+        `meeting ingest: run in flight sessionId=${sessionId}, message queued`,
+      );
+      return {
+        ok: true,
+        sessionId,
+        sessionKey,
+        speaker: resolution.speaker,
+        queued: true,
+      };
+    }
+
+    inFlightSessions.set(sessionId, { startedAt: Date.now(), sessionKey });
+    try {
+      const { sessionManager } = await import("../../session-manager");
+      sessionManager.registerSession(sessionId, sessionKey, "meeting");
+    } catch (regErr) {
+      chatLog.debug(
+        `sessionManager.registerSession skipped: ${regErr instanceof Error ? regErr.message : String(regErr)}`,
+      );
+    }
+    await chatStorage
+      .updateSessionStatus(sessionId, "streaming")
+      .catch((err) =>
+        chatLog.warn(
+          `status update to streaming failed sessionId=${sessionId}`,
+          err,
+        ),
+      );
+
+    // The agent sees the attributed line; persisted content stays raw.
+    processChatStream(
+      sessionKey,
+      sessionId,
+      `[${resolution.speaker.label}] ${event.text}`,
+    ).catch((err) => {
+      chatLog.error("meeting ingest processChatStream error:", err);
+    });
+
+    return {
+      ok: true,
+      sessionId,
+      sessionKey,
+      speaker: resolution.speaker,
+      queued: false,
+    };
+  }
+
+  // Recall.ai webhook receiver — registered with the canonical ingest path.
+  const { registerRecallRoutes } = await import("../../routes/recall");
+  registerRecallRoutes(app, { ingestMeetingEvent });
+
+  // M0 dev loopback transport — POST attributed transcript text into a
+  // meeting session through the canonical ingest path.
   app.post("/api/dev/meeting/loopback", async (req: Request, res: Response) => {
     try {
       const {
@@ -2432,120 +2602,36 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         return res.status(400).json({ error: "text is required" });
       }
 
-      const { resolveSpeaker } = await import("../../meeting/speakers");
-
-      // Resolve or create the meeting session
-      let session = incomingSessionId
-        ? await chatStorage.getSession(incomingSessionId)
-        : null;
-      if (incomingSessionId && !session) {
-        return res.status(404).json({ error: "Session not found" });
-      }
-      if (session && session.type !== "meeting") {
-        return res
-          .status(400)
-          .json({ error: "Session is not a meeting session" });
-      }
-      if (!session) {
-        const meetingTitle =
-          (typeof title === "string" && title.trim()) || "Meeting";
-        session = await chatStorage.createMeetingSession(meetingTitle, {
-          title: meetingTitle,
+      const result = await ingestMeetingEvent({
+        sessionId:
+          typeof incomingSessionId === "string" ? incomingSessionId : undefined,
+        create: {
+          title: typeof title === "string" ? title : undefined,
           platform: typeof platform === "string" ? platform : undefined,
-          participants: [],
-          botStatus: botStatus || "live",
-        });
-        chatLog.log(
-          `meeting loopback: created session ${session.id} title="${meetingTitle}" platform=${platform || "-"}`,
-        );
-      }
-      const sessionId = session.id;
-
-      // Speaker attribution against the session's participant roster
-      const meeting = session.meeting || {
-        participants: [],
-        botStatus: "live" as const,
-      };
-      const resolution = await resolveSpeaker(
-        typeof speakerLabel === "string" ? speakerLabel : undefined,
-        meeting.participants,
-      );
-      if (resolution.added || (botStatus && botStatus !== meeting.botStatus)) {
-        const updated = await chatStorage.updateMeetingMeta(sessionId, {
-          participants: resolution.participants,
-          ...(botStatus ? { botStatus } : {}),
-          ...(botStatus === "ended"
-            ? { endedAt: new Date().toISOString() }
-            : {}),
-        });
-        if (updated) session = updated;
-      }
-
-      await chatStorage.createMeetingUserMessage(
-        sessionId,
+        },
+        speakerLabel:
+          typeof speakerLabel === "string" ? speakerLabel : undefined,
         text,
-        resolution.speaker,
-      );
-
-      const sessionKey = session.sessionKey || `meeting:${sessionId}`;
-      publishChatStreamEvent(sessionKey, sessionId, {
-        type: "user_message",
-        content: text,
-        sessionId,
-        title: session.title || undefined,
+        botStatus: typeof botStatus === "string" ? (botStatus as MeetingBotStatus) : undefined,
       });
 
-      // If a run is already active, the transcript line is persisted and
-      // visible; the agent finishes its current turn (no abort in meetings).
-      const isInFlight =
-        inFlightSessions.has(sessionId) ||
-        agentExecutor.hasActiveRunForSession(sessionId);
-      if (isInFlight) {
-        chatLog.log(
-          `meeting loopback: run in flight sessionId=${sessionId}, message queued`,
-        );
+      if (!result.ok) {
+        return res.status(result.status).json({ error: result.error });
+      }
+      if (result.queued) {
         return res.status(202).json({
-          sessionId,
-          sessionKey,
-          speaker: resolution.speaker,
+          sessionId: result.sessionId,
+          sessionKey: result.sessionKey,
+          speaker: result.speaker,
           queued: true,
         });
       }
-
-      inFlightSessions.set(sessionId, { startedAt: Date.now(), sessionKey });
-      try {
-        const { sessionManager } = await import("../../session-manager");
-        sessionManager.registerSession(sessionId, sessionKey, "meeting");
-      } catch (regErr) {
-        chatLog.debug(
-          `sessionManager.registerSession skipped: ${regErr instanceof Error ? regErr.message : String(regErr)}`,
-        );
-      }
-      await chatStorage
-        .updateSessionStatus(sessionId, "streaming")
-        .catch((err) =>
-          chatLog.warn(
-            `status update to streaming failed sessionId=${sessionId}`,
-            err,
-          ),
-        );
-
-      const streamStartedAt = Date.now();
       res.json({
-        sessionId,
-        sessionKey,
-        speaker: resolution.speaker,
+        sessionId: result.sessionId,
+        sessionKey: result.sessionKey,
+        speaker: result.speaker,
         status: "streaming",
-        streamStartedAt,
-      });
-
-      // The agent sees the attributed line; persisted content stays raw.
-      processChatStream(
-        sessionKey,
-        sessionId,
-        `[${resolution.speaker.label}] ${text}`,
-      ).catch((err) => {
-        chatLog.error("meeting loopback processChatStream error:", err);
+        streamStartedAt: Date.now(),
       });
     } catch (error) {
       chatLog.error("Error in meeting loopback:", error);
@@ -2554,6 +2640,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       }
     }
   });
+
 
   app.post("/api/sessions/:id/abort", async (req: Request, res: Response) => {
     const routeStartAt = Date.now();

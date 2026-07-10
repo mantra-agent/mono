@@ -6,14 +6,16 @@
  * pattern used by plans/workflows.
  */
 import { useEffect, useState } from "react";
-import { Radio, Users } from "lucide-react";
+import { Hourglass, Radio, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { MeetingSessionMeta, MeetingBotStatus } from "@shared/models/chat";
 
 const STATUS_LABEL: Record<MeetingBotStatus, string> = {
-  dialing: "Dialing",
+  dialing: "Joining",
   in_lobby: "In lobby",
   live: "Live",
+  denied: "Not admitted",
+  failed: "Failed",
   ended: "Ended",
 };
 
@@ -21,7 +23,18 @@ const STATUS_CLASS: Record<MeetingBotStatus, string> = {
   dialing: "bg-warning/10 text-warning-foreground border-warning/30",
   in_lobby: "bg-warning/10 text-warning-foreground border-warning/30",
   live: "bg-active/10 text-active border-active/30",
+  denied: "bg-destructive/10 text-destructive border-destructive/30",
+  failed: "bg-destructive/10 text-destructive border-destructive/30",
   ended: "bg-muted text-muted-foreground border-border",
+};
+
+/** Ray-facing explanation per terminal/waiting state. Never a silent fail. */
+const STATUS_BANNER: Partial<Record<MeetingBotStatus, string>> = {
+  in_lobby:
+    "Waiting to be admitted — admit 'Mantra Agent' from the meeting participants panel.",
+  denied:
+    "The bot was not admitted to the meeting (recording permission denied or removed from the lobby).",
+  failed: "The bot hit a fatal error and could not stay in the meeting.",
 };
 
 function formatElapsed(ms: number): string {
@@ -57,10 +70,12 @@ export function MeetingHeaderBar({
 }) {
   const elapsed = useElapsed(meeting.startedAt, meeting.endedAt);
   const isLive = meeting.botStatus === "live";
+  const banner = STATUS_BANNER[meeting.botStatus];
 
   return (
+    <div className="border-b border-border bg-card/60">
     <div
-      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2 border-b border-border bg-card/60"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2"
       data-testid="meeting-header-bar"
     >
       <div className="flex items-center gap-2 min-w-0">
@@ -120,6 +135,24 @@ export function MeetingHeaderBar({
           ))}
         </div>
       )}
+    </div>
+    {banner && (
+      <div
+        className={cn(
+          "flex items-center gap-2 px-4 py-1.5 text-xs",
+          meeting.botStatus === "in_lobby"
+            ? "text-warning-foreground bg-warning/10"
+            : "text-destructive bg-destructive/10",
+        )}
+        data-testid="banner-meeting-status"
+      >
+        <Hourglass className="h-3 w-3 shrink-0" />
+        <span>
+          {banner}
+          {meeting.statusDetail ? ` (${meeting.statusDetail})` : ""}
+        </span>
+      </div>
+    )}
     </div>
   );
 }

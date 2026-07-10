@@ -12,6 +12,7 @@ export type SecretSection =
   | "railway"
   | "expo"
   | "sentry"
+  | "recall"
   | "sendgrid"
   | "storage";
 
@@ -41,6 +42,9 @@ export const SECRET_CATALOG: SecretSpec[] = [
   { name: "SENTRY_AUTH_TOKEN", section: "sentry", label: "Sentry Auth Token", description: "Secret token used by EAS/Sentry tooling to upload source maps and debug artifacts. Store as an EAS secret too." },
   { name: "SENTRY_ORG", section: "sentry", label: "Sentry Organization Slug", description: "Sentry organization slug used by the Expo/Sentry config plugin and source-map upload tooling." },
   { name: "SENTRY_PROJECT", section: "sentry", label: "Sentry Project Slug", description: "Sentry project slug for the mobile app crash-reporting project." },
+  { name: "RECALL_API_KEY", section: "recall", label: "Recall.ai API Key", description: "API key from the Recall.ai dashboard (region-specific). Powers the meeting bot: joining Zoom/Meet calls and streaming live transcripts." },
+  { name: "RECALL_REGION", section: "recall", label: "Recall.ai Region", description: "Region of your Recall.ai workspace: us-east-1 | us-west-2 | eu-central-1 | ap-northeast-1. Determines the API base URL (https://{region}.recall.ai)." },
+  { name: "RECALL_WEBHOOK_SECRET", section: "recall", label: "Recall.ai Webhook Signing Secret", description: "Svix signing secret (whsec_...) from the Recall.ai dashboard Webhooks page. Used to verify bot status and real-time transcript webhook signatures." },
   { name: "SENDGRID_API_KEY", section: "sendgrid", label: "SendGrid API Key", description: "Server-side API key for Twilio SendGrid Mail Send." },
   { name: "SENDGRID_FROM_EMAIL", section: "sendgrid", label: "Verified From Email", description: "Default verified sender email or authenticated domain sender used for outbound notifications." },
   { name: "SENDGRID_FROM_NAME", section: "sendgrid", label: "From Name", description: "Optional display name for Mantra outbound notifications." },
