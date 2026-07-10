@@ -56,9 +56,10 @@ import {
   type ErrorSeverity,
 } from "@shared/models/chat";
 import { db } from "../../db";
-import { and, eq, inArray, notInArray, sql as drizzleSql } from "drizzle-orm";
+import { and, eq, inArray, isNull, notInArray, sql as drizzleSql } from "drizzle-orm";
 import { visibleScopePredicate } from "../../scoped-storage";
 import { libraryPages } from "@shared/models/info";
+import { planExecutions } from "@shared/schema";
 import { planExecutions, workflowRuns } from "@shared/schema";
 import { createLogger } from "../../log";
 import { requireAuth } from "../../auth";
@@ -176,6 +177,37 @@ async function getPlanSessionIdsForSessions(sessionIds: string[]): Promise<Set<s
   }
 
   return planSessionIds;
+}
+
+/**
+ * Sessions with a plan currently executing. A session with an in-flight plan
+ * must render as active even in the gap between plan steps, when no child
+ * session is streaming yet.
+ */
+async function getExecutingPlanSessionIdsForSessions(sessionIds: string[]): Promise<Set<string>> {
+  const uniqueSessionIds = Array.from(new Set(sessionIds.filter(Boolean)));
+  const executingSessionIds = new Set<string>();
+  if (uniqueSessionIds.length === 0) return executingSessionIds;
+
+  for (let i = 0; i < uniqueSessionIds.length; i += PLAN_SESSION_QUERY_CHUNK_SIZE) {
+    const chunk = uniqueSessionIds.slice(i, i + PLAN_SESSION_QUERY_CHUNK_SIZE);
+    const rows = await db
+      .select({ sessionId: planExecutions.originSessionId })
+      .from(planExecutions)
+      .where(
+        and(
+          inArray(planExecutions.originSessionId, chunk),
+          eq(planExecutions.status, "executing"),
+          isNull(planExecutions.archivedAt),
+        ),
+      );
+
+    for (const row of rows) {
+      if (row.sessionId) executingSessionIds.add(row.sessionId);
+    }
+  }
+
+  return executingSessionIds;
 }
 
 const SENSITIVE_PATTERNS = [
@@ -388,9 +420,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       // Detect plans only for sessions returned by this request. The previous
       // implementation scanned every plan-tagged Library page on each sidebar
       // poll, which saturated the DB pool after the session-management deploy.
-      const planSessionIds = await getPlanSessionIdsForSessions(
-        filtered.map((s) => s.id),
-      );
+      const filteredIds = filtered.map((s) => s.id);
+      const [planSessionIds, executingPlanSessionIds] = await Promise.all([
+        getPlanSessionIdsForSessions(filteredIds),
+        getExecutingPlanSessionIdsForSessions(filteredIds),
+      ]);
 
       // Compute which sessions have active (streaming) descendants
       // Walk the tree bottom-up: if a session is streaming, mark all ancestors
@@ -419,6 +453,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         directChildCount: childCounts.get(s.id) || 0,
         parentMissing: !!s.parentSessionId && !allIds.has(s.parentSessionId),
         hasPlan: planSessionIds.has(s.id),
+        hasActivePlan: executingPlanSessionIds.has(s.id),
         hasActiveDescendant: activeDescendantIds.has(s.id),
         reminder: reminderMap.get(s.id) || { active: false },
       }));

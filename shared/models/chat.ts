@@ -563,6 +563,7 @@ export interface ChatSession {
   gitWriteOverride?: boolean;
   contextFlags?: Record<string, boolean>;
   hasPlan?: boolean;
+  hasActivePlan?: boolean;
   hasActiveDescendant?: boolean;
   archivedAt?: string | null;
   ftueWelcome?: boolean;
