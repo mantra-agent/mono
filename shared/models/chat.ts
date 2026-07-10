@@ -564,6 +564,24 @@ export interface MeetingSessionMeta {
   meetingUrl?: string;
   /** Human-readable detail for denied/failed states (e.g. sub_code). */
   statusDetail?: string;
+  /** End-of-meeting recap lifecycle state. */
+  recap?: MeetingRecapMeta;
+  /** Owner captured at session creation so webhook-driven finalization can run under a real user principal. */
+  ownerUserId?: string;
+  principalAccountId?: string;
+}
+
+/** Recap lifecycle discriminant — one discriminant per decision. */
+export type MeetingRecapStatus = "generating" | "ready" | "failed";
+
+/** End-of-meeting recap state stored on the meeting session meta. */
+export interface MeetingRecapMeta {
+  status: MeetingRecapStatus;
+  pageId?: string;
+  pageSlug?: string;
+  pageTitle?: string;
+  interactionsLogged?: number;
+  error?: string;
 }
 
 /** Speaker attribution for inbound meeting transcript messages. */

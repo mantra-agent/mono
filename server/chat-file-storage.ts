@@ -976,6 +976,7 @@ export interface IChatFileStorage {
     sessionId: string,
     patch: Partial<MeetingSessionMeta>,
   ): Promise<FileSession | null>;
+  claimMeetingRecap(sessionId: string): Promise<FileSession | null>;
   createMeetingUserMessage(
     sessionId: string,
     content: string,
@@ -1548,6 +1549,16 @@ export const chatFileStorage: IChatFileStorage = {
   ) {
     const id = generateId();
     const now = new Date().toISOString();
+    // Capture the owning user structurally so webhook-driven finalization
+    // (which has no user principal) can reconstruct it later.
+    const principal = getCurrentPrincipalOrSystem();
+    const ownership: Partial<MeetingSessionMeta> =
+      principal.actorType === "user" && principal.userId
+        ? {
+            ownerUserId: principal.userId,
+            principalAccountId: principal.accountId ?? undefined,
+          }
+        : {};
     const data: SessionData = {
       id,
       title,
@@ -1562,6 +1573,7 @@ export const chatFileStorage: IChatFileStorage = {
       isPinned: false,
       meeting: {
         ...meeting,
+        ...ownership,
         startedAt: meeting.startedAt || now,
       },
       triggerType: "meeting",
@@ -1605,6 +1617,34 @@ export const chatFileStorage: IChatFileStorage = {
         sessionId,
         session: meta,
       });
+      return meta;
+    });
+  },
+
+  /**
+   * Atomically claim recap generation for a meeting session. Returns the
+   * session if this caller won the claim, or null if the session is not a
+   * meeting or a recap is already generating/ready (idempotent against
+   * duplicate end events, e.g. Recall bot.call_ended + bot.done).
+   */
+  async claimMeetingRecap(sessionId: string) {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data || data.type !== "meeting" || !data.meeting) {
+        return null;
+      }
+      const status = data.meeting.recap?.status;
+      if (status === "generating" || status === "ready") {
+        return null;
+      }
+      data.meeting = {
+        ...data.meeting,
+        recap: { status: "generating" },
+      };
+      data.updatedAt = new Date().toISOString();
+      await writeConv(data);
+      const meta = convToMeta(data);
+      invalidateSessionsCache({ action: "updated", sessionId, session: meta });
       return meta;
     });
   },
