@@ -63,9 +63,8 @@ function SignalRow({ signal, onDismiss, onSave, onConverse }: { signal: NewsSign
   const displayTitle = cleanSignalText(signal.curatedTitle || signal.title);
   const cleanReason = cleanSignalText(signal.curatedReason);
   const cleanSummary = cleanSignalText(signal.agentSummary);
-  const cleanSnippet = cleanSignalText(signal.snippet);
   const cleanOriginalTitle = cleanSignalText(signal.title);
-  const hasExpansion = Boolean(cleanReason || cleanSummary || cleanSnippet || cleanOriginalTitle);
+  const hasExpansion = Boolean(cleanSummary || cleanReason || cleanOriginalTitle);
   return (
     <div className="space-y-0.5">
       <div className="flex">
@@ -106,11 +105,10 @@ function SignalRow({ signal, onDismiss, onSave, onConverse }: { signal: NewsSign
       </div>
       {expanded && (
         <div className="rounded-md border border-border/40 bg-card/40 p-3 text-sm">
-          {cleanReason && <p className="text-foreground">{cleanReason}</p>}
-          {cleanSummary && <p className="mt-2 text-muted-foreground">{cleanSummary}</p>}
+          {cleanSummary && <p className="text-foreground">{cleanSummary}</p>}
+          {cleanReason && <p className={cn("text-muted-foreground", cleanSummary && "mt-2")}>{cleanReason}</p>}
           <div className="mt-2 space-y-1 text-xs text-muted-foreground">
             <div className="font-medium text-foreground/80">{cleanOriginalTitle}</div>
-            {cleanSnippet && <div>{cleanSnippet}</div>}
             {signal.matchedTopics?.length ? <div>Topics: {signal.matchedTopics.join(", ")}</div> : null}
           </div>
         </div>
@@ -133,9 +131,8 @@ function SectionHeader({ section, count, open, onToggle }: { section: NewsSectio
 function buildSignalMessage(signal: NewsSignal): string {
   const title = signal.curatedTitle || signal.title;
   const parts = [`Let's discuss this: **${title}**`, `URL: ${signal.url}`];
-  if (signal.curatedReason) parts.push(`\nAnalysis: ${signal.curatedReason}`);
   if (signal.agentSummary) parts.push(`\nSummary: ${signal.agentSummary}`);
-  if (signal.snippet) parts.push(`\nSnippet: ${signal.snippet}`);
+  if (signal.curatedReason) parts.push(`\nAnalysis: ${signal.curatedReason}`);
   if (signal.matchedTopics?.length) parts.push(`\nTopics: ${signal.matchedTopics.join(", ")}`);
   return parts.join("\n");
 }
