@@ -89,14 +89,16 @@ import {
   Search as SearchIcon,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useTimezone, formatDate as tzFormatDate, formatDateTime, formatDateOnly } from "@/hooks/use-timezone";
 import { localDayDiff } from "@/lib/local-date";
-import type { Task, Project, PriorityLevel, TaskStatus, ProjectStatus, ImpactEffort, Milestone, MilestoneStatus, ProjectNote, ProjectFile } from "@shared/models/work";
+import type { Task, Project, PriorityLevel, TaskStatus, ProjectStatus, ImpactEffort, Milestone, MilestoneStatus, ProjectNote, ProjectFile, ProjectPage } from "@shared/models/work";
 import type { GoalIndexEntry } from "@shared/schema";
+import { createReferenceRef, type ReferenceRef } from "@shared/references";
 import {
   Collapsible,
   CollapsibleContent,
@@ -1110,6 +1112,10 @@ function ProjectsView() {
     queryKey: ["/api/projects/tasks"],
   });
 
+  const { data: peopleData } = useQuery<{ people: PersonEntry[] }>({
+    queryKey: ["/api/people"],
+  });
+
   useFocusContext(null);
 
   const updateProjectMutation = useMutation({
@@ -1344,6 +1350,7 @@ function ProjectsView() {
                     onUpdateMilestone={(milestoneId, data) => updateMilestoneMutation.mutate({ projectId: project.id, milestoneId, data })}
                     onAddProjectPage={(targetProject, page) => addProjectPageMutation.mutate({ projectId: targetProject.id, page })}
                     onUploadProjectFile={uploadProjectFile}
+                    people={peopleData?.people ?? []}
                   />
                 ))}
               </CollapsibleWorkSection>
@@ -1461,6 +1468,73 @@ function WorkTreeIndent({ depth }: { depth: number }) {
   );
 }
 
+
+function projectPageReference(page: ProjectPage): ReferenceRef {
+  const pageId = page.slug || page.id;
+  return createReferenceRef({
+    type: "page",
+    id: pageId,
+    metadata: {
+      label: page.title,
+      href: `/info#library?page=${encodeURIComponent(pageId)}`,
+    },
+  });
+}
+
+function projectFileReference(file: ProjectFile): ReferenceRef {
+  const objectPath = file.objectKey.startsWith("/objects/") ? file.objectKey : `/objects/${file.objectKey}`;
+  return createReferenceRef({
+    type: "file",
+    id: objectPath,
+    metadata: {
+      label: file.name,
+      href: `/objects/${file.objectKey.replace(/^\/objects\//, "")}?name=${encodeURIComponent(file.name)}`,
+    },
+  });
+}
+
+function resolveProjectPersonReference(value: string, people: PersonEntry[]): ReferenceRef | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const person = people.find(p => p.id === trimmed) || people.find(p => p.name.toLowerCase() === trimmed.toLowerCase());
+  if (!person) return null;
+  return createReferenceRef({
+    type: "person",
+    id: person.id,
+    metadata: { label: person.name },
+  });
+}
+
+function ProjectReferenceChipRow({ project, people }: { project: Project; people: PersonEntry[] }) {
+  const pageRefs = (project.pages || []).map(projectPageReference);
+  const fileRefs = (project.files || []).map(projectFileReference);
+  const personRefs = (project.people || [])
+    .map(value => resolveProjectPersonReference(value, people))
+    .filter((ref): ref is ReferenceRef => Boolean(ref));
+  const unresolvedPeople = (project.people || []).filter(value => !resolveProjectPersonReference(value, people));
+  const hasLinks = pageRefs.length > 0 || fileRefs.length > 0 || personRefs.length > 0 || unresolvedPeople.length > 0;
+
+  if (!hasLinks) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5" data-testid={`project-links-row-${project.id}`}>
+      {[...pageRefs, ...fileRefs, ...personRefs].map(ref => (
+        <ReferenceRenderer key={ref.canonical} refValue={ref} surface="simple-row" className="max-w-[14rem]" />
+      ))}
+      {unresolvedPeople.map(person => (
+        <span
+          key={person}
+          className="inline-flex max-w-[14rem] items-center gap-1 rounded-md border border-border/50 bg-muted/40 px-2 py-1 text-xs leading-tight text-muted-foreground"
+          title={person}
+        >
+          <Users className="h-3 w-3 shrink-0" />
+          <span className="truncate">{person}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function ProjectTreeNode({
   project,
   tasks,
@@ -1489,6 +1563,7 @@ function ProjectTreeNode({
   onUpdateMilestone,
   onAddProjectPage,
   onUploadProjectFile,
+  people,
 }: {
   project: Project;
   tasks: Task[];
@@ -1517,6 +1592,7 @@ function ProjectTreeNode({
   onUpdateMilestone: (milestoneId: number, data: Partial<Milestone>) => void;
   onAddProjectPage: (project: Project, page: LibraryPickerPage) => void;
   onUploadProjectFile: (project: Project, event: React.ChangeEvent<HTMLInputElement>) => void;
+  people: PersonEntry[];
 }) {
   const [expanded, setExpanded] = useState(false);
   const [expandedMilestones, setExpandedMilestones] = useState<Record<number, boolean>>({});
@@ -1530,14 +1606,26 @@ function ProjectTreeNode({
   const [milestoneDueDraft, setMilestoneDueDraft] = useState("");
   const [editingMilestoneId, setEditingMilestoneId] = useState<number | null>(null);
   const [milestoneNameDraft, setMilestoneNameDraft] = useState("");
+  const [editingProjectDescription, setEditingProjectDescription] = useState(false);
+  const [projectDescriptionDraft, setProjectDescriptionDraft] = useState(project.description || "");
   useEffect(() => {
     if (!editingProjectTitle) setProjectTitleDraft(project.title);
   }, [editingProjectTitle, project.title]);
+
+  useEffect(() => {
+    if (!editingProjectDescription) setProjectDescriptionDraft(project.description || "");
+  }, [editingProjectDescription, project.description]);
 
   const saveProjectTitle = () => {
     const nextTitle = projectTitleDraft.trim();
     if (nextTitle && nextTitle !== project.title) onUpdateProject({ title: nextTitle });
     setEditingProjectTitle(false);
+  };
+
+  const saveProjectDescription = () => {
+    const nextDescription = projectDescriptionDraft.trim();
+    if (nextDescription !== (project.description || "")) onUpdateProject({ description: nextDescription });
+    setEditingProjectDescription(false);
   };
 
   const projectDueLabel = formatWorkDueDate(project.dueDate);
@@ -1560,7 +1648,8 @@ function ProjectTreeNode({
     }
     unassignedTasks.push(task);
   });
-  const hasChildren = sortedMilestones.length > 0 || unassignedTasks.length > 0 || isAddingMilestone;
+  const hasProjectLinks = (project.pages?.length || 0) > 0 || (project.files?.length || 0) > 0 || (project.people?.length || 0) > 0;
+  const hasChildren = true;
   const isMilestoneExpanded = (milestone: Milestone) =>
     expandedMilestones[milestone.id] ?? milestone.status === "active";
   const toggleMilestoneExpanded = (milestone: Milestone) => {
@@ -1801,6 +1890,44 @@ function ProjectTreeNode({
       </div>
       {expanded && hasChildren && (
         <div className="space-y-0 mt-0" data-testid={`tree-children-project-${project.id}`}>
+          <div className="flex min-w-0 items-stretch" style={{ paddingLeft: Math.min(WORK_INDENT_STEP_PX, WORK_MAX_INDENT_PX) }}>
+              <WorkTreeIndent depth={1} />
+              <div className="flex-1 min-w-0 px-2 py-1.5">
+                <div className="space-y-2 rounded-md border border-border/30 bg-card/40 p-2" data-testid={`project-expanded-summary-${project.id}`}>
+                  {editingProjectDescription ? (
+                    <Textarea
+                      value={projectDescriptionDraft}
+                      onChange={e => setProjectDescriptionDraft(e.target.value)}
+                      onBlur={saveProjectDescription}
+                      onKeyDown={e => {
+                        if (e.key === "Escape") {
+                          setProjectDescriptionDraft(project.description || "");
+                          setEditingProjectDescription(false);
+                        }
+                        if ((e.metaKey || e.ctrlKey) && e.key === "Enter") saveProjectDescription();
+                      }}
+                      placeholder="Add a project description..."
+                      className="min-h-16 resize-none border-0 bg-transparent p-0 text-sm leading-relaxed shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                      autoFocus
+                      data-testid={`textarea-project-description-${project.id}`}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => { setProjectDescriptionDraft(project.description || ""); setEditingProjectDescription(true); }}
+                      className={cn(
+                        "block w-full rounded-sm text-left text-sm leading-relaxed hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                        project.description?.trim() ? "text-muted-foreground" : "text-muted-foreground/50"
+                      )}
+                      data-testid={`button-edit-project-description-${project.id}`}
+                    >
+                      {project.description?.trim() || "Add a project description..."}
+                    </button>
+                  )}
+                  <ProjectReferenceChipRow project={project} people={people} />
+                </div>
+              </div>
+            </div>
           {sortedMilestones.map(milestone => {
             const milestoneTasks = tasksByMilestone.get(milestone.id) || [];
             const isAddingTask = addingTaskTarget?.projectId === project.id && addingTaskTarget.milestoneId === milestone.id;
