@@ -103,8 +103,8 @@ export async function registerProjectsRoutes(app: Express) {
     try {
       const id = parseInt(req.params.id, 10);
       const { patch: updates, clearFields, destructiveUpdateReason } = sanitizePatch(req.body, {
-        protectedFields: ['title', 'description', 'context', 'deliverable', 'acceptanceCriteria', 'output', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
-        clearableFields: ['description', 'context', 'deliverable', 'acceptanceCriteria', 'output', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
+        protectedFields: ['title', 'description', 'context', 'output', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
+        clearableFields: ['description', 'context', 'output', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
         destructiveFields: ['description'] as Array<keyof any>,
       });
       for (const field of clearFields) {

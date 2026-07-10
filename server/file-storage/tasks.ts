@@ -32,8 +32,6 @@ function rowToTask(row: typeof tasks.$inferSelect): Task {
     projectId: row.projectId,
     milestoneId: row.milestoneId,
     tags: (row.tags as string[]) || [],
-    deliverable: row.deliverable,
-    acceptanceCriteria: row.acceptanceCriteria,
     context: row.context,
     output: row.output,
     deadline: row.deadline,
@@ -131,8 +129,6 @@ export class FileTaskStorage {
       projectId: input.projectId ?? null,
       milestoneId: input.milestoneId ?? null,
       tags: input.tags || [],
-      deliverable: input.deliverable || "",
-      acceptanceCriteria: input.acceptanceCriteria || "",
       context: input.context || "",
       output: input.output || "",
       deadline: input.deadline ?? null,
@@ -167,8 +163,6 @@ export class FileTaskStorage {
     if (updates.projectId !== undefined) setValues.projectId = updates.projectId;
     if (updates.milestoneId !== undefined) setValues.milestoneId = updates.milestoneId;
     if (updates.tags !== undefined) setValues.tags = updates.tags;
-    if (updates.deliverable !== undefined) setValues.deliverable = updates.deliverable;
-    if (updates.acceptanceCriteria !== undefined) setValues.acceptanceCriteria = updates.acceptanceCriteria;
     if (updates.context !== undefined) setValues.context = updates.context;
     if (updates.output !== undefined) setValues.output = updates.output;
     if (updates.deadline !== undefined) setValues.deadline = updates.deadline;

@@ -315,8 +315,6 @@ async function genProjects(dir: string): Promise<{ count: number }> {
                 `  Status: ${t.status ?? ""} | Priority: ${t.priority ?? ""} | Effort: ${t.effort ?? ""} | Impact: ${t.impact ?? ""} | Owner: ${t.owner ?? ""}\n` +
                 (t.deadline ? `  Deadline: ${t.deadline}\n` : "") +
                 (t.description ? `  ${t.description}\n` : "") +
-                (t.acceptanceCriteria ? `  ✓ ${t.acceptanceCriteria}\n` : "") +
-                (t.deliverable ? `  → ${t.deliverable}\n` : "") +
                 (t.context ? `  Context: ${t.context}\n` : "") +
                 (t.output ? `  Output: ${t.output}\n` : "") +
                 (t.tags?.length ? `  Tags: ${t.tags.join(", ")}\n` : "")
