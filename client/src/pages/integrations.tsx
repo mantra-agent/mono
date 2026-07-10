@@ -75,6 +75,7 @@ import {
   Square,
   Copy,
   Glasses,
+  Radio,
 } from "lucide-react";
 import { SiX } from "react-icons/si";
 import { SecretsForSection } from "@/components/SecretControl";
@@ -122,6 +123,7 @@ const INTEGRATIONS: IntegrationDef[] = [
   { id: "sendgrid", name: "SendGrid", icon: Mail, statusFields: ["sendgrid"], route: "sendgrid" },
   { id: "meta", name: "Meta", icon: Glasses, statusFields: ["meta"], route: "meta" },
   { id: "oura", name: "Oura Ring", icon: Activity, statusFields: ["oura"], route: "oura" },
+  { id: "recall", name: "Recall.ai Meeting Bot", icon: Radio, statusFields: ["recall"], route: "recall" },
 ];
 
 function resolveStatus(
@@ -2686,6 +2688,96 @@ function easSelectionInput(fromIndex: number, toIndex: number): string {
 }
 
 
+interface RecallStatus {
+  connected: boolean;
+  hasKey?: boolean;
+  region?: string | null;
+  hasWebhookSecret?: boolean;
+  error?: string;
+}
+
+function RecallDetail() {
+  const { data: recallStatus, isLoading, refetch, isRefetching } = useQuery<RecallStatus>({
+    queryKey: ["/api/integrations/recall/status"],
+    refetchInterval: false,
+  });
+
+  return (
+    <div className="space-y-4">
+      <Card data-testid="card-recall-status">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base font-semibold">
+            <Radio className="h-4 w-4" />
+            Recall.ai Meeting Bot
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+            Powers the meeting agent: the bot joins Zoom and Google Meet calls as
+            {" "}<span className="font-medium text-foreground">"Mantra Agent"</span> and streams a live,
+            speaker-attributed transcript into a meeting session. Enter your API key here — it is
+            stored encrypted and never requested through chat.
+          </div>
+
+          <div className="flex items-center gap-2" data-testid="recall-connection-status">
+            {isLoading ? (
+              <Skeleton className="h-5 w-40" />
+            ) : recallStatus?.connected ? (
+              <>
+                <CheckCircle2 className="h-4 w-4 text-active" />
+                <span className="text-sm">
+                  Connected{recallStatus.region ? ` (${recallStatus.region})` : ""}
+                </span>
+              </>
+            ) : (
+              <>
+                <XCircle className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">
+                  {recallStatus?.error
+                    ? `Not connected — ${recallStatus.error}`
+                    : "Not connected. Set the API key and region below."}
+                </span>
+              </>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refetch()}
+              disabled={isRefetching}
+              data-testid="button-recall-test-connection"
+            >
+              {isRefetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Test connection"}
+            </Button>
+          </div>
+
+          <SecretsForSection section="recall" />
+
+          <div className="grid gap-2 text-xs text-muted-foreground @md:grid-cols-2">
+            <div className="rounded-lg border p-3">
+              <div className="font-medium text-foreground">API key + region</div>
+              <p>
+                Create a key in the Recall.ai dashboard. Keys are region-specific — set{" "}
+                <code>RECALL_REGION</code> to the region shown in your dashboard URL
+                (us-east-1, us-west-2, eu-central-1, or ap-northeast-1).
+              </p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="font-medium text-foreground">Status webhook (one-time)</div>
+              <p>
+                In the Recall dashboard, add a webhook endpoint pointing to{" "}
+                <code>{`${window.location.origin}/api/webhooks/recall`}</code> and subscribe it to
+                bot status events. Then copy its signing secret (whsec_…) into{" "}
+                <code>RECALL_WEBHOOK_SECRET</code> so lobby/live/denied states show up in meeting
+                sessions.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 function SentryDetail() {
   return (
     <div className="space-y-4">
@@ -5104,6 +5196,7 @@ function IntegrationDetail({ provider }: { provider: string }) {
 
       {provider === "expo" && <ExpoDetail />}
       {provider === "sentry" && <SentryDetail />}
+      {provider === "recall" && <RecallDetail />}
       {provider === "sendgrid" && <SendGridDetail />}
       {provider === "meta" && <MetaDetail />}
 

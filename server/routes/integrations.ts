@@ -1194,6 +1194,37 @@ export async function registerIntegrationsRoutes(app: Express) {
   // === Automation Auth Token ===
 
   // ---------------------------------------------------------------------------
+  // Recall.ai (meeting bot)
+  // ---------------------------------------------------------------------------
+
+  app.get("/api/integrations/recall/status", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { getRecallConfig, testRecallConnection } = await import(
+        "../integrations/recall/client"
+      );
+      const cfg = await getRecallConfig();
+      if (!cfg.hasKey || !cfg.region) {
+        return res.json({
+          connected: false,
+          hasKey: cfg.hasKey,
+          region: cfg.region,
+          hasWebhookSecret: cfg.hasWebhookSecret,
+        });
+      }
+      const test = await testRecallConnection();
+      res.json({
+        connected: test.connected,
+        hasKey: cfg.hasKey,
+        region: cfg.region,
+        hasWebhookSecret: cfg.hasWebhookSecret,
+        error: test.error,
+      });
+    } catch (error: any) {
+      res.json({ connected: false, error: error.message });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
   // Expo / EAS
   // ---------------------------------------------------------------------------
 

@@ -111,6 +111,7 @@ export async function registerSetupRoutes(app: Express) {
       claudeCli: !!getSecretSync("CLAUDE_CODE_OAUTH_TOKEN"),
       railway: !!getSecretSync("RAILWAY_API_TOKEN"),
       expo: !!await getSecret("EXPO_ACCESS_TOKEN"),
+      recall: !!(await getSecret("RECALL_API_KEY") && await getSecret("RECALL_REGION")),
       sentry: !!(getSecretSync("EXPO_PUBLIC_SENTRY_DSN") && getSecretSync("SENTRY_AUTH_TOKEN") && getSecretSync("SENTRY_ORG") && getSecretSync("SENTRY_PROJECT")),
       sendgrid: !!(getSecretSync("SENDGRID_API_KEY") && getSecretSync("SENDGRID_FROM_EMAIL")),
       phone: false,

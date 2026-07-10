@@ -8491,6 +8491,155 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
   },
 
+  async meeting_bot(args: Record<string, any>): Promise<ToolHandlerResult> {
+    const action = typeof args.action === "string" ? args.action : "";
+    if (!["join", "status", "leave"].includes(action)) {
+      return { result: `Unknown meeting_bot action: ${action}. Allowed: join, status, leave`, error: true };
+    }
+
+    const { chatStorage } = await import("./integrations/chat/storage");
+
+    if (action === "status" || action === "leave") {
+      const sessionId = typeof args.sessionId === "string" ? args.sessionId.trim() : "";
+      if (!sessionId) return { result: "Missing sessionId", error: true };
+      const session = await chatStorage.getSession(sessionId);
+      if (!session || session.type !== "meeting" || !session.meeting) {
+        return { result: `No meeting session found for id ${sessionId}`, error: true };
+      }
+      if (action === "status") {
+        return {
+          result: JSON.stringify({
+            sessionId,
+            title: session.meeting.title || session.title,
+            botStatus: session.meeting.botStatus,
+            statusDetail: session.meeting.statusDetail,
+            participants: session.meeting.participants,
+            startedAt: session.meeting.startedAt,
+            endedAt: session.meeting.endedAt,
+            link: `/session?c=${sessionId}`,
+          }),
+        };
+      }
+      // leave
+      const botId = session.meeting.botId;
+      if (!botId) return { result: "This meeting session has no Recall bot attached.", error: true };
+      try {
+        const { leaveRecallBot } = await import("./integrations/recall/client");
+        await leaveRecallBot(botId);
+      } catch (err) {
+        return { result: `Failed to remove bot from call: ${err instanceof Error ? err.message : String(err)}`, error: true };
+      }
+      await chatStorage.updateMeetingMeta(sessionId, {
+        botStatus: "ended",
+        endedAt: new Date().toISOString(),
+      });
+      return { result: JSON.stringify({ sessionId, botStatus: "ended", left: true }) };
+    }
+
+    // join
+    const recall = await import("./integrations/recall/client");
+    const cfg = await recall.getRecallConfig();
+    if (!recall.isRecallConfigured(cfg)) {
+      return {
+        result:
+          "Recall.ai is not configured. Ray must enter the RECALL_API_KEY and RECALL_REGION in Settings → Integrations → Recall.ai (the key is never entered through chat). Once connected, retry the join.",
+        error: true,
+      };
+    }
+    const publicUrl = process.env.PUBLIC_URL?.replace(/\/$/, "");
+    if (!publicUrl) {
+      return { result: "PUBLIC_URL is not set — the Recall transcript webhook needs a stable public URL. Configure PUBLIC_URL and retry.", error: true };
+    }
+
+    const MEETING_URL_RE = /https?:\/\/[^\s<>"']*(?:zoom\.us\/j\/|zoom\.us\/wc\/|meet\.google\.com\/)[^\s<>"')]+/i;
+    let meetingUrl = typeof args.url === "string" ? args.url.trim() : "";
+    let resolvedTitle = typeof args.title === "string" && args.title.trim() ? args.title.trim() : "";
+
+    if (meetingUrl && !MEETING_URL_RE.test(meetingUrl)) {
+      return { result: `That doesn't look like a Zoom or Google Meet link: ${meetingUrl}`, error: true };
+    }
+
+    if (!meetingUrl) {
+      // Resolve from the calendar: current or next event (±15 min back, 8h ahead) with a meeting link.
+      try {
+        const { listAllEvents } = await import("./google-calendar");
+        const now = Date.now();
+        const { events } = await listAllEvents({
+          timeMin: new Date(now - 15 * 60000).toISOString(),
+          timeMax: new Date(now + 8 * 3600000).toISOString(),
+          maxResults: 25,
+        });
+        const sorted = (events || []).slice().sort((a, b) => {
+          const ta = new Date(a.start?.dateTime || a.start?.date || 0).getTime();
+          const tb = new Date(b.start?.dateTime || b.start?.date || 0).getTime();
+          return ta - tb;
+        });
+        for (const ev of sorted) {
+          const haystack = [ev.location, ev.description, ev.summary].filter(Boolean).join("\n");
+          const match = haystack.match(MEETING_URL_RE);
+          if (match) {
+            meetingUrl = match[0];
+            if (!resolvedTitle) resolvedTitle = ev.summary || "";
+            break;
+          }
+        }
+      } catch (err) {
+        return { result: `Calendar lookup failed while resolving the meeting link: ${err instanceof Error ? err.message : String(err)}`, error: true };
+      }
+      if (!meetingUrl) {
+        return { result: "No meeting URL provided and no upcoming calendar event with a Zoom/Meet link was found. Paste the meeting link.", error: true };
+      }
+    }
+
+    const platform = /zoom\.us/i.test(meetingUrl)
+      ? "zoom"
+      : /meet\.google\.com/i.test(meetingUrl)
+        ? "meet"
+        : "unknown";
+    const title = resolvedTitle || "Meeting";
+
+    // Create the meeting session first so the bot carries the session id in
+    // its metadata — the webhook receiver routes events by bot.metadata.sessionId.
+    const session = await chatStorage.createMeetingSession(title, {
+      title,
+      platform,
+      participants: [],
+      botStatus: "dialing",
+      meetingUrl,
+    });
+
+    let bot;
+    try {
+      bot = await recall.createRecallBot({
+        meetingUrl,
+        botName: "Mantra Agent",
+        webhookUrl: `${publicUrl}/api/webhooks/recall/transcript`,
+        metadata: { sessionId: session.id },
+      });
+    } catch (err) {
+      await chatStorage.updateMeetingMeta(session.id, {
+        botStatus: "failed",
+        statusDetail: err instanceof Error ? err.message : String(err),
+        endedAt: new Date().toISOString(),
+      });
+      return { result: `Recall bot creation failed: ${err instanceof Error ? err.message : String(err)}`, error: true };
+    }
+
+    await chatStorage.updateMeetingMeta(session.id, { botId: bot.id });
+
+    return {
+      result: JSON.stringify({
+        sessionId: session.id,
+        botId: bot.id,
+        botStatus: "dialing",
+        platform,
+        title,
+        link: `/session?c=${session.id}`,
+        note: "Bot 'Mantra Agent' is joining the call. If it lands in the waiting room, admit it from the participants panel. Live attributed transcript streams into the linked meeting session.",
+      }),
+    };
+  },
+
   async expo(args: Record<string, any>): Promise<ToolHandlerResult> {
     const action = typeof args.action === "string" ? args.action : "";
     if (!action) return { result: "Missing 'action' parameter", error: true };
