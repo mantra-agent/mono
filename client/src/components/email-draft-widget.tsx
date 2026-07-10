@@ -214,6 +214,7 @@ function ThreadHistory({ messages }: { messages: ThreadMessage[] }) {
 export function EmailDraftWidget({ draftId }: { draftId: string }) {
   const [showCc, setShowCc] = useState(false);
   const [showBcc, setShowBcc] = useState(false);
+  const [sentExpanded, setSentExpanded] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Local edit state — initialized from server, patches sent on change
@@ -374,7 +375,12 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
   if (draft.status === "sent") {
     return (
       <div className="border rounded-md border-success/40 bg-success/5 my-1">
-        <div className="flex items-center gap-2 px-3 py-2">
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-success/10"
+          onClick={() => setSentExpanded((expanded) => !expanded)}
+          aria-expanded={sentExpanded}
+        >
           <Check className="h-3.5 w-3.5 text-success shrink-0" />
           <div className="flex-1 min-w-0 text-sm">
             <span className="text-success font-medium">Sent</span>
@@ -384,18 +390,45 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
               </span>
             )}
           </div>
-        </div>
-        <div className="px-3 pb-2 space-y-1">
-          <div className="text-xs text-muted-foreground">
-            To: {draft.to.join(", ")}
-          </div>
-          <div className="text-xs font-medium">{draft.subject}</div>
-          <div className="text-xs text-muted-foreground whitespace-pre-wrap line-clamp-3">
-            {draft.body}
-          </div>
-          {draft.sentMessageId && (
-            <div className="text-xs text-muted-foreground/60">
-              ID: {draft.sentMessageId}
+          {sentExpanded ? (
+            <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
+          ) : (
+            <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />
+          )}
+        </button>
+        <div className="px-3 pb-2 space-y-1.5">
+          {!sentExpanded && (
+            <>
+              <div className="text-xs text-muted-foreground break-words">
+                To: {draft.to.join(", ")}
+              </div>
+              <div className="text-xs font-medium truncate">{draft.subject}</div>
+            </>
+          )}
+          {sentExpanded && (
+            <div className="space-y-1.5 border-t border-border/30 pt-2">
+              <div className="text-xs text-muted-foreground break-words">
+                To: {draft.to.join(", ") || "(none)"}
+              </div>
+              {draft.cc.length > 0 && (
+                <div className="text-xs text-muted-foreground break-words">
+                  CC: {draft.cc.join(", ")}
+                </div>
+              )}
+              {draft.bcc.length > 0 && (
+                <div className="text-xs text-muted-foreground break-words">
+                  BCC: {draft.bcc.join(", ")}
+                </div>
+              )}
+              <div className="text-xs font-medium break-words">Subject: {draft.subject}</div>
+              <div className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
+                {draft.body || "(empty body)"}
+              </div>
+              {draft.sentMessageId && (
+                <div className="text-xs text-muted-foreground/60 break-all">
+                  ID: {draft.sentMessageId}
+                </div>
+              )}
             </div>
           )}
         </div>
