@@ -708,9 +708,19 @@ function cleanNewsText(value?: string | null): string {
     .trim();
 }
 
+function newsReferenceType(sourceType: string): "web_article" | "x_item" | "reddit_post" | "rss_item" | "news" {
+  if (sourceType === "web") return "web_article";
+  if (sourceType === "x" || sourceType === "x_account") return "x_item";
+  if (sourceType === "reddit") return "reddit_post";
+  if (sourceType === "rss") return "rss_item";
+  return "news";
+}
+
 function itemFromNewsSignal(signal: SignalItem, index: number): SimpleFeedItem {
   const title = cleanNewsText(signal.curatedTitle || signal.title) || "News item";
-  const reason = cleanNewsText(signal.curatedReason || signal.agentSummary || signal.snippet);
+  const summary = cleanNewsText(signal.agentSummary);
+  const reason = cleanNewsText(signal.curatedReason);
+  const originalTitle = cleanNewsText(signal.title);
   const sourceLabel = sourceLabelForNews(signal.sourceType);
   const observedAt = (signal.publishedAt ?? signal.scannedAt ?? signal.createdAt).toISOString();
   const sourceRef: SimpleSourceRef = {
@@ -731,15 +741,21 @@ function itemFromNewsSignal(signal: SignalItem, index: number): SimpleFeedItem {
     anchorTime: observedAt,
     time: formatInboxDate(inboxAddedDate),
     sourceRefs: [sourceRef],
-    references: sourceRefsToReferenceRefs([sourceRef]),
+    references: [createReferenceRef({
+      type: newsReferenceType(signal.sourceType),
+      id: signal.url,
+      metadata: { label: title, href: signal.url, sourceType: signal.sourceType },
+    })],
     payload: {
       kind: "news_signal",
       signalId: signal.id,
       sourceType: signal.sourceType,
       sourceLabel,
       url: signal.url,
-      snippet: cleanNewsText(signal.snippet),
+      summary,
       reason,
+      originalTitle,
+      matchedTopics: signal.matchedTopics,
       relevanceScore: signal.curationScore ?? signal.relevanceScore,
       inboxAddedAt: observedAt,
     },
