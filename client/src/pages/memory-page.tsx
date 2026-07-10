@@ -92,6 +92,8 @@ import {
   Globe,
   Mic,
   Lightbulb,
+  Activity,
+  CircleDot,
   Settings,
   Zap,
   MoreHorizontal,
@@ -735,6 +737,22 @@ function SourceIcon({ source, className = "h-2.5 w-2.5" }: { source: string; cla
     case "tool": return <Wrench className={className} />;
     default: return <FileText className={className} />;
   }
+}
+
+function getGraphNodeVisual(entry: MemoryEntry): { icon: string; source: string; label: string; Icon: typeof FileText } {
+  const meta = (entry.metadata || {}) as Record<string, unknown>;
+  const nodeKind = String(meta.nodeKind || "");
+  const nodeType = String(meta.nodeType || meta.entityType || nodeKind || entry.source || "manual");
+  const claimType = String(meta.claimType || entry.source || "").toLowerCase();
+  if (nodeKind === "claim") {
+    if (claimType === "cause") return { icon: "↯", source: "cause", label: "Cause", Icon: Zap };
+    if (claimType === "action") return { icon: "→", source: "action", label: "Action", Icon: Activity };
+    return { icon: "•", source: "state", label: "State", Icon: CircleDot };
+  }
+  if (nodeType === "person") return { icon: "👤", source: "person", label: "Person", Icon: User };
+  if (nodeType === "page") return { icon: "📄", source: "page", label: "Page", Icon: FileText };
+  if (nodeType === "session") return { icon: "💬", source: "session", label: "Session", Icon: MessageSquare };
+  return { icon: "◦", source: nodeType, label: nodeType, Icon: FileText };
 }
 
 function relativeTime(dateStr?: string): string {
@@ -2405,6 +2423,7 @@ function LayersTab() {
 interface GraphNode {
   id: number;
   label: string;
+  icon: string;
   source: string;
   x: number;
   y: number;
@@ -2429,6 +2448,9 @@ const sourceColorMap: Record<string, { fill: string; stroke: string }> = {
   identity: { fill: "hsl(50, 50%, 32%)", stroke: "hsl(50, 50%, 24%)" },
   belief: { fill: "hsl(300, 55%, 40%)", stroke: "hsl(300, 55%, 30%)" },
   claim: { fill: "hsl(200, 70%, 38%)", stroke: "hsl(200, 70%, 28%)" },
+  state: { fill: "hsl(200, 70%, 38%)", stroke: "hsl(200, 70%, 28%)" },
+  cause: { fill: "hsl(25, 70%, 38%)", stroke: "hsl(25, 70%, 28%)" },
+  action: { fill: "hsl(145, 55%, 35%)", stroke: "hsl(145, 55%, 25%)" },
   page: { fill: "hsl(145, 45%, 32%)", stroke: "hsl(145, 45%, 23%)" },
   session: { fill: "hsl(270, 45%, 38%)", stroke: "hsl(270, 45%, 28%)" },
 };
@@ -2785,10 +2807,12 @@ function GraphTab({ inFullscreenModal = false }: { inFullscreenModal?: boolean }
 
     const initialNodes: GraphNode[] = palace.entries.map((e) => {
       const meta = (e.metadata || {}) as Record<string, unknown>;
+      const visual = getGraphNodeVisual(e);
       return {
         id: e.id,
         label: e.title || (e.summary || e.content || "").slice(0, 20),
-        source: String(((e.metadata || {}) as Record<string, unknown>).nodeType || ((e.metadata || {}) as Record<string, unknown>).entityType || ((e.metadata || {}) as Record<string, unknown>).nodeKind || e.source || "manual"),
+        icon: visual.icon,
+        source: visual.source,
         x: w / 2 + (Math.random() - 0.5) * w * 0.8,
         y: h / 2 + (Math.random() - 0.5) * h * 0.8,
         vx: 0,
@@ -3112,15 +3136,18 @@ function GraphTab({ inFullscreenModal = false }: { inFullscreenModal?: boolean }
           const screenFontSize = fontSize * scaleX;
           if (screenFontSize < 3) continue;
           const labelOpacity = hasInteraction && !isNodeHighlighted ? 0.2 : 1;
-          context.font = `600 ${screenFontSize}px sans-serif`;
           context.textAlign = "center";
           context.textBaseline = "middle";
           context.fillStyle = `rgba(255,255,255,${labelOpacity})`;
           const words = node.label.split(/\s+/);
-          const totalHeight = (words.length - 1) * screenFontSize * 1.15;
+          const lineHeight = screenFontSize * 1.15;
+          const totalHeight = words.length * lineHeight;
           const startY = sy - totalHeight / 2;
+          context.font = `700 ${Math.max(7, screenFontSize * 1.15)}px sans-serif`;
+          context.fillText(node.icon, sx, startY);
+          context.font = `600 ${screenFontSize}px sans-serif`;
           for (let wi = 0; wi < words.length; wi++) {
-            context.fillText(words[wi], sx, startY + wi * screenFontSize * 1.15);
+            context.fillText(words[wi], sx, startY + (wi + 1) * lineHeight);
           }
         }
       }
@@ -3587,10 +3614,12 @@ function GraphTab({ inFullscreenModal = false }: { inFullscreenModal?: boolean }
             if (!hovEntry) return null;
             const displayTitle = hovEntry.title || hovEntry.summary?.split('\n')[0]?.slice(0, 60) || `Entry #${hovEntry.id}`;
             const meta = (hovEntry.metadata || {}) as Record<string, unknown>;
-            const nodeType = String(meta.nodeType || meta.entityType || meta.nodeKind || hovEntry.source);
+            const visual = getGraphNodeVisual(hovEntry);
+            const nodeType = visual.source;
             const referenceType = nodeType === "person" ? "person" : nodeType === "page" ? "page" : nodeType === "session" ? "session" : null;
             const summaryText = hovEntry.content || hovEntry.summary;
             const dateText = hovEntry.updatedAt || hovEntry.createdAt;
+            const HoverIcon = visual.Icon;
             return (
               <div
                 className="absolute z-50 max-w-xs rounded-md border border-card-border bg-popover p-3 shadow-md"
@@ -3598,7 +3627,7 @@ function GraphTab({ inFullscreenModal = false }: { inFullscreenModal?: boolean }
                 data-testid={`palace-node-tooltip-${hoveredNodeId}`}
               >
                 <div className="flex items-center gap-2 text-sm font-semibold text-popover-foreground leading-tight mb-2" data-testid="tooltip-title">
-                  <SourceIcon source={nodeType} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <HoverIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <span className="truncate">{displayTitle}</span>
                 </div>
                 {referenceType && hovEntry.sourceId && (
