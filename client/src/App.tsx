@@ -26,6 +26,7 @@ import { useClientPresence } from "@/hooks/use-client-presence";
 import { ExecutorStatusProvider } from "@/hooks/use-executor-status";
 import { FocusSessionProvider } from "@/hooks/use-focus-session";
 import { FocusContextProvider } from "@/hooks/use-focus-context";
+import { TaskModalProvider } from "@/contexts/task-modal-context";
 import { FocusWidget } from "@/components/focus-widget";
 import { BottomBar } from "@/components/bottom-bar";
 import { AppToastDisplay } from "@/components/toast-display";
@@ -398,10 +399,11 @@ function AppShell() {
           <ExecutorStatusProvider>
             <FocusSessionProvider>
               <FocusContextProvider>
+              <TaskModalProvider>
               <SidebarProvider style={style as React.CSSProperties} forceMobile={mobileSurfaceActive} defaultOpen={false}>
                 <AppLayout mobileSurfaceActive={mobileSurfaceActive} previewRouteOwnsCanvas={previewRouteOwnsCanvas} />
               </SidebarProvider>
-
+              </TaskModalProvider>
               </FocusContextProvider>
             </FocusSessionProvider>
           </ExecutorStatusProvider>
