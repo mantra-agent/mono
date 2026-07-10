@@ -81,7 +81,7 @@ export default function SystemPage() {
   }, [activeTab, canReadUsers]);
 
   usePageHeader({
-    title: "System",
+    title: activeTab === "vaults" ? "Vaults" : "System",
     tabs,
     activeTab,
     onTabChange: setActiveTab,

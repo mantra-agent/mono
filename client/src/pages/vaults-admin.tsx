@@ -317,17 +317,13 @@ export default function VaultsAdminPage() {
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin p-6">
-      <div className="space-y-4">
-        <h2 className="text-xl font-semibold text-foreground">Vaults</h2>
-
-        <div className="space-y-1">
+      <div className="space-y-1">
           <div className="relative min-w-0">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
               type="text"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search vaults"
               className="h-7 w-full rounded-md border border-input bg-background pl-7 pr-7 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               aria-label="Search vaults"
             />
@@ -373,7 +369,6 @@ export default function VaultsAdminPage() {
               </div>
             </CollapsibleContent>
           </Collapsible>
-        </div>
       </div>
 
       <CreateVaultDialog open={createOpen} onOpenChange={setCreateOpen} />
