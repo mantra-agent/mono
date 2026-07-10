@@ -128,7 +128,7 @@ export async function registerRoutes(
 
   // Confirmed user-data leak surfaces: route auth establishes request principal
   // for document-backed storage and external-account access before handlers run.
-  app.use(["/api/people", "/api/life-goals", "/api/calendar", "/api/context", "/api/email-sync"], requireAuth);
+  app.use(["/api/people", "/api/life-goals", "/api/calendar", "/api/context", "/api/email-sync", "/api/gmail", "/api/twitter"], requireAuth);
 
   registerPeopleRoutes(app, peopleStorage);
   registerGoalRoutes(app);

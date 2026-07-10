@@ -96,9 +96,8 @@ function verifyGitHubWebhookSignature(rawBody: unknown, signatureHeader: string 
 export async function registerIntegrationsRoutes(app: Express) {
   app.get("/api/gmail/status", async (_req, res) => {
     try {
-      // Use system principal: integration status is system-wide, not per-user.
-      // Prevents user-principal scoping from hiding legacy rows with NULL ownership.
-      const result = await runWithPrincipal(createSystemPrincipal(), async () => {
+      // Runs under the request principal: users only see their own Gmail integration state.
+      const result = await (async () => {
         const { isGmailConnected, isConnectorConnected, listGmailAccounts, getAccountScopes } = await import("../gmail");
         const connected = await isGmailConnected();
         const connectorAccess = await isConnectorConnected();
@@ -114,7 +113,7 @@ export async function registerIntegrationsRoutes(app: Express) {
         }
         const oauthConfigured = !!(getSecretSync("GOOGLE_CLIENT_ID") && getSecretSync("GOOGLE_CLIENT_SECRET"));
         return { connected, readAccess, connectorAccess, email, oauthConfigured, accounts: accounts.length };
-      });
+      })();
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -216,8 +215,8 @@ export async function registerIntegrationsRoutes(app: Express) {
 
   app.get("/api/gmail/accounts", async (_req, res) => {
     try {
-      // Use system principal: integration listing is system-wide.
-      const result = await runWithPrincipal(createSystemPrincipal(), async () => {
+      // Runs under the request principal: connected accounts are user-owned sensitive data.
+      const result = await (async () => {
         const { listGmailAccounts, getAccountScopes, verifyAccountTokenHealth } = await import("../gmail");
         const accounts = await listGmailAccounts();
         const enriched = await Promise.all(accounts.map(async (a) => {
@@ -234,7 +233,7 @@ export async function registerIntegrationsRoutes(app: Express) {
           };
         }));
         return { accounts: enriched };
-      });
+      })();
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -362,10 +361,10 @@ export async function registerIntegrationsRoutes(app: Express) {
 
   // === Connected Accounts & Permissions ===
 
-  app.get("/api/connected-accounts", requireAuth, requirePermission("system:read"), async (req, res) => {
+  app.get("/api/connected-accounts", requireAuth, async (req, res) => {
     try {
-      // Use system principal: admin viewing all connected accounts for the system.
-      const result = await runWithPrincipal(createSystemPrincipal(), async () => {
+      // Runs under the request principal: each user sees only their own connected accounts.
+      const result = await (async () => {
         const { listAccounts, resolvePermissions } = await import("../connected-accounts");
         const provider = req.query.provider as string | undefined;
         const accounts = await listAccounts(provider || undefined);
@@ -376,14 +375,14 @@ export async function registerIntegrationsRoutes(app: Express) {
             permissions: resolvePermissions(a.permissions),
           };
         });
-      });
+      })();
       res.json({ accounts: result });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.get("/api/connected-accounts/:id/permissions", requireAuth, requirePermission("system:read"), async (req, res) => {
+  app.get("/api/connected-accounts/:id/permissions", requireAuth, async (req, res) => {
     try {
       const { getAccountPermissions, getAccount } = await import("../connected-accounts");
       const account = await getAccount(req.params.id);
@@ -395,7 +394,7 @@ export async function registerIntegrationsRoutes(app: Express) {
     }
   });
 
-  app.put("/api/connected-accounts/:id/permissions", requireAuth, requirePermission("system:write"), async (req, res) => {
+  app.put("/api/connected-accounts/:id/permissions", requireAuth, async (req, res) => {
     try {
       const { setAccountPermissions, getAccount, DEFAULT_GOOGLE_PERMISSIONS } = await import("../connected-accounts");
       const account = await getAccount(req.params.id);
@@ -1117,8 +1116,8 @@ export async function registerIntegrationsRoutes(app: Express) {
 
   app.get("/api/twitter/accounts", async (_req, res) => {
     try {
-      // Use system principal: integration listing is system-wide.
-      const result = await runWithPrincipal(createSystemPrincipal(), async () => {
+      // Runs under the request principal: connected accounts are user-owned sensitive data.
+      const result = await (async () => {
         const { listTwitterAccounts, verifyStoredCredentials, getTwitterPermissions } = await import("../twitter");
         const accounts = await listTwitterAccounts();
         const enriched = await Promise.all(accounts.map(async (a) => {
@@ -1127,7 +1126,7 @@ export async function registerIntegrationsRoutes(app: Express) {
           return { ...a, valid: status.valid, username: status.username, error: status.error, permissions };
         }));
         return { accounts: enriched };
-      });
+      })();
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
