@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, real, boolean, timestamp, jsonb, unique, index, uniqueIndex, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, real, boolean, timestamp, jsonb, unique, index, uniqueIndex, primaryKey, uuid } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { libraryPages } from "./models/info";
@@ -778,30 +778,38 @@ export const insertEmailSyncCursorSchema = createInsertSchema(emailSyncCursors).
 export type EmailSyncCursor = typeof emailSyncCursors.$inferSelect;
 export type InsertEmailSyncCursor = z.infer<typeof insertEmailSyncCursorSchema>;
 
+export const emailDraftStatuses = ["draft", "sent", "discarded"] as const;
+export const emailDraftStatusSchema = z.enum(emailDraftStatuses);
+
 export const emailDrafts = pgTable("email_drafts", {
-  id: serial("id").primaryKey(),
-  accountId: text("account_id").notNull(),
+  id: uuid("id").primaryKey().defaultRandom(),
   ownerUserId: text("owner_user_id"),
-  principalAccountId: text("principal_account_id"),
-  toAddress: text("to_address").notNull(),
-  subject: text("subject").notNull(),
-  bodyHtml: text("body_html"),
-  bodyText: text("body_text"),
-  status: text("status").notNull().default("pending_review"),
-  personId: text("person_id"),
-  sourceEmailId: integer("source_email_id").references(() => emailMessages.id),
-  gmailDraftId: text("gmail_draft_id"),
-  gmailError: text("gmail_error"),
+  accountId: text("account_id"),
+  scope: text("scope").notNull().default("user"),
+  createdByUserId: text("created_by_user_id"),
+  sessionId: text("session_id"),
+  gmailAccountId: text("gmail_account_id"),
+  to: text("to").array().notNull().default(sql`'{}'::text[]`),
+  cc: text("cc").array().notNull().default(sql`'{}'::text[]`),
+  bcc: text("bcc").array().notNull().default(sql`'{}'::text[]`),
+  subject: text("subject").notNull().default(""),
+  body: text("body").notNull().default(""),
+  threadId: text("thread_id"),
+  inReplyTo: text("in_reply_to"),
+  status: text("status", { enum: emailDraftStatuses }).notNull().default("draft"),
+  sentMessageId: text("sent_message_id"),
   sentAt: timestamp("sent_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_email_drafts_owner").on(table.ownerUserId),
-  index("idx_email_drafts_principal_account").on(table.principalAccountId),
+  index("idx_email_drafts_account").on(table.accountId),
+  index("idx_email_drafts_session").on(table.sessionId),
 ]);
 
 export const insertEmailDraftSchema = createInsertSchema(emailDrafts).omit({
   id: true,
+  sentMessageId: true,
   sentAt: true,
   createdAt: true,
   updatedAt: true,

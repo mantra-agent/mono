@@ -5,7 +5,7 @@ import { db } from "../db";
 import { peopleStorage } from "../people-storage";
 import { resolve } from "path";
 import crypto from "crypto";
-import { insertEmailDraftSchema } from "@shared/schema";
+// insertEmailDraftSchema import removed — email draft CRUD moved to email-drafts.ts
 import { createLogger } from "../log";
 import { getSecretSync } from "../secrets-store";
 import { requireAuth, requireAdmin } from "../auth";
@@ -1200,67 +1200,8 @@ export async function registerIntegrationsRoutes(app: Express) {
     }
   });
 
-  app.get("/api/email-drafts", async (_req, res) => {
-    try {
-      const drafts = await storage.listEmailDrafts();
-      res.json({ drafts });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/email-drafts", async (req, res) => {
-    try {
-      const parsed = insertEmailDraftSchema.parse(req.body);
-      const draft = await storage.createEmailDraft(parsed);
-      res.json(draft);
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  });
-
-  app.patch("/api/email-drafts/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      const updated = await storage.updateEmailDraft(id, req.body);
-      if (!updated) return res.status(404).json({ error: "Draft not found" });
-      res.json(updated);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.delete("/api/email-drafts/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      const deleted = await storage.deleteEmailDraft(id);
-      if (!deleted) return res.status(404).json({ error: "Draft not found" });
-      res.json({ success: true });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/email-drafts/:id/send", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      const draft = await storage.getEmailDraft(id);
-      if (!draft) return res.status(404).json({ error: "Draft not found" });
-      if (draft.status === "sent") return res.status(400).json({ error: "Draft already sent" });
-
-      const { sendEmail } = await import("../gmail");
-      const body = draft.bodyHtml || draft.bodyText || "";
-      const result = await sendEmail(draft.toAddress, draft.subject, body, draft.accountId || undefined);
-      await storage.updateEmailDraft(id, { status: "sent" } as any);
-      res.json({ sent: true, messageId: result.id });
-    } catch (error: any) {
-      await storage.updateEmailDraft(parseInt(req.params.id), {
-        status: "send_failed",
-        gmailError: error.message,
-      } as any);
-      res.status(500).json({ error: error.message });
-    }
-  });
+  // Email draft CRUD moved to server/routes/email-drafts.ts
+  // with new schema (uuid IDs, scoped-storage, human-only send gate).
 
   // === Automation Auth Token ===
 

@@ -492,6 +492,51 @@ export async function sendEmail(to: string, subject: string, body: string, accou
   return res.data;
 }
 
+/**
+ * Send an email from a persisted EmailDraft record.
+ * Supports threading via threadId, In-Reply-To, and References headers.
+ */
+export async function sendEmailFromDraft(draft: {
+  gmailAccountId: string | null;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  body: string;
+  threadId: string | null;
+  inReplyTo: string | null;
+}) {
+  const gmail = await getReadClientAuto(draft.gmailAccountId ?? undefined);
+
+  const headers: string[] = [
+    `To: ${draft.to.join(", ")}`,
+  ];
+  if (draft.cc.length > 0) headers.push(`Cc: ${draft.cc.join(", ")}`);
+  if (draft.bcc.length > 0) headers.push(`Bcc: ${draft.bcc.join(", ")}`);
+  headers.push(`Subject: ${draft.subject}`);
+  if (draft.inReplyTo) {
+    headers.push(`In-Reply-To: ${draft.inReplyTo}`);
+    headers.push(`References: ${draft.inReplyTo}`);
+  }
+  headers.push("Content-Type: text/html; charset=utf-8");
+
+  const messageParts = [...headers, "", draft.body];
+  const rawMessage = Buffer.from(messageParts.join("\r\n"))
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+  const requestBody: { raw: string; threadId?: string } = { raw: rawMessage };
+  if (draft.threadId) requestBody.threadId = draft.threadId;
+
+  const res = await gmail.users.messages.send({
+    userId: "me",
+    requestBody,
+  });
+  return res.data;
+}
+
 export async function createDraft(to: string, subject: string, body: string, accountId?: string) {
   const gmail = await getReadClientAuto(accountId);
 

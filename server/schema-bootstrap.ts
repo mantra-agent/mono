@@ -2833,24 +2833,35 @@ export async function runSchemaBootstrap(
     `);
   });
 
-  await heal("email_drafts table", async () => {
+  await heal("email_drafts table v2", async () => {
+    // Drop the old table if it exists (legacy approval-based schema)
+    await pool.query(`DROP TABLE IF EXISTS email_drafts CASCADE`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS email_drafts (
-        id SERIAL PRIMARY KEY,
-        account_id TEXT NOT NULL,
-        to_address TEXT NOT NULL,
-        subject TEXT NOT NULL,
-        body_html TEXT,
-        body_text TEXT,
-        status TEXT NOT NULL DEFAULT 'pending_review',
-        person_id TEXT,
-        gmail_draft_id TEXT,
-        gmail_error TEXT,
-        sent_at TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_user_id TEXT,
+        account_id TEXT,
+        scope TEXT NOT NULL DEFAULT 'user',
+        created_by_user_id TEXT,
+        session_id TEXT,
+        gmail_account_id TEXT,
+        "to" TEXT[] NOT NULL DEFAULT '{}',
+        cc TEXT[] NOT NULL DEFAULT '{}',
+        bcc TEXT[] NOT NULL DEFAULT '{}',
+        subject TEXT NOT NULL DEFAULT '',
+        body TEXT NOT NULL DEFAULT '',
+        thread_id TEXT,
+        in_reply_to TEXT,
+        status TEXT NOT NULL DEFAULT 'draft',
+        sent_message_id TEXT,
+        sent_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
       )
     `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_drafts_owner ON email_drafts (owner_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_drafts_account ON email_drafts (account_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_drafts_session ON email_drafts (session_id)`);
   });
 
   await heal("magic demo sessions tables", async () => {
@@ -3291,17 +3302,7 @@ export async function runSchemaBootstrap(
     await runRelationshipTypeMigration();
   });
 
-  await heal("email_drafts source_email_id column", async () => {
-    const { migrateAddSourceEmailIdToDrafts } =
-      await import("./migrations/add-source-email-id-to-drafts");
-    await migrateAddSourceEmailIdToDrafts();
-  });
-
-  await heal("email_drafts person_id column", async () => {
-    await pool.query(
-      `ALTER TABLE email_drafts ADD COLUMN IF NOT EXISTS person_id TEXT`,
-    );
-  });
+  // email_drafts source_email_id and person_id columns removed — table replaced by v2 schema
 
   await heal("emotional_states narrative column", async () => {
     const { migrateAddNarrativeToEmotionalStates } =

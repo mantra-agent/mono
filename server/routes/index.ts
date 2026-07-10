@@ -22,6 +22,7 @@ import { registerWellnessRoutes } from "./wellness";
 import { registerLibraryRoutes } from "./library";
 import { registerCaptureRoutes } from "./captures";
 import { registerEmailRoutes } from "./email";
+import { registerEmailDraftRoutes } from "./email-drafts";
 import { registerSessionDisplayRoutes } from "./session-display";
 import { registerContentRoutes } from "./content";
 import { registerHooksRoutes } from "./hooks";
@@ -108,6 +109,7 @@ export async function registerDomainRoutes(
   await registerLibraryRoutes(app);
   registerCaptureRoutes(app);
   registerEmailRoutes(app);
+  registerEmailDraftRoutes(app);
   registerSessionDisplayRoutes(app);
   registerContentRoutes(app);
   registerHooksRoutes(app);

@@ -118,8 +118,8 @@ async function backfillEmailOwnership(accountId: string, owner: EmailAccountOwne
       .where(and(eq(emailDismissals.accountId, accountId), or(isNull(emailDismissals.ownerUserId), isNull(emailDismissals.principalAccountId))!))
       .returning({ id: emailDismissals.id }),
     db.update(emailDrafts)
-      .set({ ...ownership, updatedAt: new Date() })
-      .where(and(eq(emailDrafts.accountId, accountId), or(isNull(emailDrafts.ownerUserId), isNull(emailDrafts.principalAccountId))!))
+      .set({ ownerUserId: ownership.ownerUserId, accountId: ownership.accountId, updatedAt: new Date() })
+      .where(and(eq(emailDrafts.accountId, accountId), isNull(emailDrafts.ownerUserId)))
       .returning({ id: emailDrafts.id }),
   ]);
 
