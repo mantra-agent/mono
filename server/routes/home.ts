@@ -129,7 +129,7 @@ async function buildPlanOpeningContext(cadence: PlanCadence): Promise<string> {
     });
   const dueTasks = tasks
     .filter(t => t.status !== "done" && t.deadline && t.deadline >= start && t.deadline <= end);
-  const activeParentGoals = parentGoals.filter(g => g.status !== "achieved" && g.status !== "dormant");
+  const activeParentGoals = parentGoals.filter(g => g.status !== "achieved");
 
   const eventLine = compactList(events, e => `${meetingRef(e)}${formatEventTime(e, timezone) ? ` (${formatEventTime(e, timezone)})` : ""}`, "none");
   const taskLine = compactList(dueTasks, t => `@task:${t.id}`, "none");

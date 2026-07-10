@@ -103,6 +103,23 @@ export interface Goal {
   completedAt?: string | null;
 }
 
+/**
+ * Filters for goal list queries.
+ * Dormant goals are excluded from every listing by default (they are shelved, not in play).
+ * Management and mutation-lookup surfaces must pass includeDormant: true explicitly.
+ */
+export interface GoalListFilters {
+  horizon?: GoalHorizon;
+  owner?: string;
+  search?: string;
+  tag?: string;
+  periodDate?: string;
+  periodWeek?: string;
+  periodMonth?: string;
+  periodScoped?: boolean;
+  includeDormant?: boolean;
+}
+
 export interface GoalIndexEntry {
   id: string;
   shortName: string;

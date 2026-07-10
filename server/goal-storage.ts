@@ -1,7 +1,7 @@
 // Use createLogger for logging ONLY
 import { randomBytes } from "crypto";
 import { documentStorage } from "./memory";
-import type { Goal, GoalIndexEntry, GoalNote, GoalActivity, GoalHorizon, GoalStatus, CreateGoalInput, UpdateGoalInput } from "@shared/schema";
+import type { Goal, GoalIndexEntry, GoalListFilters, GoalNote, GoalActivity, GoalHorizon, GoalStatus, CreateGoalInput, UpdateGoalInput } from "@shared/schema";
 import { goalStatuses, resolveHorizon } from "@shared/schema";
 import { tagRegistry } from "./file-storage";
 import { TTLCache } from "./utils/ttl-cache";
@@ -158,7 +158,7 @@ export class GoalStorage {
     this.invalidateCache();
   }
 
-  async listGoals(filters?: { horizon?: GoalHorizon; owner?: string; search?: string; tag?: string; periodDate?: string; periodWeek?: string; periodMonth?: string; periodScoped?: boolean }): Promise<GoalIndexEntry[]> {
+  async listGoals(filters?: GoalListFilters): Promise<GoalIndexEntry[]> {
     const allEntries = await this._listCache.getOrFetch(`all:${principalCacheKey()}`, async () => {
       const docs = await documentStorage.getDocumentsByType("goal");
       const entries: GoalIndexEntry[] = [];
@@ -171,12 +171,20 @@ export class GoalStorage {
       }
       return entries;
     });
-    if (!filters) return allEntries;
+
+    // Dormant goals are shelved: excluded from every listing unless explicitly requested.
+    // This is the canonical enforcement point — all goal surfaces (Simple, Home, context
+    // assembly, priorities) inherit it. Management surfaces opt in via includeDormant.
+    const visibleEntries = filters?.includeDormant
+      ? allEntries
+      : allEntries.filter((entry) => entry.status !== "dormant");
+
+    if (!filters) return visibleEntries;
 
     // Resolve horizon filter alias before comparing
     const filterHorizon = filters.horizon ? (resolveHorizon(filters.horizon) ?? filters.horizon) : undefined;
 
-    return allEntries.filter((entry) => {
+    return visibleEntries.filter((entry) => {
       if (filterHorizon && entry.horizon !== filterHorizon) return false;
       if (filters.owner && entry.owner !== filters.owner) return false;
       if (filters.tag && !(entry.tags || []).includes(filters.tag)) return false;
@@ -356,7 +364,7 @@ export class GoalStorage {
   }
 
   async getGraphData(): Promise<{ goals: (GoalIndexEntry & { description?: string })[] }> {
-    const index = await this.listGoals();
+    const index = await this.listGoals({ includeDormant: true });
     const goals: (GoalIndexEntry & { description?: string })[] = [];
     for (const entry of index) {
       const goal = await this.getGoal(entry.id);

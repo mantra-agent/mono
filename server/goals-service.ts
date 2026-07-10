@@ -6,7 +6,7 @@
  * migration logic to live in one place.
  */
 import { goalStorage } from "./goal-storage";
-import type { Goal, GoalIndexEntry, GoalHorizon, GoalStatus, CreateGoalInput, UpdateGoalInput } from "@shared/schema";
+import type { Goal, GoalIndexEntry, GoalListFilters, GoalHorizon, GoalStatus, CreateGoalInput, UpdateGoalInput } from "@shared/schema";
 import type { Priority } from "@shared/models/goals";
 
 import { createLogger } from "./log";
@@ -68,11 +68,11 @@ function computePeriodMonth(dateStr: string, sessionType: string): string | null
 export class GoalsService {
   // --- Query ---
 
-  async listByHorizon(horizon: GoalHorizon): Promise<GoalIndexEntry[]> {
-    return goalStorage.listGoals({ horizon });
+  async listByHorizon(horizon: GoalHorizon, opts?: { includeDormant?: boolean }): Promise<GoalIndexEntry[]> {
+    return goalStorage.listGoals({ horizon, ...(opts?.includeDormant ? { includeDormant: true } : {}) });
   }
 
-  async listAll(filters?: { horizon?: GoalHorizon; owner?: string; search?: string; tag?: string; periodDate?: string; periodWeek?: string; periodMonth?: string; periodScoped?: boolean }): Promise<GoalIndexEntry[]> {
+  async listAll(filters?: GoalListFilters): Promise<GoalIndexEntry[]> {
     return goalStorage.listGoals(filters);
   }
 
@@ -92,7 +92,7 @@ export class GoalsService {
    */
   async create(input: CreateGoalInput): Promise<{ goal: Goal; created: boolean }> {
     const normalized = normalizeTitle(input.shortName);
-    const existing = await goalStorage.listGoals({ horizon: input.horizon });
+    const existing = await goalStorage.listGoals({ horizon: input.horizon, includeDormant: true });
     const dupe = existing.find(g => normalizeTitle(g.shortName) === normalized);
     if (dupe) {
       const goal = await goalStorage.getGoal(dupe.id);
@@ -196,7 +196,7 @@ export class GoalsService {
     periodDate: string,
   ): Promise<Goal | null> {
     const normalized = normalizeTitle(title);
-    const goals = await goalStorage.listGoals({ horizon, periodDate });
+    const goals = await goalStorage.listGoals({ horizon, periodDate, includeDormant: true });
     const match = goals.find(g => normalizeTitle(g.shortName) === normalized);
     if (!match) return null;
     return goalStorage.getGoal(match.id);
@@ -210,7 +210,7 @@ export class GoalsService {
     opts?: { periodWeek?: string | null; periodMonth?: string | null; source?: string },
   ): Promise<{ goal: Goal; created: boolean; duplicate?: Priority }> {
     const normalized = normalizeTitle(title);
-    const existing = await goalStorage.listGoals({ horizon, periodDate });
+    const existing = await goalStorage.listGoals({ horizon, periodDate, includeDormant: true });
     const dupe = existing.find(g => normalizeTitle(g.shortName) === normalized);
     if (dupe) {
       const goal = await goalStorage.getGoal(dupe.id);
@@ -249,7 +249,7 @@ export class GoalsService {
 
     // Check for duplicate with new title
     const normalized = normalizeTitle(newTitle);
-    const existing = await goalStorage.listGoals({ horizon, periodDate });
+    const existing = await goalStorage.listGoals({ horizon, periodDate, includeDormant: true });
     const dupe = existing.find(g => g.id !== goal.id && normalizeTitle(g.shortName) === normalized);
     if (dupe) return { error: `DUPLICATE_PRIORITY: "${newTitle}" already exists as "${dupe.shortName}"` };
 

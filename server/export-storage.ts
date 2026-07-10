@@ -345,7 +345,7 @@ async function genProjects(dir: string): Promise<{ count: number }> {
 async function genGoals(dir: string): Promise<{ count: number }> {
   let count = 0;
   try {
-    const index = await goalsService.listAll();
+    const index = await goalsService.listAll({ includeDormant: true });
     // Build a map for tree rendering
     const goalMap: Record<string, typeof index[0]> = {};
     for (const entry of index) goalMap[entry.id] = entry;
@@ -795,7 +795,7 @@ async function genPriorities(dir: string): Promise<{ count: number }> {
     const sections: string[] = [];
 
     for (const horizon of horizons) {
-      const goals = await goalsService.listByHorizon(horizon);
+      const goals = await goalsService.listByHorizon(horizon, { includeDormant: true });
       if (goals.length === 0) continue;
       const label = horizon === "today" ? "Daily" : horizon === "this_week" ? "Weekly" : "Monthly";
       sections.push(
