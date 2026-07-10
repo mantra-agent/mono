@@ -3,21 +3,24 @@ import { eq, notInArray, sql } from "drizzle-orm";
 import { db } from "./db";
 import { getSetting, setSetting } from "./system-settings";
 import { connectedAccounts, peopleImportCandidates } from "@shared/schema";
-import { PeopleStorage } from "./people-storage";
+import { peopleStorage } from "./people-storage";
 import { createLogger } from "./log";
 import { combineWithSensitiveVisible } from "./sensitive-scope";
+import { getCurrentPrincipal } from "./principal-context";
 
 const log = createLogger("ImportQueue");
 const connectedAccountScopeColumns = { ownerUserId: connectedAccounts.ownerUserId, principalAccountId: connectedAccounts.principalAccountId };
 
 /** Scoped predicate: only candidates belonging to currently connected accounts (used for mutations) */
 function connectedAccountPredicate() {
-  return sql`(${peopleImportCandidates.accountId} IS NULL OR ${peopleImportCandidates.accountId} IN (SELECT account_id FROM connected_accounts WHERE ${combineWithSensitiveVisible(connectedAccountScopeColumns)}))`;
+  const principal = getCurrentPrincipal();
+  return sql`(${peopleImportCandidates.accountId} = ${`ios:${principal.accountId}`} OR ${peopleImportCandidates.accountId} IN (SELECT account_id FROM connected_accounts WHERE ${combineWithSensitiveVisible(connectedAccountScopeColumns)}))`;
 }
 
 /** Visible predicate: candidates belonging to the current principal's connected accounts (used for reads) */
 function visibleImportAccountPredicate() {
-  return sql`(${peopleImportCandidates.accountId} IS NULL OR ${peopleImportCandidates.accountId} IN (SELECT account_id FROM connected_accounts WHERE ${combineWithSensitiveVisible(connectedAccountScopeColumns)}))`;
+  const principal = getCurrentPrincipal();
+  return sql`(${peopleImportCandidates.accountId} = ${`ios:${principal.accountId}`} OR ${peopleImportCandidates.accountId} IN (SELECT account_id FROM connected_accounts WHERE ${combineWithSensitiveVisible(connectedAccountScopeColumns)}))`;
 }
 
 const LEGACY_DB_KEY = "import_queue";
@@ -45,12 +48,22 @@ export interface ImportCandidate {
   sourceId?: string;
   displayName?: string;
   givenName?: string;
+  middleName?: string;
   familyName?: string;
+  nickname?: string;
+  maidenName?: string;
+  phoneticGivenName?: string;
+  phoneticMiddleName?: string;
+  phoneticFamilyName?: string;
   company?: string;
   role?: string;
   emails?: string[];
   phones?: string[];
   contactInfo?: ImportContactInfo[];
+  department?: string;
+  addresses?: Array<Record<string, unknown>>;
+  urls?: Array<Record<string, unknown>>;
+  dates?: Array<Record<string, unknown>>;
   birthday?: Record<string, unknown>;
   rawContactHash?: string;
 }
@@ -59,11 +72,21 @@ export interface IosContactImportPayload {
   sourceId: string;
   displayName?: string;
   givenName?: string;
+  middleName?: string;
   familyName?: string;
+  nickname?: string;
+  maidenName?: string;
+  phoneticGivenName?: string;
+  phoneticMiddleName?: string;
+  phoneticFamilyName?: string;
   emails?: string[];
   phones?: string[];
   company?: string;
   jobTitle?: string;
+  department?: string;
+  addresses?: Array<Record<string, unknown>>;
+  urls?: Array<Record<string, unknown>>;
+  dates?: Array<Record<string, unknown>>;
   birthday?: Record<string, unknown>;
   rawContactHash?: string;
 }
@@ -128,16 +151,29 @@ function normalizePhone(phone: string): string {
   return phone.replace(/[^+\d]/g, "");
 }
 
+export function isSyntheticContactEmail(value: string): boolean {
+  return normalizeEmail(value).endsWith("@contacts.local");
+}
+
 function normalizeSyntheticKeyPart(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "").slice(0, 80) || "contact";
 }
 
 function makeIosContactQueueKey(contact: IosContactImportPayload): string {
+  if (contact.sourceId?.trim()) return `ios-contact-${normalizeSyntheticKeyPart(contact.sourceId)}@contacts.local`;
   const firstEmail = contact.emails?.map(normalizeEmail).find(Boolean);
   if (firstEmail) return firstEmail;
   const firstPhone = contact.phones?.map(normalizePhone).find(Boolean);
   if (firstPhone) return `ios-phone-${normalizeSyntheticKeyPart(firstPhone)}@contacts.local`;
-  return `ios-contact-${normalizeSyntheticKeyPart(contact.sourceId || contact.rawContactHash || contact.displayName || "unknown")}@contacts.local`;
+  return `ios-contact-${normalizeSyntheticKeyPart(contact.rawContactHash || contact.displayName || "unknown")}@contacts.local`;
+}
+
+function candidateMatchesIosIdentity(candidate: StoredImportCandidate, contact: IosContactImportPayload, emails: string[], phones: string[]): boolean {
+  if (contact.sourceId && candidate.sourceId === contact.sourceId) return true;
+  const candidateEmails = new Set((candidate.emails || []).map(normalizeEmail).filter(Boolean));
+  if (emails.some(email => candidateEmails.has(email))) return true;
+  const candidatePhones = new Set((candidate.phones || []).map(normalizePhone).filter(Boolean));
+  return phones.some(phone => candidatePhones.has(phone));
 }
 
 function displayNameForIosContact(contact: IosContactImportPayload): string {
@@ -330,53 +366,93 @@ export async function upsertCandidates(candidates: Array<Partial<StoredImportCan
   }
 }
 
-export async function stageIosContacts(rawContacts: IosContactImportPayload[]): Promise<{ imported: number; skipped: number }> {
+export interface IosContactStageResult {
+  imported: number;
+  updated: number;
+  repaired: number;
+  skipped: number;
+}
+
+async function findPeopleByContactIdentity(emails: string[], phones: string[]) {
+  const emailSet = new Set(emails);
+  const phoneSet = new Set(phones);
+  const matches = [];
+  for (const entry of await peopleStorage.listPeople()) {
+    const person = await peopleStorage.getPerson(entry.id);
+    if (!person) continue;
+    const matchesIdentity = (person.contactInfo || []).some(contact =>
+      contact.type === "email"
+        ? emailSet.has(normalizeEmail(contact.value))
+        : contact.type === "phone" && phoneSet.has(normalizePhone(contact.value)),
+    );
+    if (matchesIdentity) matches.push(person);
+  }
+  return matches;
+}
+
+async function repairIosCandidate(candidate: StoredImportCandidate): Promise<{ repaired: boolean; matchedPersonId?: string }> {
+  const emails = (candidate.emails || []).map(normalizeEmail).filter(value => value && !isSyntheticContactEmail(value));
+  const phones = (candidate.phones || []).map(normalizePhone).filter(Boolean);
+  const directPerson = candidate.mergedPersonId ? await peopleStorage.getPerson(candidate.mergedPersonId) : null;
+  const matches = directPerson ? [directPerson] : await findPeopleByContactIdentity(emails, phones);
+  if (matches.length !== 1) return { repaired: false };
+
+  const person = matches[0]!;
+  const existing = new Set((person.contactInfo || []).map(contact => `${contact.type}:${contact.type === "email" ? normalizeEmail(contact.value) : normalizePhone(contact.value)}`));
+  const additions: ImportContactInfo[] = [
+    ...emails.filter(value => !existing.has(`email:${value}`)).map(value => ({ type: "email" as const, label: "iOS", value })),
+    ...phones.filter(value => !existing.has(`phone:${value}`)).map(value => ({ type: "phone" as const, label: "iOS", value })),
+  ];
+  if (additions.length > 0) {
+    await peopleStorage.updatePerson(person.id, { contactInfo: [...(person.contactInfo || []), ...additions] });
+  }
+  const shouldLink = !candidate.mergedPersonId && candidate.decision !== "skipped";
+  return { repaired: additions.length > 0 || shouldLink, matchedPersonId: shouldLink ? person.id : candidate.mergedPersonId };
+}
+
+export async function stageIosContacts(rawContacts: IosContactImportPayload[]): Promise<IosContactStageResult> {
   const scannedAt = new Date().toISOString();
+  const principal = getCurrentPrincipal();
+  const accountId = `ios:${principal.accountId}`;
   const candidates: Array<Partial<StoredImportCandidate> & { email: string }> = [];
+  const existingCandidates = Object.values(await loadCandidates());
   let skipped = 0;
+  let imported = 0;
+  let updated = 0;
+  let repaired = 0;
 
   for (const contact of rawContacts) {
-    const emails = Array.from(new Set((contact.emails || []).map(normalizeEmail).filter(Boolean)));
+    const emails = Array.from(new Set((contact.emails || []).map(normalizeEmail).filter(value => value && !isSyntheticContactEmail(value))));
     const phones = Array.from(new Set((contact.phones || []).map(normalizePhone).filter(Boolean)));
-    if (emails.length === 0 && phones.length === 0) {
-      skipped += 1;
-      continue;
-    }
-
+    if (emails.length === 0 && phones.length === 0) { skipped += 1; continue; }
     const contactInfo: ImportContactInfo[] = [
-      ...emails.map((value) => ({ type: "email" as const, label: "iOS", value })),
-      ...phones.map((value) => ({ type: "phone" as const, label: "iOS", value })),
+      ...emails.map(value => ({ type: "email" as const, label: "iOS", value })),
+      ...phones.map(value => ({ type: "phone" as const, label: "iOS", value })),
     ];
-
-    candidates.push({
-      email: makeIosContactQueueKey({ ...contact, emails, phones }),
-      name: displayNameForIosContact(contact),
-      displayName: contact.displayName,
-      givenName: contact.givenName,
-      familyName: contact.familyName,
-      company: contact.company,
-      role: contact.jobTitle,
-      emails,
-      phones,
-      contactInfo,
-      birthday: contact.birthday,
-      sourceId: contact.sourceId,
-      rawContactHash: contact.rawContactHash,
-      source: "ios_contacts",
-      sentCount: 0,
-      receivedCount: 0,
-      threadCount: 0,
-      firstInteraction: scannedAt,
-      lastInteraction: scannedAt,
-      scannedAt,
-      sampleSubjects: ["Imported from iOS Contacts"],
-      interactions: [],
-      decision: "pending",
-    });
+    const canonicalKey = makeIosContactQueueKey({ ...contact, emails, phones });
+    const existing = [...existingCandidates, ...candidates as StoredImportCandidate[]].find(candidate => candidateMatchesIosIdentity(candidate, contact, emails, phones));
+    existing ? updated += 1 : imported += 1;
+    const candidate: StoredImportCandidate = {
+      ...(existing || {}), email: existing?.email || canonicalKey, name: displayNameForIosContact(contact),
+      displayName: contact.displayName, givenName: contact.givenName, middleName: contact.middleName, familyName: contact.familyName,
+      nickname: contact.nickname, maidenName: contact.maidenName, phoneticGivenName: contact.phoneticGivenName,
+      phoneticMiddleName: contact.phoneticMiddleName, phoneticFamilyName: contact.phoneticFamilyName, company: contact.company,
+      role: contact.jobTitle, department: contact.department, addresses: contact.addresses, urls: contact.urls, dates: contact.dates,
+      emails, phones, contactInfo, birthday: contact.birthday, sourceId: contact.sourceId, rawContactHash: contact.rawContactHash,
+      source: "ios_contacts", accountId, sentCount: 0, receivedCount: 0, threadCount: 0, firstInteraction: existing?.firstInteraction || scannedAt,
+      lastInteraction: scannedAt, scannedAt, sampleSubjects: ["Imported from iOS Contacts"], interactions: [],
+      decision: existing?.decision || "pending", decidedAt: existing?.decidedAt, mergedPersonId: existing?.mergedPersonId,
+    };
+    const repair = await repairIosCandidate(candidate);
+    if (repair.repaired) repaired += 1;
+    if (repair.matchedPersonId && candidate.decision !== "skipped") {
+      candidate.mergedPersonId = repair.matchedPersonId;
+      if (candidate.decision === "pending") { candidate.decision = "merged"; candidate.decidedAt = scannedAt; }
+    }
+    candidates.push(candidate);
   }
-
   await upsertCandidates(candidates);
-  return { imported: candidates.length, skipped };
+  return { imported, updated, repaired, skipped };
 }
 
 export async function saveQueueState(state: ImportQueueState): Promise<void> {
