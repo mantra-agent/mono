@@ -1,7 +1,8 @@
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { resolveModelForActivity, ACTIVITY_FRAMING, ACTIVITY_CHAT, type ActivityId, type ModelRoutingDecision } from "./job-profiles";
-import { getMaxOutputTokens, getModel } from "./model-registry";
+import { getMaxOutputTokens, getModel, supportsSelectableEffort } from "./model-registry";
+import { resolveOpenAIReasoningEffort, type OpenAIReasoningEffort } from "./thinking-config";
 import { withTimeout, STREAM_FINAL_MESSAGE_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";
 import { getSecretSync, onSecretChange } from "./secrets-store";
@@ -116,7 +117,7 @@ interface CodexResponsesRequest {
   input: Array<CodexInputItem>;
   store: boolean;
   temperature?: number;
-  reasoning?: { summary: "detailed" | "concise" | "auto" };
+  reasoning?: { effort?: OpenAIReasoningEffort; summary?: "detailed" | "concise" | "auto" };
   tools?: Array<
     | { type: "function"; name: string; description: string; parameters: Record<string, unknown> }
     | { type: "image_generation"; quality?: string; size?: string; background?: string; output_format?: string }
@@ -289,6 +290,12 @@ export interface ChatCompletionOptions {
   jsonMode?: boolean;
   signal?: AbortSignal;
   tools?: ToolDefinition[];
+  /**
+   * Resolved tier thinking config. When provided, effort-capable OpenAI models
+   * (registry selectableEffort) receive a mapped reasoning effort. Omitted =
+   * provider default behavior (no effort sent).
+   */
+  thinking?: import("./thinking-config").ResolvedThinking;
 }
 
 export type InferenceStatus = "success" | "error" | "aborted" | "partial";
@@ -453,6 +460,12 @@ function usesMaxCompletionTokens(model: string): boolean {
 }
 
 async function openaiCompletion(model: string, options: ChatCompletionOptions): Promise<ChatCompletionResult> {
+  // Effort-capable models (GPT-5.6 family) use the Responses API so the tier
+  // thinking config can map onto a reasoning effort.
+  if (supportsSelectableEffort(model)) {
+    return openaiResponsesCompletion(model, options);
+  }
+
   const client = getOpenAIClient();
 
   const params: any = {
@@ -487,6 +500,47 @@ async function openaiCompletion(model: string, options: ChatCompletionOptions): 
       promptTokens: response.usage.prompt_tokens,
       completionTokens: response.usage.completion_tokens,
       totalTokens: response.usage.total_tokens,
+    } : undefined,
+  };
+}
+
+/**
+ * Direct OpenAI Responses API completion — used for models with a selectable
+ * reasoning effort (registry `selectableEffort`). Reuses the Responses-format
+ * message and tool converters shared with the Codex subscription path.
+ */
+async function openaiResponsesCompletion(model: string, options: ChatCompletionOptions): Promise<ChatCompletionResult> {
+  const client = getOpenAIClient();
+  const { instructions, input } = buildCodexInput(options.messages);
+
+  const params: Record<string, any> = {
+    model,
+    instructions,
+    input,
+    store: false,
+  };
+  if (options.maxTokens) params.max_output_tokens = options.maxTokens;
+  if (options.jsonMode) params.text = { format: { type: "json_object" } };
+  if (options.tools && options.tools.length > 0) {
+    params.tools = convertToolsToCodexResponses(options.tools);
+  }
+  const effort = resolveOpenAIReasoningEffort(options.thinking, "responses");
+  if (effort) params.reasoning = { effort };
+
+  const requestOptions: Record<string, any> = {};
+  if (options.signal) requestOptions.signal = options.signal;
+
+  const response: any = await client.responses.create(params as any, requestOptions);
+  const content = typeof response.output_text === "string" ? response.output_text : "";
+
+  return {
+    content,
+    model,
+    provider: "openai",
+    usage: response.usage ? {
+      promptTokens: response.usage.input_tokens || 0,
+      completionTokens: response.usage.output_tokens || 0,
+      totalTokens: response.usage.total_tokens || 0,
     } : undefined,
   };
 }
@@ -630,6 +684,10 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
     store: false,
     stream: true,
   };
+  if (options.thinking && supportsSelectableEffort(model)) {
+    const effort = resolveOpenAIReasoningEffort(options.thinking, "codex");
+    if (effort) body.reasoning = { effort };
+  }
 
   const fetchOptions: RequestInit = {
     method: "POST",
@@ -1126,6 +1184,10 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
       // concise, without forcing the oversized detailed internal-process cards.
       reasoning: { summary: "auto" },
     };
+    if (supportsSelectableEffort(model)) {
+      const codexEffort = resolveOpenAIReasoningEffort(options.thinking, "codex");
+      if (codexEffort) body.reasoning = { effort: codexEffort, summary: "auto" };
+    }
 
     if (options.tools && options.tools.length > 0) {
       body.tools = convertToolsToCodexResponses(options.tools);
@@ -1585,7 +1647,139 @@ async function* anthropicStream(model: string, options: ChatCompletionStreamOpti
   yield { type: "error", error: lastOverloadErr?.message || "overloaded_error" };
 }
 
+/**
+ * Direct OpenAI Responses API stream — used for models with a selectable
+ * reasoning effort (registry `selectableEffort`). Mirrors the Codex
+ * subscription stream's event handling; reuses the shared Responses-format
+ * message and tool converters.
+ */
+async function* openaiResponsesStream(model: string, options: ChatCompletionStreamOptions): AsyncGenerator<StreamEvent> {
+  const start = Date.now();
+  let eventCount = 0;
+
+  try {
+    const client = getOpenAIClient();
+    const { instructions, input } = buildCodexInput(options.messages);
+
+    const params: Record<string, any> = {
+      model,
+      instructions,
+      input,
+      store: false,
+      stream: true,
+    };
+    if (options.maxTokens) params.max_output_tokens = options.maxTokens;
+    if (options.tools && options.tools.length > 0) {
+      params.tools = convertToolsToCodexResponses(options.tools);
+    }
+    const effort = resolveOpenAIReasoningEffort(options.thinking, "responses");
+    if (effort) params.reasoning = { effort };
+
+    let stopReason: "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" = "end_turn";
+    let streamUsage: { inputTokens: number; outputTokens: number; totalTokens: number; cacheReadTokens?: number; reasoningTokens?: number; visibleOutputTokens?: number } = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+    const pendingToolCalls = new Map<string, { callId: string; name: string; argsAccumulator: string; reasoningEmitted: boolean }>();
+    let connectedEmitted = false;
+
+    const stream: any = await client.responses.create(params as any, { signal: options.signal });
+
+    for await (const chunk of stream) {
+      eventCount++;
+      if (!connectedEmitted) { connectedEmitted = true; yield { type: "connected" }; }
+
+      const usageData = chunk.response?.usage;
+      if (usageData) {
+        streamUsage = {
+          inputTokens: usageData.input_tokens || 0,
+          outputTokens: usageData.output_tokens || 0,
+          totalTokens: usageData.total_tokens || 0,
+          cacheReadTokens: usageData.input_tokens_details?.cached_tokens ?? 0,
+          reasoningTokens: usageData.output_tokens_details?.reasoning_tokens ?? 0,
+          visibleOutputTokens: (usageData.output_tokens || 0) - (usageData.output_tokens_details?.reasoning_tokens ?? 0),
+        };
+      }
+
+      if (chunk.type === "response.reasoning_summary_text.delta" && typeof chunk.delta === "string") {
+        yield { type: "thinking_delta", content: chunk.delta };
+      } else if (chunk.type === "response.output_text.delta" && typeof chunk.delta === "string") {
+        yield { type: "text_delta", content: chunk.delta };
+      } else if (chunk.type === "response.output_item.added" && chunk.item?.type === "function_call") {
+        const itemId = chunk.item.id || `item-${chunk.output_index ?? eventCount}`;
+        const callId = chunk.item.call_id || itemId;
+        const name = chunk.item.name || "";
+        pendingToolCalls.set(itemId, { callId, name, argsAccumulator: "", reasoningEmitted: false });
+        yield { type: "tool_use_start", toolCallId: callId, toolName: name };
+        stopReason = "tool_use";
+      } else if (chunk.type === "response.function_call_arguments.delta") {
+        const itemId = chunk.item_id;
+        const argsDelta = typeof chunk.delta === "string" ? chunk.delta : (chunk.delta as any)?.arguments || "";
+        if (itemId) {
+          const tc = pendingToolCalls.get(itemId);
+          if (tc) {
+            tc.argsAccumulator += argsDelta;
+            if (!tc.reasoningEmitted) {
+              const match = tc.argsAccumulator.match(/"reasoning"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+              if (match) {
+                tc.reasoningEmitted = true;
+                const reasoning = match[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+                yield { type: "tool_use_update", toolCallId: tc.callId, narrative: reasoning };
+              }
+            }
+          }
+        }
+      } else if (chunk.type === "response.function_call_arguments.done") {
+        const itemId = chunk.item_id;
+        if (itemId) {
+          const tc = pendingToolCalls.get(itemId);
+          if (tc) {
+            let inputArgs: Record<string, unknown> = {};
+            try { inputArgs = JSON.parse(tc.argsAccumulator || "{}"); } catch { /* ignore */ }
+            yield { type: "tool_use", toolCallId: tc.callId, toolName: tc.name, arguments: inputArgs };
+            pendingToolCalls.delete(itemId);
+          }
+        }
+      } else if (chunk.type === "response.completed") {
+        stopReason = pendingToolCalls.size > 0 ? "tool_use" : "end_turn";
+      } else if (chunk.type === "response.incomplete") {
+        stopReason = "max_tokens";
+      } else if (chunk.type === "response.failed") {
+        const failMsg = chunk.response?.error?.message || "OpenAI response failed";
+        log.error(`openai responses stream FAILED model=${model}: ${failMsg}`);
+        yield { type: "error", error: failMsg };
+        return;
+      }
+    }
+
+    // Emit any remaining tool calls that didn't receive a done event.
+    for (const tc of pendingToolCalls.values()) {
+      let inputArgs: Record<string, unknown> = {};
+      try { inputArgs = JSON.parse(tc.argsAccumulator || "{}"); } catch { /* ignore */ }
+      yield { type: "tool_use", toolCallId: tc.callId, toolName: tc.name, arguments: inputArgs };
+    }
+
+    log.debug(`openai responses stream done model=${model} events=${eventCount} elapsed=${Date.now() - start}ms stopReason=${stopReason} effort=${effort ?? "default"}`);
+    yield { type: "usage", usage: streamUsage, model, stopReason };
+  } catch (err: any) {
+    if (err?.name === "AbortError" || err?.code === "ERR_CANCELED" || options.signal?.aborted) {
+      log.debug(`openai responses stream aborted model=${model}`);
+      yield { type: "usage", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, stopReason: "end_turn" };
+    } else if (err?.status === 429 || (err?.message && err.message.includes("rate limit"))) {
+      log.error(`openai responses stream rate limit model=${model}`);
+      yield { type: "error", error: "OpenAI rate limit reached. Please wait and try again." };
+    } else {
+      log.error(`openai responses stream ERROR model=${model}: ${err?.message}`);
+      yield { type: "error", error: err?.message || "OpenAI stream error" };
+    }
+  }
+}
+
 async function* openaiStream(model: string, options: ChatCompletionStreamOptions): AsyncGenerator<StreamEvent> {
+  // Effort-capable models (GPT-5.6 family) use the Responses API so the tier
+  // thinking config can map onto a reasoning effort.
+  if (supportsSelectableEffort(model)) {
+    yield* openaiResponsesStream(model, options);
+    return;
+  }
+
   const client = getOpenAIClient();
 
   const messages: Array<any> = options.messages.flatMap(m => {

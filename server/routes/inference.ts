@@ -969,6 +969,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
                 reasoning: m.reasoning || false,
                 thinkingLevel: thinking.level,
                 thinkingDescription: thinking.description,
+                supportsReasoningEffort: thinking.selectableEffort === true,
               };
             }),
           });
@@ -1016,6 +1017,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
                 reasoning: info.reasoning,
                 thinkingLevel: info.thinking.level,
                 thinkingDescription: info.thinking.description,
+                supportsReasoningEffort: info.thinking.selectableEffort === true,
               })),
             });
           }
@@ -1038,6 +1040,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
               reasoning: info.reasoning,
               thinkingLevel: info.thinking.level,
               thinkingDescription: info.thinking.description,
+              supportsReasoningEffort: info.thinking.selectableEffort === true,
             })),
           });
         }

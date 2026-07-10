@@ -67,6 +67,8 @@ Direct model overrides are exceptional and must include `overrideReason`. They a
 
 Inference tracking is boundary-owned. `chatCompletion` and `chatCompletionStream` record success, error, abort, and partial stream outcomes with provider/model/activity/source/status/usage/routing metadata. `trackChatCompletion` is deprecated compatibility only and skips results already marked `trackedAtBoundary`.
 
+Reasoning effort is capability-gated, not name-matched. The canonical thinking setting is `model_profiles.tiers[*].thinking`; `thinking-config.ts` resolves it and `resolveOpenAIReasoningEffort` maps it to OpenAI effort values (Responses floor `none`, Codex floor `minimal`). Models opt in via `thinking.selectableEffort` in `model-registry.ts` (`supportsSelectableEffort`). Effort-capable direct OpenAI models route through the Responses API adapters in `model-client.ts` (reusing the Codex input/tool converters); subscription/Codex requests carry `reasoning.effort`. Do not add a second effort setting or hard-code model IDs.
+
 ## Context Assembly & Retrieval
 
 The context system builds the LLM prompt from ~40 dynamically resolved sections. Every chat, voice, and autonomous call gets a structured XML-section prompt.

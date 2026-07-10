@@ -51,6 +51,7 @@ interface ModelInfo {
   reasoning: boolean;
   thinkingLevel: "extended" | "basic" | "none";
   thinkingDescription: string;
+  supportsReasoningEffort?: boolean;
 }
 
 interface ProviderInfo {
@@ -494,7 +495,7 @@ export default function ModelTab() {
                       <div className="hidden @md:flex items-center gap-2 text-xs text-muted-foreground shrink-0">
                         <span>In: {formatCostPerMillion(modelInfo.model.cost.input)}</span>
                         <span>Out: {formatCostPerMillion(modelInfo.model.cost.output)}</span>
-                        {modelInfo.model.thinkingLevel === "extended" ? (
+                        {modelInfo.model.thinkingLevel === "extended" || modelInfo.model.supportsReasoningEffort ? (
                           <Select
                             value={String(tier.thinkingBudget || 0)}
                             onValueChange={(val) => updateThinkingBudgetMutation.mutate({ tierId: tier.id, thinkingBudget: Number(val) })}
@@ -508,11 +509,23 @@ export default function ModelTab() {
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="0" data-testid={`thinking-off-${tier.id}`}>Off</SelectItem>
-                              <SelectItem value="4096" data-testid={`thinking-light-${tier.id}`}>Light (4K)</SelectItem>
-                              <SelectItem value="8192" data-testid={`thinking-standard-${tier.id}`}>Standard (8K)</SelectItem>
-                              <SelectItem value="16384" data-testid={`thinking-deep-${tier.id}`}>Deep (16K)</SelectItem>
-                              <SelectItem value="32768" data-testid={`thinking-max-${tier.id}`}>Maximum (32K)</SelectItem>
+                              {modelInfo.model.supportsReasoningEffort && modelInfo.model.thinkingLevel !== "extended" ? (
+                                <>
+                                  <SelectItem value="0" data-testid={`thinking-off-${tier.id}`}>Off</SelectItem>
+                                  <SelectItem value="4096" data-testid={`thinking-light-${tier.id}`}>Low</SelectItem>
+                                  <SelectItem value="8192" data-testid={`thinking-standard-${tier.id}`}>Medium</SelectItem>
+                                  <SelectItem value="16384" data-testid={`thinking-deep-${tier.id}`}>High</SelectItem>
+                                  <SelectItem value="32768" data-testid={`thinking-max-${tier.id}`}>X-High</SelectItem>
+                                </>
+                              ) : (
+                                <>
+                                  <SelectItem value="0" data-testid={`thinking-off-${tier.id}`}>Off</SelectItem>
+                                  <SelectItem value="4096" data-testid={`thinking-light-${tier.id}`}>Light (4K)</SelectItem>
+                                  <SelectItem value="8192" data-testid={`thinking-standard-${tier.id}`}>Standard (8K)</SelectItem>
+                                  <SelectItem value="16384" data-testid={`thinking-deep-${tier.id}`}>Deep (16K)</SelectItem>
+                                  <SelectItem value="32768" data-testid={`thinking-max-${tier.id}`}>Maximum (32K)</SelectItem>
+                                </>
+                              )}
                             </SelectContent>
                           </Select>
                         ) : modelInfo.model.thinkingLevel === "basic" ? (

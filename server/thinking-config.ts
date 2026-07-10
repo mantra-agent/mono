@@ -77,3 +77,43 @@ export function thinkingConfigKey(r: ResolvedThinking | undefined): string {
   if (r.thinking.type === "enabled") return `e:${r.thinking.budgetTokens ?? 0}`;
   return `a:${r.effort ?? "default"}`;
 }
+
+/** Reasoning effort values accepted by OpenAI Responses API and Codex configuration. */
+export type OpenAIReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+/**
+ * Map the canonical tier thinking config (resolved) to an OpenAI reasoning effort.
+ * Targets differ in their floor: the Responses API accepts "none" while Codex's
+ * model_reasoning_effort bottoms out at "minimal".
+ * Budget boundaries mirror the tier selector levels: 4096 → low, 8192 → medium,
+ * 16384 → high, 32768 → xhigh.
+ */
+export function resolveOpenAIReasoningEffort(
+  resolved: ResolvedThinking | undefined,
+  target: "responses" | "codex",
+): OpenAIReasoningEffort | undefined {
+  if (!resolved) return undefined;
+  const t = resolved.thinking;
+  if (t.type === "disabled") return target === "codex" ? "minimal" : "none";
+  if (t.type === "enabled") {
+    const b = t.budgetTokens ?? 0;
+    if (b <= 0) return target === "codex" ? "minimal" : "none";
+    if (b <= 4096) return "low";
+    if (b <= 8192) return "medium";
+    if (b <= 16384) return "high";
+    return "xhigh";
+  }
+  // adaptive
+  switch (resolved.effort) {
+    case "low":
+      return "low";
+    case "medium":
+      return "medium";
+    case "high":
+      return "high";
+    case "max":
+      return "xhigh";
+    default:
+      return undefined;
+  }
+}
