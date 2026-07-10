@@ -658,7 +658,7 @@ function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOver
                   item={item}
                   dateLabel={surfacedDateLabel(item)}
                   onSurfaceChange={() => {
-                    queryClient.invalidateQueries({ queryKey: ["/api/simple/feed"] });
+                    queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
                     queryClient.invalidateQueries({ queryKey: ["/api/people/agenda"] });
                   }}
                 />
@@ -3934,7 +3934,7 @@ export default function PeoplePage() {
   }, [selectedPersonId, setLocation]);
 
   const { data: simpleFeed } = useQuery<SimpleFeed>({
-    queryKey: ["/api/simple/feed"],
+    queryKey: ["/api/home/feed"],
     refetchInterval: 60_000,
   });
 

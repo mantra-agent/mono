@@ -116,7 +116,6 @@ export function useEmailMarkDone() {
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/email/messages"] });
       queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/simple/feed"] });
     },
   });
 }
@@ -157,7 +156,6 @@ export function useEmailSnooze() {
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/email/messages"] });
       queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/simple/feed"] });
     },
   });
 }

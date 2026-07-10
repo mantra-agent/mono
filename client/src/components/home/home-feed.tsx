@@ -155,13 +155,13 @@ function PlanArtifactRow({
     if (!skillName || running) return;
     setRunning(true);
     try {
-      const res = await apiRequest("POST", "/api/simple/run-plan-skill", { skillName, cadence });
+      const res = await apiRequest("POST", "/api/home/run-plan-skill", { skillName, cadence });
       const data = await res.json();
       if (data.success && data.sessionId) {
         setSessionForRoute(route, data.sessionId);
         setWidgetOpen(true);
       }
-      queryClient.invalidateQueries({ queryKey: ["/api/simple/feed"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
     } catch (err) {
       log.error(`Failed to start plan skill: ${err instanceof Error ? err.message : String(err)}`);
     } finally {

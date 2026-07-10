@@ -80,10 +80,10 @@ export function SurfacedPersonRow({ item, onSurfaceChange, dateLabel }: Surfaced
   const surfaceMutation = useMutation({
     mutationFn: async (body: { action: "dismiss" | "snooze"; reasonKey?: string | null; snoozedUntil?: string }) => {
       if (!personId) throw new Error("Missing person id");
-      await apiRequest("PATCH", `/api/simple/people/${personId}/surface`, body);
+      await apiRequest("PATCH", `/api/home/people/${personId}/surface`, body);
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/simple/feed"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
       onSurfaceChange?.();
     },
   });
@@ -169,14 +169,14 @@ export function SurfacedPersonRow({ item, onSurfaceChange, dateLabel }: Surfaced
               {personId && reasonKey && (
                 <ReminderPopover
                   title={item.title}
-                  postUrl={`/api/simple/people/${personId}/surface`}
+                  postUrl={`/api/home/people/${personId}/surface`}
                   postMethod="PATCH"
                   buildPayload={({ fireAt }) => ({
                     action: "snooze",
                     reasonKey,
                     snoozedUntil: fireAt,
                   })}
-                  invalidateKeys={[["/api/simple/feed"]]}
+                  invalidateKeys={[["/api/home/feed"]]}
                   allowNextBoot={false}
                   onReminderSet={() => setMenuOpen(false)}
                 />

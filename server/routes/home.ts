@@ -258,7 +258,7 @@ async function completeTask(payload: Record<string, unknown>) {
 }
 
 export function registerHomeRoutes(app: Express) {
-  app.get("/api/simple/feed", requireAuth, async (req, res) => {
+  app.get("/api/home/feed", requireAuth, async (req, res) => {
     try {
       const refresh = req.query.refresh === "true";
       const useModel = req.query.model === "true";
@@ -267,12 +267,12 @@ export function registerHomeRoutes(app: Express) {
       res.json(feed);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      log.error(`GET /api/simple/feed failed: ${message}`);
-      res.status(500).json({ error: message, operation: "get_simple_feed" });
+      log.error(`GET /api/home/feed failed: ${message}`);
+      res.status(500).json({ error: message, operation: "get_home_feed" });
     }
   });
 
-  app.post("/api/simple/run-plan-skill", requireAuth, async (req, res) => {
+  app.post("/api/home/run-plan-skill", requireAuth, async (req, res) => {
     const skillName = typeof req.body?.skillName === "string" ? req.body.skillName.trim() : "";
     const cadence = planCadenceValue(req.body?.cadence);
     if (skillName !== "plan" || !cadence) {
@@ -307,7 +307,7 @@ export function registerHomeRoutes(app: Express) {
         undefined,
         undefined,
         undefined,
-        { spawnReason: `simple-plan:${cadence}`, spawnerTool: "simple.run-plan-skill", triggerType: "agent" as const, triggerName: topic },
+        { spawnReason: `home-plan:${cadence}`, spawnerTool: "home.run-plan-skill", triggerType: "agent" as const, triggerName: topic },
       );
       await chatFileStorage.createMessage(created.id, "system_prompt", skillContext);
       await chatFileStorage.setInitialContext(created.id, skillContext);
@@ -325,18 +325,18 @@ export function registerHomeRoutes(app: Express) {
       eventBus.publish({
         category: "chat",
         event: "chat.xyz.initiated",
-        payload: { sessionId: created.id, topic, source: "simple-plan", cadence },
+        payload: { sessionId: created.id, topic, source: "home-plan", cadence },
       });
       invalidateSimpleFeedCache();
       res.json({ success: true, sessionId: created.id, skillName: "plan", cadence });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      log.error(`POST /api/simple/run-plan-skill failed: ${message}`);
+      log.error(`POST /api/home/run-plan-skill failed: ${message}`);
       res.status(500).json({ error: message });
     }
   });
 
-  app.patch("/api/simple/people/:personId/surface", requireAuth, async (req, res) => {
+  app.patch("/api/home/people/:personId/surface", requireAuth, async (req, res) => {
     const personId = stringValue(req.params.personId);
     const action = stringValue(req.body?.action);
     try {
@@ -363,12 +363,12 @@ export function registerHomeRoutes(app: Express) {
     } catch (err: any) {
       const message = err instanceof Error ? err.message : String(err);
       const status = typeof err?.statusCode === "number" ? err.statusCode : 500;
-      log.error(`PATCH /api/simple/people/${personId}/surface failed: ${message}`);
-      res.status(status).json({ error: message, operation: "update_simple_people_surface" });
+      log.error(`PATCH /api/home/people/${personId}/surface failed: ${message}`);
+      res.status(status).json({ error: message, operation: "update_home_people_surface" });
     }
   });
 
-  app.post("/api/simple/items/:id/complete", requireAuth, async (req, res) => {
+  app.post("/api/home/items/:id/complete", requireAuth, async (req, res) => {
     try {
       const sourceType = stringValue(req.body?.sourceType);
       const payload = (req.body?.payload && typeof req.body.payload === "object" ? req.body.payload : {}) as Record<string, unknown>;
@@ -386,8 +386,8 @@ export function registerHomeRoutes(app: Express) {
     } catch (err: any) {
       const message = err instanceof Error ? err.message : String(err);
       const status = typeof err?.statusCode === "number" ? err.statusCode : 500;
-      log.error(`POST /api/simple/items/${req.params.id}/complete failed: ${message}`);
-      res.status(status).json({ error: message, operation: "complete_simple_item" });
+      log.error(`POST /api/home/items/${req.params.id}/complete failed: ${message}`);
+      res.status(status).json({ error: message, operation: "complete_home_item" });
     }
   });
 }
