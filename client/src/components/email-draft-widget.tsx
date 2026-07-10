@@ -229,6 +229,8 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
       if (!res.ok) throw new Error("Failed to load draft");
       return res.json();
     },
+    refetchInterval: (query) =>
+      query.state.data?.draft.status === "draft" ? 3_000 : false,
   });
 
   const draft = data?.draft;
@@ -264,11 +266,19 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
       const res = await apiRequest("PATCH", `/api/email-drafts/${draftId}`, patch);
       return res.json();
     },
-    onSuccess: (result) => {
+    onSuccess: (result, patch) => {
       queryClient.setQueryData(["/api/email-drafts", draftId], (old: any) =>
         old ? { ...old, draft: result.draft } : old,
       );
-      setLocalEdits({});
+      setLocalEdits((current) => {
+        const remaining = { ...current };
+        for (const [field, value] of Object.entries(patch)) {
+          if (remaining[field as keyof EmailDraft] === value) {
+            delete remaining[field as keyof EmailDraft];
+          }
+        }
+        return remaining;
+      });
     },
   });
 

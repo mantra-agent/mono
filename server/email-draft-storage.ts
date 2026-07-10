@@ -119,9 +119,20 @@ export class EmailDraftStorage {
       .update(emailDrafts)
       .set(setValues)
       .where(
-        combineWithWritableScope(principal, scopeColumns, eq(emailDrafts.id, id)),
+        combineWithWritableScope(
+          principal,
+          scopeColumns,
+          and(eq(emailDrafts.id, id), eq(emailDrafts.status, "draft")),
+        ),
       )
       .returning();
+
+    if (!updated) {
+      const current = await this.getById(principal, id);
+      if (current && current.status !== "draft") {
+        throw new Error(`Cannot edit draft in '${current.status}' status`);
+      }
+    }
     return updated ?? null;
   }
 

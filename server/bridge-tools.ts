@@ -1300,6 +1300,19 @@ async function checkGmailPermission(
   return { denied: false, resolvedAccountId: undefined };
 }
 
+function optionalDraftText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return value.trim().length > 0 ? value : undefined;
+}
+
+function optionalDraftRecipients(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const recipients = value.filter(
+    (recipient): recipient is string => typeof recipient === "string" && recipient.trim().length > 0,
+  );
+  return recipients.length > 0 ? recipients : undefined;
+}
+
 async function handleGmailDraft(args: Record<string, any>): Promise<ToolHandlerResult> {
   const permCheck = await checkGmailPermission(args.account, "gmailDraft", "create drafts");
   if (permCheck.denied) return permCheck.result;
@@ -1327,6 +1340,44 @@ async function handleGmailDraft(args: Record<string, any>): Promise<ToolHandlerR
   } catch (err: any) {
     toolExec.error(`handleGmailDraft: Failed to create draft: ${err.message}`);
     return { result: `Failed to create email draft: ${err.message}`, error: true };
+  }
+}
+
+async function handleGmailDraftUpdate(args: Record<string, any>): Promise<ToolHandlerResult> {
+  const draftId = optionalDraftText(args.draft_id);
+  if (!draftId) return { result: "Missing draft_id", error: true };
+
+  try {
+    const { emailDraftStorage } = await import("./email-draft-storage");
+    const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+    const principal = getCurrentPrincipalOrSystem();
+    const account = optionalDraftText(args.account);
+    let gmailAccountId: string | undefined;
+    if (account) {
+      const permission = await checkGmailPermission(account, "gmailDraft", "update drafts");
+      if (permission.denied) return permission.result;
+      gmailAccountId = permission.resolvedAccountId;
+    }
+    const patch = {
+      gmailAccountId,
+      to: optionalDraftRecipients(args.update_to),
+      cc: optionalDraftRecipients(args.update_cc),
+      bcc: optionalDraftRecipients(args.update_bcc),
+      subject: optionalDraftText(args.subject),
+      body: optionalDraftText(args.body),
+    };
+
+    if (Object.values(patch).every((value) => value === undefined)) {
+      return { result: "No non-empty editable fields provided", error: true };
+    }
+
+    const draft = await emailDraftStorage.update(principal, draftId, patch);
+    if (!draft) return { result: `Email draft ${draftId} not found`, error: true };
+
+    return { result: `Email draft updated. @email_draft:${draft.id}` };
+  } catch (err: any) {
+    toolExec.error(`handleGmailDraftUpdate: Failed to update draft: ${err.message}`);
+    return { result: `Failed to update email draft: ${err.message}`, error: true };
   }
 }
 
@@ -2071,6 +2122,7 @@ const gmailSubHandlers: Record<string, (args: Record<string, any>) => Promise<To
   read: handleGmailRead,
   batch_read: handleGmailBatchRead,
   draft: handleGmailDraft,
+  update_draft: handleGmailDraftUpdate,
   recent: handleGmailRecent,
   download_attachment: handleGmailDownloadAttachment,
   triage_log: handleGmailTriageLog,
@@ -4495,7 +4547,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
   async gmail(args) {
     const action = args.action || "status";
     const handler = gmailSubHandlers[action];
-    if (!handler) return { result: `Unknown gmail action: ${action}. Available: status, search, read, batch_read, draft, recent, download_attachment, triage_log, email_cache`, error: true };
+    if (!handler) return { result: `Unknown gmail action: ${action}. Available: status, search, read, batch_read, draft, update_draft, recent, download_attachment, triage_log, email_cache`, error: true };
     try {
       return await handler(args);
     } catch (err: any) {
