@@ -22,11 +22,21 @@ type IosContactImportPayload = {
   sourceId: string;
   displayName?: string;
   givenName?: string;
+  middleName?: string;
   familyName?: string;
+  nickname?: string;
+  maidenName?: string;
+  phoneticGivenName?: string;
+  phoneticMiddleName?: string;
+  phoneticFamilyName?: string;
   emails?: string[];
   phones?: string[];
   company?: string;
   jobTitle?: string;
+  department?: string;
+  addresses?: Array<Record<string, unknown>>;
+  urls?: Array<Record<string, unknown>>;
+  dates?: Array<Record<string, unknown>>;
   birthday?: Record<string, unknown>;
   rawContactHash?: string;
 };
@@ -54,11 +64,21 @@ function extractContactPayload(contact: Contacts.Contact): IosContactImportPaylo
     id: contact.id,
     name: contact.name,
     firstName: contact.firstName,
+    middleName: contact.middleName,
     lastName: contact.lastName,
+    nickname: contact.nickname,
+    maidenName: contact.maidenName,
+    phoneticFirstName: contact.phoneticFirstName,
+    phoneticMiddleName: contact.phoneticMiddleName,
+    phoneticLastName: contact.phoneticLastName,
     emails,
     phones,
     company: contact.company,
     jobTitle: contact.jobTitle,
+    department: contact.department,
+    addresses: contact.addresses,
+    urlAddresses: contact.urlAddresses,
+    dates: contact.dates,
     birthday: contact.birthday,
   };
 
@@ -66,11 +86,21 @@ function extractContactPayload(contact: Contacts.Contact): IosContactImportPaylo
     sourceId: contact.id,
     displayName: contact.name || [contact.firstName, contact.lastName].filter(Boolean).join(' ') || emails[0] || phones[0],
     givenName: contact.firstName || undefined,
+    middleName: contact.middleName || undefined,
     familyName: contact.lastName || undefined,
+    nickname: contact.nickname || undefined,
+    maidenName: contact.maidenName || undefined,
+    phoneticGivenName: contact.phoneticFirstName || undefined,
+    phoneticMiddleName: contact.phoneticMiddleName || undefined,
+    phoneticFamilyName: contact.phoneticLastName || undefined,
     emails,
     phones,
     company: contact.company || undefined,
     jobTitle: contact.jobTitle || undefined,
+    department: contact.department || undefined,
+    addresses: contact.addresses as Array<Record<string, unknown>> | undefined,
+    urls: contact.urlAddresses as Array<Record<string, unknown>> | undefined,
+    dates: contact.dates as Array<Record<string, unknown>> | undefined,
     birthday: contact.birthday as Record<string, unknown> | undefined,
     rawContactHash: stableContactHash(source),
   };
@@ -151,11 +181,21 @@ export default function PrimaryScreen() {
         fields: [
           Contacts.Fields.Name,
           Contacts.Fields.FirstName,
+          Contacts.Fields.MiddleName,
           Contacts.Fields.LastName,
+          Contacts.Fields.Nickname,
+          Contacts.Fields.MaidenName,
+          Contacts.Fields.PhoneticFirstName,
+          Contacts.Fields.PhoneticMiddleName,
+          Contacts.Fields.PhoneticLastName,
           Contacts.Fields.Emails,
           Contacts.Fields.PhoneNumbers,
           Contacts.Fields.Company,
           Contacts.Fields.JobTitle,
+          Contacts.Fields.Department,
+          Contacts.Fields.Addresses,
+          Contacts.Fields.UrlAddresses,
+          Contacts.Fields.Dates,
           Contacts.Fields.Birthday,
         ],
         pageSize: 5000,

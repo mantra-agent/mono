@@ -590,7 +590,7 @@ export async function registerIntegrationsRoutes(app: Express) {
 
   app.post("/api/import-queue/decide", requireAdmin, async (req, res) => {
     try {
-      const { getCandidateByEmail, updateCandidateDecision } = await import("../import-queue");
+      const { getCandidateByEmail, updateCandidateDecision, isSyntheticContactEmail } = await import("../import-queue");
       const { email, decision, cabinetLevel, tags, mergePersonId, name, company, role, relation, professionalRelations, familiarity, trust, met, notes, introducedBy } = req.body;
 
       if (!email || !decision) {
@@ -615,8 +615,8 @@ export async function registerIntegrationsRoutes(app: Express) {
           name: name || candidate.name || email.split("@")[0],
           cabinetLevel: cabinetLevel || "network",
           contactInfo: (candidate.contactInfo?.length
-            ? candidate.contactInfo
-            : [{ type: "email", label: candidate.source === "ios_contacts" ? "iOS" : "Gmail", value: candidate.email }]) as any,
+            ? candidate.contactInfo.filter(contact => contact.type !== "email" || !isSyntheticContactEmail(contact.value))
+            : isSyntheticContactEmail(candidate.email) ? [] : [{ type: "email", label: candidate.source === "ios_contacts" ? "iOS" : "Gmail", value: candidate.email }]) as any,
           tags: tags || [],
           nicknames: [],
           socialProfiles: {},
@@ -670,8 +670,8 @@ export async function registerIntegrationsRoutes(app: Express) {
 
         const existingContactValues = new Set((existingPerson.contactInfo || []).map((c: any) => c.value?.toLowerCase()).filter(Boolean));
         const candidateContactInfo = candidate.contactInfo?.length
-          ? candidate.contactInfo
-          : [{ type: "email", label: candidate.source === "ios_contacts" ? "iOS" : "Gmail", value: candidate.email }];
+          ? candidate.contactInfo.filter(contact => contact.type !== "email" || !isSyntheticContactEmail(contact.value))
+          : isSyntheticContactEmail(candidate.email) ? [] : [{ type: "email", label: candidate.source === "ios_contacts" ? "iOS" : "Gmail", value: candidate.email }];
         const newContactInfo = candidateContactInfo.filter((contact: any) => {
           const value = contact.value?.toLowerCase();
           return value && !existingContactValues.has(value);
@@ -730,7 +730,7 @@ export async function registerIntegrationsRoutes(app: Express) {
         });
       }
 
-      res.json({ ok: true });
+      res.json({ ok: true, imported: decision === "add" ? 1 : 0, updated: decision === "merge" ? 1 : 0, repaired: 0, skipped: decision === "skip" ? 1 : 0 });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

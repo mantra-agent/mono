@@ -2568,6 +2568,41 @@ interface ImportCandidate extends GmailContact {
   emails?: string[];
   phones?: string[];
   contactInfo?: ImportContactInfo[];
+  department?: string;
+  addresses?: Array<Record<string, unknown>>;
+  urls?: Array<Record<string, unknown>>;
+  dates?: Array<Record<string, unknown>>;
+  birthday?: Record<string, unknown>;
+}
+
+function textValue(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function formatImportedDate(record: Record<string, unknown>): string | null {
+  const year = typeof record.year === "number" ? record.year : null;
+  const month = typeof record.month === "number" ? record.month : null;
+  const day = typeof record.day === "number" ? record.day : null;
+  if (!month || !day) return null;
+  const parsed = new Date(Date.UTC(year || 2000, month - 1, day));
+  const formatted = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(year ? { year: "numeric" as const } : {}),
+    timeZone: "UTC",
+  }).format(parsed);
+  return year ? formatted : formatted.replace(/,? 2000$/, "");
+}
+
+function formatImportedAddress(address: Record<string, unknown>): string | null {
+  const parts = [
+    textValue(address, "street"),
+    textValue(address, "city"),
+    [textValue(address, "region"), textValue(address, "postalCode")].filter(Boolean).join(" "),
+    textValue(address, "country"),
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(", ") : null;
 }
 
 function ExpandableInteractions({ interactions }: { interactions: GmailInteraction[] }) {
@@ -2720,6 +2755,15 @@ function ImportCandidateDetail({
   );
 
   const introducedByName = introducedBy ? existingPeople.find(p => p.id === introducedBy)?.name : null;
+  const importedAddresses = (candidate.addresses || [])
+    .map(formatImportedAddress)
+    .filter((value): value is string => Boolean(value));
+  const importedDates = (candidate.dates || []).flatMap((date) => {
+    const value = formatImportedDate(date);
+    if (!value) return [];
+    return [{ label: textValue(date, "label") || "Date", value }];
+  });
+  const importedBirthday = candidate.birthday ? formatImportedDate(candidate.birthday) : null;
 
   const filteredIntroducedByPeople = useMemo(() => {
     if (!introducedBySearch) return [];
@@ -2853,12 +2897,42 @@ function ImportCandidateDetail({
             <Badge variant="outline" className="text-xs">{candidate.source === "ios_contacts" ? "contact" : `${candidate.threadCount} threads`}</Badge>
           </div>
         </div>
-        <div className="flex gap-3 text-xs text-muted-foreground">
-          {candidate.source !== "ios_contacts" && <span>{candidate.sentCount} sent</span>}
-          {candidate.source !== "ios_contacts" && <span>{candidate.receivedCount} received</span>}
-          {candidate.lastInteraction && <span>Last: {daysAgo(candidate.lastInteraction)}</span>}
-          {candidate.firstInteraction && <span>First: {daysAgo(candidate.firstInteraction)}</span>}
-        </div>
+        {candidate.source !== "ios_contacts" && (
+          <div className="flex gap-3 text-xs text-muted-foreground">
+            <span>{candidate.sentCount} sent</span>
+            <span>{candidate.receivedCount} received</span>
+            {candidate.lastInteraction && <span>Last: {daysAgo(candidate.lastInteraction)}</span>}
+            {candidate.firstInteraction && <span>First: {daysAgo(candidate.firstInteraction)}</span>}
+          </div>
+        )}
+        {candidate.source === "ios_contacts" && (candidate.company || candidate.role || candidate.department || importedBirthday || importedAddresses.length > 0 || importedDates.length > 0) && (
+          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+            {(candidate.company || candidate.role || candidate.department) && (
+              <>
+                <span className="text-muted-foreground">Work</span>
+                <span>{[candidate.role, candidate.company, candidate.department].filter(Boolean).join(" · ")}</span>
+              </>
+            )}
+            {importedBirthday && (
+              <>
+                <span className="text-muted-foreground">Birthday</span>
+                <span>{importedBirthday}</span>
+              </>
+            )}
+            {importedAddresses.map((address, index) => (
+              <Fragment key={`${address}-${index}`}>
+                <span className="text-muted-foreground">Address</span>
+                <span>{address}</span>
+              </Fragment>
+            ))}
+            {importedDates.map((date, index) => (
+              <Fragment key={`${date.label}-${date.value}-${index}`}>
+                <span className="text-muted-foreground">{date.label}</span>
+                <span>{date.value}</span>
+              </Fragment>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto scrollbar-thin">
