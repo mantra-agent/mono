@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
-import { eq, and, inArray, sql, desc } from "drizzle-orm";
+import { eq, and, or, inArray, sql, desc } from "drizzle-orm";
 import { documentStorage } from "./document-storage";
 import {
   memoryStorage,
@@ -41,6 +41,8 @@ import { randomUUID, createHash } from "crypto";
 import { memoryVnextClaimStorage } from "./vnext-claim-storage";
 import { runVnextLifecycle } from "./vnext-lifecycle";
 import { listVisibleSources } from "./vnext-source-queue";
+import { peopleStorage } from "../people-storage";
+import { libraryPages } from "@shared/models/info";
 
 const log = createLogger("MemoryRoutes");
 
@@ -1869,6 +1871,29 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
         ),
       );
 
+    // Resolve human-readable titles for entity nodes (person names, page titles).
+    const entityTitleByKey = new Map<string, string>();
+    const personEntityIds = [...new Set(entityLinks.filter((l) => l.entityType === "person").map((l) => l.entityId))];
+    const pageEntityIds = [...new Set(entityLinks.filter((l) => l.entityType === "page" || l.entityType === "library_page").map((l) => l.entityId))];
+    if (personEntityIds.length > 0) {
+      const people = await peopleStorage.getPeopleByIds(personEntityIds);
+      for (const person of people) entityTitleByKey.set(`person:${person.id}`, person.name);
+    }
+    if (pageEntityIds.length > 0) {
+      const pageScope = { ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, scope: libraryPages.scope };
+      const pageRows = await db
+        .select({ id: libraryPages.id, slug: libraryPages.slug, title: libraryPages.title })
+        .from(libraryPages)
+        .where(combineWithVisibleScope(principal, pageScope, or(inArray(libraryPages.id, pageEntityIds), inArray(libraryPages.slug, pageEntityIds))));
+      for (const row of pageRows) {
+        if (!row.title) continue;
+        entityTitleByKey.set(`page:${row.id}`, row.title);
+        entityTitleByKey.set(`library_page:${row.id}`, row.title);
+        entityTitleByKey.set(`page:${row.slug}`, row.title);
+        entityTitleByKey.set(`library_page:${row.slug}`, row.title);
+      }
+    }
+
     const entityNodeIds = new Map<string, number>();
     let nextEntityNodeId = -1;
     const entries: VnextGraphNode[] = claims.map((claim) => ({
@@ -1901,10 +1926,11 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       if (!entityNodeIds.has(key)) {
         const entityNodeId = nextEntityNodeId--;
         entityNodeIds.set(key, entityNodeId);
+        const entityTitle = entityTitleByKey.get(key) || link.entityId;
         entries.push({
           id: entityNodeId,
-          content: `${link.entityType}: ${link.entityId}`,
-          title: link.entityId,
+          content: `${link.entityType}: ${entityTitle}`,
+          title: entityTitle,
           summary: `Entity linked to vNext claims (${link.entityType})`,
           layer: "long",
           source: link.entityType,
