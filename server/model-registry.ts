@@ -10,6 +10,8 @@ export interface ModelThinking {
   description: string;
   /** Model only supports adaptive thinking — no extended-thinking budget toggle (e.g. Fable/Mythos class). */
   adaptiveOnly?: boolean;
+  /** Model exposes a selectable OpenAI reasoning-effort control mapped from the tier thinking config. */
+  selectableEffort?: boolean;
 }
 
 export interface ModelInfo {
@@ -285,7 +287,7 @@ const REGISTRY: Record<string, ModelInfo> = {
     contextWindow: 1050000,
     maxOutputTokens: 128000,
     reasoning: true,
-    thinking: { level: "basic", description: "GPT-5.6 Sol flagship reasoning; alias for gpt-5.6-sol" },
+    thinking: { level: "basic", description: "GPT-5.6 Sol flagship reasoning; alias for gpt-5.6-sol", selectableEffort: true },
   },
   "gpt-5.6-sol": {
     id: "gpt-5.6-sol",
@@ -295,7 +297,7 @@ const REGISTRY: Record<string, ModelInfo> = {
     contextWindow: 1050000,
     maxOutputTokens: 128000,
     reasoning: true,
-    thinking: { level: "basic", description: "GPT-5.6 flagship reasoning for complex work" },
+    thinking: { level: "basic", description: "GPT-5.6 flagship reasoning for complex work", selectableEffort: true },
   },
   "gpt-5.6-luna": {
     id: "gpt-5.6-luna",
@@ -305,7 +307,7 @@ const REGISTRY: Record<string, ModelInfo> = {
     contextWindow: 1050000,
     maxOutputTokens: 128000,
     reasoning: true,
-    thinking: { level: "basic", description: "Fast, cost-efficient GPT-5.6 reasoning for high-volume workloads" },
+    thinking: { level: "basic", description: "Fast, cost-efficient GPT-5.6 reasoning for high-volume workloads", selectableEffort: true },
   },
   "gpt-5.5": {
     id: "gpt-5.5",
@@ -345,7 +347,7 @@ const REGISTRY: Record<string, ModelInfo> = {
     contextWindow: 1050000,
     maxOutputTokens: 128000,
     reasoning: true,
-    thinking: { level: "basic", description: "GPT-5.6 Sol subscription reasoning via Codex/Work access" },
+    thinking: { level: "basic", description: "GPT-5.6 Sol subscription reasoning via Codex/Work access", selectableEffort: true },
     requiresSubscription: true,
     codexModelId: "gpt-5.6-sol",
   },
@@ -357,7 +359,7 @@ const REGISTRY: Record<string, ModelInfo> = {
     contextWindow: 1050000,
     maxOutputTokens: 128000,
     reasoning: true,
-    thinking: { level: "basic", description: "Fast GPT-5.6 subscription reasoning via Codex/Work access" },
+    thinking: { level: "basic", description: "Fast GPT-5.6 subscription reasoning via Codex/Work access", selectableEffort: true },
     requiresSubscription: true,
     codexModelId: "gpt-5.6-luna",
   },
@@ -541,6 +543,11 @@ export function getThinkingInfo(modelId: string): ModelThinking {
   return DEFAULT_THINKING;
 }
 
+/** Whether the model exposes a selectable OpenAI reasoning-effort control. */
+export function supportsSelectableEffort(modelId: string): boolean {
+  return getThinkingInfo(modelId).selectableEffort === true;
+}
+
 export function getModelName(modelId: string): string {
   return REGISTRY[modelId]?.name ?? modelId;
 }
@@ -569,6 +576,7 @@ export function getDefaultProviderModels(): Array<{
     reasoning: boolean;
     thinkingLevel: "extended" | "basic" | "none";
     thinkingDescription: string;
+    supportsReasoningEffort: boolean;
   }>;
 }> {
   const providers: Record<string, typeof REGISTRY[string][]> = {};
@@ -590,6 +598,7 @@ export function getDefaultProviderModels(): Array<{
       reasoning: m.reasoning,
       thinkingLevel: m.thinking.level,
       thinkingDescription: m.thinking.description,
+      supportsReasoningEffort: m.thinking.selectableEffort === true,
     })),
   }));
 }
