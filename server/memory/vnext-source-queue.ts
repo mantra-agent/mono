@@ -1,7 +1,8 @@
-import { and, eq, lt, sql, desc } from "drizzle-orm";
+import { and, eq, lt, sql, desc, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { createLogger } from "../log";
 import type { Principal } from "../principal";
+import { runWithPrincipal } from "../principal-context";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -9,6 +10,8 @@ import {
 } from "../scoped-storage";
 import {
   memoryVnextSourceQueue,
+  memoryVnextSourceRefs,
+  memoryVnextClaims,
   type VnextSourceType,
   type MemoryVnextSourceQueueRow,
 } from "@shared/schema";
@@ -19,6 +22,150 @@ const scopeColumns = {
   ownerUserId: memoryVnextSourceQueue.ownerUserId,
   accountId: memoryVnextSourceQueue.accountId,
 };
+
+
+const sourceRefScopeColumns = {
+  scope: memoryVnextSourceRefs.scope,
+  ownerUserId: memoryVnextSourceRefs.ownerUserId,
+  accountId: memoryVnextSourceRefs.accountId,
+};
+
+const claimScopeColumns = {
+  scope: memoryVnextClaims.scope,
+  ownerUserId: memoryVnextClaims.ownerUserId,
+  accountId: memoryVnextClaims.accountId,
+};
+
+async function isAutonomousSessionSource(sourceId: string): Promise<boolean> {
+  const { chatFileStorage } = await import("../chat-file-storage");
+  const session = await chatFileStorage.getSession(sourceId);
+  return session?.sessionType === "autonomous";
+}
+
+/**
+ * Remove one autonomous session from the queue and from claim provenance.
+ * Claims are deleted only when this was their final source. Cascades then remove
+ * their entity/claim links; claims with any valid source remain intact.
+ */
+export async function removeAutonomousSessionSource(
+  sourceId: string,
+  principal: Principal,
+): Promise<{ queueRows: number; sourceRefs: number; orphanClaims: number }> {
+  const refs = await db
+    .select({ id: memoryVnextSourceRefs.id, claimId: memoryVnextSourceRefs.claimId })
+    .from(memoryVnextSourceRefs)
+    .where(
+      combineWithVisibleScope(
+        principal,
+        sourceRefScopeColumns,
+        and(
+          eq(memoryVnextSourceRefs.sourceType, "session"),
+          eq(memoryVnextSourceRefs.sourceId, sourceId),
+        ),
+      ),
+    );
+
+  const deletedRefs = await db
+    .delete(memoryVnextSourceRefs)
+    .where(
+      combineWithWritableScope(
+        principal,
+        sourceRefScopeColumns,
+        and(
+          eq(memoryVnextSourceRefs.sourceType, "session"),
+          eq(memoryVnextSourceRefs.sourceId, sourceId),
+        ),
+      ),
+    )
+    .returning({ id: memoryVnextSourceRefs.id });
+
+  const deletedQueue = await db
+    .delete(memoryVnextSourceQueue)
+    .where(
+      combineWithWritableScope(
+        principal,
+        scopeColumns,
+        and(
+          eq(memoryVnextSourceQueue.sourceType, "session"),
+          eq(memoryVnextSourceQueue.sourceId, sourceId),
+        ),
+      ),
+    )
+    .returning({ id: memoryVnextSourceQueue.id });
+
+  let orphanClaims = 0;
+  const claimIds = [...new Set(refs.map((ref) => ref.claimId))];
+  if (claimIds.length > 0) {
+    const deletedClaims = await db
+      .delete(memoryVnextClaims)
+      .where(
+        combineWithWritableScope(
+          principal,
+          claimScopeColumns,
+          and(
+            inArray(memoryVnextClaims.id, claimIds),
+            sql`NOT EXISTS (
+              SELECT 1 FROM ${memoryVnextSourceRefs}
+              WHERE ${memoryVnextSourceRefs.claimId} = ${memoryVnextClaims.id}
+            )`,
+          ),
+        ),
+      )
+      .returning({ id: memoryVnextClaims.id });
+    orphanClaims = deletedClaims.length;
+  }
+
+  if (deletedQueue.length || deletedRefs.length || orphanClaims) {
+    log.info(
+      `removed autonomous session source=${sourceId} queueRows=${deletedQueue.length} sourceRefs=${deletedRefs.length} orphanClaims=${orphanClaims}`,
+    );
+  }
+  return { queueRows: deletedQueue.length, sourceRefs: deletedRefs.length, orphanClaims };
+}
+
+/**
+ * Bounded maintenance for legacy autonomous session rows. Ownership from each
+ * queue row is restored before session lookup and cleanup. Completed rows are
+ * included, so the migration converges rather than relying on re-enqueue.
+ */
+export async function cleanupAutonomousSessionSources(
+  limit = 100,
+): Promise<{ scanned: number; removed: number }> {
+  const rows = await db
+    .select()
+    .from(memoryVnextSourceQueue)
+    .where(eq(memoryVnextSourceQueue.sourceType, "session"))
+    .orderBy(memoryVnextSourceQueue.id)
+    .limit(Math.max(1, Math.min(limit, 500)));
+
+  let removed = 0;
+  for (const row of rows) {
+    if (!row.ownerUserId) {
+      log.warn(`cleanup skipped queueId=${row.id} reason=missing_owner`);
+      continue;
+    }
+    const principal: Principal = {
+      actorType: "user",
+      userId: row.ownerUserId,
+      accountId: row.accountId,
+      role: "owner",
+      scopes: ["user:read", "user:write"],
+      permissions: [],
+      isAdmin: false,
+      impersonation: {
+        impersonatedByActorType: "system",
+        reason: "vnext autonomous source cleanup",
+      },
+      source: "system",
+    };
+    await runWithPrincipal(principal, async () => {
+      if (!await isAutonomousSessionSource(row.sourceId)) return;
+      await removeAutonomousSessionSource(row.sourceId, principal);
+      removed++;
+    });
+  }
+  return { scanned: rows.length, removed };
+}
 
 /**
  * Upsert a source into the extraction queue.
@@ -31,6 +178,12 @@ export async function upsertSource(
   sourceId: string,
   principal: Principal,
 ): Promise<void> {
+  if (sourceType === "session" && await isAutonomousSessionSource(sourceId)) {
+    await removeAutonomousSessionSource(sourceId, principal);
+    log.debug(`skipped autonomous session source=${sourceId}`);
+    return;
+  }
+
   const ownership = ownedInsertValues(principal, scopeColumns);
 
   await db

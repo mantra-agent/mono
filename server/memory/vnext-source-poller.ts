@@ -7,6 +7,7 @@ import {
   markProcessing,
   markCompleted,
   resetStuckProcessing,
+  cleanupAutonomousSessionSources,
 } from "./vnext-source-queue";
 import {
   buildFullSessionContent,
@@ -398,6 +399,13 @@ export async function processSettledSources(): Promise<{
   totalRetirementCandidates: number;
   errors: number;
 }> {
+  // Repair legacy autonomous rows before polling. This is bounded and
+  // idempotent, and includes completed rows that would never be polled again.
+  const cleanup = await cleanupAutonomousSessionSources(100);
+  if (cleanup.removed > 0) {
+    log.info(`processSettledSources: autonomous cleanup scanned=${cleanup.scanned} removed=${cleanup.removed}`);
+  }
+
   // Reset any stuck processing rows first (crash recovery)
   await resetStuckProcessing(STUCK_PROCESSING_TIMEOUT_MINUTES);
 
