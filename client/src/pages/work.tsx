@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { InlineDatePicker } from "@/components/inline-date-picker";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -818,8 +819,6 @@ function TaskRow({
   const { openTaskModal } = useTaskModal();
   const [editTitle, setEditTitle] = useState(task.title);
   const [expanded, setExpanded] = useState(false);
-  const [editingDeadline, setEditingDeadline] = useState(false);
-  const [deadlineDraft, setDeadlineDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -883,41 +882,32 @@ function TaskRow({
         </span>
       )}
 
-      {editingDeadline ? (
-        <Input
-          type="date"
-          value={deadlineDraft}
-          onChange={e => setDeadlineDraft(e.target.value)}
-          onBlur={() => {
-            onUpdate({ deadline: deadlineDraft || null });
-            setEditingDeadline(false);
-          }}
-          onKeyDown={e => {
-            if (e.key === "Enter") { onUpdate({ deadline: deadlineDraft || null }); setEditingDeadline(false); }
-            if (e.key === "Escape") setEditingDeadline(false);
-          }}
-          onClick={e => e.stopPropagation()}
-          className="h-6 text-xs w-32 shrink-0"
-          autoFocus
-          data-testid={`input-task-deadline-${task.id}`}
-        />
-      ) : dueLabel ? (
-        <span
-          className="shrink-0 text-xs text-muted-foreground/70 tabular-nums cursor-pointer rounded px-1 -mx-1 hover:bg-accent/70"
-          onClick={e => { e.stopPropagation(); setDeadlineDraft(task.deadline || ""); setEditingDeadline(true); }}
-          data-testid={`text-task-due-date-${task.id}`}
+      {dueLabel ? (
+        <InlineDatePicker
+          value={task.deadline || ""}
+          onCommit={(v) => onUpdate({ deadline: v })}
+          className="shrink-0"
         >
-          {dueLabel}
-        </span>
+          <span
+            className="text-xs text-muted-foreground/70 tabular-nums rounded px-1 -mx-1 hover:bg-accent/70"
+            data-testid={`text-task-due-date-${task.id}`}
+          >
+            {dueLabel}
+          </span>
+        </InlineDatePicker>
       ) : (
-        <button
-          type="button"
-          className="shrink-0 text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity rounded p-0.5 hover:bg-accent/70 hover:text-muted-foreground"
-          onClick={e => { e.stopPropagation(); setDeadlineDraft(""); setEditingDeadline(true); }}
-          data-testid={`button-task-set-deadline-${task.id}`}
+        <InlineDatePicker
+          value=""
+          onCommit={(v) => onUpdate({ deadline: v })}
+          className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
         >
-          <CalendarDays className="h-3 w-3" />
-        </button>
+          <span
+            className="text-muted-foreground/40 rounded p-0.5 hover:bg-accent/70 hover:text-muted-foreground"
+            data-testid={`button-task-set-deadline-${task.id}`}
+          >
+            <CalendarDays className="h-3 w-3" />
+          </span>
+        </InlineDatePicker>
       )}
 
       <div className="ml-auto flex h-6 shrink-0 items-center gap-0.5">
@@ -1602,14 +1592,10 @@ function ProjectTreeNode({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [expandedMilestones, setExpandedMilestones] = useState<Record<number, boolean>>({});
-  const [editingProjectDue, setEditingProjectDue] = useState(false);
-  const [projectDueDraft, setProjectDueDraft] = useState("");
   const [editingProjectTitle, setEditingProjectTitle] = useState(false);
   const [projectTitleDraft, setProjectTitleDraft] = useState(project.title);
   const [pagePickerOpen, setPagePickerOpen] = useState(false);
   const [filePickerOpen, setFilePickerOpen] = useState(false);
-  const [editingMilestoneDueId, setEditingMilestoneDueId] = useState<number | null>(null);
-  const [milestoneDueDraft, setMilestoneDueDraft] = useState("");
   const [editingMilestoneId, setEditingMilestoneId] = useState<number | null>(null);
   const [milestoneNameDraft, setMilestoneNameDraft] = useState("");
   const [editingProjectDescription, setEditingProjectDescription] = useState(false);
@@ -1718,41 +1704,32 @@ function ProjectTreeNode({
                 {project.title}
               </span>
             )}
-            {editingProjectDue ? (
-              <Input
-                type="date"
-                value={projectDueDraft}
-                onChange={e => setProjectDueDraft(e.target.value)}
-                onBlur={() => {
-                  onUpdateProject({ dueDate: projectDueDraft || null });
-                  setEditingProjectDue(false);
-                }}
-                onKeyDown={e => {
-                  if (e.key === "Enter") { onUpdateProject({ dueDate: projectDueDraft || null }); setEditingProjectDue(false); }
-                  if (e.key === "Escape") setEditingProjectDue(false);
-                }}
-                onClick={e => e.stopPropagation()}
-                className="h-6 text-xs w-32 shrink-0"
-                autoFocus
-                data-testid={`input-project-due-date-${project.id}`}
-              />
-            ) : projectDueLabel ? (
-              <span
-                className="shrink-0 text-xs text-muted-foreground/70 tabular-nums cursor-pointer rounded px-1 -mx-1 hover:bg-accent/70"
-                onClick={e => { e.stopPropagation(); setProjectDueDraft(project.dueDate || ""); setEditingProjectDue(true); }}
-                data-testid={`text-project-due-date-${project.id}`}
+            {projectDueLabel ? (
+              <InlineDatePicker
+                value={project.dueDate || ""}
+                onCommit={(v) => onUpdateProject({ dueDate: v })}
+                className="shrink-0"
               >
-                {projectDueLabel}
-              </span>
+                <span
+                  className="text-xs text-muted-foreground/70 tabular-nums rounded px-1 -mx-1 hover:bg-accent/70"
+                  data-testid={`text-project-due-date-${project.id}`}
+                >
+                  {projectDueLabel}
+                </span>
+              </InlineDatePicker>
             ) : (
-              <button
-                type="button"
-                className="shrink-0 text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity rounded p-0.5 hover:bg-accent/70 hover:text-muted-foreground"
-                onClick={e => { e.stopPropagation(); setProjectDueDraft(""); setEditingProjectDue(true); }}
-                data-testid={`button-project-set-due-date-${project.id}`}
+              <InlineDatePicker
+                value=""
+                onCommit={(v) => onUpdateProject({ dueDate: v })}
+                className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
               >
-                <CalendarDays className="h-3 w-3" />
-              </button>
+                <span
+                  className="text-muted-foreground/40 rounded p-0.5 hover:bg-accent/70 hover:text-muted-foreground"
+                  data-testid={`button-project-set-due-date-${project.id}`}
+                >
+                  <CalendarDays className="h-3 w-3" />
+                </span>
+              </InlineDatePicker>
             )}
             <div className="z-10 ml-auto flex h-6 shrink-0 items-center gap-0.5 pl-1">
               {hasChildren && (
@@ -1979,41 +1956,32 @@ function ProjectTreeNode({
                           {milestone.name}
                         </span>
                       )}
-                      {editingMilestoneDueId === milestone.id ? (
-                        <Input
-                          type="date"
-                          value={milestoneDueDraft}
-                          onChange={e => setMilestoneDueDraft(e.target.value)}
-                          onBlur={() => {
-                            onUpdateMilestone(milestone.id, { dueDate: milestoneDueDraft || null });
-                            setEditingMilestoneDueId(null);
-                          }}
-                          onKeyDown={e => {
-                            if (e.key === "Enter") { onUpdateMilestone(milestone.id, { dueDate: milestoneDueDraft || null }); setEditingMilestoneDueId(null); }
-                            if (e.key === "Escape") setEditingMilestoneDueId(null);
-                          }}
-                          onClick={e => e.stopPropagation()}
-                          className="h-6 text-xs w-32 shrink-0"
-                          autoFocus
-                          data-testid={`input-tree-milestone-due-${milestone.id}`}
-                        />
-                      ) : milestoneDueLabel ? (
-                        <span
-                          className="shrink-0 text-xs text-muted-foreground/70 tabular-nums cursor-pointer rounded px-1 -mx-1 hover:bg-accent/70"
-                          onClick={e => { e.stopPropagation(); setMilestoneDueDraft(milestone.dueDate || ""); setEditingMilestoneDueId(milestone.id); }}
-                          data-testid={`text-tree-milestone-due-date-${milestone.id}`}
+                      {milestoneDueLabel ? (
+                        <InlineDatePicker
+                          value={milestone.dueDate || ""}
+                          onCommit={(v) => onUpdateMilestone(milestone.id, { dueDate: v })}
+                          className="shrink-0"
                         >
-                          {milestoneDueLabel}
-                        </span>
+                          <span
+                            className="text-xs text-muted-foreground/70 tabular-nums rounded px-1 -mx-1 hover:bg-accent/70"
+                            data-testid={`text-tree-milestone-due-date-${milestone.id}`}
+                          >
+                            {milestoneDueLabel}
+                          </span>
+                        </InlineDatePicker>
                       ) : (
-                        <button
-                          type="button"
-                          className="shrink-0 text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity rounded p-0.5 hover:bg-accent/70 hover:text-muted-foreground"
-                          onClick={e => { e.stopPropagation(); setMilestoneDueDraft(""); setEditingMilestoneDueId(milestone.id); }}
-                          data-testid={`button-tree-milestone-set-due-${milestone.id}`}
+                        <InlineDatePicker
+                          value=""
+                          onCommit={(v) => onUpdateMilestone(milestone.id, { dueDate: v })}
+                          className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
                         >
-                          <CalendarDays className="h-3 w-3" />
-                        </button>
+                          <span
+                            className="text-muted-foreground/40 rounded p-0.5 hover:bg-accent/70 hover:text-muted-foreground"
+                            data-testid={`button-tree-milestone-set-due-${milestone.id}`}
+                          >
+                            <CalendarDays className="h-3 w-3" />
+                          </span>
+                        </InlineDatePicker>
                       )}
                       <div className="z-10 ml-auto flex h-6 shrink-0 items-center gap-0.5 pl-1">
                         {milestoneTasks.length > 0 && (
