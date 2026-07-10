@@ -1,18 +1,18 @@
 import type { Express, Request, Response } from "express";
 import { createLogger } from "../log";
 import { db } from "../db";
-import { emailMessages, emailDrafts, emailSyncCursors, emailEnrichments } from "@shared/schema";
+import { emailMessages, emailSyncCursors, emailEnrichments } from "@shared/schema";
 import { eq, and, desc, sql, ilike, inArray } from "drizzle-orm";
 import { triageJob } from "../triage-job-state";
 import { storage } from "../storage";
-import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwnershipValues } from "../sensitive-scope";
+import { combineWithSensitiveVisible, combineWithSensitiveWritable } from "../sensitive-scope";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { invalidateSimpleFeedCache } from "../simple/generate-feed";
 
 const log = createLogger("EmailRoutes");
 
 const messageScopeCols = { ownerUserId: emailMessages.ownerUserId, principalAccountId: emailMessages.principalAccountId };
-const draftScopeCols = { ownerUserId: emailDrafts.ownerUserId, principalAccountId: emailDrafts.principalAccountId };
+// Email draft scope moved to server/email-draft-storage.ts
 
 function activeDismissalExclusionPredicate(threadIdRef: any, accountIdRef: any) {
   // Exclude threads with an active (non-stale) dismissal. Manual Review
@@ -320,17 +320,17 @@ export function registerEmailRoutes(app: Express) {
         });
         res.json(draftResult);
       } catch (skillErr: any) {
-        const draftData = {
-          accountId: srcMsg.accountId,
-          toAddress: sender,
+        // Fallback: create a draft via the new storage module
+        const { emailDraftStorage } = await import("../email-draft-storage");
+        const principal = req.principal;
+        if (!principal) return res.status(401).json({ error: "Not authenticated" });
+        const created = await emailDraftStorage.create(principal, {
+          gmailAccountId: srcMsg.accountId,
+          to: [sender],
           subject: replySubject,
-          bodyText: "",
-          bodyHtml: "",
-          status: "pending_review" as const,
-          sourceEmailId: id,
-          ...sensitiveOwnershipValues(),
-        };
-        const [created] = await db.insert(emailDrafts).values(draftData).returning();
+          body: "",
+          threadId: srcMsg.providerThreadId ?? undefined,
+        });
         res.json({ draft: created, skillError: skillErr.message });
       }
     } catch (err: any) {
@@ -339,111 +339,8 @@ export function registerEmailRoutes(app: Express) {
     }
   });
 
-  app.post("/api/email/drafts/by-source-ids", async (req: Request, res: Response) => {
-    try {
-      const { sourceEmailIds } = req.body;
-      if (!Array.isArray(sourceEmailIds)) return res.status(400).json({ error: "sourceEmailIds must be an array" });
-      const { storage } = await import("../storage");
-      const drafts = await storage.getEmailDraftsBySourceIds(sourceEmailIds);
-      res.json({ drafts });
-    } catch (err: any) {
-      log.error(`POST /api/email/drafts/by-source-ids error: ${err.message}`);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.get("/api/email/drafts", async (req: Request, res: Response) => {
-    try {
-      const accountId = req.query.accountId as string | undefined;
-      const status = req.query.status as string | undefined;
-
-      const conditions: any[] = [];
-      if (accountId) conditions.push(eq(emailDrafts.accountId, accountId));
-      if (status) conditions.push(eq(emailDrafts.status, status));
-
-      const userCondition = conditions.length > 0 ? and(...conditions) : undefined;
-      const where = combineWithSensitiveVisible(draftScopeCols, userCondition);
-
-      const drafts = await db.select().from(emailDrafts)
-        .where(where)
-        .orderBy(desc(emailDrafts.createdAt));
-
-      res.json({ drafts });
-    } catch (err: any) {
-      log.error(`GET /api/email/drafts error: ${err.message}`);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/email/drafts", async (req: Request, res: Response) => {
-    try {
-      const { accountId, toAddress, subject, bodyHtml, bodyText, status } = req.body;
-      if (!accountId || !toAddress || !subject) {
-        return res.status(400).json({ error: "accountId, toAddress, and subject are required" });
-      }
-
-      const validStatuses = ['pending_review', 'approved_to_send', 'sent', 'send_failed', 'discarded'];
-      const draftStatus = status && validStatuses.includes(status) ? status : 'pending_review';
-
-      const result = await db.insert(emailDrafts).values({
-        accountId,
-        toAddress,
-        subject,
-        bodyHtml: bodyHtml || null,
-        bodyText: bodyText || null,
-        status: draftStatus,
-        ...sensitiveOwnershipValues(),
-      }).returning();
-
-      res.status(201).json(result[0]);
-    } catch (err: any) {
-      log.error(`POST /api/email/drafts error: ${err.message}`);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.patch("/api/email/drafts/:id", async (req: Request, res: Response) => {
-    try {
-      const id = parseInt(req.params.id as string);
-      if (isNaN(id)) return res.status(400).json({ error: "Invalid draft ID" });
-
-      const existing = await db.select().from(emailDrafts).where(combineWithSensitiveVisible(draftScopeCols, eq(emailDrafts.id, id))).limit(1);
-      if (existing.length === 0) return res.status(404).json({ error: "Draft not found" });
-
-      const updates: Record<string, any> = { updatedAt: sql`CURRENT_TIMESTAMP` };
-      if (req.body.toAddress !== undefined) updates.toAddress = req.body.toAddress;
-      if (req.body.subject !== undefined) updates.subject = req.body.subject;
-      if (req.body.bodyHtml !== undefined) updates.bodyHtml = req.body.bodyHtml;
-      if (req.body.bodyText !== undefined) updates.bodyText = req.body.bodyText;
-      if (req.body.status !== undefined) {
-        const validStatuses = ['pending_review', 'approved_to_send', 'sent', 'send_failed', 'discarded'];
-        if (!validStatuses.includes(req.body.status)) {
-          return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
-        }
-        updates.status = req.body.status;
-      }
-
-      const result = await db.update(emailDrafts).set(updates).where(combineWithSensitiveWritable(draftScopeCols, eq(emailDrafts.id, id))).returning();
-      res.json(result[0]);
-    } catch (err: any) {
-      log.error(`PATCH /api/email/drafts/:id error: ${err.message}`);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.delete("/api/email/drafts/:id", async (req: Request, res: Response) => {
-    try {
-      const id = parseInt(req.params.id as string);
-      if (isNaN(id)) return res.status(400).json({ error: "Invalid draft ID" });
-
-      const deleted = await db.delete(emailDrafts).where(combineWithSensitiveWritable(draftScopeCols, eq(emailDrafts.id, id))).returning();
-      if (deleted.length === 0) return res.status(404).json({ error: "Draft not found" });
-      res.json({ deleted: true });
-    } catch (err: any) {
-      log.error(`DELETE /api/email/drafts/:id error: ${err.message}`);
-      res.status(500).json({ error: err.message });
-    }
-  });
+  // Legacy email draft CRUD removed — replaced by /api/email-drafts routes
+  // in server/routes/email-drafts.ts with new schema and human-only send gate.
 
   app.get("/api/email/triage-status", (_req: Request, res: Response) => {
     res.json({ ...triageJob });
@@ -609,43 +506,6 @@ export function registerEmailRoutes(app: Express) {
     }
   });
 
-  app.post("/api/email/drafts/:id/send", async (req: Request, res: Response) => {
-    try {
-      const id = parseInt(req.params.id as string);
-      if (isNaN(id)) return res.status(400).json({ error: "Invalid draft ID" });
-
-      const rows = await db.select().from(emailDrafts).where(combineWithSensitiveVisible(draftScopeCols, eq(emailDrafts.id, id))).limit(1);
-      if (rows.length === 0) return res.status(404).json({ error: "Draft not found" });
-
-      const draft = rows[0];
-      if (draft.status !== 'approved_to_send') {
-        return res.status(400).json({ error: `Draft must be in 'approved_to_send' status to send. Current: ${draft.status}` });
-      }
-
-      const { sendEmail } = await import("../gmail");
-      const body = draft.bodyHtml || draft.bodyText || '';
-
-      try {
-        const result = await sendEmail(draft.toAddress, draft.subject, body, draft.accountId);
-        await db.update(emailDrafts).set({
-          status: 'sent',
-          sentAt: sql`CURRENT_TIMESTAMP`,
-          updatedAt: sql`CURRENT_TIMESTAMP`,
-        }).where(combineWithSensitiveWritable(draftScopeCols, eq(emailDrafts.id, id)));
-
-        res.json({ sent: true, gmailMessageId: result.id });
-      } catch (sendErr: any) {
-        await db.update(emailDrafts).set({
-          status: 'send_failed',
-          gmailError: sendErr.message,
-          updatedAt: sql`CURRENT_TIMESTAMP`,
-        }).where(combineWithSensitiveWritable(draftScopeCols, eq(emailDrafts.id, id)));
-
-        res.status(502).json({ sent: false, error: sendErr.message });
-      }
-    } catch (err: any) {
-      log.error(`POST /api/email/drafts/:id/send error: ${err.message}`);
-      res.status(500).json({ error: err.message });
-    }
-  });
+  // Email draft send moved to POST /api/email-drafts/:id/send
+  // in server/routes/email-drafts.ts (human-only send gate).
 }

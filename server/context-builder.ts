@@ -2495,7 +2495,7 @@ const TOOL_SHORT_DESCRIPTIONS: Record<string, string> = {
   files: "Manage persistent files in object storage. Actions: write, read, list.",
   finance: "Query financial data from connected accounts. Actions: summary, transactions, holdings, liabilities, recurring, link_account, refresh.",
   git: "Interact with Git repositories. Actions: clone, pull, status, log, diff, branch, checkout, show.",
-  gmail: "Read, search, and send emails via Gmail. Actions: status, search, read, send, draft, recent, download_attachment.",
+  gmail: "Read, search, and draft emails via Gmail. The draft action creates a persisted draft widget; the human sends via the Send button. Actions: status, search, read, draft, recent, download_attachment.",
   goals: "Manage life goals by domain and time horizon. Actions: list, get, create, update, delete, search, set_parent, unlink_parent.",
   intentions: `DEPRECATED — intentions system removed. Use the autonomy skill instead.`,
   router: "Call and inspect the model routing layer. Actions: eval, list_inference_calls, get_inference_call.",

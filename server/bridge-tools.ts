@@ -1216,18 +1216,6 @@ async function handleGmailRead(args: Record<string, any>): Promise<ToolHandlerRe
   return { result };
 }
 
-async function handleGmailSend(args: Record<string, any>): Promise<ToolHandlerResult> {
-  const permCheck = await checkGmailPermission(args.account, "gmailSend", "send emails");
-  if (permCheck.denied) return permCheck.result;
-
-  const { sendEmail } = await import("./gmail");
-  const { to, subject, body } = args;
-  if (!to || !subject || !body) return { result: "Missing to, subject, or body", error: true };
-  const sendAccountId = permCheck.resolvedAccountId || await resolveGmailAccountId(args.account);
-  const result = await sendEmail(to, subject, body, sendAccountId);
-  return { result: `Email sent to ${to} (ID: ${result.id})` };
-}
-
 async function handleGmailRecent(args: Record<string, any>): Promise<ToolHandlerResult> {
   const permCheck = await checkGmailPermission(args.account, "gmailRead", "read emails");
   if (permCheck.denied) return permCheck.result;
@@ -1316,53 +1304,29 @@ async function handleGmailDraft(args: Record<string, any>): Promise<ToolHandlerR
   const permCheck = await checkGmailPermission(args.account, "gmailDraft", "create drafts");
   if (permCheck.denied) return permCheck.result;
 
-  const { createDraft } = await import("./gmail");
   const { to, subject, body } = args;
   if (!to || !subject || !body) return { result: "Missing to, subject, or body", error: true };
   const draftAccountId = permCheck.resolvedAccountId || await resolveGmailAccountId(args.account);
 
-  let localDraftId: number | null = null;
   try {
-    const { db } = await import("./db");
-    const { emailDrafts } = await import("@shared/schema");
-    const rows = await db.insert(emailDrafts).values({
-      accountId: draftAccountId || 'default',
-      toAddress: to,
+    const { emailDraftStorage } = await import("./email-draft-storage");
+    const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+    const principal = getCurrentPrincipalOrSystem();
+
+    const draft = await emailDraftStorage.create(principal, {
+      gmailAccountId: draftAccountId || undefined,
+      to: Array.isArray(to) ? to : [to],
       subject,
-      bodyHtml: body,
-      status: 'pending_review',
-      ...sensitiveOwnershipValues(),
-      ...(args.sourceEmailId ? { sourceEmailId: Number(args.sourceEmailId) } : {}),
-    }).returning();
-    localDraftId = rows[0]?.id ?? null;
-  } catch (localErr: any) {
-    toolExec.warn(`handleGmailDraft: Failed to save local draft (non-fatal): ${localErr.message}`);
-  }
+      body,
+      threadId: args.thread_id || undefined,
+      inReplyTo: args.in_reply_to || undefined,
+      sessionId: args._sessionId || undefined,
+    });
 
-  try {
-    const result = await createDraft(to, subject, body, draftAccountId);
-
-    if (localDraftId) {
-      try {
-        const { db } = await import("./db");
-        const { emailDrafts } = await import("@shared/schema");
-        const { eq } = await import("drizzle-orm");
-        await db.update(emailDrafts).set({ gmailDraftId: result.id ?? null }).where(eq(emailDrafts.id, localDraftId));
-      } catch {}
-    }
-
-    return { result: `Draft created for ${to} with subject "${subject}" (Draft ID: ${result.id})` };
-  } catch (gmailErr: any) {
-    if (localDraftId) {
-      try {
-        const { db } = await import("./db");
-        const { emailDrafts } = await import("@shared/schema");
-        const { eq } = await import("drizzle-orm");
-        await db.update(emailDrafts).set({ gmailError: gmailErr.message }).where(eq(emailDrafts.id, localDraftId));
-      } catch {}
-      return { result: `Draft saved locally (ID: ${localDraftId}) but Gmail draft creation failed: ${gmailErr.message}. The draft is preserved and can be retried.` };
-    }
-    throw gmailErr;
+    return { result: `Email draft created. @email_draft:${draft.id}` };
+  } catch (err: any) {
+    toolExec.error(`handleGmailDraft: Failed to create draft: ${err.message}`);
+    return { result: `Failed to create email draft: ${err.message}`, error: true };
   }
 }
 
@@ -1381,29 +1345,8 @@ export async function handleGmailDraftFromReview(args: {
     account: args.accountId,
   });
 
-  const { db } = await import("./db");
-  const { emailDrafts } = await import("@shared/schema");
-  const { eq, desc, and } = await import("drizzle-orm");
-
-  const [recentDraft] = await db.select().from(emailDrafts)
-    .where(and(
-      eq(emailDrafts.toAddress, args.to),
-      eq(emailDrafts.subject, args.subject),
-    ))
-    .orderBy(desc(emailDrafts.createdAt))
-    .limit(1);
-
-  if (recentDraft) {
-    await db.update(emailDrafts)
-      .set({ sourceEmailId: args.sourceEmailId })
-      .where(eq(emailDrafts.id, recentDraft.id));
-
-    return {
-      draft: { ...recentDraft, sourceEmailId: args.sourceEmailId },
-      toolResult: result.result,
-    };
-  }
-
+  // The draft was created via emailDraftStorage in handleGmailDraft.
+  // Return the tool result — the @email_draft reference is in the result string.
   return { draft: null, toolResult: result.result };
 }
 
@@ -2127,7 +2070,6 @@ const gmailSubHandlers: Record<string, (args: Record<string, any>) => Promise<To
   search: handleGmailSearch,
   read: handleGmailRead,
   batch_read: handleGmailBatchRead,
-  send: handleGmailSend,
   draft: handleGmailDraft,
   recent: handleGmailRecent,
   download_attachment: handleGmailDownloadAttachment,
@@ -4424,7 +4366,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
   async gmail(args) {
     const action = args.action || "status";
     const handler = gmailSubHandlers[action];
-    if (!handler) return { result: `Unknown gmail action: ${action}. Available: status, search, read, send, draft, recent, download_attachment`, error: true };
+    if (!handler) return { result: `Unknown gmail action: ${action}. Available: status, search, read, batch_read, draft, recent, download_attachment, triage_log, email_cache`, error: true };
     try {
       return await handler(args);
     } catch (err: any) {

@@ -31,7 +31,7 @@ import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } 
 import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwnershipValues } from "./sensitive-scope";
 
 const emailMessageScopeColumns = { ownerUserId: emailMessages.ownerUserId, principalAccountId: emailMessages.principalAccountId };
-const emailDraftScopeColumns = { ownerUserId: emailDrafts.ownerUserId, principalAccountId: emailDrafts.principalAccountId };
+// emailDraftScopeColumns removed — draft storage moved to email-draft-storage.ts
 const emailSyncLogScopeColumns = { ownerUserId: emailSyncLog.ownerUserId, principalAccountId: emailSyncLog.principalAccountId };
 const emailSyncCursorScopeColumns = { ownerUserId: emailSyncCursors.ownerUserId, principalAccountId: emailSyncCursors.principalAccountId };
 const emailEnrichmentScopeColumns = { ownerUserId: emailEnrichments.ownerUserId, principalAccountId: emailEnrichments.principalAccountId };
@@ -148,12 +148,7 @@ export interface IStorage {
   getSyncHealth(): Promise<Array<{ accountId: string; lastSuccess: Date | null; lastError: string | null; totalSynced: number; totalReconciled: number; orphaned: boolean }>>;
   cleanupEmailAccountState(accountId: string): Promise<{ accountId: string; deleted: Record<string, number> }>;
 
-  listEmailDrafts(): Promise<EmailDraft[]>;
-  getEmailDraft(id: number): Promise<EmailDraft | undefined>;
-  getEmailDraftsBySourceIds(sourceEmailIds: number[]): Promise<EmailDraft[]>;
-  createEmailDraft(draft: InsertEmailDraft): Promise<EmailDraft>;
-  updateEmailDraft(id: number, updates: Partial<InsertEmailDraft>): Promise<EmailDraft | undefined>;
-  deleteEmailDraft(id: number): Promise<boolean>;
+  // Email draft storage moved to server/email-draft-storage.ts
 
   getUnenrichedTriagedEmails(limit?: number): Promise<EmailMessage[]>;
   getEmailPipelineCounts(): Promise<{ untriaged: number; awaitingEnrichment: number; reviewReady: number; ownerNullEmailMessages: number; systemAwaitingEnrichment: number; visibilityMismatch: boolean }>;
@@ -1075,39 +1070,8 @@ export class HybridStorage implements IStorage {
       .limit(5000);
   }
 
-  async listEmailDrafts(): Promise<EmailDraft[]> {
-    return db.select().from(emailDrafts).where(combineWithSensitiveVisible(emailDraftScopeColumns)).orderBy(desc(emailDrafts.updatedAt));
-  }
-
-  async getEmailDraft(id: number): Promise<EmailDraft | undefined> {
-    const [draft] = await db.select().from(emailDrafts).where(combineWithSensitiveVisible(emailDraftScopeColumns, eq(emailDrafts.id, id)));
-    return draft;
-  }
-
-  async getEmailDraftsBySourceIds(sourceEmailIds: number[]): Promise<EmailDraft[]> {
-    if (sourceEmailIds.length === 0) return [];
-    return db.select().from(emailDrafts)
-      .where(combineWithSensitiveVisible(emailDraftScopeColumns, inArray(emailDrafts.sourceEmailId, sourceEmailIds)))
-      .orderBy(desc(emailDrafts.createdAt));
-  }
-
-  async createEmailDraft(draft: InsertEmailDraft): Promise<EmailDraft> {
-    const [created] = await db.insert(emailDrafts).values({ ...draft, ...sensitiveOwnershipValues() }).returning();
-    return created;
-  }
-
-  async updateEmailDraft(id: number, updates: Partial<InsertEmailDraft>): Promise<EmailDraft | undefined> {
-    const [updated] = await db.update(emailDrafts)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(combineWithSensitiveWritable(emailDraftScopeColumns, eq(emailDrafts.id, id)))
-      .returning();
-    return updated;
-  }
-
-  async deleteEmailDraft(id: number): Promise<boolean> {
-    const result = await db.delete(emailDrafts).where(combineWithSensitiveWritable(emailDraftScopeColumns, eq(emailDrafts.id, id))).returning();
-    return result.length > 0;
-  }
+  // Email draft storage moved to server/email-draft-storage.ts
+  // with new schema (uuid IDs, scoped-storage, human-only send gate).
 
   async getUnenrichedTriagedEmails(limit = 50): Promise<EmailMessage[]> {
     // Returns triaged messages that either:
