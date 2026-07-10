@@ -11,7 +11,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -84,13 +83,9 @@ import {
   Download,
   ArrowLeft,
   Monitor,
-  ClipboardCheck,
   ListTodo,
   Package,
-  FileOutput,
-  BookOpen,
   CalendarDays,
-  Calculator,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { useToast } from "@/hooks/use-toast";
@@ -99,7 +94,6 @@ import { cn } from "@/lib/utils";
 import { useTimezone, formatDate as tzFormatDate, formatDateTime, formatDateOnly } from "@/hooks/use-timezone";
 import { localDayDiff } from "@/lib/local-date";
 import type { Task, Project, PriorityLevel, TaskStatus, ProjectStatus, ImpactEffort, Milestone, MilestoneStatus, ProjectNote, ProjectFile } from "@shared/models/work";
-import { getDeadlineProximity } from "@shared/models/work";
 import type { GoalIndexEntry } from "@shared/schema";
 import {
   Collapsible,
@@ -107,6 +101,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { STATUS_CONFIG, PROJECT_STATUS_CONFIG, groupTasksByStatus } from "@/lib/task-utils";
+import { TaskWidget } from "@/components/task-widget";
 
 const log = createLogger("WorkPage");
 
@@ -616,407 +611,20 @@ function ConfirmDeleteProjectDialog({
   );
 }
 
-function EditableTextField({
-  value,
-  onSave,
-  placeholder,
-  multiline,
-  testId,
-}: {
-  value: string;
-  onSave: (val: string) => void;
-  placeholder: string;
-  multiline?: boolean;
-  testId: string;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => { setDraft(value); }, [value]);
-  useEffect(() => {
-    if (editing) {
-      if (multiline) {
-        textareaRef.current?.focus();
-      } else {
-        inputRef.current?.focus();
-      }
-    }
-  }, [editing, multiline]);
-
-  const save = () => {
-    const trimmed = draft.trim();
-    if (trimmed !== value) onSave(trimmed);
-    setEditing(false);
-  };
-
-  if (editing) {
-    if (multiline) {
-      return (
-        <Textarea
-          ref={textareaRef}
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          onBlur={save}
-          onKeyDown={e => { if (e.key === "Escape") { setDraft(value); setEditing(false); } }}
-          className="text-sm min-h-[60px]"
-          data-testid={testId}
-        />
-      );
-    }
-    return (
-      <Input
-        ref={inputRef}
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        onBlur={save}
-        onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") { setDraft(value); setEditing(false); } }}
-        className="text-sm"
-        data-testid={testId}
-      />
-    );
-  }
-
-  return (
-    <div
-      className={cn(
-        "cursor-pointer rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors min-h-[32px]",
-        !value && "text-muted-foreground/50"
-      )}
-      onClick={() => setEditing(true)}
-      data-testid={testId}
-    >
-      <span className="text-sm whitespace-pre-wrap">{value || placeholder}</span>
-    </div>
-  );
-}
-
-/** Commit-on-blur input for date values */
-function DeadlineInput({ value, onSave }: { value: string; onSave: (val: string | null) => void }) {
-  const [localValue, setLocalValue] = useState(value);
-  useEffect(() => { setLocalValue(value); }, [value]);
-  const dlProx = getDeadlineProximity(localValue || null);
-  const dlColor = dlProx?.urgency === 'overdue' ? 'text-error' :
-    dlProx?.urgency === 'urgent' ? 'text-warning' :
-    dlProx?.urgency === 'soon' ? 'text-warning' : '';
-  return (
-    <div className="flex items-center gap-1.5 flex-1 justify-end">
-      <Input
-        type="date"
-        value={localValue}
-        onChange={(e) => setLocalValue(e.target.value)}
-        onBlur={() => {
-          const committed = localValue === "" ? null : localValue;
-          if (committed !== (value || null)) onSave(committed);
-        }}
-        className={cn("h-8 text-xs w-auto", dlColor)}
-        data-testid="input-detail-deadline"
-      />
-      {dlProx && (
-        <span className={cn("text-xs whitespace-nowrap", dlColor)} data-testid="text-detail-deadline-proximity">
-          {dlProx.label}
-        </span>
-      )}
-    </div>
-  );
-}
-
-/** Commit-on-blur input for numeric values */
-function NumericInput({ value, onSave, step, suffix, placeholder, testId }: {
-  value: number | null;
-  onSave: (val: number | null) => void;
-  step?: string;
-  suffix?: string;
-  placeholder?: string;
-  testId: string;
-}) {
-  const [localValue, setLocalValue] = useState(value != null ? String(value) : "");
-  useEffect(() => { setLocalValue(value != null ? String(value) : ""); }, [value]);
-  return (
-    <div className="flex items-center gap-1 flex-1 justify-end">
-      <Input
-        type="number"
-        step={step}
-        min="0"
-        value={localValue}
-        onChange={(e) => setLocalValue(e.target.value)}
-        onBlur={() => {
-          const committed = localValue === "" ? null : parseFloat(localValue);
-          if (committed !== value) onSave(committed);
-        }}
-        placeholder={placeholder ?? "—"}
-        className="h-8 text-xs w-20"
-        data-testid={testId}
-      />
-      {suffix && <span className="text-xs text-muted-foreground">{suffix}</span>}
-    </div>
-  );
-}
-
-/** Standard row for a metadata field: label left, control right */
-function DetailRow({ icon: Icon, label, children, testId }: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  children: React.ReactNode;
-  testId?: string;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 py-2.5 px-1 min-h-[44px]" data-testid={testId}>
-      <div className="flex items-center gap-2 shrink-0">
-        <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      </div>
-      {children}
-    </div>
-  );
-}
-
 export function TaskDetails({ taskId, onBack }: { taskId: number; onBack: () => void }) {
-  const { toast } = useToast();
-
-  const { data: task, isLoading } = useQuery<Task>({
-    queryKey: ["/api/projects/tasks", taskId],
-    queryFn: async () => {
-      const res = await fetch(`/api/projects/tasks/${taskId}`);
-      if (!res.ok) throw new Error("Failed to load task");
-      return res.json();
-    },
-  });
-
-  const { data: projects } = useQuery<Project[]>({
-    queryKey: ["/api/projects/projects"],
-  });
-
-  const projectMap = useMemo(() => {
-    const map = new Map<number, Project>();
-    projects?.forEach(p => map.set(p.id, p));
-    return map;
-  }, [projects]);
-
-  const updateMutation = useMutation({
-    mutationFn: (data: Partial<Task>) => apiRequest("PATCH", `/api/projects/tasks/${taskId}`, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/projects/tasks", taskId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/projects/tasks"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/projects/todo"] });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to update task", description: err.message, variant: "destructive" });
-    },
-  });
-
-  if (isLoading || !task) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  const project = task.projectId ? projectMap.get(task.projectId) : undefined;
-  const milestone = project?.milestones?.find(m => m.id === task.milestoneId);
-
-  const sectionTitleClass = "flex items-center gap-2 px-1 text-xs font-bold text-muted-foreground uppercase tracking-wider";
-
-  const fieldSections = [
-    { icon: Package, label: "Deliverable", field: "deliverable" as const, value: task.deliverable, placeholder: "What should this task produce?" },
-    { icon: ClipboardCheck, label: "Acceptance Criteria", field: "acceptanceCriteria" as const, value: task.acceptanceCriteria, placeholder: "How do we know it's done correctly?" },
-    { icon: BookOpen, label: "Context", field: "context" as const, value: task.context, placeholder: "Background info, links, or references..." },
-    { icon: FileOutput, label: "Output", field: "output" as const, value: task.output, placeholder: "Result or output once completed..." },
-  ];
-
   return (
-    <div className="min-h-full bg-background px-3 py-4 space-y-5 w-full" data-testid="task-details">
-      {/* Header */}
-      <header className="space-y-3">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onBack}
-          className="gap-1 px-2"
-          data-testid="button-back-to-tasks"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </Button>
-        <div className="space-y-1.5 px-1">
-          <EditableTextField
-            value={task.title}
-            onSave={(val) => updateMutation.mutate({ title: val })}
-            placeholder="Task title"
-            testId="input-task-detail-title"
-          />
-          <EditableTextField
-            value={task.description}
-            onSave={(val) => updateMutation.mutate({ description: val })}
-            placeholder="Add a description..."
-            multiline
-            testId="input-task-detail-description"
-          />
-        </div>
-      </header>
-
-      {/* Metadata — single column stacked rows */}
-      <section data-testid="section-task-operational">
-        <div className={cn(sectionTitleClass, "mb-1")}>Properties</div>
-        <div className="divide-y divide-border/20">
-          <DetailRow icon={Flag} label="Status" testId="row-status">
-            <Select value={task.status} onValueChange={(v) => updateMutation.mutate({ status: v as any })}>
-              <SelectTrigger className="h-8 text-xs w-auto min-w-[100px]" data-testid="select-detail-status">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="on_hold">On Hold</SelectItem>
-                <SelectItem value="ready">Ready</SelectItem>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="done">Done</SelectItem>
-              </SelectContent>
-            </Select>
-          </DetailRow>
-
-          <DetailRow icon={Gauge} label="Priority" testId="row-priority">
-            <Select value={task.priority} onValueChange={(v) => updateMutation.mutate({ priority: v as any })}>
-              <SelectTrigger className="h-8 text-xs w-auto min-w-[100px]" data-testid="select-detail-priority">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="high">High</SelectItem>
-                <SelectItem value="mid">Mid</SelectItem>
-                <SelectItem value="low">Low</SelectItem>
-              </SelectContent>
-            </Select>
-          </DetailRow>
-
-          <DetailRow icon={User} label="Owner" testId="row-owner">
-            <Select value={task.owner} onValueChange={(v) => updateMutation.mutate({ owner: v as any })}>
-              <SelectTrigger className="h-8 text-xs w-auto min-w-[100px]" data-testid="select-detail-owner">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="me">Me</SelectItem>
-                <SelectItem value="agent">{getInstanceName()}</SelectItem>
-              </SelectContent>
-            </Select>
-          </DetailRow>
-
-          <DetailRow icon={Target} label="Impact" testId="row-impact">
-            <Select value={task.impact} onValueChange={(v) => updateMutation.mutate({ impact: v as any })}>
-              <SelectTrigger className="h-8 text-xs w-auto min-w-[100px]" data-testid="select-detail-impact">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="high">High</SelectItem>
-                <SelectItem value="mid">Mid</SelectItem>
-                <SelectItem value="low">Low</SelectItem>
-              </SelectContent>
-            </Select>
-          </DetailRow>
-
-          <DetailRow icon={Gauge} label="Effort" testId="row-effort">
-            <Select
-              value={task.effort}
-              onValueChange={(v) => updateMutation.mutate({ effort: v as any })}
-            >
-              <SelectTrigger className="h-8 text-xs w-auto min-w-[100px]" data-testid="select-detail-effort">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="high">High</SelectItem>
-                <SelectItem value="mid">Mid</SelectItem>
-                <SelectItem value="low">Low</SelectItem>
-              </SelectContent>
-            </Select>
-          </DetailRow>
-
-          <DetailRow icon={CalendarDays} label="Deadline" testId="row-deadline">
-            <DeadlineInput
-              value={task.deadline ?? ""}
-              onSave={(val) => updateMutation.mutate({ deadline: val } as Partial<Task>)}
-            />
-          </DetailRow>
-
-          <DetailRow icon={FolderKanban} label="Project" testId="row-project">
-            <Select
-              value={task.projectId ? String(task.projectId) : "none"}
-              onValueChange={(v) => updateMutation.mutate({ projectId: v === "none" ? null : parseInt(v, 10) })}
-            >
-              <SelectTrigger className="h-8 text-xs w-auto min-w-[100px] max-w-[180px]" data-testid="select-detail-project">
-                <SelectValue placeholder="None" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">None</SelectItem>
-                {projects?.filter(p => p.status !== "completed").map(p => (
-                  <SelectItem key={p.id} value={String(p.id)}>{p.title}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </DetailRow>
-
-          {project && project.milestones && project.milestones.length > 0 && (
-            <DetailRow icon={Target} label="Milestone" testId="row-milestone">
-              <Select
-                value={task.milestoneId ? String(task.milestoneId) : "none"}
-                onValueChange={(v) => updateMutation.mutate({ milestoneId: v === "none" ? null : parseInt(v, 10) } as Partial<Task>)}
-              >
-                <SelectTrigger className="h-8 text-xs w-auto min-w-[100px] max-w-[180px]" data-testid="select-detail-milestone">
-                  <SelectValue placeholder="None" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  {project.milestones.map(m => (
-                    <SelectItem key={m.id} value={String(m.id)}>{m.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </DetailRow>
-          )}
-
-          <DetailRow icon={Tag} label="Tags" testId="row-tags">
-            <TagPicker
-              selectedTags={task.tags}
-              onChange={(tags) => updateMutation.mutate({ tags })}
-              testId="tags-detail"
-            />
-          </DetailRow>
-        </div>
-      </section>
-
-      {task.owner === "agent" && (
-        <section data-testid="section-task-agent-estimates">
-          <div className={cn(sectionTitleClass, "mb-1")}>Agent</div>
-          <div className="divide-y divide-border/20">
-            <DetailRow icon={Calculator} label="Token Est." testId="row-token-estimate">
-              <NumericInput
-                value={task.tokenEstimate}
-                onSave={(val) => updateMutation.mutate({ tokenEstimate: val != null ? Math.round(val) : null } as Partial<Task>)}
-                suffix="tok"
-                testId="input-detail-token-estimate"
-              />
-            </DetailRow>
-          </div>
-        </section>
-      )}
-
-      {/* Detail text fields */}
-      <section className="space-y-3" data-testid="section-task-details">
-        <div className={sectionTitleClass}>Details</div>
-        {fieldSections.map(({ icon: Icon, label, field, value, placeholder }) => (
-          <div key={field} className="space-y-1.5 px-1">
-            <div className="flex items-center gap-2">
-              <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="text-xs font-medium text-muted-foreground">{label}</span>
-            </div>
-            <EditableTextField
-              value={value}
-              onSave={(val) => updateMutation.mutate({ [field]: val })}
-              placeholder={placeholder}
-              multiline
-              testId={`input-detail-${field}`}
-            />
-          </div>
-        ))}
-      </section>
+    <div className="min-h-full bg-background px-3 py-4 space-y-3 w-full" data-testid="task-details">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onBack}
+        className="gap-1 px-2"
+        data-testid="button-back-to-tasks"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Back
+      </Button>
+      <TaskWidget taskId={taskId} defaultExpanded onDelete={onBack} />
     </div>
   );
 }
