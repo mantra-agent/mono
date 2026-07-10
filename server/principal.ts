@@ -33,6 +33,8 @@ export interface Principal {
   visibleVaultIds: string[];
   /** The single vault new data lands in. Null for system/service principals. */
   activeVaultId: string | null;
+  /** Named system job for vault allowlist enforcement. Only set on system principals. */
+  jobName?: string;
 }
 
 interface ServiceSessionPrincipal {
@@ -93,6 +95,22 @@ export function createSystemPrincipal(scopes: string[] = ["system:read", "system
     source: "system",
     visibleVaultIds: [],
     activeVaultId: null,
+  };
+}
+
+/**
+ * Create a named system principal for vault allowlist enforcement.
+ * Named system principals that touch vault-scoped data are checked against
+ * the allowlist in server/vault-allowlist.ts. Use this instead of
+ * createSystemPrincipal() when the job name should be tracked for audit.
+ */
+export function createNamedSystemPrincipal(
+  jobName: string,
+  scopes: string[] = ["system:read", "system:write"],
+): Principal {
+  return {
+    ...createSystemPrincipal(scopes),
+    jobName,
   };
 }
 

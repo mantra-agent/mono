@@ -15,7 +15,7 @@ import { chatFileStorage } from "../chat-file-storage";
 import { pool } from "../db";
 import { getSetting, setSetting } from "../system-settings";
 import { runWithPrincipal } from "../principal-context";
-import { createSystemPrincipal } from "../principal";
+import { createNamedSystemPrincipal } from "../principal";
 
 const INFERENCE_DEBUG_KEY = "system.inference_debug";
 
@@ -997,7 +997,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
       // do not hide the configured subscription from this admin model setup page.
       try {
         const { getAccount } = await import("../connected-accounts");
-        const openaiSubAccount = await runWithPrincipal(createSystemPrincipal(), () =>
+        const openaiSubAccount = await runWithPrincipal(createNamedSystemPrincipal("openai-subscription-check"), () =>
           getAccount("openai-subscription-primary")
         );
         if (openaiSubAccount) {

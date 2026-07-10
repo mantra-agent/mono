@@ -15,10 +15,12 @@ const log = createLogger("Finance");
 const amortizationScopeColumns = {
   ownerUserId: transactionAmortizations.ownerUserId,
   principalAccountId: transactionAmortizations.principalAccountId,
+  vaultId: transactionAmortizations.vaultId,
 };
 const transactionScopeColumns = {
   ownerUserId: plaidTransactions.ownerUserId,
   principalAccountId: plaidTransactions.principalAccountId,
+  vaultId: plaidTransactions.vaultId,
 };
 
 export interface AmortizationWithTxn {

@@ -11,6 +11,7 @@ const peopleSurfaceScopeColumns = {
   ownerUserId: simplePeopleSurfaceState.ownerUserId,
   accountId: simplePeopleSurfaceState.accountId,
   scope: simplePeopleSurfaceState.scope,
+  vaultId: simplePeopleSurfaceState.vaultId,
 };
 
 let ensurePromise: Promise<void> | null = null;

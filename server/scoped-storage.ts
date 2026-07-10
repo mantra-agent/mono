@@ -1,6 +1,7 @@
 import { and, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import type { AnyColumn } from "drizzle-orm";
 import type { Principal } from "./principal";
+import { assertSystemVaultAccess } from "./vault-allowlist";
 
 export interface ScopeColumns {
   userId?: AnyColumn;
@@ -69,7 +70,10 @@ export function visibleScopePredicate(
   principal: Principal,
   columns: ScopeColumns,
 ): SQL {
-  if (principal.actorType === "system") return sql`TRUE`;
+  if (principal.actorType === "system") {
+    if (columns.vaultId) assertSystemVaultAccess(principal, "visibleScopePredicate");
+    return sql`TRUE`;
+  }
   const scoped = definedPredicates([
     hasUser(principal) && columns.userId
       ? eq(columns.userId, principal.userId)
@@ -101,7 +105,10 @@ export function writableScopePredicate(
   principal: Principal,
   columns: ScopeColumns,
 ): SQL {
-  if (principal.actorType === "system") return sql`TRUE`;
+  if (principal.actorType === "system") {
+    if (columns.vaultId) assertSystemVaultAccess(principal, "writableScopePredicate");
+    return sql`TRUE`;
+  }
   const scoped = definedPredicates([
     hasUser(principal) && columns.userId
       ? eq(columns.userId, principal.userId)
@@ -165,7 +172,12 @@ export function rowVisibleToPrincipal(
   principal: Principal,
   row: Record<string, unknown>,
 ): boolean {
-  if (principal.actorType === "system") return true;
+  if (principal.actorType === "system") {
+    // Row-level visibility — vault allowlist check when row has vault_id
+    const rowVault = row.vaultId ?? row.vault_id;
+    if (rowVault) assertSystemVaultAccess(principal, "rowVisibleToPrincipal");
+    return true;
+  }
   if (rowIsTemplate(row)) return true;
   const ownerMatch =
     (principal.userId &&
@@ -190,7 +202,11 @@ export function rowWritableByPrincipal(
   principal: Principal,
   row: Record<string, unknown>,
 ): boolean {
-  if (principal.actorType === "system") return true;
+  if (principal.actorType === "system") {
+    const rowVault = row.vaultId ?? row.vault_id;
+    if (rowVault) assertSystemVaultAccess(principal, "rowWritableByPrincipal");
+    return true;
+  }
   const ownerMatch =
     (principal.userId &&
       (row.userId === principal.userId ||

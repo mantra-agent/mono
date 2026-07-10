@@ -11,7 +11,7 @@ import { getSecretSync } from "../secrets-store";
 import { requireAuth, requireAdmin } from "../auth";
 import { requirePermission } from "../permissions";
 import { runWithPrincipal } from "../principal-context";
-import { createSystemPrincipal } from "../principal";
+import { createNamedSystemPrincipal } from "../principal";
 import { getSetting, setSetting } from "../system-settings";
 
 const log = createLogger("IntegrationsRoutes");
@@ -798,7 +798,7 @@ export async function registerIntegrationsRoutes(app: Express) {
       // Use system principal: this is a system-wide integration check, not per-user.
       // The global auth middleware may have set a user principal whose ownership
       // predicates hide legacy rows with NULL owner_user_id.
-      const result = await runWithPrincipal(createSystemPrincipal(), async () => {
+      const result = await runWithPrincipal(createNamedSystemPrincipal("openai-subscription-check"), async () => {
         const { getAccount, getAccountTokens } = await import("../connected-accounts");
         const account = await getAccount(OPENAI_SUBSCRIPTION_ACCOUNT_ID);
         if (!account) {
@@ -921,7 +921,7 @@ export async function registerIntegrationsRoutes(app: Express) {
       };
 
       const { createAccount } = await import("../connected-accounts");
-      await runWithPrincipal(createSystemPrincipal(), () => createAccount({
+      await runWithPrincipal(createNamedSystemPrincipal("openai-subscription-check"), () => createAccount({
         accountId: OPENAI_SUBSCRIPTION_ACCOUNT_ID,
         provider: "openai-subscription",
         email,
@@ -1029,7 +1029,7 @@ export async function registerIntegrationsRoutes(app: Express) {
       };
 
       const { createAccount } = await import("../connected-accounts");
-      await runWithPrincipal(createSystemPrincipal(), () => createAccount({
+      await runWithPrincipal(createNamedSystemPrincipal("openai-subscription-check"), () => createAccount({
         accountId: OPENAI_SUBSCRIPTION_ACCOUNT_ID,
         provider: "openai-subscription",
         email,
@@ -1046,7 +1046,7 @@ export async function registerIntegrationsRoutes(app: Express) {
   app.post("/api/openai-subscription/disconnect", requireAuth, requirePermission("system:write"), async (_req, res) => {
     try {
       const { deleteAccount } = await import("../connected-accounts");
-      await runWithPrincipal(createSystemPrincipal(), () => deleteAccount(OPENAI_SUBSCRIPTION_ACCOUNT_ID));
+      await runWithPrincipal(createNamedSystemPrincipal("openai-subscription-check"), () => deleteAccount(OPENAI_SUBSCRIPTION_ACCOUNT_ID));
       res.json({ disconnected: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

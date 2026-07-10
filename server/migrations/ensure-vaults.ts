@@ -48,8 +48,9 @@ export async function ensureVaults(): Promise<void> {
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS visible_vault_ids TEXT[] DEFAULT '{}'::text[]`,
     );
 
-    // ── 3. vault_id on Phase-1 owned tables ────────────────────────
+    // ── 3. vault_id on owned tables (Phase 1 + Phase 2) ──────────
     const vaultIdTables = [
+      // Phase 1
       "sessions",
       "messages",
       "workspace_documents",
@@ -62,12 +63,48 @@ export async function ensureVaults(): Promise<void> {
       "theses",
       "signal_sources",
       "signal_items",
+      // Phase 2: Calendar
+      "calendar_event_metadata",
+      "calendar_event_tasks",
+      "calendar_event_people",
+      "calendar_event_artifacts",
+      // Phase 2: People
+      "persons",
+      "simple_people_surface_state",
+      // Phase 2: Finance (user data, NOT plaid_accounts/plaid_sync_cursors plumbing)
+      "plaid_transactions",
+      "plaid_holdings",
+      "plaid_liabilities",
+      "manual_assets",
+      "manual_liabilities",
+      "financial_goals",
+      "recurring_expenses",
+      "expense_categories",
+      "merchant_category_overrides",
+      "budget_entries",
+      "budget_income_override",
+      "budget_monthly_overrides",
+      "income_sources",
+      "income_deductions",
+      "income_deposits",
+      "debt_payments",
+      "financed_assets",
+      "manual_401k_accounts",
+      "future_cash_events",
+      "transaction_amortizations",
     ];
 
     for (const table of vaultIdTables) {
-      await pool.query(
-        `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS vault_id TEXT`,
-      );
+      // Some tables may not exist yet (e.g. financed_assets created later by finance-scope).
+      // Use DO block to skip gracefully.
+      await pool.query(`
+        DO $vault_col$
+        BEGIN
+          IF to_regclass('public.${table}') IS NOT NULL THEN
+            ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS vault_id TEXT;
+          END IF;
+        END $vault_col$;
+      `);
     }
 
     // Add indexes (idempotent)
@@ -76,11 +113,19 @@ export async function ensureVaults(): Promise<void> {
       { table: "workspace_documents", idx: "idx_ws_doc_vault" },
       { table: "memory_entries", idx: "idx_memory_vault" },
       { table: "library_pages", idx: "idx_library_pages_vault" },
+      // Phase 2 indexes
+      { table: "calendar_event_metadata", idx: "idx_cal_meta_vault" },
+      { table: "persons", idx: "idx_persons_vault" },
     ];
     for (const { table, idx } of indexedTables) {
-      await pool.query(
-        `CREATE INDEX IF NOT EXISTS ${idx} ON ${table}(vault_id)`,
-      );
+      await pool.query(`
+        DO $vault_idx$
+        BEGIN
+          IF to_regclass('public.${table}') IS NOT NULL THEN
+            CREATE INDEX IF NOT EXISTS ${idx} ON "${table}"(vault_id);
+          END IF;
+        END $vault_idx$;
+      `);
     }
 
     // ── 4. Create "Personal" vault per account ─────────────────────
@@ -101,8 +146,10 @@ export async function ensureVaults(): Promise<void> {
 
     // ── 5. Backfill vault_id on all owned rows ─────────────────────
     // For each table, set vault_id to the account's default vault
-    // where vault_id is currently NULL and account_id is populated.
+    // where vault_id is currently NULL and accountCol is populated.
+    // Phase 1 tables use account_id. Finance tables use principal_account_id.
     const backfillTables = [
+      // Phase 1
       { table: "sessions", accountCol: "account_id" },
       { table: "messages", accountCol: "account_id" },
       { table: "workspace_documents", accountCol: "account_id" },
@@ -115,11 +162,46 @@ export async function ensureVaults(): Promise<void> {
       { table: "theses", accountCol: "account_id" },
       { table: "signal_sources", accountCol: "account_id" },
       { table: "signal_items", accountCol: "account_id" },
+      // Phase 2: Calendar (use account_id)
+      { table: "calendar_event_metadata", accountCol: "account_id" },
+      { table: "calendar_event_tasks", accountCol: "principal_account_id" },
+      { table: "calendar_event_people", accountCol: "principal_account_id" },
+      { table: "calendar_event_artifacts", accountCol: "principal_account_id" },
+      // Phase 2: People (use account_id)
+      { table: "persons", accountCol: "account_id" },
+      { table: "simple_people_surface_state", accountCol: "account_id" },
+      // Phase 2: Finance (use principal_account_id — maps to accounts.id)
+      { table: "plaid_transactions", accountCol: "principal_account_id" },
+      { table: "plaid_holdings", accountCol: "principal_account_id" },
+      { table: "plaid_liabilities", accountCol: "principal_account_id" },
+      { table: "manual_assets", accountCol: "principal_account_id" },
+      { table: "manual_liabilities", accountCol: "principal_account_id" },
+      { table: "financial_goals", accountCol: "principal_account_id" },
+      { table: "recurring_expenses", accountCol: "principal_account_id" },
+      { table: "expense_categories", accountCol: "principal_account_id" },
+      { table: "merchant_category_overrides", accountCol: "principal_account_id" },
+      { table: "budget_entries", accountCol: "principal_account_id" },
+      { table: "budget_income_override", accountCol: "principal_account_id" },
+      { table: "budget_monthly_overrides", accountCol: "principal_account_id" },
+      { table: "income_sources", accountCol: "principal_account_id" },
+      { table: "income_deductions", accountCol: "principal_account_id" },
+      { table: "income_deposits", accountCol: "principal_account_id" },
+      { table: "debt_payments", accountCol: "principal_account_id" },
+      { table: "financed_assets", accountCol: "principal_account_id" },
+      { table: "manual_401k_accounts", accountCol: "principal_account_id" },
+      { table: "future_cash_events", accountCol: "principal_account_id" },
+      { table: "transaction_amortizations", accountCol: "principal_account_id" },
     ];
 
     for (const { table, accountCol } of backfillTables) {
+      // Skip if table does not exist (e.g. financed_assets created later)
+      const { rows: tableExists } = await pool.query(
+        `SELECT to_regclass('public.${table}') AS t`,
+      );
+      if (!tableExists[0]?.t) continue;
+
       const { rowCount } = await pool.query(`
-        UPDATE ${table} t
+        UPDATE "${table}" t
         SET vault_id = v.id
         FROM vaults v
         WHERE v.account_id = t.${accountCol}

@@ -8,7 +8,7 @@ import { TTLCache } from "./utils/ttl-cache";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 
-const personScopeColumns = { scope: persons.scope, ownerUserId: persons.ownerUserId, accountId: persons.accountId };
+const personScopeColumns = { scope: persons.scope, ownerUserId: persons.ownerUserId, accountId: persons.accountId, vaultId: persons.vaultId };
 
 export interface ContactInfo {
   type: "email" | "phone" | "social" | "other";
