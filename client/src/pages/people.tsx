@@ -634,15 +634,10 @@ function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOver
           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
         </div>
       ) : people.length === 0 && !searchQuery ? (
-        <div className="text-center py-8 px-4">
-          <Users className="h-8 w-8 text-muted-foreground/50 mx-auto mb-2" />
-          <p className="text-xs text-muted-foreground" data-testid="text-no-people">No people yet</p>
-        </div>
+        <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-no-people">No people yet.</div>
       ) : people.length === 0 && searchQuery ? (
-        <div className="text-center py-8 px-4">
-          <p className="text-xs text-muted-foreground" data-testid="text-no-search-results">
-            No results for "{searchQuery}"
-          </p>
+        <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-no-search-results">
+          No matching people.
         </div>
       ) : (
         <div className="space-y-1">

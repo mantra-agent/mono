@@ -545,11 +545,7 @@ export default function PlatformsPage() {
               <Skeleton className="ml-12 h-8 rounded-md" />
             </div>
           ) : platforms.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <Boxes className="mb-3 h-6 w-6 text-muted-foreground" />
-              <p className="text-sm font-medium text-foreground">No platforms yet</p>
-              <p className="mt-1 text-sm text-muted-foreground">Create the first platform, then add products underneath it.</p>
-            </div>
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">No platforms yet.</div>
           ) : platforms.map(platform => {
             const platformOpen = !closedPlatforms.has(platform.id);
             const platformRenaming = renameTarget?.type === "platform" && renameTarget.id === platform.id;

@@ -19,7 +19,6 @@ import {
   Download,
   Pause,
   Play,
-  ScrollText,
   AlertCircle,
   WrapText,
   Loader2,
@@ -515,16 +514,10 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
         data-testid="logs-scroll-container"
       >
         {filteredLogs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <ScrollText className="h-6 w-6 text-muted-foreground mb-3" />
-            <p className="text-sm text-muted-foreground">
-              {filter || levelFilter !== "all" || sourceFilter !== "all"
-                ? "No logs match your filters"
-                : "No log entries yet"}
-            </p>
-            <p className="text-xs text-muted-foreground/60 mt-1">
-              Application logs stream here in real-time
-            </p>
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">
+            {filter || levelFilter !== "all" || sourceFilter !== "all"
+              ? "No matching logs."
+              : "No log entries yet."}
           </div>
         ) : (
           <div className={wrap ? "" : "min-w-max"}>

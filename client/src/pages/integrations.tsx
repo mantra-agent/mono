@@ -639,11 +639,8 @@ function PronunciationSection() {
             <Skeleton className="h-10 w-full" />
           </div>
         ) : entries.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 py-4 text-center">
-            <Volume2 className="h-5 w-5 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground" data-testid="text-pronunciation-empty">
-              No pronunciation entries yet. Add one below to teach Agent how to say a word.
-            </p>
+          <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-pronunciation-empty">
+            No pronunciation entries yet.
           </div>
         ) : (
           <div className="space-y-1" data-testid="pronunciation-entries-list">

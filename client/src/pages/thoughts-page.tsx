@@ -591,12 +591,7 @@ export default function ObservationsPage({ embedded }: { embedded?: boolean } = 
     return (
       <div className="flex-1 overflow-y-auto p-4 space-y-3" data-testid="thoughts-empty">
         {actionBar}
-        <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-          <Radio className="h-10 w-10 text-muted-foreground/30 mb-4" />
-          <p className="text-sm text-muted-foreground">
-            No observations yet. Observations are recorded when Agent uses the observe tool.
-          </p>
-        </div>
+        <div className="px-2 py-1.5 text-sm text-muted-foreground">No observations yet.</div>
       </div>
     );
   }

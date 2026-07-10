@@ -73,7 +73,7 @@ export function FilesTab() {
               {scratchLoading ? (
                 <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
               ) : !scratchFiles || scratchFiles.length === 0 ? (
-                <div className="text-sm text-muted-foreground text-center py-8">No scratch files found</div>
+                <div className="px-2 py-1.5 text-sm text-muted-foreground">No scratch files yet.</div>
               ) : (
                 <div className="space-y-0.5">
                   {scratchFiles.map(f => (
@@ -139,7 +139,7 @@ export function FilesTab() {
                 <p className="text-xs mt-1 font-mono">{bucketData.error}</p>
               </div>
             ) : !bucketData?.files || bucketData.files.length === 0 ? (
-              <div className="text-sm text-muted-foreground text-center py-8">No files in object storage</div>
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">No object storage files yet.</div>
             ) : (
               <div className="space-y-0.5">
                 {bucketData.files.map(f => (

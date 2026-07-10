@@ -1090,15 +1090,7 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
       </h2>
 
       {timers.length === 0 && !isLoading && (
-        <Card>
-          <CardContent className="p-8 text-center">
-            <Bot className="h-6 w-6 mx-auto text-muted-foreground/50 mb-3" />
-            <p className="text-sm text-muted-foreground mb-3">No timers yet. Create one to have Agent perform actions on a schedule.</p>
-            <Button size="sm" onClick={() => { setEditingTimer(null); setDialogOpen(true); }} data-testid="button-create-empty">
-              <Plus className="h-3.5 w-3.5 mr-1.5" /> Create First Timer
-            </Button>
-          </CardContent>
-        </Card>
+        <div className="px-2 py-1.5 text-sm text-muted-foreground">No timers yet.</div>
       )}
 
       <div className="space-y-2">

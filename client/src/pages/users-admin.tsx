@@ -74,8 +74,8 @@ export default function UsersAdminPage() {
         </div>
 
         {rows.length === 0 ? (
-          <div className="rounded-lg border border-border bg-card py-12 text-center text-sm text-muted-foreground">
-            No users found.
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">
+            No users yet.
           </div>
         ) : (
           <div className="rounded-lg border border-border bg-card divide-y divide-border">
