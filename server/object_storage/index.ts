@@ -23,4 +23,17 @@ export {
   deleteObjectAclPolicy,
 } from "./objectAcl";
 
+export {
+  vaultObjectKey,
+  vaultObjectKeyFromPrincipal,
+  vaultObjectKeyAuto,
+  isVaultKey,
+  isLegacyKey,
+  legacyKeyToVaultKey,
+  vaultKeyToLegacyKey,
+  extractEntityPath,
+  resolveObjectKeyWithFallback,
+  VAULT_PREFIX,
+} from "./vault-keys";
+
 export { registerObjectStorageRoutes } from "./routes";

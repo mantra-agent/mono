@@ -5,7 +5,8 @@ import { extname } from "path";
 import { readFileSync, unlinkSync } from "fs";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission, setObjectAclPolicy } from "./objectAcl";
-import { storageBackend, PRIVATE_PREFIX } from "./s3-backend";
+import { storageBackend } from "./s3-backend";
+import { vaultObjectKeyFromPrincipal } from "./vault-keys";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
 import { getPrincipal } from "../principal";
@@ -33,7 +34,9 @@ export function registerObjectStorageRoutes(app: Express): void {
         const ext = extname(req.file.originalname);
         const objectId = randomUUID();
         const suffix = ext ? (ext.startsWith(".") ? ext : `.${ext}`) : "";
-        const key = `${PRIVATE_PREFIX}users/${principal.userId}/uploads/${objectId}${suffix}`;
+        const category = `users/${principal.userId}/uploads`;
+        const filename = `${objectId}${suffix}`;
+        const key = vaultObjectKeyFromPrincipal(principal, category, filename);
 
         const fileBuffer = readFileSync(tmpPath);
         await storageBackend.putObject(key, fileBuffer, {
@@ -47,8 +50,8 @@ export function registerObjectStorageRoutes(app: Express): void {
           createdByUserId: principal.userId,
           scope: "user",
           visibility: "private",
+          vaultId: principal.activeVaultId ?? undefined,
         });
-
 
         unlinkSync(tmpPath);
 
@@ -79,7 +82,7 @@ export function registerObjectStorageRoutes(app: Express): void {
       if (!principal?.userId || !principal.accountId) return res.status(403).json({ error: "User principal required" });
       const uploadURL = await objectStorageService.getObjectEntityUploadURL(
         ext || undefined,
-        { ownerUserId: principal.userId, accountId: principal.accountId, contentType: contentType || undefined, prefix: `users/${principal.userId}/uploads` },
+        { ownerUserId: principal.userId, accountId: principal.accountId, contentType: contentType || undefined, prefix: `users/${principal.userId}/uploads`, principal },
       );
       const objectPath = objectStorageService.normalizeObjectEntityPath(uploadURL);
       log.log(`[Upload] presign OK: name="${name}" objectPath=${objectPath}`);
@@ -100,10 +103,11 @@ export function registerObjectStorageRoutes(app: Express): void {
   app.use("/objects", requireAuth, async (req, res, next) => {
     if (req.method !== "GET") return next();
     try {
+      const principal = getPrincipal(req);
       const objectFile = await objectStorageService.getObjectEntityFile(
         req.originalUrl.split("?")[0],
+        principal,
       );
-      const principal = getPrincipal(req);
       const allowed = await objectStorageService.canAccessObjectEntity({
         principal,
         objectFile,

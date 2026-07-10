@@ -1,5 +1,6 @@
 import { Response } from "express";
 import type { Principal } from "../principal";
+import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { randomUUID } from "crypto";
 import { createLogger } from "../log";
 import {
@@ -16,6 +17,11 @@ import {
   PRIVATE_PREFIX,
   type ObjectMetadata,
 } from "./s3-backend";
+import {
+  vaultObjectKeyFromPrincipal,
+  isVaultKey,
+  VAULT_PREFIX,
+} from "./vault-keys";
 
 const log = createLogger("ObjectStorage");
 
@@ -61,12 +67,22 @@ export class StorageObjectRef {
 
 // Splits an object key like "private/abc-123" into its visibility prefix
 // segment ("private/") and the entity id portion ("abc-123").
+// For vault-prefixed keys like "vaults/{id}/uploads/abc.png", the entity portion
+// is the path after the vault id (e.g. "uploads/abc.png").
 function splitPrefix(key: string): { prefix: string; rest: string } | null {
   if (key.startsWith(PRIVATE_PREFIX)) {
     return { prefix: PRIVATE_PREFIX, rest: key.slice(PRIVATE_PREFIX.length) };
   }
   if (key.startsWith(PUBLIC_PREFIX)) {
     return { prefix: PUBLIC_PREFIX, rest: key.slice(PUBLIC_PREFIX.length) };
+  }
+  if (key.startsWith(VAULT_PREFIX)) {
+    // vaults/{vaultId}/{entity...} → entity portion is after the vault id
+    const afterVault = key.slice(VAULT_PREFIX.length);
+    const slashIdx = afterVault.indexOf("/");
+    if (slashIdx === -1) return null;
+    const rest = afterVault.slice(slashIdx + 1);
+    return { prefix: VAULT_PREFIX, rest };
   }
   return null;
 }
@@ -131,12 +147,17 @@ export class ObjectStorageService {
 
   async getObjectEntityUploadURL(
     extension?: string,
-    opts: { owner?: string; ownerUserId?: string; accountId?: string; contentType?: string; prefix?: string } = {},
+    opts: { owner?: string; ownerUserId?: string; accountId?: string; contentType?: string; prefix?: string; principal?: Principal | null } = {},
   ): Promise<string> {
     const objectId = randomUUID();
     const suffix = extension ? (extension.startsWith(".") ? extension : `.${extension}`) : "";
-    const prefix = opts.prefix?.replace(/^\/+|\/+$/g, "") || "uploads";
-    const key = `${PRIVATE_PREFIX}${prefix}/${objectId}${suffix}`;
+    const category = opts.prefix?.replace(/^\/+|\/+$/g, "") || "uploads";
+    const filename = `${objectId}${suffix}`;
+
+    // Resolve vault-prefixed key from principal
+    const principal = opts.principal ?? getCurrentPrincipalOrSystem();
+    const key = vaultObjectKeyFromPrincipal(principal, category, filename);
+
     if (opts.owner || opts.ownerUserId || opts.accountId) {
       await setObjectAclPolicy(key, {
         owner: opts.ownerUserId ?? opts.owner ?? "system",
@@ -144,13 +165,16 @@ export class ObjectStorageService {
         accountId: opts.accountId ?? null,
         scope: opts.ownerUserId ? "user" : "system",
         visibility: "private",
+        vaultId: principal.activeVaultId ?? undefined,
       });
     }
     return storageBackend.getSignedPutUrl(key, { ttlSec: 900, contentType: opts.contentType });
   }
 
   // Gets the object entity file from the object path.
-  async getObjectEntityFile(objectPath: string): Promise<StorageObjectRef> {
+  // Supports dual-read: tries vault-prefixed key first (if principal has activeVaultId),
+  // then falls back to legacy private/ key.
+  async getObjectEntityFile(objectPath: string, principal?: Principal | null): Promise<StorageObjectRef> {
     if (!objectPath.startsWith("/objects/")) {
       throw new ObjectNotFoundError();
     }
@@ -160,12 +184,26 @@ export class ObjectStorageService {
       throw new ObjectNotFoundError();
     }
 
-    const key = `${PRIVATE_PREFIX}${entityId}`;
-    const meta = await storageBackend.headObject(key);
-    if (!meta) {
+    // Resolve principal for vault-aware lookup
+    const resolvedPrincipal = principal ?? getCurrentPrincipalOrSystem();
+    const vaultId = resolvedPrincipal?.activeVaultId;
+
+    // Try vault-prefixed key first
+    if (vaultId) {
+      const vaultKey = `${VAULT_PREFIX}${vaultId}/${entityId}`;
+      const vaultMeta = await storageBackend.headObject(vaultKey);
+      if (vaultMeta) {
+        return new StorageObjectRef(vaultKey, vaultMeta);
+      }
+    }
+
+    // Fall back to legacy key
+    const legacyKey = `${PRIVATE_PREFIX}${entityId}`;
+    const legacyMeta = await storageBackend.headObject(legacyKey);
+    if (!legacyMeta) {
       throw new ObjectNotFoundError();
     }
-    return new StorageObjectRef(key, meta);
+    return new StorageObjectRef(legacyKey, legacyMeta);
   }
 
   // Rewrites an absolute storage URL (e.g. a presigned PUT URL the client
@@ -214,8 +252,8 @@ export class ObjectStorageService {
     if (!split) {
       return rawPath;
     }
-    if (split.prefix !== PRIVATE_PREFIX) {
-      // We only mint /objects/ paths for private entities.
+    if (split.prefix !== PRIVATE_PREFIX && split.prefix !== VAULT_PREFIX) {
+      // We only mint /objects/ paths for private/vault entities.
       return rawPath;
     }
     return `/objects/${split.rest}`;

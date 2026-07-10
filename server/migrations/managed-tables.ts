@@ -48,6 +48,8 @@ export const MANAGED_TABLES: string[] = [
   "indexed_content",
   "info_notes",
 
+  "object_acls",
+
   "library_annotations",
   "library_page_links",
   "library_page_views",

@@ -363,6 +363,7 @@ export type AppSecretRow = typeof appSecrets.$inferSelect;
 export const objectAcls = pgTable("object_acls", {
   objectKey: text("object_key").primaryKey(),
   policy: jsonb("policy").notNull(),
+  vaultId: text("vault_id"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 

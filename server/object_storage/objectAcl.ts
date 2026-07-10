@@ -34,6 +34,7 @@ export interface ObjectAclPolicy {
   ownerUserId?: string | null;
   accountId?: string | null;
   createdByUserId?: string | null;
+  vaultId?: string;
   aclRules?: Array<ObjectAclRule>;
 }
 
@@ -79,10 +80,19 @@ export async function setObjectAclPolicy(
   const now = new Date();
   await db
     .insert(objectAcls)
-    .values({ objectKey, policy: aclPolicy, updatedAt: now })
+    .values({
+      objectKey,
+      policy: aclPolicy,
+      vaultId: aclPolicy.vaultId ?? null,
+      updatedAt: now,
+    })
     .onConflictDoUpdate({
       target: objectAcls.objectKey,
-      set: { policy: aclPolicy, updatedAt: now },
+      set: {
+        policy: aclPolicy,
+        vaultId: aclPolicy.vaultId ?? null,
+        updatedAt: now,
+      },
     });
 }
 

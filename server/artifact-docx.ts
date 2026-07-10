@@ -2,8 +2,9 @@ import { randomUUID } from "crypto";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from "docx";
 import { coverLetterContentSchema, resumeContentSchema, type CoverLetterContent, type ResumeContent } from "@shared/schema";
 import { BRAND } from "./docx-brand";
-import { storageBackend, PRIVATE_PREFIX } from "./object_storage/s3-backend";
+import { storageBackend } from "./object_storage/s3-backend";
 import { setObjectAclPolicy } from "./object_storage/objectAcl";
+import { vaultObjectKeyAuto } from "./object_storage/vault-keys";
 import { createLogger } from "./log";
 
 const log = createLogger("ArtifactDocx");
@@ -57,7 +58,7 @@ export async function renderArtifactDocx(kind: "resume" | "cover_letter", conten
 
   const buffer = await Packer.toBuffer(doc);
   const objectId = randomUUID();
-  const key = `${PRIVATE_PREFIX}uploads/${objectId}.docx`;
+  const key = vaultObjectKeyAuto("uploads", `${objectId}.docx`);
 
   await storageBackend.putObject(key, buffer, {
     contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
