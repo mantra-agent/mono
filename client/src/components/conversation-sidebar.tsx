@@ -78,8 +78,10 @@ export function groupSessions(sessions: ChatSession[], opts?: { activeVoiceSessi
   const archive: ChatSession[] = [];
 
   for (const conv of sorted) {
-    // Streaming, actively running, or voice-connected sessions go to "Active"
-    if (conv.status === "streaming" || conv.hasActiveDescendant || (voiceId && conv.id === voiceId)) {
+    // Streaming, actively running, plan-executing, or voice-connected sessions go to "Active".
+    // hasActivePlan keeps a session in Active during the gap between plan steps,
+    // when no child session is streaming yet.
+    if (conv.status === "streaming" || conv.hasActiveDescendant || conv.hasActivePlan || (voiceId && conv.id === voiceId)) {
       active.push(conv);
       continue;
     }
@@ -245,7 +247,7 @@ export function ConversationItem({
     ? "text-error"
     : isLive
       ? "text-active font-medium animate-pulse"
-      : conv.hasActiveDescendant
+      : conv.hasActiveDescendant || conv.hasActivePlan
         ? "text-active font-medium animate-pulse"
         : hasUnreadResult
           ? "text-foreground font-medium"
@@ -262,7 +264,7 @@ export function ConversationItem({
   // - Live/active descendant + NOT hovering icon: spinner
   // - Hovering icon area OR pinned (when not live): pin icon (clickable)
   // - Default: Bot or User icon
-  const isSpinning = isLive || !!conv.hasActiveDescendant;
+  const isSpinning = isLive || !!conv.hasActiveDescendant || !!conv.hasActivePlan;
   const showPinIcon = (isPinned && !isSpinning) || iconHovered;
   const isIconInteractive = iconHovered || (isPinned && !isSpinning);
 
