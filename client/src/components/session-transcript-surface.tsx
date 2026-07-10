@@ -48,7 +48,6 @@ export interface SessionTranscriptSurfaceProps {
 }
 
 const TERMINAL_PLAN_STATUSES = new Set(["completed", "completed_with_failures", "failed", "aborted"]);
-const TERMINAL_WORKFLOW_STATUSES = new Set(["completed", "failed", "canceled"]);
 
 export function SessionTranscriptSurface({
   activeSession,
@@ -83,7 +82,7 @@ export function SessionTranscriptSurface({
   compactReferences = false,
 }: SessionTranscriptSurfaceProps) {
   const showPlan = !!plan && !TERMINAL_PLAN_STATUSES.has(plan.status);
-  const showWorkflow = !!workflow && !TERMINAL_WORKFLOW_STATUSES.has(workflow.run.status);
+  const showWorkflow = !!workflow;
   const workflowOwnsPlan = !!showPlan && !!showWorkflow && workflow.linked?.planId === plan.id;
 
   return (
