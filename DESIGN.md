@@ -363,6 +363,8 @@ layout:
 ### Layout rules
 
 - Page-level and tab-level content default to full width.
+- Root pages have one title and no subtitle, descriptive tagline, or explanatory paragraph beneath it. Put essential guidance at the point of action or inside the relevant detail surface.
+- New root-page UI/UX must use the established SessionMenu-style Hierarchy Tree format as its primary object surface: search first, a persistent blue `+ New Thing` row, collapsible section labels, and compact nested rows. A different root-page structure requires an explicit product exception.
 - Use grids, hierarchy tree, tabs, and sections for structure.
 - Do not add `max-w-* mx-auto` to page containers unless the surface is reading-heavy or a focused form.
 - Do not create a generic “layout anatomy” block. Actual product surfaces decide structure from object relationships.
@@ -409,6 +411,7 @@ hierarchy-tree:
 
 #### Hierarchy Tree rules
 
+- For new root pages, mirror the SessionMenu interaction grammar rather than inventing a page-local list, card grid, or table.
 - Search comes first.
 - Creation sits directly under search when creation is a primary action. Use the blue `+ New Thing` row as the persistent primary CTA.
 - Use collapsible sections to reduce scanning cost.

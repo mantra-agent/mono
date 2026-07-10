@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
-  Vault as VaultIcon,
   Plus,
   Pencil,
   Archive,
@@ -9,9 +8,13 @@ import {
   Loader2,
   Eye,
   EyeOff,
+  ChevronRight,
+  Search,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -236,64 +239,43 @@ function VaultRow({ vault }: { vault: Vault }) {
   const [renameOpen, setRenameOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
 
-  const nonArchivedCount = allVaults.filter((v) => !v.isArchived).length;
+  const nonArchivedCount = allVaults.filter((item) => !item.isArchived).length;
   const canArchive = !isActive && nonArchivedCount > 1;
 
   return (
     <>
-      <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3">
-        {/* Color dot */}
-        <div className="h-3 w-3 rounded-full flex-shrink-0" style={{ backgroundColor: vault.color || "#828A96" }} />
-
-        {/* Name + badges */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-foreground truncate">{vault.name}</span>
-            {isActive && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                <Star className="h-3 w-3" />
-                Active
-              </span>
-            )}
-            {vault.isDefault && (
-              <span className="text-xs text-muted-foreground">(default)</span>
-            )}
-          </div>
-          <div className="flex items-center gap-1.5 mt-0.5">
-            {visible ? (
-              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                <Eye className="h-3 w-3" /> Visible
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground/50">
-                <EyeOff className="h-3 w-3" /> Hidden
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center gap-1">
+      <div className="group flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent/70">
+        <div
+          className="h-3 w-3 shrink-0 rounded-full"
+          style={{ backgroundColor: vault.color || "#828A96" }}
+          aria-hidden="true"
+        />
+        <span className="min-w-0 flex-1 truncate font-medium text-foreground">{vault.name}</span>
+        {isActive && <span className="shrink-0 text-xs font-medium text-active">Active</span>}
+        {vault.isDefault && <span className="shrink-0 text-xs text-muted-foreground">Default</span>}
+        <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+          {visible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3 opacity-50" />}
+          {visible ? "Visible" : "Hidden"}
+        </span>
+        <div className="flex shrink-0 items-center gap-1">
           {!isActive && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setActiveVault(vault.id)}>
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setActiveVault(vault.id)} aria-label={`Set ${vault.name} as active`}>
                   <Star className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Set as active vault</TooltipContent>
             </Tooltip>
           )}
-
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setRenameOpen(true)}>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setRenameOpen(true)} aria-label={`Edit ${vault.name}`}>
                 <Pencil className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Edit vault</TooltipContent>
           </Tooltip>
-
           <Tooltip>
             <TooltipTrigger asChild>
               <span>
@@ -303,22 +285,18 @@ function VaultRow({ vault }: { vault: Vault }) {
                   className="h-7 w-7 text-muted-foreground hover:text-destructive"
                   onClick={() => setArchiveOpen(true)}
                   disabled={!canArchive}
+                  aria-label={`Archive ${vault.name}`}
                 >
                   <Archive className="h-3.5 w-3.5" />
                 </Button>
               </span>
             </TooltipTrigger>
             <TooltipContent>
-              {isActive
-                ? "Switch active vault first"
-                : nonArchivedCount <= 1
-                  ? "Cannot archive your last vault"
-                  : "Archive vault"}
+              {isActive ? "Switch active vault first" : nonArchivedCount <= 1 ? "Cannot archive your last vault" : "Archive vault"}
             </TooltipContent>
           </Tooltip>
         </div>
       </div>
-
       <RenameDialog vault={vault} open={renameOpen} onOpenChange={setRenameOpen} />
       <ArchiveDialog vault={vault} open={archiveOpen} onOpenChange={setArchiveOpen} />
     </>
@@ -330,44 +308,72 @@ function VaultRow({ vault }: { vault: Vault }) {
 export default function VaultsAdminPage() {
   const { vaults, isLoading } = useVaults();
   const [createOpen, setCreateOpen] = useState(false);
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sectionOpen, setSectionOpen] = useState(true);
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filteredVaults = normalizedQuery
+    ? vaults.filter((vault) => vault.name.toLowerCase().includes(normalizedQuery))
+    : vaults;
 
   return (
-    <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin p-6">
+    <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin p-6">
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <VaultIcon className="h-5 w-5 text-muted-foreground" />
-            <div>
-              <h2 className="text-xl font-semibold text-foreground">Vaults</h2>
-              <p className="text-sm text-muted-foreground">Manage data partitions. Each vault isolates sessions, memory, and all user data.</p>
-            </div>
-          </div>
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus className="mr-1.5 h-3.5 w-3.5" />
-            Create vault
-          </Button>
-        </div>
+        <h2 className="text-xl font-semibold text-foreground">Vaults</h2>
 
-        {vaults.length === 0 ? (
-          <div className="rounded-lg border border-border bg-card py-12 text-center">
-            <VaultIcon className="h-6 w-6 text-muted-foreground mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">No vaults found.</p>
+        <div className="space-y-1">
+          <div className="relative min-w-0">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search vaults"
+              className="h-7 w-full rounded-md border border-input bg-background pl-7 pr-7 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              aria-label="Search vaults"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+                aria-label="Clear vault search"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
           </div>
-        ) : (
-          <div className="space-y-2">
-            {vaults.map((vault) => (
-              <VaultRow key={vault.id} vault={vault} />
-            ))}
-          </div>
-        )}
+
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80"
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            <span>New Vault</span>
+          </button>
+
+          <Collapsible open={sectionOpen} onOpenChange={setSectionOpen}>
+            <CollapsibleTrigger className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover:bg-accent/70">
+              <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${sectionOpen ? "rotate-90" : ""}`} />
+              Vaults
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="space-y-0">
+                {isLoading ? (
+                  <div className="flex items-center px-2 py-1.5 text-sm text-muted-foreground">
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> Loading vaults
+                  </div>
+                ) : filteredVaults.length === 0 ? (
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                    {normalizedQuery ? "No matching vaults." : "No vaults yet."}
+                  </div>
+                ) : (
+                  filteredVaults.map((vault) => <VaultRow key={vault.id} vault={vault} />)
+                )}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        </div>
       </div>
 
       <CreateVaultDialog open={createOpen} onOpenChange={setCreateOpen} />
