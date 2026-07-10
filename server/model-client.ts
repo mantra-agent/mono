@@ -6,7 +6,7 @@ import { withTimeout, STREAM_FINAL_MESSAGE_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";
 import { getSecretSync, onSecretChange } from "./secrets-store";
 import type { ToolDefinition } from "@shared/models/tools";
-import { createSystemPrincipal } from "./principal";
+import { createNamedSystemPrincipal } from "./principal";
 import { runWithPrincipal } from "./principal-context";
 
 let _openaiClient: OpenAI | null = null;
@@ -51,7 +51,7 @@ function isOpenAISubscriptionTokens(v: unknown): v is OpenAISubscriptionTokens {
 }
 
 async function getOpenAISubscriptionAccessToken(): Promise<string> {
-  return runWithPrincipal(createSystemPrincipal(), async () => {
+  return runWithPrincipal(createNamedSystemPrincipal("model-client"), async () => {
     const { getAccountTokens, updateAccount } = await import("./connected-accounts");
     const rawTokens = await getAccountTokens(OPENAI_SUBSCRIPTION_ACCOUNT_ID);
     if (!isOpenAISubscriptionTokens(rawTokens)) {

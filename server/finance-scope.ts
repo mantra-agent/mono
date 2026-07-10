@@ -87,7 +87,7 @@ export const financeTables = {
   merchantCategoryOverrides,
 };
 
-type FinanceSensitiveTable = { ownerUserId?: unknown; principalAccountId?: unknown };
+type FinanceSensitiveTable = { ownerUserId?: unknown; principalAccountId?: unknown; vaultId?: unknown };
 
 let schemaEnsurePromise: Promise<void> | null = null;
 let schemaEnsured = false;
@@ -108,10 +108,14 @@ export function financeSensitiveColumns(table: FinanceSensitiveTable): Sensitive
   if (!table.ownerUserId || !table.principalAccountId) {
     throw new Error("Finance table is missing owner columns in the Drizzle model");
   }
-  return {
+  const cols: SensitiveOwnerColumns = {
     ownerUserId: table.ownerUserId as SensitiveOwnerColumns["ownerUserId"],
     principalAccountId: table.principalAccountId as SensitiveOwnerColumns["principalAccountId"],
   };
+  if (table.vaultId) {
+    cols.vaultId = table.vaultId as SensitiveOwnerColumns["vaultId"];
+  }
+  return cols;
 }
 
 export function financeSensitiveValues(req: Request) {

@@ -2,6 +2,7 @@ import { db } from "./db";
 import { plaidTransactions, plaidAccounts, merchantCategoryOverrides, expenseCategories } from "@shared/schema";
 import { eq, and, sql } from "drizzle-orm";
 import crypto from "crypto";
+import { sensitiveOwnershipValues } from "./sensitive-scope";
 
 interface ParsedRow {
   date: string;
@@ -350,7 +351,8 @@ export async function importCSVTransactions(
     const batchSize = 100;
     for (let i = 0; i < toInsert.length; i += batchSize) {
       const batch = toInsert.slice(i, i + batchSize);
-      const inserted = await db.insert(plaidTransactions).values(batch).onConflictDoNothing().returning({ id: plaidTransactions.id });
+      const ownerValues = sensitiveOwnershipValues();
+      const inserted = await db.insert(plaidTransactions).values(batch.map(row => ({ ...ownerValues, ...row }))).onConflictDoNothing().returning({ id: plaidTransactions.id });
       actualInserted += inserted.length;
     }
     result.imported = actualInserted;

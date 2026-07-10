@@ -551,12 +551,14 @@ export const persons = pgTable("persons", {
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
+  vaultId: text("vault_id"),
   lastViewedAt: timestamp("last_viewed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_persons_cabinet_level").on(table.cabinetLevel),
   index("idx_persons_scope_owner").on(table.scope, table.ownerUserId),
+  index("idx_persons_vault").on(table.vaultId),
 ]);
 
 export type PersonRow = typeof persons.$inferSelect;
@@ -572,6 +574,7 @@ export const simplePeopleSurfaceState = pgTable("simple_people_surface_state", {
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id").notNull(),
+  vaultId: text("vault_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
@@ -812,6 +815,7 @@ export const calendarEventMetadata = pgTable("calendar_event_metadata", {
   accountId: text("account_id").notNull(),
   ownerUserId: text("owner_user_id"),
   principalAccountId: text("principal_account_id"),
+  vaultId: text("vault_id"),
   calendarId: text("calendar_id").notNull(),
   eventType: text("event_type").notNull().default("meeting"),
   capacityType: text("capacity_type"),
@@ -838,6 +842,7 @@ export const calendarEventTasks = pgTable("calendar_event_tasks", {
   metadataId: integer("metadata_id").notNull().references(() => calendarEventMetadata.id, { onDelete: "cascade" }),
   ownerUserId: text("owner_user_id"),
   principalAccountId: text("principal_account_id"),
+  vaultId: text("vault_id"),
   taskId: integer("task_id"),
   priorityTitle: text("priority_title"),
   taskTitle: text("task_title"),
@@ -861,6 +866,7 @@ export const calendarEventPeople = pgTable("calendar_event_people", {
   metadataId: integer("metadata_id").notNull().references(() => calendarEventMetadata.id, { onDelete: "cascade" }),
   ownerUserId: text("owner_user_id"),
   principalAccountId: text("principal_account_id"),
+  vaultId: text("vault_id"),
   personId: text("person_id").notNull(),
   personName: text("person_name").notNull(),
   attendeeEmail: text("attendee_email"),
@@ -883,6 +889,7 @@ export const calendarEventArtifacts = pgTable("calendar_event_artifacts", {
   metadataId: integer("metadata_id").notNull().references(() => calendarEventMetadata.id, { onDelete: "cascade" }),
   ownerUserId: text("owner_user_id"),
   principalAccountId: text("principal_account_id"),
+  vaultId: text("vault_id"),
   artifactType: text("artifact_type").notNull().default("library_page"),
   libraryPageId: text("library_page_id").notNull().references(() => libraryPages.id, { onDelete: "cascade" }),
   artifactKind: text("artifact_kind").notNull().default("brief"),

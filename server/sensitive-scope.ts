@@ -1,13 +1,16 @@
 import type { NextFunction, Request, Response } from "express";
-import { and, eq, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import type { AnyColumn } from "drizzle-orm";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { recordPrincipalDiagnosticEvent } from "./principal-diagnostics";
 import { getPrincipal, hasScope, recordPrivilegedAccess, type Principal } from "./principal";
+import { assertSystemVaultAccess } from "./vault-allowlist";
 
 export interface SensitiveOwnerColumns {
   ownerUserId?: AnyColumn;
   principalAccountId?: AnyColumn;
+  /** When present, vault filtering is applied to reads, writes, and inserts. */
+  vaultId?: AnyColumn;
 }
 
 function hasUser(principal: Principal): principal is Principal & { userId: string } {
@@ -25,6 +28,9 @@ export function sensitiveOwnershipValues(principal: Principal = getCurrentPrinci
   const values: Record<string, string> = {};
   if (principal.userId) values.ownerUserId = principal.userId;
   if (principal.accountId) values.principalAccountId = principal.accountId;
+  // Stamp vault_id from principal's activeVaultId.
+  // System principals without an activeVaultId produce no vaultId (backfill assigns later).
+  if (principal.activeVaultId) values.vaultId = principal.activeVaultId;
   return values;
 }
 
@@ -32,19 +38,51 @@ export function sensitiveVisiblePredicate(
   columns: SensitiveOwnerColumns,
   principal: Principal = getCurrentPrincipalOrSystem(),
 ): SQL {
-  if (principal.actorType === "system") return sql`TRUE`;
+  if (principal.actorType === "system") {
+    if (columns.vaultId) assertSystemVaultAccess(principal, "sensitiveVisiblePredicate");
+    return sql`TRUE`;
+  }
   const predicates: SQL[] = [];
   if (hasUser(principal) && columns.ownerUserId) predicates.push(eq(columns.ownerUserId, principal.userId));
   if (hasAccount(principal) && columns.principalAccountId) predicates.push(eq(columns.principalAccountId, principal.accountId));
   if (predicates.length === 0) return sql`FALSE`;
-  return or(...predicates)!;
+  const basePredicate = or(...predicates)!;
+  // Vault filtering: when the table has a vaultId column and the principal
+  // has a non-empty visibleVaultIds set, additionally require vault_id IN (...).
+  // Empty visibleVaultIds (system principals, or users before vault setup) = no vault filter.
+  // Rows with NULL vault_id pass through (backwards compatibility during backfill).
+  if (columns.vaultId && principal.visibleVaultIds && principal.visibleVaultIds.length > 0) {
+    const vaultFilter = or(
+      inArray(columns.vaultId, principal.visibleVaultIds),
+      sql`${columns.vaultId} IS NULL`,
+    )!;
+    return and(basePredicate, vaultFilter)!;
+  }
+  return basePredicate;
 }
 
 export function sensitiveWritablePredicate(
   columns: SensitiveOwnerColumns,
   principal: Principal = getCurrentPrincipalOrSystem(),
 ): SQL {
-  return sensitiveVisiblePredicate(columns, principal);
+  if (principal.actorType === "system") {
+    if (columns.vaultId) assertSystemVaultAccess(principal, "sensitiveWritablePredicate");
+    return sql`TRUE`;
+  }
+  const predicates: SQL[] = [];
+  if (hasUser(principal) && columns.ownerUserId) predicates.push(eq(columns.ownerUserId, principal.userId));
+  if (hasAccount(principal) && columns.principalAccountId) predicates.push(eq(columns.principalAccountId, principal.accountId));
+  if (predicates.length === 0) return sql`FALSE`;
+  const basePredicate = or(...predicates)!;
+  // Vault filtering on writes: same logic as reads.
+  if (columns.vaultId && principal.visibleVaultIds && principal.visibleVaultIds.length > 0) {
+    const vaultFilter = or(
+      inArray(columns.vaultId, principal.visibleVaultIds),
+      sql`${columns.vaultId} IS NULL`,
+    )!;
+    return and(basePredicate, vaultFilter)!;
+  }
+  return basePredicate;
 }
 
 export function combineWithSensitiveVisible(

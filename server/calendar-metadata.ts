@@ -19,10 +19,10 @@ import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwn
 const log = createLogger("CalendarMetadata");
 
 const _calendarCache = new TTLCache<any>("CalendarMetadata", Infinity);
-const calendarMetadataOwnerColumns = { ownerUserId: calendarEventMetadata.ownerUserId, principalAccountId: calendarEventMetadata.principalAccountId };
-const calendarTaskOwnerColumns = { ownerUserId: calendarEventTasks.ownerUserId, principalAccountId: calendarEventTasks.principalAccountId };
-const calendarPeopleOwnerColumns = { ownerUserId: calendarEventPeople.ownerUserId, principalAccountId: calendarEventPeople.principalAccountId };
-const calendarArtifactOwnerColumns = { ownerUserId: calendarEventArtifacts.ownerUserId, principalAccountId: calendarEventArtifacts.principalAccountId };
+const calendarMetadataOwnerColumns = { ownerUserId: calendarEventMetadata.ownerUserId, principalAccountId: calendarEventMetadata.principalAccountId, vaultId: calendarEventMetadata.vaultId };
+const calendarTaskOwnerColumns = { ownerUserId: calendarEventTasks.ownerUserId, principalAccountId: calendarEventTasks.principalAccountId, vaultId: calendarEventTasks.vaultId };
+const calendarPeopleOwnerColumns = { ownerUserId: calendarEventPeople.ownerUserId, principalAccountId: calendarEventPeople.principalAccountId, vaultId: calendarEventPeople.vaultId };
+const calendarArtifactOwnerColumns = { ownerUserId: calendarEventArtifacts.ownerUserId, principalAccountId: calendarEventArtifacts.principalAccountId, vaultId: calendarEventArtifacts.vaultId };
 function principalCacheKey(): string {
   const principal = getCurrentPrincipalOrSystem();
   return `${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}`;

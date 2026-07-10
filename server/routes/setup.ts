@@ -77,9 +77,9 @@ export async function registerSetupRoutes(app: Express) {
       (async () => {
         try {
           const { getAccount } = await import("../connected-accounts");
-          const { createSystemPrincipal } = await import("../principal");
+          const { createNamedSystemPrincipal } = await import("../principal");
           const { runWithPrincipal } = await import("../principal-context");
-          const acct = await runWithPrincipal(createSystemPrincipal(), () => getAccount("openai-subscription-primary"));
+          const acct = await runWithPrincipal(createNamedSystemPrincipal("openai-subscription-check"), () => getAccount("openai-subscription-primary"));
           return !!acct;
         } catch { return false; }
       })(),

@@ -27,6 +27,7 @@ import { unifiedMemorySearch, type UnifiedSearchResult } from "./memory/unified-
 import { isSummaryStale } from "./memory/memory-storage";
 import type { MemoryLayer } from "@shared/schema";
 import { sensitiveOwnershipValues } from "./sensitive-scope";
+import { visibleFinanceForCurrentPrincipal } from "./finance-scope";
 // Priority handling delegated to GoalsService
 
 import { createLogger } from "./log";
@@ -7630,7 +7631,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
       }
 
-      const assets = await db.select().from(manualAssets);
+      const assets = await db.select().from(manualAssets).where(visibleFinanceForCurrentPrincipal(manualAssets));
       if (assets.length > 0) {
         parts.push("\n**Manual Assets**");
         for (const a of assets) {
@@ -7639,9 +7640,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       }
 
       const [k401Rows, deductionRows, sourceRows] = await Promise.all([
-        db.select().from(manual401kAccounts),
-        db.select().from(incomeDeductions),
-        db.select().from(incomeSources),
+        db.select().from(manual401kAccounts).where(visibleFinanceForCurrentPrincipal(manual401kAccounts)),
+        db.select().from(incomeDeductions).where(visibleFinanceForCurrentPrincipal(incomeDeductions)),
+        db.select().from(incomeSources).where(visibleFinanceForCurrentPrincipal(incomeSources)),
       ]);
       if (k401Rows.length > 0) {
         const FREQ_MULT: Record<string, number> = { weekly: 52/12, biweekly: 26/12, semimonthly: 2, monthly: 1, quarterly: 1/3, annually: 1/12 };
@@ -7702,9 +7703,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const { manual401kAccounts, incomeDeductions, incomeSources } = await import("@shared/schema");
 
       const [k401Rows, deductionRows, sourceRows] = await Promise.all([
-        db.select().from(manual401kAccounts),
-        db.select().from(incomeDeductions),
-        db.select().from(incomeSources),
+        db.select().from(manual401kAccounts).where(visibleFinanceForCurrentPrincipal(manual401kAccounts)),
+        db.select().from(incomeDeductions).where(visibleFinanceForCurrentPrincipal(incomeDeductions)),
+        db.select().from(incomeSources).where(visibleFinanceForCurrentPrincipal(incomeSources)),
       ]);
 
       let holdings: any[] = [];
@@ -7768,17 +7769,17 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const { desc, inArray, lt, and } = await import("drizzle-orm");
 
       const [manual, plaid, payments, financedAssetRows] = await Promise.all([
-        db.select().from(manualLiabilities),
-        db.select().from(plaidLiabilitiesTable),
-        db.select().from(debtPayments).orderBy(desc(debtPayments.date)),
-        db.select().from(financedAssets),
+        db.select().from(manualLiabilities).where(visibleFinanceForCurrentPrincipal(manualLiabilities)),
+        db.select().from(plaidLiabilitiesTable).where(visibleFinanceForCurrentPrincipal(plaidLiabilitiesTable)),
+        db.select().from(debtPayments).where(visibleFinanceForCurrentPrincipal(debtPayments)).orderBy(desc(debtPayments.date)),
+        db.select().from(financedAssets).where(visibleFinanceForCurrentPrincipal(financedAssets)),
       ]);
 
       let autoPayments: Array<{ source: "auto"; liabilityType: string; liabilityId: number; amount: number; date: string; notes: string | null }> = [];
       if (plaid.length > 0) {
         const accountIds = plaid.map(l => l.accountId);
         const txns = await db.select().from(plaidTransactions)
-          .where(and(inArray(plaidTransactions.accountId, accountIds), lt(plaidTransactions.amount, 0)))
+          .where(visibleFinanceForCurrentPrincipal(plaidTransactions, and(inArray(plaidTransactions.accountId, accountIds), lt(plaidTransactions.amount, 0))))
           .orderBy(desc(plaidTransactions.date));
         const accountToLiability = new Map(plaid.map(l => [l.accountId, l]));
         autoPayments = txns.map(t => {
@@ -7862,16 +7863,16 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const { desc, inArray, lt, and } = await import("drizzle-orm");
 
       const [manualPayments, manual, plaid] = await Promise.all([
-        db.select().from(debtPayments).orderBy(desc(debtPayments.date)),
-        db.select().from(manualLiabilities),
-        db.select().from(plaidLiabilitiesTable),
+        db.select().from(debtPayments).where(visibleFinanceForCurrentPrincipal(debtPayments)).orderBy(desc(debtPayments.date)),
+        db.select().from(manualLiabilities).where(visibleFinanceForCurrentPrincipal(manualLiabilities)),
+        db.select().from(plaidLiabilitiesTable).where(visibleFinanceForCurrentPrincipal(plaidLiabilitiesTable)),
       ]);
 
       let autoPayments: Array<{ source: "auto"; liabilityType: string; liabilityId: number; amount: number; date: string; notes: string | null }> = [];
       if (plaid.length > 0) {
         const accountIds = plaid.map(l => l.accountId);
         const txns = await db.select().from(plaidTransactions)
-          .where(and(inArray(plaidTransactions.accountId, accountIds), lt(plaidTransactions.amount, 0)))
+          .where(visibleFinanceForCurrentPrincipal(plaidTransactions, and(inArray(plaidTransactions.accountId, accountIds), lt(plaidTransactions.amount, 0))))
           .orderBy(desc(plaidTransactions.date));
         const accountToLiability = new Map(plaid.map(l => [l.accountId, l]));
         autoPayments = txns.map(t => {
@@ -7938,8 +7939,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const { expenseCategories, merchantCategoryOverrides } = await import("@shared/schema");
 
       const [cats, overrides] = await Promise.all([
-        db.select().from(expenseCategories),
-        db.select().from(merchantCategoryOverrides),
+        db.select().from(expenseCategories).where(visibleFinanceForCurrentPrincipal(expenseCategories)),
+        db.select().from(merchantCategoryOverrides).where(visibleFinanceForCurrentPrincipal(merchantCategoryOverrides)),
       ]);
 
       if (cats.length === 0) return { result: "No expense categories configured yet." };
@@ -8015,10 +8016,10 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
       const { listAmortizationsWithTxn, getAmortizedSpendingForMonth } = await import("./finance-amortization");
       const [budgets, txns, catRows, overrideRows, amortizations] = await Promise.all([
-        db.select().from(budgetEntries),
-        db.select().from(plaidTransactions).where(and(gte(plaidTransactions.date, startDate), lte(plaidTransactions.date, endDate))),
-        db.select().from(expenseCategories),
-        db.select().from(merchantCategoryOverrides),
+        db.select().from(budgetEntries).where(visibleFinanceForCurrentPrincipal(budgetEntries)),
+        db.select().from(plaidTransactions).where(visibleFinanceForCurrentPrincipal(plaidTransactions, and(gte(plaidTransactions.date, startDate), lte(plaidTransactions.date, endDate)))),
+        db.select().from(expenseCategories).where(visibleFinanceForCurrentPrincipal(expenseCategories)),
+        db.select().from(merchantCategoryOverrides).where(visibleFinanceForCurrentPrincipal(merchantCategoryOverrides)),
         listAmortizationsWithTxn({ activeOnly: true }),
       ]);
 
@@ -8134,9 +8135,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const FREQ: Record<string, number> = { weekly: 52 / 12, biweekly: 26 / 12, semimonthly: 2, monthly: 1, annually: 1 / 12 };
 
       const [sources, deductions, deposits] = await Promise.all([
-        db.select().from(incomeSources),
-        db.select().from(incomeDeductions),
-        db.select().from(incomeDeposits),
+        db.select().from(incomeSources).where(visibleFinanceForCurrentPrincipal(incomeSources)),
+        db.select().from(incomeDeductions).where(visibleFinanceForCurrentPrincipal(incomeDeductions)),
+        db.select().from(incomeDeposits).where(visibleFinanceForCurrentPrincipal(incomeDeposits)),
       ]);
 
       if (sources.length === 0) return { result: "No income sources configured yet. Add income sources in the Finance → Income tab." };
@@ -9604,11 +9605,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const { financedAssets, manualAssets, manual401kAccounts, incomeDeductions, incomeSources } = await import("@shared/schema");
 
           const [financedRows, manualRows, k401Rows, deductionRows, sourceRows] = await Promise.all([
-            db.select().from(financedAssets),
-            db.select().from(manualAssets),
-            db.select().from(manual401kAccounts),
-            db.select().from(incomeDeductions),
-            db.select().from(incomeSources),
+            db.select().from(financedAssets).where(visibleFinanceForCurrentPrincipal(financedAssets)),
+            db.select().from(manualAssets).where(visibleFinanceForCurrentPrincipal(manualAssets)),
+            db.select().from(manual401kAccounts).where(visibleFinanceForCurrentPrincipal(manual401kAccounts)),
+            db.select().from(incomeDeductions).where(visibleFinanceForCurrentPrincipal(incomeDeductions)),
+            db.select().from(incomeSources).where(visibleFinanceForCurrentPrincipal(incomeSources)),
           ]);
 
           if (financedRows.length === 0 && manualRows.length === 0 && k401Rows.length === 0) {
@@ -9665,9 +9666,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const goalAction = a.goal_action || "list";
 
           if (goalAction === "list") {
-            const goals = await db.select().from(financialGoals);
+            const goals = await db.select().from(financialGoals).where(visibleFinanceForCurrentPrincipal(financialGoals));
             if (goals.length === 0) return { result: "No financial goals set yet. Create one with goal_action: 'create'." };
-            const accounts = await db.select().from(plaidAccounts);
+            const accounts = await db.select().from(plaidAccounts).where(visibleFinanceForCurrentPrincipal(plaidAccounts));
             const accountMap = new Map(accounts.map(a => [a.accountId, a]));
             const lines = goals.map(g => {
               let computedAmount = g.currentAmount || 0;

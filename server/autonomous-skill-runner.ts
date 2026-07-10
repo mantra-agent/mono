@@ -36,9 +36,9 @@ async function resolveAutonomousPrincipal(): Promise<Principal> {
     const users = await storage.getUsers();
     const user = users.find(u => u.role === "admin") || users[0];
     if (!user) {
-      logger.warn("resolveAutonomousPrincipal: no users found, falling back to system principal");
-      const { createSystemPrincipal } = await import("./principal");
-      return createSystemPrincipal();
+      logger.warn("resolveAutonomousPrincipal: no users found, falling back to named system principal");
+      const { createNamedSystemPrincipal } = await import("./principal");
+      return createNamedSystemPrincipal("autonomous-skill-runner");
     }
     const foundation = await ensureUserIdentityFoundation(user);
     const permissions = await getUserEffectivePermissions(user.id);
@@ -52,13 +52,15 @@ async function resolveAutonomousPrincipal(): Promise<Principal> {
       isAdmin: user.role === "admin",
       impersonation: null,
       source: "autonomous",
+      visibleVaultIds: user.visibleVaultIds ?? [],
+      activeVaultId: user.activeVaultId ?? null,
     };
     logger.log(`resolveAutonomousPrincipal: resolved userId=${user.id} accountId=${foundation.accountId}`);
     return _cachedAutonomousPrincipal;
   } catch (err) {
-    logger.error("resolveAutonomousPrincipal failed, falling back to system principal:", err instanceof Error ? err.message : String(err));
-    const { createSystemPrincipal } = await import("./principal");
-    return createSystemPrincipal();
+    logger.error("resolveAutonomousPrincipal failed, falling back to named system principal:", err instanceof Error ? err.message : String(err));
+    const { createNamedSystemPrincipal } = await import("./principal");
+    return createNamedSystemPrincipal("autonomous-skill-runner");
   }
 }
 const treeLog = createLogger("SessionTree");
