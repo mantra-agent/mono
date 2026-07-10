@@ -570,7 +570,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   gmail: {
-    description: "Read, search, and draft emails via Gmail. Supports multiple accounts. Actions: status, search, read, batch_read, draft, recent, download_attachment, triage_log, email_cache. The draft action creates a persisted email draft that renders as an inline widget; the human sends via the widget's Send button. There is no tool-level send action.",
+    description: "Read, search, and draft emails via Gmail. Supports multiple accounts. Actions: status, search, read, batch_read, draft, update_draft, recent, download_attachment, triage_log, email_cache. The draft action creates a persisted email draft that renders as an inline widget; update_draft safely updates non-empty editable fields on that same draft. The human sends via the widget's Send button. There is no tool-level send action.",
     category: "communication",
     parameters: {
       type: "object",
@@ -578,9 +578,13 @@ export const TOOLS: Record<string, ToolMeta> = {
         action: { type: "string", description: "Action to perform" },
         query: { type: "string", description: "Search query (for search, batch_read)" },
         id: { type: "string", description: "Message ID (for read)" },
+        draft_id: { type: "string", description: "Persisted email draft ID (required for update_draft)" },
         ids: { type: "array", items: { type: "string" }, description: "Array of message IDs (for batch_read)" },
         excludeMessageIds: { type: "array", items: { type: "string" }, description: "Message IDs to skip (for batch_read)" },
-        to: { type: "string", description: "Recipient email" },
+        to: { type: "string", description: "Recipient email (for draft)" },
+        update_to: { type: "array", items: { type: "string" }, description: "Non-empty To recipients (for update_draft)" },
+        update_cc: { type: "array", items: { type: "string" }, description: "Non-empty CC recipients (for update_draft)" },
+        update_bcc: { type: "array", items: { type: "string" }, description: "Non-empty BCC recipients (for update_draft)" },
         subject: { type: "string", description: "Email subject" },
         body: { type: "string", description: "Email body" },
         maxResults: { type: "number", description: "Max results (default 100 for batch_read)" },

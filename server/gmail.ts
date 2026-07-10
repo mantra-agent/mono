@@ -518,10 +518,10 @@ export async function sendEmailFromDraft(draft: {
     headers.push(`In-Reply-To: ${draft.inReplyTo}`);
     headers.push(`References: ${draft.inReplyTo}`);
   }
-  headers.push("Content-Type: text/html; charset=utf-8");
+  headers.push("Content-Type: text/plain; charset=utf-8");
 
-  const messageParts = [...headers, "", draft.body];
-  const rawMessage = Buffer.from(messageParts.join("\r\n"))
+  const rawMimeMessage = `${headers.join("\r\n")}\r\n\r\n${draft.body}`;
+  const rawMessage = Buffer.from(rawMimeMessage)
     .toString("base64")
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
