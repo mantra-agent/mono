@@ -453,11 +453,8 @@ function SkillListSidebar({
             {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-8 w-full rounded-md" />)}
           </div>
         ) : total === 0 ? (
-          <div className="px-4 py-12 text-center" data-testid="empty-skills-list">
-            <Lightbulb className="mx-auto mb-2 h-6 w-6 text-muted-foreground" />
-            <p className="text-xs text-muted-foreground">
-              {searchQuery.trim() ? "No matching skills" : "No skills yet"}
-            </p>
+          <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="empty-skills-list">
+            {searchQuery.trim() ? "No matching skills." : "No skills yet."}
           </div>
         ) : (
           <div className="space-y-1">
@@ -609,13 +606,7 @@ function RunHistorySection({ skillName }: { skillName: string }) {
           {[1, 2, 3].map(i => <Skeleton key={i} className="h-8 w-full rounded" />)}
         </div>
       ) : isEmpty ? (
-        <div className="text-center py-6 px-4" data-testid="empty-run-history">
-          <History className="h-6 w-6 text-muted-foreground/30 mx-auto mb-2" />
-          <p className="text-xs text-muted-foreground">No runs yet</p>
-          <p className="text-xs text-muted-foreground/70 mt-1">
-            Runs are recorded when this skill is executed.
-          </p>
-        </div>
+        <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="empty-run-history">No runs yet.</div>
       ) : hasRuns ? (
         <div className="space-y-1 px-1">
           {runs.map(run => {

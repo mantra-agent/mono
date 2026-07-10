@@ -37,7 +37,6 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
-  GitBranch,
   Plus,
   ChevronDown,
   ChevronRight,
@@ -893,20 +892,8 @@ export default function HooksPage({ embedded }: { embedded?: boolean }) {
 
       <div className="flex-1 overflow-y-auto min-h-0">
         {(!hooks || hooks.length === 0) ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center px-6">
-            <GitBranch className="h-6 w-6 text-muted-foreground mb-3" />
-            <p className="text-sm text-muted-foreground font-medium" data-testid="text-hooks-zero-state">
-              No hooks configured yet.
-            </p>
-            <p className="text-xs text-muted-foreground/60 mt-2 max-w-md">
-              Hooks let Agent react autonomously to system events — like running a skill when email
-              triage completes, or starting a conversation when a timer fails. Create your first
-              hook to get started.
-            </p>
-            <Button size="sm" className="mt-4" onClick={handleCreateNew} data-testid="button-create-first-hook">
-              <Plus className="h-3.5 w-3.5 mr-1" />
-              Create Hook
-            </Button>
+          <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-hooks-zero-state">
+            No hooks yet.
           </div>
         ) : (
           hooks.map((hook) => (

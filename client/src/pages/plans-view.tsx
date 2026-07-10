@@ -14,7 +14,6 @@ import {
 import {
   ChevronDown,
   ChevronRight,
-  FileText,
   History,
   Archive,
 } from "lucide-react";
@@ -64,16 +63,7 @@ function PlansSkeleton() {
 // ─── Zero State ──────────────────────────────────────────────────────
 
 function PlansZeroState() {
-  return (
-    <div className="flex flex-col items-center justify-center py-12 text-center">
-      <FileText className="h-6 w-6 text-muted-foreground mb-3" />
-      <p className="text-sm font-medium text-muted-foreground">No plans yet</p>
-      <p className="text-xs text-muted-foreground/70 mt-1 max-w-[280px]">
-        Plans decompose complex work into tracked steps. Agent creates them
-        automatically for multi-step tasks, or you can ask: "plan out X"
-      </p>
-    </div>
-  );
+  return <div className="px-2 py-1.5 text-sm text-muted-foreground">No plans yet.</div>;
 }
 
 // ─── Plan Row ────────────────────────────────────────────────────────

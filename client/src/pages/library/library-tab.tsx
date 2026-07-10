@@ -309,7 +309,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
           {isTreeLoading ? (
             <div className="flex justify-center py-12"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div>
           ) : filteredTreeData.length === 0 ? (
-            <div className="py-12 text-center text-sm text-muted-foreground">{searchQuery ? "No matching pages" : "No pages yet"}</div>
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">{searchQuery ? "No matching pages." : "No pages yet."}</div>
           ) : (
             <DndTree
               treeData={treeData}

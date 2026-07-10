@@ -297,10 +297,8 @@ export default function TagsPage({ embedded }: { embedded?: boolean }) {
         <MergeSuggestions duplicates={duplicates} allTags={tags} />
 
         {filteredTags.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
-            <Tag className="h-8 w-8 mb-3 opacity-50" />
-            <p className="text-sm">No tags found</p>
-            <p className="text-xs mt-1">Tags are created when you add them to goals, principles, and other items.</p>
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">
+            {searchQuery ? "No matching tags." : "No tags yet."}
           </div>
         ) : (
           <div className="flex flex-wrap gap-1.5">

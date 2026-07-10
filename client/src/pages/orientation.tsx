@@ -347,7 +347,9 @@ function OrientationSection({
               <Skeleton className="h-6 rounded-md" />
             </div>
           ) : items.length === 0 ? (
-            <TreeRow depth={1} icon={section.icon} title={`No ${section.label.toLowerCase()} yet`} muted />
+            <div className="px-8 py-1.5 text-sm text-muted-foreground">
+              {searchActive ? `No matching ${section.label.toLowerCase()}.` : `No ${section.label.toLowerCase()} yet.`}
+            </div>
           ) : (
             items.map((item) => (
                 <OrientationItemRow
