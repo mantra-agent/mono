@@ -140,9 +140,9 @@ function RecipientField({
         {values.map((email, i) => (
           <span
             key={`${email}-${i}`}
-            className="inline-flex items-center gap-0.5 rounded-sm bg-muted px-1.5 py-0.5 text-xs"
+            className="inline-flex max-w-full items-center gap-0.5 rounded-sm bg-muted px-1.5 py-0.5 text-xs"
           >
-            <span className="truncate max-w-[180px]">{email}</span>
+            <span className="min-w-0 break-all whitespace-normal">{email}</span>
             {!disabled && (
               <button
                 type="button"
