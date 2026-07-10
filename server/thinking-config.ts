@@ -78,26 +78,26 @@ export function thinkingConfigKey(r: ResolvedThinking | undefined): string {
   return `a:${r.effort ?? "default"}`;
 }
 
-/** Reasoning effort values accepted by OpenAI Responses API and Codex configuration. */
-export type OpenAIReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+/** Reasoning effort values accepted by OpenAI reasoning-capable Responses requests. */
+export type OpenAIReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh";
 
 /**
  * Map the canonical tier thinking config (resolved) to an OpenAI reasoning effort.
- * Targets differ in their floor: the Responses API accepts "none" while Codex's
- * model_reasoning_effort bottoms out at "minimal".
+ * The Responses/Codex endpoint for GPT-5.6 accepts "none" as its no-thinking
+ * floor; sending legacy "minimal" is rejected by gpt-5.6-sol.
  * Budget boundaries mirror the tier selector levels: 4096 → low, 8192 → medium,
  * 16384 → high, 32768 → xhigh.
  */
 export function resolveOpenAIReasoningEffort(
   resolved: ResolvedThinking | undefined,
-  target: "responses" | "codex",
+  _target: "responses" | "codex",
 ): OpenAIReasoningEffort | undefined {
   if (!resolved) return undefined;
   const t = resolved.thinking;
-  if (t.type === "disabled") return target === "codex" ? "minimal" : "none";
+  if (t.type === "disabled") return "none";
   if (t.type === "enabled") {
     const b = t.budgetTokens ?? 0;
-    if (b <= 0) return target === "codex" ? "minimal" : "none";
+    if (b <= 0) return "none";
     if (b <= 4096) return "low";
     if (b <= 8192) return "medium";
     if (b <= 16384) return "high";
