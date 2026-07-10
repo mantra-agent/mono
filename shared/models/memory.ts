@@ -10,7 +10,6 @@ import {
   boolean,
   unique,
 } from "drizzle-orm/pg-core";
-import { vector } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
@@ -65,7 +64,6 @@ export const workspaceDocuments = pgTable(
     vaultId: text("vault_id"),
     createdByUserId: text("created_by_user_id"),
     updatedByUserId: text("updated_by_user_id"),
-    embedding: vector("embedding", { dimensions: 1536 }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .default(sql`CURRENT_TIMESTAMP`)
       .notNull(),
@@ -205,7 +203,6 @@ export const memoryEntries = pgTable(
     content: text("content").notNull(),
     summary: text("summary"),
     contentHash: text("content_hash"),
-    embedding: vector("embedding", { dimensions: 1536 }),
     source: text("source").notNull().default("manual"),
     sourceId: text("source_id"),
     scope: text("scope").notNull().default("user"),
@@ -801,7 +798,6 @@ export const codeEmbeddings = pgTable(
     endLine: integer("end_line"),
     contentHash: text("content_hash").notNull(),
     content: text("content").notNull(),
-    embedding: vector("embedding", { dimensions: 1536 }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .default(sql`CURRENT_TIMESTAMP`)
       .notNull(),

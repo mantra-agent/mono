@@ -459,9 +459,7 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 - Key file: `decisions-storage.ts` (252 lines)
 
 ### Capabilities & Stories
-- **5 tables:** `user_stories`, `system_capabilities`, `story_capability_links`, `story_validations`, `capability_cache`
-- **Capability audit** cross-references tools and code clusters → `active`/`degraded`/`missing`
-- Key files: `spec-storage.ts` (171 lines), `capability-audit.ts` (162 lines)
+- Removed legacy story/capability table registry entries; capability state is derived from current tools, skills, code graph, and reports rather than the removed capability cache table.
 
 ### File-Storage Abstraction
 - **16 modules** (3,713 lines) using `BaseDocumentStore<T>` pattern over `workspace_documents`

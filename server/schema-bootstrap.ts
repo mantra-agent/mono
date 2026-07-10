@@ -2399,6 +2399,38 @@ export async function runSchemaBootstrap(
     `);
   });
 
+  await heal("stale one-shot system hooks cleanup", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS app_migrations (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        ran_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        metadata JSONB
+      )
+    `);
+    const migrationName = "stale_system_hooks_cleanup_phase_1_v1";
+    const exists = await pool.query(
+      `SELECT 1 FROM app_migrations WHERE name = $1`,
+      [migrationName],
+    );
+    if (exists.rowCount && exists.rowCount > 0) return;
+
+    const result = await pool.query(`
+      DELETE FROM system_hooks
+      WHERE id = ANY($1::int[])
+        AND name <> 'sleep-forgetting-trigger'
+    `, [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 16, 18, 23]]);
+
+    await pool.query(
+      `INSERT INTO app_migrations (name, metadata) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING`,
+      [migrationName, JSON.stringify({ rowsDeleted: result.rowCount ?? 0, retained: ["sleep-forgetting-trigger"] })],
+    );
+    log(
+      `[boot] stale system hooks cleanup: rowsDeleted=${result.rowCount ?? 0} retained=sleep-forgetting-trigger`,
+      "migration",
+    );
+  });
+
   await heal("system_hook_executions table", async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS system_hook_executions (
@@ -2766,7 +2798,6 @@ export async function runSchemaBootstrap(
         is_starred BOOLEAN DEFAULT FALSE,
         triage_status TEXT NOT NULL DEFAULT 'untriaged',
         triage_tier TEXT,
-        triage_category TEXT,
         triage_reason TEXT,
         triaged_at TIMESTAMP,
         cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -2779,9 +2810,6 @@ export async function runSchemaBootstrap(
     );
     await pool.query(
       `ALTER TABLE email_messages ADD COLUMN IF NOT EXISTS triage_tier TEXT`,
-    );
-    await pool.query(
-      `ALTER TABLE email_messages ADD COLUMN IF NOT EXISTS triage_category TEXT`,
     );
     await pool.query(
       `ALTER TABLE email_messages ADD COLUMN IF NOT EXISTS triage_reason TEXT`,
@@ -4630,10 +4658,7 @@ export async function runSchemaBootstrap(
         duration_seconds INTEGER,
         started_at TIMESTAMPTZ,
         completed_at TIMESTAMPTZ,
-        retry_tier TEXT,
-        retry_attempt INTEGER,
         total_attempts INTEGER DEFAULT 0,
-        prior_errors JSONB,
         timeout_minutes INTEGER,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

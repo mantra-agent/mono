@@ -37,7 +37,6 @@ import {
   persons,
   simplePeopleSurfaceState,
   connectedAccounts,
-  capabilityCache,
   emailTriageLog,
   emailMessages,
   personEmails,
@@ -158,7 +157,6 @@ export const TABLE_REGISTRY: TableRegistryEntry[] = [
   { key: "system_settings", table: systemSettings, domain: "core", hasSerial: true },
   { key: "timers", table: timers, domain: "core", hasSerial: false },
   { key: "connected_accounts", table: connectedAccounts, domain: "core", hasSerial: true, sensitiveFields: ["tokens"] },
-  { key: "capability_cache", table: capabilityCache, domain: "core", hasSerial: true },
   { key: "responsibility_runs", table: responsibilityRuns, domain: "core", hasSerial: true },
 
   { key: "tasks", table: tasks, domain: "core", hasSerial: true },

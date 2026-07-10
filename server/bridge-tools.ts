@@ -7118,15 +7118,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
   },
 
-  async intentions(_args: any) {
-    return {
-      result: "The intentions system has been deprecated and removed. " +
-        "Agent autonomy is now handled by the autonomy skill, which runs on a recurring timer. " +
-        "Use skills(action: \"runs\", name: \"autonomy\") to see recent autonomous activity. " +
-        "Use skills(action: \"run\", name: \"autonomy\") to trigger a manual run. " +
-        "Ideas and work items should be captured via goals, tasks, projects, or library pages.",
-    };
-  },
 
   async beliefs(args) {
     const { memoryBeliefStorage } = await import("./memory/belief-storage");

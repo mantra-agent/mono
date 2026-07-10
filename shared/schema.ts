@@ -453,8 +453,6 @@ export const tasks = pgTable("tasks", {
   acceptanceCriteria: text("acceptance_criteria").notNull().default(""),
   context: text("context").notNull().default(""),
   output: text("output").notNull().default(""),
-  estimateLow: real("estimate_low"),
-  estimateHigh: real("estimate_high"),
   deadline: text("deadline"),
   tokenEstimate: integer("token_estimate"),
   scope: text("scope").notNull().default("user"),
@@ -619,13 +617,6 @@ export type InsertConnectedAccount = z.infer<typeof insertConnectedAccountSchema
 // Intention infrastructure removed — see autonomy skill for replacement
 
 
-export const capabilityCache = pgTable("capability_cache", {
-  id: serial("id").primaryKey(),
-  key: text("key").notNull().unique(),
-  value: text("value").notNull(),
-  generatedAt: timestamp("generated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-});
-
 export const voiceSessionActive = pgTable("voice_session_active", {
   id: serial("id").primaryKey(),
   sessionId: text("session_id").notNull().unique(),
@@ -697,7 +688,6 @@ export const emailMessages = pgTable("email_messages", {
   isStarred: boolean("is_starred").default(false),
   triageStatus: text("triage_status").notNull().default("untriaged"),
   triageTier: text("triage_tier"),
-  triageCategory: text("triage_category"),
   triageReason: text("triage_reason"),
   triagedAt: timestamp("triaged_at", { withTimezone: true }),
   isDone: boolean("is_done").default(false).notNull(),
@@ -1143,10 +1133,7 @@ export const planSteps = pgTable("plan_steps", {
   durationSeconds: integer("duration_seconds"),
   startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
-  retryTier: text("retry_tier"),
-  retryAttempt: integer("retry_attempt"),
   totalAttempts: integer("total_attempts").default(0),
-  priorErrors: jsonb("prior_errors"),
   timeoutMinutes: integer("timeout_minutes"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

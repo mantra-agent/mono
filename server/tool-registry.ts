@@ -1052,18 +1052,6 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: [],
     },
   },
-  intentions: {
-    description: "DEPRECATED — The intentions system has been removed. Agent autonomy is now handled by the 'autonomy' skill. Use skills(action: 'runs', name: 'autonomy') to see recent autonomous activity, or skills(action: 'run', name: 'autonomy') for a manual run. Capture ideas via goals, tasks, projects, or library pages.",
-    category: "work",
-
-    parameters: {
-      type: "object",
-      properties: {
-        action: { type: "string", description: "Any action returns a deprecation notice." },
-      },
-      required: ["action"],
-    },
-  },
   router: {
     description: "Call and inspect the model routing layer. Actions: eval, list_inference_calls, get_inference_call.",
     category: "knowledge",

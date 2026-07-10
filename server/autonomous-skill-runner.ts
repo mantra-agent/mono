@@ -1324,51 +1324,7 @@ export async function triggerResponseOnChildSession(sessionId: string): Promise<
   }
 }
 
-// executeAutonomousIntentionRun removed — intentions system deprecated
 
-async function buildIntentionInstructions(intention: IntentionItem): Promise<string> {
-  const effectiveMode = intention.executionMode
-    || ((intention.type as string) === "conversation" ? "supervised" : "gift");
-
-  const parts: string[] = [
-    `## Intention: ${intention.title}`,
-    "",
-    `**Why:** ${intention.why || "Not specified"}`,
-    `**Done criteria:** ${intention.doneCriteria || "Not specified"}`,
-    `**Type:** ${intention.type}`,
-  ];
-
-  if (effectiveMode === "gift") {
-    parts.push(
-      "",
-      "## Execution Mode: Gift",
-      "You are running in **gift mode** (tier-1 ceiling). This means:",
-      "- You may use read-only tools (tier-0) and internal-write tools (tier-1) freely",
-      "- You CANNOT use external-effect tools (tier-2): no emails, no tweets, no calendar changes, no conversations",
-      "- Produce completed artifacts (Library pages, analysis docs, strategy updates)",
-      "- Do NOT create conversations or flag for attention — present your work as a gift",
-    );
-  }
-
-  if (intention.attempts?.length) {
-    const pastAttempts = intention.attempts.filter(a => a.outcome !== "running").slice(-5);
-    if (pastAttempts.length > 0) {
-      parts.push("", "## Previous Attempts");
-      for (const a of pastAttempts) {
-        parts.push(`- ${a.outcome} (${a.timestamp}): ${a.output?.slice(0, 200) || "no output"}`);
-      }
-    }
-  }
-
-  parts.push(
-    "",
-    "## Instructions",
-    "Execute this intention autonomously. Use the available tools to accomplish the goal.",
-    "When complete, summarize what was done and whether the done criteria were met.",
-  );
-
-  return parts.join("\n");
-}
 
 (async () => {
   try {

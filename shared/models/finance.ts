@@ -71,13 +71,6 @@ export const insertTransferPairOverrideSchema = createInsertSchema(transferPairO
 export type TransferPairOverride = typeof transferPairOverrides.$inferSelect;
 export type InsertTransferPairOverride = z.infer<typeof insertTransferPairOverrideSchema>;
 
-export const appMigrations = pgTable("app_migrations", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull().unique(),
-  ranAt: timestamp("ran_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-  metadata: jsonb("metadata"),
-});
-
 export const plaidSecurities = pgTable("plaid_securities", {
   id: serial("id").primaryKey(),
   securityId: text("security_id").notNull().unique(),

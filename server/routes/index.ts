@@ -20,7 +20,6 @@ import { registerPlaidRoutes } from "./plaid";
 import { registerFinanceRoutes } from "./finance";
 import { registerWellnessRoutes } from "./wellness";
 import { registerLibraryRoutes } from "./library";
-import { registerCaptureRoutes } from "./captures";
 import { registerEmailRoutes } from "./email";
 import { registerEmailDraftRoutes } from "./email-drafts";
 import { registerSessionDisplayRoutes } from "./session-display";
@@ -107,7 +106,6 @@ export async function registerDomainRoutes(
   await registerFinanceRoutes(app);
   await registerWellnessRoutes(app);
   await registerLibraryRoutes(app);
-  registerCaptureRoutes(app);
   registerEmailRoutes(app);
   registerEmailDraftRoutes(app);
   registerSessionDisplayRoutes(app);
