@@ -81,7 +81,6 @@ import {
   FileIcon,
   Users,
   Download,
-  ArrowLeft,
   Monitor,
   ListTodo,
   Package,
@@ -102,6 +101,7 @@ import {
 } from "@/components/ui/collapsible";
 import { STATUS_CONFIG, PROJECT_STATUS_CONFIG, groupTasksByStatus } from "@/lib/task-utils";
 import { TaskWidget } from "@/components/task-widget";
+import { useTaskModal } from "@/contexts/task-modal-context";
 
 const log = createLogger("WorkPage");
 
@@ -611,55 +611,29 @@ function ConfirmDeleteProjectDialog({
   );
 }
 
-export function TaskDetails({ taskId, onBack }: { taskId: number; onBack: () => void }) {
-  return (
-    <div className="min-h-full bg-background px-3 py-4 space-y-3 w-full" data-testid="task-details">
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onBack}
-        className="gap-1 px-2"
-        data-testid="button-back-to-tasks"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Back
-      </Button>
-      <TaskWidget taskId={taskId} defaultExpanded onDelete={onBack} />
-    </div>
-  );
-}
-
 export default function ProjectsPage() {
   const search = useSearch();
   const params = new URLSearchParams(search);
   const urlTaskId = params.get("task");
-  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(() => {
-    const parsed = urlTaskId ? Number(urlTaskId) : NaN;
-    return Number.isFinite(parsed) ? parsed : null;
-  });
+  const { openTaskModal } = useTaskModal();
 
   usePageHeader({
     title: "Projects",
   });
 
-  // Publish the open task so the focus widget's pageContext carries it.
-  useFocusContext(
-    selectedTaskId !== null
-      ? { entity: { type: "task", id: String(selectedTaskId) } }
-      : null
-  );
-
-  if (selectedTaskId !== null) {
-    return (
-      <div className="flex flex-col h-full overflow-y-auto overflow-x-hidden">
-        <TaskDetails taskId={selectedTaskId} onBack={() => setSelectedTaskId(null)} />
-      </div>
-    );
-  }
+  // If navigated with ?task=<id>, open modal and clear the param
+  useEffect(() => {
+    if (urlTaskId) {
+      const parsed = Number(urlTaskId);
+      if (Number.isFinite(parsed)) {
+        openTaskModal(parsed);
+      }
+    }
+  }, [urlTaskId, openTaskModal]);
 
   return (
     <div className="flex flex-col h-full overflow-y-auto overflow-x-hidden">
-      <ProjectsView onOpenTask={setSelectedTaskId} />
+      <ProjectsView />
     </div>
   );
 }
@@ -728,7 +702,6 @@ function TaskRow({
   projects,
   isDone,
   hideProjectAssign,
-  onOpenTask,
 }: {
   task: Task;
   project?: Project;
@@ -740,8 +713,8 @@ function TaskRow({
   projects: Project[];
   isDone?: boolean;
   hideProjectAssign?: boolean;
-  onOpenTask?: (id: number) => void;
 }) {
+  const { openTaskModal } = useTaskModal();
   const [editTitle, setEditTitle] = useState(task.title);
   const [expanded, setExpanded] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -781,7 +754,7 @@ function TaskRow({
           statusTextClass,
           isCompleted && "line-through"
         )}
-        onClick={() => onOpenTask ? onOpenTask(task.id) : onStartEdit()}
+        onClick={() => openTaskModal(task.id)}
         data-testid={`card-task-${task.id}`}
       >
       <WorkCheckCircle checked={isCompleted} data-testid={`check-task-${task.id}`} />
@@ -977,24 +950,15 @@ function TaskRow({
       </DropdownMenu>
       </div>
       {expanded && (
-        <div className="ml-14 mr-2 rounded-md border-l border-border/40 px-3 py-1.5 text-xs text-muted-foreground" data-testid={`tree-task-expanded-${task.id}`}>
-          {taskDetailLines.length > 0 ? (
-            <div className="space-y-1">
-              {task.description?.trim() && <p>{task.description.trim()}</p>}
-              {task.deliverable?.trim() && <p><span className="text-muted-foreground/70">Deliverable:</span> {task.deliverable.trim()}</p>}
-              {task.context?.trim() && <p><span className="text-muted-foreground/70">Context:</span> {task.context.trim()}</p>}
-              {task.output?.trim() && <p><span className="text-muted-foreground/70">Output:</span> {task.output.trim()}</p>}
-            </div>
-          ) : (
-            <span>No details yet.</span>
-          )}
+        <div className="ml-6 mr-2 border-l border-border/40 pl-2" data-testid={`tree-task-expanded-${task.id}`}>
+          <TaskWidget taskId={task.id} defaultExpanded onDelete={onDelete} />
         </div>
       )}
     </div>
   );
 }
 
-function ProjectsView({ onOpenTask }: { onOpenTask?: (id: number) => void }) {
+function ProjectsView() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [showCreate, setShowCreate] = useState(false);
@@ -1181,7 +1145,6 @@ function ProjectsView({ onOpenTask }: { onOpenTask?: (id: number) => void }) {
                     onUpdateTask={(id, data) => updateTaskMutation.mutate({ id, data })}
                     onDeleteTask={(task) => setPendingDeleteTask({ id: task.id, title: task.title })}
                     onOpenProject={() => setLocation(`/projects/${project.id}`)}
-                    onOpenTask={onOpenTask}
                     addingMilestoneProjectId={addingMilestoneProjectId}
                     newMilestoneName={newMilestoneName}
                     onNewMilestoneNameChange={setNewMilestoneName}
@@ -1299,7 +1262,6 @@ function ProjectTreeNode({
   onUpdateTask,
   onDeleteTask,
   onOpenProject,
-  onOpenTask,
   addingMilestoneProjectId,
   newMilestoneName,
   onNewMilestoneNameChange,
@@ -1325,7 +1287,6 @@ function ProjectTreeNode({
   onUpdateTask: (id: number, data: any) => void;
   onDeleteTask: (task: Task) => void;
   onOpenProject: () => void;
-  onOpenTask?: (id: number) => void;
   addingMilestoneProjectId: number | null;
   newMilestoneName: string;
   onNewMilestoneNameChange: (value: string) => void;
@@ -1589,7 +1550,6 @@ function ProjectTreeNode({
                         projects={projects}
                         isDone={task.status === "done"}
                         hideProjectAssign
-                        onOpenTask={onOpenTask}
                       />
                     </div>
                   </div>
@@ -1633,7 +1593,6 @@ function ProjectTreeNode({
                   projects={projects}
                   isDone={task.status === "done"}
                   hideProjectAssign
-                  onOpenTask={onOpenTask}
                 />
               </div>
             </div>
@@ -1760,12 +1719,10 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
 export function ProjectDetail({
   projectId,
   onBack,
-  onOpenTask,
   initialShowAddMilestone = false,
 }: {
   projectId: number;
   onBack: () => void;
-  onOpenTask?: (id: number) => void;
   initialShowAddMilestone?: boolean;
 }) {
   const { timezone } = useTimezone();
@@ -2066,7 +2023,6 @@ export function ProjectDetail({
                 projects={allProjects || []}
                 isDone={section.isDone}
                 hideProjectAssign
-                onOpenTask={onOpenTask}
               />
             ))}
             </div>
