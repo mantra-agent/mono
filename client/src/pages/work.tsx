@@ -822,10 +822,12 @@ function TaskRow({
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (isEditing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
+    if (isEditing) {
+      setEditTitle(task.title);
+      inputRef.current?.focus();
+      inputRef.current?.select();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing]);
 
   const handleSaveTitle = () => {
@@ -875,7 +877,8 @@ function TaskRow({
         />
       ) : (
         <span
-          className="truncate flex-1 min-w-0"
+          className="truncate flex-1 min-w-0 rounded px-1 -mx-1 hover:bg-accent/70"
+          onClick={(e) => { e.stopPropagation(); onStartEdit(); }}
           data-testid={`text-task-title-${task.id}`}
         >
           {task.title}
@@ -1077,7 +1080,7 @@ function TaskRow({
       </div>
       {expanded && (
         <div className="ml-6 mr-2 border-l border-border/40 pl-2" data-testid={`tree-task-expanded-${task.id}`}>
-          <TaskWidget taskId={task.id} defaultExpanded onDelete={onDelete} />
+          <TaskWidget taskId={task.id} showHeader={false} onDelete={onDelete} />
         </div>
       )}
     </div>
@@ -1700,7 +1703,15 @@ function ProjectTreeNode({
                 data-testid={`input-project-title-${project.id}`}
               />
             ) : (
-              <span className="truncate flex-1 min-w-0" data-testid={`text-project-title-${project.id}`}>
+              <span
+                className="truncate flex-1 min-w-0 rounded px-1 -mx-1 hover:bg-accent/70"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setProjectTitleDraft(project.title);
+                  setEditingProjectTitle(true);
+                }}
+                data-testid={`text-project-title-${project.id}`}
+              >
                 {project.title}
               </span>
             )}
@@ -1952,7 +1963,15 @@ function ProjectTreeNode({
                           data-testid={`input-tree-milestone-name-${milestone.id}`}
                         />
                       ) : (
-                        <span className={cn("truncate flex-1 min-w-0", milestoneCompleted && "line-through text-muted-foreground")} data-testid={`text-tree-milestone-name-${milestone.id}`}>
+                        <span
+                          className={cn("truncate flex-1 min-w-0 rounded px-1 -mx-1 hover:bg-accent/70", milestoneCompleted && "line-through text-muted-foreground")}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMilestoneNameDraft(milestone.name);
+                            setEditingMilestoneId(milestone.id);
+                          }}
+                          data-testid={`text-tree-milestone-name-${milestone.id}`}
+                        >
                           {milestone.name}
                         </span>
                       )}
