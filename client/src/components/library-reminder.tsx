@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { CalendarIcon, Clock, X, Check, Power, Hammer } from "lucide-react";
+import { CalendarIcon, Clock, X, Check, Hammer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenuSub,
@@ -27,9 +27,9 @@ interface ReminderPopoverProps {
   postUrl?: string;
   postMethod?: "POST" | "PATCH";
   deleteUrl?: string;
-  buildPayload?: (input: { fireAt?: string; nextBoot?: boolean; nextBuild?: boolean }) => Record<string, unknown>;
+  buildPayload?: (input: { fireAt?: string; nextBuild?: boolean }) => Record<string, unknown>;
   invalidateKeys?: unknown[][];
-  allowNextBoot?: boolean;
+  allowNextBuild?: boolean;
   onOpenChange?: (open: boolean) => void;
   onReminderSet?: () => void;
   /** When provided, bypasses internal mutation and calls this with the selected ISO date string instead. */
@@ -108,12 +108,11 @@ function buildReminderToastTitle(title: string | null | undefined, timeLabel: st
 
 interface SetReminderInput {
   fireAt?: string;
-  nextBoot?: boolean;
   nextBuild?: boolean;
   toastTimeLabel: string;
 }
 
-export function ReminderPopover({ title, queryKey, getUrl, postUrl, postMethod = "POST", deleteUrl, buildPayload, invalidateKeys = [], allowNextBoot = true, onOpenChange, onReminderSet, onSelect }: ReminderPopoverProps) {
+export function ReminderPopover({ title, queryKey, getUrl, postUrl, postMethod = "POST", deleteUrl, buildPayload, invalidateKeys = [], allowNextBuild = true, onOpenChange, onReminderSet, onSelect }: ReminderPopoverProps) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [showCustom, setShowCustom] = useState(false);
@@ -166,7 +165,6 @@ export function ReminderPopover({ title, queryKey, getUrl, postUrl, postMethod =
     if (onSelect) { onSelect(fireAt); setOpen(false); onReminderSet?.(); return; }
     setReminderMutation.mutate({ fireAt, toastTimeLabel: label });
   };
-  const handleNextBoot = () => setReminderMutation.mutate({ nextBoot: true, toastTimeLabel: "Next Boot" });
   const handleNextBuild = () => setReminderMutation.mutate({ nextBuild: true, toastTimeLabel: "Next Build" });
 
   const handleCustomSubmit = () => {
@@ -213,17 +211,11 @@ export function ReminderPopover({ title, queryKey, getUrl, postUrl, postMethod =
               </button>
             ))}
             <div className="border-t border-border/30 my-1" />
-            {allowNextBoot && (
-              <>
-                <button className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-accent transition-colors flex items-center gap-2" onClick={(e) => { e.stopPropagation(); handleNextBoot(); }} disabled={isPending}>
-                  <Power className="h-3 w-3" />
-                  Next boot
-                </button>
-                <button className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-accent transition-colors flex items-center gap-2" onClick={(e) => { e.stopPropagation(); handleNextBuild(); }} disabled={isPending}>
-                  <Hammer className="h-3 w-3" />
-                  Next build
-                </button>
-              </>
+            {allowNextBuild && (
+              <button className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-accent transition-colors flex items-center gap-2" onClick={(e) => { e.stopPropagation(); handleNextBuild(); }} disabled={isPending}>
+                <Hammer className="h-3 w-3" />
+                Next build
+              </button>
             )}
             <div className="space-y-2">
               <button className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-accent transition-colors flex items-center gap-2" onClick={(e) => { e.stopPropagation(); setShowCustom(!showCustom); }} disabled={isPending}>

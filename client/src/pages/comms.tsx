@@ -501,7 +501,7 @@ function EmailReference({
                     <ReminderPopover
                       title={title}
                       onSelect={(fireAt) => onSnooze(messages.map(m => m.id), fireAt)}
-                      allowNextBoot={false}
+                      allowNextBuild={false}
                     />
                   </>
                 )}

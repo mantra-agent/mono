@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { CalendarIcon, Clock, X, Check, Power, Hammer } from "lucide-react";
+import { CalendarIcon, Clock, X, Check, Hammer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenuSub,
@@ -156,10 +156,6 @@ export function SessionReminderPopover({ sessionId, sessionTitle, onOpenChange, 
     setReminderMutation.mutate({ fireAt: new Date(getTime()).toISOString(), toastTimeLabel: label });
   };
 
-  const handleNextBoot = () => {
-    setReminderMutation.mutate({ nextBoot: true, toastTimeLabel: "Next Boot" });
-  };
-
   const handleNextBuild = () => {
     setReminderMutation.mutate({ nextBuild: true, toastTimeLabel: "Next Build" });
   };
@@ -175,21 +171,6 @@ export function SessionReminderPopover({ sessionId, sessionTitle, onOpenChange, 
     }
     setReminderMutation.mutate({ fireAt: dt.toISOString(), toastTimeLabel: formatToastDateTime(dt) });
   };
-
-  const renderNextBootOption = () => (
-    <button
-      className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-accent transition-colors flex items-center gap-2"
-      onClick={(e) => {
-        e.stopPropagation();
-        handleNextBoot();
-      }}
-      disabled={isPending}
-      data-testid="button-preset-next-boot"
-    >
-      <Power className="h-3 w-3" />
-      Next boot
-    </button>
-  );
 
   const renderNextBuildOption = () => (
     <button
@@ -348,7 +329,6 @@ export function SessionReminderPopover({ sessionId, sessionTitle, onOpenChange, 
             </div>
             {showCustom && (
               <div className="border-t pt-2 space-y-1">
-                {renderNextBootOption()}
                 {renderNextBuildOption()}
                 {renderPresetOptions()}
                 {renderCustomOption()}
@@ -357,7 +337,6 @@ export function SessionReminderPopover({ sessionId, sessionTitle, onOpenChange, 
           </div>
         ) : (
           <div className="space-y-1">
-            {renderNextBootOption()}
             {renderNextBuildOption()}
             {renderPresetOptions()}
             {renderCustomOption()}
