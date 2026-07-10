@@ -1,10 +1,11 @@
 import { useState, useCallback } from "react";
 import { useLocation, useParams } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, Settings2, ExternalLink, Play, History, ShieldCheck, Trash2, FileText, Search } from "lucide-react";
+import { Pencil, Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, Settings2, ChevronRight, ExternalLink, Play, History, ShieldCheck, Trash2, FileText, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -694,44 +695,27 @@ function SourceBindingCard({
 
   if (!editing) {
     return (
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <CardTitle className="text-base">Source Binding</CardTitle>
-              <CardDescription>What code this environment runs.</CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              {binding.inferred && <Badge variant="outline">inferred</Badge>}
-              <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => { resetDraft(); setEditing(true); }}>
-                <Pencil className="h-3.5 w-3.5" /> Edit
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
+      <div>
+        <div className="flex items-center justify-end gap-2 px-2 pb-1">
+          {binding.inferred && <Badge variant="outline">inferred</Badge>}
+          <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => { resetDraft(); setEditing(true); }}>
+            <Pencil className="h-3.5 w-3.5" /> Edit
+          </Button>
+        </div>
+        <div>
           <ValueRow label="Provider" value={binding.provider} />
           <ValueRow label="Connection" value={binding.connection?.label || "No connection selected"} />
           <ValueRow label="Repository" value={`${binding.owner || ""}/${binding.repo || ""}`} mono />
           <ValueRow label="Branch" value={binding.branch} mono />
           <ValueRow label="Auto deploy" value={binding.autoDeploy} />
           <ValueRow label="Code indexing" value={binding.codeIndexingEnabled ? "Enabled" : "Disabled"} />
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     );
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <CardTitle className="text-base">Source Binding</CardTitle>
-            <CardDescription>What code this environment runs.</CardDescription>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-0">
+    <div className="space-y-0">
         <ValueRow label="Provider" value={binding.provider} />
         <ConnectionSelect
           provider="github"
@@ -782,8 +766,7 @@ function SourceBindingCard({
             Save
           </Button>
         </div>
-      </CardContent>
-    </Card>
+    </div>
   );
 }
 
@@ -894,22 +877,14 @@ function HostingBindingCard({
 
   if (!editing) {
     return (
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <CardTitle className="text-base">Hosting Binding</CardTitle>
-              <CardDescription>Where this environment runs.</CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              {binding.inferred && <Badge variant="outline">inferred</Badge>}
-              <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => { resetDraft(); setEditing(true); }}>
-                <Pencil className="h-3.5 w-3.5" /> Edit
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
+      <div>
+        <div className="flex items-center justify-end gap-2 px-2 pb-1">
+          {binding.inferred && <Badge variant="outline">inferred</Badge>}
+          <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => { resetDraft(); setEditing(true); }}>
+            <Pencil className="h-3.5 w-3.5" /> Edit
+          </Button>
+        </div>
+        <div>
           <ValueRow label="Provider" value={humanize(resolvedProvider)} />
           <ValueRow label="Connection" value={binding.connection?.label || "No connection selected"} />
           {resolvedProvider === "cloudflare" ? (
@@ -927,22 +902,13 @@ function HostingBindingCard({
           )}
           <ValueRow label="Public URL" value={binding.publicUrl} mono />
           {binding.staticUrl && <ValueRow label="Static URL" value={binding.staticUrl} mono />}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     );
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <CardTitle className="text-base">Hosting Binding</CardTitle>
-            <CardDescription>Where this environment runs.</CardDescription>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-0">
+    <div className="space-y-0">
         <div className="grid grid-cols-[9rem_1fr] gap-3 border-b border-border/40 py-2 items-center">
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Provider</div>
           <Select value={draft.hostingProvider} onValueChange={(v) => { setDraft((d) => ({ ...d, hostingProvider: v, connectionId: "" })); setShowNewConn(false); setShowUpdateToken(false); }}>
@@ -1004,8 +970,7 @@ function HostingBindingCard({
             Save
           </Button>
         </div>
-      </CardContent>
-    </Card>
+    </div>
   );
 }
 
@@ -1799,105 +1764,99 @@ function ContextArtifactsCard({ artifacts, environmentId }: { artifacts: Context
   });
 
   return (
-    <Card className="border-border/40 bg-card/60 shadow-none">
-      <CardHeader className="px-3 pb-2 pt-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-medium">Context Artifacts</CardTitle>
-          {!adding && (
-            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setAdding(true)}>
-              <Plus className="mr-1 h-3 w-3" /> Add
-            </Button>
-          )}
-        </div>
-        <CardDescription className="text-xs">Library pages loaded into Agent's context for this environment.</CardDescription>
-      </CardHeader>
-      <CardContent className="px-3 pb-3">
-        {artifacts.length === 0 && !adding && (
-          <p className="text-xs text-muted-foreground py-2">No context artifacts linked.</p>
-        )}
-        {artifacts.length > 0 && (
-          <div className="space-y-1">
-            {artifacts.map((a) => (
-                <div key={a.id} className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs hover:bg-muted/40">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0">{ARTIFACT_KIND_LABELS[a.kind] ?? a.kind}</Badge>
-                    <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
-                    <span className="truncate">{a.pageTitle}</span>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-5 w-5 p-0 shrink-0 text-muted-foreground hover:text-destructive"
-                    onClick={() => removeMutation.mutate(a.id)}
-                    disabled={removeMutation.isPending}
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
+    <div>
+      {artifacts.length > 0 && (
+        <div className="space-y-1">
+          {artifacts.map((a) => (
+              <div key={a.id} className="flex items-center justify-between gap-2 rounded px-2 py-1 text-xs hover:bg-muted/40">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0">{ARTIFACT_KIND_LABELS[a.kind] ?? a.kind}</Badge>
+                  <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{a.pageTitle}</span>
                 </div>
-              ))}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 w-5 p-0 shrink-0 text-muted-foreground hover:text-destructive"
+                  onClick={() => removeMutation.mutate(a.id)}
+                  disabled={removeMutation.isPending}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
+            ))}
+        </div>
+      )}
+      {adding && (
+        <div className="mt-2 space-y-2 rounded border border-border/30 p-2">
+          <div className="grid gap-1.5">
+            <Label className="text-xs">Kind</Label>
+            <Select value={newKind} onValueChange={setNewKind}>
+              <SelectTrigger className="h-7 text-xs">
+                <SelectValue placeholder="Select artifact kind" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableKinds.map((k) => (
+                  <SelectItem key={k.value} value={k.value} className="text-xs">
+                    <span>{k.label}</span>
+                    <span className="ml-2 text-muted-foreground">{k.description}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        )}
-        {adding && (
-          <div className="mt-2 space-y-2 rounded border border-border/30 p-2">
-            <div className="grid gap-1.5">
-              <Label className="text-xs">Kind</Label>
-              <Select value={newKind} onValueChange={setNewKind}>
-                <SelectTrigger className="h-7 text-xs">
-                  <SelectValue placeholder="Select artifact kind" />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableKinds.map((k) => (
-                    <SelectItem key={k.value} value={k.value} className="text-xs">
-                      <span>{k.label}</span>
-                      <span className="ml-2 text-muted-foreground">{k.description}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-1.5">
-              <Label className="text-xs">Library Page</Label>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs justify-start font-normal"
-                onClick={() => setPagePickerOpen(true)}
-              >
-                {selectedPage ? (
-                  <span className="flex items-center gap-1.5 truncate">
-                    <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
-                    {selectedPage.title}
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground flex items-center gap-1.5">
-                    <Search className="h-3 w-3" />
-                    Search library pages...
-                  </span>
-                )}
-              </Button>
-            </div>
-            <div className="flex gap-1.5 justify-end">
-              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => { setAdding(false); setNewKind(""); setSelectedPage(null); }}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                className="h-6 px-2 text-xs"
-                disabled={!newKind.trim() || !selectedPage || saveMutation.isPending}
-                onClick={() => selectedPage && saveMutation.mutate({ kind: newKind.trim(), libraryPageId: selectedPage.id })}
-              >
-                {saveMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Save"}
-              </Button>
-            </div>
+          <div className="grid gap-1.5">
+            <Label className="text-xs">Library Page</Label>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs justify-start font-normal"
+              onClick={() => setPagePickerOpen(true)}
+            >
+              {selectedPage ? (
+                <span className="flex items-center gap-1.5 truncate">
+                  <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  {selectedPage.title}
+                </span>
+              ) : (
+                <span className="text-muted-foreground flex items-center gap-1.5">
+                  <Search className="h-3 w-3" />
+                  Search library pages...
+                </span>
+              )}
+            </Button>
           </div>
-        )}
-      </CardContent>
+          <div className="flex gap-1.5 justify-end">
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => { setAdding(false); setNewKind(""); setSelectedPage(null); }}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="h-6 px-2 text-xs"
+              disabled={!newKind.trim() || !selectedPage || saveMutation.isPending}
+              onClick={() => selectedPage && saveMutation.mutate({ kind: newKind.trim(), libraryPageId: selectedPage.id })}
+            >
+              {saveMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Save"}
+            </Button>
+          </div>
+        </div>
+      )}
+      {!adding && (
+        <button
+          type="button"
+          onClick={() => setAdding(true)}
+          className="flex items-center gap-2 w-full px-2 py-1.5 text-sm text-cta hover:text-cta/80 hover:bg-accent/70 rounded-md transition-colors"
+        >
+          <Plus className="h-3.5 w-3.5 shrink-0" />
+          <span>New Context</span>
+        </button>
+      )}
       <LibraryPagePickerDialog
         open={pagePickerOpen}
         onOpenChange={setPagePickerOpen}
         onSelect={(page) => { setSelectedPage(page); setPagePickerOpen(false); }}
       />
-    </Card>
+    </div>
   );
 }
 
@@ -1977,30 +1936,55 @@ function ConfigCard({ title, description, children }: { title: string; descripti
   );
 }
 
+// --- Collapsible Environment Section ---
+// Styled like the Session Menu group headers (PINNED, ACTIVE, etc.)
+
+function EnvironmentSection({
+  label,
+  defaultOpen = true,
+  children,
+}: {
+  label: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger className="flex items-center gap-1.5 w-full px-2 py-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider hover-elevate rounded-md">
+        <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
+        {label}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="pt-1 pb-2">
+          {children}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 function EnvironmentDetailsConfigureCard({ details, environmentId }: { details: EnvironmentDetails; environmentId: number }) {
   return (
-    <Card className="border-border/40 bg-card/70 shadow-none">
-      <CardHeader className="px-3 pb-2 pt-3">
-        <CardTitle className="flex items-center gap-2 text-sm font-medium">
-          <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
-          Environment Details / Configure
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="px-3 pb-3">
-        <div className="overflow-hidden rounded-md border border-border/20">
-          <div className="grid gap-2 p-2">
-            <SourceBindingCard binding={details.source} environmentId={environmentId} />
-            <HostingBindingCard binding={details.hosting} environmentId={environmentId} />
-            <ConfigCard title="Promotion">
-              <ValueRow label="Source branch" value={details.promotion.sourceBranch} mono />
-              <ValueRow label="Target branch" value={details.promotion.targetBranch || "—"} mono />
-              <ValueRow label="Mode" value={details.promotion.mode} />
-            </ConfigCard>
-            <ContextArtifactsCard artifacts={details.contextArtifacts || []} environmentId={environmentId} />
-          </div>
+    <div className="space-y-1">
+      <EnvironmentSection label="Source">
+        <SourceBindingCard binding={details.source} environmentId={environmentId} />
+      </EnvironmentSection>
+      <EnvironmentSection label="Hosting">
+        <HostingBindingCard binding={details.hosting} environmentId={environmentId} />
+      </EnvironmentSection>
+      <EnvironmentSection label="Promotion">
+        <div>
+          <ValueRow label="Source branch" value={details.promotion.sourceBranch} mono />
+          <ValueRow label="Target branch" value={details.promotion.targetBranch || "—"} mono />
+          <ValueRow label="Mode" value={details.promotion.mode} />
         </div>
-      </CardContent>
-    </Card>
+      </EnvironmentSection>
+      <EnvironmentSection label="Context">
+        <ContextArtifactsCard artifacts={details.contextArtifacts || []} environmentId={environmentId} />
+      </EnvironmentSection>
+    </div>
   );
 }
 
