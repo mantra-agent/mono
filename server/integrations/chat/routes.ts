@@ -70,22 +70,26 @@ function isLiveSessionStatus(session: { status?: string }): boolean {
   return session.status === "streaming";
 }
 
-function getSessionReminderState(timer: Timer): { active: true; timerId: string; fireAt: string | null; nextBoot: boolean } | null {
+type SessionReminderState = { active: true; timerId: string; fireAt: string | null; nextBoot: boolean; nextBuild: boolean };
+
+function getSessionReminderState(timer: Timer): SessionReminderState | null {
   if (timer.type !== "reminder" || !timer.enabled) return null;
   if (!timer.description?.startsWith(SESSION_REMINDER_PREFIX)) return null;
   const schedule = timer.schedules[0];
   const nextBoot = !!schedule?.fireOnNextBoot;
+  const nextBuild = !!schedule?.fireOnNextBuild;
   const nextRunTimes = timerScheduler.getNextRunTimes();
   return {
     active: true,
     timerId: timer.id,
-    fireAt: nextBoot ? null : (schedule?.fireAt || nextRunTimes[timer.id] || null),
+    fireAt: nextBoot || nextBuild ? null : (schedule?.fireAt || nextRunTimes[timer.id] || null),
     nextBoot,
+    nextBuild,
   };
 }
 
-async function getSessionReminderMap(): Promise<Map<string, { active: true; timerId: string; fireAt: string | null; nextBoot: boolean }>> {
-  const reminders = new Map<string, { active: true; timerId: string; fireAt: string | null; nextBoot: boolean }>();
+async function getSessionReminderMap(): Promise<Map<string, SessionReminderState>> {
+  const reminders = new Map<string, SessionReminderState>();
   const timers = await timerStorage.getAll();
   for (const timer of timers) {
     const state = getSessionReminderState(timer);

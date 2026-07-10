@@ -47,12 +47,14 @@ export function registerSessionReminderRoutes(app: Express): void {
       const nextRunTimes = timerScheduler.getNextRunTimes();
       const schedule = timer.schedules[0];
       const nextBoot = !!schedule?.fireOnNextBoot;
-      const fireAt = nextBoot ? null : (schedule?.fireAt || nextRunTimes[timer.id] || null);
+      const nextBuild = !!schedule?.fireOnNextBuild;
+      const fireAt = nextBoot || nextBuild ? null : (schedule?.fireAt || nextRunTimes[timer.id] || null);
       res.json({
         active: true,
         timerId: timer.id,
         fireAt,
         nextBoot,
+        nextBuild,
       });
     } catch (error: unknown) {
       log.error("GET reminder error:", error instanceof Error ? error.message : String(error));
@@ -69,16 +71,16 @@ export function registerSessionReminderRoutes(app: Express): void {
         return;
       }
 
-      const { fireAt, nextBoot } = req.body as { fireAt?: string; nextBoot?: boolean };
+      const { fireAt, nextBoot, nextBuild } = req.body as { fireAt?: string; nextBoot?: boolean; nextBuild?: boolean };
 
-      let scheduleEntry: { id: string; frequency: "once"; fireAt?: string; fireOnNextBoot?: boolean };
+      let scheduleEntry: { id: string; frequency: "once"; fireAt?: string; fireOnNextBoot?: boolean; fireOnNextBuild?: boolean };
       let fireAtIso: string | null = null;
 
-      if (nextBoot) {
+      if (nextBoot || nextBuild) {
         scheduleEntry = {
           id: `sched-reminder-${Date.now().toString(36)}`,
           frequency: "once",
-          fireOnNextBoot: true,
+          ...(nextBuild ? { fireOnNextBuild: true } : { fireOnNextBoot: true }),
         };
       } else {
         if (!fireAt) {
@@ -114,7 +116,7 @@ export function registerSessionReminderRoutes(app: Express): void {
         timezone: "UTC",
       });
 
-      log.log(`Created session reminder timerId=${timer.id} session=${sessionId} ${nextBoot ? "nextBoot=true" : `fireAt=${fireAtIso}`}`);
+      log.log(`Created session reminder timerId=${timer.id} session=${sessionId} ${nextBuild ? "nextBuild=true" : nextBoot ? "nextBoot=true" : `fireAt=${fireAtIso}`}`);
 
       await timerScheduler.rescheduleAll();
 
@@ -122,7 +124,8 @@ export function registerSessionReminderRoutes(app: Express): void {
         active: true,
         timerId: timer.id,
         fireAt: fireAtIso,
-        nextBoot: !!nextBoot,
+        nextBoot: !!nextBoot && !nextBuild,
+        nextBuild: !!nextBuild,
       });
     } catch (error: unknown) {
       log.error("POST reminder error:", error instanceof Error ? error.message : String(error));

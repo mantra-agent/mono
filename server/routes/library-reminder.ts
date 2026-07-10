@@ -53,12 +53,14 @@ export function registerLibraryReminderRoutes(app: Express): void {
       const nextRunTimes = timerScheduler.getNextRunTimes();
       const schedule = timer.schedules[0];
       const nextBoot = !!schedule?.fireOnNextBoot;
-      const fireAt = nextBoot ? null : (schedule?.fireAt || nextRunTimes[timer.id] || null);
+      const nextBuild = !!schedule?.fireOnNextBuild;
+      const fireAt = nextBoot || nextBuild ? null : (schedule?.fireAt || nextRunTimes[timer.id] || null);
       res.json({
         active: true,
         timerId: timer.id,
         fireAt,
         nextBoot,
+        nextBuild,
       });
     } catch (error: unknown) {
       log.error("GET library reminder error:", error instanceof Error ? error.message : String(error));
@@ -78,20 +80,21 @@ export function registerLibraryReminderRoutes(app: Express): void {
         return;
       }
 
-      const { fireAt, nextBoot, dismiss } = req.body as {
+      const { fireAt, nextBoot, nextBuild, dismiss } = req.body as {
         fireAt?: string;
         nextBoot?: boolean;
+        nextBuild?: boolean;
         dismiss?: boolean;
       };
 
-      let scheduleEntry: { id: string; frequency: "once"; fireAt?: string; fireOnNextBoot?: boolean };
+      let scheduleEntry: { id: string; frequency: "once"; fireAt?: string; fireOnNextBoot?: boolean; fireOnNextBuild?: boolean };
       let fireAtIso: string | null = null;
 
-      if (nextBoot) {
+      if (nextBoot || nextBuild) {
         scheduleEntry = {
           id: `sched-reminder-${Date.now().toString(36)}`,
           frequency: "once",
-          fireOnNextBoot: true,
+          ...(nextBuild ? { fireOnNextBuild: true } : { fireOnNextBoot: true }),
         };
       } else {
         if (!fireAt) {
@@ -133,7 +136,7 @@ export function registerLibraryReminderRoutes(app: Express): void {
       if (dismiss !== false) {
         const snoozedUntil = fireAtIso
           ? new Date(fireAtIso)
-          : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000); // nextBoot: snooze for a year
+          : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000); // nextBoot/nextBuild: snooze for a year
         await db
           .update(libraryPages)
           .set({
@@ -145,7 +148,7 @@ export function registerLibraryReminderRoutes(app: Express): void {
           .where(eq(libraryPages.id, pageId));
       }
 
-      log.log(`Created library reminder timerId=${timer.id} page=${pageId} ${nextBoot ? "nextBoot=true" : `fireAt=${fireAtIso}`}`);
+      log.log(`Created library reminder timerId=${timer.id} page=${pageId} ${nextBuild ? "nextBuild=true" : nextBoot ? "nextBoot=true" : `fireAt=${fireAtIso}`}`);
 
       await timerScheduler.rescheduleAll();
 
@@ -153,7 +156,8 @@ export function registerLibraryReminderRoutes(app: Express): void {
         active: true,
         timerId: timer.id,
         fireAt: fireAtIso,
-        nextBoot: !!nextBoot,
+        nextBoot: !!nextBoot && !nextBuild,
+        nextBuild: !!nextBuild,
       });
     } catch (error: unknown) {
       log.error("POST library reminder error:", error instanceof Error ? error.message : String(error));

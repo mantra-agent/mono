@@ -41,6 +41,7 @@ export type CanonicalSchedule = {
   cronExpression?: string;
   fireAt?: string;
   fireOnNextBoot?: boolean;
+  fireOnNextBuild?: boolean;
 };
 
 function compactObject<T extends Record<string, unknown>>(value: T): T {
@@ -67,6 +68,7 @@ export function normalizeSchedule(schedule: Schedule): CanonicalSchedule {
     cronExpression: schedule.cronExpression,
     fireAt: schedule.fireAt,
     fireOnNextBoot: schedule.fireOnNextBoot,
+    fireOnNextBuild: schedule.fireOnNextBuild,
   });
 }
 
