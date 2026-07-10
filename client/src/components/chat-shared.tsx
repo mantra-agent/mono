@@ -108,6 +108,8 @@ export function filterStepsByLayer(steps: ExecutionStep[], layer: 1 | 2 | 3 | 4,
 import { useVisibilityLayer } from "@/hooks/use-visibility-layer";
 import { ReferenceText } from "@/components/references/reference-text";
 import type { ReferenceSurface } from "@/components/references/reference-renderer";
+import { EmailDraftWidget } from "@/components/email-draft-widget";
+import { parseReferenceText } from "@shared/reference-parser";
 
 const log = createLogger("ChatShared");
 
@@ -1158,23 +1160,44 @@ export function MarkdownContent({ content, stripTags = false, compact = false, r
   const strippedContent = stripTags ? stripExpressionTags(timestampStripped) : timestampStripped;
   const { tags, remaining } = stripTags ? { tags: [], remaining: strippedContent } : parseLeadingExpressionTags(strippedContent);
 
+  // Extract email_draft references for block-level widget rendering
+  const parts = parseReferenceText(remaining);
+  const draftIds: string[] = [];
+  const textWithoutDrafts = parts
+    .map((part) => {
+      if (part.kind === "reference" && part.ref.type === "email_draft") {
+        draftIds.push(part.ref.id);
+        return ""; // Strip from inline text — rendered as block widget below
+      }
+      return part.kind === "text" ? part.text : `@${part.ref.type}:${part.ref.id}`;
+    })
+    .join("")
+    .trim();
+
   return (
-    <div className={cn(
-      "prose prose-sm dark:prose-invert max-w-none break-words overflow-hidden [&_pre]:bg-card/70 [&_pre]:rounded-md [&_pre]:border [&_pre]:border-primary/20 [&_pre]:p-3 [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:text-xs [&_code]:font-mono [&_code]:break-all [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-sm [&_blockquote]:bg-card/70 [&_blockquote]:rounded-md [&_blockquote]:border-l-primary/20 [&_blockquote]:px-3 [&_blockquote]:py-2 [&_a]:text-cta [&_a]:break-all [&_a]:transition-colors [&_a:hover]:text-active",
-      compact ? "[&_p]:my-2 [&_ul]:my-0 [&_ol]:my-0 [&_li]:my-0 [&>:first-child]:mt-0 [&>:last-child]:mb-0" : "[&_p]:my-2 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0",
-      tags.length > 0 && "[&>p:first-of-type]:inline [&>p:first-of-type]:my-0"
-    )}>
-      {tags.length > 0 && (
-        <span className="not-prose mr-1.5 inline-flex flex-wrap items-baseline gap-1 align-baseline text-muted-foreground/80">
-          {tags.map((tag, index) => (
-            <span key={`${tag}-${index}`} className="inline-flex whitespace-nowrap italic">
-              [{tag}]
+    <>
+      {textWithoutDrafts && (
+        <div className={cn(
+          "prose prose-sm dark:prose-invert max-w-none break-words overflow-hidden [&_pre]:bg-card/70 [&_pre]:rounded-md [&_pre]:border [&_pre]:border-primary/20 [&_pre]:p-3 [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:text-xs [&_code]:font-mono [&_code]:break-all [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-sm [&_blockquote]:bg-card/70 [&_blockquote]:rounded-md [&_blockquote]:border-l-primary/20 [&_blockquote]:px-3 [&_blockquote]:py-2 [&_a]:text-cta [&_a]:break-all [&_a]:transition-colors [&_a:hover]:text-active",
+          compact ? "[&_p]:my-2 [&_ul]:my-0 [&_ol]:my-0 [&_li]:my-0 [&>:first-child]:mt-0 [&>:last-child]:mb-0" : "[&_p]:my-2 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0",
+          tags.length > 0 && "[&>p:first-of-type]:inline [&>p:first-of-type]:my-0"
+        )}>
+          {tags.length > 0 && (
+            <span className="not-prose mr-1.5 inline-flex flex-wrap items-baseline gap-1 align-baseline text-muted-foreground/80">
+              {tags.map((tag, index) => (
+                <span key={`${tag}-${index}`} className="inline-flex whitespace-nowrap italic">
+                  [{tag}]
+                </span>
+              ))}
             </span>
-          ))}
-        </span>
+          )}
+          <ReferenceText content={textWithoutDrafts} markdownComponents={markdownComponents} referenceSurface={referenceSurface} />
+        </div>
       )}
-      <ReferenceText content={remaining} markdownComponents={markdownComponents} referenceSurface={referenceSurface} />
-    </div>
+      {draftIds.map((id) => (
+        <EmailDraftWidget key={id} draftId={id} />
+      ))}
+    </>
   );
 }
 
