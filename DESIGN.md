@@ -402,16 +402,47 @@ hierarchy-tree:
     selection: "single selected row when context needs it"
     expansion: "chevron rotation"
     completion: "inline check control for completable objects"
+    editing: "fields and dates edit in place"
+    references: "canonical reference widgets expand inline when context is useful"
     nesting: "visible rails or indentation"
 ```
 
 #### Hierarchy Tree rules
 
 - Search comes first.
-- Creation sits directly under search when creation is a primary action.
+- Creation sits directly under search when creation is a primary action. Use the blue `+ New Thing` row as the persistent primary CTA.
 - Use collapsible sections to reduce scanning cost.
 - Preserve semantic status through icons, checks, and muted metadata.
+- Edit short fields in place. Use `InlineDatePicker` for dates.
+- Render canonical references with the shared reference renderer. When a reference has useful Simple-view context, expand that context directly beneath its row rather than opening a detached card.
 - Prefer one compact tree over separate cards, lists, and detail fragments.
+
+### Zero states
+
+A zero state is the normal empty form of a surface, not a hero, onboarding panel, or marketing moment. Keep the surface's useful scaffolding visible and replace missing objects with one quiet row.
+
+```yaml
+zero-state:
+  preserve:
+    - search
+    - primary creation action
+    - section structure when it helps orientation
+  row:
+    copy: "No {things} yet."
+    style: "text-sm text-muted-foreground"
+    alignment: "left aligned at the object's tree depth"
+    spacing: "px-2 py-1.5"
+  prohibit:
+    - hero icons or icon circles
+    - centered layouts
+    - headings plus explanatory paragraphs
+    - CTA buttons inside the empty area
+    - dashed or decorative empty cards
+```
+
+The persistent blue `+ New Thing` action is the CTA. Do not add a second action inside the empty area. Search-result emptiness follows the same quiet-row pattern with precise copy such as `No matching goals.`
+
+Chat is an explicit exception. Its Mantra mark and conversation prompt are part of the conversational canvas, not a reusable zero-state pattern. Errors, loading states, and permission states are also separate patterns.
 
 ### Buttons
 

@@ -42,7 +42,7 @@ Design system source of truth: the Design page / Build Design implementation is 
 - **Color system**: Functional token names (e.g., `cat-critical` not `cat-purple`). 60/30/10 proportion rule. Dark theme is primary.
 - **Typography**: 4 scale stops only: `text-sm` (body), `text-base` (emphasis), `text-lg` (section heads), `text-xl` (page titles).
 - **Spacing**: 8px rhythm. Standard gaps: `gap-2` (tight), `gap-4` (default), `gap-6` (sections).
-- **Empty states**: Every list/table must have an empty state with icon (`h-6 w-6 text-muted-foreground`), message, and optional action. Padding: `py-12`.
+- **Zero states**: Preserve search, the blue `+ New Thing` action, and useful section structure. Render missing content as one left-aligned quiet row (`px-2 py-1.5 text-sm text-muted-foreground`). No hero icons, centered layouts, explanatory panels, or CTA inside the empty area. Chat is the explicit exception. See `DESIGN.md`.
 - **Components**: shadcn/ui as base. Extend, don't reinvent.
 
 ## Streaming Architecture
