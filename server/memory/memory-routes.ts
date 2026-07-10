@@ -1881,9 +1881,15 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
     const entityTitleByKey = new Map<string, string>();
     const personEntityIds = [...new Set(entityLinks.filter((l) => l.entityType === "person").map((l) => l.entityId))];
     const pageEntityIds = [...new Set(entityLinks.filter((l) => l.entityType === "page" || l.entityType === "library_page").map((l) => l.entityId))];
+    const entitySummaryByKey = new Map<string, string>();
     if (personEntityIds.length > 0) {
       const people = await peopleStorage.getPeopleByIds(personEntityIds);
-      for (const person of people) entityTitleByKey.set(`person:${person.id}`, person.name);
+      for (const person of people) {
+        entityTitleByKey.set(`person:${person.id}`, person.name);
+        const fallbackSummary = [person.role, person.company, person.relation].filter(Boolean).join(" · ");
+        const personSummary = person.quickSummary || person.aiSummary || person.identityContent || fallbackSummary;
+        if (personSummary) entitySummaryByKey.set(`person:${person.id}`, personSummary);
+      }
     }
     if (pageEntityIds.length > 0) {
       const pageScope = { ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, scope: libraryPages.scope };
@@ -1956,11 +1962,12 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
         const entityNodeId = nextSyntheticNodeId--;
         entityNodeIds.set(key, entityNodeId);
         const entityTitle = entityTitleByKey.get(key) || link.entityId;
+        const entitySummary = entitySummaryByKey.get(key) || `Entity linked to vNext claims (${link.entityType})`;
         entries.push({
           id: entityNodeId,
-          content: `${link.entityType}: ${entityTitle}`,
+          content: entitySummary,
           title: entityTitle,
-          summary: `Entity linked to vNext claims (${link.entityType})`,
+          summary: entitySummary,
           layer: "long",
           source: link.entityType,
           sourceId: link.entityId,
