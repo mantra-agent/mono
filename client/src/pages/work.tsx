@@ -11,7 +11,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { InlineDatePicker } from "@/components/inline-date-picker";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -107,6 +106,7 @@ import {
 } from "@/components/ui/collapsible";
 import { STATUS_CONFIG, PROJECT_STATUS_CONFIG, groupTasksByStatus } from "@/lib/task-utils";
 import { TaskWidget } from "@/components/task-widget";
+import { ExpandedDescriptionEditor } from "@/components/expanded-description-editor";
 import { useTaskModal } from "@/contexts/task-modal-context";
 
 const log = createLogger("WorkPage");
@@ -1614,8 +1614,6 @@ function ProjectTreeNode({
   const [filePickerOpen, setFilePickerOpen] = useState(false);
   const [editingMilestoneId, setEditingMilestoneId] = useState<number | null>(null);
   const [milestoneNameDraft, setMilestoneNameDraft] = useState("");
-  const [editingProjectDescription, setEditingProjectDescription] = useState(false);
-  const [projectDescriptionDraft, setProjectDescriptionDraft] = useState(project.description || "");
   useEffect(() => {
     if (!editingProjectTitle) setProjectTitleDraft(project.title);
   }, [editingProjectTitle, project.title]);
@@ -1624,20 +1622,10 @@ function ProjectTreeNode({
     if (selected) setExpanded(true);
   }, [selected]);
 
-  useEffect(() => {
-    if (!editingProjectDescription) setProjectDescriptionDraft(project.description || "");
-  }, [editingProjectDescription, project.description]);
-
   const saveProjectTitle = () => {
     const nextTitle = projectTitleDraft.trim();
     if (nextTitle && nextTitle !== project.title) onUpdateProject({ title: nextTitle });
     setEditingProjectTitle(false);
-  };
-
-  const saveProjectDescription = () => {
-    const nextDescription = projectDescriptionDraft.trim();
-    if (nextDescription !== (project.description || "")) onUpdateProject({ description: nextDescription });
-    setEditingProjectDescription(false);
   };
 
   const projectDueLabel = formatWorkDueDate(project.dueDate);
@@ -1901,36 +1889,12 @@ function ProjectTreeNode({
               <WorkTreeIndent depth={1} />
               <div className="flex-1 min-w-0 px-2 py-1.5">
                 <div className="space-y-2 rounded-md border border-border/30 bg-card/40 p-2" data-testid={`project-expanded-summary-${project.id}`}>
-                  {editingProjectDescription ? (
-                    <Textarea
-                      value={projectDescriptionDraft}
-                      onChange={e => setProjectDescriptionDraft(e.target.value)}
-                      onBlur={saveProjectDescription}
-                      onKeyDown={e => {
-                        if (e.key === "Escape") {
-                          setProjectDescriptionDraft(project.description || "");
-                          setEditingProjectDescription(false);
-                        }
-                        if ((e.metaKey || e.ctrlKey) && e.key === "Enter") saveProjectDescription();
-                      }}
-                      placeholder="Add a project description..."
-                      className="min-h-16 resize-none border-0 bg-transparent p-0 text-sm leading-relaxed shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
-                      autoFocus
-                      data-testid={`textarea-project-description-${project.id}`}
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => { setProjectDescriptionDraft(project.description || ""); setEditingProjectDescription(true); }}
-                      className={cn(
-                        "block w-full rounded-sm text-left text-sm leading-relaxed hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-                        project.description?.trim() ? "text-muted-foreground" : "text-muted-foreground/50"
-                      )}
-                      data-testid={`button-edit-project-description-${project.id}`}
-                    >
-                      {project.description?.trim() || "Add a project description..."}
-                    </button>
-                  )}
+                  <ExpandedDescriptionEditor
+                    value={project.description}
+                    onSave={(description) => onUpdateProject({ description })}
+                    placeholder="Add a project description..."
+                    testIdPrefix={`project-description-${project.id}`}
+                  />
                   <ProjectReferenceChipRow project={project} people={people} />
                 </div>
               </div>
