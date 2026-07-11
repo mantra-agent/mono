@@ -168,12 +168,12 @@ export async function cleanupAutonomousSessionSources(
 }
 
 /**
- * Upsert a source into the extraction queue.
+ * Mark a source as changed in the extraction queue.
  * If the source already exists, bumps last_modified_at and resets status to 'pending'.
  * This is the debounce mechanism: rapid edits keep bumping the timestamp,
  * and the poller only picks up sources that have been quiet for the settle period.
  */
-export async function upsertSource(
+export async function markSourceChanged(
   sourceType: VnextSourceType,
   sourceId: string,
   principal: Principal,
@@ -209,8 +209,45 @@ export async function upsertSource(
     });
 
   log.debug(
-    `upserted source=${sourceType}:${sourceId} owner=${ownership.ownerUserId}`,
+    `marked source changed=${sourceType}:${sourceId} owner=${ownership.ownerUserId}`,
   );
+}
+
+/**
+ * Register a source for extraction without invalidating an existing queue row.
+ * Full reads use this path so observing unchanged content is replay-safe.
+ */
+export async function registerSourceIfAbsent(
+  sourceType: VnextSourceType,
+  sourceId: string,
+  principal: Principal,
+): Promise<void> {
+  if (sourceType === "session" && await isAutonomousSessionSource(sourceId)) {
+    await removeAutonomousSessionSource(sourceId, principal);
+    log.debug(`skipped autonomous session source=${sourceId}`);
+    return;
+  }
+
+  const ownership = ownedInsertValues(principal, scopeColumns);
+
+  const inserted = await db
+    .insert(memoryVnextSourceQueue)
+    .values({
+      sourceType,
+      sourceId,
+      status: "pending",
+      lastModifiedAt: new Date(),
+      ownerUserId: ownership.ownerUserId,
+      accountId: ownership.accountId,
+    })
+    .onConflictDoNothing()
+    .returning({ id: memoryVnextSourceQueue.id });
+
+  if (inserted.length > 0) {
+    log.debug(
+      `registered source=${sourceType}:${sourceId} owner=${ownership.ownerUserId}`,
+    );
+  }
 }
 
 /**

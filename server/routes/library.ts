@@ -57,7 +57,7 @@ import {
 } from "../scoped-storage";
 import { WORKSPACE_DIR } from "../paths";
 import { eventBus } from "../event-bus";
-import { upsertSource as upsertVnextSource } from "../memory/vnext-source-queue";
+import { markSourceChanged, registerSourceIfAbsent } from "../memory/vnext-source-queue";
 
 const log = createLogger("InfoRoutes");
 
@@ -633,6 +633,7 @@ export async function registerLibraryRoutes(app: Express) {
       }
       if (!page)
         return res.status(404).json({ error: "Library page not found" });
+      await registerSourceIfAbsent("library_page", page.id, req.principal);
       res.json(page);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -988,7 +989,7 @@ export async function registerLibraryRoutes(app: Express) {
       publishLibraryChanged("created", page);
 
       // Queue for vNext claim extraction
-      upsertVnextSource("library_page", page.id, principal).catch((e) =>
+      markSourceChanged("library_page", page.id, principal).catch((e) =>
         log.warn(`vNext source queue upsert failed for new page ${page.id}: ${e.message}`),
       );
 
@@ -1083,7 +1084,7 @@ export async function registerLibraryRoutes(app: Express) {
         updates.title !== undefined;
       if (hasMaterialChange) {
         const principal = principalOrThrow(req);
-        upsertVnextSource("library_page", updated.id, principal).catch((e) =>
+        markSourceChanged("library_page", updated.id, principal).catch((e) =>
           log.warn(`vNext source queue upsert failed for page ${updated.id}: ${e.message}`),
         );
       }

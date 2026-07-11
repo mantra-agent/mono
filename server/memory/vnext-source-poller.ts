@@ -2,6 +2,7 @@ import { createLogger } from "../log";
 import type { Principal } from "../principal";
 import { runWithPrincipal } from "../principal-context";
 import type { MemoryVnextSourceQueueRow, MemorySource } from "@shared/schema";
+import { parseReferenceText } from "@shared/reference-parser";
 import {
   pollSettledSources,
   markProcessing,
@@ -56,6 +57,27 @@ interface SourceContent {
   topics: string[];
   splitMode: "message" | "paragraph";
   sourceType: MemorySource;
+}
+
+interface ExtractedChunkClaim {
+  claim: ClaimCandidate;
+  chunk: string;
+}
+
+function buildSessionPageSourceRefs(chunk: string) {
+  const pageIds = new Set(
+    parseReferenceText(chunk)
+      .filter((part) => part.kind === "reference" && part.ref.type === "page")
+      .map((part) => part.kind === "reference" ? part.ref.id : ""),
+  );
+
+  return [...pageIds].map((pageId) => ({
+    sourceType: "library_page",
+    sourceId: pageId,
+    relationship: "used_as_evidence",
+    context: "Canonical page reference in the supporting session chunk",
+    strength: 1,
+  }));
 }
 
 async function loadSourceContent(
@@ -115,8 +137,8 @@ async function extractClaimsFromChunks(
   chunks: string[],
   source: string,
   title: string,
-): Promise<ClaimCandidate[]> {
-  const allClaims: ClaimCandidate[] = [];
+): Promise<ExtractedChunkClaim[]> {
+  const extracted: ExtractedChunkClaim[] = [];
 
   for (let i = 0; i < chunks.length; i++) {
     try {
@@ -127,7 +149,7 @@ async function extractClaimsFromChunks(
         source,
         title,
       );
-      allClaims.push(...claims);
+      extracted.push(...claims.map((claim) => ({ claim, chunk: chunks[i] })));
     } catch (err) {
       log.warn(
         `extractClaimsFromChunks: chunk ${i + 1}/${chunks.length} failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -135,8 +157,11 @@ async function extractClaimsFromChunks(
     }
   }
 
-  // Deduplicate across chunks and cap
-  return deduplicateChunkClaims(allClaims).slice(0, MAX_CLAIMS_PER_SOURCE);
+  const deduplicatedClaims = deduplicateChunkClaims(extracted.map(({ claim }) => claim));
+  return deduplicatedClaims
+    .map((claim) => extracted.find((item) => item.claim === claim))
+    .filter((item): item is ExtractedChunkClaim => !!item)
+    .slice(0, MAX_CLAIMS_PER_SOURCE);
 }
 
 // ---------------------------------------------------------------------------
@@ -144,16 +169,14 @@ async function extractClaimsFromChunks(
 // ---------------------------------------------------------------------------
 
 async function persistPollerClaims(
-  claims: ClaimCandidate[],
+  extractedClaims: ExtractedChunkClaim[],
   sourceContent: SourceContent,
   row: MemoryVnextSourceQueueRow,
 ): Promise<{ created: number; reinforced: number; skipped: number }> {
-  return persistClaimCandidates({
-    claims,
-    source: sourceContent.sourceType,
-    sourceId: row.sourceId,
-    sourceMemoryId: null,
-    sourceRefs: [
+  const totals = { created: 0, reinforced: 0, skipped: 0 };
+
+  for (const { claim, chunk } of extractedClaims) {
+    const sourceRefs = [
       {
         sourceType: row.sourceType,
         sourceId: row.sourceId,
@@ -161,10 +184,23 @@ async function persistPollerClaims(
         context: `Extracted by vNext source poller from ${row.sourceType}`,
         strength: 1,
       },
-    ],
-    metadata: { extractedBy: "vnext-source-poller" },
-    logPrefix: "pollerPersist",
-  });
+      ...(row.sourceType === "session" ? buildSessionPageSourceRefs(chunk) : []),
+    ];
+    const result = await persistClaimCandidates({
+      claims: [claim],
+      source: sourceContent.sourceType,
+      sourceId: row.sourceId,
+      sourceMemoryId: null,
+      sourceRefs,
+      metadata: { extractedBy: "vnext-source-poller" },
+      logPrefix: "pollerPersist",
+    });
+    totals.created += result.created;
+    totals.reinforced += result.reinforced;
+    totals.skipped += result.skipped;
+  }
+
+  return totals;
 }
 
 // ---------------------------------------------------------------------------
@@ -234,19 +270,19 @@ async function processSource(
     `processSource: extracting source=${row.sourceType}:${row.sourceId} contentLen=${sourceContent.content.length} chunks=${chunks.length}`,
   );
 
-  const claims = await extractClaimsFromChunks(
+  const extractedClaims = await extractClaimsFromChunks(
     chunks,
     row.sourceType,
     sourceContent.title,
   );
 
   log.info(
-    `processSource: extracted ${claims.length} claims from source=${row.sourceType}:${row.sourceId}`,
+    `processSource: extracted ${extractedClaims.length} claims from source=${row.sourceType}:${row.sourceId}`,
   );
 
   let result: ProcessSourceResult = { created: 0, reinforced: 0, skipped: 0, decayed: 0, retirementCandidates: 0 };
-  if (claims.length > 0) {
-    const persistResult = await persistPollerClaims(claims, sourceContent, row);
+  if (extractedClaims.length > 0) {
+    const persistResult = await persistPollerClaims(extractedClaims, sourceContent, row);
     result.created = persistResult.created;
     result.reinforced = persistResult.reinforced;
     result.skipped = persistResult.skipped;
