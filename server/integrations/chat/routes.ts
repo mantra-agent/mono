@@ -886,8 +886,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         const { deleteChildSessionBlock } =
           await import("../../sessions/child-block-lifecycle");
         await deleteChildSessionBlock(parentId, childId);
-        await chatStorage.deleteSession(childId);
-        res.status(204).send();
+        const result = await chatStorage.deleteSession(childId);
+        res.json(result);
       } catch (error) {
         chatLog.error("Error deleting child session block:", error);
         res.status(500).json({ error: "Failed to delete child session block" });
@@ -898,8 +898,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
   app.delete("/api/sessions/:id", async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
-      await chatStorage.deleteSession(id);
-      res.status(204).send();
+      const result = await chatStorage.deleteSession(id);
+      res.json(result);
     } catch (error) {
       chatLog.error("Error deleting session:", error);
       res.status(500).json({ error: "Failed to delete session" });

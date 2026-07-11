@@ -1,8 +1,8 @@
 import { documentStorage } from "./memory";
 import { db } from "./db";
-import { memoryEntries } from "@shared/schema";
-import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
-import { combineWithVisibleScope } from "./scoped-storage";
+import { memoryEntries, sessionArtifacts, sessionTree } from "@shared/schema";
+import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { combineWithVisibleScope, combineWithWritableScope } from "./scoped-storage";
 import { generateId } from "./file-storage/utils";
 import { createLogger } from "./log";
 import { markSessionDeleted } from "./chat-journal";
@@ -532,12 +532,71 @@ async function writeConv(data: SessionData): Promise<void> {
   }
 }
 
-async function deleteConvDoc(id: string): Promise<void> {
-  try {
-    await documentStorage.deleteDocument("chat", id);
-  } catch (err) {
-    log.warn("deleteConvDoc failed", id, err);
+export interface SessionDeletionResult {
+  deletedSessionIds: string[];
+  descendantCount: number;
+}
+
+const chatDocumentScopeColumns = {
+  scope: memoryEntries.scope,
+  ownerUserId: memoryEntries.ownerUserId,
+  accountId: memoryEntries.accountId,
+  vaultId: memoryEntries.vaultId,
+};
+
+async function deleteSessionSubtree(rootSessionId: string): Promise<SessionDeletionResult> {
+  const principal = getCurrentPrincipalOrSystem();
+  const sessions = await chatFileStorage.getAllSessions();
+  const root = sessions.find((session) => session.id === rootSessionId);
+  if (!root) throw new Error(`Session not found: ${rootSessionId}`);
+
+  const childrenByParent = new Map<string, string[]>();
+  for (const session of sessions) {
+    if (!session.parentSessionId) continue;
+    const children = childrenByParent.get(session.parentSessionId) ?? [];
+    children.push(session.id);
+    childrenByParent.set(session.parentSessionId, children);
   }
+
+  const deletedSessionIds = [rootSessionId];
+  const visited = new Set(deletedSessionIds);
+  const pending = [...(childrenByParent.get(rootSessionId) ?? [])];
+  while (pending.length > 0) {
+    const sessionId = pending.shift()!;
+    if (visited.has(sessionId)) continue;
+    visited.add(sessionId);
+    deletedSessionIds.push(sessionId);
+    pending.push(...(childrenByParent.get(sessionId) ?? []));
+  }
+
+  await db.transaction(async (tx) => {
+    const deletedDocuments = await tx
+      .delete(memoryEntries)
+      .where(
+        combineWithWritableScope(
+          principal,
+          chatDocumentScopeColumns,
+          and(
+            eq(memoryEntries.layer, "workspace"),
+            eq(memoryEntries.source, "chat"),
+            inArray(memoryEntries.sourceId, deletedSessionIds),
+          ),
+        ),
+      )
+      .returning({ sessionId: memoryEntries.sourceId });
+
+    if (!deletedDocuments.some((row) => row.sessionId === rootSessionId)) {
+      throw new Error(`Session is not writable: ${rootSessionId}`);
+    }
+
+    await tx.delete(sessionArtifacts).where(inArray(sessionArtifacts.sessionId, deletedSessionIds));
+    await tx.delete(sessionTree).where(inArray(sessionTree.sessionId, deletedSessionIds));
+  });
+
+  return {
+    deletedSessionIds,
+    descendantCount: deletedSessionIds.length - 1,
+  };
 }
 
 function extractFallbackSessionSummary(data: SessionData): { summary: string | null; reason: string } {
@@ -936,7 +995,7 @@ export interface IChatFileStorage {
     }>,
     summary?: string,
   ): Promise<FileSession>;
-  deleteSession(id: string): Promise<void>;
+  deleteSession(id: string): Promise<SessionDeletionResult>;
   saveSession(id: string, title: string, options?: { source?: "manual" | "auto" | "orient"; respectManualTitle?: boolean }): Promise<void>;
   updateSessionTitle(id: string, title: string, options?: { source?: "manual" | "auto" | "orient"; respectManualTitle?: boolean }): Promise<void>;
   updateSessionSessionKey(id: string, sessionKey: string): Promise<void>;
@@ -1256,58 +1315,21 @@ export const chatFileStorage: IChatFileStorage = {
     return meta;
   },
 
-  async deleteSession(id: string) {
-    let parentForLog: string | null = null;
-    try {
-      const existing = await readConv(id);
-      if (existing?.parentSessionId) parentForLog = existing.parentSessionId;
-    } catch {
-      /* ignore */
+  async deleteSession(id: string): Promise<SessionDeletionResult> {
+    const result = await deleteSessionSubtree(id);
+
+    for (const deletedSessionId of result.deletedSessionIds) {
+      markSessionDeleted(deletedSessionId);
+      invalidateSessionsCache({ action: "deleted", sessionId: deletedSessionId });
+      import("./chat-markdown")
+        .then((m) => m.removeChatMarkdown(deletedSessionId))
+        .catch((err) => log.warn("markdown cleanup failed", err));
     }
 
-    // Re-home any sub-sessions BEFORE we tear down this session, so the
-    // ancestry walk in `reparentChildrenOfDeletedSession` can still see this
-    // session in `session_tree` and hand the children up to its own parent.
-    // Without this step, deleting a parent would silently orphan its visible
-    // children (task #880).
-    try {
-      const { reparentChildrenOfDeletedSession } =
-        await import("./sessions/cleanup-orphans");
-      const r = await reparentChildrenOfDeletedSession(id, parentForLog);
-      if (r.reparented || r.promoted || r.deleted) {
-        treeLog.log(
-          `deleteSession child cleanup parent=${id} reparented=${r.reparented} promoted=${r.promoted} deleted=${r.deleted}`,
-        );
-      }
-    } catch (err) {
-      log.warn(`deleteSession: child re-parenting failed for ${id}`, err);
-    }
-
-    markSessionDeleted(id);
-    await deleteConvDoc(id);
-
-    // Remove our own session_tree row so a future delete of the new parent
-    // doesn't try to walk back through this stale row.
-    try {
-      const { deleteSessionTreeRow } = await import("./sessions/tree");
-      await deleteSessionTreeRow(id);
-    } catch (err) {
-      log.warn(
-        `deleteSession: failed to delete session_tree row for ${id}`,
-        err,
-      );
-    }
-
-    _sessionsCache.invalidateAll();
-    invalidateSessionsCache({ action: "deleted", sessionId: id });
-    if (parentForLog) {
-      treeLog.log(
-        `end child=${id} parent=${parentForLog} endReason=deleted via=deleteSession`,
-      );
-    }
-    import("./chat-markdown")
-      .then((m) => m.removeChatMarkdown(id))
-      .catch((err) => log.warn("markdown cleanup failed", err));
+    treeLog.log(
+      `delete subtree root=${id} descendants=${result.descendantCount} total=${result.deletedSessionIds.length}`,
+    );
+    return result;
   },
 
   async saveSession(id: string, title: string, options?: { source?: "manual" | "auto" | "orient"; respectManualTitle?: boolean }) {

@@ -16,6 +16,7 @@ import { XyzIconButton } from "@/components/app-sidebar";
 import { ConnectionsIndicator } from "@/components/connections-indicator";
 // Tooltip import removed — FAB tooltip no longer needed
 import { apiRequest } from "@/lib/queryClient";
+import { deleteSessionTree } from "@/lib/session-deletion";
 import { getSessionStreamState, useSessionSubscriptions } from "@/hooks/use-session-subscription";
 import type { ChatSession as Session, PageContext } from "@shared/models/chat";
 import { ConversationSidebar } from "@/components/conversation-sidebar";
@@ -572,15 +573,13 @@ function FocusWidgetPanel({ isAgentRunning }: FocusWidgetPanelProps) {
   }, [voiceSession, setShowVoiceToolsSafe, voiceStepsInsertIndexRef, clearSessionForRoute, route, queryClient, toast, requestBottomBarFocus]);
 
   const sidebarDeleteConversation = useMutation({
-    mutationFn: async (id: string) => {
-      await apiRequest("DELETE", `/api/sessions/${id}`);
-    },
-    onSuccess: (_data, id) => {
+    mutationFn: (id: string) => deleteSessionTree(id),
+    onSuccess: (result) => {
       emitSessionListChanged("focus-sidebar-delete");
-      if (panelView.mode === "session" && panelView.sessionId === id) {
+      if (panelView.mode === "session" && result.deletedSessionIds.includes(panelView.sessionId)) {
         setPanelView({ mode: "list" });
+        clearSessionForRoute(route);
       }
-      clearSessionForRoute(route);
     },
     onError: (err) => {
       toast({ title: "Failed to delete session", description: String(err), variant: "destructive" });

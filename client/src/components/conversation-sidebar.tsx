@@ -46,6 +46,7 @@ import {
 import { groupByLocalDay } from "@/lib/local-date";
 import { ActiveStatusSpinner } from "@/components/nav-dot";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { getSessionDeletionDescription } from "@/lib/session-deletion";
 import { useToast } from "@/hooks/use-toast";
 import { emitSessionListChanged } from "@/hooks/use-data-sync";
 import { useVoiceSessionOptional } from "@/hooks/use-voice-session";
@@ -181,6 +182,7 @@ export function ConversationItem({
   isActive,
   isLive,
   childCount = 0,
+  sessions,
   onSelect,
   onDelete,
   onRename,
@@ -192,6 +194,7 @@ export function ConversationItem({
   isActive: boolean;
   isLive: boolean;
   childCount?: number;
+  sessions: ChatSession[];
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
@@ -413,7 +416,7 @@ export function ConversationItem({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete conversation</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this conversation? This action cannot be undone.
+              {getSessionDeletionDescription(sessions, deleteConfirmId)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -458,6 +461,7 @@ function navigateToParentContext(parentId: string, childId: string, onSelect: (i
 
 export function SessionTreeNode({
   conv,
+  sessions,
   depth,
   activeSession,
   onSelect,
@@ -467,6 +471,7 @@ export function SessionTreeNode({
   onTogglePin,
 }: {
   conv: ChatSession;
+  sessions: ChatSession[];
   depth: number;
   activeSession: string | null;
   onSelect: (id: string) => void;
@@ -504,6 +509,7 @@ export function SessionTreeNode({
             isActive={activeSession === conv.id}
             isLive={conv.status === "streaming" || (conv.type === "meeting" && conv.meeting?.botStatus === "live")}
             childCount={childCount}
+            sessions={sessions}
             onSelect={onSelect}
             onDelete={onDelete}
             onRename={onRename}
@@ -544,6 +550,7 @@ export function SessionTreeNode({
                 <SessionTreeNode
                   key={child.id}
                   conv={child}
+                  sessions={sessions}
                   depth={depth + 1}
                   activeSession={activeSession}
                   onSelect={onSelect}
@@ -562,6 +569,7 @@ export function SessionTreeNode({
 
 export function SessionGroupSection({
   group,
+  sessions,
   activeSession,
   onSelect,
   onDelete,
@@ -570,6 +578,7 @@ export function SessionGroupSection({
   onTogglePin,
 }: {
   group: SessionGroup;
+  sessions: ChatSession[];
   activeSession: string | null;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
@@ -600,6 +609,7 @@ export function SessionGroupSection({
             <SessionTreeNode
               key={conv.id}
               conv={conv}
+              sessions={sessions}
               depth={0}
               activeSession={activeSession}
               onSelect={onSelect}
@@ -672,6 +682,7 @@ function AutoSessionsGroup({
             <SessionTreeNode
               key={conv.id}
               conv={conv}
+              sessions={sessions}
               depth={0}
               activeSession={activeSession}
               onSelect={onSelect}
@@ -877,6 +888,7 @@ export function ConversationSidebar({
               <SessionGroupSection
                 key={group.label}
                 group={group}
+                sessions={sessionsWithChildCounts}
                 activeSession={activeSession}
                 onSelect={onSelect}
                 onDelete={(id) => onDelete(id)}
