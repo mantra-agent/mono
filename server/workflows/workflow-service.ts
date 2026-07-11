@@ -43,7 +43,7 @@ import {
 import { libraryPages } from "@shared/models/info";
 import { isParseableReferenceType, serializeReference } from "@shared/references";
 import { getProviderCredential } from "../provider-credential-store";
-import { getLatestDeploymentByToken } from "../integrations/railway/client";
+import { extractDeploymentMeta, fetchDeployments, getLatestDeploymentByToken } from "../integrations/railway/client";
 import { getCloudflareLatestDeployment } from "../services/provider-connection-service";
 import { buildWorkflowRunPageContent, buildWorkflowStages, parseWorkflowDefinition, type WorkflowEnvironmentTruth, type WorkflowRunDetail } from "./workflow-renderer";
 import { monitorChildSession, truncateOutput, type MonitorResult } from "../child-session-monitor";
@@ -731,7 +731,7 @@ export async function getWorkflowTemplate(templateId: string): Promise<WorkflowT
   return template || null;
 }
 
-export async function getWorkflowEnvironmentTruth(runIdOrEnvironmentId: string | number): Promise<WorkflowEnvironmentTruth | null> {
+export async function getWorkflowEnvironmentTruth(runIdOrEnvironmentId: string | number, expectedCommitSha?: string | null): Promise<WorkflowEnvironmentTruth | null> {
   let environmentId: number | null = typeof runIdOrEnvironmentId === "number" ? runIdOrEnvironmentId : null;
   if (typeof runIdOrEnvironmentId === "string") {
     const [run] = await db.select({ environmentId: workflowRuns.linkedEnvironmentId }).from(workflowRuns).where(visible(runScopeColumns, eq(workflowRuns.id, runIdOrEnvironmentId))).limit(1);
@@ -814,7 +814,25 @@ export async function getWorkflowEnvironmentTruth(runIdOrEnvironmentId: string |
           if (!hostingRow.projectId || !hostingRow.serviceId || !hostingRow.providerEnvironmentId) {
             deployment = unavailableDeployment("Railway hosting binding is incomplete");
           } else {
-            const latest = await getLatestDeploymentByToken(token, hostingRow.projectId, hostingRow.serviceId, hostingRow.providerEnvironmentId);
+            let latest = await getLatestDeploymentByToken(token, hostingRow.projectId, hostingRow.serviceId, hostingRow.providerEnvironmentId);
+            if (expectedCommitSha && !commitMatches(expectedCommitSha, latest?.commitHash || null)) {
+              const deployments = await fetchDeployments(hostingRow.projectId, hostingRow.serviceId, 25, token);
+              const matching = deployments.find((candidate) => {
+                if (candidate.environmentId !== hostingRow.providerEnvironmentId) return false;
+                const meta = extractDeploymentMeta(candidate.meta);
+                return commitMatches(expectedCommitSha, meta.commitHash || null);
+              });
+              if (matching) {
+                const meta = extractDeploymentMeta(matching.meta);
+                latest = {
+                  id: matching.id,
+                  status: matching.status,
+                  commitHash: meta.commitHash || null,
+                  commitMessage: meta.commitMessage || null,
+                  createdAt: matching.createdAt,
+                };
+              }
+            }
             deployment = {
               ...deploymentBase,
               available: true,
@@ -1096,6 +1114,13 @@ export async function startStageAttempt(runId: string, stageKey?: string, option
   }
   await db.update(workflowStageAttempts).set({ childSessionId, inputContext: persistedInputContext, updatedAt: new Date() }).where(writable(attemptScopeColumns, and(eq(workflowStageAttempts.workflowRunId, runId), eq(workflowStageAttempts.id, attempt.id))));
   if (childSessionId) await linkWorkflowSession({ workflowRunId: runId, stageAttemptId: attempt.id, sessionId: childSessionId, role: "stage_attempt", spawnReason: `workflow:${runId}:${key}:attempt-${attemptNumber}` });
+  if (key === "acceptance" && childSessionId) {
+    const expected = expectedAcceptanceDeployment(detail);
+    const truth = await getWorkflowEnvironmentTruth(runId, expected.commitSha);
+    if (!deploymentIsCurrent(truth?.deployment, expected) || deploymentStatusCategory(normalizedDeploymentStatus(truth?.deployment)) === "pending") {
+      await chatFileStorage.updateSessionStatus(childSessionId, "waiting");
+    }
+  }
   await db.update(workflowRuns).set({ status: "active", currentStageKey: key, updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, runId)));
   await notifyWorkflowProgress(parentSessionId, runId, `Started workflow stage **${stage.title}** attempt ${attemptNumber}/${maxAttempts}${childSessionId ? ` in child session ${childSessionId}` : ""}.`);
   await renderWorkflowRunPage(runId);
@@ -1421,16 +1446,18 @@ function deploymentIsCurrent(
 }
 
 async function waitForAcceptanceDeploymentTruth(runId: string, initialTruth: WorkflowEnvironmentTruth | null): Promise<{ truth: WorkflowEnvironmentTruth | null; readiness: DeploymentReadiness }> {
-  const startedAt = Date.now();
   const detail = await getWorkflowRun(runId);
   if (!detail) throw new Error(`Workflow run not found: ${runId}`);
   const expected = expectedAcceptanceDeployment(detail);
+  const activeAcceptanceAttempt = detail.stages.find((stage) => stage.key === "acceptance")?.attempts
+    .find((attempt) => attempt.status === "active");
+  const startedAt = activeAcceptanceAttempt?.startedAt?.getTime() || Date.now();
   let truth = initialTruth;
   let attempts = 0;
   const initialStatus = normalizedDeploymentStatus(truth?.deployment) || null;
   while (true) {
     attempts += 1;
-    if (attempts > 1 || !truth) truth = await getWorkflowEnvironmentTruth(runId);
+    if (attempts > 1 || !truth) truth = await getWorkflowEnvironmentTruth(runId, expected.commitSha);
     const deployment = truth?.deployment || null;
     const status = normalizedDeploymentStatus(deployment);
     const category = deploymentStatusCategory(status);
