@@ -166,6 +166,8 @@ class TimerScheduler {
         return (schedule.interval || 30) * 60 * 1000;
       case "every_x_hours":
         return (schedule.interval || 1) * 60 * 60 * 1000;
+      case "every_x_weeks":
+        return (schedule.interval || 1) * 7 * 24 * 60 * 60 * 1000;
       case "daily":
         return 24 * 60 * 60 * 1000;
       case "weekly":
@@ -769,6 +771,16 @@ export function computeNextRun(
         return next;
       }
 
+      case "every_x_weeks": {
+        return getNextMultiWeekRun(
+          schedule.timeOfDay || "09:00",
+          schedule.daysOfWeek || ["mon"],
+          schedule.interval || 1,
+          timezone,
+          now,
+        );
+      }
+
       case "daily": {
         const target = getNextTimeOfDay(
           schedule.timeOfDay || "09:00",
@@ -855,6 +867,14 @@ export function computePreviousRun(
         const interval = (schedule.interval || 1) * 60 * 60 * 1000;
         return before - interval;
       }
+      case "every_x_weeks":
+        return getPrevMultiWeekRun(
+          schedule.timeOfDay || "09:00",
+          schedule.daysOfWeek || ["mon"],
+          schedule.interval || 1,
+          timezone,
+          before,
+        );
       case "daily":
         return getPrevDailyRun(
           schedule.timeOfDay || "09:00",
@@ -924,6 +944,72 @@ function getPrevDailyRun(
   }
 
   return before - 24 * 60 * 60 * 1000;
+}
+
+
+const MULTI_WEEK_EPOCH_DATE = Date.UTC(2024, 0, 1);
+
+function isEligibleMultiWeekDate(
+  year: number,
+  month: number,
+  day: number,
+  intervalWeeks: number,
+): boolean {
+  const dateUtc = Date.UTC(year, month - 1, day);
+  const weekIndex = Math.floor((dateUtc - MULTI_WEEK_EPOCH_DATE) / (7 * 24 * 60 * 60 * 1000));
+  return ((weekIndex % intervalWeeks) + intervalWeeks) % intervalWeeks === 0;
+}
+
+function findMultiWeekRun(
+  timeOfDay: string,
+  days: string[],
+  intervalWeeks: number,
+  timezone: string,
+  boundary: number,
+  direction: 1 | -1,
+): number {
+  const normalizedInterval = Math.max(1, Math.floor(intervalWeeks));
+  const targetDays = new Set(days);
+  const [hours, minutes] = timeOfDay.split(":").map(Number);
+  const boundaryDate = new Date(boundary);
+  const searchDays = normalizedInterval * 7 + 7;
+
+  for (let offset = 0; offset <= searchDays; offset++) {
+    const candidate = new Date(boundaryDate);
+    candidate.setUTCDate(candidate.getUTCDate() + direction * offset);
+    const dateStr = candidate.toLocaleDateString("en-CA", { timeZone: timezone });
+    const [year, month, day] = dateStr.split("-").map(Number);
+    const dayName = candidate
+      .toLocaleDateString("en-US", { timeZone: timezone, weekday: "short" })
+      .toLowerCase()
+      .slice(0, 3);
+    if (!targetDays.has(dayName) || !isEligibleMultiWeekDate(year, month, day, normalizedInterval)) continue;
+
+    const runAt = buildDateInTimezone(year, month, day, hours, minutes, timezone).getTime();
+    if ((direction === 1 && runAt > boundary) || (direction === -1 && runAt < boundary)) return runAt;
+  }
+
+  return boundary + direction * normalizedInterval * 7 * 24 * 60 * 60 * 1000;
+}
+
+function getNextMultiWeekRun(
+  timeOfDay: string,
+  days: string[],
+  intervalWeeks: number,
+  timezone: string,
+  after: number,
+): number {
+  return findMultiWeekRun(timeOfDay, days, intervalWeeks, timezone, after, 1);
+}
+
+function getPrevMultiWeekRun(
+  timeOfDay: string,
+  days: string[],
+  intervalWeeks: number,
+  timezone: string,
+  before: number,
+): number {
+  return findMultiWeekRun(timeOfDay, days, intervalWeeks, timezone, before, -1);
 }
 
 function getPrevWeeklyRun(
@@ -1282,6 +1368,12 @@ export function humanizeSchedule(schedule: Schedule): string {
       return `Every ${schedule.interval || 30} minutes`;
     case "every_x_hours":
       return `Every ${schedule.interval || 1} hour${(schedule.interval || 1) > 1 ? "s" : ""}`;
+    case "every_x_weeks": {
+      const days = (schedule.daysOfWeek || ["mon"])
+        .map((d) => d.charAt(0).toUpperCase() + d.slice(1))
+        .join(", ");
+      return `Every ${schedule.interval || 1} weeks on ${days} at ${schedule.timeOfDay || "09:00"}`;
+    }
     case "daily":
       return `Daily at ${schedule.timeOfDay || "09:00"}`;
     case "weekly": {

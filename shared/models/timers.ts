@@ -9,6 +9,7 @@ export type ResponsibilityType = TimerType;
 export const scheduleFrequencies = [
   "every_x_minutes",
   "every_x_hours",
+  "every_x_weeks",
   "daily",
   "weekly",
   "monthly",
