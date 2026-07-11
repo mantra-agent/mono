@@ -3,15 +3,58 @@ import { z } from "zod";
 import { eq, and, sql } from "drizzle-orm";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
+import { requirePermission } from "../permissions";
 import { db } from "../db";
 import { vaults, users } from "@shared/schema";
 import { getPrincipal } from "../principal";
 import { assertVisible, assertWritable } from "../scoped-storage";
+import {
+  analyzeVaultR2Migration,
+  getVaultR2MigrationStatus,
+  startVaultR2Migration,
+} from "../object_storage/vault-migration";
 
 const log = createLogger("VaultRoutes");
 
 export function registerVaultRoutes(app: Express) {
   app.use("/api/vaults", requireAuth);
+
+  const migrationAdmin = requirePermission("system:write");
+
+  app.get("/api/vaults/migration", migrationAdmin, async (req, res) => {
+    try {
+      const principal = getPrincipal(req);
+      res.json(await getVaultR2MigrationStatus(principal));
+    } catch (error) {
+      log.error("GET /api/vaults/migration failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to load migration status" });
+    }
+  });
+
+  app.post("/api/vaults/migration/analyze", migrationAdmin, async (req, res) => {
+    try {
+      const principal = getPrincipal(req);
+      res.json(await analyzeVaultR2Migration(principal));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to analyze migration";
+      log.error("POST /api/vaults/migration/analyze failed", { error: message });
+      res.status(message.includes("already active") ? 409 : 500).json({ error: message });
+    }
+  });
+
+  app.post("/api/vaults/migration/start", migrationAdmin, async (req, res) => {
+    try {
+      const principal = getPrincipal(req);
+      res.json(await startVaultR2Migration(principal));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to start migration";
+      log.error("POST /api/vaults/migration/start failed", { error: message });
+      const status = message.includes("already active") ? 409 : 400;
+      res.status(status).json({ error: message });
+    }
+  });
 
   /**
    * GET /api/vaults — list the user's vaults plus their visible set and active vault.

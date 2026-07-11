@@ -1,221 +1,404 @@
 /**
- * Vault R2 Migration Job
- *
- * Copies legacy `private/...` objects to vault-prefixed `vaults/{vaultId}/...` paths.
- * Idempotent: skips objects that already exist at the destination.
- * Does NOT delete legacy copies (migrate-don't-mutate safety).
- *
- * Bound by:
- * - Batch size: processes BATCH_SIZE objects per iteration
- * - Concurrency: MAX_CONCURRENT copies at a time
- * - Total cap: stops after MAX_TOTAL_OBJECTS to bound runtime
+ * Controlled migration of legacy private/ objects into the authenticated
+ * administrator's Personal vault. Legacy objects and references are preserved.
  */
+import { createHash } from "crypto";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { objectAcls } from "@shared/schema";
-import { storageBackend, PRIVATE_PREFIX } from "./s3-backend";
-import { legacyKeyToVaultKey, isVaultKey, VAULT_PREFIX } from "./vault-keys";
 import { createLogger } from "../log";
-import { sql, isNull, and } from "drizzle-orm";
+import type { Principal } from "../principal";
+import {
+  vaultR2MigrationStates,
+  vaults,
+  type VaultR2MigrationState,
+  type VaultR2MigrationStatus,
+} from "@shared/schema";
+import { storageBackend, PRIVATE_PREFIX, type ListedObject, type ObjectMetadata } from "./s3-backend";
+import { legacyKeyToVaultKey } from "./vault-keys";
 
 const log = createLogger("VaultMigration");
-
-const BATCH_SIZE = 100;
+const STATE_ID = "legacy-private-to-personal";
+const MAX_COPY_BYTES = 5 * 1024 * 1024 * 1024;
 const MAX_CONCURRENT = 5;
-const MAX_TOTAL_OBJECTS = 10_000;
+const PROGRESS_BATCH_SIZE = 25;
+const EXCLUDED_PREFIXES = [`${PRIVATE_PREFIX}backups/`, `${PRIVATE_PREFIX}inference/`];
 
-interface MigrationStats {
-  scanned: number;
-  copied: number;
-  skipped: number;
-  errors: number;
-  alreadyMigrated: number;
-}
-
-/**
- * Resolve the default (personal) vault ID for a given account.
- * Used when an object's ACL has no vault association — defaults to personal vault.
- */
-async function getDefaultVaultId(accountId: string | null): Promise<string | null> {
-  if (!accountId) return null;
-  const result = await db.execute(sql`
-    SELECT id FROM vaults
-    WHERE account_id = ${accountId} AND is_default = true
-    LIMIT 1
-  `);
-  const rows = result.rows as Array<{ id: string }>;
-  return rows.length > 0 ? rows[0].id : null;
-}
-
-/**
- * Get the first account's default vault as the system fallback.
- * For objects with no ACL or no account, we need a vault to put them in.
- */
-async function getSystemFallbackVaultId(): Promise<string | null> {
-  const result = await db.execute(sql`
-    SELECT id FROM vaults WHERE is_default = true ORDER BY created_at ASC LIMIT 1
-  `);
-  const rows = result.rows as Array<{ id: string }>;
-  return rows.length > 0 ? rows[0].id : null;
-}
-
-/**
- * Copy a single object from legacy path to vault-prefixed path.
- * Returns true if copied, false if skipped (already exists at destination).
- */
-async function copyObjectToVault(
-  legacyKey: string,
-  vaultId: string,
-): Promise<{ copied: boolean; destKey: string }> {
-  const destKey = legacyKeyToVaultKey(legacyKey, vaultId);
-
-  // Check if destination already exists (idempotent)
-  const destMeta = await storageBackend.headObject(destKey);
-  if (destMeta) {
-    return { copied: false, destKey };
-  }
-
-  // Copy using S3 CopyObject (server-side copy, no data transfer)
-  await storageBackend.copyObject(legacyKey, destKey);
-  return { copied: true, destKey };
-}
-
-/**
- * Process a batch of legacy keys with bounded concurrency.
- */
-async function processBatch(
-  keys: string[],
-  vaultId: string,
-  stats: MigrationStats,
-): Promise<void> {
-  // Process in chunks of MAX_CONCURRENT
-  for (let i = 0; i < keys.length; i += MAX_CONCURRENT) {
-    const chunk = keys.slice(i, i + MAX_CONCURRENT);
-    const results = await Promise.allSettled(
-      chunk.map(async (key) => {
-        try {
-          const result = await copyObjectToVault(key, vaultId);
-          if (result.copied) {
-            stats.copied++;
-            log.debug(`copied ${key} → ${result.destKey}`);
-          } else {
-            stats.alreadyMigrated++;
-          }
-        } catch (err) {
-          stats.errors++;
-          log.warn(`failed to copy ${key}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }),
-    );
-    // All settled, no need to check results (errors tracked in stats)
-  }
-}
-
-/**
- * Run the vault R2 migration.
- *
- * Lists legacy `private/` objects, resolves vault ownership from ACL records,
- * and copies them to vault-prefixed paths.
- *
- * Safe to run multiple times. Does not delete legacy objects.
- */
-export async function runVaultR2Migration(): Promise<MigrationStats> {
-  const stats: MigrationStats = {
-    scanned: 0,
-    copied: 0,
-    skipped: 0,
-    errors: 0,
-    alreadyMigrated: 0,
+export interface VaultR2MigrationView {
+  status: VaultR2MigrationStatus;
+  destination: { accountId: string; vaultId: string; name: string } | null;
+  counts: {
+    scanned: number;
+    eligible: number;
+    excluded: number;
+    oversized: number;
+    verified: number;
+    copied: number;
+    existing: number;
+    errors: number;
+    unresolved: number;
   };
+  analysisFingerprint: string | null;
+  lastProcessedKey: string | null;
+  lastError: string | null;
+  analyzedAt: Date | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  updatedAt: Date;
+}
 
-  // Get fallback vault for objects without ACL
-  const fallbackVaultId = await getSystemFallbackVaultId();
-  if (!fallbackVaultId) {
-    log.warn("No vaults exist — skipping R2 migration");
-    return stats;
+interface MigrationTarget {
+  accountId: string;
+  vaultId: string;
+  name: string;
+  adminUserId: string;
+}
+
+function requireAdminIdentity(principal: Principal): asserts principal is Principal & {
+  userId: string;
+  accountId: string;
+} {
+  if (!principal.userId || !principal.accountId || !principal.permissions.includes("system:write")) {
+    throw new Error("Vault migration requires an authenticated administrator account");
   }
+}
 
-  // Build a map of legacy key → vault ID from ACL records
-  const aclRows = await db
-    .select({
-      objectKey: objectAcls.objectKey,
-      vaultId: objectAcls.vaultId,
-      policy: objectAcls.policy,
-    })
-    .from(objectAcls)
-    .where(
-      sql`${objectAcls.objectKey} LIKE 'private/%'`,
+async function resolveMigrationTarget(principal: Principal): Promise<MigrationTarget> {
+  requireAdminIdentity(principal);
+  const candidates = await db
+    .select({ id: vaults.id, name: vaults.name })
+    .from(vaults)
+    .where(and(
+      eq(vaults.accountId, principal.accountId),
+      eq(vaults.isDefault, true),
+      eq(vaults.isArchived, false),
+    ));
+
+  if (candidates.length !== 1 || candidates[0].name !== "Personal") {
+    throw new Error(
+      `Expected exactly one active default Personal vault for admin account; found ${candidates.length}`,
     );
-
-  const keyToVaultId = new Map<string, string>();
-  for (const row of aclRows) {
-    if (row.vaultId) {
-      keyToVaultId.set(row.objectKey, row.vaultId);
-    } else {
-      // Try to resolve from ACL policy's accountId → default vault
-      const policy = row.policy as { accountId?: string | null } | null;
-      if (policy?.accountId) {
-        const vaultId = await getDefaultVaultId(policy.accountId);
-        if (vaultId) {
-          keyToVaultId.set(row.objectKey, vaultId);
-        }
-      }
-    }
   }
 
-  log.info(`vault R2 migration starting: ${aclRows.length} ACL records mapped, fallback vault=${fallbackVaultId}`);
+  return {
+    accountId: principal.accountId,
+    vaultId: candidates[0].id,
+    name: candidates[0].name,
+    adminUserId: principal.userId,
+  };
+}
 
-  // List and process legacy objects in batches
-  let continuationToken: string | undefined;
-  let totalProcessed = 0;
+async function ensureStateRow(): Promise<VaultR2MigrationState> {
+  const [state] = await db
+    .insert(vaultR2MigrationStates)
+    .values({ id: STATE_ID })
+    .onConflictDoNothing()
+    .returning();
+  if (state) return state;
+  const [existing] = await db
+    .select()
+    .from(vaultR2MigrationStates)
+    .where(eq(vaultR2MigrationStates.id, STATE_ID));
+  if (!existing) throw new Error("Vault migration state is unavailable");
+  return existing;
+}
 
-  // Use listObjects which handles pagination internally
-  const allLegacyObjects = await storageBackend.listObjects(PRIVATE_PREFIX, { maxKeys: MAX_TOTAL_OBJECTS });
+function toView(state: VaultR2MigrationState, targetName: string | null = null): VaultR2MigrationView {
+  return {
+    status: state.status as VaultR2MigrationStatus,
+    destination: state.accountId && state.destinationVaultId
+      ? { accountId: state.accountId, vaultId: state.destinationVaultId, name: targetName ?? "Personal" }
+      : null,
+    counts: {
+      scanned: state.scannedCount,
+      eligible: state.eligibleCount,
+      excluded: state.excludedCount,
+      oversized: state.oversizedCount,
+      verified: state.verifiedCount,
+      copied: state.copiedCount,
+      existing: state.existingCount,
+      errors: state.errorCount,
+      unresolved: state.unresolvedCount,
+    },
+    analysisFingerprint: state.analysisFingerprint,
+    lastProcessedKey: state.lastProcessedKey,
+    lastError: state.lastError,
+    analyzedAt: state.analyzedAt,
+    startedAt: state.startedAt,
+    completedAt: state.completedAt,
+    updatedAt: state.updatedAt,
+  };
+}
 
-  for (let batchStart = 0; batchStart < allLegacyObjects.length; batchStart += BATCH_SIZE) {
-    const batch = allLegacyObjects.slice(batchStart, batchStart + BATCH_SIZE);
-    const keysToMigrate: string[] = [];
+async function getState(): Promise<VaultR2MigrationState> {
+  await ensureStateRow();
+  const [state] = await db
+    .select()
+    .from(vaultR2MigrationStates)
+    .where(eq(vaultR2MigrationStates.id, STATE_ID));
+  if (!state) throw new Error("Vault migration state is unavailable");
+  return state;
+}
 
-    for (const obj of batch) {
-      stats.scanned++;
+function isExcluded(key: string): boolean {
+  return EXCLUDED_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
 
-      // Skip objects in system directories that shouldn't be vault-scoped
-      if (
-        obj.key.startsWith(`${PRIVATE_PREFIX}backups/`) ||
-        obj.key.startsWith(`${PRIVATE_PREFIX}inference/`)
-      ) {
-        stats.skipped++;
-        continue;
-      }
+function eligibleObjects(objects: ListedObject[]): ListedObject[] {
+  return objects.filter((object) => !isExcluded(object.key));
+}
 
-      keysToMigrate.push(obj.key);
-    }
+function fingerprint(objects: ListedObject[], vaultId: string): string {
+  const hash = createHash("sha256");
+  hash.update(vaultId);
+  for (const object of objects) hash.update(`\n${object.key}:${object.size}`);
+  return hash.digest("hex");
+}
 
-    if (keysToMigrate.length > 0) {
-      // Resolve vault IDs for this batch
-      const batchByVault = new Map<string, string[]>();
-      for (const key of keysToMigrate) {
-        const vaultId = keyToVaultId.get(key) ?? fallbackVaultId;
-        if (!batchByVault.has(vaultId)) {
-          batchByVault.set(vaultId, []);
-        }
-        batchByVault.get(vaultId)!.push(key);
-      }
+function normalizeEtag(etag: string | undefined): string | null {
+  return etag?.replace(/^"|"$/g, "") || null;
+}
 
-      for (const [vaultId, keys] of batchByVault) {
-        await processBatch(keys, vaultId, stats);
-      }
-    }
+function objectsMatch(source: ObjectMetadata, destination: ObjectMetadata): boolean {
+  if (source.contentLength !== destination.contentLength) return false;
+  const sourceEtag = normalizeEtag(source.etag);
+  const destinationEtag = normalizeEtag(destination.etag);
+  return Boolean(sourceEtag && destinationEtag && sourceEtag === destinationEtag);
+}
 
-    totalProcessed += batch.length;
-    if (totalProcessed >= MAX_TOTAL_OBJECTS) {
-      log.info(`vault R2 migration: reached MAX_TOTAL_OBJECTS cap (${MAX_TOTAL_OBJECTS}), stopping`);
-      break;
-    }
+async function markFailed(error: unknown): Promise<never> {
+  const message = error instanceof Error ? error.message : String(error);
+  await db
+    .update(vaultR2MigrationStates)
+    .set({ status: "failed", lastError: message, updatedAt: new Date() })
+    .where(eq(vaultR2MigrationStates.id, STATE_ID));
+  log.error("Vault R2 migration failed", { error: message });
+  throw error;
+}
+
+export async function getVaultR2MigrationStatus(principal: Principal): Promise<VaultR2MigrationView> {
+  requireAdminIdentity(principal);
+  return toView(await getState());
+}
+
+export async function analyzeVaultR2Migration(principal: Principal): Promise<VaultR2MigrationView> {
+  const target = await resolveMigrationTarget(principal);
+  await ensureStateRow();
+  const claimed = await db
+    .update(vaultR2MigrationStates)
+    .set({ status: "analyzing", lastError: null, updatedAt: new Date() })
+    .where(and(
+      eq(vaultR2MigrationStates.id, STATE_ID),
+      sql`${vaultR2MigrationStates.status} NOT IN ('analyzing', 'running')`,
+    ))
+    .returning({ id: vaultR2MigrationStates.id });
+  if (claimed.length !== 1) throw new Error("Vault migration is already active");
+
+  try {
+    const objects = await storageBackend.listObjects(PRIVATE_PREFIX);
+    const eligible = eligibleObjects(objects);
+    const excluded = objects.length - eligible.length;
+    const oversized = eligible.filter((object) => object.size > MAX_COPY_BYTES).length;
+    const now = new Date();
+    const [state] = await db
+      .update(vaultR2MigrationStates)
+      .set({
+        status: oversized === 0 ? "ready" : "failed",
+        adminUserId: target.adminUserId,
+        accountId: target.accountId,
+        destinationVaultId: target.vaultId,
+        analysisFingerprint: fingerprint(eligible, target.vaultId),
+        scannedCount: objects.length,
+        eligibleCount: eligible.length,
+        excludedCount: excluded,
+        oversizedCount: oversized,
+        verifiedCount: 0,
+        copiedCount: 0,
+        existingCount: 0,
+        errorCount: 0,
+        unresolvedCount: oversized,
+        lastProcessedKey: null,
+        lastError: oversized > 0
+          ? `${oversized} object(s) exceed the 5 GB single-copy limit`
+          : null,
+        analyzedAt: now,
+        startedAt: null,
+        completedAt: null,
+        updatedAt: now,
+      })
+      .where(eq(vaultR2MigrationStates.id, STATE_ID))
+      .returning();
+    log.info("Vault R2 migration analyzed", {
+      accountId: target.accountId,
+      destinationVaultId: target.vaultId,
+      scanned: objects.length,
+      eligible: eligible.length,
+      excluded,
+      oversized,
+    });
+    return toView(state, target.name);
+  } catch (error) {
+    return markFailed(error);
+  }
+}
+
+interface CopyResult {
+  key: string;
+  copied: boolean;
+  verified: boolean;
+  error?: string;
+}
+
+async function copyAndVerify(object: ListedObject, vaultId: string): Promise<CopyResult> {
+  const destinationKey = legacyKeyToVaultKey(object.key, vaultId);
+  const source = await storageBackend.headObject(object.key);
+  if (!source) return { key: object.key, copied: false, verified: false, error: "Source object disappeared" };
+  if ((source.contentLength ?? object.size) > MAX_COPY_BYTES) {
+    return { key: object.key, copied: false, verified: false, error: "Object exceeds the 5 GB copy limit" };
   }
 
-  log.info(
-    `vault R2 migration complete: scanned=${stats.scanned} copied=${stats.copied} ` +
-    `alreadyMigrated=${stats.alreadyMigrated} skipped=${stats.skipped} errors=${stats.errors}`,
-  );
-  return stats;
+  const existing = await storageBackend.headObject(destinationKey);
+  if (existing) {
+    if (!objectsMatch(source, existing)) {
+      return { key: object.key, copied: false, verified: false, error: "Destination exists but does not match source" };
+    }
+    return { key: object.key, copied: false, verified: true };
+  }
+
+  try {
+    await storageBackend.copyObject(object.key, destinationKey, {
+      sourceEtag: source.etag,
+      destinationIfNoneMatch: true,
+    });
+  } catch (error) {
+    const concurrentDestination = await storageBackend.headObject(destinationKey);
+    if (!concurrentDestination || !objectsMatch(source, concurrentDestination)) throw error;
+    return { key: object.key, copied: false, verified: true };
+  }
+
+  const copied = await storageBackend.headObject(destinationKey);
+  if (!copied || !objectsMatch(source, copied)) {
+    return { key: object.key, copied: true, verified: false, error: "Copied object failed verification" };
+  }
+  return { key: object.key, copied: true, verified: true };
+}
+
+export async function startVaultR2Migration(principal: Principal): Promise<VaultR2MigrationView> {
+  const target = await resolveMigrationTarget(principal);
+  const before = await getState();
+  if (before.status !== "ready" && before.status !== "failed" && before.status !== "completed") {
+    throw new Error("Analyze the migration before starting it");
+  }
+  if (before.oversizedCount > 0) throw new Error("Migration contains oversized unresolved objects");
+  if (before.accountId !== target.accountId || before.destinationVaultId !== target.vaultId) {
+    throw new Error("Migration destination changed; analyze again before starting");
+  }
+
+  const objects = eligibleObjects(await storageBackend.listObjects(PRIVATE_PREFIX));
+  if (fingerprint(objects, target.vaultId) !== before.analysisFingerprint) {
+    throw new Error("Legacy object inventory changed; analyze again before starting");
+  }
+
+  const claimed = await db
+    .update(vaultR2MigrationStates)
+    .set({
+      status: "running",
+      verifiedCount: 0,
+      copiedCount: 0,
+      existingCount: 0,
+      errorCount: 0,
+      unresolvedCount: 0,
+      lastProcessedKey: null,
+      lastError: null,
+      startedAt: new Date(),
+      completedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(and(
+      eq(vaultR2MigrationStates.id, STATE_ID),
+      eq(vaultR2MigrationStates.analysisFingerprint, before.analysisFingerprint),
+      eq(vaultR2MigrationStates.status, before.status),
+    ))
+    .returning({ id: vaultR2MigrationStates.id });
+  if (claimed.length !== 1) throw new Error("Vault migration is already active");
+
+  try {
+    let copiedCount = 0;
+    let existingCount = 0;
+    let verifiedCount = 0;
+    let errorCount = 0;
+    let lastError: string | null = null;
+    let lastProcessedKey: string | null = null;
+
+    for (let offset = 0; offset < objects.length; offset += PROGRESS_BATCH_SIZE) {
+      const batch = objects.slice(offset, offset + PROGRESS_BATCH_SIZE);
+      for (let index = 0; index < batch.length; index += MAX_CONCURRENT) {
+        const results = await Promise.all(
+          batch.slice(index, index + MAX_CONCURRENT).map(async (object) => {
+            try {
+              return await copyAndVerify(object, target.vaultId);
+            } catch (error) {
+              return {
+                key: object.key,
+                copied: false,
+                verified: false,
+                error: error instanceof Error ? error.message : String(error),
+              } satisfies CopyResult;
+            }
+          }),
+        );
+        for (const result of results) {
+          lastProcessedKey = result.key;
+          if (result.verified) verifiedCount++;
+          if (result.copied) copiedCount++;
+          if (result.verified && !result.copied) existingCount++;
+          if (result.error) {
+            errorCount++;
+            lastError = `${result.key}: ${result.error}`;
+          }
+        }
+      }
+      await db
+        .update(vaultR2MigrationStates)
+        .set({
+          verifiedCount,
+          copiedCount,
+          existingCount,
+          errorCount,
+          unresolvedCount: errorCount,
+          lastProcessedKey,
+          lastError,
+          updatedAt: new Date(),
+        })
+        .where(eq(vaultR2MigrationStates.id, STATE_ID));
+    }
+
+    const completed = verifiedCount === objects.length && errorCount === 0;
+    const [state] = await db
+      .update(vaultR2MigrationStates)
+      .set({
+        status: completed ? "completed" : "failed",
+        verifiedCount,
+        copiedCount,
+        existingCount,
+        errorCount,
+        unresolvedCount: objects.length - verifiedCount,
+        lastProcessedKey,
+        lastError: completed ? null : lastError ?? "Not every eligible object was verified",
+        completedAt: completed ? new Date() : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(vaultR2MigrationStates.id, STATE_ID))
+      .returning();
+    log.info("Vault R2 migration finished", {
+      status: state.status,
+      eligible: objects.length,
+      verified: verifiedCount,
+      copied: copiedCount,
+      existing: existingCount,
+      errors: errorCount,
+    });
+    return toView(state, target.name);
+  } catch (error) {
+    return markFailed(error);
+  }
 }

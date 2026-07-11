@@ -40,6 +40,38 @@ export async function ensureVaults(): Promise<void> {
       `CREATE INDEX IF NOT EXISTS idx_vaults_account ON vaults(account_id)`,
     );
 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS vault_r2_migration_states (
+        id TEXT PRIMARY KEY DEFAULT 'legacy-private-to-personal',
+        status TEXT NOT NULL DEFAULT 'idle',
+        admin_user_id TEXT,
+        account_id TEXT,
+        destination_vault_id TEXT,
+        analysis_fingerprint TEXT,
+        scanned_count INTEGER NOT NULL DEFAULT 0,
+        eligible_count INTEGER NOT NULL DEFAULT 0,
+        excluded_count INTEGER NOT NULL DEFAULT 0,
+        oversized_count INTEGER NOT NULL DEFAULT 0,
+        verified_count INTEGER NOT NULL DEFAULT 0,
+        copied_count INTEGER NOT NULL DEFAULT 0,
+        existing_count INTEGER NOT NULL DEFAULT 0,
+        error_count INTEGER NOT NULL DEFAULT 0,
+        unresolved_count INTEGER NOT NULL DEFAULT 0,
+        last_processed_key TEXT,
+        last_error TEXT,
+        analyzed_at TIMESTAMPTZ,
+        started_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CHECK (status IN ('idle', 'analyzing', 'ready', 'running', 'completed', 'failed'))
+      )
+    `);
+    await pool.query(`
+      INSERT INTO vault_r2_migration_states (id)
+      VALUES ('legacy-private-to-personal')
+      ON CONFLICT (id) DO NOTHING
+    `);
+
     // ── 2. Users table vault columns ───────────────────────────────
     await pool.query(
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS active_vault_id TEXT`,

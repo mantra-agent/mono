@@ -7,6 +7,7 @@ import {
   CopyObjectCommand,
   ListObjectsV2Command,
   type PutObjectCommandInput,
+  type CopyObjectCommandOutput,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Readable } from "stream";
@@ -401,15 +402,35 @@ export const storageBackend = {
     return getSignedUrl(client, cmd, { expiresIn: opts.ttlSec ?? 900 });
   },
 
-  async copyObject(sourceKey: string, destKey: string): Promise<void> {
+  async copyObject(
+    sourceKey: string,
+    destKey: string,
+    opts: { sourceEtag?: string; destinationIfNoneMatch?: boolean } = {},
+  ): Promise<{ etag?: string; lastModified?: Date }> {
     const { client, config } = getClient();
-    await client.send(
-      new CopyObjectCommand({
-        Bucket: config.bucket,
-        CopySource: `${config.bucket}/${sourceKey}`,
-        Key: destKey,
-      }),
-    );
+    const input = {
+      Bucket: config.bucket,
+      CopySource: `${config.bucket}/${encodeURIComponent(sourceKey).replace(/%2F/g, "/")}`,
+      Key: destKey,
+      CopySourceIfMatch: opts.sourceEtag,
+    };
+    const command = new CopyObjectCommand(input);
+    if (opts.destinationIfNoneMatch) {
+      command.middlewareStack.add(
+        (next) => async (args) => {
+          const request = args.request as { headers?: Record<string, string> };
+          request.headers = request.headers || {};
+          request.headers["if-none-match"] = "*";
+          return next(args);
+        },
+        { step: "build", name: "r2DestinationIfNoneMatch" },
+      );
+    }
+    const out: CopyObjectCommandOutput = await client.send(command);
+    return {
+      etag: out.CopyObjectResult?.ETag,
+      lastModified: out.CopyObjectResult?.LastModified,
+    };
   },
 
   async getSignedGetUrl(
