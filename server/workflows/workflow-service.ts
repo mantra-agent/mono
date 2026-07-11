@@ -295,13 +295,13 @@ const BUILD_STAGE_PURPOSES: Record<string, string> = {
 };
 
 const BUILD_STAGE_ARTIFACT_KINDS: Record<string, string[]> = {
-  scope: ["product_definition", "design_system", "coding_process", "planning_process"],
-  design_review: ["product_definition", "design_system", "coding_process"],
-  implement: ["coding_process", "design_system", "product_definition", "planning_process"],
-  code_review: ["coding_process", "design_system", "product_definition"],
-  acceptance: ["product_definition", "design_system"],
-  calibration: ["planning_process", "coding_process"],
-  documentation: ["planning_process", "product_definition"],
+  scope: ["design_system", "product_definition"],
+  design_review: ["design_system", "product_definition"],
+  implement: ["coding_process", "product_definition"],
+  code_review: ["coding_process", "product_definition"],
+  acceptance: ["design_system", "product_definition"],
+  calibration: ["product_definition"],
+  documentation: ["product_definition"],
 };
 
 async function resolveGoverningArtifacts(environmentId: number | null, stageKey: string): Promise<Array<{ kind: string; libraryPageId: string; title: string }>> {
