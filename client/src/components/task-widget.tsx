@@ -27,7 +27,6 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  AlignLeft,
   Check,
   ChevronRight,
   Loader2,
@@ -37,13 +36,9 @@ import {
   User,
   Bot,
   Target,
-  Tag,
   CalendarDays,
   FolderKanban,
   Package,
-  BookOpen,
-  FileOutput,
-  Calculator,
   Trash2,
   ListTodo,
 } from "lucide-react";
@@ -232,66 +227,6 @@ function EditableText({
   );
 }
 
-/** Inline tag picker matching Person profile style */
-function InlineTagPicker({
-  tags,
-  onChange,
-}: {
-  tags: string[];
-  onChange: (tags: string[]) => void;
-}) {
-  const [adding, setAdding] = useState(false);
-  const [newTag, setNewTag] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => { if (adding) inputRef.current?.focus(); }, [adding]);
-
-  const addTag = () => {
-    const trimmed = newTag.trim().toLowerCase();
-    if (trimmed && !tags.includes(trimmed)) {
-      onChange([...tags, trimmed]);
-    }
-    setNewTag("");
-    setAdding(false);
-  };
-
-  return (
-    <div className="flex flex-wrap items-center gap-1">
-      {tags.map(tag => (
-        <Badge
-          key={tag}
-          variant="outline"
-          className="text-[10px] cursor-pointer hover:bg-destructive/20 hover:text-destructive-foreground"
-          onClick={() => onChange(tags.filter(t => t !== tag))}
-        >
-          {tag} ×
-        </Badge>
-      ))}
-      {adding ? (
-        <Input
-          ref={inputRef}
-          value={newTag}
-          onChange={e => setNewTag(e.target.value)}
-          onBlur={addTag}
-          onKeyDown={e => {
-            if (e.key === "Enter") addTag();
-            if (e.key === "Escape") { setNewTag(""); setAdding(false); }
-          }}
-          className="h-5 w-20 bg-muted/50 px-1.5 text-[10px]"
-          placeholder="tag"
-        />
-      ) : (
-        <button
-          onClick={() => setAdding(true)}
-          className="text-[10px] text-muted-foreground/60 hover:text-foreground"
-        >
-          + add
-        </button>
-      )}
-    </div>
-  );
-}
-
 /** Deadline picker with canonical urgency color on the date itself. */
 function DeadlineField({
   value,
@@ -407,12 +342,6 @@ export function TaskWidget({ taskId, defaultExpanded = false, showHeader = true,
   const milestone = project?.milestones?.find(m => m.id === task.milestoneId);
   const statusCfg = STATUS_CONFIG[task.status];
 
-  const textFieldRows = [
-    { icon: AlignLeft, label: "Description", field: "description" as const, value: task.description, placeholder: "Add a description..." },
-    { icon: BookOpen, label: "Context", field: "context" as const, value: task.context, placeholder: "Background info, links, or references..." },
-    { icon: FileOutput, label: "Output", field: "output" as const, value: task.output, placeholder: "Result or output once completed..." },
-  ];
-
   return (
     <div className="w-full" data-testid={`task-widget-${taskId}`}>
       {/* Header: editable title + status badge + menu (hidden when host renders its own) */}
@@ -484,6 +413,15 @@ export function TaskWidget({ taskId, defaultExpanded = false, showHeader = true,
       {/* Detail fields — flat, Person-profile-style rows */}
       {(!showHeader || expanded) && (
         <div className="space-y-0.5 pb-2" data-testid={`task-widget-expanded-${taskId}`}>
+          <div className="px-2 pb-2">
+            <ExpandedDescriptionEditor
+              value={task.description}
+              onSave={(description) => updateMutation.mutate({ description })}
+              placeholder="Add a description..."
+              testIdPrefix={`task-description-${taskId}`}
+            />
+          </div>
+
           <TaskFieldRow icon={Flag} label="Status" testId="row-task-status">
             <Select value={task.status} onValueChange={(v) => updateMutation.mutate({ status: v as TaskStatus })}>
               <SelectTrigger className="h-5 text-xs w-auto min-w-[80px]" data-testid="select-task-widget-status">
@@ -598,47 +536,6 @@ export function TaskWidget({ taskId, defaultExpanded = false, showHeader = true,
             </TaskFieldRow>
           )}
 
-          <TaskFieldRow icon={Tag} label="Tags" testId="row-task-tags">
-            <InlineTagPicker
-              tags={task.tags}
-              onChange={(tags) => updateMutation.mutate({ tags })}
-            />
-          </TaskFieldRow>
-
-          {task.owner === "agent" && (
-            <TaskFieldRow icon={Calculator} label="Token Est." testId="row-task-token-estimate">
-              <span className="text-xs text-muted-foreground">
-                {task.tokenEstimate != null ? `${task.tokenEstimate.toLocaleString()} tok` : "—"}
-              </span>
-            </TaskFieldRow>
-          )}
-
-          {textFieldRows.map(({ icon: Icon, label, field, value, placeholder }) => (
-            <TaskFieldRow key={field} icon={Icon} label={label} testId={`row-task-${field}`}
-              expandedContent={
-                field === "description" ? (
-                  <ExpandedDescriptionEditor
-                    value={value}
-                    onSave={(val) => updateMutation.mutate({ [field]: val })}
-                    placeholder={placeholder}
-                    testIdPrefix={`task-description-${taskId}`}
-                  />
-                ) : (
-                  <EditableText
-                    value={value}
-                    onSave={(val) => updateMutation.mutate({ [field]: val })}
-                    placeholder={placeholder}
-                    multiline
-                    testId={`input-task-widget-${field}-${taskId}`}
-                  />
-                )
-              }
-            >
-              <span className="text-xs text-muted-foreground truncate max-w-[160px]">
-                {value ? value.slice(0, 40) + (value.length > 40 ? "…" : "") : "—"}
-              </span>
-            </TaskFieldRow>
-          ))}
         </div>
       )}
     </div>
