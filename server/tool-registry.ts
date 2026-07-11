@@ -1183,6 +1183,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         checklist: { type: "array", items: { type: "object", properties: { check: { type: "string" }, weight: { type: "number" } }, required: ["check"] }, description: "Structured quality checklist for scoring (for create/update). Array of {check: string, weight?: number}." },
         activity: { type: "string", description: "Activity type (for create/update)" },
         version: { type: "string", description: "Version string (for create/update)" },
+        sessionType: { type: "string", enum: ["autonomous", "agent"], description: "Session type for this skill's runs (for create/update). 'agent' surfaces runs as visible conversations alongside user sessions; 'autonomous' (default) files them under SYSTEM sessions." },
         preContext: { type: "string", description: "Optional pre-context string to pass to the skill run (for run)" },
         wait: { type: "boolean", description: "If true (default), wait for the skill run to complete before returning. If false, fire-and-forget. (for run)" },
         limit: { type: "number", description: "Number of records to return (for runs and scores actions, default 20, max 50)" },
