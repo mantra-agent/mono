@@ -27,6 +27,7 @@ import {
   GitBranch,
   History,
   Loader2,
+  MoreHorizontal,
   MoreVertical,
   MessageSquare,
   Pause,
@@ -3932,13 +3933,6 @@ const referenceExamples = [
   },
 ];
 
-const tabStateExamples = [
-  { label: "Overview", state: "default", icon: LayoutGrid },
-  { label: "Sessions", state: "selected", icon: MessageSquare },
-  { label: "Data", state: "hover", icon: Database },
-  { label: "Policy", state: "disabled", icon: ShieldCheck },
-];
-
 function DesignSection({
   number,
   title,
@@ -4024,7 +4018,6 @@ export function DesignTab() {
   const [hierarchyTitle, setHierarchyTitle] = useState("Launch Mantra");
   const [hierarchyDate, setHierarchyDate] = useState("2026-07-15");
   const [hierarchyReferenceOpen, setHierarchyReferenceOpen] = useState(true);
-  const [hierarchyShowItems, setHierarchyShowItems] = useState(true);
   const [hierarchyChecked, setHierarchyChecked] = useState({
     priority: true,
     mobility: false,
@@ -4279,7 +4272,6 @@ export function DesignTab() {
         >
           <div className="grid gap-6 @lg:grid-cols-[1fr_0.9fr]">
             <div className="space-y-3">
-              <div className="text-sm font-medium">Primary UI surfacing modality</div>
               <div className="w-full min-w-0 max-w-full overflow-hidden rounded-md bg-background p-2">
                 <div className="relative mb-1 min-w-0">
                   <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -4315,13 +4307,6 @@ export function DesignTab() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setHierarchyShowItems((visible) => !visible)}
-                  className="mb-1 ml-2 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  {hierarchyShowItems ? "Show zero state" : "Show rich rows"}
-                </button>
-                <button
-                  type="button"
                   className="flex w-full min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover:bg-accent/70 hover:text-foreground"
                   onClick={() => setHierarchySectionOpen((open) => !open)}
                   aria-expanded={hierarchySectionOpen}
@@ -4330,7 +4315,6 @@ export function DesignTab() {
                   <span className="truncate">Today</span>
                 </button>
                 {hierarchySectionOpen ? (
-                  hierarchyShowItems ? (
                   <>
                     <div className="flex min-w-0 items-stretch">
                       <div className="relative min-w-0 flex-1 overflow-hidden">
@@ -4373,13 +4357,13 @@ export function DesignTab() {
                               <button
                                 type="button"
                                 className={cn(
-                                  "absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-100 transition-colors hover:text-foreground",
+                                  "absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-[color,background-color,opacity] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100",
                                   hierarchySelected === "parent" ? "bg-accent" : "bg-background hover:bg-accent",
                                 )}
                                 aria-label="Parent actions"
                                 onClick={(event) => event.stopPropagation()}
                               >
-                                <MoreVertical className="h-3.5 w-3.5" />
+                                <MoreHorizontal className="h-3.5 w-3.5" />
                               </button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
@@ -4475,13 +4459,13 @@ export function DesignTab() {
                                   <button
                                     type="button"
                                     className={cn(
-                                      "absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-100 transition-colors hover:bg-accent hover:text-foreground",
+                                      "absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-[color,background-color,opacity] hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100",
                                       selected ? "bg-accent" : "bg-background",
                                     )}
                                     aria-label={`${item.label} actions`}
                                     onClick={(event) => event.stopPropagation()}
                                   >
-                                    <MoreVertical className="h-3.5 w-3.5" />
+                                    <MoreHorizontal className="h-3.5 w-3.5" />
                                   </button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
@@ -4537,14 +4521,11 @@ export function DesignTab() {
                       </div>
                     </div>
                   </>
-                  ) : (
-                    <div className="px-2 py-1.5 text-sm text-muted-foreground">No items yet.</div>
-                  )
                 ) : null}
               </div>
               <p className="max-w-full break-words text-xs leading-relaxed text-muted-foreground">
                 Hierarchy Tree is the primary modality for surfacing UI objects: search first, then the + New Item
-                action, then collapsible sections. Edit the parent title and meeting date in place, expand the reference for Simple-view context, and use “Show zero state” to inspect the canonical empty form. Click rows to select, twisties to expand/collapse, check circles to toggle completion, and … menus for row actions.
+                action, then collapsible sections. Edit the parent title and meeting date in place, expand the reference for useful context, and use the quiet zero state below as the canonical empty form. Click rows to select, twisties to expand/collapse, check circles to toggle completion, and hover a row to reveal its horizontal … menu.
               </p>
             </div>
 
@@ -4728,7 +4709,7 @@ export function DesignTab() {
                       className={cn(
                         "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
                         item.state === "pending" &&
-                          "border-foreground/40 bg-muted/20",
+                          "border-transparent bg-transparent text-muted-foreground",
                         item.state === "complete" &&
                           "border-transparent bg-transparent text-success",
                         item.state === "running" &&
@@ -4739,6 +4720,9 @@ export function DesignTab() {
                           "border-foreground/70 bg-foreground/10 text-foreground shadow-[0_0_0_1px_hsl(var(--foreground)/0.12)]",
                       )}
                     >
+                      {item.state === "pending" && (
+                        <Circle className="h-4 w-4" />
+                      )}
                       {item.state === "complete" && (
                         <CheckCircle2 className="h-4 w-4" />
                       )}
@@ -4787,41 +4771,6 @@ export function DesignTab() {
                 Badges describe durable object attributes, not read-only metadata.
                 Plain text for config values, scores, and parameters.
               </p>
-            </div>
-          </div>
-          <div className="mt-6 grid min-w-0 gap-6 overflow-hidden @lg:grid-cols-2">
-            <div className="min-w-0 space-y-3">
-              <div className="text-sm font-medium">Tabs</div>
-                <div className="flex min-w-0 gap-1 overflow-x-auto scrollbar-thin rounded-md border border-border/30 bg-card p-1">
-                  {tabStateExamples.map((tab) => {
-                    const Icon = tab.icon;
-                    return (
-                      <button
-                        key={tab.label}
-                        type="button"
-                        disabled={tab.state === "disabled"}
-                        className={cn(
-                          "flex h-9 shrink-0 items-center gap-2 rounded px-3 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                          tab.state === "selected" &&
-                            "bg-accent text-foreground",
-                          tab.state === "hover" &&
-                            "bg-accent/50 text-foreground",
-                          tab.state === "default" &&
-                            "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                          tab.state === "disabled" &&
-                            "cursor-not-allowed text-muted-foreground opacity-50",
-                        )}
-                      >
-                        <Icon className="h-4 w-4" />
-                        <span>{tab.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  Every tab has an icon. Selected is unmistakable; hover invites
-                  without pretending to be selected; disabled is dormant.
-                </p>
             </div>
           </div>
         </DesignSection>
@@ -4946,30 +4895,19 @@ export function DesignTab() {
           <div className="grid gap-6 @lg:grid-cols-[1.1fr_0.9fr]">
             <div className="space-y-3">
               {referenceExamples.map((item) => {
-                const Icon = item.icon;
                 return (
                   <div
                     key={item.canonical}
                     className="flex flex-col gap-2 overflow-hidden rounded-md border border-border/20 p-3 @md:flex-row @md:items-center @md:gap-4"
                   >
-                    <a
-                      href="#"
-                      className="group inline-flex w-fit max-w-full items-center gap-1.5 text-xs font-medium text-cta no-underline transition-colors hover:text-active"
-                      onClick={(event) => event.preventDefault()}
-                    >
-                      <Icon className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate border-b border-current leading-tight">
-                        {item.label}
-                      </span>
-                    </a>
-                    <div className="min-w-0 space-y-1">
-                      <code className="block overflow-hidden text-ellipsis whitespace-nowrap rounded bg-muted px-2 py-1 font-mono text-[11px]">
-                        {item.canonical}
-                      </code>
-                      <div className="text-xs text-muted-foreground">
-                        Legacy: <span className="font-mono">{item.legacy}</span>
-                      </div>
-                    </div>
+                    <ReferenceRenderer
+                      refValue={{ type: item.type, id: item.canonical.slice(item.canonical.indexOf(":") + 1), canonical: item.canonical }}
+                      surface="inline"
+                      className="mx-0"
+                    />
+                    <code className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap rounded bg-muted px-2 py-1 font-mono text-[11px]">
+                      {item.canonical}
+                    </code>
                   </div>
                 );
               })}
@@ -4996,12 +4934,10 @@ export function DesignTab() {
                   when the ID is known.
                 </li>
                 <li>
-                  <span className="text-foreground">Compatibility:</span> legacy
-                  bracket and Intention ID formats render during migration.
+                  <span className="text-foreground">Rendering:</span> use the shared parser and ReferenceRenderer so every registered type gets the current inline treatment.
                 </li>
                 <li>
-                  <span className="text-foreground">Resolved:</span> references are
-                  compact typed links, underlined at rest, and optionally clickable.
+                  <span className="text-foreground">Resolved:</span> references are compact inline links with their type icon and current object label.
                 </li>
                 <li>
                   <span className="text-foreground">Actionable:</span>{" "}
@@ -5033,70 +4969,6 @@ export function DesignTab() {
                   confetti.
                 </li>
               </ul>
-            </div>
-          </div>
-        </DesignSection>
-
-        <DesignSection
-          number="14"
-          eyebrow="Simple Home"
-          title="Feed widget types"
-        >
-          <div className="space-y-3">
-            <p className="text-xs text-muted-foreground">
-              The Simple home feed uses temporal sections with dynamic labels. Nested feed items use the SessionMenu hierarchy exactly: same compact row, selected/hover treatment, connector gutter, and control positions.
-              Checkable items (priorities, tasks, wellness) use the same hierarchy row with the Simple check circle.
-              Non-checkable items (meetings, projects, inbox) use icon + text rows; complex times stay inline as muted metadata.
-            </p>
-            <div className="grid gap-3 @md:grid-cols-2">
-              {[
-                { type: "priority_task", desc: "Checkbox + title. Sources: priority, task", checkable: true },
-                { type: "meeting", desc: "Calendar icon + title + time + attendees", checkable: false },
-                { type: "project", desc: "Briefcase icon + title + status + due date", checkable: false },
-                { type: "wellness", desc: "Checkbox + title + window sublabel", checkable: true },
-                { type: "inbox_item", desc: "Inbox icon + title + kind", checkable: false },
-                { type: "state", desc: "Card — ambient state indicator", checkable: false },
-              ].map(w => (
-                <div key={w.type} className="rounded-md border border-border/20 p-3">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="font-mono text-[10px]">{w.type}</Badge>
-                    {w.checkable && <Badge variant="outline" className="text-[10px] border-success/40 text-success">checkable</Badge>}
-                  </div>
-                  <p className="mt-1.5 text-xs text-muted-foreground">{w.desc}</p>
-                </div>
-              ))}
-            </div>
-            <div className="grid min-w-0 gap-3 overflow-hidden @lg:grid-cols-2">
-              <div>
-                <div className="text-sm font-medium">Dynamic section labels</div>
-                <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-                  <li><span className="text-foreground">now →</span> "Tuesday, 6/23" (weekday + date)</li>
-                  <li><span className="text-foreground">soon →</span> "Later Today"</li>
-                  <li><span className="text-foreground">this_month →</span> "June" (current month name)</li>
-                  <li><span className="text-foreground">this_quarter →</span> "Q3 2026"</li>
-                  <li><span className="text-foreground">this_year →</span> "2026"</li>
-                  <li><span className="text-foreground">inbox →</span> "Inbox" (between now and later today)</li>
-                </ul>
-              </div>
-              <div>
-                <div className="text-sm font-medium">Complex time examples</div>
-                <div className="mt-2 rounded-md border border-border/30 bg-card p-1">
-                  {[
-                    { icon: Calendar, label: "Rana prep", meta: "Tue 1:30 PM · 30m · UChicago" },
-                    { icon: Dumbbell, label: "Mobility reset", meta: "Due today · 10 min · 6–10 PM" },
-                  ].map((item) => {
-                    const Icon = item.icon;
-                    return (
-                      <div key={item.label} className="group relative flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 pr-16 text-left text-sm text-muted-foreground hover:bg-sidebar-accent/70 hover:text-foreground">
-                        <Icon className="h-3.5 w-3.5 shrink-0" />
-                        <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                        <span className="ml-auto min-w-0 max-w-[50%] truncate text-xs text-muted-foreground">{item.meta}</span>
-                        <MoreVertical className="absolute right-1 top-1/2 h-6 w-6 -translate-y-1/2 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
             </div>
           </div>
         </DesignSection>
@@ -5176,12 +5048,6 @@ export function DesignTab() {
                     One title, one action, quiet metadata.
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button size="sm">CTA</Button>
-                  <Button size="sm" variant="outline">
-                    Secondary
-                  </Button>
-                </div>
               </div>
             </DoDontCard>
             <DoDontCard kind="dont" title="Don't improvise decoration">
@@ -5202,10 +5068,6 @@ export function DesignTab() {
                     If the UI needs this explanation under its title, redesign
                     the surface or use a tooltip at the point of need.
                   </div>
-                </div>
-                <div className="flex gap-2">
-                  <Button size="sm">Primary</Button>
-                  <Button size="sm">Also primary</Button>
                 </div>
               </div>
             </DoDontCard>
