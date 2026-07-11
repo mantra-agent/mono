@@ -2700,18 +2700,18 @@ interface RecallStatus {
 function IntegrationTreeSection({
   label,
   children,
-  defaultOpen = true,
+  initialOpen = false,
 }: {
   label: string;
   children: React.ReactNode;
-  defaultOpen?: boolean;
+  initialOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useState(initialOpen);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger
-        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate"
+        className="flex min-h-11 w-full items-center gap-1.5 rounded-md px-2 py-2 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate"
         data-testid={`button-recall-section-${label.toLowerCase().replaceAll(" ", "-")}`}
       >
         <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
@@ -2730,6 +2730,7 @@ function RecallDetail() {
     queryKey: ["/api/integrations/recall/status"],
     refetchInterval: false,
   });
+  const [connectionTestError, setConnectionTestError] = useState<string | null>(null);
   const testConnection = useMutation({
     mutationFn: async () => {
       const response = await apiRequest("POST", "/api/integrations/recall/test");
@@ -2737,6 +2738,7 @@ function RecallDetail() {
     },
     onSuccess: (status) => {
       queryClient.setQueryData(["/api/integrations/recall/status"], status);
+      setConnectionTestError(status.connected ? null : status.error ?? "Check the API key and region, then try again.");
       toast({
         title: status.connected ? "Recall.ai connected" : "Recall.ai connection failed",
         description: status.connected
@@ -2746,6 +2748,7 @@ function RecallDetail() {
       });
     },
     onError: (error: Error) => {
+      setConnectionTestError(error.message);
       toast({
         title: "Recall.ai connection test failed",
         description: error.message,
@@ -2760,6 +2763,9 @@ function RecallDetail() {
       ? `Not connected: ${recallStatus.error}`
       : "Not connected";
   const webhookReady = Boolean(recallStatus?.connected && recallStatus?.hasWebhookSecret);
+  const credentialsReady = Boolean(recallStatus?.hasKey && recallStatus?.region && recallStatus?.hasWebhookSecret);
+  const connectionNeedsAttention = isLoading || !recallStatus?.connected || Boolean(recallStatus?.error);
+  const webhookNeedsAttention = !webhookReady;
 
   return (
     <div className="min-w-0 space-y-2" data-testid="card-recall-status">
@@ -2773,7 +2779,7 @@ function RecallDetail() {
         </div>
       </div>
 
-      <IntegrationTreeSection label="Connection">
+      <IntegrationTreeSection label="Connection" initialOpen={connectionNeedsAttention}>
         <ProfileTreeRow
           label="Status"
           icon={recallStatus?.connected
@@ -2782,14 +2788,14 @@ function RecallDetail() {
           hasValue
           showEmpty
           testId="recall-connection-status"
-          expandedContent={recallStatus?.error ? (
-            <p className="text-destructive">{recallStatus.error}</p>
+          expandedContent={recallStatus?.error || connectionTestError ? (
+            <p className="text-destructive">{connectionTestError ?? recallStatus?.error}</p>
           ) : undefined}
         >
           {isLoading ? (
             <Skeleton className="h-4 w-28" />
           ) : (
-            <span className={cn("truncate", recallStatus?.connected ? "text-active" : "text-muted-foreground")}>
+            <span className={cn(recallStatus?.connected ? "text-active" : "text-muted-foreground")}>
               {statusLabel}
             </span>
           )}
@@ -2812,13 +2818,13 @@ function RecallDetail() {
         </ProfileTreeRow>
       </IntegrationTreeSection>
 
-      <IntegrationTreeSection label="Credentials">
+      <IntegrationTreeSection label="Credentials" initialOpen={!credentialsReady}>
         <div className="min-w-0 px-2 py-1.5">
           <SecretsForSection section="recall" />
         </div>
       </IntegrationTreeSection>
 
-      <IntegrationTreeSection label="Webhook setup">
+      <IntegrationTreeSection label="Webhook setup" initialOpen={webhookNeedsAttention}>
         <ProfileTreeRow
           label="API key + region"
           icon={<Globe className="h-3.5 w-3.5" />}
@@ -2831,7 +2837,7 @@ function RecallDetail() {
             </p>
           }
         >
-          <span className="truncate text-muted-foreground">{recallStatus?.region ?? "Required"}</span>
+          <span className="text-muted-foreground">{recallStatus?.region ?? "Required"}</span>
         </ProfileTreeRow>
         <ProfileTreeRow
           label="Status webhook"
@@ -2841,7 +2847,7 @@ function RecallDetail() {
           hasValue
           showEmpty
           expandedContentClassName="min-w-0 space-y-2"
-          defaultOpen={!webhookReady}
+          defaultOpen={webhookNeedsAttention}
           expandedContent={
             <>
               <p className="text-muted-foreground">
