@@ -717,8 +717,8 @@ async function syncSessionMemoryMirrorIfReady(data: SessionData, options?: { wri
 
   try {
     const principal = getCurrentPrincipalOrSystem();
-    const { upsertSource } = await import("./memory/vnext-source-queue");
-    await upsertSource("session", data.id, principal);
+    const { markSourceChanged } = await import("./memory/vnext-source-queue");
+    await markSourceChanged("session", data.id, principal);
     memoryMirrorLog.info(
       `[vnext_ingest] queued source=session sessionId=${data.id} memoryEntryId=${memEntryId} messageCount=${data.messages.length}`,
     );

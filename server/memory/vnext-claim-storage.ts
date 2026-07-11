@@ -1173,6 +1173,9 @@ export async function persistClaimCandidates(
 
       if (nearDuplicate) {
         await memoryVnextClaimStorage.reinforceClaim(nearDuplicate.id);
+        for (const sourceRef of sourceRefs ?? []) {
+          await memoryVnextClaimStorage.addSourceRef(nearDuplicate.id, sourceRef);
+        }
         log.debug(
           `${logPrefix}: reinforced existing claim #${nearDuplicate.id} (similarity=${nearDuplicate.similarity.toFixed(3)}) for "${claim.content.slice(0, 60)}"`,
         );
