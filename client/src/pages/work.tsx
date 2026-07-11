@@ -1468,12 +1468,16 @@ function MilestoneBar({ milestones }: { milestones: Project["milestones"] }) {
   );
 }
 
-function WorkTreeIndent({ depth }: { depth: number }) {
-  if (depth <= 0) return null;
+function WorkTreeConnector({ continues = false }: { continues?: boolean }) {
   return (
-    <div className="shrink-0 w-5 self-stretch relative mr-1" aria-hidden="true">
-      <div className="absolute left-1/2 top-0 bottom-1/2 -translate-x-px border-l border-border" />
-      <div className="absolute left-1/2 top-1/2 right-0 border-t border-border" />
+    <div className="relative mr-1 w-5 shrink-0 self-stretch" aria-hidden="true">
+      <div
+        className={cn(
+          "absolute left-1/2 top-0 -translate-x-px border-l border-border",
+          continues ? "bottom-0" : "bottom-1/2",
+        )}
+      />
+      <div className="absolute left-1/2 right-0 top-1/2 border-t border-border" />
     </div>
   );
 }
@@ -1886,7 +1890,7 @@ function ProjectTreeNode({
       {expanded && hasChildren && (
         <div className="space-y-0 mt-0" data-testid={`tree-children-project-${project.id}`}>
           <div className="flex min-w-0 items-stretch" style={{ paddingLeft: Math.min(WORK_INDENT_STEP_PX, WORK_MAX_INDENT_PX) }}>
-              <WorkTreeIndent depth={1} />
+              <WorkTreeConnector continues={sortedMilestones.length > 0 || isAddingMilestone || sortedUnassignedTasks.length > 0} />
               <div className="flex-1 min-w-0 px-2 py-1.5">
                 <div className="space-y-2 rounded-md border border-border/30 bg-card/40 p-2" data-testid={`project-expanded-summary-${project.id}`}>
                   <ExpandedDescriptionEditor
@@ -1899,7 +1903,7 @@ function ProjectTreeNode({
                 </div>
               </div>
             </div>
-          {sortedMilestones.map(milestone => {
+          {sortedMilestones.map((milestone, milestoneIndex) => {
             const milestoneTasks = stablePartition(tasksByMilestone.get(milestone.id) || [], task => task.status === "done");
             const isAddingTask = addingTaskTarget?.projectId === project.id && addingTaskTarget.milestoneId === milestone.id;
             const milestoneExpanded = isMilestoneExpanded(milestone);
@@ -1908,7 +1912,7 @@ function ProjectTreeNode({
             return (
               <div key={milestone.id} className="space-y-0">
                 <div className="flex min-w-0 max-w-full items-stretch overflow-hidden" style={{ paddingLeft: Math.min(WORK_INDENT_STEP_PX, WORK_MAX_INDENT_PX) }}>
-                  <WorkTreeIndent depth={1} />
+                  <WorkTreeConnector continues={milestoneIndex < sortedMilestones.length - 1 || isAddingMilestone || sortedUnassignedTasks.length > 0} />
                   <div className="flex-1 min-w-0 relative overflow-hidden">
                     <div className="group relative flex w-full min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm select-none transition-colors hover:bg-accent/70" data-testid={`tree-node-milestone-${milestone.id}`}>
                       <WorkCheckCircle
@@ -2063,7 +2067,7 @@ function ProjectTreeNode({
                 </div>
                 {isAddingTask && (
                   <div className="flex min-w-0 items-stretch" style={{ paddingLeft: Math.min(WORK_INDENT_STEP_PX * 2, WORK_MAX_INDENT_PX) }}>
-                    <WorkTreeIndent depth={1} />
+                    <WorkTreeConnector continues={milestoneTasks.length > 0} />
                     <div className="flex-1 min-w-0 flex items-center gap-2 py-1 pr-2">
                       <Input
                         value={newTaskTitle}
@@ -2082,9 +2086,9 @@ function ProjectTreeNode({
                     </div>
                   </div>
                 )}
-                {milestoneExpanded && milestoneTasks.map(task => (
+                {milestoneExpanded && milestoneTasks.map((task, taskIndex) => (
                   <div key={task.id} className="flex min-w-0 max-w-full items-stretch overflow-hidden" style={{ paddingLeft: Math.min(WORK_INDENT_STEP_PX * 2, WORK_MAX_INDENT_PX) }}>
-                    <WorkTreeIndent depth={1} />
+                    <WorkTreeConnector continues={taskIndex < milestoneTasks.length - 1} />
                     <div className="flex-1 min-w-0 relative overflow-hidden">
                       <TaskRow
                         task={task}
@@ -2106,7 +2110,7 @@ function ProjectTreeNode({
           })}
           {isAddingMilestone && (
             <div className="flex min-w-0 items-stretch" style={{ paddingLeft: Math.min(WORK_INDENT_STEP_PX, WORK_MAX_INDENT_PX) }}>
-              <WorkTreeIndent depth={1} />
+              <WorkTreeConnector continues={sortedUnassignedTasks.length > 0} />
               <div className="flex-1 min-w-0 flex items-center gap-2 py-1 pr-2">
                 <Input
                   value={newMilestoneName}
@@ -2125,9 +2129,9 @@ function ProjectTreeNode({
               </div>
             </div>
           )}
-          {sortedUnassignedTasks.map(task => (
+          {sortedUnassignedTasks.map((task, taskIndex) => (
             <div key={task.id} className="flex min-w-0 items-stretch" style={{ paddingLeft: Math.min(WORK_INDENT_STEP_PX, WORK_MAX_INDENT_PX) }}>
-              <WorkTreeIndent depth={1} />
+              <WorkTreeConnector continues={taskIndex < sortedUnassignedTasks.length - 1} />
               <div className="flex-1 min-w-0 relative overflow-hidden">
                 <TaskRow
                   task={task}
