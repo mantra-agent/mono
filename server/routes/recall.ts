@@ -8,29 +8,7 @@ import type {
 
 const log = createLogger("RecallWebhooks");
 
-type RecallDeliveryDiagnostic = {
-  receivedAt: string;
-  path: "status" | "transcript";
-  event: string;
-  webhookId: string | null;
-  accepted: boolean;
-  responseStatus: number;
-  reason?: string;
-};
-
-const recentRecallDeliveries: RecallDeliveryDiagnostic[] = [];
-const MAX_RECALL_DELIVERY_DIAGNOSTICS = 100;
-
-function recordRecallDelivery(entry: RecallDeliveryDiagnostic): void {
-  recentRecallDeliveries.unshift(entry);
-  if (recentRecallDeliveries.length > MAX_RECALL_DELIVERY_DIAGNOSTICS) {
-    recentRecallDeliveries.length = MAX_RECALL_DELIVERY_DIAGNOSTICS;
-  }
-}
-
-export function getRecallDeliveryDiagnostics(limit = 20): RecallDeliveryDiagnostic[] {
-  return recentRecallDeliveries.slice(0, Math.min(100, Math.max(1, limit)));
-}
+import { recordRecallDelivery } from "../integrations/recall/delivery-diagnostics";
 
 function webhookId(req: Request): string | null {
   const value = req.get("webhook-id") ?? req.get("svix-id");
@@ -113,7 +91,7 @@ export function registerRecallRoutes(
       rawBodyString(req),
     );
     if (!verified) {
-      recordRecallDelivery({
+      await recordRecallDelivery({
         receivedAt: new Date().toISOString(),
         path: "status",
         event: typeof req.body?.event === "string" ? req.body.event : "unknown",
@@ -124,7 +102,7 @@ export function registerRecallRoutes(
       });
       return res.status(401).json({ error: "Invalid webhook signature" });
     }
-    recordRecallDelivery({
+    await recordRecallDelivery({
       receivedAt: new Date().toISOString(),
       path: "status",
       event: typeof req.body?.event === "string" ? req.body.event : "unknown",
@@ -176,7 +154,7 @@ export function registerRecallRoutes(
         rawBodyString(req),
       );
       if (!verified) {
-        recordRecallDelivery({
+        await recordRecallDelivery({
           receivedAt: new Date().toISOString(),
           path: "transcript",
           event: typeof req.body?.event === "string" ? req.body.event : "unknown",
@@ -187,7 +165,7 @@ export function registerRecallRoutes(
         });
         return res.status(401).json({ error: "Invalid webhook signature" });
       }
-      recordRecallDelivery({
+      await recordRecallDelivery({
         receivedAt: new Date().toISOString(),
         path: "transcript",
         event: typeof req.body?.event === "string" ? req.body.event : "unknown",
