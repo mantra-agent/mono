@@ -109,6 +109,7 @@ import {
 } from "lucide-react";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
+import { SimpleTextFrame } from "@/components/home/simple-text-frame";
 
 const SOURCE_REF_TYPE_MAP: Record<string, "session" | "page"> = {
   session: "session",
@@ -998,37 +999,41 @@ function MemoryPipelineRow({ entry, expanded, onToggle, timezone }: { entry: Mem
 }
 
 
+function VnextClaimTypeIcon({ claimType }: { claimType: string }) {
+  if (claimType === "cause") return <Zap className="h-3.5 w-3.5 shrink-0 text-warning" aria-label="Cause" />;
+  if (claimType === "action") return <Activity className="h-3.5 w-3.5 shrink-0 text-success" aria-label="Action" />;
+  return <CircleDot className="h-3.5 w-3.5 shrink-0 text-info" aria-label="State" />;
+}
+
 function VnextClaimRow({ claim, expanded, onToggle, timezone }: { claim: VnextClaim; expanded: boolean; onToggle: () => void; timezone: string }) {
   const updated = claim.lifecycleStageUpdatedAt || claim.updatedAt || claim.createdAt;
   const topics = claim.topics ?? [];
   const metadataEntries = claim.metadata ? Object.entries(claim.metadata).filter(([, value]) => value !== null && value !== undefined) : [];
+  const timestamp = formatPipelineTime(updated, timezone);
 
   return (
     <div data-testid={`memory-vnext-claim-row-${claim.id}`}>
       <button type="button" className={cn(WORKING_TREE_ROW_CLASS, WORKING_TREE_IDLE_CLASS)} onClick={onToggle} aria-expanded={expanded} data-testid={`memory-vnext-claim-toggle-${claim.id}`}>
-        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform text-muted-foreground/70", expanded && "rotate-90")} />
-        <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />
-        <span className="min-w-0 flex-1 truncate text-left" data-testid={`memory-vnext-claim-title-${claim.id}`}>{claim.title ? <>{claim.title}<span className="ml-2 text-muted-foreground/60">{claim.content}</span></> : claim.content}</span>
-        <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-xs">{claimTypeLabel(claim.claimType)}</Badge>
-        <span className="shrink-0 text-xs text-muted-foreground/60" data-testid={`memory-vnext-claim-time-${claim.id}`}>{relativeTime(updated || undefined)}</span>
+        <VnextClaimTypeIcon claimType={claim.claimType} />
+        <span className="min-w-0 flex-1 truncate text-left text-foreground" data-testid={`memory-vnext-claim-title-${claim.id}`}>{claim.title || "Untitled claim"}</span>
+        {timestamp && <span className="shrink-0 text-xs text-muted-foreground/60" data-testid={`memory-vnext-claim-time-${claim.id}`}>{timestamp}</span>}
+        <span className="ml-1 flex w-5 shrink-0 items-center justify-center">
+          <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", expanded && "rotate-90")} />
+        </span>
       </button>
       {expanded && (
-        <div className="ml-6 border-l border-card-border pl-3 pr-2 py-2 space-y-3" data-testid={`memory-vnext-claim-details-${claim.id}`}>
+        <div className="space-y-3 pb-3 pl-8 pr-2 pt-1" data-testid={`memory-vnext-claim-details-${claim.id}`}>
+          <SimpleTextFrame content={claim.content} />
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`memory-vnext-claim-meta-${claim.id}`}>
-            <span>Claim {claim.id}</span>
-            <span>vNext</span>
             <span>{lifecycleLabel(claim.lifecycleStage)}</span>
             <span>{claimTypeLabel(claim.claimType)}</span>
             <span>{Math.round(Number(claim.confidence ?? 0) * 100)}% confidence</span>
-            {claim.sourceMemoryId && <span>provenance memory #{claim.sourceMemoryId}</span>}
-            {updated && <span>{new Date(updated).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}</span>}
           </div>
-          {topics.length > 0 && <div><p className="text-xs font-medium text-muted-foreground mb-1">Topics</p><div className="flex flex-wrap gap-1.5">{topics.map(topic => <Badge key={topic} variant="outline" className="px-1.5 py-0 text-xs">{topic}</Badge>)}</div></div>}
-          <div><p className="text-xs font-medium text-muted-foreground mb-1 flex items-center gap-1"><FileText className="h-3 w-3" />Claim</p><ExchangeContentRenderer content={claim.content} /></div>
+          {topics.length > 0 && <div className="flex flex-wrap gap-1.5">{topics.map(topic => <Badge key={topic} variant="outline" className="px-1.5 py-0 text-xs">{topic}</Badge>)}</div>}
           <VnextSourceRefsSection claimId={claim.id} />
           {metadataEntries.length > 0 && (
             <div>
-              <p className="text-xs font-medium text-muted-foreground mb-1">Budget metadata</p>
+              <p className="mb-1 text-xs font-medium text-muted-foreground">Budget metadata</p>
               <pre className="rounded-md border border-card-border bg-muted/10 p-2 text-xs font-mono text-foreground/70 whitespace-pre-wrap">{JSON.stringify(claim.metadata, null, 2)}</pre>
             </div>
           )}
@@ -2149,7 +2154,7 @@ function LayersTab() {
   }, [pipelineEntries]);
 
   const vnextSources = useMemo(() => {
-    const sources = vnextSourcesResponse?.sources ?? [];
+    const sources = (vnextSourcesResponse?.sources ?? []).filter(source => source.status !== "completed");
     return [...sources].sort((a, b) => new Date(b.lastModifiedAt || b.createdAt || 0).getTime() - new Date(a.lastModifiedAt || a.createdAt || 0).getTime());
   }, [vnextSourcesResponse]);
 
@@ -2246,23 +2251,19 @@ function LayersTab() {
   };
 
   const renderVnextSourceRow = (source: VnextSourceQueueRow) => {
-    const modified = formatPipelineTime(source.lastModifiedAt, timezone);
-    const extracted = formatPipelineTime(source.lastExtractedAt, timezone);
+    const modified = formatPipelineTime(source.lastModifiedAt || source.createdAt, timezone);
     const refType = SOURCE_REF_TYPE_MAP[source.sourceType] ?? null;
     return (
-      <div key={source.id} className="grid grid-cols-[1fr_auto] gap-2 px-2 py-1.5 text-xs hover:bg-muted/30" data-testid={`memory-vnext-source-row-${source.id}`}>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 min-w-0">
-            {renderVnextSourceStatusIcon(source.status, `memory-vnext-source-status-${source.id}`)}
-            {refType ? (
-              <ReferenceRenderer refValue={createReferenceRef({ type: refType, id: source.sourceId })} surface="simple-chip" />
-            ) : (
-              <span className="truncate font-medium">{source.sourceType}:{source.sourceId}</span>
-            )}
-          </div>
-          <div className="mt-0.5 text-[11px] text-muted-foreground/70">{extracted ? `Last extracted ${extracted}` : modified ? `Queued ${modified}` : "Queued source"}</div>
+      <div key={source.id} className="flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-muted/30" data-testid={`memory-vnext-source-row-${source.id}`}>
+        {renderVnextSourceStatusIcon(source.status, `memory-vnext-source-status-${source.id}`)}
+        <div className="min-w-0 flex-1">
+          {refType ? (
+            <ReferenceRenderer refValue={createReferenceRef({ type: refType, id: source.sourceId })} surface="simple-chip" />
+          ) : (
+            <span className="truncate font-medium">{source.sourceType}:{source.sourceId}</span>
+          )}
         </div>
-        <span className="font-mono text-[11px] text-muted-foreground/60">#{source.id}</span>
+        {modified && <span className="shrink-0 text-[11px] text-muted-foreground/60">{modified}</span>}
       </div>
     );
   };
@@ -2275,9 +2276,9 @@ function LayersTab() {
     return (
       <Collapsible key={stage.value} open={open} onOpenChange={() => toggleStage(stage.value)} data-testid={`memory-vnext-stage-${stage.value}`}>
         <CollapsibleTrigger className={WORKING_SECTION_TRIGGER_CLASS} data-testid={`memory-vnext-stage-trigger-${stage.value}`}>
-          <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
-          <span className="min-w-0 truncate">{stage.label}</span>
-          <span className="ml-auto font-mono text-[11px] text-muted-foreground/70" data-testid={`memory-vnext-stage-count-${stage.value}`}>{count}</span>
+          <span className="min-w-0 flex-1 truncate">{stage.label}</span>
+          <span className="font-mono text-[11px] text-muted-foreground/70" data-testid={`memory-vnext-stage-count-${stage.value}`}>{count}</span>
+          <span className="ml-1 flex w-5 shrink-0 items-center justify-center"><ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", open && "rotate-90")} /></span>
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="space-y-0.5 pb-2" data-testid={`memory-vnext-stage-claims-${stage.value}`}>
