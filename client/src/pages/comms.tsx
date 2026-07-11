@@ -320,11 +320,10 @@ function MessageBodyView({ message }: { message: EmailMessage }) {
 }
 
 interface DraftInfo {
-  id: number;
+  id: string;
   subject: string;
   status: string;
-  toAddress: string;
-  sourceEmailId?: number;
+  threadId?: string | null;
   createdAt: string;
 }
 
@@ -1355,33 +1354,25 @@ function ReviewTab({ onHover, onSwitchTab }: { onHover: (ids: number[] | null) =
     return map;
   }, [enrichmentsQuery.data]);
 
-  const allMessageIds = useMemo(() => {
-    const ids: number[] = [];
-    for (const t of threads) {
-      for (const m of t.messages) ids.push(m.id);
-    }
-    return ids;
-  }, [threads]);
-
   const draftsQuery = useQuery<{ drafts: DraftInfo[] }>({
-    queryKey: ["/api/email/drafts/by-source-ids", allMessageIds],
+    queryKey: ["/api/email-drafts/by-thread-ids", threadIds],
     queryFn: async () => {
-      if (allMessageIds.length === 0) return { drafts: [] };
-      const res = await apiRequest("POST", "/api/email/drafts/by-source-ids", { sourceEmailIds: allMessageIds });
+      if (threadIds.length === 0) return { drafts: [] };
+      const res = await apiRequest("POST", "/api/email-drafts/by-thread-ids", { threadIds });
       if (!res.ok) throw new Error("Failed to fetch linked drafts");
       return res.json();
     },
-    enabled: allMessageIds.length > 0,
+    enabled: threadIds.length > 0,
     refetchInterval: 30000,
   });
 
-  const draftsByMessageId = useMemo(() => {
-    const map = new Map<number, DraftInfo[]>();
+  const draftsByThreadId = useMemo(() => {
+    const map = new Map<string, DraftInfo[]>();
     const drafts = draftsQuery.data?.drafts || [];
     for (const d of drafts) {
-      if (d.sourceEmailId) {
-        if (!map.has(d.sourceEmailId)) map.set(d.sourceEmailId, []);
-        map.get(d.sourceEmailId)!.push(d);
+      if (d.threadId) {
+        if (!map.has(d.threadId)) map.set(d.threadId, []);
+        map.get(d.threadId)!.push(d);
       }
     }
     return map;
@@ -1406,7 +1397,7 @@ function ReviewTab({ onHover, onSwitchTab }: { onHover: (ids: number[] | null) =
         `**Subject:** ${subject}`,
         `**Thread ID:** ${thread.threadId}`,
         `**Account:** ${msg.accountId}`,
-        `**Source Email ID:** ${msg.id}`,
+        `**Provider Message ID:** ${msg.providerMessageId}`,
         msg.toAddresses ? `**To:** ${msg.toAddresses}` : null,
         msg.ccAddresses ? `**CC:** ${msg.ccAddresses}` : null,
         ``,
@@ -1420,10 +1411,10 @@ function ReviewTab({ onHover, onSwitchTab }: { onHover: (ids: number[] | null) =
         `- **subject:** Re: ${subject}`,
         `- **account:** ${msg.accountId}`,
         `- **body:** the reply text`,
-        `- **sourceEmailId:** ${msg.id}`,
+        `- **thread_id:** ${thread.threadId}`,
         ``,
         `Do NOT wait for approval before creating the draft. Create it immediately.`,
-        `After creating the draft, include an \`@draft:<draftId>\` reference in your response so Ray can click through to it.`,
+        `After creating the draft, include an \`@email_draft:<draftId>\` reference in your response so Ray can click through to it.`,
       ].filter(Boolean);
 
       await apiRequest("POST", `/api/sessions/${session.id}/messages`, {
@@ -1467,11 +1458,7 @@ function ReviewTab({ onHover, onSwitchTab }: { onHover: (ids: number[] | null) =
     <div className="h-full overflow-y-auto overflow-x-hidden">
       <div data-testid="review-thread-list">
         {threads.map((thread) => {
-          const threadDrafts: DraftInfo[] = [];
-          for (const m of thread.messages) {
-            const d = draftsByMessageId.get(m.id);
-            if (d) threadDrafts.push(...d);
-          }
+          const threadDrafts = draftsByThreadId.get(thread.threadId) ?? [];
           return (
             <ThreadRow
               key={thread.threadId}
