@@ -8619,8 +8619,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
   async meeting_bot(args: Record<string, any>): Promise<ToolHandlerResult> {
     const action = typeof args.action === "string" ? args.action : "";
-    if (!["join", "status", "leave"].includes(action)) {
-      return { result: `Unknown meeting_bot action: ${action}. Allowed: join, status, leave`, error: true };
+    if (!["join", "status", "diagnostics", "leave"].includes(action)) {
+      return { result: `Unknown meeting_bot action: ${action}. Allowed: join, status, diagnostics, leave`, error: true };
+    }
+
+    if (action === "diagnostics") {
+      const { getRecallDeliveryDiagnostics } = await import("./routes/recall");
+      const limit = Math.min(100, Math.max(1, Number(args.limit) || 20));
+      return { result: JSON.stringify({ deliveries: getRecallDeliveryDiagnostics(limit) }, null, 2) };
     }
 
     const { chatStorage } = await import("./integrations/chat/storage");

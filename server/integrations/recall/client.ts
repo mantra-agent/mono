@@ -219,7 +219,12 @@ export async function verifyRecallWebhook(
     log.warn("Webhook timestamp outside tolerance");
     return false;
   }
-  const secretBytes = Buffer.from(secret.replace(/^whsec_/, ""), "base64");
+  // Recall workspace verification secrets are opaque strings. Legacy Svix
+  // endpoint secrets use the whsec_ prefix and encode the HMAC key as base64.
+  // Decoding every secret as base64 corrupts new workspace secrets.
+  const secretBytes = secret.startsWith("whsec_")
+    ? Buffer.from(secret.slice("whsec_".length), "base64")
+    : Buffer.from(secret, "utf8");
   const signedContent = `${msgId}.${msgTimestamp}.${rawBody}`;
   const expected = crypto.createHmac("sha256", secretBytes).update(signedContent).digest("base64");
   // Header format: "v1,<base64sig> v1,<base64sig2> ..."
