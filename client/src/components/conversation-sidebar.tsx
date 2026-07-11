@@ -33,6 +33,7 @@ import {
   Pin,
   MessageSquare,
   Radio,
+  Timer,
 } from "lucide-react";
 import type { ChatSession } from "@shared/models/chat";
 import { SessionActionsMenuItems } from "@/components/session-actions-menu";
@@ -268,8 +269,9 @@ export function ConversationItem({
   // - Live/active descendant + NOT hovering icon: spinner
   // - Hovering icon area OR pinned (when not live): pin icon (clickable)
   // - Default: Bot or User icon
-  const isSpinning = isLive || !!conv.hasActiveDescendant || !!conv.hasActivePlan;
-  const showPinIcon = (isPinned && !isSpinning) || iconHovered;
+  const isWaiting = conv.status === "waiting";
+  const isSpinning = !isWaiting && (isLive || !!conv.hasActiveDescendant || !!conv.hasActivePlan);
+  const showPinIcon = (isPinned && !isSpinning && !isWaiting) || iconHovered;
   const isIconInteractive = iconHovered || (isPinned && !isSpinning);
 
   const handleIconClick = (e: MouseEvent) => {
@@ -280,6 +282,9 @@ export function ConversationItem({
   };
 
   const renderIcon = () => {
+    if (isWaiting && !iconHovered) {
+      return <Timer className="h-3.5 w-3.5 shrink-0 text-active" data-testid={`icon-conversation-waiting-${conv.id}`} />;
+    }
     if (isSpinning && !iconHovered) {
       return <ActiveStatusSpinner className="h-3.5 w-3.5" />;
     }
