@@ -256,7 +256,7 @@ The active migration target is source-backed, stage-driven memory. Treat this se
 - A memory row is a compact cognitive claim or summary. Raw transcripts, raw autonomous runs, tool-output blobs, and legacy exchange records are source material, not graphable memory.
 - `memory_sources` is the provenance path. New ingestion code must attach source refs with enough context to explain why the memory exists.
 - `integration_stage` is processing depth, not memory ontology. Keep `layer` compatibility until all callers migrate, but do not design new behavior around short/mid/long as the semantic model.
-- Stage 1 means indexed/enriched: title, summary/one-liner, and topics/tags are present or intentionally queued.
+- Stage 1 means indexed/enriched: title, summary/one-liner, topics/tags, and a validated search embedding are present before admission completes. Candidate embeddings generated for semantic dedup are reused for persistence; embedding failure aborts the retryable source admission rather than creating an unsearchable active claim.
 - Stage 2 means shallow-linked/integrated. A memory may reach Stage 2 either because the StageOneSweep created/preserved shallow source refs, or because reconciliation recognizes existing source/link evidence that already satisfies the Stage 2 invariant.
 - Stage 3/4 work belongs to deep integration and sleep/upkeep. Do not put expensive deep LLM or broad graph work in foreground writes or the Stage 1 sweep.
 
@@ -342,6 +342,8 @@ When diagnosing Stage 1 backlog, distinguish two cases:
 2. Legacy Stage 1 entries that already have links/source evidence but were never reconciled into Stage 2.
 
 Do not assume age alone should advance a memory. Advance when Stage 2 evidence exists or the sweep successfully creates/preserves it.
+
+Legacy active vNext claims missing embeddings are repaired through a bounded, idempotent backfill under each owning principal. Retired claims are excluded, and each update rechecks both ownership and `embedding IS NULL` so retries are safe.
 
 ### Observability
 
