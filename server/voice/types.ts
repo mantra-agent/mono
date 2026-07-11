@@ -57,6 +57,10 @@ export interface VoiceSession {
   pendingTranscriptUpdate: VoiceMessage[] | null;
   executorStarted: boolean;
   activeTurnNumber: number;
+  /** Stable logical turn identity across growing transcript callbacks. */
+  activeVoiceTurnId: string | null;
+  activeTranscriptRevision: number;
+  activeAssistantAttemptId: string | null;
   /** Principal captured at /api/voice/start for scoping voice LLM callbacks. */
   principal: Principal | null;
 }
@@ -79,6 +83,8 @@ export interface TurnContext {
   turnStart: number;
   currentTurn: number;
   turnId: string;
+  assistantAttemptId: string;
+  transcriptRevision: number;
   aborted: boolean;
   turnAbort: AbortController;
   lastWrite: SSEWriteState;

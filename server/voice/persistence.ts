@@ -191,54 +191,15 @@ export async function persistOrphanedTurnData(
   ctx?: TurnContext,
 ): Promise<void> {
   const releaseLock = await acquireSessionTurnLock(session.id);
-  let orphanedToolCalls: VoiceToolCall[];
+  let discardedToolCallCount = 0;
   try {
-    orphanedToolCalls = session.toolCalls.splice(0);
+    discardedToolCallCount = session.toolCalls.splice(0).length;
   } finally {
     releaseLock();
   }
-  await new Promise<void>(r => setImmediate(r));
-  const systemSteps = ctx?.systemSteps && ctx.systemSteps.length > 0 ? [...ctx.systemSteps] : undefined;
-  const visibleSegmentChronology = ctx?.segmentChronology?.filter((entry) => entry.s !== "system");
-  const segmentChronology = visibleSegmentChronology && visibleSegmentChronology.length > 0 ? visibleSegmentChronology : undefined;
-  if ((orphanedToolCalls.length > 0 || segmentChronology) && session.chatSessionId) {
-    log.log(`turn ${currentTurn} ${reason}_PERSIST — saving ${orphanedToolCalls.length} orphaned tool calls, ${systemSteps?.length || 0} system steps session=${session.id}`);
-    try {
-      const { chatFileStorage } = await import("../chat-file-storage");
-      const toolCalls = orphanedToolCalls.length > 0
-        ? orphanedToolCalls.map(tc => ({
-            toolName: tc.name,
-            status: ("done" as const),
-            arguments: tc.args,
-            result: tc.result,
-            toolCallId: tc.callId,
-          }))
-        : undefined;
 
-      const effectiveTurnId = ctx?.turnId;
-      await chatFileStorage.createMessage(
-        session.chatSessionId,
-        "assistant",
-        "",
-        undefined,
-        toolCalls,
-        "elevenlabs-voice",
-        systemSteps,
-        undefined,
-        undefined,
-        segmentChronology,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        effectiveTurnId,
-      );
-
-      log.log(`turn ${currentTurn} ${reason}_PERSIST complete turnId=${effectiveTurnId || "none"} session=${session.id}`);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.warn(`turn ${currentTurn} ${reason}_PERSIST failed: ${msg}`);
-    }
-  }
+  // Superseded attempts are diagnostics, never chat messages. Persisting their
+  // chronology created empty assistant rows and made abandoned output renderable.
+  log.log(`turn ${currentTurn} ${reason}_DISCARDED turnId=${ctx?.turnId || "none"} assistantAttemptId=${ctx?.assistantAttemptId || "none"} toolCalls=${discardedToolCallCount} session=${session.id}`);
   publishVoiceEvent(session, "voice_tools_cleared", { turn: currentTurn, reason });
 }

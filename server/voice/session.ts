@@ -151,6 +151,24 @@ export function publishVoiceDiagnostic(
   }
 }
 
+/** Publish a lifecycle event through both canonical live projection paths. */
+export async function publishVoiceLifecycleEvent(
+  session: VoiceSession,
+  event: "assistant_attempt_started" | "assistant_attempt_superseded" | "assistant_attempt_committed",
+  payload: { turnId: string; assistantAttemptId: string; transcriptRevision: number; turn: number },
+): Promise<void> {
+  if (session.chatSessionId) {
+    const { sessionManager } = await import("../session-manager");
+    sessionManager.applyEvent(session.chatSessionId, { type: event, ...payload });
+  }
+  publishVoiceEvent(session, event, {
+    voiceTurnId: payload.turnId,
+    assistantAttemptId: payload.assistantAttemptId,
+    transcriptRevision: payload.transcriptRevision,
+    turn: payload.turn,
+  });
+}
+
 // ── Turn Lock ────────────────────────────────────────────────────────────
 
 const sessionTurnMutex = new Map<string, Promise<void>>();
@@ -254,6 +272,9 @@ export function createVoiceSession(
     pendingTranscriptUpdate: null,
     executorStarted: false,
     activeTurnNumber: 0,
+    activeVoiceTurnId: null,
+    activeTranscriptRevision: 0,
+    activeAssistantAttemptId: null,
     principal: null,
   };
   sessions.set(session.id, session);
