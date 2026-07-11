@@ -4335,6 +4335,45 @@ export async function runSchemaBootstrap(
       `CREATE INDEX IF NOT EXISTS idx_people_import_candidates_account ON people_import_candidates (account_id)`,
     );
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS people_import_decisions (
+        id TEXT PRIMARY KEY,
+        candidate_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        person_id TEXT,
+        idempotency_key TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        result JSONB NOT NULL,
+        undo_data JSONB,
+        owner_user_id TEXT,
+        account_id TEXT,
+        undone_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT people_import_decisions_owner_idempotency_unique UNIQUE (owner_user_id, account_id, idempotency_key)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_people_import_decisions_candidate_created ON people_import_decisions (candidate_id, created_at)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_people_import_decisions_owner ON people_import_decisions (owner_user_id, account_id)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS people_import_batches (
+        id TEXT PRIMARY KEY,
+        proposal_hash TEXT NOT NULL,
+        proposal JSONB NOT NULL,
+        preview JSONB NOT NULL,
+        status TEXT NOT NULL DEFAULT 'previewed',
+        idempotency_key TEXT,
+        result JSONB,
+        owner_user_id TEXT,
+        account_id TEXT,
+        expires_at TIMESTAMPTZ NOT NULL,
+        applied_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT people_import_batches_owner_idempotency_unique UNIQUE (owner_user_id, account_id, idempotency_key)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_people_import_batches_owner_created ON people_import_batches (owner_user_id, account_id, created_at)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_people_import_batches_expires ON people_import_batches (expires_at)`);
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS app_migrations (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,

@@ -933,6 +933,23 @@ async function handlePeopleScanImports(args: Record<string, any>): Promise<ToolH
   return { result: `${pending.length} pending import candidates:\n\n${lines.join("\n\n")}` };
 }
 
+
+async function handlePeopleImportApi(args: Record<string, any>): Promise<ToolHandlerResult> {
+  const service = await import("./people-import-decision-service");
+  const action = String(args.action || "");
+  if (action === "list_import_candidates") return { result: JSON.stringify(await service.listImportCandidates({ limit: args.limit, offset: args.offset }), null, 2) };
+  if (action === "get_import_candidate") return { result: JSON.stringify(await service.getImportCandidate(String(args.candidateId || "")), null, 2) };
+  if (action === "find_import_matches") return { result: JSON.stringify(await service.findImportMatches(String(args.candidateId || ""), args.limit), null, 2) };
+  if (action === "add_import_candidate") return { result: JSON.stringify(await service.addImportCandidate({ ...args, candidateId: String(args.candidateId || "") }), null, 2) };
+  if (action === "merge_import_candidate") return { result: JSON.stringify(await service.mergeImportCandidate({ ...args, candidateId: String(args.candidateId || ""), mergePersonId: args.personId || args.mergePersonId }), null, 2) };
+  if (action === "skip_import_candidate") return { result: JSON.stringify(await service.skipImportCandidate({ ...args, candidateId: String(args.candidateId || "") }), null, 2) };
+  if (action === "undo_import_decision") return { result: JSON.stringify(await service.undoImportDecision(String(args.decisionId || ""), String(args.idempotencyKey || "")), null, 2) };
+  if (action === "preview_import_batch") return { result: JSON.stringify(await service.previewImportBatch(args.decisions || []), null, 2) };
+  if (action === "apply_import_batch") return { result: JSON.stringify(await service.applyImportBatch(String(args.batchId || ""), String(args.batchToken || ""), String(args.idempotencyKey || "")), null, 2) };
+  if (action === "get_import_batch") return { result: JSON.stringify(await service.getImportBatch(String(args.batchId || "")), null, 2) };
+  return { result: `Unsupported People import action: ${action}`, error: true };
+}
+
 async function handlePeopleScanIgnored(): Promise<ToolHandlerResult> {
   const { peopleStorage } = await import("./people-storage");
   const skipList = await peopleStorage.getGmailSkipList();
@@ -967,6 +984,16 @@ const peopleSubHandlers: Record<string, (args: Record<string, any>) => Promise<T
   create: handlePeopleCreate,
   set_daily_contact: handlePeopleSetDailyContact,
   scan_imports: handlePeopleScanImports,
+  list_import_candidates: handlePeopleImportApi,
+  get_import_candidate: handlePeopleImportApi,
+  find_import_matches: handlePeopleImportApi,
+  add_import_candidate: handlePeopleImportApi,
+  merge_import_candidate: handlePeopleImportApi,
+  skip_import_candidate: handlePeopleImportApi,
+  undo_import_decision: handlePeopleImportApi,
+  preview_import_batch: handlePeopleImportApi,
+  apply_import_batch: handlePeopleImportApi,
+  get_import_batch: handlePeopleImportApi,
   scan_ignored: handlePeopleScanIgnored,
 };
 
@@ -4556,7 +4583,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
   async people(args) {
     const action = args.action || "list";
     const handler = peopleSubHandlers[action];
-    if (!handler) return { result: `Unknown people action: ${action}. Available: list, get, get_many, query, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, update_relationship_profile, update_network_profile, update_capital, add_commitment, update_commitment, ask_route, add_relationship_memory, get_relationship_memories, enrichment_prompt, create, set_daily_contact, scan_imports, scan_ignored`, error: true };
+    if (!handler) return { result: `Unknown people action: ${action}. Available: list, get, get_many, query, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, update_relationship_profile, update_network_profile, update_capital, add_commitment, update_commitment, ask_route, add_relationship_memory, get_relationship_memories, enrichment_prompt, create, set_daily_contact, scan_imports, scan_ignored, list_import_candidates, get_import_candidate, find_import_matches, add_import_candidate, merge_import_candidate, skip_import_candidate, undo_import_decision, preview_import_batch, apply_import_batch, get_import_batch`, error: true };
     try {
       return await handler(args);
     } catch (err: any) {

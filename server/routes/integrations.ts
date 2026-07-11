@@ -590,147 +590,30 @@ export async function registerIntegrationsRoutes(app: Express) {
 
   app.post("/api/import-queue/decide", requireAdmin, async (req, res) => {
     try {
-      const { getCandidateByEmail, updateCandidateDecision, isSyntheticContactEmail } = await import("../import-queue");
-      const { email, decision, cabinetLevel, tags, mergePersonId, name, company, role, relation, professionalRelations, familiarity, trust, met, notes, introducedBy } = req.body;
-
-      if (!email || !decision) {
-        return res.status(400).json({ error: "email and decision required" });
-      }
-      if (!["add", "merge", "skip"].includes(decision)) {
-        return res.status(400).json({ error: "decision must be add, merge, or skip" });
-      }
-
-      const emailLower = email.toLowerCase();
-      const candidate = await getCandidateByEmail(emailLower);
-      if (!candidate) {
-        return res.status(404).json({ error: "Candidate not found in queue" });
-      }
-
-      if (decision === "skip") {
-        const decidedAt = new Date().toISOString();
-        await storage.addToGmailSkipList([{ email: emailLower, name: candidate.name || undefined }]);
-        await updateCandidateDecision(emailLower, { decision: "skipped", decidedAt });
-      } else if (decision === "add") {
-        const person = await peopleStorage.createPerson({
-          name: name || candidate.name || email.split("@")[0],
-          cabinetLevel: cabinetLevel || "network",
-          contactInfo: (candidate.contactInfo?.length
-            ? candidate.contactInfo.filter(contact => contact.type !== "email" || !isSyntheticContactEmail(contact.value))
-            : isSyntheticContactEmail(candidate.email) ? [] : [{ type: "email", label: candidate.source === "ios_contacts" ? "iOS" : "Gmail", value: candidate.email }]) as any,
-          tags: tags || [],
-          nicknames: [],
-          socialProfiles: {},
-          importantDates: [],
-          notes: [],
-          interactions: [],
-          private: false,
-          ...(company ? { company } : {}),
-          ...(role ? { role } : {}),
-          ...(relation ? { relation } : {}),
-          ...(professionalRelations?.length ? { professionalRelations } : {}),
-          ...(familiarity ? { familiarity } : {}),
-          ...(trust ? { trust } : {}),
-          ...(met ? { met } : {}),
-          ...(introducedBy ? { introducedBy } : {}),
-        });
-
-        if (notes) {
-          await peopleStorage.addNote(person.id, notes);
-        }
-
-        const interactions = (candidate.interactions || [])
-          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        const seen = new Set<string>();
-        for (const ix of interactions) {
-          const dateStr = ix.date.split("T")[0];
-          const summary = `${ix.direction === "sent" ? "Sent" : "Received"}: ${ix.subject}`;
-          const key = `${dateStr}_email_${summary}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          await peopleStorage.addInteraction(person.id, {
-            date: dateStr,
-            type: "email",
-            summary,
-            context: ix.snippet || undefined,
-          });
-        }
-
-        await updateCandidateDecision(emailLower, {
-          decision: "added",
-          decidedAt: new Date().toISOString(),
-        });
-      } else if (decision === "merge") {
-        if (!mergePersonId) {
-          return res.status(400).json({ error: "mergePersonId required for merge" });
-        }
-        const existingPerson = await peopleStorage.getPerson(mergePersonId);
-        if (!existingPerson) {
-          return res.status(404).json({ error: "Target person not found" });
-        }
-
-        const existingContactValues = new Set((existingPerson.contactInfo || []).map((c: any) => c.value?.toLowerCase()).filter(Boolean));
-        const candidateContactInfo = candidate.contactInfo?.length
-          ? candidate.contactInfo.filter(contact => contact.type !== "email" || !isSyntheticContactEmail(contact.value))
-          : isSyntheticContactEmail(candidate.email) ? [] : [{ type: "email", label: candidate.source === "ios_contacts" ? "iOS" : "Gmail", value: candidate.email }];
-        const newContactInfo = candidateContactInfo.filter((contact: any) => {
-          const value = contact.value?.toLowerCase();
-          return value && !existingContactValues.has(value);
-        });
-        if (newContactInfo.length > 0) {
-          const updated = [...(existingPerson.contactInfo || []), ...newContactInfo];
-          await peopleStorage.updatePerson(mergePersonId, { contactInfo: updated as any });
-        }
-
-        const mergeUpdates: Record<string, any> = {};
-        if (tags && tags.length > 0) {
-          const combined = [...(existingPerson.tags || []), ...tags];
-          mergeUpdates.tags = [...new Set(combined)];
-        }
-        if (introducedBy && !existingPerson.introducedBy) {
-          mergeUpdates.introducedBy = introducedBy;
-        }
-        if (candidate.company && !existingPerson.company) {
-          mergeUpdates.company = candidate.company;
-        }
-        if (candidate.role && !existingPerson.role) {
-          mergeUpdates.role = candidate.role;
-        }
-        if (Object.keys(mergeUpdates).length > 0) {
-          await peopleStorage.updatePerson(mergePersonId, mergeUpdates);
-        }
-
-        if (notes) {
-          await peopleStorage.addNote(mergePersonId, notes);
-        }
-
-        const interactions = (candidate.interactions || [])
-          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        const existingKeys = new Set(
-          (existingPerson.interactions || []).map((ei: any) => `${ei.date}_${ei.type}_${ei.summary}`)
-        );
-        const seen = new Set<string>();
-        for (const ix of interactions) {
-          const dateStr = ix.date.split("T")[0];
-          const summary = `${ix.direction === "sent" ? "Sent" : "Received"}: ${ix.subject}`;
-          const key = `${dateStr}_email_${summary}`;
-          if (existingKeys.has(key) || seen.has(key)) continue;
-          seen.add(key);
-          await peopleStorage.addInteraction(mergePersonId, {
-            date: dateStr,
-            type: "email",
-            summary,
-            context: ix.snippet || undefined,
-          });
-        }
-
-        await updateCandidateDecision(emailLower, {
-          decision: "merged",
-          decidedAt: new Date().toISOString(),
-          mergedPersonId: mergePersonId,
-        });
-      }
-
-      res.json({ ok: true, imported: decision === "add" ? 1 : 0, updated: decision === "merge" ? 1 : 0, repaired: 0, skipped: decision === "skip" ? 1 : 0 });
+      const { addImportCandidate, mergeImportCandidate, skipImportCandidate } = await import("../people-import-decision-service");
+      const { email, candidateId, decision, idempotencyKey, ...fields } = req.body;
+      const resolvedCandidateId = String(candidateId || email || "").trim().toLowerCase();
+      if (!resolvedCandidateId || !decision) return res.status(400).json({ error: "candidateId/email and decision required" });
+      if (!["add", "merge", "skip"].includes(decision)) return res.status(400).json({ error: "decision must be add, merge, or skip" });
+      const input = {
+        ...fields,
+        candidateId: resolvedCandidateId,
+        idempotencyKey: String(idempotencyKey || `legacy-ui:${decision}:${resolvedCandidateId}`).trim(),
+      };
+      const result = decision === "add"
+        ? await addImportCandidate(input)
+        : decision === "merge"
+          ? await mergeImportCandidate(input)
+          : await skipImportCandidate(input);
+      if (result.outcome === "conflict") return res.status(409).json({ error: result.warnings[0] || "Import decision conflict", result });
+      res.json({
+        ok: true,
+        imported: result.outcome === "added" ? 1 : 0,
+        updated: result.outcome === "merged" ? 1 : 0,
+        repaired: 0,
+        skipped: result.outcome === "skipped" ? 1 : 0,
+        result,
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
