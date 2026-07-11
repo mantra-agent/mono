@@ -158,6 +158,7 @@ export function registerRecallRoutes(
       const verified = await verifyRecallWebhook(
         req.headers as Record<string, string | string[] | undefined>,
         rawBodyString(req),
+        "RECALL_WORKSPACE_VERIFICATION_SECRET",
       );
       if (!verified) {
         await recordRecallDelivery({

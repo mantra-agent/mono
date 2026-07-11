@@ -27,12 +27,14 @@ export interface RecallConfig {
   hasKey: boolean;
   region: RecallRegion | null;
   hasWebhookSecret: boolean;
+  hasWorkspaceVerificationSecret: boolean;
 }
 
 export async function getRecallConfig(): Promise<RecallConfig> {
   const key = await getSecret("RECALL_API_KEY");
   const rawRegion = (await getSecret("RECALL_REGION"))?.trim().toLowerCase() || null;
   const webhookSecret = await getSecret("RECALL_WEBHOOK_SECRET");
+  const workspaceVerificationSecret = await getSecret("RECALL_WORKSPACE_VERIFICATION_SECRET");
   const region = RECALL_REGIONS.includes(rawRegion as RecallRegion)
     ? (rawRegion as RecallRegion)
     : null;
@@ -40,6 +42,7 @@ export async function getRecallConfig(): Promise<RecallConfig> {
     hasKey: !!(key && key.length > 0),
     region,
     hasWebhookSecret: !!(webhookSecret && webhookSecret.length > 0),
+    hasWorkspaceVerificationSecret: !!(workspaceVerificationSecret && workspaceVerificationSecret.length > 0),
   };
 }
 
@@ -194,11 +197,12 @@ export async function leaveRecallBot(botId: string): Promise<void> {
  */
 export async function verifyRecallWebhook(
   headers: Record<string, string | string[] | undefined>,
-  rawBody: string
+  rawBody: string,
+  secretName: "RECALL_WEBHOOK_SECRET" | "RECALL_WORKSPACE_VERIFICATION_SECRET" = "RECALL_WEBHOOK_SECRET",
 ): Promise<boolean> {
-  const secret = await getSecret("RECALL_WEBHOOK_SECRET");
+  const secret = await getSecret(secretName);
   if (!secret) {
-    log.error("RECALL_WEBHOOK_SECRET not configured — rejecting webhook");
+    log.error(`${secretName} not configured — rejecting webhook`);
     return false;
   }
   const getHeader = (name: string): string | null => {
@@ -222,7 +226,7 @@ export async function verifyRecallWebhook(
   // Recall's published verifier requires workspace and legacy Svix secrets
   // to use the whsec_ format. The suffix is the base64-encoded HMAC key.
   if (!secret.startsWith("whsec_")) {
-    log.error("RECALL_WEBHOOK_SECRET is not a valid whsec_ verification secret");
+    log.error(`${secretName} is not a valid whsec_ verification secret`);
     return false;
   }
   const secretBytes = Buffer.from(secret.slice("whsec_".length), "base64");

@@ -1092,6 +1092,7 @@ export async function registerIntegrationsRoutes(app: Express) {
           hasKey: cfg.hasKey,
           region: cfg.region,
           hasWebhookSecret: cfg.hasWebhookSecret,
+          hasWorkspaceVerificationSecret: cfg.hasWorkspaceVerificationSecret,
         });
       }
       const test = await testRecallConnection();
@@ -1100,6 +1101,7 @@ export async function registerIntegrationsRoutes(app: Express) {
         hasKey: cfg.hasKey,
         region: cfg.region,
         hasWebhookSecret: cfg.hasWebhookSecret,
+        hasWorkspaceVerificationSecret: cfg.hasWorkspaceVerificationSecret,
         statusWebhookUrl: `${process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`}/api/webhooks/recall`,
         transcriptWebhookUrl: `${process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`}/api/webhooks/recall/transcript`,
         error: test.error,
@@ -1121,6 +1123,7 @@ export async function registerIntegrationsRoutes(app: Express) {
         hasKey: cfg.hasKey,
         region: cfg.region,
         hasWebhookSecret: cfg.hasWebhookSecret,
+        hasWorkspaceVerificationSecret: cfg.hasWorkspaceVerificationSecret,
         statusWebhookUrl: `${process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`}/api/webhooks/recall`,
         transcriptWebhookUrl: `${process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`}/api/webhooks/recall/transcript`,
         error: test.error,
