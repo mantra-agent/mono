@@ -10,6 +10,28 @@ const log = createLogger("EmailDraftRoutes");
 
 export function registerEmailDraftRoutes(app: Express) {
   /**
+   * POST /api/email-drafts/by-thread-ids
+   * Body: { threadIds: string[] } → drafts linked to those Gmail threads,
+   * scoped to the requesting principal. Used by the Comms Review tab.
+   */
+  app.post("/api/email-drafts/by-thread-ids", async (req: Request, res: Response) => {
+    try {
+      const principal = req.principal;
+      if (!principal) return res.status(401).json({ error: "Not authenticated" });
+
+      const raw = req.body?.threadIds;
+      const threadIds = Array.isArray(raw)
+        ? raw.filter((t: unknown): t is string => typeof t === "string" && t.length > 0).slice(0, 500)
+        : [];
+      const drafts = await emailDraftStorage.listByThreadIds(principal, threadIds);
+      res.json({ drafts });
+    } catch (err) {
+      log.error(`POST /api/email-drafts/by-thread-ids failed: ${err instanceof Error ? err.message : String(err)}`);
+      res.status(500).json({ error: "Failed to fetch linked drafts" });
+    }
+  });
+
+  /**
    * GET /api/email-drafts/:id
    * Fetch a draft. If it has a threadId, include prior thread messages
    * from the local email cache for reply context display.

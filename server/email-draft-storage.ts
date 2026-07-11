@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, inArray, desc } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { emailDrafts, type EmailDraft } from "@shared/schema";
 import { createLogger } from "./log";
@@ -157,6 +157,19 @@ export class EmailDraftStorage {
       .where(combineWithVisibleScope(principal, scopeColumns, eq(emailDrafts.id, id)))
       .limit(1);
     return row ?? null;
+  }
+
+  /**
+   * List drafts visible to the principal that are linked to any of the given
+   * Gmail thread IDs. Used by the Comms Review tab to show linked drafts per thread.
+   */
+  async listByThreadIds(principal: Principal, threadIds: string[]): Promise<EmailDraft[]> {
+    if (threadIds.length === 0) return [];
+    return db
+      .select()
+      .from(emailDrafts)
+      .where(combineWithVisibleScope(principal, scopeColumns, inArray(emailDrafts.threadId, threadIds)))
+      .orderBy(desc(emailDrafts.createdAt));
   }
 
   /**
