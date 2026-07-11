@@ -41,6 +41,7 @@ import {
   type ProviderConnection,
 } from "@shared/models/platforms";
 import { libraryPages } from "@shared/models/info";
+import { isParseableReferenceType, serializeReference } from "@shared/references";
 import { getProviderCredential } from "../provider-credential-store";
 import { getLatestDeploymentByToken } from "../integrations/railway/client";
 import { getCloudflareLatestDeployment } from "../services/provider-connection-service";
@@ -361,6 +362,15 @@ async function buildStageInputContext(detail: WorkflowRunDetail, stageKey: strin
   };
 }
 
+function workflowArtifactReference(artifact: WorkflowArtifactBrief): string {
+  if (!artifact.refId) return artifact.url || "";
+  const referenceType = artifact.refType === "library_page" ? "page" : artifact.refType;
+  if (isParseableReferenceType(referenceType)) {
+    return serializeReference({ type: referenceType, id: artifact.refId });
+  }
+  return [artifact.refType, artifact.refId, artifact.url].filter(Boolean).join(": ");
+}
+
 function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: unknown; environmentTruth?: WorkflowEnvironmentTruth | null; lifecycleSnapshot?: unknown }): string {
   const lines: string[] = [
     `# ${context.stageTitle}`,
@@ -390,7 +400,7 @@ function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: u
   lines.push("", "## Stage Inputs");
   if (context.relevantArtifacts.length === 0) lines.push("- No prior workflow artifacts attached.");
   for (const artifact of context.relevantArtifacts) {
-    const ref = [artifact.refType, artifact.refId, artifact.url].filter(Boolean).join(": ");
+    const ref = workflowArtifactReference(artifact);
     lines.push(`- ${artifact.kind}: ${artifact.title}${ref ? ` — ${ref}` : ""}${artifact.summary ? ` — ${artifact.summary}` : ""}`);
   }
 
