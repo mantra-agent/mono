@@ -747,8 +747,13 @@ export default function ProjectsPage() {
 }
 
 const WORK_SECTION_TITLE_CLASS = "flex items-center gap-1.5 w-full px-2 py-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider rounded-md";
+const WORK_ROW_PADDING_PX = 8;
+const WORK_COMPLETION_SIZE_PX = 16;
+const WORK_CONNECTOR_STROKE_PX = 1;
 const WORK_INDENT_STEP_PX = 24;
 const WORK_MAX_INDENT_PX = 72;
+const WORK_CONNECTOR_SPINE_PX = WORK_INDENT_STEP_PX - WORK_ROW_PADDING_PX - WORK_COMPLETION_SIZE_PX / 2;
+const WORK_CONNECTOR_BRANCH_PX = WORK_ROW_PADDING_PX + WORK_COMPLETION_SIZE_PX / 2 - WORK_CONNECTOR_SPINE_PX;
 
 function WorkSectionTitle({ children }: { children: React.ReactNode }) {
   return <div className={WORK_SECTION_TITLE_CLASS}>{children}</div>;
@@ -1469,15 +1474,23 @@ function MilestoneBar({ milestones }: { milestones: Project["milestones"] }) {
 }
 
 function WorkTreeConnector({ continues = false }: { continues?: boolean }) {
+  const spineStyle = {
+    left: WORK_CONNECTOR_SPINE_PX,
+    width: WORK_CONNECTOR_STROKE_PX,
+  };
+  const branchStyle = {
+    left: WORK_CONNECTOR_SPINE_PX,
+    width: WORK_CONNECTOR_BRANCH_PX,
+    height: WORK_CONNECTOR_STROKE_PX,
+  };
+
   return (
-    <div className="relative mr-1 w-5 shrink-0 self-stretch" aria-hidden="true">
+    <div className="relative w-4 shrink-0 self-stretch" aria-hidden="true">
       <div
-        className={cn(
-          "absolute left-1/2 top-0 -translate-x-px border-l border-border",
-          continues ? "bottom-0" : "bottom-1/2",
-        )}
+        className={cn("absolute top-0 bg-border", continues ? "bottom-0" : "bottom-1/2")}
+        style={spineStyle}
       />
-      <div className="absolute left-1/2 right-0 top-1/2 border-t border-border" />
+      <div className="absolute top-1/2 bg-border" style={branchStyle} />
     </div>
   );
 }
