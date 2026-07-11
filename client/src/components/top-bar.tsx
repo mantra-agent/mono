@@ -7,7 +7,6 @@ import { useFocusSession } from "@/hooks/use-focus-session";
 import { usePageHeaderContext } from "@/hooks/use-page-header";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSessionActivityState } from "@/components/thought-indicator";
-import { VaultToggles } from "@/components/vault-toggles";
 import { useLocation } from "wouter";
 import { useCallback, type ReactNode } from "react";
 
@@ -134,8 +133,6 @@ export function TopBar() {
       >
         {!previewOwnsAgentIcon && <XyzIconButton />}
         <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} />
-        <div className="flex-1" />
-        <VaultToggles />
         <div className="flex-1" />
       </div>
     );

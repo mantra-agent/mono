@@ -14,6 +14,7 @@ import { useExecutorStatus } from "@/hooks/use-executor-status";
 import { SessionTranscriptPanel } from "@/components/session-transcript-panel";
 import { XyzIconButton } from "@/components/app-sidebar";
 import { ConnectionsIndicator } from "@/components/connections-indicator";
+import { VaultToggles } from "@/components/vault-toggles";
 // Tooltip import removed — FAB tooltip no longer needed
 import { apiRequest } from "@/lib/queryClient";
 import { deleteSessionTree } from "@/lib/session-deletion";
@@ -849,10 +850,17 @@ function FocusWidgetPanel({ isAgentRunning }: FocusWidgetPanelProps) {
         <div className="absolute inset-y-0 -left-1.5 w-3" />
       </div>
       <div className="flex flex-col min-w-0 flex-1 overflow-hidden">
-        {/* Desktop header — conversation toggle in upper-right */}
-        <div className="hidden md:flex items-center justify-end gap-2 h-[42px] px-2 shrink-0">
-          <ConnectionsIndicator />
-          <button
+        {/* Desktop header: vault context is centered over the transcript column. */}
+        <div className="hidden md:flex h-[42px] shrink-0">
+          <div
+            className="flex shrink-0 items-center justify-center"
+            style={{ width: `${transcriptPanelWidth}px` }}
+          >
+            <VaultToggles />
+          </div>
+          <div className="flex flex-1 items-center justify-end gap-2 px-2">
+            <ConnectionsIndicator />
+            <button
             type="button"
             onClick={() => setWidgetOpen(!widgetOpen)}
             className={cn(
@@ -865,7 +873,8 @@ function FocusWidgetPanel({ isAgentRunning }: FocusWidgetPanelProps) {
             data-testid="button-focus-widget-conversation-toggle"
           >
             <MessageSquare className="h-4 w-4" />
-          </button>
+            </button>
+          </div>
         </div>
         {headerAndPanel}
       </div>
