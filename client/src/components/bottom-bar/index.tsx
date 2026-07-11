@@ -14,6 +14,7 @@ import { useChatSend } from "@/hooks/use-chat-send";
 import { useToast } from "@/hooks/use-toast";
 import { useVoiceSessionOptional, type VoiceTranscriptEntry } from "@/hooks/use-voice-session";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { deleteSessionTree, getSessionDeletionDescription } from "@/lib/session-deletion";
 import { emitSessionChanged, emitSessionListChanged } from "@/hooks/use-data-sync";
 import { useInterfaceMode } from "@/hooks/use-interface-mode";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -221,12 +222,10 @@ function BottomBarMenu({
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await apiRequest("DELETE", `/api/sessions/${id}`);
-    },
-    onSuccess: (_data, id) => {
+    mutationFn: (id: string) => deleteSessionTree(id),
+    onSuccess: (result) => {
       emitSessionListChanged("bottom-bar-delete");
-      if (focusedSessionId === id) onClearFocus();
+      if (focusedSessionId && result.deletedSessionIds.includes(focusedSessionId)) onClearFocus();
     },
     onError: (err) => {
       toast({ title: "Failed to delete session", description: String(err), variant: "destructive" });
@@ -314,7 +313,7 @@ function BottomBarMenu({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete conversation</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete the conversation and all its messages.
+              {getSessionDeletionDescription(sessions, deleteConfirmId)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

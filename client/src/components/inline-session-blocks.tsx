@@ -2,7 +2,8 @@ import { useState, useMemo, useRef, useCallback, useEffect, memo } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { queryClient } from "@/lib/queryClient";
+import { deleteSessionTree, getSessionDeletionDescription } from "@/lib/session-deletion";
 import { emitSessionListChanged } from "@/hooks/use-data-sync";
 import {
   Bot,
@@ -107,6 +108,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
     ) ? 3000 : false,
   });
 
+  const cachedSessions = queryClient.getQueryData<import("@shared/models/chat").ChatSession[]>(["/api/sessions"]);
   const hasLiveChildStream = childStream?.status === "streaming" || childStream?.runActive;
   const isChildStreaming = childSession?.status === "streaming" || hasLiveChildStream;
 
@@ -124,12 +126,10 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
   }, [childSub.status, childSub.runActive, childSub.updatedAt, meta.childSessionId]);
 
   const deleteChildSession = useMutation({
-    mutationFn: async () => {
-      await apiRequest(
-        "DELETE",
-        `/api/sessions/${encodeURIComponent(meta.parentSessionId)}/child-blocks/${encodeURIComponent(meta.childSessionId)}`,
-      );
-    },
+    mutationFn: () => deleteSessionTree(
+      meta.childSessionId,
+      `/api/sessions/${encodeURIComponent(meta.parentSessionId)}/child-blocks/${encodeURIComponent(meta.childSessionId)}`,
+    ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/sessions", meta.parentSessionId] });
       queryClient.removeQueries({ queryKey: ["/api/sessions", meta.childSessionId] });
@@ -339,7 +339,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete inline session</AlertDialogTitle>
             <AlertDialogDescription>
-              Delete this inline session widget and its associated child session? This action cannot be undone.
+              {getSessionDeletionDescription(cachedSessions, meta.childSessionId, { inlineWidget: true })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

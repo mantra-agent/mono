@@ -54,8 +54,8 @@ export function registerAudioRoutes(app: Express): void {
   app.delete("/api/sessions/:id", async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
-      await chatStorage.deleteSession(id);
-      res.status(204).send();
+      const result = await chatStorage.deleteSession(id);
+      res.json(result);
     } catch (error) {
       log.error("Error deleting session:", error);
       res.status(500).json({ error: "Failed to delete session" });

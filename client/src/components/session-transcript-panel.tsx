@@ -34,6 +34,7 @@ import { SessionActionsMenuItems } from "@/components/session-actions-menu";
 import { SessionDetailsModal } from "@/components/session-details-modal";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { deleteSessionTree, getSessionDeletionDescription } from "@/lib/session-deletion";
 import {
   type ChatMessage as Message,
 } from "@/components/chat-shared";
@@ -305,12 +306,10 @@ export function SessionTranscriptPanel({
   }, [navigateToLibraryPage, navigateToNote, setLocation]);
 
   const deleteConversation = useMutation({
-    mutationFn: async (id: string) => {
-      await apiRequest("DELETE", "/api/sessions/" + id);
-    },
-    onSuccess: (_data, id) => {
+    mutationFn: (id: string) => deleteSessionTree(id),
+    onSuccess: (result) => {
       emitSessionListChanged("delete-mutation");
-      if (activeSession === id) {
+      if (activeSession && result.deletedSessionIds.includes(activeSession)) {
         setActiveSession(null);
       }
     },
@@ -682,7 +681,7 @@ export function SessionTranscriptPanel({
               <AlertDialogHeader>
                 <AlertDialogTitle>Delete conversation</AlertDialogTitle>
                 <AlertDialogDescription>
-                  Are you sure you want to delete this conversation? This action cannot be undone.
+                  {getSessionDeletionDescription(sessions, activeSession)}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
