@@ -1374,7 +1374,6 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     completedTasks
       .filter(task => isTodayInTimezone(task.updatedAt, timezone))
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-      .slice(0, 8)
       .forEach((task, index) => items.push({ ...itemFromTask(task, today, tomorrow, weekEnd, monthEnd, quarterEnd, yearEnd, 80 + index, milestoneMap), section: "done", status: "completed", completedAt: task.updatedAt }));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
