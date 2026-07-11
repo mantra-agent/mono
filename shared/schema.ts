@@ -732,6 +732,8 @@ export const peopleImportCandidates = pgTable("people_import_candidates", {
   mergedPersonId: text("merged_person_id"),
   source: text("source"),
   accountId: text("account_id"),
+  ownerUserId: text("owner_user_id"),
+  principalAccountId: text("principal_account_id"),
   firstInteractionAt: timestamp("first_interaction_at", { withTimezone: true }),
   lastInteractionAt: timestamp("last_interaction_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -739,6 +741,7 @@ export const peopleImportCandidates = pgTable("people_import_candidates", {
 }, (table) => [
   index("idx_people_import_candidates_decision_updated").on(table.decision, table.updatedAt),
   index("idx_people_import_candidates_account").on(table.accountId),
+  index("idx_people_import_candidates_owner").on(table.ownerUserId, table.principalAccountId),
 ]);
 
 export type PeopleImportCandidate = typeof peopleImportCandidates.$inferSelect;
