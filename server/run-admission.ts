@@ -24,6 +24,7 @@ interface QueuedRequest {
   resolve: (slot: AdmissionSlot) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout> | null;
+  queuedAt: number;
 }
 
 const DEFAULT_IDLE_THRESHOLD_MS = 60 * 1000;
@@ -280,8 +281,11 @@ export class RunAdmissionController {
         ? setTimeout(() => {
             const idx = this.queue.findIndex(q => q.runId === runId);
             if (idx !== -1) {
-              this.queue.splice(idx, 1);
-              log.warn(`Admission timeout for ${tier} run: ${runId}`);
+              const [expired] = this.queue.splice(idx, 1);
+              log.warn(
+                `Admission timeout for ${tier} run: ${runId} sessionId=${expired.sessionId ?? "none"} ` +
+                `queueAgeMs=${Date.now() - expired.queuedAt} activity=${expired.activity ?? "none"}`,
+              );
               reject(new Error("admission_timeout"));
             }
           }, timeout)
@@ -292,8 +296,11 @@ export class RunAdmissionController {
         const idx = this.queue.findIndex(q => q.runId === runId);
         if (idx !== -1) {
           if (this.queue[idx].timer) clearTimeout(this.queue[idx].timer);
-          this.queue.splice(idx, 1);
-          log.verbose(() => `Admission request cancelled by signal for ${tier} run: ${runId}`);
+          const [cancelled] = this.queue.splice(idx, 1);
+          log.debug(
+            `autonomous.lifecycle phase=queue-aborted runId=${runId} sessionId=${cancelled.sessionId ?? "none"} ` +
+            `tier=${tier} activity=${cancelled.activity ?? "none"} queueAgeMs=${Date.now() - cancelled.queuedAt}`,
+          );
           reject(new Error("admission_aborted"));
         }
       };
@@ -311,6 +318,7 @@ export class RunAdmissionController {
         reject(err);
       };
 
+      const queuedAt = Date.now();
       this.queue.push({
         runId,
         tier,
@@ -319,8 +327,13 @@ export class RunAdmissionController {
         resolve: wrappedResolve,
         reject: wrappedReject,
         timer,
+        queuedAt,
       });
       this.queue.sort((a, b) => TIER_PRIORITY[a.tier] - TIER_PRIORITY[b.tier]);
+      log.debug(
+        `autonomous.lifecycle phase=queued runId=${runId} sessionId=${options?.sessionId ?? "none"} ` +
+        `tier=${tier} activity=${options?.activity ?? "none"} queueDepth=${this.queue.length} timeoutMs=${timeout}`,
+      );
     });
   }
 
@@ -414,7 +427,11 @@ export class RunAdmissionController {
       };
       this.slots.set(next.runId, slot);
       this.setState("active");
-      log.verbose(() => `${next.tier} slot granted from queue (skipped cooldown): ${next.runId}`);
+      log.debug(
+        `autonomous.lifecycle phase=admitted runId=${next.runId} sessionId=${next.sessionId ?? "none"} ` +
+        `tier=${next.tier} activity=${next.activity ?? "none"} queueAgeMs=${Date.now() - next.queuedAt} ` +
+        `queueDepth=${this.queue.length} cooldownBypassed=true`,
+      );
       next.resolve(slot);
     }
   }
@@ -448,7 +465,11 @@ export class RunAdmissionController {
     this.slots.set(request.runId, slot);
     this.setState("active");
 
-    log.verbose(() => `${request.tier} slot granted from queue: ${request.runId}`);
+    log.debug(
+      `autonomous.lifecycle phase=admitted runId=${request.runId} sessionId=${request.sessionId ?? "none"} ` +
+      `tier=${request.tier} activity=${request.activity ?? "none"} queueAgeMs=${Date.now() - request.queuedAt} ` +
+      `queueDepth=${this.queue.length} cooldownBypassed=false`,
+    );
     request.resolve(slot);
   }
 
