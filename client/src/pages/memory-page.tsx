@@ -130,6 +130,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -2102,6 +2104,7 @@ function LayersTab() {
   const { status: graphMyelinationStatus } = useGraphMyelinationStatus();
   const [clearLayer, setClearLayer] = useState<string | null>(null);
   const [showPendingDeletions, setShowPendingDeletions] = useState(false);
+  const [layersSearchQuery, setLayersSearchQuery] = useState("");
 
   useEffect(() => {
     setOpenStages(new Set((storageMode === "legacy" ? MEMORY_PIPELINE_STAGES : MEMORY_VNEXT_PIPELINE_STAGES).map(stage => stage.value)));
@@ -2134,13 +2137,18 @@ function LayersTab() {
 
   const pipelineEntries = useMemo(() => {
     const entries = allEntries ?? [];
-    const filtered = showPendingDeletions ? entries.filter(isDeletionScheduled) : entries;
+    const deletionFiltered = showPendingDeletions ? entries.filter(isDeletionScheduled) : entries;
+    const queryTokens = layersSearchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+    const filtered = queryTokens.length === 0 ? deletionFiltered : deletionFiltered.filter(entry => {
+      const searchable = [entry.title, entry.summary, entry.content, ...(entry.tags ?? []), ...(entry.topics ?? [])].filter(Boolean).join(" ").toLowerCase();
+      return queryTokens.every(token => searchable.includes(token));
+    });
     return [...filtered].sort((a, b) => {
       const stageCompare = (a.integrationStage || "stage_0").localeCompare(b.integrationStage || "stage_0");
       if (stageCompare !== 0) return stageCompare;
       return new Date(b.processedAt || b.updatedAt || b.createdAt || 0).getTime() - new Date(a.processedAt || a.updatedAt || a.createdAt || 0).getTime();
     });
-  }, [allEntries, showPendingDeletions]);
+  }, [allEntries, showPendingDeletions, layersSearchQuery]);
 
   const entriesByStage = useMemo(() => {
     const groups = new Map<string, MemoryEntry[]>();
@@ -2154,18 +2162,29 @@ function LayersTab() {
   }, [pipelineEntries]);
 
   const vnextSources = useMemo(() => {
-    const sources = (vnextSourcesResponse?.sources ?? []).filter(source => source.status !== "completed");
+    const queryTokens = layersSearchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+    const sources = (vnextSourcesResponse?.sources ?? []).filter(source => {
+      if (source.status === "completed") return false;
+      if (queryTokens.length === 0) return true;
+      const searchable = `${source.sourceType} ${source.sourceId}`.toLowerCase();
+      return queryTokens.every(token => searchable.includes(token));
+    });
     return [...sources].sort((a, b) => new Date(b.lastModifiedAt || b.createdAt || 0).getTime() - new Date(a.lastModifiedAt || a.createdAt || 0).getTime());
-  }, [vnextSourcesResponse]);
+  }, [vnextSourcesResponse, layersSearchQuery]);
 
   const vnextClaims = useMemo(() => {
+    const queryTokens = layersSearchQuery.toLowerCase().split(/\s+/).filter(Boolean);
     const claims = vnextClaimsResponse?.claims ?? [];
-    return [...claims].sort((a, b) => {
+    const filtered = queryTokens.length === 0 ? claims : claims.filter(claim => {
+      const searchable = [claim.title, claim.content, claim.claimType, ...(claim.topics ?? [])].filter(Boolean).join(" ").toLowerCase();
+      return queryTokens.every(token => searchable.includes(token));
+    });
+    return [...filtered].sort((a, b) => {
       const stageCompare = (a.lifecycleStage || "extracted").localeCompare(b.lifecycleStage || "extracted");
       if (stageCompare !== 0) return stageCompare;
       return new Date(b.lifecycleStageUpdatedAt || b.updatedAt || b.createdAt || 0).getTime() - new Date(a.lifecycleStageUpdatedAt || a.updatedAt || a.createdAt || 0).getTime();
     });
-  }, [vnextClaimsResponse]);
+  }, [vnextClaimsResponse, layersSearchQuery]);
 
   const vnextClaimsByStage = useMemo(() => {
     const groups = new Map<string, VnextClaim[]>();
@@ -2321,36 +2340,52 @@ function LayersTab() {
 
   return (
     <div className={cn("flex flex-col", MEMORY_SHELL_CLASS)} data-testid="layers-tab">
-      <div className="flex items-center justify-between gap-2 border-b border-card-border bg-background px-2 py-1.5" data-testid="layers-stats-bar">
-        <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-          {storageMode === "legacy" ? <Database className="h-3.5 w-3.5 shrink-0" /> : <GitBranch className="h-3.5 w-3.5 shrink-0" />}
-          <span className="font-bold uppercase tracking-wider">{storageMode === "legacy" ? "Legacy entries" : "vNext claims"}</span>
-          {storageMode === "legacy" ? (
-            <>
-              <span className="font-mono text-[11px]" data-testid="stat-short">S {stats?.short ?? 0}</span>
-              <span className="font-mono text-[11px]" data-testid="stat-mid">M {stats?.mid ?? 0}</span>
-              <span className="font-mono text-[11px]" data-testid="stat-long">L {stats?.long ?? 0}</span>
-            </>
-          ) : (
-            <>
-              <span className="font-mono text-[11px]" data-testid="stat-vnext-total">{vnextCounts?.total ?? 0} claims</span>
-              <span className="font-mono text-[11px]" data-testid="stat-vnext-sources">{vnextCounts?.sourceRefs ?? 0} src</span>
-              <span className="font-mono text-[11px]" data-testid="stat-vnext-links">{(vnextCounts?.entityLinks ?? 0) + (vnextCounts?.claimLinks ?? 0)} links</span>
-            </>
+      <div className="flex items-center gap-1 border-b border-card-border bg-background p-2" data-testid="layers-controls-bar">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="text"
+            value={layersSearchQuery}
+            onChange={(event) => setLayersSearchQuery(event.target.value)}
+            className="h-7 w-full rounded-md border border-input bg-background pl-7 pr-7 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            data-testid="input-search-layers"
+          />
+          {layersSearchQuery && (
+            <button
+              type="button"
+              onClick={() => setLayersSearchQuery("")}
+              className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+              data-testid="button-clear-layers-search"
+            >
+              <X className="h-3 w-3" />
+            </button>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <Tabs value={storageMode} onValueChange={(value) => setStorageMode(value as LayersStorageMode)} data-testid="memory-layers-storage-toggle">
-            <TabsList className="h-7">
-              <TabsTrigger value="legacy" className="h-6 px-2 text-xs" data-testid="memory-layers-mode-legacy">Legacy</TabsTrigger>
-              <TabsTrigger value="vnext" className="h-6 px-2 text-xs" data-testid="memory-layers-mode-vnext">vNext</TabsTrigger>
-            </TabsList>
-          </Tabs>
-          {storageMode === "legacy" && pendingDeletionCount > 0 && <Button variant={showPendingDeletions ? "secondary" : "ghost"} size="sm" className="h-7 text-xs gap-1" onClick={() => setShowPendingDeletions(!showPendingDeletions)} data-testid="button-filter-pending-deletions"><AlertTriangle className="h-3 w-3 text-error" />{pendingDeletionCount} pending</Button>}
-          {storageMode === "legacy" && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" className="h-7 w-7 p-0" data-testid="button-memory-pipeline-menu"><MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" /></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" className="h-7 w-7 shrink-0 p-0" data-testid="button-layers-menu">
+              <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuRadioGroup value={storageMode} onValueChange={(value) => setStorageMode(value as LayersStorageMode)}>
+              <DropdownMenuRadioItem value="vnext" data-testid="menu-layers-mode-vnext">vNext</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="legacy" data-testid="menu-layers-mode-legacy">Legacy</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+            {storageMode === "vnext" ? (
+              <>
+                <DropdownMenuItem onClick={() => vnextLifecycleMutation.mutate()} disabled={vnextLifecycleMutation.isPending} data-testid="menu-run-vnext-lifecycle">
+                  {vnextLifecycleMutation.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <GitBranch className="mr-2 h-3.5 w-3.5" />}
+                  Run lifecycle
+                </DropdownMenuItem>
+                <DropdownMenuItem className="text-destructive" onSelect={() => setTimeout(() => { setNukeConfirmText(""); setNukeDialogOpen(true); }, 0)} disabled={vnextNukeMutation.isPending} data-testid="menu-nuke-vnext">
+                  <Trash2 className="mr-2 h-3.5 w-3.5" />Nuke...
+                </DropdownMenuItem>
+              </>
+            ) : (
+              <>
+                {pendingDeletionCount > 0 && <DropdownMenuItem onSelect={() => setShowPendingDeletions(!showPendingDeletions)} data-testid="menu-filter-pending-deletions"><AlertTriangle className="mr-2 h-3.5 w-3.5 text-error" />{showPendingDeletions ? "Show all" : `${pendingDeletionCount} pending`}</DropdownMenuItem>}
                 <DropdownMenuItem onClick={() => consolidateMutation.mutate()} disabled={consolidateMutation.isPending || consolidationStatus?.running} data-testid="menu-consolidate">Consolidate</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => integrateMutation.mutate()} disabled={integrateMutation.isPending || integrationStatus?.running} data-testid="menu-integrate-mid">Integrate</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => graphMyelinationMutation.mutate()} disabled={graphMyelinationMutation.isPending || graphMyelinationStatus?.running} data-testid="menu-myelinate-graph">Myelinate to Graph</DropdownMenuItem>
@@ -2358,10 +2393,10 @@ function LayersTab() {
                 <DropdownMenuItem className="text-destructive" onSelect={() => setTimeout(() => setClearLayer("short"), 0)} data-testid="menu-clear-short">Clear Short-term Memory...</DropdownMenuItem>
                 <DropdownMenuItem className="text-destructive" onSelect={() => setTimeout(() => setClearLayer("mid"), 0)} data-testid="menu-clear-mid">Clear Mid-term Memory...</DropdownMenuItem>
                 <DropdownMenuItem className="text-destructive" onSelect={() => setTimeout(() => setClearLayer("long"), 0)} data-testid="menu-clear-long">Clear Long-term Memory...</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </div>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {storageMode === "legacy" ? (
@@ -2370,38 +2405,26 @@ function LayersTab() {
           <IntegrationProgressBar status={integrationStatus} />
           <GraphMyelinationProgressBar status={graphMyelinationStatus} />
         </>
-      ) : (
-        <div className="flex items-center justify-end gap-2 border-b border-card-border bg-muted/10 px-2 py-1.5 text-xs text-muted-foreground" data-testid="memory-vnext-provenance-note">
-          <div className="flex items-center gap-1">
-            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => vnextLifecycleMutation.mutate()} disabled={vnextLifecycleMutation.isPending} data-testid="button-run-vnext-lifecycle">
-              {vnextLifecycleMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitBranch className="h-3 w-3" />}
-              Run lifecycle
-            </Button>
-            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1 text-destructive hover:text-destructive" onClick={() => { setNukeConfirmText(""); setNukeDialogOpen(true); }} disabled={vnextNukeMutation.isPending} data-testid="button-nuke-vnext">
-              <Trash2 className="h-3 w-3" />
-              Nuke
-            </Button>
-          </div>
-          <AlertDialog open={nukeDialogOpen} onOpenChange={(open) => { setNukeDialogOpen(open); if (!open) setNukeConfirmText(""); }}>
-            <AlertDialogContent data-testid="dialog-nuke-vnext">
-              <AlertDialogHeader>
-                <AlertDialogTitle>Nuke all vNext memories?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This permanently deletes all {vnextCounts?.total ?? 0} vNext claims plus their source refs, entity links, and claim links. Legacy memory is untouched. This cannot be undone. Type NUKE to confirm.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <Input value={nukeConfirmText} onChange={(e) => setNukeConfirmText(e.target.value)} placeholder="Type NUKE to confirm" data-testid="input-nuke-confirm" />
-              <AlertDialogFooter>
-                <AlertDialogCancel data-testid="button-nuke-cancel">Cancel</AlertDialogCancel>
-                <AlertDialogAction disabled={nukeConfirmText !== "NUKE" || vnextNukeMutation.isPending} onClick={(e) => { e.preventDefault(); vnextNukeMutation.mutate(); }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90" data-testid="button-nuke-confirm">
-                  {vnextNukeMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                  Nuke everything
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </div>
-      )}
+      ) : null}
+
+      <AlertDialog open={nukeDialogOpen} onOpenChange={(open) => { setNukeDialogOpen(open); if (!open) setNukeConfirmText(""); }}>
+        <AlertDialogContent data-testid="dialog-nuke-vnext">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Nuke all vNext memories?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes all {vnextCounts?.total ?? 0} vNext claims plus their source refs, entity links, and claim links. Legacy memory is untouched. This cannot be undone. Type NUKE to confirm.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input value={nukeConfirmText} onChange={(event) => setNukeConfirmText(event.target.value)} placeholder="Type NUKE to confirm" data-testid="input-nuke-confirm" />
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-nuke-cancel">Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={nukeConfirmText !== "NUKE" || vnextNukeMutation.isPending} onClick={(event) => { event.preventDefault(); vnextNukeMutation.mutate(); }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90" data-testid="button-nuke-confirm">
+              {vnextNukeMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              Nuke everything
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-thin p-2" data-testid={storageMode === "legacy" ? "memory-pipeline-tree" : "memory-vnext-claim-tree"}>
         {storageMode === "legacy" ? (
@@ -4286,7 +4309,7 @@ export default function MemoryPageFull() {
   const [graphFullscreenOpen, setGraphFullscreenOpen] = useState(false);
 
   usePageHeader({
-    title: "Memory",
+    title: activeTab === "memories" ? "Layers" : "Memory",
     tabs: memoryTabs,
     activeTab,
     onTabChange: setActiveTab,
