@@ -315,6 +315,13 @@ app.use((req, res, next) => {
   const t0 = Date.now();
   const bootPhases: { name: string; durationMs: number }[] = [];
 
+  // Resolve runtime identity first: which platform/env/host this process IS.
+  // Synchronous, cached for the process lifetime, logs loudly on
+  // PUBLIC_URL/serving-host mismatch.
+  const { resolveRuntimeIdentity, describeRuntimeIdentity } = await import("./runtime-identity");
+  resolveRuntimeIdentity();
+  log(`[startup] ${describeRuntimeIdentity()}`, "boot");
+
   await timezoneReady;
 
   bootTracker.startPhase("database");

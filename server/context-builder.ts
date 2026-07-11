@@ -204,6 +204,7 @@ type SectionResolver = (request: ContextRequest) => Promise<string>;
 const sectionResolvers: Record<string, SectionResolver> = {
   "world_model": async () => "",
   "world_model.temporal": resolveCurrentDateTime,
+  "world_model.runtime": resolveRuntimeIdentitySection,
   "world_model.orientation": resolveOrientationProtocol,
   "world_model.people": async () => "",
   "world_model.people.self": async () => "",
@@ -490,6 +491,28 @@ async function resolveChatInstructions(request: ContextRequest): Promise<string>
     "- Before recording a new preference or rule, check whether a matching one already exists to avoid duplicates.",
 
   ].join("\n");
+}
+
+async function resolveRuntimeIdentitySection(): Promise<string> {
+  try {
+    const { getRuntimeIdentity } = await import("./runtime-identity");
+    const id = getRuntimeIdentity();
+    const lines = [
+      `Environment: ${id.environmentName}${id.serviceName ? ` (service: ${id.serviceName})` : ""}`,
+      id.servingHost ? `Serving host: ${id.servingHost}` : null,
+      id.publicUrl ? `PUBLIC_URL: ${id.publicUrl}` : "PUBLIC_URL: not set",
+      id.gitCommit ? `Commit: ${id.gitCommit.slice(0, 12)}` : null,
+      id.dbHost ? `Database host: ${id.dbHost}` : null,
+    ].filter(Boolean) as string[];
+    if (id.publicUrlMismatch) {
+      lines.push(
+        `⚠ PUBLIC_URL MISMATCH: PUBLIC_URL points at a different deployment than the serving host. External callbacks derived from PUBLIC_URL are misrouted until the Railway variable is corrected. The server prefers the serving host for new callback registrations.`,
+      );
+    }
+    return lines.join("\n");
+  } catch {
+    return "Runtime identity unavailable.";
+  }
 }
 
 async function resolveCurrentDateTime(): Promise<string> {
@@ -3056,7 +3079,8 @@ export class ContextBuilder {
         return "ctx_wm_beliefs";
       }
       if (sectionId === "session_context" || sectionId === "thoughts"
-        || sectionId === "world_model.temporal") {
+        || sectionId === "world_model.temporal"
+        || sectionId === "world_model.runtime") {
         return "ctx_wm_session";
       }
       return "ctx_wm_identity";

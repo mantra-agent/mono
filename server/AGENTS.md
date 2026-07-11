@@ -2,6 +2,10 @@
 
 Root `AGENTS.md` is mandatory and authoritative for Engineering Principles, architecture, and repository constraints. Root `CODING.md` is mandatory and authoritative for engineering workflow, Coding Task Gate, git policy, verification, and final reporting. This file adds local constraints only. Load this file before touching files under `server/`. For UI/product-facing work, also load root `DESIGN.md`. If instructions conflict, follow root `AGENTS.md` for principles/architecture and root `CODING.md` for procedure unless Ray explicitly overrides.
 
+# Runtime Identity
+
+`runtime-identity.ts` is the single source of truth for deployment identity: environment name, service, serving host (`RAILWAY_PUBLIC_DOMAIN`), normalized `PUBLIC_URL`, git commit, and DB host. It resolves once at boot, flags `PUBLIC_URL` vs serving-host mismatches loudly, and is injected into agent context via the `world_model.runtime` spine section. New code that needs the public base URL for external callbacks must use `getRuntimePublicBaseUrl()` (which prefers the verifiable serving host on mismatch) instead of reading `process.env.PUBLIC_URL` directly.
+
 # Server Architecture
 
 The server is a Node.js/Express/TypeScript monolith running all backend logic: API routes, LLM orchestration, autonomous execution, memory management, and integrations. This file covers the server-root subsystems. For deeper dives see:

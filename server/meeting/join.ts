@@ -49,10 +49,17 @@ export async function joinMeetingByUrl(opts: { meetingUrl: string; title?: strin
       "Recall.ai is not configured. Enter the RECALL_API_KEY and RECALL_REGION in Settings → Integrations → Recall.ai, then retry.",
     );
   }
-  const publicUrl = process.env.PUBLIC_URL?.replace(/\/$/, "");
+  const { getRuntimePublicBaseUrl, getRuntimeIdentity } = await import("../runtime-identity");
+  const publicUrl = getRuntimePublicBaseUrl();
   if (!publicUrl) {
     throw new MeetingJoinError(
-      "PUBLIC_URL is not set — the Recall transcript webhook needs a stable public URL. Configure PUBLIC_URL and retry.",
+      "No public base URL available — the Recall transcript webhook needs a stable public URL. Configure PUBLIC_URL (or deploy behind a Railway public domain) and retry.",
+    );
+  }
+  const runtime = getRuntimeIdentity();
+  if (runtime.publicUrlMismatch) {
+    log.warn(
+      `PUBLIC_URL mismatch detected; registering Recall transcript webhook against serving host ${publicUrl} for env ${runtime.environmentName}`,
     );
   }
 

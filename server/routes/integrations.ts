@@ -1096,14 +1096,21 @@ export async function registerIntegrationsRoutes(app: Express) {
         });
       }
       const test = await testRecallConnection();
+      const { getRuntimePublicBaseUrl, getRuntimeIdentity } = await import("../runtime-identity");
+      const runtime = getRuntimeIdentity();
+      const webhookBase = getRuntimePublicBaseUrl() || `${req.protocol}://${req.get("host")}`;
       res.json({
         connected: test.connected,
         hasKey: cfg.hasKey,
         region: cfg.region,
         hasWebhookSecret: cfg.hasWebhookSecret,
         hasWorkspaceVerificationSecret: cfg.hasWorkspaceVerificationSecret,
-        statusWebhookUrl: `${process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`}/api/webhooks/recall`,
-        transcriptWebhookUrl: `${process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`}/api/webhooks/recall/transcript`,
+        statusWebhookUrl: `${webhookBase}/api/webhooks/recall`,
+        transcriptWebhookUrl: `${webhookBase}/api/webhooks/recall/transcript`,
+        runtimeEnvironment: runtime.environmentName,
+        servingHost: runtime.servingHost,
+        publicUrl: runtime.publicUrl,
+        publicUrlMismatch: runtime.publicUrlMismatch,
         error: test.error,
       });
     } catch (error: any) {
@@ -1118,14 +1125,21 @@ export async function registerIntegrationsRoutes(app: Express) {
       );
       const cfg = await getRecallConfig();
       const test = await testRecallConnection();
+      const { getRuntimePublicBaseUrl, getRuntimeIdentity } = await import("../runtime-identity");
+      const runtime = getRuntimeIdentity();
+      const webhookBase = getRuntimePublicBaseUrl() || `${req.protocol}://${req.get("host")}`;
       res.json({
         connected: test.connected,
         hasKey: cfg.hasKey,
         region: cfg.region,
         hasWebhookSecret: cfg.hasWebhookSecret,
         hasWorkspaceVerificationSecret: cfg.hasWorkspaceVerificationSecret,
-        statusWebhookUrl: `${process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`}/api/webhooks/recall`,
-        transcriptWebhookUrl: `${process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`}/api/webhooks/recall/transcript`,
+        statusWebhookUrl: `${webhookBase}/api/webhooks/recall`,
+        transcriptWebhookUrl: `${webhookBase}/api/webhooks/recall/transcript`,
+        runtimeEnvironment: runtime.environmentName,
+        servingHost: runtime.servingHost,
+        publicUrl: runtime.publicUrl,
+        publicUrlMismatch: runtime.publicUrlMismatch,
         error: test.error,
       });
     } catch (error: any) {
