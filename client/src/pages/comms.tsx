@@ -35,7 +35,6 @@ import {
   RefreshCw,
   AlertTriangle,
   Plus,
-  Inbox,
   CheckCircle,
   ChevronDown,
   ChevronLeft,
@@ -757,10 +756,8 @@ function InboxTab({ onHover }: { onHover: (ids: number[] | null) => void }) {
         {messagesQuery.isLoading || syncStatusQuery.isLoading ? (
           <ListSkeleton />
         ) : threads.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 px-4 text-center" data-testid="inbox-empty">
-            <Inbox className="h-12 w-12 text-muted-foreground/30 mb-4" />
-            <h3 className="text-lg font-medium mb-2">Inbox is empty</h3>
-            <p className="text-sm text-muted-foreground">All synced emails have been classified.</p>
+          <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="inbox-empty">
+            No inbox messages yet.
           </div>
         ) : (
           <div data-testid="inbox-thread-list">
