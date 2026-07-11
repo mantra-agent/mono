@@ -343,7 +343,11 @@ When diagnosing Stage 1 backlog, distinguish two cases:
 
 Do not assume age alone should advance a memory. Advance when Stage 2 evidence exists or the sweep successfully creates/preserves it.
 
-Legacy active vNext claims missing embeddings are repaired through a bounded, idempotent backfill under each owning principal. Retired claims are excluded, and each update rechecks both ownership and `embedding IS NULL` so retries are safe.
+Every vNext claim admitted through the canonical Stage 1 mutation path must have a validated embedding before persistence completes. Candidate embeddings generated for semantic deduplication are reused for persistence; embedding failure aborts admission so an active unsearchable claim is never silently created.
+
+Legacy active vNext claims missing embeddings are repaired through the settled-source maintenance path using a bounded, idempotent backfill under each owning principal. Retired claims are excluded, and each update rechecks both ownership and `embedding IS NULL` so retries are safe. `vnext_claim_counts` is the principal-scoped coverage check; healthy coverage is `activeMissingEmbedding=0` and `embeddingCoverage=1`.
+
+vNext graph context is the primary retrieval path. It combines principal-scoped semantic and recent seeds, follows at most two bounded hops across visible claim links, excludes retired claims, scores lifecycle stage, claim type, confidence, reinforcement, connectivity, provenance, semantic/causal/contrastive/temporal signals, balances semantic and recent graph results, and renders within the existing persona memory token budget. Legacy graph retrieval runs only when vNext returns no renderable claims or errors, and every fallback must emit a structured `memory.graph.context_fallback` reason.
 
 ### Observability
 

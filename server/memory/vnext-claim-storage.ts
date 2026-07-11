@@ -100,6 +100,10 @@ export interface VnextClaimWriteBudgetInput {
 
 export interface VnextClaimCounts {
   total: number;
+  active: number;
+  activeWithEmbedding: number;
+  activeMissingEmbedding: number;
+  embeddingCoverage: number;
   byLifecycleStage: Record<MemoryVnextLifecycleStage, number>;
   byClaimType: Record<MemoryVnextClaimType, number>;
   sourceRefs: number;
@@ -243,7 +247,9 @@ export async function executeVnextClaimSemanticSearch(
       last_recalled_at, created_at, updated_at,
       1 - (embedding <=> ${embeddingStr}::vector) AS similarity
     FROM memory_vnext_claims
-    WHERE embedding IS NOT NULL ${visibilityCondition}
+    WHERE embedding IS NOT NULL
+      AND lifecycle_stage <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}
+      ${visibilityCondition}
     ORDER BY embedding <=> ${embeddingStr}::vector
     LIMIT ${limit}
   `);
@@ -509,8 +515,11 @@ export class MemoryVnextClaimStorage {
     const entityVisibility = combineWithVisibleScope(principal, vnextEntityScopeColumns);
     const claimLinkVisibility = combineWithVisibleScope(principal, vnextClaimLinkScopeColumns);
 
-    const [totalRows, stageRows, typeRows, sourceRows, entityRows, claimLinkRows] = await Promise.all([
+    const activePredicate = sql`${memoryVnextClaims.lifecycleStage} <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}`;
+    const [totalRows, activeRows, activeEmbeddedRows, stageRows, typeRows, sourceRows, entityRows, claimLinkRows] = await Promise.all([
       db.select({ count: sql<number>`count(*)::int` }).from(memoryVnextClaims).where(claimVisibility),
+      db.select({ count: sql<number>`count(*)::int` }).from(memoryVnextClaims).where(combineWithVisibleScope(principal, vnextClaimScopeColumns, activePredicate)),
+      db.select({ count: sql<number>`count(*)::int` }).from(memoryVnextClaims).where(combineWithVisibleScope(principal, vnextClaimScopeColumns, and(activePredicate, sql`${memoryVnextClaims.embedding} IS NOT NULL`))),
       db.select({ stage: memoryVnextClaims.lifecycleStage, count: sql<number>`count(*)::int` }).from(memoryVnextClaims).where(claimVisibility).groupBy(memoryVnextClaims.lifecycleStage),
       db.select({ claimType: memoryVnextClaims.claimType, count: sql<number>`count(*)::int` }).from(memoryVnextClaims).where(claimVisibility).groupBy(memoryVnextClaims.claimType),
       db.select({ count: sql<number>`count(*)::int` }).from(memoryVnextSourceRefs).where(sourceVisibility),
@@ -529,8 +538,14 @@ export class MemoryVnextClaimStorage {
       byClaimType[claimType] = Number(row.count ?? 0);
     }
 
+    const active = Number(activeRows[0]?.count ?? 0);
+    const activeWithEmbedding = Number(activeEmbeddedRows[0]?.count ?? 0);
     return {
       total: Number(totalRows[0]?.count ?? 0),
+      active,
+      activeWithEmbedding,
+      activeMissingEmbedding: Math.max(0, active - activeWithEmbedding),
+      embeddingCoverage: active === 0 ? 1 : activeWithEmbedding / active,
       byLifecycleStage,
       byClaimType,
       sourceRefs: Number(sourceRows[0]?.count ?? 0),
