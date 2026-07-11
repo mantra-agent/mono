@@ -4183,10 +4183,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
 
     try {
-      const baseContext = args.context || "";
-      const context = sourceSessionLine && !baseContext.includes(`@session:${sourceSessionId}`)
-        ? [baseContext.trim(), sourceSessionLine].filter(Boolean).join("\n\n")
-        : baseContext;
+      const context = sourceSessionLine || "";
 
       const taskData = {
         title,
@@ -4196,14 +4193,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         projectId: args.projectId ?? null,
         status: args.status || "ready",
         requiresReview: args.requiresReview ?? false,
-        tags: args.tags ?? [],
         impact: args.impact ?? null,
         effort: args.effort ?? null,
         milestoneId,
         context,
-        output: args.output || "",
         deadline: args.deadline ?? null,
-        tokenEstimate: args.tokenEstimate ?? null,
       };
       const task = await fileTaskStorage.createTask(taskData);
       return { result: `Task created: "${task.title}" (ID: ${task.id}, priority: ${task.priority}, owner: ${task.owner}, milestone: ${task.milestoneId})${sourceSessionId ? `, source: @session:${sourceSessionId}` : ""}` };
@@ -4282,19 +4276,15 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     if (args.requiresReview !== undefined) raw.requiresReview = args.requiresReview;
     if (args.projectId !== undefined) raw.projectId = args.projectId;
     if (args.milestoneId !== undefined) raw.milestoneId = args.milestoneId;
-    if (args.tags !== undefined) raw.tags = args.tags;
-    if (args.context !== undefined) raw.context = args.context;
-    if (args.output !== undefined) raw.output = args.output;
     if (args.deadline !== undefined) raw.deadline = args.deadline;
-    if (args.tokenEstimate !== undefined) raw.tokenEstimate = args.tokenEstimate;
     if (args.clearFields !== undefined) raw.clearFields = args.clearFields;
     if (args.confirmDestructiveUpdate !== undefined) raw.confirmDestructiveUpdate = args.confirmDestructiveUpdate;
     if (args.destructiveUpdateReason !== undefined) raw.destructiveUpdateReason = args.destructiveUpdateReason;
 
     try {
       const { patch: updates, clearFields, destructiveUpdateReason } = sanitizePatch(raw, {
-        protectedFields: ['title', 'description', 'context', 'output', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
-        clearableFields: ['description', 'context', 'output', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
+        protectedFields: ['title', 'description', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
+        clearableFields: ['description', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
         destructiveFields: ['description'] as Array<keyof any>,
       });
 

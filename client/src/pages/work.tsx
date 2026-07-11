@@ -883,7 +883,7 @@ function TaskRow({
   const isCompleted = task.status === "done" || isDone;
   const isActive = task.status === "active" && !isCompleted;
   const dueLabel = formatWorkDueDate(task.deadline);
-  const taskDetailLines = [task.description, task.context, task.output].map(v => v?.trim()).filter(Boolean);
+  const taskDetailLines = [task.description].map(v => v?.trim()).filter(Boolean);
   const statusTextClass = isActive
     ? "text-foreground font-medium"
     : isCompleted
@@ -1071,18 +1071,6 @@ function TaskRow({
                 <Bot className="h-3.5 w-3.5 mr-2" />
                 <span className={cn(task.owner === "agent" && "font-medium")}>{getInstanceName()}</span>
               </DropdownMenuItem>
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger data-testid={`menu-task-tags-mobile-${task.id}`}>
-              <Tag className="h-3.5 w-3.5 mr-2" />
-              Tags
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="w-40">
-              <TagMenuItems
-                selectedTags={task.tags}
-                onChange={(tags) => onUpdate({ tags })}
-              />
             </DropdownMenuSubContent>
           </DropdownMenuSub>
           <DropdownMenuSeparator />
