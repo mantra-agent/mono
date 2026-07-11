@@ -155,8 +155,17 @@ export async function registerWorkflowRoutes(app: Express) {
     catch (error) { const err = routeError(error, "start_workflow_stage_attempt"); res.status(400).json({ error: err.message, operation: err.operation }); }
   });
 
+  app.post("/api/workflows/runs/:id/stage-attempts/:attemptId/complete", async (req, res) => {
+    try { res.json(await completeStageAttempt(req.params.id, Number(req.params.attemptId), req.body || {})); }
+    catch (error) { const err = routeError(error, "complete_workflow_stage_attempt"); res.status(400).json({ error: err.message, operation: err.operation }); }
+  });
+
   app.post("/api/workflows/stage-attempts/:attemptId/complete", async (req, res) => {
-    try { res.json(await completeStageAttempt(Number(req.params.attemptId), req.body || {})); }
+    try {
+      const workflowRunId = String(req.body?.workflowRunId || req.body?.runId || "").trim();
+      if (!workflowRunId) throw new Error("workflowRunId is required; use the run-scoped completion route");
+      res.json(await completeStageAttempt(workflowRunId, Number(req.params.attemptId), req.body || {}));
+    }
     catch (error) { const err = routeError(error, "complete_workflow_stage_attempt"); res.status(400).json({ error: err.message, operation: err.operation }); }
   });
 
