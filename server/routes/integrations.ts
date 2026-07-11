@@ -1197,7 +1197,7 @@ export async function registerIntegrationsRoutes(app: Express) {
   // Recall.ai (meeting bot)
   // ---------------------------------------------------------------------------
 
-  app.get("/api/integrations/recall/status", requireAuth, requireAdmin, async (_req, res) => {
+  app.get("/api/integrations/recall/status", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { getRecallConfig, testRecallConnection } = await import(
         "../integrations/recall/client"
@@ -1217,6 +1217,8 @@ export async function registerIntegrationsRoutes(app: Express) {
         hasKey: cfg.hasKey,
         region: cfg.region,
         hasWebhookSecret: cfg.hasWebhookSecret,
+        statusWebhookUrl: `${process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`}/api/webhooks/recall`,
+        transcriptWebhookUrl: `${process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`}/api/webhooks/recall/transcript`,
         error: test.error,
       });
     } catch (error: any) {
@@ -1224,7 +1226,7 @@ export async function registerIntegrationsRoutes(app: Express) {
     }
   });
 
-  app.post("/api/integrations/recall/test", requireAuth, requireAdmin, async (_req, res) => {
+  app.post("/api/integrations/recall/test", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { getRecallConfig, testRecallConnection } = await import(
         "../integrations/recall/client"
@@ -1236,6 +1238,8 @@ export async function registerIntegrationsRoutes(app: Express) {
         hasKey: cfg.hasKey,
         region: cfg.region,
         hasWebhookSecret: cfg.hasWebhookSecret,
+        statusWebhookUrl: `${process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`}/api/webhooks/recall`,
+        transcriptWebhookUrl: `${process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`}/api/webhooks/recall/transcript`,
         error: test.error,
       });
     } catch (error: any) {

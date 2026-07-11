@@ -78,6 +78,7 @@ export function registerRecallRoutes(
   const { ingestMeetingEvent } = deps;
 
   app.post("/api/webhooks/recall", async (req: Request, res: Response) => {
+    log.info(`Status webhook received event=${typeof req.body?.event === "string" ? req.body.event : "unknown"}`);
     const verified = await verifyRecallWebhook(
       req.headers as Record<string, string | string[] | undefined>,
       rawBodyString(req),
@@ -123,6 +124,7 @@ export function registerRecallRoutes(
   app.post(
     "/api/webhooks/recall/transcript",
     async (req: Request, res: Response) => {
+      log.info(`Transcript webhook received event=${typeof req.body?.event === "string" ? req.body.event : "unknown"}`);
       const verified = await verifyRecallWebhook(
         req.headers as Record<string, string | string[] | undefined>,
         rawBodyString(req),
