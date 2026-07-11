@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
-  ChevronRight, ChevronDown, Loader2, BookOpen, Library, RefreshCw,
+  ChevronRight, ChevronDown, Loader2, Library, RefreshCw,
 } from "lucide-react";
 import { PageEmoji } from "./library-components";
 
@@ -338,9 +338,8 @@ export function IndexTab() {
       <ScrollArea className="flex-1">
         <div className="py-2">
           {filteredNodes.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground" data-testid="index-empty">
-              <BookOpen className="w-8 h-8 mb-2 opacity-50" />
-              <p className="text-sm">{filter ? "No matching pages." : "No library pages yet."}</p>
+            <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="index-empty">
+              {filter ? "No matching pages." : "No library pages yet."}
             </div>
           ) : (
             filteredNodes.map(node => (

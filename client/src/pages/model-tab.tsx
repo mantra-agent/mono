@@ -22,7 +22,6 @@ import {
 } from "@/components/ui/dialog";
 import {
   Brain,
-  AlertTriangle,
   Settings,
   Crown,
   Gauge,
@@ -351,14 +350,9 @@ export default function ModelTab() {
   if (providers.length === 0) {
     return (
       <div className="p-4 @sm:p-6 w-full">
-        <Card className="border-dashed py-8">
-            <div className="flex flex-col items-center gap-3 text-center">
-              <AlertTriangle className="h-8 w-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">
-                No model providers detected. Connect an OpenAI or Claude subscription, or add ANTHROPIC_API_KEY / OPENAI_API_KEY in Secrets to see available models.
-              </p>
-            </div>
-          </Card>
+        <div className="px-2 py-1.5 text-sm text-muted-foreground">
+          No model providers configured.
+        </div>
       </div>
     );
   }

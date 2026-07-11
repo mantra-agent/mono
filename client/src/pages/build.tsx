@@ -3429,13 +3429,7 @@ function BackupPanel() {
               ))}
             </div>
           ) : backups.length === 0 ? (
-            <div className="py-12 text-center text-muted-foreground">
-              <Database className="mx-auto mb-3 h-10 w-10 opacity-40" />
-              <p className="font-medium">No backups yet</p>
-              <p className="mt-1 text-sm">
-                Create your first backup before running data migrations.
-              </p>
-            </div>
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">No backups yet.</div>
           ) : (
             <div className="space-y-1">
               {backups.map((b) => {

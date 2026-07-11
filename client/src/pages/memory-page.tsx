@@ -2404,9 +2404,9 @@ function LayersTab() {
 
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-thin p-2" data-testid={storageMode === "legacy" ? "memory-pipeline-tree" : "memory-vnext-claim-tree"}>
         {storageMode === "legacy" ? (
-          pipelineEntries.length === 0 ? <div className={cn("px-6", MEMORY_EMPTY_CLASS)} data-testid="memory-pipeline-empty"><Database className="h-6 w-6 text-muted-foreground" /><p className="text-sm text-muted-foreground">No legacy memories in the pipeline.</p></div> : <div className="space-y-0.5">{MEMORY_PIPELINE_STAGES.map(renderStageSection)}</div>
+          pipelineEntries.length === 0 ? <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="memory-pipeline-empty">No legacy memories yet.</div> : <div className="space-y-0.5">{MEMORY_PIPELINE_STAGES.map(renderStageSection)}</div>
         ) : (
-          (vnextClaims.length === 0 && vnextSources.length === 0) ? <div className={cn("px-6", MEMORY_EMPTY_CLASS)} data-testid="memory-vnext-empty"><GitBranch className="h-6 w-6 text-muted-foreground" /><p className="text-sm text-muted-foreground">No vNext sources or claims found.</p></div> : <div className="space-y-0.5">{MEMORY_VNEXT_PIPELINE_STAGES.map(renderVnextStageSection)}</div>
+          (vnextClaims.length === 0 && vnextSources.length === 0) ? <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="memory-vnext-empty">No vNext memories yet.</div> : <div className="space-y-0.5">{MEMORY_VNEXT_PIPELINE_STAGES.map(renderVnextStageSection)}</div>
         )}
       </div>
 
@@ -4065,10 +4065,8 @@ function QueryTab() {
           )}
 
           {results && results.length === 0 && (
-            <div className={cn(MEMORY_EMPTY_CLASS, "px-4")} data-testid="query-no-results">
-              <Search className="h-8 w-8 text-muted-foreground/30 mb-3" />
-              <p className="text-sm text-muted-foreground">No results found</p>
-              <p className="text-xs text-muted-foreground/60 mt-1">Try different keywords or phrasing</p>
+            <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="query-no-results">
+              No matching memories.
             </div>
           )}
 

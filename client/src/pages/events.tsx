@@ -352,14 +352,8 @@ function HistoryMode() {
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
         ) : events.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <History className="h-10 w-10 text-muted-foreground/30 mb-3" />
-            <p className="text-sm text-muted-foreground" data-testid="text-history-zero-state">
-              No events match your filters.
-            </p>
-            <p className="text-xs text-muted-foreground/60 mt-1">
-              Try broadening the date range or removing filters.
-            </p>
+          <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-history-zero-state">
+            No matching events.
           </div>
         ) : (
           <div>

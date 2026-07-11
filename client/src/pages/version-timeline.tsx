@@ -403,16 +403,7 @@ export default function VersionTimeline() {
   const githubConnected = data?.githubConnected ?? false;
 
   if (deployments.length === 0 && pending.length === 0) {
-    return (
-      <Card>
-        <CardContent className="py-12 text-center">
-          <Rocket className="h-8 w-8 text-muted-foreground/30 mx-auto mb-3" />
-          <p className="text-sm text-muted-foreground">
-            No deployments yet. Push to main and Railway will deploy automatically.
-          </p>
-        </CardContent>
-      </Card>
-    );
+    return <div className="px-2 py-1.5 text-sm text-muted-foreground">No deployments yet.</div>;
   }
 
   return (
