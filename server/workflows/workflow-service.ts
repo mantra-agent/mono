@@ -41,6 +41,7 @@ import {
 } from "@shared/models/platforms";
 import { getProviderCredential } from "../provider-credential-store";
 import { getLatestDeploymentByToken } from "../integrations/railway/client";
+import { getCloudflareLatestDeployment } from "../services/provider-connection-service";
 import { buildWorkflowRunPageContent, buildWorkflowStages, parseWorkflowDefinition, type WorkflowEnvironmentTruth, type WorkflowRunDetail } from "./workflow-renderer";
 import { monitorChildSession, truncateOutput, type MonitorResult } from "../child-session-monitor";
 
@@ -752,37 +753,72 @@ export async function getWorkflowEnvironmentTruth(runIdOrEnvironmentId: string |
   const hosting = sanitizeHostingBinding(hostingRow, connectionFor(hostingRow?.connectionId));
 
   let deployment: WorkflowEnvironmentTruth["deployment"] = null;
-  if (hostingRow?.connectionId && hostingRow.projectId && hostingRow.serviceId && hostingRow.providerEnvironmentId) {
-    try {
-      const connection = connectionFor(hostingRow.connectionId);
-      const token = connection?.credentialRef ? await getProviderCredential(connection.credentialRef) : null;
-      if (!token) {
-        deployment = { available: false, reason: "Connection has no decryptable Railway credential", latest: null, publicUrl: hostingRow.publicUrl, urlReachable: null, checkedAt: new Date().toISOString() };
-      } else {
-        const latest = await getLatestDeploymentByToken(token, hostingRow.projectId, hostingRow.serviceId, hostingRow.providerEnvironmentId);
-        let urlReachable: boolean | null = null;
-        if (hostingRow.publicUrl) {
-          try {
-            const healthUrl = hostingRow.publicUrl.startsWith("http") ? hostingRow.publicUrl : `https://${hostingRow.publicUrl}`;
-            const res = await fetch(healthUrl, { method: "HEAD", signal: AbortSignal.timeout(5000) });
-            urlReachable = res.ok;
-          } catch {
-            urlReachable = false;
-          }
-        }
-        deployment = {
-          available: true,
-          latest: latest ? { id: latest.id, status: latest.status, commitSha: latest.commitHash, commitMessage: latest.commitMessage, deployedAt: latest.createdAt } : null,
-          publicUrl: hostingRow.publicUrl,
-          urlReachable,
-          checkedAt: new Date().toISOString(),
-        };
-      }
-    } catch (err) {
-      deployment = { available: false, reason: err instanceof Error ? err.message : String(err), latest: null, publicUrl: hostingRow.publicUrl, urlReachable: null, checkedAt: new Date().toISOString() };
-    }
+  const hostingProvider = hostingRow?.provider || connectionFor(hostingRow?.connectionId)?.provider || "railway";
+  const deploymentBase = {
+    provider: hostingProvider,
+    publicUrl: hostingRow?.publicUrl || null,
+    checkedAt: new Date().toISOString(),
+  };
+  const unavailableDeployment = (reason: string): NonNullable<WorkflowEnvironmentTruth["deployment"]> => ({
+    ...deploymentBase,
+    available: false,
+    reason,
+    latest: null,
+    urlReachable: null,
+  });
+
+  if (!hostingRow) {
+    deployment = unavailableDeployment("Hosting binding is not configured");
+  } else if (!hostingRow.connectionId) {
+    deployment = unavailableDeployment(`${hostingProvider} hosting binding has no provider connection`);
   } else {
-    deployment = { available: false, reason: "Railway hosting binding is incomplete", latest: null, publicUrl: hostingRow?.publicUrl || null, urlReachable: null, checkedAt: new Date().toISOString() };
+    const connection = connectionFor(hostingRow.connectionId);
+    const token = connection?.credentialRef ? await getProviderCredential(connection.credentialRef) : null;
+    if (!token) {
+      deployment = unavailableDeployment(`Connection has no decryptable ${hostingProvider} credential`);
+    } else {
+      let urlReachable: boolean | null = null;
+      if (hostingRow.publicUrl) {
+        try {
+          const healthUrl = hostingRow.publicUrl.startsWith("http") ? hostingRow.publicUrl : `https://${hostingRow.publicUrl}`;
+          const res = await fetch(healthUrl, { method: "HEAD", signal: AbortSignal.timeout(5000) });
+          urlReachable = res.ok;
+        } catch {
+          urlReachable = false;
+        }
+      }
+      try {
+        if (hostingProvider === "cloudflare") {
+          if (!hostingRow.projectId || !hostingRow.projectName) {
+            deployment = unavailableDeployment("Cloudflare Pages hosting binding is incomplete (need accountId in projectId and project name in projectName)");
+          } else {
+            const latest = await getCloudflareLatestDeployment(token, hostingRow.projectId, hostingRow.projectName, hostingRow.providerEnvironmentId || "production");
+            deployment = {
+              ...deploymentBase,
+              available: true,
+              latest: latest ? { id: latest.id, status: latest.status, commitSha: latest.commitHash, commitMessage: latest.commitMessage, branch: latest.branch, url: latest.url, deployedAt: latest.createdAt } : null,
+              urlReachable,
+            };
+          }
+        } else if (hostingProvider === "railway") {
+          if (!hostingRow.projectId || !hostingRow.serviceId || !hostingRow.providerEnvironmentId) {
+            deployment = unavailableDeployment("Railway hosting binding is incomplete");
+          } else {
+            const latest = await getLatestDeploymentByToken(token, hostingRow.projectId, hostingRow.serviceId, hostingRow.providerEnvironmentId);
+            deployment = {
+              ...deploymentBase,
+              available: true,
+              latest: latest ? { id: latest.id, status: latest.status, commitSha: latest.commitHash, commitMessage: latest.commitMessage, deployedAt: latest.createdAt } : null,
+              urlReachable,
+            };
+          }
+        } else {
+          deployment = unavailableDeployment(`Deployment status is unsupported for hosting provider ${hostingProvider}`);
+        }
+      } catch (err) {
+        deployment = unavailableDeployment(err instanceof Error ? err.message : String(err));
+      }
+    }
   }
 
   return {
@@ -1244,13 +1280,14 @@ export async function capturePublishToStageEvidence(input: { workflowRunId: stri
   const branch = typeof truth.source?.branch === "string" ? truth.source.branch : null;
   const title = latest?.id ? `Deployment evidence for ${truth.environment.name}: ${String(latest.id)}` : `Deployment evidence for ${truth.environment.name}`;
   const status = latest?.status ? String(latest.status) : truth.deployment?.available ? "no deployment found" : "unavailable";
-  const summary = input.summary || `Stage environment ${truth.environment.name} sourced from ${branch || "unknown branch"}; Railway deployment status ${status}.`;
+  const deploymentProvider = truth.deployment?.provider || String(truth.hosting?.provider || "hosting");
+  const summary = input.summary || `Stage environment ${truth.environment.name} sourced from ${branch || "unknown branch"}; ${deploymentProvider} deployment status ${status}.`;
   return attachWorkflowArtifact({
     workflowRunId: input.workflowRunId,
     stageAttemptId,
     kind: "deployment",
     title,
-    refType: "railway_deployment",
+    refType: `${deploymentProvider}_deployment`,
     refId: latest?.id ? String(latest.id) : null,
     url: typeof truth.deployment?.publicUrl === "string" && truth.deployment.publicUrl ? (truth.deployment.publicUrl.startsWith("http") ? truth.deployment.publicUrl : `https://${truth.deployment.publicUrl}`) : undefined,
     summary,
@@ -1275,7 +1312,7 @@ function normalizedDeploymentStatus(deployment: WorkflowEnvironmentTruth["deploy
 }
 
 function deploymentStatusCategory(status: string): "green" | "pending" | "failed" | "unknown" {
-  const s = status.trim().toUpperCase();
+  const s = status.trim().toUpperCase().split(":").at(-1) || "";
   if (!s) return "unknown";
   if (["SUCCESS", "SUCCEEDED", "COMPLETE", "COMPLETED", "DEPLOYED", "ACTIVE", "READY", "HEALTHY"].includes(s)) return "green";
   if (["BUILDING", "DEPLOYING", "INITIALIZING", "QUEUED", "WAITING", "PENDING", "REMOVING", "RESTARTING"].includes(s)) return "pending";
@@ -1292,10 +1329,10 @@ function deploymentId(deployment: WorkflowEnvironmentTruth["deployment"] | null 
   return typeof id === "string" && id.trim() ? id : null;
 }
 
-function deploymentReadinessMessage(readiness: DeploymentReadiness): string {
+function deploymentReadinessMessage(readiness: DeploymentReadiness, provider: string): string {
   const status = readiness.finalStatus || "unknown";
-  if (readiness.status === "green") return `Deployment ${readiness.finalDeploymentId || "unknown"} reached ${status} after ${readiness.attempts} check(s).`;
-  if (readiness.status === "timeout") return `Timed out after ${Math.round(readiness.waitedMs / 1000)}s waiting for Railway deployment to finish; final status ${status}.`;
+  if (readiness.status === "green") return `${provider} deployment ${readiness.finalDeploymentId || "unknown"} reached ${status} after ${readiness.attempts} check(s).`;
+  if (readiness.status === "timeout") return `Timed out after ${Math.round(readiness.waitedMs / 1000)}s waiting for ${provider} deployment to finish; final status ${status}.`;
   if (readiness.status === "failed") return `Deployment ${readiness.finalDeploymentId || "unknown"} reached terminal failure status ${status}.`;
   if (readiness.status === "pending") return `Deployment ${readiness.finalDeploymentId || "unknown"} is still pending with status ${status}.`;
   return `Deployment status unavailable: ${status}.`;
@@ -1327,25 +1364,25 @@ async function waitForAcceptanceDeploymentTruth(runId: string, initialTruth: Wor
     }
     if (category === "green") {
       const readiness: DeploymentReadiness = { status: "green", ...base, message: "" };
-      readiness.message = deploymentReadinessMessage(readiness);
+      readiness.message = deploymentReadinessMessage(readiness, deployment.provider);
       return { truth, readiness };
     }
     if (category === "failed") {
       const readiness: DeploymentReadiness = { status: "failed", ...base, message: "" };
-      readiness.message = deploymentReadinessMessage(readiness);
+      readiness.message = deploymentReadinessMessage(readiness, deployment.provider);
       return { truth, readiness };
     }
     if (category === "pending" || !deployment.latest) {
       if (waitedMs >= ACCEPTANCE_DEPLOY_WAIT_TIMEOUT_MS) {
         const readiness: DeploymentReadiness = { status: "timeout", ...base, message: "" };
-        readiness.message = deploymentReadinessMessage(readiness);
+        readiness.message = deploymentReadinessMessage(readiness, deployment.provider);
         return { truth, readiness };
       }
       await sleep(Math.min(ACCEPTANCE_DEPLOY_POLL_INTERVAL_MS, ACCEPTANCE_DEPLOY_WAIT_TIMEOUT_MS - waitedMs));
       continue;
     }
 
-    const readiness: DeploymentReadiness = { status: "pending", ...base, message: `Unknown Railway deployment status ${status}; leaving acceptance gate non-green.` };
+    const readiness: DeploymentReadiness = { status: "pending", ...base, message: `Unknown ${deployment.provider} deployment status ${status}; leaving acceptance gate non-green.` };
     return { truth, readiness };
   }
 }

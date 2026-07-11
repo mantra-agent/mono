@@ -16,7 +16,7 @@ export type WorkflowEnvironmentTruth = {
   environment: { id: number; name: string; kind: string; status: string } | null;
   source: Record<string, unknown> | null;
   hosting: Record<string, unknown> | null;
-  deployment: { available: boolean; reason?: string; latest: Record<string, unknown> | null; publicUrl?: string | null; urlReachable?: boolean | null; checkedAt: string } | null;
+  deployment: { provider: string; available: boolean; reason?: string; latest: Record<string, unknown> | null; publicUrl?: string | null; urlReachable?: boolean | null; checkedAt: string } | null;
 };
 
 export type WorkflowRunDetail = {
