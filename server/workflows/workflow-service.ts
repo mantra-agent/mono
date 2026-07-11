@@ -320,6 +320,9 @@ function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: u
   lines.push(`# Workflow Stage Attempt`);
   lines.push("");
   lines.push(`Workflow Run ID: ${context.workflowRunId}`);
+  if ("stageAttemptId" in context && Number.isSafeInteger((context as WorkflowStageInputContext & { stageAttemptId?: number }).stageAttemptId)) {
+    lines.push(`Stage Attempt ID: ${(context as WorkflowStageInputContext & { stageAttemptId: number }).stageAttemptId}`);
+  }
   lines.push(`Workflow: ${context.workflowTitle}`);
   lines.push(`Stage: ${context.stageTitle} (${context.stageKey})`);
   lines.push(`Attempt: ${context.attemptNumber}/${context.maxAttempts}`);
@@ -530,12 +533,11 @@ async function spawnWorkflowStageChild(parentSessionId: string, detail: Workflow
 }
 
 /**
- * Monitor a workflow stage child session. When the monitor detects completion
- * (saved/failed/idle_timeout), auto-call completeStageAttempt with the
- * extracted output and inferred pass/fail result.
+ * Monitor a workflow stage child session for executor failures.
  *
- * This makes the child's explicit complete_stage_attempt tool call optional.
- * The idempotency guard in completeStageAttempt ensures no double-completion.
+ * Successful child-session completion is not stage completion. The child must
+ * explicitly submit the stage result through completeStageAttempt, which is
+ * the sole owner of attempt completion and workflow transitions.
  */
 async function monitorWorkflowChild(
   attemptId: number,
@@ -557,7 +559,7 @@ async function monitorWorkflowChild(
   // The idempotency guard in completeStageAttempt will no-op, but we can
   // skip the call entirely to avoid noisy logs.
   const [currentAttempt] = await db.select().from(workflowStageAttempts)
-    .where(eq(workflowStageAttempts.id, attemptId)).limit(1);
+    .where(and(eq(workflowStageAttempts.workflowRunId, runId), eq(workflowStageAttempts.id, attemptId))).limit(1);
   if (currentAttempt && currentAttempt.status !== "active") {
     log.log(`[monitor] Workflow attempt ${attemptId} (${stageTitle} #${attemptNumber}) already ${currentAttempt.status} — monitor no-op`);
     return;
@@ -565,19 +567,12 @@ async function monitorWorkflowChild(
 
   switch (result.status) {
     case "completed": {
-      // Infer pass/fail from the child's output. Look for explicit signals.
-      const output = result.output;
-      const inferredResult = inferStageResult(output);
-      log.log(`[monitor] Workflow child ${childSessionId} completed — inferred result: ${inferredResult} for ${stageTitle} #${attemptNumber}`);
-      await completeStageAttempt(attemptId, {
-        result: inferredResult,
-        outputSummary: truncateOutput(output, 500),
-      });
+      log.warn(`[monitor] Workflow child ${childSessionId} completed without checkpointing ${stageTitle} #${attemptNumber}; leaving attempt ${attemptId} active for explicit completion`);
       break;
     }
     case "failed": {
       log.warn(`[monitor] Workflow child ${childSessionId} failed [${result.reason}]: ${result.message}`);
-      await completeStageAttempt(attemptId, {
+      await completeStageAttempt(runId, attemptId, {
         result: "failed",
         outputSummary: truncateOutput(result.message, 500),
         failureContext: { reason: result.reason, message: result.message, source: "child-session-monitor" },
@@ -586,7 +581,7 @@ async function monitorWorkflowChild(
     }
     case "idle_timeout": {
       log.warn(`[monitor] Workflow child ${childSessionId} idle timeout after ${result.idleMinutes}m for ${stageTitle} #${attemptNumber}`);
-      await completeStageAttempt(attemptId, {
+      await completeStageAttempt(runId, attemptId, {
         result: "failed",
         outputSummary: `Stage child went idle for ${result.idleMinutes}m without completing. ${result.message}`,
         failureContext: { reason: "idle_timeout", idleMinutes: result.idleMinutes, message: result.message, source: "child-session-monitor" },
@@ -594,27 +589,6 @@ async function monitorWorkflowChild(
       break;
     }
   }
-}
-
-/**
- * Infer the stage result from the child's final assistant output.
- * Looks for explicit pass/fail signals in the text. Defaults to "passed"
- * if the session completed successfully (saved status) without explicit failure.
- */
-function inferStageResult(output: string): string {
-  const lower = output.toLowerCase();
-  // Check for explicit failure signals
-  if (lower.includes("stage: failed") || lower.includes("result: failed") || lower.includes("stage failed")) {
-    return "failed";
-  }
-  if (lower.includes("stage: blocked") || lower.includes("result: blocked")) {
-    return "blocked";
-  }
-  if (lower.includes("stage: needs_review") || lower.includes("result: needs_review")) {
-    return "needs_review";
-  }
-  // Default: if the session completed (saved), the stage passed
-  return "passed";
 }
 
 export const BUILD_WORKFLOW_TEMPLATE_ID = "build-v1";
@@ -1061,7 +1035,6 @@ export async function startStageAttempt(runId: string, stageKey?: string, option
     ? { ...(typeof stageSpecificContext === "object" ? stageSpecificContext : {}), ...(typeof options.inputContext === "object" && options.inputContext !== null ? options.inputContext as Record<string, unknown> : options.inputContext !== undefined ? { input: options.inputContext } : {}) }
     : undefined;
   const inputContext = buildStageInputContext(detail, key, stage, attemptNumber, mergedInputContext);
-  const childSessionId = options.childSessionId || (options.spawnChildSession === false ? null : await spawnWorkflowStageChild(parentSessionId, detail, key, stage.title, attemptNumber, inputContext));
 
   const [attempt] = await db.insert(workflowStageAttempts).values({
     workflowRunId: runId,
@@ -1070,28 +1043,36 @@ export async function startStageAttempt(runId: string, stageKey?: string, option
     attemptNumber,
     status: "active",
     autonomyMode: workflowAutonomyModeSchema.parse(stage.autonomyMode),
-    childSessionId,
+    childSessionId: options.childSessionId || null,
     linkedPlanId: options.linkedPlanId || null,
-    inputContext,
+    inputContext: { ...inputContext, stageAttemptId: null },
     startedAt: new Date(),
     ...owner(attemptScopeColumns),
   }).returning();
+  const persistedInputContext = { ...inputContext, stageAttemptId: attempt.id };
+  let childSessionId = options.childSessionId || null;
+  try {
+    childSessionId = childSessionId || (options.spawnChildSession === false ? null : await spawnWorkflowStageChild(parentSessionId, detail, key, stage.title, attemptNumber, persistedInputContext));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await db.update(workflowStageAttempts).set({ status: "failed", result: "failed", outputSummary: `Failed to spawn workflow child: ${message}`, failureContext: { reason: "child_spawn_failed", message }, completedAt: new Date(), updatedAt: new Date() }).where(writable(attemptScopeColumns, and(eq(workflowStageAttempts.workflowRunId, runId), eq(workflowStageAttempts.id, attempt.id))));
+    throw error;
+  }
+  await db.update(workflowStageAttempts).set({ childSessionId, inputContext: persistedInputContext, updatedAt: new Date() }).where(writable(attemptScopeColumns, and(eq(workflowStageAttempts.workflowRunId, runId), eq(workflowStageAttempts.id, attempt.id))));
   if (childSessionId) await linkWorkflowSession({ workflowRunId: runId, stageAttemptId: attempt.id, sessionId: childSessionId, role: "stage_attempt", spawnReason: `workflow:${runId}:${key}:attempt-${attemptNumber}` });
   await db.update(workflowRuns).set({ status: "active", currentStageKey: key, updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, runId)));
   await notifyWorkflowProgress(parentSessionId, runId, `Started workflow stage **${stage.title}** attempt ${attemptNumber}/${maxAttempts}${childSessionId ? ` in child session ${childSessionId}` : ""}.`);
   await renderWorkflowRunPage(runId);
 
-  // Fire-and-forget: monitor the child session and auto-complete the stage
-  // when the child finishes. The child's own complete_stage_attempt tool call
-  // becomes optional — the idempotency guard in completeStageAttempt handles
-  // the case where both the child and the monitor try to complete.
+  // Fire-and-forget: monitor executor failures. Successful stage completion
+  // remains explicit through completeStageAttempt.
   if (childSessionId) {
     monitorWorkflowChild(attempt.id, childSessionId, parentSessionId, runId, key, stage.title, attemptNumber).catch((err) => {
       log.error(`[monitor] Failed to monitor workflow child ${childSessionId} for attempt ${attempt.id}: ${err instanceof Error ? err.message : String(err)}`);
     });
   }
 
-  return attempt;
+  return { ...attempt, childSessionId, inputContext: persistedInputContext };
 }
 
 function acceptanceGateFailureFromEvidence(attempt: WorkflowStageAttempt, result: string, evidence: unknown): Record<string, unknown> | null {
@@ -1112,17 +1093,22 @@ function acceptanceGateFailureFromEvidence(attempt: WorkflowStageAttempt, result
     : { reason: "acceptance_gate_failure", failedGates, gates, nextSuggestedFix: "Return to Implement, fix the failed gate, publish again, and rerun acceptance." };
 }
 
-export async function completeStageAttempt(attemptId: number, resultInput: { result: string; outputSummary?: string; evidence?: unknown; failureContext?: unknown; createdBySessionId?: string }): Promise<WorkflowRunDetail> {
+export async function completeStageAttempt(workflowRunId: string, attemptId: number, resultInput: { result: string; outputSummary?: string; evidence?: unknown; failureContext?: unknown; createdBySessionId?: string }): Promise<WorkflowRunDetail> {
+  if (!workflowRunId.trim()) throw new Error("completeStageAttempt requires workflowRunId");
+  if (!Number.isSafeInteger(attemptId) || attemptId <= 0) throw new Error(`Invalid stage attempt ID: ${String(attemptId)}`);
   const requestedResult = workflowAttemptResultSchema.parse(resultInput.result);
-  const [attempt] = await db.select().from(workflowStageAttempts).where(visible(attemptScopeColumns, eq(workflowStageAttempts.id, attemptId))).limit(1);
-  if (!attempt) throw new Error(`Stage attempt not found: ${attemptId}`);
+  const [attempt] = await db.select().from(workflowStageAttempts).where(visible(attemptScopeColumns, and(eq(workflowStageAttempts.workflowRunId, workflowRunId), eq(workflowStageAttempts.id, attemptId)))).limit(1);
+  if (!attempt) throw new Error(`Stage attempt ${attemptId} not found in workflow run ${workflowRunId}`);
   // Idempotency guard: reject duplicate completions for already-completed attempts
   if (attempt.completedAt || attempt.status !== "active") {
     log.warn(`completeStageAttempt called on already-completed attempt ${attemptId} (status=${attempt.status}). Returning current state as no-op.`);
     return (await getWorkflowRun(attempt.workflowRunId))!;
   }
-  const beforeDetail = await getWorkflowRun(attempt.workflowRunId);
-  if (!beforeDetail) throw new Error(`Workflow run not found: ${attempt.workflowRunId}`);
+  const beforeDetail = await getWorkflowRun(workflowRunId);
+  if (!beforeDetail) throw new Error(`Workflow run not found: ${workflowRunId}`);
+  if (beforeDetail.run.currentStageKey !== attempt.stageKey) {
+    throw new Error(`Stage attempt ${attemptId} is stale for workflow run ${workflowRunId}: attempt stage ${attempt.stageKey}, current stage ${beforeDetail.run.currentStageKey || "none"}`);
+  }
   const forcedAcceptanceFailure = acceptanceGateFailureFromEvidence(attempt, requestedResult, resultInput.evidence || attempt.evidence || {});
   const result = forcedAcceptanceFailure ? "failed" : requestedResult;
   const status = result === "passed" ? "passed" : result === "needs_review" ? "needs_review" : result === "blocked" ? "blocked" : result === "skipped" ? "skipped" : "failed";
@@ -1151,7 +1137,7 @@ export async function completeStageAttempt(attemptId: number, resultInput: { res
     completedAt: new Date(),
     durationSeconds,
     updatedAt: new Date(),
-  }).where(writable(attemptScopeColumns, eq(workflowStageAttempts.id, attemptId)));
+  }).where(writable(attemptScopeColumns, and(eq(workflowStageAttempts.workflowRunId, workflowRunId), eq(workflowStageAttempts.id, attemptId))));
   if (failurePacket) await db.update(workflowRuns).set({ failurePacket, updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, attempt.workflowRunId)));
   if (resultInput.evidence) await attachWorkflowArtifact({ workflowRunId: attempt.workflowRunId, stageAttemptId: attempt.id, kind: attempt.stageKey === "calibration" ? "calibration" : attempt.stageKey === "acceptance" ? "acceptance" : result === "passed" ? "acceptance" : "other", title: `${attempt.stageTitle} attempt ${result}`, summary: resultInput.outputSummary || "", metadata: resultInput.evidence, createdBySessionId: resultInput.createdBySessionId, render: false });
 
@@ -1162,7 +1148,7 @@ export async function completeStageAttempt(attemptId: number, resultInput: { res
     await notifyWorkflowProgress(parentSessionId, attempt.workflowRunId, `Retry available for **${attempt.stageTitle}**. Next attempt will spawn a fresh child session with the failure packet and a different-approach instruction.`);
   }
 
-  return advanceWorkflowRun(attempt.workflowRunId, result === "passed" ? "autonomous" : "system", attempt.id, result, resultInput.outputSummary || "");
+  return advanceWorkflowRun(workflowRunId, result === "passed" ? "autonomous" : "system", attempt.id, result, resultInput.outputSummary || "");
 }
 
 export async function advanceWorkflowRun(runId: string, trigger: WorkflowTransitionTrigger | string = "autonomous", fromAttemptId?: number, result: string = "passed", reason = ""): Promise<WorkflowRunDetail> {
@@ -1173,8 +1159,9 @@ export async function advanceWorkflowRun(runId: string, trigger: WorkflowTransit
   if (!current) return detail;
   // Idempotency guard: if fromAttemptId belongs to a different stage than current, it's a stale signal
   if (fromAttemptId) {
-    const [sourceAttempt] = await db.select().from(workflowStageAttempts).where(eq(workflowStageAttempts.id, fromAttemptId)).limit(1);
-    if (sourceAttempt && sourceAttempt.stageKey !== current) {
+    const [sourceAttempt] = await db.select().from(workflowStageAttempts).where(visible(attemptScopeColumns, and(eq(workflowStageAttempts.workflowRunId, runId), eq(workflowStageAttempts.id, fromAttemptId)))).limit(1);
+    if (!sourceAttempt) throw new Error(`Stage attempt ${fromAttemptId} does not belong to workflow run ${runId}`);
+    if (sourceAttempt.stageKey !== current) {
       log.warn(`advanceWorkflowRun: stale attempt ${fromAttemptId} (stage=${sourceAttempt.stageKey}) does not match current stage (${current}). No-op.`);
       return detail;
     }
