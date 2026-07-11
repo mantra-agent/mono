@@ -29,6 +29,7 @@ import {
   type WorkflowStageDefinition,
 } from "@shared/schema";
 import {
+  environmentContextArtifacts,
   environmentHostingBindings,
   environmentSourceBindings,
   platformProductEnvironments,
@@ -39,6 +40,7 @@ import {
   type EnvironmentSourceBinding,
   type ProviderConnection,
 } from "@shared/models/platforms";
+import { libraryPages } from "@shared/models/info";
 import { getProviderCredential } from "../provider-credential-store";
 import { getLatestDeploymentByToken } from "../integrations/railway/client";
 import { getCloudflareLatestDeployment } from "../services/provider-connection-service";
@@ -194,6 +196,7 @@ type WorkflowStageInputContext = {
   exitCriteria?: string[];
   evidenceRequirements?: string[];
   allowedTransitions?: Array<{ toStageKey: string | null; on: string; reason?: string }>;
+  boundProtocols?: Array<{ kind: string; libraryPageId: string; title: string }>;
 };
 
 function getMaxAttempts(detail: WorkflowRunDetail): number {
@@ -279,11 +282,33 @@ function buildRetryContext(detail: WorkflowRunDetail, stageKey: string, stageTit
   };
 }
 
-function buildStageInputContext(detail: WorkflowRunDetail, stageKey: string, stageDef: WorkflowStageDefinition, attemptNumber: number, extraContext?: unknown): WorkflowStageInputContext & { extraContext?: unknown; environmentTruth?: WorkflowEnvironmentTruth | null; lifecycleSnapshot?: unknown; protocols?: Record<string, unknown> } {
+async function resolveBoundProtocols(environmentId: number | null): Promise<Array<{ kind: string; libraryPageId: string; title: string }>> {
+  if (!environmentId) return [];
+  const rows = await db
+    .select({
+      kind: environmentContextArtifacts.kind,
+      libraryPageId: environmentContextArtifacts.libraryPageId,
+      title: libraryPages.title,
+    })
+    .from(environmentContextArtifacts)
+    .innerJoin(libraryPages, eq(environmentContextArtifacts.libraryPageId, libraryPages.id))
+    .where(and(
+      eq(environmentContextArtifacts.environmentId, environmentId),
+      inArray(environmentContextArtifacts.kind, ["design_system", "product_definition"]),
+      visible({ scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId }),
+    ))
+    .orderBy(environmentContextArtifacts.kind, libraryPages.title);
+  return rows.map((row) => ({ kind: row.kind, libraryPageId: row.libraryPageId, title: row.title }));
+}
+
+async function buildStageInputContext(detail: WorkflowRunDetail, stageKey: string, stageDef: WorkflowStageDefinition, attemptNumber: number, extraContext?: unknown): Promise<WorkflowStageInputContext & { extraContext?: unknown; environmentTruth?: WorkflowEnvironmentTruth | null; lifecycleSnapshot?: unknown; protocols?: Record<string, unknown> }> {
   const priorAttempts = detail.stages.find((stage) => stage.key === stageKey)?.attempts || [];
   const retryCount = Math.max(0, attemptNumber - 1);
   const previousFailurePacket = buildPreviousFailurePacket(priorAttempts);
   const retryContext = retryCount > 0 ? buildRetryContext(detail, stageKey, stageDef.title, priorAttempts) : undefined;
+  const boundProtocols = stageKey === "design_review"
+    ? await resolveBoundProtocols(detail.run.linkedEnvironmentId)
+    : [];
   const instruction = retryCount > 0
     ? "This is a retry. The actionable failure packet is included inline under Retry Context. Address that failure directly and try a materially different approach. Do not hunt for the failure packet unless you need archival backup evidence."
     : "Execute this workflow stage in isolation. Use the workflow run artifact as the checkpoint source of truth and report a concise outcome when complete.";
@@ -304,6 +329,7 @@ function buildStageInputContext(detail: WorkflowRunDetail, stageKey: string, sta
     exitCriteria: stageDef.exitCriteria,
     evidenceRequirements: stageDef.evidenceRequirements,
     allowedTransitions: stageDef.allowedTransitions,
+    boundProtocols,
     environmentTruth: detail.environmentTruth || null,
     lifecycleSnapshot: detail.lifecycleSnapshot || detail.run.lifecycleSnapshot || null,
     protocols: detail.template.id === BUILD_WORKFLOW_TEMPLATE_ID ? {
@@ -385,6 +411,14 @@ function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: u
   for (const artifact of context.relevantArtifacts) {
     const ref = [artifact.refType, artifact.refId, artifact.url].filter(Boolean).join(": ");
     lines.push(`- ${artifact.kind}: ${artifact.title}${ref ? ` — ${ref}` : ""}${artifact.summary ? ` — ${artifact.summary}` : ""}`);
+  }
+  if (context.boundProtocols?.length) {
+    lines.push("");
+    lines.push(`## Bound Product Protocols`);
+    lines.push("Resolve and inspect every linked Library page below. These semantic environment bindings are authoritative. Do not substitute guessed repository filenames.");
+    for (const protocol of context.boundProtocols) {
+      lines.push(`- ${protocol.kind}: @page:${protocol.libraryPageId} (${protocol.title})`);
+    }
   }
   if ((context as any).protocols) {
     lines.push("");
@@ -628,7 +662,19 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
     },
     {
       key: "design_review", title: "Design Review", position: 1, autonomyMode: "requires_agent_review",
-      evidenceRequirements: ["Implementation design checked against product coding standards, principles, and relevant project protocols (resolve from product documentation config)."],
+      entryCriteria: [
+        "Inspect the existing user-visible artifact and the proposed implementation design before judging it.",
+        "Resolve design_system and product_definition artifacts semantically from the target environment's bound context artifacts. Fail if the required product protocols cannot be resolved or inspected.",
+      ],
+      evidenceRequirements: [
+        "Protocol audit: compare the existing artifact and proposed design against every bound design_system and product_definition protocol. Enumerate each concrete violation with the governing rule, affected element or flow, and a structural cure. Do not pass while any clear violation remains uncured in the design.",
+        "End-user-backward UX audit: walk the complete user journey and identify missing journeys, states, feedback, recovery, accessibility, and forgotten user needs. For every gap, prescribe the design change that closes it.",
+        "Complexity-reduction audit: identify proposed elements, states, components, or mechanisms already solved by a simpler fundamental system or canonical shared primitive. Remove or consolidate them unless a named constraint requires the added complexity.",
+        "Final verdict: explicitly state pass or fail, list residual risks, and cite the inspected artifact plus every bound protocol used as evidence.",
+      ],
+      exitCriteria: [
+        "Pass only when the design contains structural cures for every clear protocol violation and material UX gap, and the complexity-reduction pass leaves no unjustified duplicate mechanism.",
+      ],
       allowedTransitions: [{ toStageKey: "implement", on: "pass" }, { toStageKey: "scope", on: "fail" }],
     },
     {
@@ -1060,7 +1106,7 @@ export async function startStageAttempt(runId: string, stageKey?: string, option
   const mergedInputContext = stageSpecificContext || options.inputContext !== undefined
     ? { ...(typeof stageSpecificContext === "object" ? stageSpecificContext : {}), ...(typeof options.inputContext === "object" && options.inputContext !== null ? options.inputContext as Record<string, unknown> : options.inputContext !== undefined ? { input: options.inputContext } : {}) }
     : undefined;
-  const inputContext = buildStageInputContext(detail, key, stage, attemptNumber, mergedInputContext);
+  const inputContext = await buildStageInputContext(detail, key, stage, attemptNumber, mergedInputContext);
   const childSessionId = options.childSessionId || (options.spawnChildSession === false ? null : await spawnWorkflowStageChild(parentSessionId, detail, key, stage.title, attemptNumber, inputContext));
 
   const [attempt] = await db.insert(workflowStageAttempts).values({
