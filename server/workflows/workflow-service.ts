@@ -1116,11 +1116,6 @@ export async function completeStageAttempt(attemptId: number, resultInput: { res
   const requestedResult = workflowAttemptResultSchema.parse(resultInput.result);
   const [attempt] = await db.select().from(workflowStageAttempts).where(visible(attemptScopeColumns, eq(workflowStageAttempts.id, attemptId))).limit(1);
   if (!attempt) throw new Error(`Stage attempt not found: ${attemptId}`);
-  // Idempotency guard: reject duplicate completions for already-completed attempts
-  if (attempt.completedAt || attempt.status !== "active") {
-    log.warn(`completeStageAttempt called on already-completed attempt ${attemptId} (status=${attempt.status}). Returning current state as no-op.`);
-    return (await getWorkflowRun(attempt.workflowRunId))!;
-  }
   const beforeDetail = await getWorkflowRun(attempt.workflowRunId);
   if (!beforeDetail) throw new Error(`Workflow run not found: ${attempt.workflowRunId}`);
   const forcedAcceptanceFailure = acceptanceGateFailureFromEvidence(attempt, requestedResult, resultInput.evidence || attempt.evidence || {});
@@ -1142,7 +1137,10 @@ export async function completeStageAttempt(attemptId: number, resultInput: { res
     }
     : null;
 
-  await db.update(workflowStageAttempts).set({
+  // Claim completion atomically. The child may call complete_stage_attempt while
+  // the parent monitor observes the same terminal session state. Only the
+  // winner may persist evidence or advance the workflow.
+  const [completedAttempt] = await db.update(workflowStageAttempts).set({
     status,
     result,
     outputSummary: resultInput.outputSummary || null,
@@ -1151,7 +1149,15 @@ export async function completeStageAttempt(attemptId: number, resultInput: { res
     completedAt: new Date(),
     durationSeconds,
     updatedAt: new Date(),
-  }).where(writable(attemptScopeColumns, eq(workflowStageAttempts.id, attemptId)));
+  }).where(writable(attemptScopeColumns, and(
+    eq(workflowStageAttempts.id, attemptId),
+    eq(workflowStageAttempts.status, "active"),
+    isNull(workflowStageAttempts.completedAt),
+  ))).returning();
+  if (!completedAttempt) {
+    log.log(`completeStageAttempt lost completion claim for attempt ${attemptId}; another path already completed it.`);
+    return (await getWorkflowRun(attempt.workflowRunId))!;
+  }
   if (failurePacket) await db.update(workflowRuns).set({ failurePacket, updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, attempt.workflowRunId)));
   if (resultInput.evidence) await attachWorkflowArtifact({ workflowRunId: attempt.workflowRunId, stageAttemptId: attempt.id, kind: attempt.stageKey === "calibration" ? "calibration" : attempt.stageKey === "acceptance" ? "acceptance" : result === "passed" ? "acceptance" : "other", title: `${attempt.stageTitle} attempt ${result}`, summary: resultInput.outputSummary || "", metadata: resultInput.evidence, createdBySessionId: resultInput.createdBySessionId, render: false });
 
@@ -1304,6 +1310,8 @@ type DeploymentReadiness = {
   initialStatus: string | null;
   finalStatus: string | null;
   finalDeploymentId: string | null;
+  expectedCommitSha: string | null;
+  observedCommitSha: string | null;
   message: string;
 };
 
@@ -1332,14 +1340,67 @@ function deploymentId(deployment: WorkflowEnvironmentTruth["deployment"] | null 
 function deploymentReadinessMessage(readiness: DeploymentReadiness, provider: string): string {
   const status = readiness.finalStatus || "unknown";
   if (readiness.status === "green") return `${provider} deployment ${readiness.finalDeploymentId || "unknown"} reached ${status} after ${readiness.attempts} check(s).`;
-  if (readiness.status === "timeout") return `Timed out after ${Math.round(readiness.waitedMs / 1000)}s waiting for ${provider} deployment to finish; final status ${status}.`;
+  if (readiness.status === "timeout") return `Timed out after ${Math.round(readiness.waitedMs / 1000)}s waiting for ${provider} deployment${readiness.expectedCommitSha ? ` of ${readiness.expectedCommitSha.slice(0, 8)}` : ""}; final status ${status}${readiness.observedCommitSha ? ` on ${readiness.observedCommitSha.slice(0, 8)}` : ""}.`;
   if (readiness.status === "failed") return `Deployment ${readiness.finalDeploymentId || "unknown"} reached terminal failure status ${status}.`;
   if (readiness.status === "pending") return `Deployment ${readiness.finalDeploymentId || "unknown"} is still pending with status ${status}.`;
   return `Deployment status unavailable: ${status}.`;
 }
 
+function deploymentCommitSha(deployment: WorkflowEnvironmentTruth["deployment"] | null | undefined): string | null {
+  const sha = deployment?.latest?.commitSha;
+  return typeof sha === "string" && sha.trim() ? sha.trim().toLowerCase() : null;
+}
+
+function commitMatches(expected: string | null, observed: string | null): boolean {
+  if (!expected) return true;
+  if (!observed) return false;
+  return expected.startsWith(observed) || observed.startsWith(expected);
+}
+
+function findCommitSha(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  for (const key of ["mergeSha", "mergedCommitSha", "commitSha", "reviewedCommit"]) {
+    const candidate = record[key];
+    if (typeof candidate === "string" && /^[a-f0-9]{7,40}$/i.test(candidate.trim())) return candidate.trim().toLowerCase();
+  }
+  for (const nested of Object.values(record)) {
+    const found = findCommitSha(nested);
+    if (found) return found;
+  }
+  return null;
+}
+
+function expectedAcceptanceDeployment(detail: WorkflowRunDetail): { commitSha: string | null; notBefore: Date | null } {
+  const review = detail.stages.find((stage) => stage.key === "code_review")?.attempts
+    .filter((attempt) => attempt.result === "passed" && attempt.completedAt)
+    .sort((a, b) => (b.completedAt?.getTime() || 0) - (a.completedAt?.getTime() || 0))[0];
+  const implement = detail.stages.find((stage) => stage.key === "implement")?.attempts
+    .filter((attempt) => attempt.result === "passed" && attempt.completedAt)
+    .sort((a, b) => (b.completedAt?.getTime() || 0) - (a.completedAt?.getTime() || 0))[0];
+  return {
+    commitSha: findCommitSha(review?.evidence) || findCommitSha(implement?.evidence),
+    notBefore: review?.completedAt || implement?.completedAt || null,
+  };
+}
+
+function deploymentIsCurrent(
+  deployment: WorkflowEnvironmentTruth["deployment"] | null | undefined,
+  expected: { commitSha: string | null; notBefore: Date | null },
+): boolean {
+  const observedCommit = deploymentCommitSha(deployment);
+  if (expected.commitSha) return commitMatches(expected.commitSha, observedCommit);
+  const deployedAt = deployment?.latest?.deployedAt;
+  if (!expected.notBefore || typeof deployedAt !== "string") return false;
+  const deployedAtMs = Date.parse(deployedAt);
+  return Number.isFinite(deployedAtMs) && deployedAtMs >= expected.notBefore.getTime();
+}
+
 async function waitForAcceptanceDeploymentTruth(runId: string, initialTruth: WorkflowEnvironmentTruth | null): Promise<{ truth: WorkflowEnvironmentTruth | null; readiness: DeploymentReadiness }> {
   const startedAt = Date.now();
+  const detail = await getWorkflowRun(runId);
+  if (!detail) throw new Error(`Workflow run not found: ${runId}`);
+  const expected = expectedAcceptanceDeployment(detail);
   let truth = initialTruth;
   let attempts = 0;
   const initialStatus = normalizedDeploymentStatus(truth?.deployment) || null;
@@ -1356,23 +1417,25 @@ async function waitForAcceptanceDeploymentTruth(runId: string, initialTruth: Wor
       initialStatus,
       finalStatus: status || null,
       finalDeploymentId: deploymentId(deployment),
+      expectedCommitSha: expected.commitSha,
+      observedCommitSha: deploymentCommitSha(deployment),
     };
 
     if (!deployment?.available) {
       const readiness: DeploymentReadiness = { status: "unavailable", ...base, message: deployment?.reason || "Deployment status is unavailable." };
       return { truth, readiness };
     }
-    if (category === "green") {
+    if (category === "green" && deploymentIsCurrent(deployment, expected)) {
       const readiness: DeploymentReadiness = { status: "green", ...base, message: "" };
       readiness.message = deploymentReadinessMessage(readiness, deployment.provider);
       return { truth, readiness };
     }
-    if (category === "failed") {
+    if (category === "failed" && deploymentIsCurrent(deployment, expected)) {
       const readiness: DeploymentReadiness = { status: "failed", ...base, message: "" };
       readiness.message = deploymentReadinessMessage(readiness, deployment.provider);
       return { truth, readiness };
     }
-    if (category === "pending" || !deployment.latest) {
+    if (category === "pending" || category === "green" || category === "failed" || !deployment.latest) {
       if (waitedMs >= ACCEPTANCE_DEPLOY_WAIT_TIMEOUT_MS) {
         const readiness: DeploymentReadiness = { status: "timeout", ...base, message: "" };
         readiness.message = deploymentReadinessMessage(readiness, deployment.provider);
