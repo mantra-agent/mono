@@ -107,6 +107,12 @@ export class RunAdmissionController {
     return this.queue.length;
   }
 
+  getQueuedRequestForSession(sessionId: string): { runId: string; tier: AdmissionTier; activity?: string } | undefined {
+    const request = this.queue.find((queued) => queued.sessionId === sessionId);
+    if (!request) return undefined;
+    return { runId: request.runId, tier: request.tier, activity: request.activity };
+  }
+
   getQueuedByTier(): Record<AdmissionTier, number> {
     const counts: Record<AdmissionTier, number> = { communication: 0, realtime: 0, request: 0, background: 0 };
     for (const q of this.queue) {
