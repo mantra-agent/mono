@@ -2690,6 +2690,8 @@ interface RecallStatus {
   hasKey?: boolean;
   region?: string | null;
   hasWebhookSecret?: boolean;
+  statusWebhookUrl?: string;
+  transcriptWebhookUrl?: string;
   error?: string;
 }
 
@@ -2709,7 +2711,7 @@ function RecallDetail() {
       toast({
         title: status.connected ? "Recall.ai connected" : "Recall.ai connection failed",
         description: status.connected
-          ? `Connection verified${status.region ? ` in ${status.region}` : ""}.`
+          ? `API credentials verified${status.region ? ` in ${status.region}` : ""}. Complete the status webhook setup below before live testing.`
           : status.error ?? "Check the API key and region, then try again.",
         variant: status.connected ? "default" : "destructive",
       });
@@ -2747,7 +2749,7 @@ function RecallDetail() {
               <>
                 <CheckCircle2 className="h-4 w-4 text-active" />
                 <span className="text-sm">
-                  Connected{recallStatus.region ? ` (${recallStatus.region})` : ""}
+                  API connected{recallStatus.region ? ` (${recallStatus.region})` : ""}
                 </span>
               </>
             ) : (
@@ -2782,14 +2784,20 @@ function RecallDetail() {
                 (us-east-1, us-west-2, eu-central-1, or ap-northeast-1).
               </p>
             </div>
-            <div className="rounded-lg border p-3">
-              <div className="font-medium text-foreground">Status webhook (one-time)</div>
+            <div className="rounded-lg border p-3 space-y-2">
+              <div className="font-medium text-foreground">Required status webhook (one-time)</div>
               <p>
-                In the Recall dashboard, add a webhook endpoint pointing to{" "}
-                <code>{`${window.location.origin}/api/webhooks/recall`}</code> and subscribe it to
-                bot status events. Then copy its signing secret (whsec_…) into{" "}
-                <code>RECALL_WEBHOOK_SECRET</code> so lobby/live/denied states show up in meeting
-                sessions.
+                API credentials alone are not enough. In the Recall dashboard for this region,
+                open <strong>Webhooks</strong>, choose <strong>Add Endpoint</strong>, and add:
+              </p>
+              <code className="block break-all rounded bg-muted p-2 text-[11px]">
+                {recallStatus?.statusWebhookUrl ?? `${window.location.origin}/api/webhooks/recall`}
+              </code>
+              <p>
+                Subscribe to all <code>bot.*</code> status events, especially joining, waiting room,
+                in-call recording, call ended, done, and fatal. Save the workspace verification
+                secret as <code>RECALL_WEBHOOK_SECRET</code>. Recall does not register this endpoint
+                through Create Bot, so live meeting status cannot work until this dashboard step is complete.
               </p>
             </div>
           </div>
