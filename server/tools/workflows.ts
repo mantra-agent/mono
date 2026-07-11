@@ -40,7 +40,13 @@ export async function handleWorkflows(args: Record<string, any>): Promise<ToolHa
       case "resume_run": return json(await resumeWorkflowRun(String(args.runId || args.id || "")));
       case "cancel_run": return json(await cancelWorkflowRun(String(args.runId || args.id || ""), args.reason));
       case "start_stage_attempt": return json(await startStageAttempt(String(args.runId || args.id || ""), args.stageKey, args));
-      case "complete_stage_attempt": return json(await completeStageAttempt(Number(args.attemptId), args));
+      case "complete_stage_attempt": {
+        const workflowRunId = String(args.workflowRunId || args.runId || "").trim();
+        const attemptId = Number(args.attemptId);
+        if (!workflowRunId) throw new Error("complete_stage_attempt requires workflowRunId");
+        if (!Number.isSafeInteger(attemptId) || attemptId <= 0) throw new Error(`complete_stage_attempt requires a positive integer attemptId; received ${String(args.attemptId)}`);
+        return json(await completeStageAttempt(workflowRunId, attemptId, args));
+      }
       case "attach_artifact": return json(await attachWorkflowArtifact({ ...args, workflowRunId: String(args.workflowRunId || args.runId || args.id || "") || undefined }));
       case "capture_publish_stage_evidence": return json(await capturePublishToStageEvidence({ workflowRunId: String(args.runId || args.id || args.workflowRunId || ""), stageAttemptId: args.stageAttemptId, createdBySessionId: args.createdBySessionId, summary: args.summary }));
       case "capture_acceptance_evidence": return json(await captureAcceptanceEvidence({ workflowRunId: String(args.runId || args.id || args.workflowRunId || ""), stageAttemptId: args.stageAttemptId, routePath: args.routePath, createdBySessionId: args.createdBySessionId, summary: args.summary, optionalSmokeAttempted: args.optionalSmokeAttempted }));
