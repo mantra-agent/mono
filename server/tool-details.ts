@@ -162,7 +162,7 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     },
   },
   people: {
-    description: "Manage personal contacts — search, list, get details, check outreach agenda, add notes, log interactions. Actions: list, get, search, agenda, add_note, update_note, delete_note, log_interaction, create, scan_imports, scan_ignored.",
+    description: "Manage personal contacts — search, list, get details, check outreach agenda, add notes, log interactions. Actions: list, get, search, agenda, add_note, update_note, delete_note, log_interaction, create, scan_imports, scan_ignored, granular import-candidate reads/decisions, and preview/apply batch processing.",
     whenToUse: "User mentions a person, wants to look up contact details, log an interaction, or manage their relationship network.",
     example: 'Search: { "action": "search", "query": "Sarah" }\nAdd note: { "action": "add_note", "id": "person-id", "content": "..." }',
   },

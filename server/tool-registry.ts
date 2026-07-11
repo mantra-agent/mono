@@ -352,13 +352,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   people: {
-    description: "Manage personal contacts — query, search, get details, check outreach agenda, add notes, log interactions, update or delete interactions. Actions: list, query, get_many, get, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, create, scan_imports, scan_ignored. Use canonical @person:id syntax in messages to link to people. Legacy [person:id] syntax is accepted during migration.",
+    description: "Manage personal contacts — query, search, get details, check outreach agenda, add notes, log interactions, update or delete interactions. Actions: list, query, get_many, get, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, create, scan_imports, scan_ignored, list/get/find import candidates, add/merge/skip/undo decisions, and preview/apply/get batches. Use canonical @person:id syntax in messages to link to people. Legacy [person:id] syntax is accepted during migration.",
     category: "communication",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list", "query", "get_many", "get", "search", "agenda", "add_note", "update_note", "delete_note", "log_interaction", "get_interactions", "update_interaction", "delete_interaction", "create", "scan_imports", "scan_ignored"], description: "The action to perform" },
+        action: { type: "string", enum: ["list", "query", "get_many", "get", "search", "agenda", "add_note", "update_note", "delete_note", "log_interaction", "get_interactions", "update_interaction", "delete_interaction", "create", "scan_imports", "scan_ignored", "list_import_candidates", "get_import_candidate", "find_import_matches", "add_import_candidate", "merge_import_candidate", "skip_import_candidate", "undo_import_decision", "preview_import_batch", "apply_import_batch", "get_import_batch"], description: "The action to perform" },
         id: { type: "string", description: "Person ID or name (resolved automatically)" },
         query: { type: "string", description: "Person name or search term" },
         ids: { type: "array", items: { type: "string" }, description: "Person IDs for get_many (max 100)" },
@@ -389,6 +389,13 @@ export const TOOLS: Record<string, ToolMeta> = {
         introducedBy: { type: "string", description: "Who introduced them (for create)" },
         familiarity: { type: "string", enum: ["none", "surface", "deep"], description: "Familiarity level (for create)" },
         trust: { type: "string", enum: ["ally", "positive", "none", "negative", "enemy"], description: "Trust level (for create)" },
+        candidateId: { type: "string", description: "Import candidate ID for candidate actions" },
+        personId: { type: "string", description: "Target Person ID for merge_import_candidate" },
+        decisionId: { type: "string", description: "Decision audit ID for undo_import_decision" },
+        idempotencyKey: { type: "string", description: "Required replay-safe key for import mutations and batch apply" },
+        decisions: { type: "array", items: { type: "object" }, description: "Batch decisions: [{ action: add|merge|skip, input: { candidateId, ... } }]" },
+        batchId: { type: "string", description: "Import batch ID" },
+        batchToken: { type: "string", description: "Immutable token returned by preview_import_batch" },
       },
       required: ["action"],
     },
