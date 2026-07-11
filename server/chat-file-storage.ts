@@ -2201,6 +2201,8 @@ export const chatFileStorage: IChatFileStorage = {
       data.spawnReason = undefined;
       data.spawnerTool = undefined;
       data.spawnerSkillRun = undefined;
+      data.rootSessionId = data.id;
+      data.depth = 0;
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
       try {

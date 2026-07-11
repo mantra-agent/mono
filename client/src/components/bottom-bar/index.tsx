@@ -286,6 +286,7 @@ function BottomBarMenu({
               <SessionActionsMenuItems
                 sessionId={focusedSessionId}
                 sessionTitle={focusedSession?.title}
+                parentSessionId={focusedSession?.parentSessionId}
                 hideRename
                 onSelectSession={onSelectSession}
                 onArchive={(id) => archiveMutation.mutate(id)}

@@ -402,6 +402,7 @@ export function ConversationItem({
           <SessionActionsMenuItems
             sessionId={conv.id}
             sessionTitle={conv.title}
+            parentSessionId={conv.parentSessionId}
             onRename={startRename}
             onSelectSession={onSelect}
             onArchive={onArchive}
