@@ -16,6 +16,7 @@ export function ProfileTreeRow({
   actionContent,
   menuContent,
   testId,
+  defaultOpen = false,
 }: {
   label: ReactNode;
   icon?: ReactNode;
@@ -27,8 +28,9 @@ export function ProfileTreeRow({
   actionContent?: ReactNode;
   menuContent?: ReactNode;
   testId?: string;
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
 
   if (!hasValue && !showEmpty) return null;
 

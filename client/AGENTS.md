@@ -201,3 +201,9 @@ Do not reintroduce a second embedded session input under the transcript panel. I
 - **Tab naming**: Call them "Tabs" in all specs and discussions — that's the UI system vocabulary.
 - **Test in dark mode**. Dark theme is primary. Light mode exists but is secondary.
 - Cross-reference: The streaming protocol is produced by the server chat route (see `/server/AGENTS.md`). WebSocket events originate from various server subsystems.
+
+## Shared UI Patterns
+
+### Profile Tree Rows
+
+Use `ProfileTreeRow` for compact label/value rows with optional progressive disclosure. Pass `defaultOpen` only when readiness or missing required configuration must be visible on first render; ordinary detail rows stay collapsed.

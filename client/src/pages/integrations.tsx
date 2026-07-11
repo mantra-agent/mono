@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { usePageHeader } from "@/hooks/use-page-header";
@@ -79,6 +80,7 @@ import {
 } from "lucide-react";
 import { SiX } from "react-icons/si";
 import { SecretsForSection } from "@/components/SecretControl";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { RailwaySetupTab } from "@/components/railway-setup";
 import { VoiceV3WebhookSecretCard } from "@/components/VoiceV3WebhookSecretCard";
 import { usePlaidLink } from "react-plaid-link";
@@ -2695,6 +2697,33 @@ interface RecallStatus {
   error?: string;
 }
 
+function IntegrationTreeSection({
+  label,
+  children,
+  defaultOpen = true,
+}: {
+  label: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger
+        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate"
+        data-testid={`button-recall-section-${label.toLowerCase().replaceAll(" ", "-")}`}
+      >
+        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
+        {label}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="mt-0 space-y-0">{children}</div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 function RecallDetail() {
   const { toast } = useToast();
   const { data: recallStatus, isLoading } = useQuery<RecallStatus>({
@@ -2725,84 +2754,116 @@ function RecallDetail() {
     },
   });
 
+  const statusLabel = recallStatus?.connected
+    ? `API connected${recallStatus.region ? ` (${recallStatus.region})` : ""}`
+    : recallStatus?.error
+      ? `Not connected: ${recallStatus.error}`
+      : "Not connected";
+  const webhookReady = Boolean(recallStatus?.connected && recallStatus?.hasWebhookSecret);
+
   return (
-    <div className="space-y-4">
-      <Card data-testid="card-recall-status">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base font-semibold">
-            <Radio className="h-4 w-4" />
-            Recall.ai Meeting Bot
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
-            Powers the meeting agent: the bot joins Zoom and Google Meet calls as
-            {" "}<span className="font-medium text-foreground">"Mantra Agent"</span> and streams a live,
-            speaker-attributed transcript into a meeting session. Enter your API key here — it is
-            stored encrypted and never requested through chat.
-          </div>
+    <div className="min-w-0 space-y-2" data-testid="card-recall-status">
+      <div className="flex min-w-0 items-center gap-2 px-2 py-1.5">
+        <Radio className="h-4 w-4 shrink-0" />
+        <div className="min-w-0">
+          <h2 className="truncate text-base font-semibold">Recall.ai Meeting Bot</h2>
+          <p className="text-xs text-muted-foreground">
+            Joins Zoom and Google Meet calls as "Mantra Agent" and streams speaker-attributed transcripts.
+          </p>
+        </div>
+      </div>
 
-          <div className="flex items-center gap-2" data-testid="recall-connection-status">
-            {isLoading ? (
-              <Skeleton className="h-5 w-40" />
-            ) : recallStatus?.connected ? (
-              <>
-                <CheckCircle2 className="h-4 w-4 text-active" />
-                <span className="text-sm">
-                  API connected{recallStatus.region ? ` (${recallStatus.region})` : ""}
-                </span>
-              </>
-            ) : (
-              <>
-                <XCircle className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">
-                  {recallStatus?.error
-                    ? `Not connected — ${recallStatus.error}`
-                    : "Not connected. Set the API key and region below."}
-                </span>
-              </>
-            )}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => testConnection.mutate()}
-              disabled={testConnection.isPending}
-              data-testid="button-recall-test-connection"
-            >
-              {testConnection.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Test connection"}
-            </Button>
-          </div>
+      <IntegrationTreeSection label="Connection">
+        <ProfileTreeRow
+          label="Status"
+          icon={recallStatus?.connected
+            ? <CheckCircle2 className="h-3.5 w-3.5 text-active" />
+            : <XCircle className="h-3.5 w-3.5 text-muted-foreground" />}
+          hasValue
+          showEmpty
+          testId="recall-connection-status"
+          expandedContent={recallStatus?.error ? (
+            <p className="text-destructive">{recallStatus.error}</p>
+          ) : undefined}
+        >
+          {isLoading ? (
+            <Skeleton className="h-4 w-28" />
+          ) : (
+            <span className={cn("truncate", recallStatus?.connected ? "text-active" : "text-muted-foreground")}>
+              {statusLabel}
+            </span>
+          )}
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="Connection test"
+          icon={<RefreshCw className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => testConnection.mutate()}
+            disabled={testConnection.isPending}
+            data-testid="button-recall-test-connection"
+          >
+            {testConnection.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Test connection"}
+          </Button>
+        </ProfileTreeRow>
+      </IntegrationTreeSection>
 
+      <IntegrationTreeSection label="Credentials">
+        <div className="min-w-0 px-2 py-1.5">
           <SecretsForSection section="recall" />
+        </div>
+      </IntegrationTreeSection>
 
-          <div className="grid gap-2 text-xs text-muted-foreground @md:grid-cols-2">
-            <div className="rounded-lg border p-3">
-              <div className="font-medium text-foreground">API key + region</div>
-              <p>
-                Create a key in the Recall.ai dashboard. Keys are region-specific — set{" "}
-                <code>RECALL_REGION</code> to the region shown in your dashboard URL
-                (us-east-1, us-west-2, eu-central-1, or ap-northeast-1).
+      <IntegrationTreeSection label="Webhook setup">
+        <ProfileTreeRow
+          label="API key + region"
+          icon={<Globe className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          expandedContent={
+            <p className="text-muted-foreground">
+              Create a key in the Recall.ai dashboard. Keys are region-specific. Set <code>RECALL_REGION</code>
+              {" "}to the region shown in your dashboard URL: us-east-1, us-west-2, eu-central-1, or ap-northeast-1.
+            </p>
+          }
+        >
+          <span className="truncate text-muted-foreground">{recallStatus?.region ?? "Required"}</span>
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="Status webhook"
+          icon={webhookReady
+            ? <CheckCircle2 className="h-3.5 w-3.5 text-active" />
+            : <AlertTriangle className="h-3.5 w-3.5 text-warning" />}
+          hasValue
+          showEmpty
+          expandedContentClassName="min-w-0 space-y-2"
+          defaultOpen={!webhookReady}
+          expandedContent={
+            <>
+              <p className="text-muted-foreground">
+                In the Recall dashboard for this region, open <strong>Webhooks</strong>, choose <strong>Add Endpoint</strong>, and add:
               </p>
-            </div>
-            <div className="rounded-lg border p-3 space-y-2">
-              <div className="font-medium text-foreground">Required status webhook (one-time)</div>
-              <p>
-                API credentials alone are not enough. In the Recall dashboard for this region,
-                open <strong>Webhooks</strong>, choose <strong>Add Endpoint</strong>, and add:
-              </p>
-              <code className="block break-all rounded bg-muted p-2 text-[11px]">
+              <code className="block min-w-0 break-all rounded bg-muted p-2 text-[11px]">
                 {recallStatus?.statusWebhookUrl ?? `${window.location.origin}/api/webhooks/recall`}
               </code>
-              <p>
-                Subscribe to all <code>bot.*</code> status events, especially joining, waiting room,
-                in-call recording, call ended, done, and fatal. Save the workspace verification
-                secret as <code>RECALL_WEBHOOK_SECRET</code>. Recall does not register this endpoint
-                through Create Bot, so live meeting status cannot work until this dashboard step is complete.
+              <p className="text-muted-foreground">
+                Subscribe to all <code>bot.*</code> status events, especially joining, waiting room, in-call recording,
+                call ended, done, and fatal. Save the workspace verification secret as <code>RECALL_WEBHOOK_SECRET</code>.
+                Recall does not register this endpoint through Create Bot, so live meeting status cannot work until this
+                dashboard step is complete.
               </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+            </>
+          }
+        >
+          <span className={webhookReady ? "text-active" : "text-warning"}>
+            {webhookReady ? "Configured" : "Required"}
+          </span>
+        </ProfileTreeRow>
+      </IntegrationTreeSection>
     </div>
   );
 }
