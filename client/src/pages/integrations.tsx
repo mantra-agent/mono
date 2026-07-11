@@ -2694,9 +2694,33 @@ interface RecallStatus {
 }
 
 function RecallDetail() {
-  const { data: recallStatus, isLoading, refetch, isRefetching } = useQuery<RecallStatus>({
+  const { toast } = useToast();
+  const { data: recallStatus, isLoading } = useQuery<RecallStatus>({
     queryKey: ["/api/integrations/recall/status"],
     refetchInterval: false,
+  });
+  const testConnection = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/integrations/recall/test");
+      return (await response.json()) as RecallStatus;
+    },
+    onSuccess: (status) => {
+      queryClient.setQueryData(["/api/integrations/recall/status"], status);
+      toast({
+        title: status.connected ? "Recall.ai connected" : "Recall.ai connection failed",
+        description: status.connected
+          ? `Connection verified${status.region ? ` in ${status.region}` : ""}.`
+          : status.error ?? "Check the API key and region, then try again.",
+        variant: status.connected ? "default" : "destructive",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Recall.ai connection test failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
   });
 
   return (
@@ -2739,11 +2763,11 @@ function RecallDetail() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => refetch()}
-              disabled={isRefetching}
+              onClick={() => testConnection.mutate()}
+              disabled={testConnection.isPending}
               data-testid="button-recall-test-connection"
             >
-              {isRefetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Test connection"}
+              {testConnection.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Test connection"}
             </Button>
           </div>
 

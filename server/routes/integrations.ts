@@ -1224,6 +1224,25 @@ export async function registerIntegrationsRoutes(app: Express) {
     }
   });
 
+  app.post("/api/integrations/recall/test", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { getRecallConfig, testRecallConnection } = await import(
+        "../integrations/recall/client"
+      );
+      const cfg = await getRecallConfig();
+      const test = await testRecallConnection();
+      res.json({
+        connected: test.connected,
+        hasKey: cfg.hasKey,
+        region: cfg.region,
+        hasWebhookSecret: cfg.hasWebhookSecret,
+        error: test.error,
+      });
+    } catch (error: any) {
+      res.status(500).json({ connected: false, error: error.message });
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // Expo / EAS
   // ---------------------------------------------------------------------------
