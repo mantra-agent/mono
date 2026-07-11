@@ -952,13 +952,12 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
                 emitVoiceDiag("first_user_speech", `First user speech ${elapsedSinceConnect}ms after connect`, "done");
                 phoneDiag("first_user_speech", { elapsedSinceConnect });
               }
-              handleUserTranscript({
-                source: "user",
-                message: msg.text,
-                turnId: msg.turnId,
-                sequence: msg.sequence,
-                isFinal: msg.isFinal,
-                transcriptId: msg.eventId ? `native:${msg.eventId}` : undefined,
+              // The server voice_user_transcript event is the canonical user-message
+              // projection. Native transcript callbacks carry provider-local identity
+              // and previously created a second row before the server revision arrived.
+              log.debug("VOICE:NATIVE:USER_TRANSCRIPT_SKIPPED", {
+                reason: "server_transcript_authoritative",
+                messageLength: msg.text.length,
               });
             }
             break;
@@ -1115,7 +1114,13 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
           emitVoiceDiag("first_user_speech", detail, "done");
           phoneDiag("first_user_speech", { elapsedSinceConnect });
         }
-        handleUserTranscript(message);
+        // The server voice_user_transcript event is authoritative for user text.
+        // ElevenLabs onMessage has no canonical voiceTurnId, so rendering it here
+        // creates a duplicate row when the server publishes the same transcript.
+        log.debug("VOICE:MESSAGE:USER_TRANSCRIPT_SKIPPED", {
+          reason: "server_transcript_authoritative",
+          messageLength: message.message?.length || 0,
+        });
       },
       onError: handleVoiceError,
       onDebug: (_debug: { type: string; response?: string }) => {
