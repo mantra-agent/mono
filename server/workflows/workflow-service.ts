@@ -235,8 +235,24 @@ function buildPreviousFailurePacket(attempts: WorkflowStageAttempt[]): unknown |
   };
 }
 
+const BUILD_STAGE_INPUT_SOURCES: Record<string, string[]> = {
+  design_review: ["scope"],
+  implement: ["scope", "design_review"],
+  code_review: ["scope", "design_review", "implement"],
+  acceptance: ["scope", "design_review", "implement", "code_review"],
+  calibration: ["scope", "design_review", "acceptance"],
+  documentation: ["scope", "design_review", "implement", "code_review", "acceptance", "calibration"],
+};
+
 function stageArtifacts(detail: WorkflowRunDetail, stageKey: string): WorkflowArtifactBrief[] {
-  const attemptIds = new Set(detail.stages.find((stage) => stage.key === stageKey)?.attempts.map((attempt) => attempt.id) || []);
+  const sourceStageKeys = detail.template.id === BUILD_WORKFLOW_TEMPLATE_ID
+    ? BUILD_STAGE_INPUT_SOURCES[stageKey] || []
+    : [stageKey];
+  const attemptIds = new Set(
+    detail.stages
+      .filter((stage) => sourceStageKeys.includes(stage.key))
+      .flatMap((stage) => stage.attempts.map((attempt) => attempt.id)),
+  );
   return detail.artifacts
     .filter((artifact) => artifact.stageAttemptId == null || attemptIds.has(artifact.stageAttemptId))
     .map((artifact) => ({
@@ -289,7 +305,7 @@ const BUILD_STAGE_PURPOSES: Record<string, string> = {
   design_review: "Find defects, omissions, unjustified complexity, and governing-context violations in the proposed design before implementation begins.",
   implement: "Implement the approved design completely, preserve its constraints, and produce build and change evidence.",
   code_review: "Find defects, inconsistencies, technical debt, and governing-context violations in the resulting implementation and every affected system. This is an implementation review, not merely a code or build check.",
-  acceptance: "Determine whether the deployed result satisfies the approved design and user-visible success criteria in the target environment.",
+  acceptance: "Confirm the deployed system boots successfully and does what the approved specification says it must do in the target environment.",
   calibration: "Determine what this run revealed about the product, implementation process, and workflow, then record the changes that should follow.",
   documentation: "Preserve the final implemented truth, evidence, decisions, and remaining gates in durable project documentation.",
 };
@@ -299,7 +315,7 @@ const BUILD_STAGE_ARTIFACT_KINDS: Record<string, string[]> = {
   design_review: ["design_system", "product_definition"],
   implement: ["coding_process", "product_definition"],
   code_review: ["coding_process", "product_definition"],
-  acceptance: ["design_system", "product_definition"],
+  acceptance: [],
   calibration: ["product_definition"],
   documentation: ["product_definition"],
 };
@@ -619,7 +635,7 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
   stages: [
     {
       key: "scope", title: "Design", position: 0, autonomyMode: "autonomous",
-      evidenceRequirements: ["A complete implementation design with success conditions, target truth, verification path, and terminal state, grounded in the loaded governing context."],
+      evidenceRequirements: ["A durable specification artifact (`kind: spec`) containing the complete implementation design, success conditions, target truth, verification path, and terminal state, grounded in the loaded governing context."],
       allowedTransitions: [{ toStageKey: "design_review", on: "pass" }, { toStageKey: null, on: "blocked" }],
     },
     {
@@ -631,7 +647,8 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
     },
     {
       key: "implement", title: "Implement", position: 2, autonomyMode: "autonomous",
-      evidenceRequirements: ["Implementation evidence, build result, impact/change-scope evidence, and branch/commit references proving the approved design was executed under the loaded governing context."],
+      entryCriteria: ["Load and implement the approved specification from Stage Inputs."],
+      evidenceRequirements: ["Implementation evidence, build result, impact/change-scope evidence, and branch/commit references proving the approved specification was executed under the loaded governing context."],
       allowedTransitions: [{ toStageKey: "code_review", on: "pass" }, { toStageKey: "design_review", on: "blocked" }],
     },
     {
@@ -643,14 +660,15 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
     },
     {
       key: "acceptance", title: "Acceptance Test", position: 4, autonomyMode: "autonomous",
-      entryCriteria: ["Confirm the merged implementation is deployed and healthy in the target environment before testing the user-visible result."],
-      evidenceRequirements: ["Deployment, health, target-route, screenshot, runtime-log, and safe feature-path evidence sufficient to determine whether the deployed result satisfies the approved design and success conditions."],
-      exitCriteria: ["Pass only when the deployed result satisfies the approved design and user-visible success conditions."],
+      entryCriteria: ["Load the approved specification from Stage Inputs, then confirm the merged implementation is deployed and healthy in the target environment."],
+      evidenceRequirements: ["Deployment, boot/health, target-route, screenshot, runtime-log, and safe feature-path evidence sufficient to determine whether the deployed result does what the approved specification requires."],
+      exitCriteria: ["Pass only when the deployed system boots successfully and satisfies the approved specification."],
       allowedTransitions: [{ toStageKey: "calibration", on: "pass" }, { toStageKey: "implement", on: "fail" }, { toStageKey: "implement", on: "blocked" }],
     },
     {
       key: "calibration", title: "Calibration", position: 5, autonomyMode: "autonomous",
-      evidenceRequirements: ["A comparison of the run, retries, and acceptance evidence against the workflow and loaded governing context, with any product, process, or protocol changes identified."],
+      entryCriteria: ["Load the approved specification and acceptance evidence from Stage Inputs."],
+      evidenceRequirements: ["Compare the approved specification, implementation outcome, retries, and acceptance evidence to identify what the run taught us about the product and what should change next."],
       allowedTransitions: [{ toStageKey: "documentation", on: "pass" }, { toStageKey: "implement", on: "fail" }, { toStageKey: "scope", on: "blocked" }, { toStageKey: null, on: "needs_review", reason: "hard gate" }],
     },
     {
