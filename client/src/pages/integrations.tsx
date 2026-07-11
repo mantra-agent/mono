@@ -2730,6 +2730,9 @@ function RecallDetail() {
     queryKey: ["/api/integrations/recall/status"],
     refetchInterval: false,
   });
+  const { data: secretMetadata } = useQuery<{ secrets: Array<{ name: string; status: "set" | "not_set" | "invalid" }> }>({
+    queryKey: ["/api/secrets/metadata"],
+  });
   const [connectionTestError, setConnectionTestError] = useState<string | null>(null);
   const testConnection = useMutation({
     mutationFn: async () => {
@@ -2762,18 +2765,30 @@ function RecallDetail() {
     : recallStatus?.error
       ? `Not connected: ${recallStatus.error}`
       : "Not connected";
-  const webhookReady = Boolean(recallStatus?.connected && recallStatus?.hasWebhookSecret);
-  const credentialsReady = Boolean(recallStatus?.hasKey && recallStatus?.region && recallStatus?.hasWebhookSecret);
+  const recallSecretStatuses = new Map(
+    (secretMetadata?.secrets ?? [])
+      .filter((secret) => secret.name.startsWith("RECALL_"))
+      .map((secret) => [secret.name, secret.status] as const),
+  );
+  const credentialsReady = ["RECALL_API_KEY", "RECALL_REGION", "RECALL_WEBHOOK_SECRET"]
+    .every((name) => recallSecretStatuses.get(name) === "set");
+  const credentialsLoading = !secretMetadata;
+  const webhookReady = Boolean(
+    recallStatus?.connected &&
+    recallStatus?.hasWebhookSecret &&
+    recallSecretStatuses.get("RECALL_WEBHOOK_SECRET") === "set",
+  );
   const connectionNeedsAttention = isLoading || !recallStatus?.connected || Boolean(recallStatus?.error);
-  const webhookNeedsAttention = !webhookReady;
+  const credentialsNeedAttention = credentialsLoading || !credentialsReady;
+  const webhookNeedsAttention = isLoading || credentialsLoading || !webhookReady;
 
   return (
     <div className="min-w-0 space-y-2" data-testid="card-recall-status">
       <div className="flex min-w-0 items-center gap-2 px-2 py-1.5">
         <Radio className="h-4 w-4 shrink-0" />
         <div className="min-w-0">
-          <h2 className="truncate text-base font-semibold">Recall.ai Meeting Bot</h2>
-          <p className="text-xs text-muted-foreground">
+          <h2 className="text-base font-semibold">Recall.ai Meeting Bot</h2>
+          <p className="text-sm text-muted-foreground">
             Joins Zoom and Google Meet calls as "Mantra Agent" and streams speaker-attributed transcripts.
           </p>
         </div>
@@ -2818,7 +2833,7 @@ function RecallDetail() {
         </ProfileTreeRow>
       </IntegrationTreeSection>
 
-      <IntegrationTreeSection label="Credentials" initialOpen={!credentialsReady}>
+      <IntegrationTreeSection label="Credentials" initialOpen={credentialsNeedAttention}>
         <div className="min-w-0 px-2 py-1.5">
           <SecretsForSection section="recall" />
         </div>
@@ -2853,7 +2868,7 @@ function RecallDetail() {
               <p className="text-muted-foreground">
                 In the Recall dashboard for this region, open <strong>Webhooks</strong>, choose <strong>Add Endpoint</strong>, and add:
               </p>
-              <code className="block min-w-0 break-all rounded bg-muted p-2 text-[11px]">
+              <code className="block min-w-0 break-all rounded bg-muted p-2 text-xs">
                 {recallStatus?.statusWebhookUrl ?? `${window.location.origin}/api/webhooks/recall`}
               </code>
               <p className="text-muted-foreground">
@@ -5187,10 +5202,12 @@ function IntegrationDetail({ provider }: { provider: string }) {
         Integrations
       </Button>
 
-      <div className="flex items-center gap-3">
-        <Icon className="h-6 w-6" />
-        <h2 className="text-lg font-semibold">{integration.name}</h2>
-      </div>
+      {provider !== "recall" && (
+        <div className="flex items-center gap-3">
+          <Icon className="h-6 w-6" />
+          <h2 className="text-lg font-semibold">{integration.name}</h2>
+        </div>
+      )}
 
       {provider === "google" && (
         <div className="space-y-4">
