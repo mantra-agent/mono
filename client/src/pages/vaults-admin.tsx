@@ -32,6 +32,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useVaults, type Vault } from "@/hooks/use-vaults";
 import { useToast } from "@/hooks/use-toast";
 import { createLogger } from "@/lib/logger";
+import { VaultMigrationControls } from "@/components/vault-migration-controls";
 
 const log = createLogger("VaultsAdmin");
 
@@ -369,6 +370,8 @@ export default function VaultsAdminPage() {
               </div>
             </CollapsibleContent>
           </Collapsible>
+
+          <VaultMigrationControls />
       </div>
 
       <CreateVaultDialog open={createOpen} onOpenChange={setCreateOpen} />
