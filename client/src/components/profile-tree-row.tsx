@@ -39,19 +39,19 @@ export function ProfileTreeRow({
   return (
     <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
       <div className="group last:border-b-0">
-        <div className="group relative flex items-center gap-2 rounded-md px-2 py-1.5 text-sm w-full text-left select-none transition-colors hover:bg-accent/70">
-          <div className="flex min-w-0 flex-1 items-center gap-2 text-muted-foreground">
-            <span className="flex items-center justify-center shrink-0 text-muted-foreground">{icon}</span>
-            <span className="truncate">{label}</span>
+        <div className="group relative grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 rounded-md px-2 py-1.5 text-left text-sm select-none transition-colors hover:bg-accent/70 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto]">
+          <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
+            <span className="flex shrink-0 items-center justify-center text-muted-foreground">{icon}</span>
+            <span className="min-w-0 break-words">{label}</span>
           </div>
           <div
             className={cn(
-              "flex min-w-0 w-48 shrink-0 items-center justify-end text-right text-xs leading-none",
+              "col-span-2 flex min-w-0 max-w-full items-center justify-start pl-6 text-left text-xs leading-relaxed sm:col-span-1 sm:w-48 sm:justify-end sm:pl-0 sm:text-right",
               "[&_input]:h-5 [&_input]:w-48 [&_input]:bg-muted/50 [&_input]:px-1.5 [&_input]:py-0 [&_input]:text-right [&_input]:text-xs [&_input]:leading-none",
               "[&_input[type=date]]:[color-scheme:dark] [&_input[type=date]::-webkit-calendar-picker-indicator]:h-3 [&_input[type=date]::-webkit-calendar-picker-indicator]:w-3 [&_input[type=date]::-webkit-calendar-picker-indicator]:opacity-60 [&_input[type=date]::-webkit-calendar-picker-indicator]:invert",
               "[&_textarea]:bg-muted/50 [&_textarea]:text-xs",
               "[&_[role=combobox]]:h-5 [&_[role=combobox]]:w-48 [&_[role=combobox]]:justify-end [&_[role=combobox]]:bg-muted/50 [&_[role=combobox]]:px-1.5 [&_[role=combobox]]:py-0 [&_[role=combobox]]:text-right [&_[role=combobox]]:text-xs [&_[role=combobox]>span]:text-right",
-              "[&_button]:h-5 [&_button]:px-1.5 [&_button]:text-xs",
+              "[&_button]:min-h-11 [&_button]:px-2 [&_button]:text-xs sm:[&_button]:min-h-5 sm:[&_button]:px-1.5",
             )}
           >
             {children}
@@ -61,21 +61,21 @@ export function ProfileTreeRow({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+                className="min-h-11 min-w-11 shrink-0 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground sm:min-h-5 sm:min-w-5"
                 aria-label={`${open ? "Collapse" : "Expand"} ${typeof label === "string" ? label : "profile field"}`}
               >
                 <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
               </Button>
             </CollapsibleTrigger>
           ) : actionContent ? (
-            <div className="h-5 w-5 shrink-0">{actionContent}</div>
+            <div className="min-h-11 min-w-11 shrink-0 sm:min-h-5 sm:min-w-5">{actionContent}</div>
           ) : (
-            <span className="h-5 w-5 shrink-0" />
+            <span className="hidden h-5 w-5 shrink-0 sm:block" />
           )}
           {menuContent ? (
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100" aria-label="More actions">
+                <Button variant="ghost" size="icon" className="min-h-11 min-w-11 shrink-0 rounded text-muted-foreground/60 transition-opacity hover:bg-accent hover:text-foreground sm:min-h-5 sm:min-w-5 sm:opacity-0 sm:group-hover:opacity-100" aria-label="More actions">
                   <MoreHorizontal className="h-3 w-3" />
                 </Button>
               </DropdownMenuTrigger>
