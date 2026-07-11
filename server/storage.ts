@@ -2,7 +2,7 @@
 import { db } from "./db";
 import { createLogger } from "./log";
 import {
-  users, skills, skillReferences, skillRuns, skillFailureDismissals, promptModules, promptModuleVersions, systemSettings,
+  users, skills, skillReferences, skillRuns, skillFailureDismissals, promptModules, promptModuleVersions, systemSettings, insertSkillSchema,
   voiceSessionActive,
   emailTriageLog, emailMessages, emailSyncLog, emailSyncCursors, emailDrafts,
   emailEnrichments, emailDismissals, connectedAccounts,
@@ -448,12 +448,12 @@ export class HybridStorage implements IStorage {
   }
 
   async createSkill(data: InsertSkill): Promise<SkillWithReferences> {
-    const { references: refs, ...skillData } = data;
+    const normalized = insertSkillSchema.parse(data);
+    const { references: refs, ...skillData } = normalized;
     const [created] = await db.insert(skills).values({
       ...skillData,
       allowedTools: [],
       ...ownedInsertValues(getCurrentPrincipalOrSystem(), skillScopeColumns),
-      author: skillData.author ?? "user",
     }).returning();
     if (refs && refs.length > 0) {
       await db.insert(skillReferences).values(
