@@ -8,6 +8,8 @@ export type RecallDeliveryDiagnostic = {
   accepted: boolean;
   responseStatus: number;
   reason?: string;
+  providerStatus?: string;
+  providerSubCode?: string;
 };
 
 let ensurePromise: Promise<void> | null = null;
@@ -23,8 +25,14 @@ async function ensureRecallDeliveryDiagnosticsTable(): Promise<void> {
         webhook_id TEXT,
         accepted BOOLEAN NOT NULL,
         response_status INTEGER NOT NULL,
-        reason TEXT
+        reason TEXT,
+        provider_status TEXT,
+        provider_sub_code TEXT
       );
+      ALTER TABLE recall_webhook_delivery_diagnostics
+        ADD COLUMN IF NOT EXISTS provider_status TEXT;
+      ALTER TABLE recall_webhook_delivery_diagnostics
+        ADD COLUMN IF NOT EXISTS provider_sub_code TEXT;
       CREATE INDEX IF NOT EXISTS recall_webhook_delivery_diagnostics_received_at_idx
         ON recall_webhook_delivery_diagnostics (received_at DESC);
     `).then(() => undefined).catch((error) => {
@@ -39,8 +47,8 @@ export async function recordRecallDelivery(entry: RecallDeliveryDiagnostic): Pro
   await ensureRecallDeliveryDiagnosticsTable();
   await pool.query(
     `INSERT INTO recall_webhook_delivery_diagnostics
-      (received_at, path, event, webhook_id, accepted, response_status, reason)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      (received_at, path, event, webhook_id, accepted, response_status, reason, provider_status, provider_sub_code)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
     [
       entry.receivedAt,
       entry.path,
@@ -49,6 +57,8 @@ export async function recordRecallDelivery(entry: RecallDeliveryDiagnostic): Pro
       entry.accepted,
       entry.responseStatus,
       entry.reason ?? null,
+      entry.providerStatus ?? null,
+      entry.providerSubCode ?? null,
     ],
   );
 }
@@ -57,7 +67,7 @@ export async function getRecallDeliveryDiagnostics(limit = 20): Promise<RecallDe
   await ensureRecallDeliveryDiagnosticsTable();
   const boundedLimit = Math.min(100, Math.max(1, limit));
   const result = await pool.query(
-    `SELECT received_at, path, event, webhook_id, accepted, response_status, reason
+    `SELECT received_at, path, event, webhook_id, accepted, response_status, reason, provider_status, provider_sub_code
        FROM recall_webhook_delivery_diagnostics
       ORDER BY received_at DESC
       LIMIT $1`,
@@ -71,5 +81,7 @@ export async function getRecallDeliveryDiagnostics(limit = 20): Promise<RecallDe
     accepted: row.accepted,
     responseStatus: row.response_status,
     ...(row.reason ? { reason: row.reason } : {}),
+    ...(row.provider_status ? { providerStatus: row.provider_status } : {}),
+    ...(row.provider_sub_code ? { providerSubCode: row.provider_sub_code } : {}),
   }));
 }

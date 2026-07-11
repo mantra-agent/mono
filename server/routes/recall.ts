@@ -102,17 +102,23 @@ export function registerRecallRoutes(
       });
       return res.status(401).json({ error: "Invalid webhook signature" });
     }
+    const statusBody = req.body as {
+      event?: string;
+      data?: { data?: { status?: string | null; sub_code?: string | null } };
+    };
     await recordRecallDelivery({
       receivedAt: new Date().toISOString(),
       path: "status",
-      event: typeof req.body?.event === "string" ? req.body.event : "unknown",
+      event: typeof statusBody?.event === "string" ? statusBody.event : "unknown",
       webhookId: webhookId(req),
       accepted: true,
       responseStatus: 200,
+      providerStatus: statusBody?.data?.data?.status || undefined,
+      providerSubCode: statusBody?.data?.data?.sub_code || undefined,
     });
     res.status(200).json({ received: true });
 
-    const body = req.body as { event?: string; data?: { data?: { sub_code?: string | null } } };
+    const body = statusBody;
     const eventName = typeof body?.event === "string" ? body.event : "";
     const botStatus = BOT_STATUS_MAP[eventName];
     if (!botStatus) {
