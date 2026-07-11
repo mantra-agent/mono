@@ -3,7 +3,12 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import { createLogger } from "../log";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
-import { combineWithVisibleScope, ownedInsertValues, writableScopePredicate } from "../scoped-storage";
+import {
+  combineWithVisibleScope,
+  combineWithWritableScope,
+  ownedInsertValues,
+  writableScopePredicate,
+} from "../scoped-storage";
 import {
   MEMORY_VNEXT_LIFECYCLE_STAGE,
   memoryVnextClaimLinks,
@@ -128,6 +133,12 @@ export interface VnextLifecycleCandidate {
 export interface VnextLifecycleTransitionInput {
   reason: string;
   metadata?: Record<string, unknown>;
+}
+
+export interface VnextEmbeddingBackfillResult {
+  scanned: number;
+  updated: number;
+  errors: number;
 }
 
 export interface VnextClaimSearchFilters {
@@ -260,13 +271,16 @@ export class MemoryVnextClaimStorage {
     }
 
     const validatedEmbedding = validateVnextEmbedding(input.embedding, "create_claim");
+    if (!validatedEmbedding) {
+      throw new Error("vNext Stage 1 admission rejected: claim embedding is required");
+    }
 
     const metadata = {
       ...(input.metadata ?? {}),
       ...(input.sourceMemoryId ? { extractedFrom: input.sourceMemoryId } : {}),
       schema: "memory_vnext_claim",
       embeddingProfile: MEMORY_VNEXT_EMBEDDING_PROFILE,
-      embeddingStatus: validatedEmbedding ? "ready" : "unavailable",
+      embeddingStatus: "ready",
       ...(writeBudget
         ? {
             extractionBudget: {
@@ -856,6 +870,77 @@ export class MemoryVnextClaimStorage {
     return updated ?? null;
   }
 
+  /**
+   * Idempotently embed a bounded batch of visible active claims that predate
+   * the Stage 1 embedding invariant. The writable predicate on each update
+   * prevents a principal from mutating global or another user's claims.
+   */
+  async backfillMissingActiveEmbeddings(limit = 25): Promise<VnextEmbeddingBackfillResult> {
+    const principal = getCurrentPrincipalOrSystem();
+    const boundedLimit = Math.max(1, Math.min(Math.floor(limit), 100));
+    const activeMissingEmbedding = and(
+      isNull(memoryVnextClaims.embedding),
+      sql`${memoryVnextClaims.lifecycleStage} <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}`,
+    );
+    const claims = await db
+      .select({ id: memoryVnextClaims.id, content: memoryVnextClaims.content })
+      .from(memoryVnextClaims)
+      .where(combineWithVisibleScope(principal, vnextClaimScopeColumns, activeMissingEmbedding))
+      .orderBy(memoryVnextClaims.id)
+      .limit(boundedLimit);
+
+    let updated = 0;
+    let errors = 0;
+    for (const claim of claims) {
+      try {
+        const embedding = validateVnextEmbedding(
+          await generateEmbedding(claim.content),
+          `backfill_claim_${claim.id}`,
+        );
+        const updatedRows = await db
+          .update(memoryVnextClaims)
+          .set({
+            embedding,
+            metadata: sql`jsonb_set(
+              jsonb_set(
+                COALESCE(${memoryVnextClaims.metadata}, '{}'::jsonb),
+                '{embeddingProfile}',
+                ${JSON.stringify(MEMORY_VNEXT_EMBEDDING_PROFILE)}::jsonb,
+                true
+              ),
+              '{embeddingStatus}',
+              '"ready"'::jsonb,
+              true
+            )`,
+            updatedByUserId: principal.userId ?? undefined,
+            updatedAt: new Date(),
+          })
+          .where(
+            combineWithWritableScope(
+              principal,
+              vnextClaimScopeColumns,
+              and(eq(memoryVnextClaims.id, claim.id), isNull(memoryVnextClaims.embedding)),
+            ),
+          )
+          .returning({ id: memoryVnextClaims.id });
+        updated += updatedRows.length;
+      } catch (err) {
+        errors++;
+        log.error(
+          `backfillMissingActiveEmbeddings: claimId=${claim.id} failed: ${err instanceof Error ? (err.stack || err.message) : String(err)}`,
+        );
+      }
+    }
+
+    const result = { scanned: claims.length, updated, errors };
+    if (claims.length > 0 || errors > 0) {
+      log.info(
+        `backfillMissingActiveEmbeddings: scanned=${result.scanned} updated=${result.updated} errors=${result.errors} limit=${boundedLimit} principal=${principal.actorType}:${principal.userId ?? "system"}`,
+      );
+    }
+    return result;
+  }
+
   async searchClaims(filters: VnextClaimSearchFilters): Promise<MemoryVnextClaim[]> {
     const conditions = [];
     if (typeof filters.claimType === "string") {
@@ -939,7 +1024,7 @@ export interface PersistClaimCandidatesResult {
  *
  * For each claim candidate:
  * 1. Generate embedding
- * 2. Semantic dedup against existing claims (fail open)
+ * 2. Semantic dedup against existing claims (fail open after embedding succeeds)
  * 3. If near-duplicate found → reinforce existing claim
  * 4. Otherwise → create new claim via memoryVnextClaimStorage.createClaim
  * 5. Resolve entity mentions and link to claim
@@ -971,15 +1056,26 @@ export async function persistClaimCandidates(
   // -----------------------------------------------------------------------
   // Phase 1: Embed all candidates
   // -----------------------------------------------------------------------
-  const embeddings: (number[] | null)[] = [];
-  for (const claim of claims) {
+  const embeddings: number[][] = [];
+  for (let index = 0; index < claims.length; index++) {
+    const claim = claims[index];
     try {
-      embeddings.push(await generateEmbedding(claim.content));
-    } catch (err) {
-      log.warn(
-        `${logPrefix}: embedding failed for "${claim.content.slice(0, 80)}": ${err instanceof Error ? err.message : String(err)}`,
+      const embedding = validateVnextEmbedding(
+        await generateEmbedding(claim.content),
+        `${logPrefix}_candidate_${index}`,
       );
-      embeddings.push(null);
+      if (!embedding) {
+        throw new Error("embedding generator returned no vector");
+      }
+      embeddings.push(embedding);
+    } catch (err) {
+      log.error(
+        `${logPrefix}: Stage 1 admission failed during embedding candidateIndex=${index} preview="${claim.content.slice(0, 80)}": ${err instanceof Error ? (err.stack || err.message) : String(err)}`,
+      );
+      throw new Error(
+        `${logPrefix}: Stage 1 admission requires embeddings for every candidate`,
+        { cause: err },
+      );
     }
   }
 
@@ -1046,20 +1142,18 @@ export async function persistClaimCandidates(
     try {
       // Semantic dedup against existing vNext claims (fail open)
       let nearDuplicate: { id: number; similarity: number } | undefined;
-      if (embedding) {
-        try {
-          const similar = await executeVnextClaimSemanticSearch(embedding, 3);
-          const match = similar.find(
-            (s) => s.similarity >= CLAIM_DEDUP_SIMILARITY_THRESHOLD,
-          );
-          if (match) {
-            nearDuplicate = { id: match.row.id, similarity: match.similarity };
-          }
-        } catch (err) {
-          log.warn(
-            `${logPrefix}: semantic dedup failed open for "${claim.content.slice(0, 80)}": ${err instanceof Error ? err.message : String(err)}`,
-          );
+      try {
+        const similar = await executeVnextClaimSemanticSearch(embedding, 3);
+        const match = similar.find(
+          (s) => s.similarity >= CLAIM_DEDUP_SIMILARITY_THRESHOLD,
+        );
+        if (match) {
+          nearDuplicate = { id: match.row.id, similarity: match.similarity };
         }
+      } catch (err) {
+        log.warn(
+          `${logPrefix}: semantic dedup failed open for "${claim.content.slice(0, 80)}": ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
 
       if (nearDuplicate) {
@@ -1090,7 +1184,7 @@ export async function persistClaimCandidates(
         source,
         sourceId,
         createdAt,
-        embedding: embedding ?? undefined,
+        embedding,
         metadata: {
           confidence: claim.confidence,
           claimType: claim.claimType,
@@ -1140,10 +1234,10 @@ export async function persistClaimCandidates(
       createdClaimIds.set(i, claimEntry.id);
       created++;
     } catch (err) {
-      log.warn(
-        `${logPrefix}: failed claim "${claim.content.slice(0, 80)}": ${err instanceof Error ? err.message : String(err)}`,
+      log.error(
+        `${logPrefix}: Stage 1 admission failed candidateIndex=${i} preview="${claim.content.slice(0, 80)}": ${err instanceof Error ? (err.stack || err.message) : String(err)}`,
       );
-      skipped++;
+      throw err;
     }
   }
 

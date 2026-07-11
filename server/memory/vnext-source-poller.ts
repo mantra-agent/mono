@@ -399,6 +399,9 @@ export async function processSettledSources(): Promise<{
   totalRetirementCandidates: number;
   errors: number;
 }> {
+  // Repair legacy active claims before new extraction. The backfill method is
+  // bounded and runs inside each settled source owner's principal context.
+
   // Repair legacy autonomous rows before polling. This is bounded and
   // idempotent, and includes completed rows that would never be polled again.
   const cleanup = await cleanupAutonomousSessionSources(100);
@@ -439,9 +442,15 @@ export async function processSettledSources(): Promise<{
       await markProcessing(row.id);
 
       const principal = buildOwnerPrincipal(row);
-      const result = await runWithPrincipal(principal, () =>
-        processSource(row),
-      );
+      const result = await runWithPrincipal(principal, async () => {
+        const backfill = await memoryVnextClaimStorage.backfillMissingActiveEmbeddings(25);
+        if (backfill.errors > 0) {
+          throw new Error(
+            `vNext embedding backfill incomplete for owner=${principal.userId}: ${backfill.errors} error(s)`,
+          );
+        }
+        return processSource(row);
+      });
 
       processed++;
       totalCreated += result.created;
