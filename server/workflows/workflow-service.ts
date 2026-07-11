@@ -192,12 +192,12 @@ type WorkflowStageInputContext = {
   previousFailurePacket?: unknown;
   retryContext?: WorkflowRetryContext;
   relevantArtifacts: WorkflowArtifactBrief[];
-  instruction: string;
   entryCriteria?: string[];
   exitCriteria?: string[];
   evidenceRequirements?: string[];
   allowedTransitions?: Array<{ toStageKey: string | null; on: string; reason?: string }>;
-  boundProtocols?: Array<{ kind: string; libraryPageId: string; title: string }>;
+  governingArtifacts?: Array<{ kind: string; libraryPageId: string; title: string; content: string }>;
+  purpose: string;
 };
 
 function getMaxAttempts(detail: WorkflowRunDetail): number {
@@ -283,36 +283,62 @@ function buildRetryContext(detail: WorkflowRunDetail, stageKey: string, stageTit
   };
 }
 
-async function resolveBoundProtocols(environmentId: number | null): Promise<Array<{ kind: string; libraryPageId: string; title: string }>> {
+const BUILD_STAGE_PURPOSES: Record<string, string> = {
+  scope: "Define the implementation design and its success conditions against the target product, environment, and governing context.",
+  design_review: "Find defects, omissions, unjustified complexity, and governing-context violations in the proposed design before implementation begins.",
+  implement: "Implement the approved design completely, preserve its constraints, and produce build and change evidence.",
+  code_review: "Find defects, inconsistencies, technical debt, and governing-context violations in the resulting implementation and every affected system. This is an implementation review, not merely a code or build check.",
+  acceptance: "Determine whether the deployed result satisfies the approved design and user-visible success criteria in the target environment.",
+  calibration: "Determine what this run revealed about the product, implementation process, and workflow, then record the changes that should follow.",
+  documentation: "Preserve the final implemented truth, evidence, decisions, and remaining gates in durable project documentation.",
+};
+
+const BUILD_STAGE_ARTIFACT_KINDS: Record<string, string[]> = {
+  scope: ["product_definition", "design_system", "coding_process", "planning_process"],
+  design_review: ["product_definition", "design_system", "coding_process"],
+  implement: ["coding_process", "design_system", "product_definition", "planning_process"],
+  code_review: ["coding_process", "design_system", "product_definition"],
+  acceptance: ["product_definition", "design_system"],
+  calibration: ["planning_process", "coding_process"],
+  documentation: ["planning_process", "product_definition"],
+};
+
+async function resolveGoverningArtifacts(environmentId: number | null, stageKey: string): Promise<Array<{ kind: string; libraryPageId: string; title: string; content: string }>> {
   if (!environmentId) return [];
+  const relevantKinds = BUILD_STAGE_ARTIFACT_KINDS[stageKey] || [];
+  if (relevantKinds.length === 0) return [];
   const rows = await db
     .select({
       kind: environmentContextArtifacts.kind,
       libraryPageId: environmentContextArtifacts.libraryPageId,
       title: libraryPages.title,
+      content: libraryPages.plainTextContent,
     })
     .from(environmentContextArtifacts)
     .innerJoin(libraryPages, eq(environmentContextArtifacts.libraryPageId, libraryPages.id))
     .where(and(
       eq(environmentContextArtifacts.environmentId, environmentId),
-      inArray(environmentContextArtifacts.kind, ["design_system", "product_definition"]),
+      inArray(environmentContextArtifacts.kind, relevantKinds),
       visible({ scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId }),
     ))
     .orderBy(environmentContextArtifacts.kind, libraryPages.title);
-  return rows.map((row) => ({ kind: row.kind, libraryPageId: row.libraryPageId, title: row.title }));
+  return rows.map((row) => ({
+    kind: row.kind,
+    libraryPageId: row.libraryPageId,
+    title: row.title,
+    content: row.content,
+  }));
 }
 
-async function buildStageInputContext(detail: WorkflowRunDetail, stageKey: string, stageDef: WorkflowStageDefinition, attemptNumber: number, extraContext?: unknown): Promise<WorkflowStageInputContext & { extraContext?: unknown; environmentTruth?: WorkflowEnvironmentTruth | null; lifecycleSnapshot?: unknown; protocols?: Record<string, unknown> }> {
+
+async function buildStageInputContext(detail: WorkflowRunDetail, stageKey: string, stageDef: WorkflowStageDefinition, attemptNumber: number, extraContext?: unknown): Promise<WorkflowStageInputContext & { extraContext?: unknown; environmentTruth?: WorkflowEnvironmentTruth | null; lifecycleSnapshot?: unknown }> {
   const priorAttempts = detail.stages.find((stage) => stage.key === stageKey)?.attempts || [];
   const retryCount = Math.max(0, attemptNumber - 1);
   const previousFailurePacket = buildPreviousFailurePacket(priorAttempts);
   const retryContext = retryCount > 0 ? buildRetryContext(detail, stageKey, stageDef.title, priorAttempts) : undefined;
-  const boundProtocols = stageKey === "design_review"
-    ? await resolveBoundProtocols(detail.run.linkedEnvironmentId)
+  const governingArtifacts = detail.template.id === BUILD_WORKFLOW_TEMPLATE_ID
+    ? await resolveGoverningArtifacts(detail.run.linkedEnvironmentId, stageKey)
     : [];
-  const instruction = retryCount > 0
-    ? "This is a retry. The actionable failure packet is included inline under Retry Context. Address that failure directly and try a materially different approach. Do not hunt for the failure packet unless you need archival backup evidence."
-    : "Execute this workflow stage in isolation. Use the workflow run artifact as the checkpoint source of truth and report a concise outcome when complete.";
   return {
     workflowRunId: detail.run.id,
     workflowTitle: detail.run.title,
@@ -325,133 +351,85 @@ async function buildStageInputContext(detail: WorkflowRunDetail, stageKey: strin
     previousFailurePacket,
     retryContext,
     relevantArtifacts: stageArtifacts(detail, stageKey),
-    instruction,
     entryCriteria: stageDef.entryCriteria,
     exitCriteria: stageDef.exitCriteria,
     evidenceRequirements: stageDef.evidenceRequirements,
     allowedTransitions: stageDef.allowedTransitions,
-    boundProtocols,
+    governingArtifacts,
+    purpose: BUILD_STAGE_PURPOSES[stageKey] || `Complete the ${stageDef.title} stage.`,
     environmentTruth: detail.environmentTruth || null,
     lifecycleSnapshot: detail.lifecycleSnapshot || detail.run.lifecycleSnapshot || null,
-    protocols: detail.template.id === BUILD_WORKFLOW_TEMPLATE_ID ? {
-      primaryProtocol: "Build workflow stage contract",
-      lowerLayerProtocols: ["CODING.md", "PLANNING.md"],
-      rule: "Use CODING.md and PLANNING.md as lower-layer protocols that constrain and supply procedure. Do not replace the workflow stage contract with them.",
-    } : undefined,
     ...(extraContext !== undefined ? { extraContext } : {}),
   };
 }
 
-function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: unknown }): string {
-  const lines: string[] = [];
-  lines.push(`# Workflow Stage Attempt`);
-  lines.push("");
-  lines.push(`Workflow Run ID: ${context.workflowRunId}`);
-  lines.push(`Workflow: ${context.workflowTitle}`);
-  lines.push(`Stage: ${context.stageTitle} (${context.stageKey})`);
-  lines.push(`Attempt: ${context.attemptNumber}/${context.maxAttempts}`);
-  lines.push(`Retry Count: ${context.retryCount}`);
-  lines.push("");
-  lines.push(`## Objective`);
-  lines.push(context.objective || "No objective recorded.");
-  lines.push("");
-  lines.push(`## Instruction`);
-  lines.push(context.instruction);
-  if (context.entryCriteria?.length) {
-    lines.push("");
-    lines.push(`## Entry Criteria`);
-    lines.push("Before beginning this stage, verify each prerequisite is met:");
-    for (const criterion of context.entryCriteria) {
-      lines.push(`- [ ] ${criterion}`);
+function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: unknown; environmentTruth?: WorkflowEnvironmentTruth | null; lifecycleSnapshot?: unknown }): string {
+  const lines: string[] = [
+    `# ${context.stageTitle}`,
+    "",
+    `## Purpose`,
+    context.purpose,
+    "",
+    `Work adversarially against this purpose. Do not let completed prior work, a passing build, or lifecycle progress substitute for the judgment this stage exists to make.`,
+    "",
+    `## Workflow Objective`,
+    context.objective || "No objective recorded.",
+  ];
+
+  if (context.governingArtifacts?.length) {
+    lines.push("", "## Governing Context");
+    lines.push("These environment-linked artifacts are authoritative for this stage. Their contents are loaded below. Apply them directly rather than restating or guessing their rules.");
+    for (const artifact of context.governingArtifacts) {
+      lines.push("", `### ${artifact.title} (${artifact.kind})`, `Source: @page:${artifact.libraryPageId}`, "", artifact.content);
     }
   }
-  if (context.evidenceRequirements?.length) {
-    lines.push("");
-    lines.push(`## Evidence Requirements`);
-    lines.push("This stage is not complete until every evidence requirement is satisfied. Produce explicit evidence for each:");
-    for (const requirement of context.evidenceRequirements) {
-      lines.push(`- [ ] ${requirement}`);
-    }
-  }
-  if (context.exitCriteria?.length) {
-    lines.push("");
-    lines.push(`## Exit Criteria`);
-    for (const criterion of context.exitCriteria) {
-      lines.push(`- [ ] ${criterion}`);
-    }
-  }
-  if (context.allowedTransitions?.length) {
-    lines.push("");
-    lines.push(`## Allowed Transitions`);
-    for (const t of context.allowedTransitions) {
-      const target = t.toStageKey ? `→ ${t.toStageKey}` : "→ terminal";
-      lines.push(`- On **${t.on}**: ${target}${t.reason ? ` (${t.reason})` : ""}`);
-    }
-  }
-  if (context.retryCount > 0) {
-    lines.push("");
-    lines.push(`## Retry Context`);
-    if (context.retryContext) {
-      lines.push("The prior failed attempt's actionable failure packet is included below. Treat this as the primary assignment context. Artifact and archive references are backup evidence only.");
-      lines.push("```json");
-      lines.push(truncateText(JSON.stringify(context.retryContext, null, 2), 8000));
-      lines.push("```");
-    } else {
-      lines.push("No structured failure packet was found for the prior attempt. Use the relevant artifacts and run history below as fallback evidence, but do not waste time searching for a packet that is absent.");
-    }
-  } else if (context.previousFailurePacket) {
-    lines.push("");
-    lines.push(`## Previous Failure Packet`);
-    lines.push("```json");
-    lines.push(truncateText(JSON.stringify(context.previousFailurePacket, null, 2), 4000));
-    lines.push("```");
-  }
-  lines.push("");
-  lines.push(`## Relevant Artifacts`);
-  if (context.relevantArtifacts.length === 0) lines.push("No prior artifacts attached.");
+
+  lines.push("", "## Stage Inputs");
+  if (context.relevantArtifacts.length === 0) lines.push("- No prior workflow artifacts attached.");
   for (const artifact of context.relevantArtifacts) {
     const ref = [artifact.refType, artifact.refId, artifact.url].filter(Boolean).join(": ");
     lines.push(`- ${artifact.kind}: ${artifact.title}${ref ? ` — ${ref}` : ""}${artifact.summary ? ` — ${artifact.summary}` : ""}`);
   }
-  if (context.boundProtocols?.length) {
-    lines.push("");
-    lines.push(`## Bound Product Protocols`);
-    lines.push("Resolve and inspect every linked Library page below. These semantic environment bindings are authoritative. Do not substitute guessed repository filenames.");
-    for (const protocol of context.boundProtocols) {
-      lines.push(`- ${protocol.kind}: @page:${protocol.libraryPageId} (${protocol.title})`);
-    }
+
+  if (context.retryCount > 0) {
+    lines.push("", "## Retry Assignment");
+    lines.push("Address the prior failure directly with a materially different approach. Do not repeat unrelated discovery.");
+    lines.push("```json", JSON.stringify(context.retryContext || context.previousFailurePacket || null, null, 2), "```");
   }
-  if ((context as any).protocols) {
-    lines.push("");
-    lines.push(`## Protocol Stack`);
-    lines.push("```json");
-    lines.push(truncateText(JSON.stringify((context as any).protocols, null, 2), 4000));
-    lines.push("```");
+
+  if (context.entryCriteria?.length) {
+    lines.push("", "## Before Starting");
+    for (const criterion of context.entryCriteria) lines.push(`- ${criterion}`);
   }
-  if ((context as any).environmentTruth) {
-    lines.push("");
-    lines.push(`## Platform / Environment Truth`);
-    lines.push("```json");
-    lines.push(truncateText(JSON.stringify((context as any).environmentTruth, null, 2), 4000));
-    lines.push("```");
+  if (context.evidenceRequirements?.length) {
+    lines.push("", "## Required Evidence");
+    for (const requirement of context.evidenceRequirements) lines.push(`- ${requirement}`);
   }
-  if ((context as any).lifecycleSnapshot) {
-    lines.push("");
-    lines.push(`## Build Lifecycle Snapshot`);
-    lines.push("```json");
-    lines.push(truncateText(JSON.stringify((context as any).lifecycleSnapshot, null, 2), 4000));
-    lines.push("```");
+  if (context.exitCriteria?.length) {
+    lines.push("", "## Pass Standard");
+    for (const criterion of context.exitCriteria) lines.push(`- ${criterion}`);
+  }
+
+  const needsEnvironmentTruth = ["scope", "implement", "acceptance"].includes(context.stageKey);
+  if (needsEnvironmentTruth && context.environmentTruth) {
+    lines.push("", "## Target Environment", "```json", JSON.stringify(context.environmentTruth, null, 2), "```");
+  }
+  if (context.stageKey === "acceptance" && context.lifecycleSnapshot) {
+    lines.push("", "## Acceptance Configuration", "```json", JSON.stringify(context.lifecycleSnapshot, null, 2), "```");
   }
   if (context.extraContext !== undefined) {
-    lines.push("");
-    lines.push(`## Extra Input Context`);
-    lines.push("```json");
-    lines.push(truncateText(JSON.stringify(context.extraContext, null, 2), 4000));
-    lines.push("```");
+    lines.push("", "## Stage-Specific Context", "```json", JSON.stringify(context.extraContext, null, 2), "```");
   }
-  lines.push("");
-  lines.push(`## Completion Contract`);
-  lines.push("When done, summarize what changed, cite artifacts/evidence created, and state whether the stage passed, failed, blocked, or needs review. The workflow parent will checkpoint progress back to the run artifact.");
+
+  if (context.allowedTransitions?.length) {
+    lines.push("", "## Outcomes");
+    for (const transition of context.allowedTransitions) {
+      const target = transition.toStageKey ? `→ ${transition.toStageKey}` : "→ terminal";
+      lines.push(`- **${transition.on}** ${target}${transition.reason ? `: ${transition.reason}` : ""}`);
+    }
+  }
+
+  lines.push("", "## Completion", `Workflow run: ${context.workflowRunId}. Attempt ${context.attemptNumber}/${context.maxAttempts}.`, "State the outcome, cite the evidence created, and name the next required action for any failure or blocker.");
   return lines.join("\n");
 }
 
@@ -658,59 +636,43 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
   stages: [
     {
       key: "scope", title: "Design", position: 0, autonomyMode: "autonomous",
-      evidenceRequirements: ["Objective, success criteria, target branch, stage environment, user-visible artifact, verification command, terminal state, and implementation design."],
+      evidenceRequirements: ["A complete implementation design with success conditions, target truth, verification path, and terminal state, grounded in the loaded governing context."],
       allowedTransitions: [{ toStageKey: "design_review", on: "pass" }, { toStageKey: null, on: "blocked" }],
     },
     {
       key: "design_review", title: "Design Review", position: 1, autonomyMode: "requires_agent_review",
-      entryCriteria: [
-        "Inspect the existing user-visible artifact and the proposed implementation design before judging it.",
-        "Resolve design_system and product_definition artifacts semantically from the target environment's bound context artifacts. Fail if the required product protocols cannot be resolved or inspected.",
-      ],
-      evidenceRequirements: [
-        "Protocol audit: compare the existing artifact and proposed design against every bound design_system and product_definition protocol. Enumerate each concrete violation with the governing rule, affected element or flow, and a structural cure. Do not pass while any clear violation remains uncured in the design.",
-        "End-user-backward UX audit: walk the complete user journey and identify missing journeys, states, feedback, recovery, accessibility, and forgotten user needs. For every gap, prescribe the design change that closes it.",
-        "Complexity-reduction audit: identify proposed elements, states, components, or mechanisms already solved by a simpler fundamental system or canonical shared primitive. Remove or consolidate them unless a named constraint requires the added complexity.",
-        "Final verdict: explicitly state pass or fail, list residual risks, and cite the inspected artifact plus every bound protocol used as evidence.",
-      ],
-      exitCriteria: [
-        "Pass only when the design contains structural cures for every clear protocol violation and material UX gap, and the complexity-reduction pass leaves no unjustified duplicate mechanism.",
-      ],
+      entryCriteria: ["Inspect the proposed design, the current user-visible artifact or system, and every loaded governing artifact relevant to the design."],
+      evidenceRequirements: ["Find and report material defects, omissions, unjustified complexity, and governing-context violations. Require structural cures before passing."],
+      exitCriteria: ["Pass only when the proposed design is coherent, complete, and compliant with the loaded governing context."],
       allowedTransitions: [{ toStageKey: "implement", on: "pass" }, { toStageKey: "scope", on: "fail" }],
     },
     {
       key: "implement", title: "Implement", position: 2, autonomyMode: "autonomous",
-      evidenceRequirements: ["Merged or PR-ready code evidence, project build result, impact/change-scope evidence, and branch/commit references."],
+      evidenceRequirements: ["Implementation evidence, build result, impact/change-scope evidence, and branch/commit references proving the approved design was executed under the loaded governing context."],
       allowedTransitions: [{ toStageKey: "code_review", on: "pass" }, { toStageKey: "design_review", on: "blocked" }],
     },
     {
       key: "code_review", title: "Implementation Review", position: 3, autonomyMode: "requires_agent_review",
-      evidenceRequirements: [
-        "Review the new code, effected and relevant systems for violations of Engineering Principles in Agents.md and cure obvious bugs, clear violations or structural issues that could lead to technical debt.",
-        "Review finding summary, residual risk, and explicit acceptance readiness decision.",
-      ],
+      entryCriteria: ["Inspect the complete implementation, affected systems, approved design, and every loaded governing artifact before judging readiness."],
+      evidenceRequirements: ["Find and report material defects, inconsistencies, technical debt, and governing-context violations in the resulting implementation. State required cures, residual risk, and acceptance readiness."],
+      exitCriteria: ["Pass only when no material implementation or governing-context violation remains."],
       allowedTransitions: [{ toStageKey: "acceptance", on: "pass" }, { toStageKey: "implement", on: "fail" }, { toStageKey: "design_review", on: "blocked" }],
     },
     {
       key: "acceptance", title: "Acceptance Test", position: 4, autonomyMode: "autonomous",
-      entryCriteria: ["Confirm staged/dev deployment evidence for the merged commit exists and is healthy. If no deployment exists yet, wait/poll provider status up to timeout. If deployment fails, return deployment failure evidence to Implement."],
-      evidenceRequirements: [
-        "Stage deploy green, target URL healthy, target route browser-loaded, screenshot captured, runtime logs checked (where applicable), and optional feature smoke path attempted or explicitly skipped with reason.",
-        "If any required gate fails, return a compact failure packet and transition back to Implement for retry.",
-      ],
+      entryCriteria: ["Confirm the merged implementation is deployed and healthy in the target environment before testing the user-visible result."],
+      evidenceRequirements: ["Deployment, health, target-route, screenshot, runtime-log, and safe feature-path evidence sufficient to determine whether the deployed result satisfies the approved design and success conditions."],
+      exitCriteria: ["Pass only when the deployed result satisfies the approved design and user-visible success conditions."],
       allowedTransitions: [{ toStageKey: "calibration", on: "pass" }, { toStageKey: "implement", on: "fail" }, { toStageKey: "implement", on: "blocked" }],
     },
     {
       key: "calibration", title: "Calibration", position: 5, autonomyMode: "autonomous",
-      evidenceRequirements: [
-        "Compare the run against the workflow spec and acceptance evidence; document deltas, false positives/negatives, retry quality, and whether workflow docs/protocols need updating.",
-        "Open a decision gate only for hard user gates, danger/security/privacy, principle conflict, production release, or exhausted retries; otherwise continue autonomously.",
-      ],
+      evidenceRequirements: ["A comparison of the run, retries, and acceptance evidence against the workflow and loaded governing context, with any product, process, or protocol changes identified."],
       allowedTransitions: [{ toStageKey: "documentation", on: "pass" }, { toStageKey: "implement", on: "fail" }, { toStageKey: "scope", on: "blocked" }, { toStageKey: null, on: "needs_review", reason: "hard gate" }],
     },
     {
       key: "documentation", title: "Documentation", position: 6, autonomyMode: "autonomous",
-      evidenceRequirements: ["Durable notes, linked artifacts, final handoff including PR/merge/deployment/acceptance/calibration evidence, and any remaining decision gates."],
+      evidenceRequirements: ["Durable final documentation that records the implemented truth, linked evidence, decisions, handoff, and any remaining gates under the loaded governing context."],
       allowedTransitions: [{ toStageKey: null, on: "pass", reason: "complete" }, { toStageKey: "documentation", on: "fail" }],
     },
   ],
