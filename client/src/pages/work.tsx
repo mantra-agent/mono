@@ -124,19 +124,25 @@ function formatWorkDueDate(date: string | null | undefined): string | null {
   return parsed.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function WorkCheckCircle({ checked, className, ...props }: { checked: boolean; className?: string } & React.HTMLAttributes<HTMLSpanElement>) {
+function stablePartition<T>(items: T[], isTerminal: (item: T) => boolean): T[] {
+  return items.filter(item => !isTerminal(item)).concat(items.filter(isTerminal));
+}
+
+function WorkCheckCircle({ checked, className, ...props }: { checked: boolean; className?: string } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
-    <span
+    <button
+      type="button"
       className={cn(
         "h-4 w-4 rounded-full border bg-transparent inline-flex items-center justify-center transition-colors shrink-0",
         checked ? "border-success text-success" : "border-muted-foreground text-muted-foreground",
         className,
       )}
-      aria-hidden="true"
+      aria-label={checked ? "Mark incomplete" : "Mark complete"}
+      aria-pressed={checked}
       {...props}
     >
       {checked ? <Check className="h-3 w-3" /> : null}
-    </span>
+    </button>
   );
 }
 const COLOR_RED = "text-error dark:text-error";
@@ -861,7 +867,14 @@ function TaskRow({
         onClick={() => openTaskModal(task.id)}
         data-testid={`card-task-${task.id}`}
       >
-      <WorkCheckCircle checked={isCompleted} data-testid={`check-task-${task.id}`} />
+      <WorkCheckCircle
+        checked={isCompleted}
+        onClick={(event) => {
+          event.stopPropagation();
+          onUpdate({ status: isCompleted ? "ready" : "done" });
+        }}
+        data-testid={`check-task-${task.id}`}
+      />
       <ListTodo className="h-3.5 w-3.5 shrink-0 text-muted-foreground" data-testid={`icon-task-${task.id}`} />
 
       {isEditing ? (
@@ -1630,12 +1643,7 @@ function ProjectTreeNode({
   const projectDueLabel = formatWorkDueDate(project.dueDate);
   const isActive = project.status === "active";
   const isAddingMilestone = addingMilestoneProjectId === project.id;
-  const sortedMilestones = [...(project.milestones || [])].sort((a, b) => {
-    if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate);
-    if (a.dueDate && !b.dueDate) return -1;
-    if (!a.dueDate && b.dueDate) return 1;
-    return (a.order ?? 0) - (b.order ?? 0);
-  });
+  const sortedMilestones = stablePartition(project.milestones || [], milestone => milestone.status === "completed");
   const tasksByMilestone = new Map<number, Task[]>();
   const unassignedTasks: Task[] = [];
   tasks.forEach(task => {
@@ -1647,6 +1655,7 @@ function ProjectTreeNode({
     }
     unassignedTasks.push(task);
   });
+  const sortedUnassignedTasks = stablePartition(unassignedTasks, task => task.status === "done");
   const hasProjectLinks = (project.pages?.length || 0) > 0 || (project.files?.length || 0) > 0 || (project.people?.length || 0) > 0;
   const hasChildren = true;
   const isMilestoneExpanded = (milestone: Milestone) =>
@@ -1927,7 +1936,7 @@ function ProjectTreeNode({
               </div>
             </div>
           {sortedMilestones.map(milestone => {
-            const milestoneTasks = tasksByMilestone.get(milestone.id) || [];
+            const milestoneTasks = stablePartition(tasksByMilestone.get(milestone.id) || [], task => task.status === "done");
             const isAddingTask = addingTaskTarget?.projectId === project.id && addingTaskTarget.milestoneId === milestone.id;
             const milestoneExpanded = isMilestoneExpanded(milestone);
             const milestoneDueLabel = formatWorkDueDate(milestone.dueDate);
@@ -1938,7 +1947,14 @@ function ProjectTreeNode({
                   <WorkTreeIndent depth={1} />
                   <div className="flex-1 min-w-0 relative overflow-hidden">
                     <div className="group relative flex w-full min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm select-none transition-colors hover:bg-accent/70" data-testid={`tree-node-milestone-${milestone.id}`}>
-                      <WorkCheckCircle checked={milestoneCompleted} data-testid={`check-tree-milestone-${milestone.id}`} />
+                      <WorkCheckCircle
+                        checked={milestoneCompleted}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onUpdateMilestone(milestone.id, { status: milestoneCompleted ? "planned" : "completed" });
+                        }}
+                        data-testid={`check-tree-milestone-${milestone.id}`}
+                      />
                       <Flag className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                       {editingMilestoneId === milestone.id ? (
                         <Input
@@ -2145,7 +2161,7 @@ function ProjectTreeNode({
               </div>
             </div>
           )}
-          {unassignedTasks.map(task => (
+          {sortedUnassignedTasks.map(task => (
             <div key={task.id} className="flex min-w-0 items-stretch" style={{ paddingLeft: Math.min(WORK_INDENT_STEP_PX, WORK_MAX_INDENT_PX) }}>
               <WorkTreeIndent depth={1} />
               <div className="flex-1 min-w-0 relative overflow-hidden">
