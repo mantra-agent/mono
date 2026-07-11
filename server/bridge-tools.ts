@@ -8641,9 +8641,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
 
     if (action === "diagnostics") {
-      const { getRecallDeliveryDiagnostics } = await import("./routes/recall");
+      const { getRecallDeliveryDiagnostics } = await import("./integrations/recall/delivery-diagnostics");
       const limit = Math.min(100, Math.max(1, Number(args.limit) || 20));
-      return { result: JSON.stringify({ deliveries: getRecallDeliveryDiagnostics(limit) }, null, 2) };
+      return { result: JSON.stringify({ deliveries: await getRecallDeliveryDiagnostics(limit) }, null, 2) };
     }
 
     const { chatStorage } = await import("./integrations/chat/storage");
