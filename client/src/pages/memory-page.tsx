@@ -2093,7 +2093,7 @@ function MemoryEntryDetailDialog({ entry, open, onOpenChange }: {
 function LayersTab() {
   const { toast } = useToast();
   const { timezone } = useTimezone();
-  const [storageMode, setStorageMode] = useState<LayersStorageMode>("legacy");
+  const [storageMode, setStorageMode] = useState<LayersStorageMode>("vnext");
   const [openStages, setOpenStages] = useState<Set<string>>(() => new Set(MEMORY_PIPELINE_STAGES.map(stage => stage.value)));
   const [expandedEntryIds, setExpandedEntryIds] = useState<Set<number>>(new Set());
   const [expandedClaimIds, setExpandedClaimIds] = useState<Set<number>>(new Set());
@@ -2666,7 +2666,7 @@ function GraphTab({ inFullscreenModal = false }: { inFullscreenModal?: boolean }
   const animRef = useRef<number>(0);
   const simAnimRef = useRef<number>(0);
   const [selectedNode, setSelectedNode] = useState<MemoryEntry | null>(null);
-  const [graphStorageMode, setGraphStorageMode] = useState<GraphStorageMode>("legacy");
+  const [graphStorageMode, setGraphStorageMode] = useState<GraphStorageMode>("vnext");
   const [removeFromGraphConfirmOpen, setRemoveFromGraphConfirmOpen] = useState(false);
 
   // Publish the selected graph node so the focus widget's pageContext carries it.
