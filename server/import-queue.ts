@@ -2,25 +2,36 @@
 import { eq, notInArray, sql } from "drizzle-orm";
 import { db } from "./db";
 import { getSetting, setSetting } from "./system-settings";
-import { connectedAccounts, peopleImportCandidates } from "@shared/schema";
+import { peopleImportCandidates } from "@shared/schema";
 import { peopleStorage } from "./people-storage";
 import { createLogger } from "./log";
-import { combineWithSensitiveVisible } from "./sensitive-scope";
+import { sensitiveOwnershipValues, sensitiveVisiblePredicate, sensitiveWritablePredicate } from "./sensitive-scope";
 import { getCurrentPrincipal } from "./principal-context";
 
 const log = createLogger("ImportQueue");
-const connectedAccountScopeColumns = { ownerUserId: connectedAccounts.ownerUserId, principalAccountId: connectedAccounts.principalAccountId };
 
-/** Scoped predicate: only candidates belonging to currently connected accounts (used for mutations) */
-function connectedAccountPredicate() {
-  const principal = getCurrentPrincipal();
-  return sql`(${peopleImportCandidates.accountId} = ${`ios:${principal.accountId}`} OR ${peopleImportCandidates.accountId} IN (SELECT account_id FROM connected_accounts WHERE ${combineWithSensitiveVisible(connectedAccountScopeColumns)}))`;
+// Row-native ownership: candidates carry their own owner_user_id/principal_account_id.
+// Visibility must not depend on the source account still being connected — disconnecting
+// an account (e.g. an old Gmail) must never hide previously imported candidates.
+const importCandidateScopeColumns = {
+  ownerUserId: peopleImportCandidates.ownerUserId,
+  principalAccountId: peopleImportCandidates.principalAccountId,
+};
+
+/** Writable predicate: the current principal's own candidate rows (used for mutations) */
+function writableCandidatePredicate() {
+  return sensitiveWritablePredicate(importCandidateScopeColumns);
 }
 
-/** Visible predicate: candidates belonging to the current principal's connected accounts (used for reads) */
-function visibleImportAccountPredicate() {
-  const principal = getCurrentPrincipal();
-  return sql`(${peopleImportCandidates.accountId} = ${`ios:${principal.accountId}`} OR ${peopleImportCandidates.accountId} IN (SELECT account_id FROM connected_accounts WHERE ${combineWithSensitiveVisible(connectedAccountScopeColumns)}))`;
+/** Visible predicate: the current principal's own candidate rows (used for reads) */
+function visibleCandidatePredicate() {
+  return sensitiveVisiblePredicate(importCandidateScopeColumns);
+}
+
+/** Ownership stamp for new candidate rows. */
+function candidateOwnershipValues(): { ownerUserId?: string; principalAccountId?: string } {
+  const values = sensitiveOwnershipValues();
+  return { ownerUserId: values.ownerUserId, principalAccountId: values.principalAccountId };
 }
 
 const LEGACY_DB_KEY = "import_queue";
@@ -282,7 +293,7 @@ async function saveScanState(scan: ImportQueueState["scan"]): Promise<void> {
 
 async function loadCandidates(): Promise<Record<string, StoredImportCandidate>> {
   await ensureLegacyFileMigratedIfNeeded();
-  const rows = await db.select().from(peopleImportCandidates).where(visibleImportAccountPredicate());
+  const rows = await db.select().from(peopleImportCandidates).where(visibleCandidatePredicate());
   const candidates: Record<string, StoredImportCandidate> = {};
   for (const row of rows) {
     candidates[row.email] = rowToCandidate(row);
@@ -328,7 +339,7 @@ export async function upsertCandidates(candidates: Array<Partial<StoredImportCan
       mergedPersonId: raw.mergedPersonId,
     };
 
-    const existingRows = await db.select().from(peopleImportCandidates).where(sql`${peopleImportCandidates.email} = ${email} AND ${visibleImportAccountPredicate()}`).limit(1);
+    const existingRows = await db.select().from(peopleImportCandidates).where(sql`${peopleImportCandidates.email} = ${email} AND ${visibleCandidatePredicate()}`).limit(1);
     if (existingRows[0]) {
       const existing = rowToCandidate(existingRows[0]);
       const subjects = new Set([...(existing.sampleSubjects || []), ...(incoming.sampleSubjects || [])]);
@@ -359,9 +370,9 @@ export async function upsertCandidates(candidates: Array<Partial<StoredImportCan
       };
       await db.update(peopleImportCandidates)
         .set(candidateToRow(merged))
-        .where(sql`${peopleImportCandidates.email} = ${email} AND ${visibleImportAccountPredicate()}`);
+        .where(sql`${peopleImportCandidates.email} = ${email} AND ${visibleCandidatePredicate()}`);
     } else {
-      await db.insert(peopleImportCandidates).values(candidateToRow(incoming));
+      await db.insert(peopleImportCandidates).values({ ...candidateToRow(incoming), ...candidateOwnershipValues() });
     }
   }
 }
@@ -458,10 +469,10 @@ export async function stageIosContacts(rawContacts: IosContactImportPayload[]): 
 export async function saveQueueState(state: ImportQueueState): Promise<void> {
   const emails = Object.keys(state.candidates);
   if (emails.length === 0) {
-    await db.delete(peopleImportCandidates).where(connectedAccountPredicate());
+    await db.delete(peopleImportCandidates).where(writableCandidatePredicate());
   } else {
     await upsertCandidates(Object.values(state.candidates));
-    await db.delete(peopleImportCandidates).where(sql`${notInArray(peopleImportCandidates.email, emails)} AND ${connectedAccountPredicate()}`);
+    await db.delete(peopleImportCandidates).where(sql`${notInArray(peopleImportCandidates.email, emails)} AND ${writableCandidatePredicate()}`);
   }
   await saveScanState(state.scan);
 }
@@ -469,7 +480,7 @@ export async function saveQueueState(state: ImportQueueState): Promise<void> {
 export async function getCandidateByEmail(email: string): Promise<StoredImportCandidate | null> {
   await ensureLegacyFileMigratedIfNeeded();
   const normalized = normalizeEmail(email);
-  const rows = await db.select().from(peopleImportCandidates).where(sql`${peopleImportCandidates.email} = ${normalized} AND ${visibleImportAccountPredicate()}`).limit(1);
+  const rows = await db.select().from(peopleImportCandidates).where(sql`${peopleImportCandidates.email} = ${normalized} AND ${visibleCandidatePredicate()}`).limit(1);
   return rows[0] ? rowToCandidate(rows[0]) : null;
 }
 
@@ -480,7 +491,7 @@ export async function updateCandidateDecision(email: string, updates: Partial<St
   const candidate = { ...existing, ...updates, email: normalized };
   await db.update(peopleImportCandidates)
     .set(candidateToRow(candidate))
-    .where(sql`${peopleImportCandidates.email} = ${normalized} AND ${visibleImportAccountPredicate()}`);
+    .where(sql`${peopleImportCandidates.email} = ${normalized} AND ${visibleCandidatePredicate()}`);
 }
 
 export function getPendingCandidates(state: ImportQueueState): StoredImportCandidate[] {
@@ -506,7 +517,7 @@ export async function getPendingCandidatesFromDb(): Promise<StoredImportCandidat
   await ensureLegacyFileMigratedIfNeeded();
   const rows = await db.select()
     .from(peopleImportCandidates)
-    .where(sql`${peopleImportCandidates.decision} = ${"pending"} AND ${visibleImportAccountPredicate()}`);
+    .where(sql`${peopleImportCandidates.decision} = ${"pending"} AND ${visibleCandidatePredicate()}`);
   return rows
     .map(rowToCandidate)
     .sort((a, b) => (b.sentCount + b.receivedCount) - (a.sentCount + a.receivedCount));
@@ -521,7 +532,7 @@ export async function getQueueSummaryFromDb() {
       count: sql<number>`count(*)::int`,
     })
       .from(peopleImportCandidates)
-      .where(visibleImportAccountPredicate())
+      .where(visibleCandidatePredicate())
       .groupBy(peopleImportCandidates.decision),
   ]);
 
@@ -574,7 +585,7 @@ export async function runAutoScan(opts: {
   const existingEmails = new Set(Object.keys(emailMap).map(e => e.toLowerCase()));
 
   if (mode === "start") {
-    await db.delete(peopleImportCandidates).where(sql`${peopleImportCandidates.decision} = ${"pending"} AND ${connectedAccountPredicate()}`);
+    await db.delete(peopleImportCandidates).where(sql`${peopleImportCandidates.decision} = ${"pending"} AND ${writableCandidatePredicate()}`);
     state.candidates = Object.fromEntries(Object.entries(state.candidates).filter(([, c]) => c.decision !== "pending"));
     state.stats = { totalAdded: 0, totalMerged: 0, totalSkipped: 0 };
     state.scan = {

@@ -4334,6 +4334,11 @@ export async function runSchemaBootstrap(
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_people_import_candidates_account ON people_import_candidates (account_id)`,
     );
+    await pool.query(`ALTER TABLE people_import_candidates ADD COLUMN IF NOT EXISTS owner_user_id TEXT`);
+    await pool.query(`ALTER TABLE people_import_candidates ADD COLUMN IF NOT EXISTS principal_account_id TEXT`);
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_people_import_candidates_owner ON people_import_candidates (owner_user_id, principal_account_id)`,
+    );
     await pool.query(`
       CREATE TABLE IF NOT EXISTS people_import_decisions (
         id TEXT PRIMARY KEY,
@@ -4457,6 +4462,50 @@ export async function runSchemaBootstrap(
       `[boot] people import candidates legacy migration: migrated=${migrated}`,
       "migration",
     );
+  });
+
+  await heal("people_import_candidates ownership backfill", async () => {
+    const migrationName = "people_import_candidates_ownership_v1";
+    const exists = await pool.query(
+      `SELECT 1 FROM app_migrations WHERE name = $1`,
+      [migrationName],
+    );
+    if (exists.rowCount && exists.rowCount > 0) return;
+
+    // Single-tenant history: all pre-ownership candidate rows belong to Ray.
+    // Row-native ownership makes candidate visibility independent of
+    // connected_accounts, so disconnecting a source account (e.g. an old
+    // Gmail) never hides its import history again.
+    await pool.query(`
+      DO $$
+      DECLARE
+        ray_user_id text;
+        ray_account_id text;
+      BEGIN
+        SELECT id INTO ray_user_id
+        FROM users
+        WHERE email = 'raymond.kallmeyer@gmail.com' OR role = 'admin'
+        ORDER BY CASE WHEN email = 'raymond.kallmeyer@gmail.com' THEN 0 ELSE 1 END, created_at NULLS LAST
+        LIMIT 1;
+        IF ray_user_id IS NOT NULL THEN
+          SELECT id INTO ray_account_id FROM accounts WHERE kind = 'personal' AND owner_user_id = ray_user_id LIMIT 1;
+          IF ray_account_id IS NOT NULL THEN
+            UPDATE people_import_candidates
+            SET owner_user_id = ray_user_id, principal_account_id = ray_account_id
+            WHERE owner_user_id IS NULL;
+            UPDATE people_import_candidates
+            SET account_id = 'ios:' || ray_account_id
+            WHERE account_id IS NULL AND source = 'ios_contacts';
+          END IF;
+        END IF;
+      END $$;
+    `);
+
+    await pool.query(
+      `INSERT INTO app_migrations (name, metadata) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING`,
+      [migrationName, JSON.stringify({ note: "row-native ownership backfill + ios account_id repair" })],
+    );
+    log("[boot] people_import_candidates ownership backfill complete", "migration");
   });
 
   // parked_ideas table heal removed — intentions system deprecated
