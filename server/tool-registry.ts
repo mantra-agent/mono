@@ -244,15 +244,16 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   meeting_bot: {
-    description: "Send the Mantra Agent meeting bot into a live meeting via Recall.ai. Actions: join (bot joins a Zoom/Google Meet call and streams a live attributed transcript into a meeting session — pass a meeting 'url', or omit it to auto-resolve the current/next calendar event that has a meeting link), status (bot/meeting state for a meeting session), leave (bot exits the call). The bot is listen-only and appears in the room as 'Mantra Agent'. Requires the Recall.ai integration to be configured in Settings → Integrations (never ask for the API key in chat).",
+    description: "Send the Mantra Agent meeting bot into a live meeting via Recall.ai. Actions: join (bot joins a Zoom/Google Meet call and streams a live attributed transcript into a meeting session — pass a meeting 'url', or omit it to auto-resolve the current/next calendar event that has a meeting link), status (bot/meeting state for a meeting session), diagnostics (recent inbound Recall webhook delivery outcomes, including rejected signatures), leave (bot exits the call). The bot is listen-only and appears in the room as 'Mantra Agent'. Requires the Recall.ai integration to be configured in Settings → Integrations (never ask for the API key in chat).",
     category: "calendar",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["join", "status", "leave"], description: "Action to perform" },
+        action: { type: "string", enum: ["join", "status", "diagnostics", "leave"], description: "Action to perform" },
         url: { type: "string", description: "Zoom or Google Meet meeting URL (for join). Omit to resolve from the calendar." },
         title: { type: "string", description: "Optional meeting session title (for join). Defaults to the calendar event summary or 'Meeting'." },
         sessionId: { type: "string", description: "Meeting session ID (for status/leave)." },
+        limit: { type: "number", description: "Maximum recent webhook deliveries for diagnostics (default 20, max 100)." },
       },
       required: ["action"],
     },
