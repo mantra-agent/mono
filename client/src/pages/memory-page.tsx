@@ -2,6 +2,7 @@
 import { createLogger } from "@/lib/logger";
 import { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { useFocusContext } from "@/hooks/use-focus-context";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import { getInstanceName } from "@/lib/instance-config";
@@ -2676,9 +2677,10 @@ function hslToRgba(h: number, s: number, l: number, a: number): string {
   return `rgba(${Math.round(f(0) * 255)},${Math.round(f(8) * 255)},${Math.round(f(4) * 255)},${a})`;
 }
 
-function GraphTab({ inFullscreenModal = false }: { inFullscreenModal?: boolean } = {}) {
+function GraphTab({ inFullscreenModal = false, onOpenFullscreen }: { inFullscreenModal?: boolean; onOpenFullscreen?: () => void } = {}) {
   const { toast } = useToast();
   const { timezone } = useTimezone();
+  const isMobile = useIsMobile();
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [canvasReady, setCanvasReady] = useState(false);
@@ -3564,50 +3566,7 @@ function GraphTab({ inFullscreenModal = false }: { inFullscreenModal?: boolean }
 
   return (
     <div className={cn("flex flex-col", MEMORY_SHELL_CLASS)} data-testid="palace-tab">
-      <div className={cn("flex items-center justify-between gap-2", MEMORY_PANEL_HEADER_CLASS)}>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Share2 className="h-3.5 w-3.5" />
-          <span>{palace.entries.length} {isVnextGraph ? (palace.entries.length === 1 ? "node" : "nodes") : (palace.entries.length === 1 ? "memory" : "memories")}</span>
-          <span className="text-muted-foreground/50">&middot;</span>
-          <span>{palace.links?.length || 0} links</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <div className="flex items-center rounded-md border border-card-border bg-background/40 p-0.5" data-testid="graph-storage-mode-toggle">
-            {(["legacy", "vnext"] as const).map((mode) => (
-              <button
-                key={mode}
-                onClick={() => {
-                  setGraphStorageMode(mode);
-                  setSelectedNode(null);
-                }}
-                className={cn(
-                  "text-xs px-2 py-0.5 rounded-sm transition-colors capitalize",
-                  graphStorageMode === mode
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-                data-testid={`graph-storage-mode-${mode}`}
-              >
-                {mode === "legacy" ? "Legacy graph" : "vNext graph"}
-              </button>
-            ))}
-          </div>
-          {!isVnextGraph && (
-            <button
-              onClick={() => setGraphLinkSource(graphLinkSource === "links" ? "sources" : "links")}
-              className={cn(
-                "text-xs px-2 py-0.5 rounded-md border transition-colors",
-                graphLinkSource === "sources"
-                  ? "bg-primary/10 border-primary/30 text-primary"
-                  : "bg-transparent border-card-border text-muted-foreground hover:text-foreground",
-              )}
-              data-testid="graph-link-source-toggle"
-            >
-              {graphLinkSource === "links" ? "Legacy Links" : "Source Refs"}
-            </button>
-          )}
-        </div>
-      </div>
+
 
       {(myelination.isMyelinating || myelination.isPaused) && (
         <div className={MEMORY_PANEL_HEADER_CLASS}>
@@ -3666,15 +3625,38 @@ function GraphTab({ inFullscreenModal = false }: { inFullscreenModal?: boolean }
           })()}
 
           <div className="absolute bottom-3 right-3 flex flex-col gap-1" data-testid="palace-zoom-controls">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon" data-testid="button-graph-menu">
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuRadioGroup value={graphStorageMode} onValueChange={(value) => { setGraphStorageMode(value as GraphStorageMode); setSelectedNode(null); }}>
+                  <DropdownMenuRadioItem value="vnext" data-testid="menu-graph-mode-vnext">vNext</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="legacy" data-testid="menu-graph-mode-legacy">Legacy</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+                {!isVnextGraph && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => setGraphLinkSource(graphLinkSource === "links" ? "sources" : "links")} data-testid="menu-graph-link-source">
+                      {graphLinkSource === "links" ? "Use source refs" : "Use legacy links"}
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button variant="outline" size="icon" onClick={handleZoomIn} data-testid="button-zoom-in">
               <ZoomIn className="h-3.5 w-3.5" />
             </Button>
             <Button variant="outline" size="icon" onClick={handleZoomOut} data-testid="button-zoom-out">
               <ZoomOut className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="outline" size="icon" onClick={handleFitToView} data-testid="button-zoom-reset">
-              <Maximize2 className="h-3.5 w-3.5" />
-            </Button>
+            {!isMobile && !inFullscreenModal && onOpenFullscreen && (
+              <Button variant="outline" size="icon" onClick={onOpenFullscreen} data-testid="button-graph-fullscreen">
+                <Maximize2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
         </div>
 
@@ -4309,7 +4291,7 @@ export default function MemoryPageFull() {
   const [graphFullscreenOpen, setGraphFullscreenOpen] = useState(false);
 
   usePageHeader({
-    title: activeTab === "memories" ? "Layers" : "Memory",
+    title: activeTab === "memories" ? "Layers" : activeTab === "graph" ? "Memory Graph" : "Memory",
     tabs: memoryTabs,
     activeTab,
     onTabChange: setActiveTab,
@@ -4317,19 +4299,7 @@ export default function MemoryPageFull() {
 
   return (
     <div className={cn("flex flex-col min-w-0", MEMORY_SHELL_CLASS)} data-testid="memory-page-full">
-      {activeTab === "graph" && (
-        <div className="flex justify-end border-b border-card-border px-4 py-2 bg-muted/10">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setGraphFullscreenOpen(true)}
-            data-testid="button-memory-graph-fullscreen"
-          >
-            <Maximize2 className="h-4 w-4 mr-2" />
-            Full screen
-          </Button>
-        </div>
-      )}
+
 
       <Dialog open={graphFullscreenOpen} onOpenChange={setGraphFullscreenOpen}>
         <DialogContent className="h-screen max-h-screen w-screen max-w-none gap-0 overflow-hidden border-0 p-0 sm:rounded-none">
@@ -4343,7 +4313,7 @@ export default function MemoryPageFull() {
       {activeTab === "memories" && <LayersTab />}
       {activeTab === "sources" && <LogTab initialEntryId={initialEntryId} />}
       {activeTab === "extraction" && <QueryTab />}
-      {activeTab === "graph" && <GraphTab />}
+      {activeTab === "graph" && <GraphTab onOpenFullscreen={() => setGraphFullscreenOpen(true)} />}
       {activeTab === "maintenance" && (
         <Tabs defaultValue="events" className="flex flex-1 min-h-0 flex-col">
           <TabsList className="mx-3 mt-3 w-fit">
