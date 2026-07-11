@@ -451,6 +451,7 @@ export class HybridStorage implements IStorage {
     const { references: refs, ...skillData } = data;
     const [created] = await db.insert(skills).values({
       ...skillData,
+      allowedTools: [],
       ...ownedInsertValues(getCurrentPrincipalOrSystem(), skillScopeColumns),
       author: skillData.author ?? "user",
     }).returning();
