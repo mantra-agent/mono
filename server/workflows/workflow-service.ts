@@ -196,7 +196,7 @@ type WorkflowStageInputContext = {
   exitCriteria?: string[];
   evidenceRequirements?: string[];
   allowedTransitions?: Array<{ toStageKey: string | null; on: string; reason?: string }>;
-  governingArtifacts?: Array<{ kind: string; libraryPageId: string; title: string; content: string }>;
+  governingArtifacts?: Array<{ kind: string; libraryPageId: string; title: string }>;
   purpose: string;
 };
 
@@ -303,7 +303,7 @@ const BUILD_STAGE_ARTIFACT_KINDS: Record<string, string[]> = {
   documentation: ["planning_process", "product_definition"],
 };
 
-async function resolveGoverningArtifacts(environmentId: number | null, stageKey: string): Promise<Array<{ kind: string; libraryPageId: string; title: string; content: string }>> {
+async function resolveGoverningArtifacts(environmentId: number | null, stageKey: string): Promise<Array<{ kind: string; libraryPageId: string; title: string }>> {
   if (!environmentId) return [];
   const relevantKinds = BUILD_STAGE_ARTIFACT_KINDS[stageKey] || [];
   if (relevantKinds.length === 0) return [];
@@ -312,7 +312,6 @@ async function resolveGoverningArtifacts(environmentId: number | null, stageKey:
       kind: environmentContextArtifacts.kind,
       libraryPageId: environmentContextArtifacts.libraryPageId,
       title: libraryPages.title,
-      content: libraryPages.plainTextContent,
     })
     .from(environmentContextArtifacts)
     .innerJoin(libraryPages, eq(environmentContextArtifacts.libraryPageId, libraryPages.id))
@@ -326,7 +325,6 @@ async function resolveGoverningArtifacts(environmentId: number | null, stageKey:
     kind: row.kind,
     libraryPageId: row.libraryPageId,
     title: row.title,
-    content: row.content,
   }));
 }
 
@@ -383,9 +381,9 @@ function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: u
 
   if (context.governingArtifacts?.length) {
     lines.push("", "## Governing Context");
-    lines.push("These environment-linked artifacts are authoritative for this stage. Their contents are loaded below. Apply them directly rather than restating or guessing their rules.");
+    lines.push("Before doing stage work, load each relevant environment-linked artifact below with the Library tool. These pages are authoritative. Apply their contents directly rather than restating or guessing their rules. Do not proceed until they are loaded.");
     for (const artifact of context.governingArtifacts) {
-      lines.push("", `### ${artifact.title} (${artifact.kind})`, `Source: @page:${artifact.libraryPageId}`, "", artifact.content);
+      lines.push(`- ${artifact.kind}: @page:${artifact.libraryPageId} (${artifact.title})`);
     }
   }
 
