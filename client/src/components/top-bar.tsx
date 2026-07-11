@@ -154,7 +154,6 @@ export function TopBar() {
     >
       {!previewOwnsAgentIcon && <XyzIconButton />}
       <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} />
-      <VaultToggles />
       <div className="flex-1" />
       <ConnectionsIndicator />
       {converseButton}
