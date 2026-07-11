@@ -4,6 +4,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useSearch, useLocation } from "wouter";
 import { useFocusContext } from "@/hooks/use-focus-context";
+import { useFocusSession } from "@/hooks/use-focus-session";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getInstanceName } from "@/lib/instance-config";
 import { Card } from "@/components/ui/card";
@@ -110,6 +111,31 @@ import { ExpandedDescriptionEditor } from "@/components/expanded-description-edi
 import { useTaskModal } from "@/contexts/task-modal-context";
 
 const log = createLogger("WorkPage");
+
+type DiscussableWorkItem =
+  | { type: "project"; id: number; title: string }
+  | { type: "milestone"; id: number; title: string; projectId: number }
+  | { type: "task"; id: number; title: string; projectId?: number | null; milestoneId?: number | null };
+
+type CreatedSession = { id: string };
+
+function buildWorkItemDiscussMessage(item: DiscussableWorkItem): string {
+  const reference = `@${item.type}:${item.id}`;
+  const context = item.type === "project"
+    ? []
+    : item.type === "milestone"
+      ? [`Project: @project:${item.projectId}`]
+      : [
+          item.projectId ? `Project: @project:${item.projectId}` : null,
+          item.milestoneId ? `Milestone: @milestone:${item.milestoneId}` : null,
+        ].filter((line): line is string => Boolean(line));
+
+  return [
+    `Let's discuss this ${item.type}: **${item.title}**`,
+    `Reference: ${reference}`,
+    ...context,
+  ].join("\n");
+}
 
 // Tasks are managed inline inside the Projects tree; no standalone tasks tab
 
@@ -815,6 +841,8 @@ function TaskRow({
   projects,
   isDone,
   hideProjectAssign,
+  onDiscuss,
+  discussPending,
 }: {
   task: Task;
   project?: Project;
@@ -826,6 +854,8 @@ function TaskRow({
   projects: Project[];
   isDone?: boolean;
   hideProjectAssign?: boolean;
+  onDiscuss: (item: DiscussableWorkItem) => void;
+  discussPending: boolean;
 }) {
   const { openTaskModal } = useTaskModal();
   const [editTitle, setEditTitle] = useState(task.title);
@@ -954,6 +984,24 @@ function TaskRow({
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+          <DropdownMenuItem
+            disabled={discussPending}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDiscuss({
+                type: "task",
+                id: task.id,
+                title: task.title,
+                projectId: task.projectId,
+                milestoneId: task.milestoneId,
+              });
+            }}
+            data-testid={`menu-task-discuss-${task.id}`}
+          >
+            {discussPending ? <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> : <MessageSquare className="h-3.5 w-3.5 mr-2" />}
+            Discuss
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuSub>
             <DropdownMenuSubTrigger data-testid={`menu-task-status-${task.id}`}>
               <Package className="h-3.5 w-3.5 mr-2" />
@@ -1108,6 +1156,7 @@ function TaskRow({
 function ProjectsView({ selectedProjectId }: { selectedProjectId?: number | null }) {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const { route, setSessionForRoute, setWidgetOpen } = useFocusSession();
   const [showCreate, setShowCreate] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
   const [addingMilestoneProjectId, setAddingMilestoneProjectId] = useState<number | null>(null);
@@ -1131,6 +1180,22 @@ function ProjectsView({ selectedProjectId }: { selectedProjectId?: number | null
   });
 
   useFocusContext(null);
+
+  const discussMutation = useMutation({
+    mutationFn: async (item: DiscussableWorkItem) => {
+      const res = await apiRequest("POST", "/api/sessions", { title: item.title.trim().slice(0, 80) || item.type });
+      const session: CreatedSession = await res.json();
+      await apiRequest("POST", `/api/sessions/${session.id}/messages`, { content: buildWorkItemDiscussMessage(item) });
+      return session;
+    },
+    onSuccess: (session) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+      setSessionForRoute(route, session.id);
+      setWidgetOpen(true);
+    },
+  });
+
+  const discussWorkItem = (item: DiscussableWorkItem) => discussMutation.mutate(item);
 
   const updateProjectMutation = useMutation({
     mutationFn: ({ id, data }: { id: number; data: any }) => apiRequest("PATCH", `/api/projects/projects/${id}`, data),
@@ -1363,6 +1428,8 @@ function ProjectsView({ selectedProjectId }: { selectedProjectId?: number | null
                     onDeleteMilestone={(milestone) => setPendingDeleteMilestone({ projectId: project.id, milestoneId: milestone.id, name: milestone.name })}
                     onUpdateProject={(data) => updateProjectMutation.mutate({ id: project.id, data })}
                     onUpdateMilestone={(milestoneId, data) => updateMilestoneMutation.mutate({ projectId: project.id, milestoneId, data })}
+                    onDiscuss={discussWorkItem}
+                    discussPending={discussMutation.isPending}
                     onAddProjectPage={(targetProject, page) => addProjectPageMutation.mutate({ projectId: targetProject.id, page })}
                     onUploadProjectFile={uploadProjectFile}
                     people={peopleData?.people ?? []}
@@ -1588,6 +1655,8 @@ function ProjectTreeNode({
   onDeleteMilestone,
   onUpdateProject,
   onUpdateMilestone,
+  onDiscuss,
+  discussPending,
   onAddProjectPage,
   onUploadProjectFile,
   people,
@@ -1618,6 +1687,8 @@ function ProjectTreeNode({
   onDeleteMilestone: (milestone: Milestone) => void;
   onUpdateProject: (data: any) => void;
   onUpdateMilestone: (milestoneId: number, data: Partial<Milestone>) => void;
+  onDiscuss: (item: DiscussableWorkItem) => void;
+  discussPending: boolean;
   onAddProjectPage: (project: Project, page: LibraryPickerPage) => void;
   onUploadProjectFile: (project: Project, event: React.ChangeEvent<HTMLInputElement>) => void;
   people: PersonEntry[];
@@ -1783,6 +1854,15 @@ function ProjectTreeNode({
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    disabled={discussPending}
+                    onClick={(e) => { e.stopPropagation(); onDiscuss({ type: "project", id: project.id, title: project.title }); }}
+                    data-testid={`menu-project-discuss-${project.id}`}
+                  >
+                    {discussPending ? <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> : <MessageSquare className="h-3.5 w-3.5 mr-2" />}
+                    Discuss
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
                   <DropdownMenuSub>
                     <DropdownMenuSubTrigger data-testid={`menu-project-goal-${project.id}`}>
                       <Target className="h-3.5 w-3.5 mr-2" />
@@ -2023,6 +2103,18 @@ function ProjectTreeNode({
                             </button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              disabled={discussPending}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDiscuss({ type: "milestone", id: milestone.id, title: milestone.name, projectId: project.id });
+                              }}
+                              data-testid={`menu-tree-milestone-discuss-${milestone.id}`}
+                            >
+                              {discussPending ? <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> : <MessageSquare className="h-3.5 w-3.5 mr-2" />}
+                              Discuss
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
                             <DropdownMenuSub>
                               <DropdownMenuSubTrigger data-testid={`menu-tree-milestone-status-${milestone.id}`}>
                                 <Package className="h-3.5 w-3.5 mr-2" />
@@ -2114,6 +2206,8 @@ function ProjectTreeNode({
                         projects={projects}
                         isDone={task.status === "done"}
                         hideProjectAssign
+                        onDiscuss={onDiscuss}
+                        discussPending={discussPending}
                       />
                     </div>
                   </div>
@@ -2157,6 +2251,8 @@ function ProjectTreeNode({
                   projects={projects}
                   isDone={task.status === "done"}
                   hideProjectAssign
+                  onDiscuss={onDiscuss}
+                  discussPending={discussPending}
                 />
               </div>
             </div>
