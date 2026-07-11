@@ -1,9 +1,12 @@
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Archive,
   BookOpen,
   CornerUpLeft,
+  CornerUpRight,
   GitBranch,
-
+  Home,
   Info,
   Pencil,
   Pin,
@@ -19,6 +22,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { SessionReminderPopover } from "@/components/session-reminder";
 import type { LinkedEntity } from "@/hooks/use-linked-entities";
@@ -60,6 +64,8 @@ const ENTITY_CHIP_STYLES: Record<
 export interface SessionActionsMenuItemsProps {
   sessionId: string;
   sessionTitle?: string | null;
+  /** Current parent session ID. When set, the "Move" submenu is shown. */
+  parentSessionId?: string | null;
   onRename?: () => void;
   onSelectSession: (id: string) => void;
   onArchive: (id: string) => void;
@@ -83,10 +89,131 @@ function maybeStopPropagation(event: Event, shouldStop: boolean) {
   if (shouldStop) event.stopPropagation();
 }
 
+interface MoveTargetSession {
+  id: string;
+  title?: string | null;
+  parentSessionId?: string | null;
+  updatedAt?: string;
+}
+
+interface SessionMoveSubmenuProps {
+  sessionId: string;
+  parentSessionId: string;
+  stopPropagation: boolean;
+  testIdPrefix: string;
+}
+
+/**
+ * "Move" submenu for child sessions: reparents the session (and its subtree)
+ * under another session, or detaches it to Root. Excludes the session itself,
+ * its descendants (cycle prevention), and its current parent from the target
+ * list. The server enforces the same invariants.
+ */
+function SessionMoveSubmenu({
+  sessionId,
+  parentSessionId,
+  stopPropagation,
+  testIdPrefix,
+}: SessionMoveSubmenuProps) {
+  const { toast } = useToast();
+  const [search, setSearch] = useState("");
+  const { data: sessions = [] } = useQuery<MoveTargetSession[]>({
+    queryKey: ["/api/sessions"],
+  });
+
+  const targets = useMemo(() => {
+    const childrenByParent = new Map<string, string[]>();
+    for (const s of sessions) {
+      if (!s.parentSessionId) continue;
+      const list = childrenByParent.get(s.parentSessionId) ?? [];
+      list.push(s.id);
+      childrenByParent.set(s.parentSessionId, list);
+    }
+    const excluded = new Set<string>([sessionId, parentSessionId]);
+    const pending = [...(childrenByParent.get(sessionId) ?? [])];
+    while (pending.length > 0) {
+      const next = pending.pop()!;
+      if (excluded.has(next)) continue;
+      excluded.add(next);
+      pending.push(...(childrenByParent.get(next) ?? []));
+    }
+    return sessions
+      .filter((s) => !excluded.has(s.id))
+      .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+  }, [sessions, sessionId, parentSessionId]);
+
+  const query = search.trim().toLowerCase();
+  const filtered = query
+    ? targets.filter((s) => (s.title || "Untitled").toLowerCase().includes(query))
+    : targets;
+
+  const move = async (newParentId: string | null) => {
+    try {
+      await apiRequest("POST", `/api/sessions/${sessionId}/move`, {
+        newParentId,
+      });
+      emitSessionListChanged("move-session");
+    } catch (err) {
+      toast({
+        title: "Failed to move session",
+        description: String(err),
+        variant: "destructive",
+      });
+    }
+  };
+
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger data-testid={`${testIdPrefix}-move`}>
+        <CornerUpRight className="h-3.5 w-3.5 mr-2" />
+        Move
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="w-64">
+        <div className="p-1">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => e.stopPropagation()}
+            placeholder="Search sessions..."
+            className="h-7 text-xs"
+            data-testid={`${testIdPrefix}-move-search`}
+          />
+        </div>
+        <div className="max-h-64 overflow-y-auto">
+          <DropdownMenuItem
+            onClick={(event) => {
+              maybeStopPropagation(event, stopPropagation);
+              void move(null);
+            }}
+            data-testid={`${testIdPrefix}-move-root`}
+          >
+            <Home className="h-3.5 w-3.5 mr-2" />
+            Root
+          </DropdownMenuItem>
+          {filtered.length > 0 && <DropdownMenuSeparator />}
+          {filtered.map((target) => (
+            <DropdownMenuItem
+              key={target.id}
+              onClick={(event) => {
+                maybeStopPropagation(event, stopPropagation);
+                void move(target.id);
+              }}
+              data-testid={`${testIdPrefix}-move-target-${target.id}`}
+            >
+              <span className="truncate">{target.title || "Untitled"}</span>
+            </DropdownMenuItem>
+          ))}
+        </div>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  );
+}
+
 export function SessionActionsMenuItems({
   sessionId,
   onRename,
   sessionTitle,
+  parentSessionId,
   onSelectSession,
   onArchive,
   onDelete,
@@ -146,17 +273,25 @@ export function SessionActionsMenuItems({
             onSelectSession(child.id);
           } catch (err) {
             toast({
-              title: "Failed to spawn child",
+              title: "Failed to fork",
               description: String(err),
               variant: "destructive",
             });
           }
         }}
-        data-testid={`${testIdPrefix}-spawn-child`}
+        data-testid={`${testIdPrefix}-fork`}
       >
         <GitBranch className="h-3.5 w-3.5 mr-2" />
-        Spawn Child
+        Fork
       </DropdownMenuItem>
+      {parentSessionId && (
+        <SessionMoveSubmenu
+          sessionId={sessionId}
+          parentSessionId={parentSessionId}
+          stopPropagation={stopPropagation}
+          testIdPrefix={testIdPrefix}
+        />
+      )}
       <SessionReminderPopover sessionId={sessionId} sessionTitle={sessionTitle} onReminderSet={onReminderSet} />
       {onOpenInParent && (
         <>

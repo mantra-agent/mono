@@ -566,6 +566,70 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     },
   );
 
+  app.post("/api/sessions/:id/move", async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      const session = await chatStorage.getSession(id);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+      const rawTarget = (req.body ?? {}).newParentId;
+      const newParentId =
+        typeof rawTarget === "string" && rawTarget.trim().length > 0
+          ? rawTarget.trim()
+          : null;
+      if (newParentId === id) {
+        return res
+          .status(400)
+          .json({ error: "Cannot move a session under itself" });
+      }
+      if (!newParentId) {
+        await chatStorage.clearParentSessionId(id);
+      } else {
+        const target = await chatStorage.getSession(newParentId);
+        if (!target) {
+          return res.status(404).json({ error: "Target session not found" });
+        }
+        // Cycle prevention: the new parent must not live inside the moved
+        // session's own subtree. Descendants keep their linkage; root/depth
+        // are recomputed from session_tree ancestry on read.
+        const all = await chatStorage.getAllSessions();
+        const childrenByParent = new Map<string, string[]>();
+        for (const s of all) {
+          if (!s.parentSessionId) continue;
+          const list = childrenByParent.get(s.parentSessionId) ?? [];
+          list.push(s.id);
+          childrenByParent.set(s.parentSessionId, list);
+        }
+        const descendants = new Set<string>();
+        const pending = [...(childrenByParent.get(id) ?? [])];
+        while (pending.length > 0) {
+          const next = pending.pop()!;
+          if (descendants.has(next)) continue;
+          descendants.add(next);
+          pending.push(...(childrenByParent.get(next) ?? []));
+        }
+        if (descendants.has(newParentId)) {
+          return res
+            .status(400)
+            .json({ error: "Cannot move a session under its own descendant" });
+        }
+        await chatStorage.setParentSessionId(id, newParentId, {
+          spawnReason: "ui:move",
+          spawnerTool: "ui",
+        });
+      }
+      chatLog.info(
+        `Moved session ${id} from parent=${session.parentSessionId || "-"} to parent=${newParentId || "root"}`,
+      );
+      const updated = await chatStorage.getSession(id);
+      res.json(updated);
+    } catch (error) {
+      chatLog.error("Error moving session:", error);
+      res.status(500).json({ error: "Failed to move session" });
+    }
+  });
+
   app.get("/api/sessions/:id", async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;

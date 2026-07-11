@@ -648,6 +648,7 @@ export function SessionTranscriptPanel({
                   <SessionActionsMenuItems
                     sessionId={activeSession}
                     sessionTitle={active.title}
+                    parentSessionId={active.parentSessionId}
                     onRename={() => {
                       const title = active.title || "Chat";
                       titleRenameCommittedRef.current = false;
