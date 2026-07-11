@@ -3,7 +3,6 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { getInstanceName } from "@/lib/instance-config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import {
   Select,
@@ -52,6 +51,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { InlineDatePicker } from "@/components/inline-date-picker";
+import { ExpandedDescriptionEditor } from "@/components/expanded-description-editor";
 import type { Task, Project, PriorityLevel, TaskStatus, ImpactEffort } from "@shared/models/work";
 import { getDeadlineProximity } from "@shared/models/work";
 import { STATUS_CONFIG } from "@/lib/task-utils";
@@ -119,10 +119,10 @@ function TaskFieldRow({
           </div>
           <div
             className={cn(
-              "flex min-w-0 w-48 shrink-0 items-center justify-end text-right text-xs leading-none",
-              "[&_input]:h-5 [&_input]:w-48 [&_input]:bg-muted/50 [&_input]:px-1.5 [&_input]:py-0 [&_input]:text-right [&_input]:text-xs [&_input]:leading-none",
+              "flex min-w-0 w-28 shrink-0 items-center justify-end text-right text-xs leading-none",
+              "[&_input]:h-5 [&_input]:w-28 [&_input]:bg-muted/50 [&_input]:px-1.5 [&_input]:py-0 [&_input]:text-right [&_input]:text-xs [&_input]:leading-none",
               "[&_input[type=date]]:[color-scheme:dark] [&_input[type=date]::-webkit-calendar-picker-indicator]:h-3 [&_input[type=date]::-webkit-calendar-picker-indicator]:w-3 [&_input[type=date]::-webkit-calendar-picker-indicator]:opacity-60 [&_input[type=date]::-webkit-calendar-picker-indicator]:invert",
-              "[&_[role=combobox]]:h-5 [&_[role=combobox]]:w-48 [&_[role=combobox]]:justify-end [&_[role=combobox]]:bg-muted/50 [&_[role=combobox]]:px-1.5 [&_[role=combobox]]:py-0 [&_[role=combobox]]:text-right [&_[role=combobox]]:text-xs [&_[role=combobox]>span]:text-right",
+              "[&_[role=combobox]]:h-5 [&_[role=combobox]]:w-28 [&_[role=combobox]]:justify-end [&_[role=combobox]]:bg-muted/50 [&_[role=combobox]]:px-1.5 [&_[role=combobox]]:py-0 [&_[role=combobox]]:text-right [&_[role=combobox]]:text-xs [&_[role=combobox]>span]:text-right",
               "[&_button]:h-5 [&_button]:px-1.5 [&_button]:text-xs",
             )}
           >
@@ -623,13 +623,22 @@ export function TaskWidget({ taskId, defaultExpanded = false, showHeader = true,
           {textFieldRows.map(({ icon: Icon, label, field, value, placeholder }) => (
             <TaskFieldRow key={field} icon={Icon} label={label} testId={`row-task-${field}`}
               expandedContent={
-                <EditableText
-                  value={value}
-                  onSave={(val) => updateMutation.mutate({ [field]: val })}
-                  placeholder={placeholder}
-                  multiline
-                  testId={`input-task-widget-${field}-${taskId}`}
-                />
+                field === "description" ? (
+                  <ExpandedDescriptionEditor
+                    value={value}
+                    onSave={(val) => updateMutation.mutate({ [field]: val })}
+                    placeholder={placeholder}
+                    testIdPrefix={`task-description-${taskId}`}
+                  />
+                ) : (
+                  <EditableText
+                    value={value}
+                    onSave={(val) => updateMutation.mutate({ [field]: val })}
+                    placeholder={placeholder}
+                    multiline
+                    testId={`input-task-widget-${field}-${taskId}`}
+                  />
+                )
               }
             >
               <span className="text-xs text-muted-foreground truncate max-w-[160px]">
