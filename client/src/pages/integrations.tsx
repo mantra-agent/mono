@@ -2695,6 +2695,10 @@ interface RecallStatus {
   hasWorkspaceVerificationSecret?: boolean;
   statusWebhookUrl?: string;
   transcriptWebhookUrl?: string;
+  runtimeEnvironment?: string;
+  servingHost?: string | null;
+  publicUrl?: string | null;
+  publicUrlMismatch?: boolean;
   error?: string;
 }
 
@@ -2796,6 +2800,24 @@ function RecallDetail() {
           </p>
         </div>
       </div>
+
+      {recallStatus?.publicUrlMismatch && (
+        <div
+          className="mx-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm"
+          data-testid="banner-recall-public-url-mismatch"
+        >
+          <div className="flex items-center gap-2 font-medium text-warning">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            PUBLIC_URL mismatch
+          </div>
+          <p className="mt-1 text-muted-foreground">
+            This deployment serves <code>{recallStatus.servingHost}</code> but its{" "}
+            <code>PUBLIC_URL</code> Railway variable is <code>{recallStatus.publicUrl ?? "unset"}</code>.
+            Webhook URLs below use the serving host, but fix the Railway variable for environment{" "}
+            <code>{recallStatus.runtimeEnvironment}</code> to clear this warning.
+          </p>
+        </div>
+      )}
 
       <IntegrationTreeSection label="Connection" initialOpen={connectionNeedsAttention}>
         <ProfileTreeRow
