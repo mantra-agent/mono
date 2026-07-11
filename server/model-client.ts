@@ -128,6 +128,7 @@ interface CodexResponsesRequest {
 
 interface CodexResponsesChunk {
   type: string;
+  sequence_number?: number;
   item_id?: string;
   output_index?: number;
   content_index?: number;
@@ -1165,6 +1166,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
   // point we cannot safely restart the request — mid-stream failures must
   // surface as `error` events.
   let yieldedRealEvent = false;
+  const seenSequenceNumbers = new Set<number>();
 
   try {
     const accessToken = await getOpenAISubscriptionAccessToken();
@@ -1277,6 +1279,13 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
           let chunk: CodexResponsesChunk;
           try { chunk = JSON.parse(data); } catch { continue; }
 
+          if (typeof chunk.sequence_number === "number") {
+            if (seenSequenceNumbers.has(chunk.sequence_number)) {
+              log.warn(`openai-subscription duplicate stream event ignored model=${model} sequence=${chunk.sequence_number} type=${chunk.type}`);
+              continue;
+            }
+            seenSequenceNumbers.add(chunk.sequence_number);
+          }
           eventCount++;
 
           // Handle `response.failed` BEFORE any consumer yields so an early
