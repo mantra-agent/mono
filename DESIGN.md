@@ -399,7 +399,7 @@ hierarchy-tree:
     height: "compact"
     label: "truncate"
     meta: "right aligned when useful"
-    actions: "row-local, visually quiet"
+    actions: "row-local, horizontal ellipsis, revealed on hover or keyboard focus"
   behavior:
     selection: "single selected row when context needs it"
     expansion: "chevron rotation"
