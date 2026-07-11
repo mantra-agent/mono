@@ -743,6 +743,28 @@ export const peopleImportCandidates = pgTable("people_import_candidates", {
 
 export type PeopleImportCandidate = typeof peopleImportCandidates.$inferSelect;
 
+export const peopleImportDecisions = pgTable("people_import_decisions", {
+  id: text("id").primaryKey(),
+  candidateId: text("candidate_id").notNull(),
+  action: text("action").notNull(),
+  outcome: text("outcome").notNull(),
+  personId: text("person_id"),
+  idempotencyKey: text("idempotency_key").notNull(),
+  requestHash: text("request_hash").notNull(),
+  result: jsonb("result").$type<Record<string, any>>().notNull(),
+  undoData: jsonb("undo_data").$type<Record<string, any>>(),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+  undoneAt: timestamp("undone_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  unique("people_import_decisions_owner_idempotency_unique").on(table.ownerUserId, table.accountId, table.idempotencyKey),
+  index("idx_people_import_decisions_candidate_created").on(table.candidateId, table.createdAt),
+  index("idx_people_import_decisions_owner").on(table.ownerUserId, table.accountId),
+]);
+
+export type PeopleImportDecision = typeof peopleImportDecisions.$inferSelect;
+
 export const emailSyncCursors = pgTable("email_sync_cursors", {
   id: serial("id").primaryKey(),
   provider: text("provider").notNull().default("gmail"),
