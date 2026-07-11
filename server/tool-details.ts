@@ -172,8 +172,8 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: 'List projects: { "action": "list_projects" }\nGet project details: { "action": "get_project", "id": 1 }',
   },
   gmail: {
-    description: "Read, search, and draft emails via Gmail. Supports multiple accounts. Actions: status, search, read, batch_read, draft, update_draft, recent, download_attachment, triage_log, email_cache. There is no tool-level send action.",
-    whenToUse: "User asks about email, wants to check inbox, search for messages, or create an email for review/send. When creating an email intended for Ray to review or send, use gmail.draft or gmail.update_draft so the inline draft widget appears; plain chat email text is only for brainstorming or explicit copy-only requests.",
+    description: "Read, search, and draft emails via Gmail. Supports multiple accounts. Actions: status, search, read, batch_read, draft, update_draft, recent, download_attachment, triage_log, email_cache. update_draft uses one explicit body operation: findReplace for exact edits, rangePatch with expectedBodyHash for guarded offsets, or replaceBody for intentional whole-body rewrites. There is no tool-level send action.",
+    whenToUse: "User asks about email, wants to check inbox, search for messages, or create an email for review/send. When creating an email intended for Ray to review or send, use gmail.draft or gmail.update_draft so the inline draft widget appears. Prefer findReplace for local feedback, rangePatch only when you have the current body hash, and replaceBody only for deliberate rewrites. Plain chat email text is only for brainstorming or explicit copy-only requests.",
     example: 'Search: { "action": "search", "query": "from:sarah", "account": "Work" }\nDraft: { "action": "draft", "to": "sarah@example.com", "subject": "Following up", "body": "..." }',
   },
   git: {

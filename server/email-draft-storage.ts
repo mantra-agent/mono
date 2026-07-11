@@ -1,5 +1,6 @@
 import { db } from "./db";
 import { eq, and, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { emailDrafts, type EmailDraft } from "@shared/schema";
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
@@ -7,7 +8,6 @@ import {
   combineWithVisibleScope,
   combineWithWritableScope,
   ownedInsertValues,
-  assertVisible,
   assertWritable,
 } from "./scoped-storage";
 
@@ -29,6 +29,77 @@ export interface CreateEmailDraftInput {
   body: string;
   threadId?: string;
   inReplyTo?: string;
+}
+
+
+export type EmailDraftBodyMutation =
+  | { type: "find_replace"; find: string; replace: string; replaceAll?: boolean }
+  | { type: "range_patch"; start: number; end: number; replacement: string; expectedBodyHash: string }
+  | { type: "replace_body"; body: string };
+
+export type EmailDraftBodyMutationStatus =
+  | "updated"
+  | "not_found"
+  | "missing_match"
+  | "ambiguous_match"
+  | "stale_body"
+  | "invalid_range"
+  | "immutable_draft";
+
+export type EmailDraftBodyMutationResult =
+  | { status: "updated"; draft: EmailDraft; bodyHash: string }
+  | { status: Exclude<EmailDraftBodyMutationStatus, "updated">; bodyHash?: string };
+
+function hashDraftBody(body: string): string {
+  return createHash("sha256").update(body, "utf8").digest("hex");
+}
+
+function countExactMatches(body: string, find: string): number {
+  if (find.length === 0) return 0;
+  let count = 0;
+  let offset = 0;
+  while ((offset = body.indexOf(find, offset)) !== -1) {
+    count += 1;
+    offset += find.length;
+  }
+  return count;
+}
+
+function applyBodyMutation(
+  body: string,
+  mutation: EmailDraftBodyMutation,
+): { status: "ready"; body: string } | { status: Exclude<EmailDraftBodyMutationStatus, "updated" | "not_found" | "immutable_draft">; bodyHash?: string } {
+  if (mutation.type === "replace_body") {
+    return { status: "ready", body: mutation.body };
+  }
+
+  if (mutation.type === "range_patch") {
+    const bodyHash = hashDraftBody(body);
+    if (bodyHash !== mutation.expectedBodyHash) return { status: "stale_body", bodyHash };
+    if (
+      !Number.isInteger(mutation.start)
+      || !Number.isInteger(mutation.end)
+      || mutation.start < 0
+      || mutation.end < mutation.start
+      || mutation.end > body.length
+    ) {
+      return { status: "invalid_range", bodyHash };
+    }
+    return {
+      status: "ready",
+      body: body.slice(0, mutation.start) + mutation.replacement + body.slice(mutation.end),
+    };
+  }
+
+  const matchCount = countExactMatches(body, mutation.find);
+  if (matchCount === 0) return { status: "missing_match" };
+  if (!mutation.replaceAll && matchCount > 1) return { status: "ambiguous_match" };
+  return {
+    status: "ready",
+    body: mutation.replaceAll
+      ? body.split(mutation.find).join(mutation.replace)
+      : body.replace(mutation.find, mutation.replace),
+  };
 }
 
 export interface UpdateEmailDraftInput {
@@ -89,6 +160,44 @@ export class EmailDraftStorage {
   }
 
   /**
+   * Atomically compare and mutate the exact current draft body.
+   */
+  async mutateBody(
+    principal: Principal,
+    id: string,
+    mutation: EmailDraftBodyMutation,
+  ): Promise<EmailDraftBodyMutationResult> {
+    return db.transaction(async (tx) => {
+      const writable = combineWithWritableScope(
+        principal,
+        scopeColumns,
+        eq(emailDrafts.id, id),
+      );
+      const rows = await tx.execute(sql`
+        SELECT *
+        FROM ${emailDrafts}
+        WHERE ${writable}
+        LIMIT 1
+        FOR UPDATE
+      `);
+      const existing = rows.rows[0] as EmailDraft | undefined;
+      if (!existing) return { status: "not_found" };
+      if (existing.status !== "draft") return { status: "immutable_draft" };
+
+      const applied = applyBodyMutation(existing.body, mutation);
+      if (applied.status !== "ready") return applied;
+
+      const [updated] = await tx
+        .update(emailDrafts)
+        .set({ body: applied.body, updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(and(writable, eq(emailDrafts.status, "draft")))
+        .returning();
+      if (!updated) return { status: "immutable_draft" };
+      return { status: "updated", draft: updated, bodyHash: hashDraftBody(updated.body) };
+    });
+  }
+
+  /**
    * Edit a draft's editable fields while status === 'draft'.
    * Returns the updated draft or null if not found / not writable.
    */
@@ -97,6 +206,22 @@ export class EmailDraftStorage {
     id: string,
     patch: UpdateEmailDraftInput,
   ): Promise<EmailDraft | null> {
+    if (patch.body !== undefined) {
+      const bodyResult = await this.mutateBody(principal, id, {
+        type: "replace_body",
+        body: patch.body,
+      });
+      if (bodyResult.status === "not_found") return null;
+      if (bodyResult.status === "immutable_draft") {
+        throw new Error("Cannot edit immutable draft");
+      }
+      const { body: _body, ...remainingPatch } = patch;
+      patch = remainingPatch;
+      if (Object.values(patch).every((value) => value === undefined)) {
+        return bodyResult.draft;
+      }
+    }
+
     const existing = await this.getById(principal, id);
     if (!existing) return null;
     assertWritable(principal, existing, "email_draft");
@@ -113,7 +238,6 @@ export class EmailDraftStorage {
     if (patch.cc !== undefined) setValues.cc = patch.cc;
     if (patch.bcc !== undefined) setValues.bcc = patch.bcc;
     if (patch.subject !== undefined) setValues.subject = patch.subject;
-    if (patch.body !== undefined) setValues.body = patch.body;
 
     const [updated] = await db
       .update(emailDrafts)
