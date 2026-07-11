@@ -11,12 +11,20 @@ import type { VoiceSession, TurnContext } from "./types";
  * Create a fresh TurnContext for a new voice turn.
  * @param canonicalTurnId Pre-minted turnId from turn acceptance. Falls back to generating one.
  */
-export function createTurnContext(session: VoiceSession, turnAbort: AbortController, canonicalTurnId?: string): TurnContext {
+export function createTurnContext(
+  session: VoiceSession,
+  turnAbort: AbortController,
+  canonicalTurnId?: string,
+  assistantAttemptId?: string,
+  transcriptRevision?: number,
+): TurnContext {
   const currentTurn = session.turnCount;
   return {
     turnStart: Date.now(),
     currentTurn,
     turnId: canonicalTurnId || `${session.id}-turn-${currentTurn}-${Date.now()}`,
+    assistantAttemptId: assistantAttemptId || `${session.id}-attempt-${currentTurn}-${Date.now()}`,
+    transcriptRevision: transcriptRevision ?? 1,
     aborted: false,
     turnAbort,
     lastWrite: { ts: 0, preview: "", index: 0, ok: true },

@@ -11,7 +11,7 @@ import { ACTIVITY_VOICE } from "../job-profiles";
 import { createThinkingFilter, createPassthroughThinkingFilter } from "./thinking-filter";
 import { buildSSEChunk, isResponseAlive, sendSSEComment, sendErrorResponse } from "./sse";
 import {
-  writeVoiceJournal, publishVoiceEvent, publishVoiceDiagnostic,
+  writeVoiceJournal, publishVoiceEvent, publishVoiceDiagnostic, publishVoiceLifecycleEvent,
   voiceSessionKey, getActiveVoiceRunCount, acquireSessionTurnLock,
   traceInflightDoneResolved,
 } from "./session";
@@ -60,8 +60,14 @@ export async function handleSuccessfulTurn(
   const turnDuration = Date.now() - ctx.turnStart;
   publishVoiceDiagnostic(session, "turn_complete", `Turn ${currentTurn} done (${turnDuration}ms, ${ctx.chunkCounter.count} chunks, ${result.toolCalls.length} tools)`, { turn: currentTurn, elapsedMs: turnDuration }, ctx);
 
-  // Publish done event to SessionManager — clears streaming state for voice turn
-  writeVoiceJournal(session, "done", {});
+  // Success is the only path that commits and settles the visible attempt.
+  await publishVoiceLifecycleEvent(session, "assistant_attempt_committed", {
+    turnId: ctx.turnId,
+    assistantAttemptId: ctx.assistantAttemptId,
+    transcriptRevision: ctx.transcriptRevision,
+    turn: currentTurn,
+  });
+  writeVoiceJournal(session, "done", { turnId: ctx.turnId });
 
   const assistantTimestamp = new Date(Date.now()).toISOString();
   await persistAssistantMessage(session, result.content || null, currentTurn, { assistantTimestamp }, ctx);
@@ -79,8 +85,12 @@ export async function handleAbortedTurn(
   log.log(`turn ${currentTurn} aborted after executor session=${session.id}`);
   logTurnForensics(ctx, session);
   publishVoiceDiagnostic(session, "turn_aborted", `Turn ${currentTurn} aborted (superseded, ${abortElapsed}ms)`, { turn: currentTurn, status: "error", elapsedMs: abortElapsed });
-  // Clear SessionManager streaming state on abort
-  writeVoiceJournal(session, "done", {});
+  await publishVoiceLifecycleEvent(session, "assistant_attempt_superseded", {
+    turnId: ctx.turnId,
+    assistantAttemptId: ctx.assistantAttemptId,
+    transcriptRevision: ctx.transcriptRevision,
+    turn: currentTurn,
+  });
 
   await persistOrphanedTurnData(session, currentTurn, "ABORTED", ctx);
   trackedWrite("data: [DONE]\n\n", "done_aborted");
@@ -101,8 +111,12 @@ export async function handleTurnError(
     log.log(`turn ${currentTurn} cancelled (superseded) after ${cancelElapsed}ms session=${session.id}`);
     logTurnForensics(ctx, session);
     publishVoiceDiagnostic(session, "turn_cancelled", `Turn ${currentTurn} cancelled (superseded, ${cancelElapsed}ms)`, { turn: currentTurn, status: "error", elapsedMs: cancelElapsed });
-    // Clear SessionManager streaming state on cancel
-    writeVoiceJournal(session, "done", {});
+    await publishVoiceLifecycleEvent(session, "assistant_attempt_superseded", {
+      turnId: ctx.turnId,
+      assistantAttemptId: ctx.assistantAttemptId,
+      transcriptRevision: ctx.transcriptRevision,
+      turn: currentTurn,
+    });
 
     await persistOrphanedTurnData(session, currentTurn, "CANCELLED", ctx);
     if (res.headersSent) { trackedWrite("data: [DONE]\n\n", "done_cancelled"); res.end(); }

@@ -39,8 +39,12 @@ export interface StreamingContent {
   model?: string | null;
   autoTier?: string | null;
   runId?: string | null;
-  /** Canonical per-turn correlation ID for voice turns. */
+  /** Canonical logical voice-turn identity, stable across transcript revisions. */
   turnId?: string | null;
+  /** Canonical assistant response attempt. Changes when revised speech supersedes a response. */
+  assistantAttemptId?: string | null;
+  /** Transcript revision answered by the active assistant attempt. */
+  transcriptRevision?: number | null;
   cost?: number | null;
   apiCallCount?: number | null;
   inputTokens?: number | null;
@@ -55,6 +59,8 @@ export const initialStreamingContent: StreamingContent = {
   autoTier: null,
   runId: null,
   turnId: null,
+  assistantAttemptId: null,
+  transcriptRevision: null,
   cost: null,
   apiCallCount: null,
   inputTokens: null,

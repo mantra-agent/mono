@@ -169,6 +169,14 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
   const prevFired = session.lastFiredUserContent;
   session.lastFiredUserContent = lastUserContent;
   const isPrefixContinuation = isWordLevelPrefixContinuation(prevFired, lastUserContent);
+  if (!isPrefixContinuation || !session.activeVoiceTurnId) {
+    session.activeVoiceTurnId = `${session.id}-voice-turn-${Date.now()}`;
+    session.activeTranscriptRevision = 1;
+  } else {
+    session.activeTranscriptRevision += 1;
+  }
+  const voiceTurnId = session.activeVoiceTurnId;
+  const transcriptRevision = session.activeTranscriptRevision;
   if (isPrefixContinuation) {
     log.debug(`[TurnBoundary] prefix continuation of previous turn session=${sessionId} prevLen=${prevFired.length} newLen=${lastUserContent.length} — treating as seamless continuation`);
     session.prefixContinuation = true;
@@ -180,10 +188,18 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
       log.debug(`[TurnCoalesce] COALESCED callback — inflight turn=${session.inflightTurn} chunksDelivered=${session.inflightChunksDelivered} executorStarted=${executorAlreadyStarted} lockHeld=${lockHeld} prefixDiff="${prefixDiff.slice(0, 100)}" session=${sessionId}`);
 
       publishVoiceDiagnostic(session, "coalesce_detected", `User continued speaking — merging transcript (${prevFired.length}→${lastUserContent.length} chars)`, { turn: session.turnCount, status: "done" });
+      if (session.activeAssistantAttemptId) {
+        await publishVoiceLifecycleEvent(session, "assistant_attempt_superseded", {
+          turnId: voiceTurnId,
+          assistantAttemptId: session.activeAssistantAttemptId,
+          transcriptRevision,
+          turn: session.inflightTurn,
+        });
+      }
 
       if (lastUserContent && session.chatSessionId) {
         try {
-          await persistUserMessage(session, messages as Array<{ role: string; content: string }>, session.turnCount, new Date().toISOString());
+          await persistUserMessage(session, messages as Array<{ role: string; content: string }>, session.turnCount, new Date().toISOString(), voiceTurnId);
           log.debug(`[TurnCoalesce] COALESCE_PERSIST — upserted extended transcript to DB session=${sessionId}`);
         } catch (persistErr: unknown) {
           const msg = persistErr instanceof Error ? persistErr.message : String(persistErr);
@@ -196,6 +212,8 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
         publishVoiceEvent(session, "voice_user_transcript", {
             text: lastUserContent,
             turn: session.turnCount,
+            turnId: voiceTurnId,
+            transcriptRevision,
             turnKey: getVoiceUserTurnKey(session, getVoiceUserOrdinal(messages as Array<{ role: string; content: string }>)),
             update: true,
           });
@@ -296,12 +314,14 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
     publishVoiceEvent(session, "voice_user_transcript", {
       text: lastUserContent,
       turn: session.turnCount,
+      turnId: voiceTurnId,
+      transcriptRevision,
       turnKey: getVoiceUserTurnKey(session, getVoiceUserOrdinal(messages as Array<{ role: string; content: string }>)),
       update: isPrefixContinuation,
     });
   }
 
-  const turnRunner = () => executeVoiceTurn(req, res, session, callbackArrivalAt);
+  const turnRunner = () => executeVoiceTurn(req, res, session, callbackArrivalAt, voiceTurnId, transcriptRevision);
   const turnPromise = session.principal
     ? runWithPrincipal(session.principal, turnRunner)
     : turnRunner();
@@ -323,14 +343,23 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
   });
 }
 
-async function executeVoiceTurn(req: Request, res: Response, session: VoiceSession, callbackArrivalAt?: number): Promise<void> {
+async function executeVoiceTurn(
+  req: Request,
+  res: Response,
+  session: VoiceSession,
+  callbackArrivalAt: number | undefined,
+  voiceTurnId: string,
+  transcriptRevision: number,
+): Promise<void> {
   const pipelineStart = callbackArrivalAt || Date.now();
   const { messages } = req.body;
 
   session.turnCount++;
   const currentTurn = session.turnCount;
-  // Mint canonical turnId at acceptance — threaded through every object for this turn.
-  const turnId = `${session.id}-turn-${currentTurn}-${Date.now()}`;
+  // The logical turn survives transcript growth. Each generated answer is a new attempt.
+  const turnId = voiceTurnId;
+  const assistantAttemptId = `${voiceTurnId}-attempt-${currentTurn}-${Date.now()}`;
+  session.activeAssistantAttemptId = assistantAttemptId;
   const userMsgs = messages.filter((m: VoiceMessage) => m.role === "user");
   const lastUserContentFull = (userMsgs[userMsgs.length - 1]?.content || "").trim() || "(none)";
   const lastUserContent = lastUserContentFull.slice(0, 200);
@@ -344,7 +373,12 @@ async function executeVoiceTurn(req: Request, res: Response, session: VoiceSessi
       const voiceSessionKey = session.chatSessionKey || session.chatSessionId;
       sessionManager.registerSession(session.chatSessionId, voiceSessionKey, "voice");
       // Set canonical turnId on the streaming projection
-      sessionManager.applyEvent(session.chatSessionId, { type: "turn_start", turnId });
+      await publishVoiceLifecycleEvent(session, "assistant_attempt_started", {
+        turnId,
+        assistantAttemptId,
+        transcriptRevision,
+        turn: currentTurn,
+      });
     } catch (regErr) {
       log.debug(`sessionManager.registerSession skipped: ${regErr instanceof Error ? regErr.message : String(regErr)}`);
     }
@@ -508,7 +542,7 @@ async function executeVoiceTurn(req: Request, res: Response, session: VoiceSessi
           return;
         }
         turnAbort = new AbortController();
-        ctx = createTurnContext(session, turnAbort, turnId);
+        ctx = createTurnContext(session, turnAbort, turnId, assistantAttemptId, transcriptRevision);
         ctx.systemSteps.push({ name: "voice_turn_boundary", status: "done", detail: `Turn ${currentTurn}` });
         ctx.segmentChronology.push({ s: "system", i: ctx.systemSteps.length - 1 });
         session.inflightAbort = turnAbort;
@@ -601,8 +635,8 @@ async function executeVoiceTurnBody(
   } catch (err: unknown) {
     await handleTurnError(err instanceof Error ? err : new Error(String(err)), session, ctx, currentTurn, turnAbort, trackedWrite, res, resolveDone);
   } finally {
-    // Finalize server-authoritative SessionManager (migration: both paths active)
-    if (session.chatSessionId) {
+    // Only the current committed attempt may settle the visible stream.
+    if (session.chatSessionId && !ctx.aborted && session.activeAssistantAttemptId === ctx.assistantAttemptId) {
       try {
         const { sessionManager } = await import("./session-manager");
         sessionManager.finalizeSession(session.chatSessionId);

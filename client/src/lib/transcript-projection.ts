@@ -250,11 +250,13 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
 
   // --- Live stream render ID ---
   const liveStreamRenderId = hasLiveStreamingState
-    ? visiblePendingTurn?.clientTurnId
-      ? `draft-assistant-${visiblePendingTurn.clientTurnId}`
-      : activeSession
-        ? `draft-assistant-server-${activeSession}`
-        : null
+    ? currentTurnStreaming.assistantAttemptId
+      ? `draft-assistant-attempt-${currentTurnStreaming.assistantAttemptId}`
+      : visiblePendingTurn?.clientTurnId
+        ? `draft-assistant-${visiblePendingTurn.clientTurnId}`
+        : activeSession
+          ? `draft-assistant-server-${activeSession}`
+          : null
     : null;
 
   // --- Frozen handoff decisions ---

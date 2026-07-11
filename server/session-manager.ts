@@ -201,6 +201,8 @@ class SessionManager {
     autoTier?: string;
     runId?: string;
     turnId?: string;
+    assistantAttemptId?: string;
+    transcriptRevision?: number;
     step?: string;
     status?: string;
     elapsedMs?: number;
@@ -296,7 +298,31 @@ class SessionManager {
         break;
 
       case "turn_start":
-        prev = { ...prev, turnId: event.turnId || null };
+      case "assistant_attempt_started":
+        // A new attempt is a replacement, never an append to superseded output.
+        prev = {
+          ...initialStreamingContent,
+          source: session.source ?? "voice",
+          turnId: event.turnId || prev.turnId || null,
+          assistantAttemptId: event.assistantAttemptId || null,
+          transcriptRevision: event.transcriptRevision ?? null,
+        };
+        session.status = "streaming";
+        session.finalizedAt = null;
+        break;
+
+      case "assistant_attempt_superseded":
+        // Superseded output must disappear atomically and must never freeze.
+        if (!event.assistantAttemptId || prev.assistantAttemptId === event.assistantAttemptId) {
+          prev = {
+            ...initialStreamingContent,
+            source: session.source ?? "voice",
+            turnId: event.turnId || prev.turnId || null,
+            transcriptRevision: event.transcriptRevision ?? prev.transcriptRevision ?? null,
+          };
+        } else {
+          changed = false;
+        }
         break;
 
       case "saved":
