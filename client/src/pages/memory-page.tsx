@@ -151,7 +151,7 @@ const MEMORY_LIST_ROW_CLASS = "rounded-md border border-transparent transition-c
 const MEMORY_SELECTED_ROW_CLASS = "border-card-border bg-accent text-accent-foreground";
 const MEMORY_EMPTY_CLASS = "flex flex-col items-center justify-center py-12 text-center text-muted-foreground";
 
-const WORKING_SECTION_TRIGGER_CLASS = "flex items-center gap-1.5 w-full px-2 py-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider hover-elevate rounded-md";
+const WORKING_SECTION_TRIGGER_CLASS = "flex items-center justify-start gap-1.5 w-full px-2 py-1.5 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider hover-elevate rounded-md";
 const WORKING_TREE_ROW_CLASS = "group relative flex items-center gap-2 rounded-md px-2 py-1.5 text-sm w-full text-left cursor-pointer select-none transition-colors overflow-hidden";
 const WORKING_TREE_SELECTED_CLASS = "bg-accent text-foreground";
 const WORKING_TREE_IDLE_CLASS = "text-muted-foreground hover:bg-accent/70 hover:text-foreground";
@@ -1003,9 +1003,9 @@ function MemoryPipelineRow({ entry, expanded, onToggle, timezone }: { entry: Mem
 
 
 function VnextClaimTypeIcon({ claimType }: { claimType: string }) {
-  if (claimType === "cause") return <Zap className="h-3.5 w-3.5 shrink-0 text-warning" aria-label="Cause" />;
-  if (claimType === "action") return <Activity className="h-3.5 w-3.5 shrink-0 text-success" aria-label="Action" />;
-  return <CircleDot className="h-3.5 w-3.5 shrink-0 text-info" aria-label="State" />;
+  if (claimType === "cause") return <Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="Cause" />;
+  if (claimType === "action") return <Activity className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="Action" />;
+  return <CircleDot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="State" />;
 }
 
 function VnextClaimRow({ claim, expanded, onToggle, timezone }: { claim: VnextClaim; expanded: boolean; onToggle: () => void; timezone: string }) {
@@ -2264,18 +2264,11 @@ function LayersTab() {
     setExpandedClaimIds(prev => { const next = new Set(prev); next.has(claimId) ? next.delete(claimId) : next.add(claimId); return next; });
   };
 
-  const renderVnextSourceStatusIcon = (status: string, testId: string) => {
-    if (status === "processing") return <Loader2 className="h-3 w-3 shrink-0 animate-spin text-info" data-testid={testId} aria-label="Processing" />;
-    if (status === "pending") return <Clock className="h-3 w-3 shrink-0 text-warning" data-testid={testId} aria-label="Pending" />;
-    return <CheckCircle2 className="h-3 w-3 shrink-0 text-success" data-testid={testId} aria-label="Completed" />;
-  };
-
   const renderVnextSourceRow = (source: VnextSourceQueueRow) => {
     const modified = formatPipelineTime(source.lastModifiedAt || source.createdAt, timezone);
     const refType = SOURCE_REF_TYPE_MAP[source.sourceType] ?? null;
     return (
       <div key={source.id} className="flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-muted/30" data-testid={`memory-vnext-source-row-${source.id}`}>
-        {renderVnextSourceStatusIcon(source.status, `memory-vnext-source-status-${source.id}`)}
         <div className="min-w-0 flex-1">
           {refType ? (
             <ReferenceRenderer refValue={createReferenceRef({ type: refType, id: source.sourceId })} surface="simple-chip" />
