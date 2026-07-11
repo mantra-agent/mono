@@ -5,16 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import type { SecretMetadata, SecretSection } from "@shared/secrets-catalog";
 
-interface AuthMe {
-  user?: { id?: string; role?: string } | null;
-}
-
 export function useIsAdmin(): boolean {
-  const { data } = useQuery<AuthMe>({ queryKey: ["/api/auth/me"], retry: false });
-  return data?.user?.role === "admin";
+  return useAuth().hasPermission("system:write");
 }
 
 interface SecretControlProps {
