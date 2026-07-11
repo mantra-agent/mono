@@ -2081,7 +2081,7 @@ function blendCacheSignals(
   return result;
 }
 
-async function resolveGraphMemory(request: ContextRequest): Promise<string> {
+async function resolveLegacyGraphMemory(request: ContextRequest): Promise<string> {
   const start = Date.now();
   try {
     let focusText = "";
@@ -2416,6 +2416,122 @@ async function resolveGraphMemory(request: ContextRequest): Promise<string> {
     log.warn(`resolveGraphMemory error: ${message}`);
     return "Graph memory temporarily unavailable.";
   }
+}
+
+interface VnextTierEntry {
+  id: number;
+  title: string | null;
+  oneLiner: string | null;
+  summary: string | null;
+  content: string;
+  tags: string[] | null;
+  createdAt: string | null;
+  integrationStage: string | null;
+  layer: string;
+  metadata: unknown;
+}
+
+function renderVnextContext(
+  candidates: Awaited<ReturnType<typeof import("./memory/vnext-context-retrieval").retrieveVnextContext>>["candidates"],
+  tokenBudget: number,
+): string {
+  const entries = new Map<number, VnextTierEntry>();
+  const refs = new Map<number, ContextSourceRef[]>();
+  for (const candidate of candidates) {
+    const claim = candidate.claim;
+    entries.set(claim.id, {
+      id: claim.id,
+      title: claim.title,
+      oneLiner: claim.content,
+      summary: claim.content,
+      content: claim.content,
+      tags: claim.topics,
+      createdAt: claim.createdAt.toISOString(),
+      integrationStage: claim.lifecycleStage,
+      layer: "vnext",
+      metadata: {
+        ...(claim.metadata as Record<string, unknown> ?? {}),
+        confidence: claim.confidence,
+        claimType: claim.claimType,
+        recallCount: claim.recallCount,
+      },
+    });
+    refs.set(claim.id, candidate.sourceRefs.map((ref) => ({
+      sourceType: ref.sourceType,
+      sourceId: ref.sourceId,
+      relationship: ref.relationship,
+      strength: ref.strength,
+      context: ref.context,
+    })));
+  }
+  const allocated = allocateTiers(
+    candidates.map((candidate) => ({ id: candidate.claim.id, score: candidate.score, sources: candidate.paths })),
+    entries,
+    refs,
+    tokenBudget,
+  );
+  if (allocated.length === 0) return "";
+  return ["Memories matching query:", ...allocated.map((item) => item.rendered)].join("\n");
+}
+
+async function resolveGraphMemory(request: ContextRequest): Promise<string> {
+  const focusParts: string[] = [];
+  if (request.currentMessage) focusParts.push(request.currentMessage.slice(0, 1000));
+  if (request.memoryQuery) focusParts.push(request.memoryQuery.slice(0, 1000));
+  if (request.conversationHistory?.length) {
+    focusParts.push(request.conversationHistory.slice(-3).map((message) => message.content).join("\n").slice(-500));
+  }
+  if (request.sessionId) {
+    try {
+      const session = await chatFileStorage.getSession(request.sessionId);
+      if (session?.title && session.title !== "New Session" && session.title !== "New Chat") focusParts.push(session.title);
+      if (session?.topics?.length) focusParts.push(session.topics.join(" "));
+    } catch { /* session metadata is optional */ }
+  }
+  const focusText = focusParts.filter(Boolean).join("\n");
+  if (!focusText) return "";
+
+  const tokenBudget = await getMemoryGraphTokenBudget();
+  const queryHash = `${contextPrincipalKey()}::vnext::${getQueryHash(focusText)}::${tokenBudget}`;
+  const cached = _graphMemoryCache.get(queryHash);
+  if (cached !== undefined) return cached;
+
+  try {
+    const sessionTopics = request.sessionId
+      ? (await chatFileStorage.getSession(request.sessionId).catch(() => null))?.topics ?? []
+      : [];
+    const detection = detectSessionType(`${focusText} ${sessionTopics.join(" ")}`);
+    let emotionInput: { valence: number; arousal: number } | null = null;
+    const currentEmotion = await fileEmotionalStateStorage.getCurrent().catch(() => null);
+    if (currentEmotion && !currentEmotion.stale) {
+      emotionInput = { valence: currentEmotion.valence, arousal: currentEmotion.arousal };
+    }
+    const { weights } = modulateWeights(BLEND_WEIGHTS[detection.type], emotionInput);
+    const { retrieveVnextContext } = await import("./memory/vnext-context-retrieval");
+    const retrieved = await retrieveVnextContext(focusText, weights);
+    const result = renderVnextContext(retrieved.candidates, tokenBudget);
+    if (result) {
+      _graphMemoryCache.set(queryHash, result);
+      log.debug(JSON.stringify({
+        event: "memory.graph.context_resolved",
+        path: "vnext",
+        semanticSeeds: retrieved.semanticSeedCount,
+        recentSeeds: retrieved.recentSeedCount,
+        expanded: retrieved.expandedCount,
+        candidates: retrieved.candidates.length,
+      }));
+      return result;
+    }
+    log.warn(JSON.stringify({ event: "memory.graph.context_fallback", path: "legacy", reason: "vnext_empty" }));
+  } catch (err) {
+    log.warn(JSON.stringify({
+      event: "memory.graph.context_fallback",
+      path: "legacy",
+      reason: "vnext_error",
+      error: err instanceof Error ? err.message : String(err),
+    }));
+  }
+  return resolveLegacyGraphMemory(request);
 }
 
 async function resolveTemporalLog(): Promise<string> {

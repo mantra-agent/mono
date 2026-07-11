@@ -243,7 +243,9 @@ export async function executeVnextClaimSemanticSearch(
       last_recalled_at, created_at, updated_at,
       1 - (embedding <=> ${embeddingStr}::vector) AS similarity
     FROM memory_vnext_claims
-    WHERE embedding IS NOT NULL ${visibilityCondition}
+    WHERE embedding IS NOT NULL
+      AND lifecycle_stage <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}
+      ${visibilityCondition}
     ORDER BY embedding <=> ${embeddingStr}::vector
     LIMIT ${limit}
   `);
