@@ -46,6 +46,7 @@ import { getLatestDeploymentByToken } from "../integrations/railway/client";
 import { getCloudflareLatestDeployment } from "../services/provider-connection-service";
 import { buildWorkflowRunPageContent, buildWorkflowStages, parseWorkflowDefinition, type WorkflowEnvironmentTruth, type WorkflowRunDetail } from "./workflow-renderer";
 import { monitorChildSession, truncateOutput, type MonitorResult } from "../child-session-monitor";
+import { chatFileStorage } from "../chat-file-storage";
 
 const log = createLogger("WorkflowService");
 
@@ -1603,7 +1604,18 @@ export async function captureAcceptanceEvidence(input: { workflowRunId: string; 
   const detail = await getWorkflowRun(input.workflowRunId);
   if (!detail) throw new Error(`Workflow run not found: ${input.workflowRunId}`);
   const initialTruth = detail.environmentTruth || await getWorkflowEnvironmentTruth(input.workflowRunId);
-  const { truth, readiness: deploymentReadiness } = await waitForAcceptanceDeploymentTruth(input.workflowRunId, initialTruth);
+  let truth: WorkflowEnvironmentTruth | null;
+  let deploymentReadiness: DeploymentReadiness;
+  if (input.createdBySessionId) {
+    await chatFileStorage.updateSessionStatus(input.createdBySessionId, "waiting");
+  }
+  try {
+    ({ truth, readiness: deploymentReadiness } = await waitForAcceptanceDeploymentTruth(input.workflowRunId, initialTruth));
+  } finally {
+    if (input.createdBySessionId) {
+      await chatFileStorage.updateSessionStatus(input.createdBySessionId, "streaming");
+    }
+  }
   const stage = detail.stages.find((item) => item.key === "acceptance");
   const stageAttemptId = input.stageAttemptId ?? stage?.latestAttempt?.id ?? null;
   const lifecycleSnapshot = detail.lifecycleSnapshot || detail.run.lifecycleSnapshot;
