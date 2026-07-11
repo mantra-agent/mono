@@ -292,7 +292,7 @@ function InlineTagPicker({
   );
 }
 
-/** Deadline picker with proximity label */
+/** Deadline picker with canonical urgency color on the date itself. */
 function DeadlineField({
   value,
   onSave,
@@ -306,28 +306,21 @@ function DeadlineField({
     dlProx?.urgency === "soon" ? "text-warning" : "";
 
   return (
-    <div className="flex items-center gap-1.5">
-      <InlineDatePicker
-        value={value}
-        onCommit={(v) => { if (v !== (value || null)) onSave(v); }}
-        testId="picker-task-widget-deadline"
+    <InlineDatePicker
+      value={value}
+      onCommit={(v) => { if (v !== (value || null)) onSave(v); }}
+      testId="picker-task-widget-deadline"
+    >
+      <span
+        className={cn(
+          "h-5 rounded bg-muted/50 px-1.5 text-xs leading-5 hover:bg-accent/70",
+          dlColor,
+          !value && "text-muted-foreground/60",
+        )}
       >
-        <span
-          className={cn(
-            "h-5 rounded bg-muted/50 px-1.5 text-xs leading-5 hover:bg-accent/70",
-            dlColor,
-            !value && "text-muted-foreground/60",
-          )}
-        >
-          {value || "Set date"}
-        </span>
-      </InlineDatePicker>
-      {dlProx && (
-        <span className={cn("text-[10px] whitespace-nowrap", dlColor)}>
-          {dlProx.label}
-        </span>
-      )}
-    </div>
+        {value || "Set date"}
+      </span>
+    </InlineDatePicker>
   );
 }
 
@@ -505,6 +498,18 @@ export function TaskWidget({ taskId, defaultExpanded = false, showHeader = true,
             </Select>
           </TaskFieldRow>
 
+          <TaskFieldRow icon={task.owner === "me" ? User : Bot} label="Owner" testId="row-task-owner">
+            <Select value={task.owner} onValueChange={(v) => updateMutation.mutate({ owner: v as "me" | "agent" })}>
+              <SelectTrigger className="h-5 text-xs w-auto min-w-[80px]" data-testid="select-task-widget-owner">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="me">Me</SelectItem>
+                <SelectItem value="agent">{getInstanceName()}</SelectItem>
+              </SelectContent>
+            </Select>
+          </TaskFieldRow>
+
           <TaskFieldRow icon={Flag} label="Priority" testId="row-task-priority">
             <Select value={task.priority} onValueChange={(v) => updateMutation.mutate({ priority: v as PriorityLevel })}>
               <SelectTrigger className={cn("h-5 text-xs w-auto min-w-[80px]", getColorForOption(task.priority, PRIORITY_OPTIONS))} data-testid="select-task-widget-priority">
@@ -516,18 +521,6 @@ export function TaskWidget({ taskId, defaultExpanded = false, showHeader = true,
                     <span className={opt.color}>{opt.label}</span>
                   </SelectItem>
                 ))}
-              </SelectContent>
-            </Select>
-          </TaskFieldRow>
-
-          <TaskFieldRow icon={task.owner === "me" ? User : Bot} label="Owner" testId="row-task-owner">
-            <Select value={task.owner} onValueChange={(v) => updateMutation.mutate({ owner: v as "me" | "agent" })}>
-              <SelectTrigger className="h-5 text-xs w-auto min-w-[80px]" data-testid="select-task-widget-owner">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="me">Me</SelectItem>
-                <SelectItem value="agent">{getInstanceName()}</SelectItem>
               </SelectContent>
             </Select>
           </TaskFieldRow>
