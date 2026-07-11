@@ -2692,6 +2692,7 @@ interface RecallStatus {
   hasKey?: boolean;
   region?: string | null;
   hasWebhookSecret?: boolean;
+  hasWorkspaceVerificationSecret?: boolean;
   statusWebhookUrl?: string;
   transcriptWebhookUrl?: string;
   error?: string;
@@ -2770,13 +2771,15 @@ function RecallDetail() {
       .filter((secret) => secret.name.startsWith("RECALL_"))
       .map((secret) => [secret.name, secret.status] as const),
   );
-  const credentialsReady = ["RECALL_API_KEY", "RECALL_REGION", "RECALL_WEBHOOK_SECRET"]
+  const credentialsReady = ["RECALL_API_KEY", "RECALL_REGION", "RECALL_WEBHOOK_SECRET", "RECALL_WORKSPACE_VERIFICATION_SECRET"]
     .every((name) => recallSecretStatuses.get(name) === "set");
   const credentialsLoading = !secretMetadata;
   const webhookReady = Boolean(
     recallStatus?.connected &&
     recallStatus?.hasWebhookSecret &&
-    recallSecretStatuses.get("RECALL_WEBHOOK_SECRET") === "set",
+    recallStatus?.hasWorkspaceVerificationSecret &&
+    recallSecretStatuses.get("RECALL_WEBHOOK_SECRET") === "set" &&
+    recallSecretStatuses.get("RECALL_WORKSPACE_VERIFICATION_SECRET") === "set",
   );
   const connectionNeedsAttention = isLoading || !recallStatus?.connected || Boolean(recallStatus?.error);
   const credentialsNeedAttention = credentialsLoading || !credentialsReady;
@@ -2873,9 +2876,10 @@ function RecallDetail() {
               </code>
               <p className="text-muted-foreground">
                 Subscribe to all <code>bot.*</code> status events, especially joining, waiting room, in-call recording,
-                call ended, done, and fatal. Save the workspace verification secret as <code>RECALL_WEBHOOK_SECRET</code>.
-                Recall does not register this endpoint through Create Bot, so live meeting status cannot work until this
-                dashboard step is complete.
+                call ended, done, and fatal. Save this endpoint's Svix signing secret as <code>RECALL_WEBHOOK_SECRET</code>.
+                Separately save the workspace verification secret from <strong>Developers → API Keys & Secrets</strong> as
+                <code>RECALL_WORKSPACE_VERIFICATION_SECRET</code>. Recall uses it for per-bot real-time transcript endpoints.
+                Legacy workspaces require both secrets; they are not interchangeable.
               </p>
             </>
           }
