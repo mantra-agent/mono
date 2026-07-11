@@ -1357,9 +1357,106 @@ async function handleGmailDraft(args: Record<string, any>): Promise<ToolHandlerR
   }
 }
 
+type ParsedDraftBodyMutation =
+  | { mutation?: import("./email-draft-storage").EmailDraftBodyMutation }
+  | { error: string };
+
+function parseDraftBodyMutation(args: Record<string, any>): ParsedDraftBodyMutation {
+  const supplied = ["findReplace", "rangePatch", "replaceBody"].filter((key) => {
+    const value = args[key];
+    return value !== undefined
+      && value !== null
+      && (typeof value !== "object" || Array.isArray(value) || Object.keys(value).length > 0);
+  });
+  if (optionalDraftText(args.body)) {
+    return { error: "update_draft body changes require findReplace, rangePatch, or replaceBody; body is for draft creation only" };
+  }
+  if (supplied.length > 1) {
+    return { error: "Provide only one body operation: findReplace, rangePatch, or replaceBody" };
+  }
+  if (supplied.length === 0) return {};
+
+  const operation = supplied[0];
+  const value = args[operation];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { error: `${operation} must be an object` };
+  }
+
+  if (operation === "findReplace") {
+    if (typeof value.find !== "string" || value.find.length === 0 || typeof value.replace !== "string") {
+      return { error: "findReplace requires a non-empty find string and a replace string" };
+    }
+    if (value.replaceAll !== undefined && typeof value.replaceAll !== "boolean") {
+      return { error: "findReplace.replaceAll must be a boolean" };
+    }
+    return {
+      mutation: {
+        type: "find_replace",
+        find: value.find,
+        replace: value.replace,
+        replaceAll: value.replaceAll,
+      },
+    };
+  }
+
+  if (operation === "rangePatch") {
+    if (
+      !Number.isInteger(value.start)
+      || !Number.isInteger(value.end)
+      || typeof value.replacement !== "string"
+      || typeof value.expectedBodyHash !== "string"
+      || value.expectedBodyHash.trim().length === 0
+    ) {
+      return { error: "rangePatch requires integer start/end, a replacement string, and non-empty expectedBodyHash" };
+    }
+    return {
+      mutation: {
+        type: "range_patch",
+        start: value.start,
+        end: value.end,
+        replacement: value.replacement,
+        expectedBodyHash: value.expectedBodyHash.trim(),
+      },
+    };
+  }
+
+  if (typeof value.body !== "string") {
+    return { error: "replaceBody requires a body string" };
+  }
+  return { mutation: { type: "replace_body", body: value.body } };
+}
+
+function describeDraftBodyMutationFailure(
+  draftId: string,
+  result: Exclude<
+    import("./email-draft-storage").EmailDraftBodyMutationResult,
+    { status: "updated" }
+  >,
+): string {
+  switch (result.status) {
+    case "not_found":
+      return `Email draft ${draftId} not found`;
+    case "missing_match":
+      return "Draft body edit failed: exact find text was not present";
+    case "ambiguous_match":
+      return "Draft body edit failed: exact find text matched more than once; provide more context or set replaceAll=true";
+    case "stale_body":
+      return `Draft body edit failed: body changed since the patch was prepared${result.bodyHash ? `. Current body hash: ${result.bodyHash}` : ""}`;
+    case "invalid_range":
+      return `Draft body edit failed: range is invalid for the current body${result.bodyHash ? `. Current body hash: ${result.bodyHash}` : ""}`;
+    case "immutable_draft":
+      return "Draft body edit failed: sent and discarded drafts are immutable";
+  }
+}
+
 async function handleGmailDraftUpdate(args: Record<string, any>): Promise<ToolHandlerResult> {
   const draftId = optionalDraftText(args.draft_id);
   if (!draftId) return { result: "Missing draft_id", error: true };
+
+  const parsedBodyMutation = parseDraftBodyMutation(args);
+  if ("error" in parsedBodyMutation) {
+    return { result: parsedBodyMutation.error, error: true };
+  }
 
   try {
     const { emailDraftStorage } = await import("./email-draft-storage");
@@ -1378,17 +1475,35 @@ async function handleGmailDraftUpdate(args: Record<string, any>): Promise<ToolHa
       cc: optionalDraftRecipients(args.update_cc),
       bcc: optionalDraftRecipients(args.update_bcc),
       subject: optionalDraftText(args.subject),
-      body: optionalDraftText(args.body),
     };
-
-    if (Object.values(patch).every((value) => value === undefined)) {
-      return { result: "No non-empty editable fields provided", error: true };
+    const hasNonBodyPatch = Object.values(patch).some((value) => value !== undefined);
+    if (!hasNonBodyPatch && !parsedBodyMutation.mutation) {
+      return { result: "No non-empty editable fields or body operation provided", error: true };
     }
 
-    const draft = await emailDraftStorage.update(principal, draftId, patch);
-    if (!draft) return { result: `Email draft ${draftId} not found`, error: true };
+    let draft = hasNonBodyPatch
+      ? await emailDraftStorage.update(principal, draftId, patch)
+      : null;
+    if (hasNonBodyPatch && !draft) {
+      return { result: `Email draft ${draftId} not found`, error: true };
+    }
 
-    return { result: `Email draft updated. @email_draft:${draft.id}` };
+    if (parsedBodyMutation.mutation) {
+      const bodyResult = await emailDraftStorage.mutateBody(
+        principal,
+        draftId,
+        parsedBodyMutation.mutation,
+      );
+      if (bodyResult.status !== "updated") {
+        return {
+          result: describeDraftBodyMutationFailure(draftId, bodyResult),
+          error: true,
+        };
+      }
+      draft = bodyResult.draft;
+    }
+
+    return { result: `Email draft updated. @email_draft:${draft!.id}` };
   } catch (err: any) {
     toolExec.error(`handleGmailDraftUpdate: Failed to update draft: ${err.message}`);
     return { result: `Failed to update email draft: ${err.message}`, error: true };
