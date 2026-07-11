@@ -2389,6 +2389,10 @@ export class AgentExecutor extends EventEmitter {
     let admissionGranted = false;
 
     const admissionQueuedAt = Date.now();
+    log.debug(
+      `autonomous.lifecycle phase=admission-requested runId=${runId} sessionId=${options.sessionId ?? "none"} ` +
+      `tier=${tier} activity=${options.activity ?? "none"}`,
+    );
 
     const runBody = async (): Promise<ExecutorRunResult> => {
     try {
@@ -2553,6 +2557,11 @@ export class AgentExecutor extends EventEmitter {
       if (admissionGranted) {
         admissionController.releaseSlot(runId);
       }
+      log.debug(
+        `autonomous.lifecycle phase=executor-released runId=${runId} sessionId=${options.sessionId ?? "none"} ` +
+        `tier=${tier} activity=${options.activity ?? "none"} elapsedMs=${Date.now() - startTime} ` +
+        `admissionGranted=${admissionGranted}`,
+      );
       this.activeRuns.delete(runId);
     }
     };

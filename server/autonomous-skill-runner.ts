@@ -18,6 +18,7 @@ import { getCurrentPrincipal, runWithPrincipal } from "./principal-context";
 import type { Principal } from "./principal";
 
 const logger = createLogger("AutonomousSkillRunner");
+const lifecycleLog = createLogger("AutonomousLifecycle");
 
 // ── Autonomous principal resolution ─────────────────────────────────
 // Every autonomous skill run must execute inside a user principal context.
@@ -700,6 +701,11 @@ export async function executeAutonomousSkillRun(
   }
 
   const sessionId = conversation.id;
+  lifecycleLog.debug(
+    `phase=created sessionId=${sessionId} parentSessionId=${options.parentSessionId ?? "none"} ` +
+    `skillId=${skillId ?? "skillless"} activity=${config.activity} sessionType=${sessType} ` +
+    `spawnReason=${effectiveSpawnReason ?? "none"}`,
+  );
   logger.log(`[SkillChat] phase=pipeline-start — session created: ${sessionId} — starting skill "${config.label}"`);
 
   if (!isSkillless) {
@@ -841,6 +847,11 @@ export async function executeAutonomousSkillRun(
       event: result.status === "succeeded" ? "chat.autonomous.completed" : "chat.autonomous.failed",
       payload: { sessionId, skillId, skillName: config.label, durationMs: result.durationMs, error: result.error, sessionType: sessType, ...(options.parentSessionId ? { parentSessionId: options.parentSessionId } : {}) },
     });
+    lifecycleLog.debug(
+      `phase=terminal sessionId=${sessionId} parentSessionId=${options.parentSessionId ?? "none"} ` +
+      `skillId=${skillId ?? "skillless"} status=${result.status} durationMs=${result.durationMs} ` +
+      `error=${result.error ?? "none"}`,
+    );
 
     return result;
   } catch (err: unknown) {
@@ -895,6 +906,11 @@ export async function executeAutonomousSkillRun(
       event: "chat.autonomous.failed",
       payload: { sessionId, skillId, skillName: config.label, error: errMsg, durationMs },
     });
+    lifecycleLog.debug(
+      `phase=terminal sessionId=${sessionId} parentSessionId=${options.parentSessionId ?? "none"} ` +
+      `skillId=${skillId ?? "skillless"} status=failed failureReason=${failureReason} ` +
+      `durationMs=${durationMs} error=${errMsg}`,
+    );
 
     return { sessionId, status: "failed", error: errMsg, durationMs };
   } finally {
@@ -1059,6 +1075,11 @@ async function runSkillPipeline(
         // Before this point, the executor was waiting in the admission queue,
         // which is not silence during work.
         inactivityTimer.start();
+        lifecycleLog.debug(
+          `phase=executor-started sessionId=${sessionId} parentSessionId=${options.parentSessionId ?? "none"} ` +
+          `skillId=${config.skillId || "skillless"} activity=${config.activity} ` +
+          `tier=${options.parentSessionId ? "request" : "background"}`,
+        );
         logger.log(`[SkillChat] [${sessionId}] Admission granted — inactivity timer started`);
         return;
       }
@@ -1068,6 +1089,11 @@ async function runSkillPipeline(
       }
     };
 
+    lifecycleLog.debug(
+      `phase=execution-requested sessionId=${sessionId} parentSessionId=${options.parentSessionId ?? "none"} ` +
+      `skillId=${config.skillId || "skillless"} activity=${config.activity} ` +
+      `tier=${options.parentSessionId ? "request" : "background"} toolCount=${tools.length}`,
+    );
     logger.log(`[SkillChat] [${sessionId}] Starting executor (${tools.length} tools, temp=${config.temperature})`);
     const result = await raceAbort(
       agentExecutor.run({
