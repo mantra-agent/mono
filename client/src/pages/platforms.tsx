@@ -56,11 +56,7 @@ interface Platform {
 }
 
 type BuildLifecycleStatus = {
-  providers?: {
-    railway?: { deployment?: { status?: string | null } | null } | null;
-    cloudflare_pages?: { deployment?: { status?: string | null } | null } | null;
-  };
-  workflows?: { recent?: Array<{ status: string }> };
+  activity?: { state: "building" | "idle" };
 };
 
 type PendingDelete =
@@ -278,15 +274,10 @@ function EnvironmentRow({
 }) {
   const { data } = useQuery<BuildLifecycleStatus>({
     queryKey: ["/api/platforms/environments", environment.id, "build-status"],
-    refetchInterval: (query) => {
-      const status = query.state.data?.providers?.railway?.deployment?.status || query.state.data?.providers?.cloudflare_pages?.deployment?.status;
-      const activeWorkflow = query.state.data?.workflows?.recent?.some((run) => ["active", "needs_review"].includes(run.status));
-      return statusFamily(status) === "deploying" || activeWorkflow ? 8000 : false;
-    },
+    refetchInterval: (query) => query.state.data?.activity?.state === "building" ? 8000 : false,
     staleTime: 30_000,
   });
-  const deploymentStatus = data?.providers?.railway?.deployment?.status || data?.providers?.cloudflare_pages?.deployment?.status;
-  const isBuilding = statusFamily(deploymentStatus) === "deploying" || !!data?.workflows?.recent?.some((run) => ["active", "needs_review"].includes(run.status));
+  const isBuilding = data?.activity?.state === "building";
 
   return (
     <PlatformTreeRow

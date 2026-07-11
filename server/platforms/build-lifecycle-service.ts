@@ -1,4 +1,4 @@
-import { and, desc, eq, ne, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { db } from "../db";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { getProviderCredential } from "../provider-credential-store";
@@ -11,6 +11,7 @@ import {
   seedBuildWorkflowTemplate,
   startWorkflowRun,
 } from "../workflows/workflow-service";
+import { workflowRuns, workflowStageAttempts } from "@shared/schema";
 import {
   environmentBuildLifecycleConfigs,
   environmentHostingBindings,
@@ -29,6 +30,8 @@ import {
 
 const platformScopeColumns = { scope: platforms.scope, ownerUserId: platforms.ownerUserId, accountId: platforms.accountId };
 const providerConnectionScopeColumns = { scope: providerConnections.scope, ownerUserId: providerConnections.ownerUserId, accountId: providerConnections.accountId };
+const workflowRunScopeColumns = { scope: workflowRuns.scope, ownerUserId: workflowRuns.ownerUserId, accountId: workflowRuns.accountId };
+const workflowAttemptScopeColumns = { scope: workflowStageAttempts.scope, ownerUserId: workflowStageAttempts.ownerUserId, accountId: workflowStageAttempts.accountId };
 
 function visiblePlatform(predicate?: SQL): SQL {
   return combineWithVisibleScope(getCurrentPrincipalOrSystem(), platformScopeColumns, predicate);
@@ -40,6 +43,14 @@ function writablePlatform(predicate?: SQL): SQL {
 
 function visibleProviderConnection(predicate?: SQL): SQL {
   return combineWithVisibleScope(getCurrentPrincipalOrSystem(), providerConnectionScopeColumns, predicate);
+}
+
+function visibleWorkflowRun(predicate?: SQL): SQL {
+  return combineWithVisibleScope(getCurrentPrincipalOrSystem(), workflowRunScopeColumns, predicate);
+}
+
+function visibleWorkflowAttempt(predicate?: SQL): SQL {
+  return combineWithVisibleScope(getCurrentPrincipalOrSystem(), workflowAttemptScopeColumns, predicate);
 }
 
 async function getVisibleEnvironment(environmentId: number) {
@@ -132,6 +143,11 @@ export type EnvironmentBuildStatus = {
   };
   workflows: {
     recent: unknown[];
+  };
+  activity: {
+    state: "building" | "idle";
+    workflowRunId: string | null;
+    stageAttemptId: number | null;
   };
   checkedAt: string;
 };
@@ -356,16 +372,50 @@ async function composeCloudflarePageStatus(hosting: typeof environmentHostingBin
   }
 }
 
+async function getEnvironmentBuildActivity(environmentId: number, workflowTemplateId?: string | null): Promise<EnvironmentBuildStatus["activity"]> {
+  const runClauses: SQL[] = [
+    eq(workflowRuns.linkedEnvironmentId, environmentId),
+    eq(workflowRuns.status, "active"),
+    isNull(workflowRuns.archivedAt),
+  ];
+  if (workflowTemplateId) runClauses.push(eq(workflowRuns.templateId, workflowTemplateId));
+
+  const activeRuns = await db
+    .select({ id: workflowRuns.id })
+    .from(workflowRuns)
+    .where(visibleWorkflowRun(and(...runClauses)))
+    .orderBy(desc(workflowRuns.updatedAt))
+    .limit(5);
+  if (!activeRuns.length) return { state: "idle", workflowRunId: null, stageAttemptId: null };
+
+  const runIds = activeRuns.map((run) => run.id);
+  const [activeAttempt] = await db
+    .select({ id: workflowStageAttempts.id, workflowRunId: workflowStageAttempts.workflowRunId })
+    .from(workflowStageAttempts)
+    .where(visibleWorkflowAttempt(and(
+      inArray(workflowStageAttempts.workflowRunId, runIds),
+      eq(workflowStageAttempts.status, "active"),
+      isNull(workflowStageAttempts.completedAt),
+    )))
+    .orderBy(desc(workflowStageAttempts.updatedAt))
+    .limit(1);
+
+  return activeAttempt
+    ? { state: "building", workflowRunId: activeAttempt.workflowRunId, stageAttemptId: activeAttempt.id }
+    : { state: "idle", workflowRunId: null, stageAttemptId: null };
+}
+
 export async function getEnvironmentBuildStatus(environmentId: number): Promise<EnvironmentBuildStatus | null> {
   const lifecycle = await getEnvironmentBuildLifecycleConfig(environmentId, { includeDisabled: true });
   if (!lifecycle) return null;
   const { source, hosting, sourceConnection, hostingConnection } = await getBindingContext(environmentId);
   const providerKind = lifecycle.config?.providerKind || "railway";
-  const [railway, eas, cloudflarePages, recentWorkflows] = await Promise.all([
+  const [railway, eas, cloudflarePages, recentWorkflows, activity] = await Promise.all([
     providerKind === "railway" || !providerKind ? composeRailwayStatus(hosting, hostingConnection) : Promise.resolve(null),
     composeEasStatus(),
     providerKind === "cloudflare_pages" ? composeCloudflarePageStatus(hosting, hostingConnection) : Promise.resolve(null),
     listWorkflowRuns({ environmentId, templateId: lifecycle.config?.workflowTemplateId || undefined, limit: 5 }),
+    getEnvironmentBuildActivity(environmentId, lifecycle.config?.workflowTemplateId),
   ]);
   return {
     platform: { id: lifecycle.platform.id, name: lifecycle.platform.name },
@@ -377,6 +427,7 @@ export async function getEnvironmentBuildStatus(environmentId: number): Promise<
     hosting: hosting ? { id: hosting.id, provider: hosting.provider, connectionId: hosting.connectionId, connection: cleanConnection(hostingConnection), projectId: hosting.projectId, projectName: hosting.projectName, providerEnvironmentId: hosting.providerEnvironmentId, providerEnvironmentName: hosting.providerEnvironmentName, serviceId: hosting.serviceId, serviceName: hosting.serviceName, publicUrl: hosting.publicUrl, staticUrl: hosting.staticUrl } : null,
     providers: { ...(railway ? { railway } : {}), eas, ...(cloudflarePages ? { cloudflare_pages: cloudflarePages } : {}) },
     workflows: { recent: recentWorkflows },
+    activity,
     checkedAt: new Date().toISOString(),
   };
 }

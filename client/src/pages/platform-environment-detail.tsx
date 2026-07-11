@@ -211,6 +211,7 @@ interface BuildLifecycleStatus {
     };
   };
   workflows: { recent: WorkflowRunSummary[] };
+  activity: { state: "building" | "idle"; workflowRunId: string | null; stageAttemptId: number | null };
   checkedAt: string;
 }
 
@@ -1347,10 +1348,7 @@ function BuildLifecycleCard({ environmentId, details }: { environmentId: number;
   const { data, isLoading, isFetching, refetch } = useQuery<BuildLifecycleStatus>({
     queryKey: ["/api/platforms/environments", environmentId, "build-status"],
     enabled: Number.isFinite(environmentId),
-    refetchInterval: (query) => {
-      const recent = query.state.data?.workflows.recent || [];
-      return recent.some((run) => ["active", "needs_review"].includes(run.status)) ? 8000 : false;
-    },
+    refetchInterval: (query) => query.state.data?.activity.state === "building" ? 8000 : false,
     staleTime: 30_000,
   });
 
