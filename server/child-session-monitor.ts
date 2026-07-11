@@ -57,6 +57,7 @@ export async function monitorChildSession(
 ): Promise<MonitorResult> {
   const { chatFileStorage } = await import("./chat-file-storage");
   const { agentExecutor } = await import("./agent-executor");
+  const { admissionController } = await import("./run-admission");
 
   let lastActivityAt = Date.now();
   let lastUpdatedAt: string | undefined;
@@ -102,6 +103,19 @@ export async function monitorChildSession(
           .sort((a, b) => b.lastActivityAt - a.lastActivityAt)[0];
         if (activeRun && activeRun.lastActivityAt > lastActivityAt) {
           lastActivityAt = activeRun.lastActivityAt;
+        }
+
+        // Waiting for admission is healthy queued work, not executor silence.
+        // Keep both the child idle clock and parent heartbeat alive until the
+        // admission controller grants capacity. The admission request itself
+        // remains bounded and will surface a real failure if it expires.
+        const queuedAdmission = admissionController.getQueuedRequestForSession(sessionId);
+        if (queuedAdmission) {
+          lastActivityAt = Date.now();
+          log.debug(
+            `[monitor] Session ${sessionId} waiting for ${queuedAdmission.tier} admission ` +
+            `(run=${queuedAdmission.runId}${queuedAdmission.activity ? ` activity=${queuedAdmission.activity}` : ""})`,
+          );
         }
 
         // Child is alive — heartbeat the parent run so its zombie detector
