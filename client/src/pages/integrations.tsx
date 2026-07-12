@@ -112,6 +112,7 @@ interface IntegrationDef {
 const INTEGRATIONS: IntegrationDef[] = [
   { id: "google", name: "Google", icon: Mail, statusFields: ["gmail", "gdrive"], healthField: "gmailHealthy", route: "google" },
   { id: "elevenlabs", name: "ElevenLabs", icon: Volume2, statusFields: ["elevenlabs"], route: "elevenlabs" },
+  { id: "cartesia", name: "Cartesia", icon: Volume2, statusFields: ["cartesia"], route: "cartesia" },
   { id: "openai", name: "OpenAI", icon: Bot, statusFields: ["openai", "openaiSubscription"], route: "openai" },
   { id: "claude-cli", name: "Claude Code CLI", icon: Settings, statusFields: ["claudeCli"], route: "claude-cli" },
   { id: "twitter", name: "X (Twitter)", icon: () => <SiX className="h-5 w-5" />, statusFields: ["twitter"], route: "twitter" },
@@ -5268,6 +5269,16 @@ function IntegrationDetail({ provider }: { provider: string }) {
           <VoiceTuningSection />
           <PronunciationSection />
         </div>
+      )}
+
+      {provider === "cartesia" && (
+        <Card className="overflow-hidden min-w-0" data-testid="card-secret-cartesia">
+          <CardHeader><CardTitle className="text-base font-semibold">Cartesia meeting speech</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">Primary low-latency voice for answers spoken into live meetings. ElevenLabs is used automatically when Cartesia fails or is not configured.</p>
+            <SecretsForSection section="cartesia" />
+          </CardContent>
+        </Card>
       )}
 
       {provider === "openai" && (

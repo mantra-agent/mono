@@ -88,6 +88,8 @@ export async function joinMeetingByUrl(opts: { meetingUrl: string; title?: strin
     );
   }
 
+  const { outputMediaPageUrl } = await import("./output-media");
+  const outputMediaUrl = outputMediaPageUrl(publicUrl, session.id);
   let botId: string;
   try {
     const bot = await recall.createRecallBot({
@@ -95,6 +97,7 @@ export async function joinMeetingByUrl(opts: { meetingUrl: string; title?: strin
       botName: "Mantra Agent",
       webhookUrl: `${publicUrl}/api/webhooks/recall/transcript`,
       metadata: { sessionId: session.id },
+      outputMediaUrl,
     });
     botId = bot.id;
   } catch (err) {
@@ -104,7 +107,7 @@ export async function joinMeetingByUrl(opts: { meetingUrl: string; title?: strin
     return failSession(message);
   }
 
-  await chatStorage.updateMeetingMeta(session.id, { botId });
+  await chatStorage.updateMeetingMeta(session.id, { botId, outputMediaUrl });
   log.log(`Bot ${botId} dispatched to ${platform} meeting "${title}" (session ${session.id})`);
 
   return { sessionId: session.id, botId, platform, title };
