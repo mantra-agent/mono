@@ -129,7 +129,7 @@ const INTEGRATIONS: IntegrationDef[] = [
   { id: "sendgrid", name: "SendGrid", icon: Mail, statusFields: ["sendgrid"], route: "sendgrid" },
   { id: "meta", name: "Meta", icon: Glasses, statusFields: ["meta"], route: "meta" },
   { id: "oura", name: "Oura Ring", icon: Activity, statusFields: ["oura"], route: "oura" },
-  { id: "recall", name: "Recall.ai Meeting Bot", icon: Radio, statusFields: ["recall"], route: "recall" },
+  { id: "recall", name: "Recall", icon: Radio, statusFields: ["recall"], route: "recall" },
 ];
 
 function resolveStatus(
@@ -2798,7 +2798,7 @@ function RecallDetail() {
       <div className="flex min-w-0 items-center gap-2 px-2 py-1.5">
         <Radio className="h-4 w-4 shrink-0" />
         <div className="min-w-0">
-          <h2 className="text-base font-semibold">Recall.ai Meeting Bot</h2>
+          <h2 className="text-base font-semibold">Recall</h2>
           <p className="text-sm text-muted-foreground">
             Joins Zoom and Google Meet calls as "Mantra Agent" and streams speaker-attributed transcripts.
           </p>
