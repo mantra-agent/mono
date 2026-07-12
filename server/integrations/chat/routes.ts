@@ -1672,8 +1672,25 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     modelSelectionMs?: number,
     sayAloud = false,
     onResponse?: (content: string) => Promise<void> | void,
+    registeredRunGeneration?: number,
   ) {
     const chatModel = resolvedModel || getModelForActivity(ACTIVITY_CHAT);
+    inFlightSessions.set(sessionId, { startedAt: Date.now(), sessionKey });
+
+    // Every execution enters through this boundary, including interrupt re-triggers.
+    // HTTP/meeting callers may pre-register so pre-executor events are visible;
+    // direct callers install their runtime here before publishing any run events.
+    let runGeneration = registeredRunGeneration;
+    if (runGeneration === undefined) {
+      try {
+        const { sessionManager } = await import("../../session-manager");
+        runGeneration = sessionManager.registerSession(sessionId, sessionKey, "text");
+      } catch (regErr) {
+        chatLog.warn(
+          `processChatStream runtime registration failed sessionId=${sessionId}: ${regErr instanceof Error ? regErr.message : String(regErr)}`,
+        );
+      }
+    }
 
     // Pre-executor system steps (model selection, context building) happen before
     // the executor runs. We collect them here and prepend to the executor's result.
@@ -2039,7 +2056,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         // and SessionManager finalization is idempotent.
         try {
           const { sessionManager } = await import("../../session-manager");
-          sessionManager.finalizeSession(sessionId);
+          sessionManager.finalizeSession(sessionId, runGeneration);
         } catch (finErr) {
           chatLog.debug(
             `sessionManager.finalizeSession after save skipped: ${finErr instanceof Error ? finErr.message : String(finErr)}`,
@@ -2206,7 +2223,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       // Finalize server-authoritative SessionManager (migration: both paths active)
       try {
         const { sessionManager } = await import("../../session-manager");
-        sessionManager.finalizeSession(sessionId);
+        sessionManager.finalizeSession(sessionId, runGeneration);
       } catch (finErr) {
         chatLog.debug(
           `sessionManager.finalizeSession skipped: ${finErr instanceof Error ? finErr.message : String(finErr)}`,
@@ -2417,13 +2434,15 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         const sessionKey = session.sessionKey || `dashboard:${sessionId}`;
         inFlightSessions.set(sessionId, { startedAt: Date.now(), sessionKey });
 
-        // Register with server-authoritative SessionManager (migration: both paths active)
+        // Pre-register so model-selection events emitted before execution are live.
+        // The returned generation follows this run through terminal settlement.
+        let runGeneration: number | undefined;
         try {
           const { sessionManager } = await import("../../session-manager");
-          sessionManager.registerSession(sessionId, sessionKey, "text");
+          runGeneration = sessionManager.registerSession(sessionId, sessionKey, "text");
         } catch (regErr) {
-          chatLog.debug(
-            `sessionManager.registerSession skipped: ${regErr instanceof Error ? regErr.message : String(regErr)}`,
+          chatLog.warn(
+            `sessionManager.registerSession failed: ${regErr instanceof Error ? regErr.message : String(regErr)}`,
           );
         }
         chatLog.log(
@@ -2490,6 +2509,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           autoTier,
           modelSelectionMs,
           sayAloud && session.type === "meeting",
+          undefined,
+          runGeneration,
         ).catch((err) => {
           chatLog.error("processChatStream error:", err);
         });
@@ -2717,13 +2738,13 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       };
     }
 
-    inFlightSessions.set(sessionId, { startedAt: Date.now(), sessionKey });
+    let runGeneration: number | undefined;
     try {
       const { sessionManager } = await import("../../session-manager");
-      sessionManager.registerSession(sessionId, sessionKey, "meeting");
+      runGeneration = sessionManager.registerSession(sessionId, sessionKey, "meeting");
     } catch (regErr) {
-      chatLog.debug(
-        `sessionManager.registerSession skipped: ${regErr instanceof Error ? regErr.message : String(regErr)}`,
+      chatLog.warn(
+        `sessionManager.registerSession failed: ${regErr instanceof Error ? regErr.message : String(regErr)}`,
       );
     }
     await chatStorage
@@ -2758,6 +2779,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       undefined,
       undefined,
       sayAddressedAloud,
+      undefined,
+      runGeneration,
     ).catch((err) => {
       chatLog.error("meeting ingest processChatStream error:", err);
     });
