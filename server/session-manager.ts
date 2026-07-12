@@ -480,14 +480,15 @@ class SessionManager {
 
     log.log(`finalizeSession sessionId=${sessionId} subscribers=${session.subscribers.size}`);
 
-    // Schedule cleanup after 60 seconds
+    // Finalized state is already durable and terminal subscribers received the
+    // authoritative delta above. Remove the runtime entry after the recovery
+    // window even when clients remain subscribed; a future duplicate subscribe
+    // will receive an idle snapshot, while a new run registers a fresh entry.
     session.cleanupTimer = setTimeout(() => {
-      if (session.subscribers.size === 0) {
-        this.sessions.delete(sessionId);
-        log.debug(`cleanup: removed session sessionId=${sessionId}`);
-      } else {
-        log.debug(`cleanup: skipping session with active subscribers sessionId=${sessionId} subscribers=${session.subscribers.size}`);
-      }
+      const current = this.sessions.get(sessionId);
+      if (current !== session || current.status === "streaming") return;
+      this.sessions.delete(sessionId);
+      log.debug(`cleanup: removed finalized session sessionId=${sessionId} subscribers=${session.subscribers.size}`);
     }, 60_000);
   }
 
@@ -553,7 +554,7 @@ class SessionManager {
     for (const [sessionId, session] of this.sessions) {
       if (
         session.finalizedAt !== null &&
-        session.subscribers.size === 0 &&
+        session.status !== "streaming" &&
         now - session.finalizedAt > 60_000
       ) {
         if (session.cleanupTimer) clearTimeout(session.cleanupTimer);
