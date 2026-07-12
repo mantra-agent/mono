@@ -61,6 +61,10 @@ export async function registerRoutes(
         wsLog.log(`eventsWss handleUpgrade complete, emitting connection`);
         eventsWss.emit("connection", ws, request);
       });
+    } else if (pathname === "/ws/twilio-media") {
+      const handler = app.locals.twilioMediaUpgrade as ((request: IncomingMessage, socket: typeof socket, head: Buffer) => void) | undefined;
+      if (!handler) { wsLog.warn("Twilio media upgrade handler unavailable"); socket.destroy(); }
+      else handler(request, socket, head);
     } else if (pathname === "/vite-hmr") {
       // Let Vite's HMR handler (registered later) handle this upgrade
     } else {

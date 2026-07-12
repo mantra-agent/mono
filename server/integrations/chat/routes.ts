@@ -1671,6 +1671,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     autoTier?: string | null,
     modelSelectionMs?: number,
     sayAloud = false,
+    onResponse?: (content: string) => Promise<void> | void,
   ) {
     const chatModel = resolvedModel || getModelForActivity(ACTIVITY_CHAT);
 
@@ -2080,6 +2081,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
               err,
             ),
           );
+      }
+
+      if (result.status === "succeeded" && responseContent.trim() && onResponse) {
+        await onResponse(responseContent).catch((err) =>
+          chatLog.error(`response callback failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`),
+        );
       }
 
       if (sayAloud && result.status === "succeeded" && responseContent.trim()) {
@@ -2761,6 +2768,31 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       queued: false,
     };
   }
+
+  // External audio transports reuse the canonical session → executor spine.
+  const { registerPhoneRoutes } = await import("../../phone/routes");
+  registerPhoneRoutes(app, {
+    ingestPhoneTurn: async (event) => {
+      const result = await ingestMeetingEvent({
+        sessionId: event.sessionId,
+        speakerLabel: event.speakerLabel,
+        text: event.text,
+      });
+      if (result.ok && !result.queued) {
+        processChatStream(
+          result.sessionKey,
+          result.sessionId,
+          `[${event.speakerLabel}] ${event.text}`,
+          undefined,
+          undefined,
+          undefined,
+          false,
+          event.onResponse,
+        ).catch((err) => chatLog.error(`phone ingest processChatStream error: ${err instanceof Error ? err.message : String(err)}`));
+      }
+      return result;
+    },
+  });
 
   // Recall.ai webhook receiver — registered with the canonical ingest path.
   const { registerRecallRoutes } = await import("../../routes/recall");
