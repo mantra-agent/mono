@@ -950,7 +950,7 @@ function TaskRow({
         <InlineDatePicker
           value=""
           onCommit={(v) => onUpdate({ deadline: v })}
-          className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
         >
           <span
             className="text-muted-foreground/40 rounded p-0.5 hover:bg-accent/70 hover:text-muted-foreground"
@@ -1805,7 +1805,7 @@ function ProjectTreeNode({
               <InlineDatePicker
                 value=""
                 onCommit={(v) => onUpdateProject({ dueDate: v })}
-                className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                className="shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
               >
                 <span
                   className="text-muted-foreground/40 rounded p-0.5 hover:bg-accent/70 hover:text-muted-foreground"
@@ -2057,7 +2057,7 @@ function ProjectTreeNode({
                         <InlineDatePicker
                           value=""
                           onCommit={(v) => onUpdateMilestone(milestone.id, { dueDate: v })}
-                          className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
                         >
                           <span
                             className="text-muted-foreground/40 rounded p-0.5 hover:bg-accent/70 hover:text-muted-foreground"
