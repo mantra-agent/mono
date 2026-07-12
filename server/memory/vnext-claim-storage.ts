@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import { createLogger } from "../log";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
@@ -155,6 +155,28 @@ export interface VnextClaimSearchFilters {
   offset?: number;
   lifecycleStage?: string;
 }
+
+export interface VnextBridgeCandidate {
+  claim: MemoryVnextClaim;
+  sourceKeys: string[];
+  entityKeys: string[];
+}
+
+export interface VnextBridgeNeighbor {
+  claimId: number;
+  similarity: number;
+  sourceKeys: string[];
+  entityKeys: string[];
+}
+
+export interface VnextBridgeEdge {
+  id: number;
+  fromClaimId: number;
+  toClaimId: number;
+  strength: number;
+}
+
+export const VNEXT_BRIDGE_RELATIONSHIP = "bridged_to";
 
 /**
  * Similarity threshold for semantic deduplication against existing DB claims.
@@ -777,9 +799,138 @@ export class MemoryVnextClaimStorage {
     await this.advanceLifecycleStage(claimId, MEMORY_VNEXT_LIFECYCLE_STAGE.LINKED);
   }
 
-  async linkClaims(fromClaimId: number, toClaimId: number, relationship: string, strength = 0.5): Promise<void> {
+  async listBridgeCandidates(limit = 50): Promise<VnextBridgeCandidate[]> {
     const principal = getCurrentPrincipalOrSystem();
+    const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), 200);
+    const eligibleStages = [
+      MEMORY_VNEXT_LIFECYCLE_STAGE.SOURCED,
+      MEMORY_VNEXT_LIFECYCLE_STAGE.LINKED,
+      MEMORY_VNEXT_LIFECYCLE_STAGE.CANONICAL,
+    ];
+    const rows = await db.execute(sql`
+      SELECT c.*,
+        COALESCE(array_agg(DISTINCT s.source_type || ':' || s.source_id)
+          FILTER (WHERE s.id IS NOT NULL), '{}') AS source_keys,
+        COALESCE(array_agg(DISTINCT e.entity_type || ':' || e.entity_id)
+          FILTER (WHERE e.id IS NOT NULL), '{}') AS entity_keys
+      FROM memory_vnext_claims c
+      LEFT JOIN memory_vnext_source_refs s ON s.claim_id = c.id
+      LEFT JOIN memory_vnext_entity_links e ON e.claim_id = c.id
+      WHERE c.lifecycle_stage IN (${sql.join(eligibleStages.map((stage) => sql`${stage}`), sql`, `)})
+        AND c.embedding IS NOT NULL
+        AND NOT COALESCE(c.metadata ? 'bridgeScannedAt', false)
+        AND ${combineWithVisibleScope(principal, vnextClaimScopeColumns, sql`TRUE`)}
+      GROUP BY c.id
+      ORDER BY c.created_at ASC
+      LIMIT ${boundedLimit}
+    `);
+    return (rows.rows as unknown as Array<MemoryVnextClaim & { source_keys?: string[]; entity_keys?: string[] }>).map((row) => ({
+      claim: row,
+      sourceKeys: row.source_keys ?? [],
+      entityKeys: row.entity_keys ?? [],
+    }));
+  }
+
+  async findBridgeNeighbors(claimId: number, embedding: number[], limit = 25): Promise<VnextBridgeNeighbor[]> {
+    const principal = getCurrentPrincipalOrSystem();
+    const embeddingStr = vectorLiteral(embedding);
+    const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), 100);
+    const rows = await db.execute(sql`
+      SELECT c.id AS claim_id,
+        1 - (c.embedding <=> ${embeddingStr}::vector) AS similarity,
+        COALESCE(array_agg(DISTINCT s.source_type || ':' || s.source_id)
+          FILTER (WHERE s.id IS NOT NULL), '{}') AS source_keys,
+        COALESCE(array_agg(DISTINCT e.entity_type || ':' || e.entity_id)
+          FILTER (WHERE e.id IS NOT NULL), '{}') AS entity_keys
+      FROM memory_vnext_claims c
+      LEFT JOIN memory_vnext_source_refs s ON s.claim_id = c.id
+      LEFT JOIN memory_vnext_entity_links e ON e.claim_id = c.id
+      WHERE c.id <> ${claimId}
+        AND c.lifecycle_stage IN ('sourced', 'linked', 'canonical')
+        AND c.embedding IS NOT NULL
+        AND ${combineWithVisibleScope(principal, vnextClaimScopeColumns, sql`TRUE`)}
+        AND 1 - (c.embedding <=> ${embeddingStr}::vector) >= 0.75
+        AND 1 - (c.embedding <=> ${embeddingStr}::vector) < ${CLAIM_DEDUP_SIMILARITY_THRESHOLD}
+      GROUP BY c.id
+      ORDER BY c.embedding <=> ${embeddingStr}::vector ASC
+      LIMIT ${boundedLimit}
+    `);
+    return (rows.rows as unknown as Array<{ claim_id: number; similarity: string | number; source_keys?: string[]; entity_keys?: string[] }>).map((row) => ({
+      claimId: Number(row.claim_id),
+      similarity: Number(row.similarity),
+      sourceKeys: row.source_keys ?? [],
+      entityKeys: row.entity_keys ?? [],
+    }));
+  }
+
+  async countActiveClaims(): Promise<number> {
+    const [row] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(memoryVnextClaims)
+      .where(combineWithVisibleScope(
+        getCurrentPrincipalOrSystem(),
+        vnextClaimScopeColumns,
+        sql`${memoryVnextClaims.lifecycleStage} <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}`,
+      ));
+    return Number(row?.count ?? 0);
+  }
+
+  async listBridgeEdges(): Promise<VnextBridgeEdge[]> {
+    return db
+      .select({
+        id: memoryVnextClaimLinks.id,
+        fromClaimId: memoryVnextClaimLinks.fromClaimId,
+        toClaimId: memoryVnextClaimLinks.toClaimId,
+        strength: memoryVnextClaimLinks.strength,
+      })
+      .from(memoryVnextClaimLinks)
+      .where(combineWithVisibleScope(
+        getCurrentPrincipalOrSystem(),
+        vnextClaimLinkScopeColumns,
+        eq(memoryVnextClaimLinks.relationship, VNEXT_BRIDGE_RELATIONSHIP),
+      ))
+      .orderBy(asc(memoryVnextClaimLinks.strength), asc(memoryVnextClaimLinks.id));
+  }
+
+  async removeBridgeEdge(id: number): Promise<boolean> {
+    const deleted = await db
+      .delete(memoryVnextClaimLinks)
+      .where(combineWithWritableScope(
+        getCurrentPrincipalOrSystem(),
+        vnextClaimLinkScopeColumns,
+        and(eq(memoryVnextClaimLinks.id, id), eq(memoryVnextClaimLinks.relationship, VNEXT_BRIDGE_RELATIONSHIP)),
+      ))
+      .returning({ id: memoryVnextClaimLinks.id });
+    return deleted.length > 0;
+  }
+
+  async markBridgeScanned(claimId: number): Promise<void> {
     await db
+      .update(memoryVnextClaims)
+      .set({
+        metadata: sql`jsonb_set(
+          COALESCE(${memoryVnextClaims.metadata}, '{}'::jsonb),
+          '{bridgeScannedAt}',
+          to_jsonb(now()::text),
+          true
+        )`,
+        updatedAt: new Date(),
+      })
+      .where(combineWithWritableScope(
+        getCurrentPrincipalOrSystem(),
+        vnextClaimScopeColumns,
+        eq(memoryVnextClaims.id, claimId),
+      ));
+  }
+
+  async linkClaims(
+    fromClaimId: number,
+    toClaimId: number,
+    relationship: string,
+    strength = 0.5,
+  ): Promise<VnextBridgeEdge | null> {
+    const principal = getCurrentPrincipalOrSystem();
+    const [link] = await db
       .insert(memoryVnextClaimLinks)
       .values({
         fromClaimId,
@@ -790,9 +941,16 @@ export class MemoryVnextClaimStorage {
         createdByUserId: principal.userId ?? undefined,
         updatedByUserId: principal.userId ?? undefined,
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({
+        id: memoryVnextClaimLinks.id,
+        fromClaimId: memoryVnextClaimLinks.fromClaimId,
+        toClaimId: memoryVnextClaimLinks.toClaimId,
+        strength: memoryVnextClaimLinks.strength,
+      });
     await this.advanceLifecycleStage(fromClaimId, MEMORY_VNEXT_LIFECYCLE_STAGE.LINKED);
     await this.advanceLifecycleStage(toClaimId, MEMORY_VNEXT_LIFECYCLE_STAGE.LINKED);
+    return link ?? null;
   }
 
   private extractionBudgetPredicate(scope: VnextExtractionBudgetScope) {
