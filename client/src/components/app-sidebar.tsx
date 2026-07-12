@@ -25,6 +25,7 @@ import {
   Home,
   Lightbulb,
   Mail,
+  Megaphone,
   Newspaper,
   Palette,
   Plug,
@@ -161,6 +162,8 @@ const navSections: NavSection[] = [
     label: "Admin",
     defaultOpen: false,
     items: [
+      { title: "Audiences", url: "/audiences", icon: Users, permission: "system:read" },
+      { title: "Campaigns", url: "/campaigns", icon: Megaphone, permission: "system:read" },
       { title: "Users", url: "/system?tab=users", icon: Users, permission: "system:read" },
       { title: "Vaults", url: "/system?tab=vaults", icon: Vault },
       { title: "Integrations", url: "/integrations", icon: Plug },
