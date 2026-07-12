@@ -7,7 +7,7 @@ export type TurnCloseReason = "conversational_gap" | "speaker_change" | "provide
 export interface TurnFragment { streamId: string; turnKey: string; sequence: number; direction: "inbound" | "outbound"; speakerKey?: string; speakerLabel?: string; text: string; stability: FragmentStability; providerEventId?: string; occurredAtMs: number; receivedAtMs: number; }
 export interface CompleteTurn { turnKey: string; streamId: string; direction: "inbound" | "outbound"; speakerKey?: string; speakerLabel?: string; text: string; rawFragments: TurnFragment[]; closeReason: TurnCloseReason; firstSequence: number; lastSequence: number; startedAtMs: number; closedAtMs: number; degraded: boolean; }
 export type TurnAssemblyOutcome = { outcome: "accepted"; turnKey: string; sequence: number } | { outcome: "duplicate"; turnKey: string; providerEventId: string } | { outcome: "stale"; turnKey: string; sequence: number } | { outcome: "closed"; turn: CompleteTurn } | { outcome: "rejected"; turnKey: string; reason: "closed" | "invalid" | "capacity" };
-export interface TurnAssemblerOptions { maxActiveTurns?: number; maxFragmentsPerTurn?: number; maxBytesPerTurn?: number; maxOpenAgeMs?: number; dedupeTtlMs?: number; }
+export interface TurnAssemblerOptions { maxActiveTurns?: number; maxFragmentsPerTurn?: number | null; maxBytesPerTurn?: number | null; maxOpenAgeMs?: number | null; dedupeTtlMs?: number; }
 interface State { seed: TurnFragment; fragments: TurnFragment[]; stable: string[]; provisional: string; lastSequence: number; bytes: number; }
 const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
 
@@ -15,8 +15,22 @@ export class TurnAssembler {
   private readonly active = new Map<string, State>();
   private readonly closed = new Set<string>();
   private readonly eventIds = new Map<string, number>();
-  private readonly limits: Required<TurnAssemblerOptions>;
-  constructor(options: TurnAssemblerOptions = {}) { this.limits = { maxActiveTurns: options.maxActiveTurns ?? 256, maxFragmentsPerTurn: options.maxFragmentsPerTurn ?? 256, maxBytesPerTurn: options.maxBytesPerTurn ?? 65_536, maxOpenAgeMs: options.maxOpenAgeMs ?? 30_000, dedupeTtlMs: options.dedupeTtlMs ?? 300_000 }; }
+  private readonly limits: {
+    maxActiveTurns: number;
+    maxFragmentsPerTurn: number | null;
+    maxBytesPerTurn: number | null;
+    maxOpenAgeMs: number | null;
+    dedupeTtlMs: number;
+  };
+  constructor(options: TurnAssemblerOptions = {}) {
+    this.limits = {
+      maxActiveTurns: options.maxActiveTurns ?? 256,
+      maxFragmentsPerTurn: options.maxFragmentsPerTurn === undefined ? 256 : options.maxFragmentsPerTurn,
+      maxBytesPerTurn: options.maxBytesPerTurn === undefined ? 65_536 : options.maxBytesPerTurn,
+      maxOpenAgeMs: options.maxOpenAgeMs === undefined ? 30_000 : options.maxOpenAgeMs,
+      dedupeTtlMs: options.dedupeTtlMs ?? 300_000,
+    };
+  }
   accept(fragment: TurnFragment): TurnAssemblyOutcome {
     this.prune(fragment.receivedAtMs);
     if (!fragment.turnKey || !fragment.streamId || fragment.sequence < 0 || !normalize(fragment.text)) return { outcome: "rejected", turnKey: fragment.turnKey, reason: "invalid" };
@@ -26,7 +40,10 @@ export class TurnAssembler {
     if (!state) { if (this.active.size >= this.limits.maxActiveTurns) return { outcome: "rejected", turnKey: fragment.turnKey, reason: "capacity" }; state = { seed: fragment, fragments: [], stable: [], provisional: "", lastSequence: -1, bytes: 0 }; this.active.set(fragment.turnKey, state); }
     if (fragment.sequence <= state.lastSequence) return { outcome: "stale", turnKey: fragment.turnKey, sequence: fragment.sequence };
     const bytes = Buffer.byteLength(fragment.text);
-    if (state.fragments.length + 1 > this.limits.maxFragmentsPerTurn || state.bytes + bytes > this.limits.maxBytesPerTurn || fragment.receivedAtMs - state.seed.receivedAtMs > this.limits.maxOpenAgeMs) return this.close(fragment.turnKey, "budget_exceeded", fragment.receivedAtMs);
+    const fragmentLimitExceeded = this.limits.maxFragmentsPerTurn !== null && state.fragments.length + 1 > this.limits.maxFragmentsPerTurn;
+    const byteLimitExceeded = this.limits.maxBytesPerTurn !== null && state.bytes + bytes > this.limits.maxBytesPerTurn;
+    const ageLimitExceeded = this.limits.maxOpenAgeMs !== null && fragment.receivedAtMs - state.seed.receivedAtMs > this.limits.maxOpenAgeMs;
+    if (fragmentLimitExceeded || byteLimitExceeded || ageLimitExceeded) return this.close(fragment.turnKey, "budget_exceeded", fragment.receivedAtMs);
     state.fragments.push({ ...fragment, text: normalize(fragment.text) }); state.lastSequence = fragment.sequence; state.bytes += bytes;
     if (fragment.stability === "stable") { state.stable.push(normalize(fragment.text)); state.provisional = ""; } else state.provisional = normalize(fragment.text);
     if (fragment.providerEventId) this.eventIds.set(fragment.providerEventId, fragment.receivedAtMs + this.limits.dedupeTtlMs);

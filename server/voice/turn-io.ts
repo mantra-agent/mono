@@ -195,15 +195,18 @@ export function createStreamChunkHandler(
 ): VoiceStreamChunkHandler {
   const assembler = new TurnAssembler({
     maxActiveTurns: 1,
-    maxFragmentsPerTurn: 2_048,
-    maxBytesPerTurn: 256 * 1_024,
-    maxOpenAgeMs: 90_000,
+    maxFragmentsPerTurn: null,
+    maxBytesPerTurn: null,
+    maxOpenAgeMs: null,
   });
   const streamId = `voice:${session.id}`;
   const turnKey = ctx.assistantAttemptId;
   let sequence = 0;
   let firstRealChunkFlushed = false;
   let terminal = false;
+  let diagnosticBytes = 0;
+  let fragmentDiagnosticPublished = false;
+  let byteDiagnosticPublished = false;
 
   const close = (reason: TurnCloseReason = "completed"): void => {
     if (terminal) return;
@@ -222,6 +225,17 @@ export function createStreamChunkHandler(
       return;
     }
     const now = Date.now();
+    diagnosticBytes += Buffer.byteLength(content);
+    if (!fragmentDiagnosticPublished && sequence >= 2_048) {
+      fragmentDiagnosticPublished = true;
+      log.warn(`voice_output_fragment_volume session=${session.id} turn=${currentTurn} turnKey=${turnKey} fragments=${sequence}`);
+      publishVoiceDiagnostic(session, "output_volume", `Voice output crossed 2,048 fragments; continuing`, { turn: currentTurn, status: "done" }, ctx);
+    }
+    if (!byteDiagnosticPublished && diagnosticBytes >= 256 * 1_024) {
+      byteDiagnosticPublished = true;
+      log.warn(`voice_output_byte_volume session=${session.id} turn=${currentTurn} turnKey=${turnKey} bytes=${diagnosticBytes}`);
+      publishVoiceDiagnostic(session, "output_volume", `Voice output crossed 256 KiB; continuing`, { turn: currentTurn, status: "done" }, ctx);
+    }
     const outcome = assembler.accept({ streamId, turnKey, sequence: sequence++, direction: "outbound", text: content, stability: "stable", providerEventId: `${turnKey}:${sequence - 1}`, occurredAtMs: now, receivedAtMs: now });
     if (outcome.outcome === "closed") {
       terminal = true;

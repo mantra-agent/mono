@@ -59,6 +59,8 @@ export interface VoiceSession {
   activeTurnNumber: number;
   /** Stable logical turn identity across growing transcript callbacks. */
   activeVoiceTurnId: string | null;
+  /** ElevenLabs conversation user-message ordinal for the active physical utterance. */
+  activeVoiceUserOrdinal: number | null;
   activeTranscriptRevision: number;
   activeAssistantAttemptId: string | null;
   /** Principal captured at /api/voice/start for scoping voice LLM callbacks. */
