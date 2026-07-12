@@ -41,17 +41,24 @@ export function InlineDatePicker({
 
   return (
     <span
-      className={cn("relative inline-flex cursor-pointer", className)}
+      className={cn("relative inline-flex cursor-pointer select-auto", className)}
       onClick={(e) => e.stopPropagation()}
       data-testid={testId}
     >
       {children}
+      {/*
+        iOS Safari refuses to focus (and therefore open the picker for) form
+        controls inside a `user-select: none` ancestor. Projects tree rows set
+        `select-none`, so the input must explicitly restore -webkit-user-select.
+        The negative inset enlarges the tap target beyond the tiny calendar icon.
+      */}
       <input
         type="date"
         value={value || ""}
         onChange={(e) => onCommit(e.target.value || null)}
         onClick={openPicker}
-        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+        className="absolute -inset-2 cursor-pointer opacity-0 touch-manipulation [-webkit-user-select:text]"
+        style={{ WebkitUserSelect: "text", userSelect: "text" }}
         aria-label="Edit date"
       />
     </span>
