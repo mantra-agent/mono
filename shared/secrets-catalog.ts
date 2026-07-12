@@ -3,6 +3,7 @@ export type SecretSection =
   | "openai"
   | "claude-cli"
   | "elevenlabs"
+  | "cartesia"
   | "brave"
   | "notion"
   | "plaid"
@@ -27,7 +28,9 @@ export const SECRET_CATALOG: SecretSpec[] = [
   { name: "ANTHROPIC_API_KEY", section: "anthropic", label: "Anthropic API Key", description: "Used for Claude models." },
   { name: "OPENAI_API_KEY", section: "openai", label: "OpenAI API Key", description: "Used for image, audio, and embeddings (api.openai.com). Chat/Codex use the OpenAI Subscription OAuth flow instead." },
   { name: "CLAUDE_CODE_OAUTH_TOKEN", section: "claude-cli", label: "Claude Code OAuth Token", description: "Token for the Claude Code CLI subscription." },
-  { name: "ELEVENLABS_API_KEY", section: "elevenlabs", label: "ElevenLabs API Key", description: "Powers voice synthesis and conversational agents." },
+  { name: "ELEVENLABS_API_KEY", section: "elevenlabs", label: "ElevenLabs API Key", description: "Powers voice synthesis and conversational agents. Also serves as the meeting TTS fallback." },
+  { name: "CARTESIA_API_KEY", section: "cartesia", label: "Cartesia API Key", description: "Primary meeting-agent text-to-speech provider." },
+  { name: "CARTESIA_VOICE_ID", section: "cartesia", label: "Cartesia Voice ID", description: "Voice used when the meeting agent speaks. Copy an ID from the Cartesia Voices page." },
   { name: "VOICE_V3_WEBHOOK_SECRET", section: "elevenlabs", label: "Voice V3 Webhook Secret", description: "Shared secret ElevenLabs sends on every V3 (native-LLM) tool webhook call. Set here to avoid an env var + redeploy. Required in production." },
   { name: "ELEVENLABS_AGENT_ID", section: "elevenlabs", label: "ElevenLabs Agent ID", description: "Conversational AI agent ID. Required for voice sessions." },
   { name: "BRAVE_API_KEY", section: "brave", label: "Brave Search API Key", description: "Enables web search." },

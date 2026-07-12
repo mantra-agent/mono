@@ -134,6 +134,7 @@ export interface CreateBotParams {
   botName: string;
   webhookUrl: string;
   metadata: Record<string, string>;
+  outputMediaUrl?: string;
 }
 
 /**
@@ -146,7 +147,9 @@ export async function createRecallBot(params: CreateBotParams): Promise<RecallBo
     meeting_url: params.meetingUrl,
     bot_name: params.botName,
     metadata: params.metadata,
+    ...(params.outputMediaUrl ? { output_media: { camera: { kind: "webpage", config: { url: params.outputMediaUrl } } }, variant: { zoom: "web_4_core", google_meet: "web_4_core", microsoft_teams: "web_4_core" } } : {}),
     recording_config: {
+      ...(params.outputMediaUrl ? { include_bot_in_recording: { audio: true } } : {}),
       transcript: {
         provider: {
           recallai_streaming: {

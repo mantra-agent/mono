@@ -385,6 +385,19 @@ function publishChatStreamEvent(
 }
 
 export async function registerChatRoutes(app: Express): Promise<void> {
+  const { OUTPUT_MEDIA_HTML, nextMeetingAudio, outputMediaSession } = await import("../../meeting/output-media");
+  app.get("/api/meeting-output/:token", (req, res) => {
+    if (!outputMediaSession(req.params.token as string)) return res.status(401).send("Invalid or expired meeting output token");
+    res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; media-src blob:; connect-src 'self'");
+    res.type("html").send(OUTPUT_MEDIA_HTML);
+  });
+  app.get("/api/meeting-output/:token/audio", async (req, res) => {
+    const sessionId = outputMediaSession(req.params.token as string);
+    if (!sessionId) return res.status(401).end();
+    const audio = await nextMeetingAudio(sessionId);
+    if (!audio) return res.status(204).end();
+    res.type("audio/mpeg").send(audio);
+  });
   app.use(["/api/sessions", "/api/chat"], requireAuth);
   app.get("/api/sessions", async (req: Request, res: Response) => {
     try {
@@ -1636,6 +1649,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     resolvedModel?: string,
     autoTier?: string | null,
     modelSelectionMs?: number,
+    sayAloud = false,
   ) {
     const chatModel = resolvedModel || getModelForActivity(ACTIVITY_CHAT);
 
@@ -2047,6 +2061,15 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           );
       }
 
+      if (sayAloud && result.status === "succeeded" && responseContent.trim()) {
+        const currentSession = await chatStorage.getSession(sessionId);
+        if (currentSession?.type === "meeting") {
+          import("../../meeting/output-media")
+            .then(({ speakMeetingResponse }) => speakMeetingResponse(sessionId, responseContent))
+            .catch((err) => chatLog.error(`say-aloud failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`));
+        }
+      }
+
       const savedRunId =
         getSessionRunStatus(sessionId).currentRunId ?? undefined;
       journal("saved", {
@@ -2218,11 +2241,13 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           content,
           isGreeting,
           pageContext: incomingPageContext,
+          sayAloud = false,
         } = req.body;
         chatLog.log(
           `message start sessionId=${sessionId} contentLen=${content?.length || 0} isGreeting=${!!isGreeting}`,
         );
 
+        if (typeof sayAloud !== "boolean") return res.status(400).json({ error: "sayAloud must be a boolean" });
         if (!content || typeof content !== "string") {
           return res.status(400).json({ error: "Message content is required" });
         }
@@ -2436,6 +2461,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           chatModel,
           autoTier,
           modelSelectionMs,
+          sayAloud && session.type === "meeting",
         ).catch((err) => {
           chatLog.error("processChatStream error:", err);
         });

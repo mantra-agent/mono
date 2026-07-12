@@ -29,6 +29,7 @@ export interface UseChatSendDeps {
   setAttachedFiles: (fn: (prev: File[]) => File[]) => void;
   createSessionPayload?: () => Record<string, unknown>;
   getMessagePageContext?: () => PageContext | undefined;
+  getSayAloud?: () => boolean;
   /** When provided, pendingTurn state lives externally (e.g. in a shared context)
    *  instead of in a local useState. This allows multiple components to read the
    *  same pendingTurn — the BottomBar writes it, SessionTranscriptPanel reads it. */
@@ -40,7 +41,7 @@ export function useChatSend(deps: UseChatSendDeps) {
   const {
     toast, voiceSession, isAgentRunning,
     activeSession, setActiveSession, setComposing,
-    attachedFiles, setAttachedFiles, createSessionPayload, getMessagePageContext,
+    attachedFiles, setAttachedFiles, createSessionPayload, getMessagePageContext, getSayAloud,
     externalPendingTurn,
   } = deps;
 
@@ -130,7 +131,7 @@ export function useChatSend(deps: UseChatSendDeps) {
       const response = await fetch(`/api/sessions/${convId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: fullMessage, ...(pageContext ? { pageContext } : {}) }),
+        body: JSON.stringify({ content: fullMessage, sayAloud: getSayAloud?.() ?? false, ...(pageContext ? { pageContext } : {}) }),
       });
 
       if (response.status === 409) {
@@ -168,7 +169,7 @@ export function useChatSend(deps: UseChatSendDeps) {
       setIsSending(false);
       queryClient.invalidateQueries({ queryKey: GATEWAY_STATUS_KEY });
     }
-  }, [attachedFiles, activeSession, isAgentRunning, isSending, queryClient, voiceSession, setActiveSession, uploadAttachedFiles, ensureConversation, toast, setAttachedFiles, setComposing, getMessagePageContext]);
+  }, [attachedFiles, activeSession, isAgentRunning, isSending, queryClient, voiceSession, setActiveSession, uploadAttachedFiles, ensureConversation, toast, setAttachedFiles, setComposing, getMessagePageContext, getSayAloud]);
 
   const handleAbort = useCallback(async () => {
     if (!activeSession) return;
