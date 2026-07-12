@@ -6,6 +6,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import { cn } from "@/lib/utils";
 import { parseReferenceText } from "@shared/reference-parser";
@@ -174,12 +175,22 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
     const rootRef = useRef<HTMLDivElement>(null);
     const pendingSelectionRef = useRef<number | null>(null);
     const composingRef = useRef(false);
+    const [domEpoch, setDomEpoch] = useState(0);
     const parts = useMemo(() => parseReferenceText(value), [value]);
 
     const commitValue = useCallback((nextValue: string, cursor: number) => {
       pendingSelectionRef.current = cursor;
       onChange(nextValue, cursor);
     }, [onChange]);
+
+    const commitFromDOM = useCallback((nextValue: string, cursor: number) => {
+      // The browser mutated contentEditable DOM natively (autocorrect,
+      // composition). Remount the rendered parts so React never reconciles
+      // against nodes it no longer owns — reconciling browser-mutated nodes
+      // desyncs or crashes the commit and permanently locks the input.
+      setDomEpoch((epoch) => epoch + 1);
+      commitValue(nextValue, cursor);
+    }, [commitValue]);
 
     const setSelectionRange = useCallback((start: number) => {
       pendingSelectionRef.current = start;
@@ -211,9 +222,9 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
       const domValue = extractValue(root);
       const cursor = selectionOffsetWithin(root);
       if (domValue !== value) {
-        commitValue(domValue, cursor);
+        commitFromDOM(domValue, cursor);
       }
-    }, [commitValue, value]);
+    }, [commitFromDOM, value]);
 
     const handleBeforeInput = useCallback((inputEvent: InputEvent) => {
       if (disabled) return;
@@ -238,6 +249,27 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
           // Not composing but got composition text (e.g. autocorrect replacement).
           // Let browser handle it natively, sync afterward.
           return;
+        case "insertReplacementText": {
+          // iOS/macOS Safari autocorrect and spellcheck replacements arrive
+          // here (not as composition events). Apply the replacement in React
+          // state so the browser never mutates React-owned DOM nodes.
+          const replacement = inputEvent.data ?? inputEvent.dataTransfer?.getData("text/plain");
+          const targetRange = inputEvent.getTargetRanges?.()[0];
+          if (replacement === undefined || replacement === null || !targetRange) {
+            // Fall back to native mutation; handleInput syncs and remounts.
+            return;
+          }
+          inputEvent.preventDefault();
+          const start = offsetForBoundary(root, targetRange.startContainer, targetRange.startOffset);
+          const end = offsetForBoundary(root, targetRange.endContainer, targetRange.endOffset);
+          const next = replaceRange(
+            value,
+            { start: Math.min(start, end), end: Math.max(start, end) },
+            replacement,
+          );
+          commitValue(next.value, next.cursor);
+          return;
+        }
         case "insertLineBreak":
         case "insertParagraph":
           inserted = "\n";
@@ -304,15 +336,7 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
         composingRef.current = false;
         // Sync the final composed value from DOM back to React state.
         // Use rAF to ensure the browser has committed the final text.
-        requestAnimationFrame(() => {
-          const r = rootRef.current;
-          if (!r) return;
-          const domValue = extractValue(r);
-          const cursor = selectionOffsetWithin(r);
-          if (domValue !== value) {
-            commitValue(domValue, cursor);
-          }
-        });
+        requestAnimationFrame(() => syncFromDOM());
       };
 
       root.addEventListener("compositionstart", onCompositionStart);
@@ -321,23 +345,25 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
         root.removeEventListener("compositionstart", onCompositionStart);
         root.removeEventListener("compositionend", onCompositionEnd);
       };
-    }, [commitValue, value]);
+    }, [syncFromDOM]);
 
     const handleInput = useCallback(() => {
       // During composition, the browser mutates the DOM directly. We don't
       // interfere here — compositionend handles the sync. For non-composition
-      // edits that slip past beforeinput (e.g. autocorrect replacements that
-      // don't fire composition events on some browsers), sync from DOM.
-      if (!composingRef.current) {
-        const root = rootRef.current;
-        if (!root) return;
-        const domValue = extractValue(root);
-        if (domValue !== value) {
-          const cursor = selectionOffsetWithin(root);
-          commitValue(domValue, cursor);
-        }
+      // native edits that slip past beforeinput, sync (and remount) from DOM.
+      if (!composingRef.current) syncFromDOM();
+    }, [syncFromDOM]);
+
+    const handleBlur = useCallback(() => {
+      // iOS can blur mid-composition without firing compositionend; a stuck
+      // composing flag would permanently disable DOM→state sync and lock
+      // the input. Clear it and sync whatever the browser left in the DOM.
+      if (composingRef.current) {
+        composingRef.current = false;
+        syncFromDOM();
       }
-    }, [commitValue, value]);
+      onBlur?.();
+    }, [onBlur, syncFromDOM]);
 
     const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
       onPaste?.(event);
@@ -372,7 +398,7 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
         onKeyUp={handleSelect}
         onMouseUp={handleSelect}
         onFocus={onFocus}
-        onBlur={onBlur}
+        onBlur={handleBlur}
         onKeyDown={onKeyDown}
         onPaste={handlePaste}
         className={cn(
@@ -383,10 +409,10 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
       >
         {parts.map((part, index) =>
           part.kind === "text" ? (
-            <span key={index}>{part.text}</span>
+            <span key={`${domEpoch}-${index}`}>{part.text}</span>
           ) : (
             <span
-              key={index}
+              key={`${domEpoch}-${index}`}
               contentEditable={false}
               data-reference-token={part.ref.canonical}
               className="inline-block align-baseline"
