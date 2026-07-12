@@ -356,7 +356,7 @@ async function composeCloudflarePageStatus(hosting: typeof environmentHostingBin
       getCloudflareLatestDeployment(token, hosting.projectId, hosting.projectName, environment),
       getCloudflarePagesProjectTruth(token, hosting.projectId, hosting.projectName),
     ]);
-    const deploymentMode = project.deployments.enabled === false ? "disabled" : project.deployments.automaticProductionDeployments ? "automatic" : project.deployments.enabled === true ? "manual" : "unknown";
+    const deploymentMode = project.outcome === "project_truth" ? (project.project.deployments.enabled === false ? "disabled" : project.project.deployments.automaticProductionDeployments ? "automatic" : project.project.deployments.enabled === true ? "manual" : "unknown") : "unknown";
     return {
       available: true,
       degraded: false,
