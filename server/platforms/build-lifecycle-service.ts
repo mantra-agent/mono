@@ -5,6 +5,7 @@ import { getProviderCredential } from "../provider-credential-store";
 import { combineWithVisibleScope, combineWithWritableScope } from "../scoped-storage";
 import { getLatestDeploymentByToken } from "../integrations/railway/client";
 import { getCloudflareLatestDeployment } from "../services/provider-connection-service";
+import { getCloudflarePagesProjectTruth } from "./cloudflare-pages-service";
 import {
   createWorkflowRun,
   listWorkflowRuns,
@@ -327,6 +328,8 @@ async function composeCloudflarePageStatus(hosting: typeof environmentHostingBin
     deployment: null as null | Record<string, unknown>,
     publicUrl: hosting?.publicUrl || null,
     urlReachable: null as boolean | null,
+    project: null as null | Record<string, unknown>,
+    deploymentMode: "unknown" as "automatic" | "manual" | "disabled" | "unknown",
   };
   if (!hosting || hosting.provider !== "cloudflare") return base;
   if (!hosting.connectionId) return { ...base, reason: "Cloudflare Pages hosting binding has no provider connection" };
@@ -349,7 +352,11 @@ async function composeCloudflarePageStatus(hosting: typeof environmentHostingBin
 
   const environment = hosting.providerEnvironmentId || "production";
   try {
-    const latest = await getCloudflareLatestDeployment(token, hosting.projectId, hosting.projectName, environment);
+    const [latest, project] = await Promise.all([
+      getCloudflareLatestDeployment(token, hosting.projectId, hosting.projectName, environment),
+      getCloudflarePagesProjectTruth(token, hosting.projectId, hosting.projectName),
+    ]);
+    const deploymentMode = project.deployments.enabled === false ? "disabled" : project.deployments.automaticProductionDeployments ? "automatic" : project.deployments.enabled === true ? "manual" : "unknown";
     return {
       available: true,
       degraded: false,
@@ -413,7 +420,7 @@ export async function getEnvironmentBuildStatus(environmentId: number): Promise<
   const [railway, eas, cloudflarePages, recentWorkflows, activity] = await Promise.all([
     providerKind === "railway" || !providerKind ? composeRailwayStatus(hosting, hostingConnection) : Promise.resolve(null),
     composeEasStatus(),
-    providerKind === "cloudflare_pages" ? composeCloudflarePageStatus(hosting, hostingConnection) : Promise.resolve(null),
+    (providerKind === "cloudflare" || providerKind === "cloudflare_pages") ? composeCloudflarePageStatus(hosting, hostingConnection) : Promise.resolve(null),
     listWorkflowRuns({ environmentId, templateId: lifecycle.config?.workflowTemplateId || undefined, limit: 5 }),
     getEnvironmentBuildActivity(environmentId, lifecycle.config?.workflowTemplateId),
   ]);
