@@ -156,9 +156,8 @@ function formatEventTime(start: CalendarEvent["start"], end: CalendarEvent["end"
   return fmt(s);
 }
 
-function isToday(date: Date): boolean {
-  const now = new Date();
-  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
+function isToday(date: Date, timezone = Intl.DateTimeFormat().resolvedOptions().timeZone): boolean {
+  return calendarDateKey(date) === getDateKeyInTimezone(new Date().toISOString(), timezone);
 }
 
 function getDateKeyInTimezone(dateTime: string, timezone: string): string {
@@ -186,6 +185,45 @@ function isAllDay(event: CalendarEvent): boolean {
 function getEventHour(event: CalendarEvent, timezone: string): number {
   if (!event.start.dateTime) return 0;
   return getPartsInTimezone(event.start.dateTime, timezone).hour;
+}
+
+interface DayHourRow {
+  hour: number;
+  events: CalendarEvent[];
+}
+
+function getEventEndHour(event: CalendarEvent, timezone: string): number {
+  if (!event.end.dateTime) return getEventHour(event, timezone);
+  const end = getPartsInTimezone(event.end.dateTime, timezone);
+  const lastTouchedHour = end.minute === 0 ? end.hour - 1 : end.hour;
+  return Math.max(getEventHour(event, timezone), lastTouchedHour);
+}
+
+function getDayHourRows(section: ScheduleSection, events: CalendarEvent[], timezone: string, now = new Date()): DayHourRow[] {
+  const today = isToday(section.start, timezone);
+  const startHour = today ? getPartsInTimezone(now.toISOString(), timezone).hour : 5;
+  const timedEvents = events.filter(event => !isAllDay(event) && event.start.dateTime);
+  const latestEventHour = timedEvents.reduce(
+    (latest, event) => Math.max(latest, getEventEndHour(event, timezone)),
+    startHour,
+  );
+  const endHour = today ? 23 : latestEventHour;
+
+  return Array.from({ length: Math.max(1, endHour - startHour + 1) }, (_, index) => {
+    const hour = startHour + index;
+    return {
+      hour,
+      events: timedEvents.filter(event => {
+        const eventStartHour = getEventHour(event, timezone);
+        const eventEndHour = getEventEndHour(event, timezone);
+        return hour >= eventStartHour && hour <= eventEndHour;
+      }),
+    };
+  });
+}
+
+function formatHourLabel(hour: number): string {
+  return new Date(2000, 0, 1, hour).toLocaleTimeString([], { hour: "numeric" });
 }
 
 function isHighPrep(event: CalendarEvent): boolean {
@@ -637,6 +675,11 @@ function ScheduleTreeSection({ section, mode, events, loading, calendarMap, acco
   onEventClick: (event: CalendarEvent) => void;
 }) {
   const [open, setOpen] = useState(true);
+  const dayHourRows = useMemo(
+    () => mode === "day" ? getDayHourRows(section, events, timezone) : [],
+    [events, mode, section, timezone],
+  );
+  const allDayEvents = mode === "day" ? events.filter(isAllDay) : [];
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -644,12 +687,32 @@ function ScheduleTreeSection({ section, mode, events, loading, calendarMap, acco
         <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
         <span className="truncate">{section.title}</span>
         {section.subtitle ? <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground/70">{section.subtitle}</span> : null}
-
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="mt-0 space-y-0.5 pb-1">
           {loading ? (
             <Skeleton className="h-10 w-full rounded-md" />
+          ) : mode === "day" ? (
+            <>
+              {allDayEvents.map(event => (
+                <DayHourRow
+                  key={`all-day:${event.calendarId}:${event.id}`}
+                  label="All day"
+                  events={[event]}
+                  accountEmails={accountEmails}
+                  onEventClick={onEventClick}
+                />
+              ))}
+              {dayHourRows.map(row => (
+                <DayHourRow
+                  key={row.hour}
+                  label={formatHourLabel(row.hour)}
+                  events={row.events}
+                  accountEmails={accountEmails}
+                  onEventClick={onEventClick}
+                />
+              ))}
+            </>
           ) : events.length === 0 ? (
             <div className="group flex min-h-9 w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left text-xs text-muted-foreground/55">
               <span className="w-14 shrink-0 text-right pr-1.5 text-[11px] leading-tight tabular-nums" />
@@ -673,6 +736,49 @@ function ScheduleTreeSection({ section, mode, events, loading, calendarMap, acco
         </div>
       </CollapsibleContent>
     </Collapsible>
+  );
+}
+
+function DayHourRow({ label, events, accountEmails, onEventClick }: {
+  label: string;
+  events: CalendarEvent[];
+  accountEmails: string[];
+  onEventClick: (event: CalendarEvent) => void;
+}) {
+  return (
+    <div className="flex min-h-7 w-full items-center gap-2 rounded-md pr-2" data-testid={`schedule-hour-${label}`}>
+      <span className="w-14 shrink-0 text-right pr-1.5 text-[11px] leading-none tabular-nums text-muted-foreground">
+        {label}
+      </span>
+      <span className="w-4 shrink-0" />
+      <div className="relative flex min-w-0 flex-1 items-center gap-2 overflow-hidden border-b border-border/30 py-1">
+        {events.length === 0 ? (
+          <span className="truncate text-xs text-muted-foreground/35">Free</span>
+        ) : events.map(event => {
+          const optional = isOptionalForMe(event);
+          const personal = isPersonalAccount(event.accountEmail);
+          const external = hasExternalAttendees(event, accountEmails);
+          return (
+            <button
+              key={`${event.calendarId}:${event.id}`}
+              type="button"
+              onClick={() => onEventClick(event)}
+              className={cn(
+                "flex min-w-0 items-center gap-1 rounded px-1 text-left hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                optional && "opacity-60",
+              )}
+              data-testid={`event-row-${event.id}`}
+            >
+              <span className={cn("truncate text-xs font-medium", optional ? "text-muted-foreground" : "text-foreground")}>{event.summary}</span>
+              {isHighPrep(event) && <Star className="h-3 w-3 shrink-0 fill-warning text-warning" />}
+              {personal && <span className="shrink-0 text-[10px] font-medium text-info-foreground">PERSONAL</span>}
+              {external && !personal && <span className="shrink-0 text-[10px] font-medium text-cat-ai-foreground">EXT</span>}
+              {optional && <span className="shrink-0 text-[10px] font-medium text-muted-foreground">OPT</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
