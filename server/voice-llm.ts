@@ -29,7 +29,6 @@ import type { VoiceSession, VoiceMessage, VoiceToolCall, TurnContext } from "./v
 import { createTurnContext } from "./voice/turn-context";
 
 import {
-  isWordLevelPrefixContinuation,
   contentHash,
   getPublicBaseUrl,
 } from "./voice/utils";
@@ -168,18 +167,21 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
 
   const callbackArrivalAt = Date.now();
   const prevFired = session.lastFiredUserContent;
+  const userOrdinal = userMsgs.length;
+  const samePhysicalUtterance = session.activeVoiceUserOrdinal === userOrdinal && session.activeVoiceTurnId !== null;
+  const transcriptChanged = samePhysicalUtterance && lastUserContent !== prevFired;
   session.lastFiredUserContent = lastUserContent;
-  const isPrefixContinuation = isWordLevelPrefixContinuation(prevFired, lastUserContent);
-  if (!isPrefixContinuation || !session.activeVoiceTurnId) {
-    session.activeVoiceTurnId = `${session.id}-voice-turn-${Date.now()}`;
+  if (!samePhysicalUtterance) {
+    session.activeVoiceUserOrdinal = userOrdinal;
+    session.activeVoiceTurnId = `${session.id}-voice-user-${userOrdinal}`;
     session.activeTranscriptRevision = 1;
-  } else {
+  } else if (transcriptChanged) {
     session.activeTranscriptRevision += 1;
   }
-  const voiceTurnId = session.activeVoiceTurnId;
+  const voiceTurnId = session.activeVoiceTurnId!;
   const transcriptRevision = session.activeTranscriptRevision;
-  if (isPrefixContinuation) {
-    log.debug(`[TurnBoundary] prefix continuation of previous turn session=${sessionId} prevLen=${prevFired.length} newLen=${lastUserContent.length} — treating as seamless continuation`);
+  if (transcriptChanged) {
+    log.debug(`[TurnBoundary] transcript revision of physical utterance session=${sessionId} userOrdinal=${userOrdinal} prevLen=${prevFired.length} newLen=${lastUserContent.length} revision=${transcriptRevision}`);
     session.prefixContinuation = true;
 
     if (session.inflightAbort && session.inflightTurn > 0) {
@@ -257,7 +259,8 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
     session.prefixContinuation = false;
   }
 
-  const isCascadeRetry = !isPrefixContinuation
+  const isCascadeRetry = samePhysicalUtterance
+    && !transcriptChanged
     && lastUserContent === prevFired
     && lastUserContent.length > 0
     && session.inflightAbort !== null
@@ -318,7 +321,7 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
       turnId: voiceTurnId,
       transcriptRevision,
       turnKey: getVoiceUserTurnKey(session, getVoiceUserOrdinal(messages as Array<{ role: string; content: string }>)),
-      update: isPrefixContinuation,
+      update: transcriptChanged,
     });
   }
 
@@ -631,8 +634,8 @@ async function executeVoiceTurnBody(
     }
 
     thinkingFilter.finalize();
-    sendChunk.close("completed");
     await handleSuccessfulTurn(session, ctx, result, conversationMessages, currentTurn, systemPromptBytes, thinkingFilter, trackedWrite, flushCoalesceBuffer);
+    sendChunk.close("completed");
     res.end();
 
   } catch (err: unknown) {

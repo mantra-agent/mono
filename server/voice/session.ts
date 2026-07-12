@@ -273,6 +273,7 @@ export function createVoiceSession(
     executorStarted: false,
     activeTurnNumber: 0,
     activeVoiceTurnId: null,
+    activeVoiceUserOrdinal: null,
     activeTranscriptRevision: 0,
     activeAssistantAttemptId: null,
     principal: null,

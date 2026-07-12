@@ -26,7 +26,6 @@ const log = createLogger("VoiceTurn");
 
 const VOICE_THINKING_ENABLED = false;
 const VOICE_MAX_ITERATIONS = 5;
-const VOICE_TURN_BUDGET_MS = 90_000;
 const BACKPRESSURE_DEAD_TIMEOUT_MS = 15_000;
 const COALESCE_INTERVAL_MS = 80;
 const SSE_KEEPALIVE_INTERVAL_MS = 5_000;
@@ -199,13 +198,6 @@ export async function runExecutorPhase(
     sendSSEComment(res, "keepalive", session.id);
   }, SSE_KEEPALIVE_INTERVAL_MS);
 
-  const turnBudgetTimer = setTimeout(() => {
-    if (!turnAbort.signal.aborted) {
-      log.warn(`turn ${currentTurn} TURN_BUDGET_EXCEEDED after ${VOICE_TURN_BUDGET_MS}ms session=${session.id}`);
-      turnAbort.abort();
-    }
-  }, VOICE_TURN_BUDGET_MS);
-
   log.debug(`turn ${currentTurn} VOICE_DIAG systemPromptBytes=${systemPromptBytes} voiceRuns=${getActiveVoiceRunCount()} session=${session.id}`);
   // Publish thinking journal entry — drives SessionManager streaming projection
   // so clients see "Thinking" for voice turns just like text chat.
@@ -335,7 +327,6 @@ export async function runExecutorPhase(
       },
     });
   } finally {
-    clearTimeout(turnBudgetTimer);
     if (keepaliveTimer) { clearInterval(keepaliveTimer); keepaliveTimer = null; }
     if (coalesceTimer) { clearInterval(coalesceTimer); coalesceTimer = null; }
     stopFillerTimer("turn_end");
