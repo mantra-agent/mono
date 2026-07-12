@@ -111,7 +111,7 @@ export function registerPhoneRoutes(app: Express, deps: { ingestPhoneTurn: Phone
           }});
           if (!result.ok) throw new Error(result.error);
           turnBusy = false;
-        });
+        }, 900, `phone:${callSid}`);
         const stt = await sttProvider.connect((result) => detector.push(result), (error) => void fail(error));
         socket.on("message", async (data) => {
           try {

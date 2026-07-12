@@ -10,6 +10,9 @@ export interface STTTranscript {
   text: string;
   isFinal: boolean;
   speechFinal: boolean;
+  eventId?: string;
+  occurredAtMs?: number;
+  receivedAtMs?: number;
 }
 
 export interface STTStream {
@@ -50,7 +53,15 @@ export class DeepgramSTTProvider implements STTProvider {
         };
         if (message.type !== "Results") return;
         const text = message.channel?.alternatives?.[0]?.transcript?.trim() || "";
-        if (text) onTranscript({ text, isFinal: message.is_final === true, speechFinal: message.speech_final === true });
+        if (text) {
+          const receivedAtMs = Date.now();
+          onTranscript({
+            text,
+            isFinal: message.is_final === true,
+            speechFinal: message.speech_final === true,
+            receivedAtMs,
+          });
+        }
       } catch (error) {
         log.warn(`invalid Deepgram message: ${error instanceof Error ? error.message : String(error)}`);
       }
