@@ -189,7 +189,13 @@ function getEventHour(event: CalendarEvent, timezone: string): number {
 
 interface DayHourRow {
   hour: number;
-  events: CalendarEvent[];
+}
+
+interface DayEventBlock {
+  event: CalendarEvent;
+  rowStart: number;
+  rowSpan: number;
+  column: number;
 }
 
 function getEventEndHour(event: CalendarEvent, timezone: string): number {
@@ -209,15 +215,35 @@ function getDayHourRows(section: ScheduleSection, events: CalendarEvent[], timez
   );
   const endHour = today ? 23 : latestEventHour;
 
-  return Array.from({ length: Math.max(1, endHour - startHour + 1) }, (_, index) => {
-    const hour = startHour + index;
+  return Array.from({ length: Math.max(1, endHour - startHour + 1) }, (_, index) => ({
+    hour: startHour + index,
+  }));
+}
+
+function getDayEventBlocks(rows: DayHourRow[], events: CalendarEvent[], timezone: string): DayEventBlock[] {
+  if (rows.length === 0) return [];
+  const firstHour = rows[0].hour;
+  const lastHour = rows[rows.length - 1].hour;
+  const timedEvents = events
+    .filter(event => !isAllDay(event) && event.start.dateTime)
+    .map(event => ({
+      event,
+      startHour: Math.max(firstHour, getEventHour(event, timezone)),
+      endHour: Math.min(lastHour, getEventEndHour(event, timezone)),
+    }))
+    .filter(({ startHour, endHour }) => startHour <= endHour)
+    .sort((a, b) => a.startHour - b.startHour || a.endHour - b.endHour);
+  const columnEndHours: number[] = [];
+
+  return timedEvents.map(({ event, startHour, endHour }) => {
+    const availableColumn = columnEndHours.findIndex(columnEndHour => columnEndHour < startHour);
+    const column = availableColumn === -1 ? columnEndHours.length : availableColumn;
+    columnEndHours[column] = endHour;
     return {
-      hour,
-      events: timedEvents.filter(event => {
-        const eventStartHour = getEventHour(event, timezone);
-        const eventEndHour = getEventEndHour(event, timezone);
-        return hour >= eventStartHour && hour <= eventEndHour;
-      }),
+      event,
+      rowStart: startHour - firstHour + 1,
+      rowSpan: endHour - startHour + 1,
+      column,
     };
   });
 }
@@ -694,24 +720,16 @@ function ScheduleTreeSection({ section, mode, events, loading, calendarMap, acco
             <Skeleton className="h-10 w-full rounded-md" />
           ) : mode === "day" ? (
             <>
-              {allDayEvents.map(event => (
-                <DayHourRow
-                  key={`all-day:${event.calendarId}:${event.id}`}
-                  label="All day"
-                  events={[event]}
-                  accountEmails={accountEmails}
-                  onEventClick={onEventClick}
-                />
-              ))}
-              {dayHourRows.map(row => (
-                <DayHourRow
-                  key={row.hour}
-                  label={formatHourLabel(row.hour)}
-                  events={row.events}
-                  accountEmails={accountEmails}
-                  onEventClick={onEventClick}
-                />
-              ))}
+              {allDayEvents.length > 0 && (
+                <DayAllDayRow events={allDayEvents} onEventClick={onEventClick} />
+              )}
+              <DayTimeline
+                rows={dayHourRows}
+                events={events}
+                accountEmails={accountEmails}
+                timezone={timezone}
+                onEventClick={onEventClick}
+              />
             </>
           ) : events.length === 0 ? (
             <div className="group flex min-h-9 w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left text-xs text-muted-foreground/55">
@@ -739,24 +757,75 @@ function ScheduleTreeSection({ section, mode, events, loading, calendarMap, acco
   );
 }
 
-function DayHourRow({ label, events, accountEmails, onEventClick }: {
-  label: string;
+function DayAllDayRow({ events, onEventClick }: {
   events: CalendarEvent[];
-  accountEmails: string[];
   onEventClick: (event: CalendarEvent) => void;
 }) {
   return (
-    <div className="flex min-h-7 w-full items-center gap-2 rounded-md pr-2" data-testid={`schedule-hour-${label}`}>
-      <span className="w-14 shrink-0 text-right pr-1.5 text-[11px] leading-none tabular-nums text-muted-foreground">
-        {label}
-      </span>
-      <span className="w-4 shrink-0" />
-      <div className="relative flex min-w-0 flex-1 items-center gap-2 overflow-hidden border-b border-border/30 py-1">
-        {events.length === 0 ? (
-          <span className="truncate text-xs text-muted-foreground/35">Free</span>
-        ) : events.map(event => {
+    <div className="grid min-h-7 w-full grid-cols-[3.5rem_1rem_minmax(0,1fr)] items-center gap-2 pr-2">
+      <span className="text-right pr-1.5 text-[11px] leading-none tabular-nums text-muted-foreground">All day</span>
+      <span />
+      <div className="flex min-w-0 items-center gap-2 overflow-hidden border-b border-border/30 py-1">
+        {events.map(event => (
+          <button
+            key={`${event.calendarId}:${event.id}`}
+            type="button"
+            onClick={() => onEventClick(event)}
+            className="flex min-w-0 items-center gap-1.5 rounded px-1 text-left text-xs font-medium text-foreground hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            data-testid={`event-row-${event.id}`}
+          >
+            <CalendarIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate">{event.summary}</span>
+            {isHighPrep(event) && <Star className="h-3 w-3 shrink-0 fill-warning text-warning" />}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DayTimeline({ rows, events, accountEmails, timezone, onEventClick }: {
+  rows: DayHourRow[];
+  events: CalendarEvent[];
+  accountEmails: string[];
+  timezone: string;
+  onEventClick: (event: CalendarEvent) => void;
+}) {
+  const blocks = useMemo(() => getDayEventBlocks(rows, events, timezone), [rows, events, timezone]);
+  const columnCount = Math.max(1, ...blocks.map(block => block.column + 1));
+  const rowTemplate = `repeat(${rows.length}, 1.75rem)`;
+
+  return (
+    <div
+      className="grid w-full grid-cols-[3.5rem_1rem_minmax(0,1fr)] gap-x-2 pr-2"
+      style={{ gridTemplateRows: rowTemplate }}
+    >
+      {rows.map((row, index) => (
+        <div key={row.hour} className="contents" data-testid={`schedule-hour-${formatHourLabel(row.hour)}`}>
+          <span
+            className="self-center text-right pr-1.5 text-[11px] leading-none tabular-nums text-muted-foreground"
+            style={{ gridColumn: 1, gridRow: index + 1 }}
+          >
+            {formatHourLabel(row.hour)}
+          </span>
+          <span style={{ gridColumn: 2, gridRow: index + 1 }} />
+          <span
+            className="border-b border-border/30"
+            style={{ gridColumn: 3, gridRow: index + 1 }}
+          />
+        </div>
+      ))}
+      <div
+        className="grid min-h-0 min-w-0 gap-1 py-0.5"
+        style={{
+          gridColumn: 3,
+          gridRow: `1 / span ${rows.length}`,
+          gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))`,
+          gridTemplateRows: rowTemplate,
+        }}
+      >
+        {blocks.map(({ event, rowStart, rowSpan, column }) => {
           const optional = isOptionalForMe(event);
-          const personal = isPersonalAccount(event.accountEmail);
           const external = hasExternalAttendees(event, accountEmails);
           return (
             <button
@@ -764,15 +833,16 @@ function DayHourRow({ label, events, accountEmails, onEventClick }: {
               type="button"
               onClick={() => onEventClick(event)}
               className={cn(
-                "flex min-w-0 items-center gap-1 rounded px-1 text-left hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                "z-10 flex min-h-0 min-w-0 items-start gap-1.5 overflow-hidden rounded-md bg-muted/70 px-1.5 py-1 text-left text-xs font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
                 optional && "opacity-60",
               )}
+              style={{ gridColumn: column + 1, gridRow: `${rowStart} / span ${rowSpan}` }}
               data-testid={`event-row-${event.id}`}
             >
-              <span className={cn("truncate text-xs font-medium", optional ? "text-muted-foreground" : "text-foreground")}>{event.summary}</span>
-              {isHighPrep(event) && <Star className="h-3 w-3 shrink-0 fill-warning text-warning" />}
-              {personal && <span className="shrink-0 text-[10px] font-medium text-info-foreground">PERSONAL</span>}
-              {external && !personal && <span className="shrink-0 text-[10px] font-medium text-cat-ai-foreground">EXT</span>}
+              <CalendarIcon className="mt-px h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{event.summary}</span>
+              {isHighPrep(event) && <Star className="mt-px h-3 w-3 shrink-0 fill-warning text-warning" />}
+              {external && <span className="shrink-0 text-[10px] font-medium text-muted-foreground">EXT</span>}
               {optional && <span className="shrink-0 text-[10px] font-medium text-muted-foreground">OPT</span>}
             </button>
           );
