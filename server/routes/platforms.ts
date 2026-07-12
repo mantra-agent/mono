@@ -3,6 +3,7 @@ import { and, desc, eq, or, sql, type SQL } from "drizzle-orm";
 import { db } from "../db";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
+import { requirePermission } from "../permissions";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { getSecretSync } from "../secrets-store";
@@ -11,6 +12,7 @@ import { getLatestDeploymentByToken } from "../integrations/railway/client";
 import { getCloudflareLatestDeployment } from "../services/provider-connection-service";
 import { environmentHostingBindings, environmentRuntimeVariables, environmentSourceBindings, environmentCapabilityBindings, environmentContextArtifacts, insertPlatformProductEnvironmentSchema, insertPlatformProductSchema, insertPlatformSchema, platformProductEnvironments, platformProducts, platforms, providerConnections, upsertSourceBindingSchema, upsertHostingBindingSchema, upsertCapabilityBindingSchema, upsertContextArtifactSchema, type EnvironmentSourceBinding, type EnvironmentHostingBinding, type EnvironmentRuntimeVariable, type ProviderConnection, type EnvironmentCapabilityBinding } from "@shared/models/platforms";
 import { encrypt, getEncryptionKey } from "../encryption";
+import { getCloudflarePagesProjectTruth, triggerCloudflarePagesProductionDeployment, retryCloudflarePagesDeployment, cancelCloudflarePagesDeployment, repairCloudflarePagesProject, type CloudflareProjectRepair } from "../platforms/cloudflare-pages-service";
 import { deleteEnvironmentBuildLifecycleConfigs, disableEnvironmentBuildLifecycleConfig, getEnvironmentBuildLifecycleConfig, getEnvironmentBuildStatus, listEnvironmentBuildWorkflows, setEnvironmentBuildLifecycleConfig, startEnvironmentBuildWorkflow } from "../platforms/build-lifecycle-service";
 
 const log = createLogger("PlatformRoutes");
@@ -363,6 +365,36 @@ export function registerPlatformRoutes(app: Express): void {
       const err = routeError(error, "delete_build_lifecycle");
       res.status(400).json({ error: err.message, operation: err.operation });
     }
+  });
+
+  async function cloudflareContext(environmentId: number) {
+    const writable = await ensureEnvironmentWritable(environmentId);
+    if (!writable) throw new Error(`Environment ${environmentId} not found or not writable`);
+    const [binding] = await db.select().from(environmentHostingBindings).where(eq(environmentHostingBindings.environmentId, environmentId)).limit(1);
+    if (!binding || binding.provider !== "cloudflare" || !binding.connectionId || !binding.projectId || !binding.projectName) throw new Error("Environment has no complete Cloudflare Pages hosting binding");
+    const [connection] = await db.select({ credentialRef: providerConnections.credentialRef }).from(providerConnections).where(visibleProviderConnection(eq(providerConnections.id, binding.connectionId))).limit(1);
+    if (!connection?.credentialRef) throw new Error("Cloudflare provider connection has no credential");
+    const token = await getProviderCredential(connection.credentialRef);
+    if (!token) throw new Error("Cloudflare provider credential could not be decrypted");
+    return { token, accountId: binding.projectId, projectName: binding.projectName };
+  }
+
+  app.get("/api/platforms/environments/:environmentId/cloudflare-pages", requirePermission("build:read"), async (req, res) => {
+    try { const c = await cloudflareContext(platformIdParam(req.params.environmentId)); res.json(await getCloudflarePagesProjectTruth(c.token, c.accountId, c.projectName)); }
+    catch (error) { const err = routeError(error, "get_cloudflare_pages_project"); res.status(400).json({ outcome: "provider_error", diagnostic: err.message }); }
+  });
+
+  app.post("/api/platforms/environments/:environmentId/cloudflare-pages/actions", requirePermission("build:write"), async (req, res) => {
+    try {
+      const c = await cloudflareContext(platformIdParam(req.params.environmentId));
+      const action = String(req.body?.action || "");
+      const deploymentId = typeof req.body?.deploymentId === "string" ? req.body.deploymentId : "";
+      if (action === "deploy") return res.json(await triggerCloudflarePagesProductionDeployment(c.token, c.accountId, c.projectName));
+      if (action === "retry" && deploymentId) return res.json(await retryCloudflarePagesDeployment(c.token, c.accountId, c.projectName, deploymentId));
+      if (action === "cancel" && deploymentId) return res.json(await cancelCloudflarePagesDeployment(c.token, c.accountId, c.projectName, deploymentId));
+      if (action === "repair") return res.json(await repairCloudflarePagesProject(c.token, c.accountId, c.projectName, (req.body?.repair || {}) as CloudflareProjectRepair));
+      return res.status(400).json({ outcome: "rejected", diagnostic: "Unsupported Cloudflare Pages action or missing deployment ID" });
+    } catch (error) { const err = routeError(error, "cloudflare_pages_action"); res.status(400).json({ outcome: "provider_error", diagnostic: err.message }); }
   });
 
   app.get("/api/platforms/environments/:environmentId/build-status", async (req, res) => {
