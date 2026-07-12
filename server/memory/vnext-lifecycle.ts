@@ -1,6 +1,11 @@
 import { createLogger } from "../log";
 import { MEMORY_VNEXT_LIFECYCLE_STAGE, type MemoryVnextClaim } from "@shared/schema";
-import { memoryVnextClaimStorage, type VnextLifecycleCandidate } from "./vnext-claim-storage";
+import {
+  memoryVnextClaimStorage,
+  VNEXT_BRIDGE_RELATIONSHIP,
+  type VnextBridgeCandidate,
+  type VnextLifecycleCandidate,
+} from "./vnext-claim-storage";
 import { resolveVnextEntityMentions } from "./vnext-entity-resolution";
 
 const log = createLogger("MemoryVnextLifecycle");
@@ -34,8 +39,24 @@ export interface VnextLifecycleRunResult {
   retired: number;
   retiredByReason: Record<string, number>;
   decayed: number;
+  bridges: VnextBridgeRunResult;
   skipped: number;
   skippedByReason: Partial<Record<LifecycleSkipReason, number>>;
+  errors: number;
+}
+
+export interface VnextBridgeRunResult {
+  candidates: number;
+  scanned: number;
+  bandHits: number;
+  sourceOverlapDiscards: number;
+  entitySignalDiscards: number;
+  islandPairSkips: number;
+  created: number;
+  replaced: number;
+  activeClaims: number;
+  ceiling: number;
+  finalEdges: number;
   errors: number;
 }
 
@@ -177,6 +198,130 @@ async function decayCanonicalConfidence(candidate: VnextLifecycleCandidate, runI
     unreinforcedDays: DECAY_UNREINFORCED_DAYS,
   }, "debug");
   return true;
+}
+
+function hasIntersection(left: string[], right: string[]): boolean {
+  const rightSet = new Set(right);
+  return left.some((value) => rightSet.has(value));
+}
+
+function islandPairKey(left: string[], right: string[]): string {
+  const leftKey = [...left].sort().join("|");
+  const rightKey = [...right].sort().join("|");
+  return [leftKey, rightKey].sort().join("::");
+}
+
+async function runBridgePass(limit: number, runId: string): Promise<VnextBridgeRunResult> {
+  const candidates = await memoryVnextClaimStorage.listBridgeCandidates(limit);
+  const activeClaims = await memoryVnextClaimStorage.countActiveClaims();
+  const ceiling = Math.floor(activeClaims * 0.2);
+  let edges = await memoryVnextClaimStorage.listBridgeEdges();
+  const result: VnextBridgeRunResult = {
+    candidates: candidates.length,
+    scanned: 0,
+    bandHits: 0,
+    sourceOverlapDiscards: 0,
+    entitySignalDiscards: 0,
+    islandPairSkips: 0,
+    created: 0,
+    replaced: 0,
+    activeClaims,
+    ceiling,
+    finalEdges: edges.length,
+    errors: 0,
+  };
+
+  const sourcesByClaim = new Map<number, string[]>();
+  const rememberSources = (candidate: VnextBridgeCandidate) => sourcesByClaim.set(candidate.claim.id, candidate.sourceKeys);
+  candidates.forEach(rememberSources);
+  const edgePairKeys = new Map<number, string>();
+  const existingPairs = new Set<string>();
+  for (const edge of edges) {
+    const [fromSources, toSources] = await Promise.all([
+      sourcesByClaim.get(edge.fromClaimId) ?? memoryVnextClaimStorage.listSourceRefs(edge.fromClaimId).then((refs) => refs.map((ref) => `${ref.sourceType}:${ref.sourceId}`)),
+      sourcesByClaim.get(edge.toClaimId) ?? memoryVnextClaimStorage.listSourceRefs(edge.toClaimId).then((refs) => refs.map((ref) => `${ref.sourceType}:${ref.sourceId}`)),
+    ]);
+    sourcesByClaim.set(edge.fromClaimId, fromSources);
+    sourcesByClaim.set(edge.toClaimId, toSources);
+    const pairKey = islandPairKey(fromSources, toSources);
+    existingPairs.add(pairKey);
+    edgePairKeys.set(edge.id, pairKey);
+  }
+
+  logLifecycle("memory.vnext.bridge_candidates", { runId, count: candidates.length }, "info");
+  logLifecycle("memory.vnext.bridge_ceiling", { runId, activeClaims, ceiling, existingEdges: edges.length }, "info");
+
+  for (const candidate of candidates) {
+    try {
+      const neighbors = await memoryVnextClaimStorage.findBridgeNeighbors(candidate.claim.id, candidate.claim.embedding ?? [], 25);
+      result.bandHits += neighbors.length;
+      logLifecycle("memory.vnext.bridge_band_hits", { runId, claimId: candidate.claim.id, count: neighbors.length }, "debug");
+
+      for (const neighbor of neighbors) {
+        if (hasIntersection(candidate.sourceKeys, neighbor.sourceKeys)) {
+          result.sourceOverlapDiscards++;
+          logLifecycle("memory.vnext.bridge_discard", { runId, claimId: candidate.claim.id, neighborId: neighbor.claimId, reason: "source_overlap" }, "debug");
+          continue;
+        }
+        if (!hasIntersection(candidate.entityKeys, neighbor.entityKeys)) {
+          result.entitySignalDiscards++;
+          logLifecycle("memory.vnext.bridge_discard", { runId, claimId: candidate.claim.id, neighborId: neighbor.claimId, reason: "no_shared_entity" }, "debug");
+          continue;
+        }
+        const pairKey = islandPairKey(candidate.sourceKeys, neighbor.sourceKeys);
+        if (existingPairs.has(pairKey)) {
+          result.islandPairSkips++;
+          logLifecycle("memory.vnext.bridge_discard", { runId, claimId: candidate.claim.id, neighborId: neighbor.claimId, reason: "island_pair_exists" }, "debug");
+          continue;
+        }
+
+        if (edges.length >= ceiling) {
+          const persistedEdges = edges.filter((edge) => edge.id > 0);
+          const weakest = persistedEdges[0];
+          if (!weakest || neighbor.similarity <= weakest.strength) continue;
+          if (!await memoryVnextClaimStorage.removeBridgeEdge(weakest.id)) continue;
+          const removedPairKey = edgePairKeys.get(weakest.id);
+          if (removedPairKey) existingPairs.delete(removedPairKey);
+          edgePairKeys.delete(weakest.id);
+          edges = edges.slice(1);
+          result.replaced++;
+        }
+        if (ceiling === 0) continue;
+
+        const fromClaimId = Math.min(candidate.claim.id, neighbor.claimId);
+        const toClaimId = Math.max(candidate.claim.id, neighbor.claimId);
+        const createdEdge = await memoryVnextClaimStorage.linkClaims(
+          fromClaimId,
+          toClaimId,
+          VNEXT_BRIDGE_RELATIONSHIP,
+          neighbor.similarity,
+        );
+        if (!createdEdge) {
+          edges = await memoryVnextClaimStorage.listBridgeEdges();
+          continue;
+        }
+        edges.push(createdEdge);
+        edges.sort((a, b) => a.strength - b.strength);
+        existingPairs.add(pairKey);
+        edgePairKeys.set(createdEdge.id, pairKey);
+        result.created++;
+        break;
+      }
+      await memoryVnextClaimStorage.markBridgeScanned(candidate.claim.id);
+      result.scanned++;
+    } catch (err: unknown) {
+      result.errors++;
+      logLifecycle("memory.vnext.bridge_error", {
+        runId,
+        claimId: candidate.claim.id,
+        error: err instanceof Error ? err.message : String(err),
+      }, "warn");
+    }
+  }
+
+  result.finalEdges = edges.length;
+  logLifecycle("memory.vnext.bridge_complete", result, result.errors > 0 ? "warn" : "info");
+  return result;
 }
 
 function canCanonicalize(candidate: VnextLifecycleCandidate): boolean {
@@ -325,6 +470,20 @@ export async function runVnextLifecycle(options: VnextLifecycleRunOptions = {}):
     retired: 0,
     retiredByReason: {},
     decayed: 0,
+    bridges: {
+      candidates: 0,
+      scanned: 0,
+      bandHits: 0,
+      sourceOverlapDiscards: 0,
+      entitySignalDiscards: 0,
+      islandPairSkips: 0,
+      created: 0,
+      replaced: 0,
+      activeClaims: 0,
+      ceiling: 0,
+      finalEdges: 0,
+      errors: 0,
+    },
     skipped: 0,
     skippedByReason: {},
     errors: 0,
@@ -401,6 +560,9 @@ export async function runVnextLifecycle(options: VnextLifecycleRunOptions = {}):
       }, "warn");
     }
   }
+
+  result.bridges = await runBridgePass(limit, runId);
+  result.errors += result.bridges.errors;
 
   // Log retirement summary at info level when retirements occurred
   if (result.retired > 0) {
