@@ -36,6 +36,12 @@ const vnextClaimScopeColumns = {
   accountId: memoryVnextClaims.accountId,
 };
 
+const bridgeClaimScopeColumns = {
+  scope: sql`c.scope`,
+  ownerUserId: sql`c.owner_user_id`,
+  accountId: sql`c.account_id`,
+};
+
 const vnextSourceScopeColumns = {
   scope: memoryVnextSourceRefs.scope,
   ownerUserId: memoryVnextSourceRefs.ownerUserId,
@@ -869,7 +875,7 @@ export class MemoryVnextClaimStorage {
       WHERE c.lifecycle_stage IN (${sql.join(eligibleStages.map((stage) => sql`${stage}`), sql`, `)})
         AND c.embedding IS NOT NULL
         AND NOT COALESCE(c.metadata ? 'bridgeScannedAt', false)
-        AND ${combineWithWritableScope(principal, vnextClaimScopeColumns, sql`TRUE`)}
+        AND ${combineWithWritableScope(principal, bridgeClaimScopeColumns, sql`TRUE`)}
       GROUP BY c.id
       ORDER BY c.created_at ASC
       LIMIT ${boundedLimit}
@@ -901,7 +907,7 @@ export class MemoryVnextClaimStorage {
       WHERE c.id <> ${claimId}
         AND c.lifecycle_stage IN ('sourced', 'linked', 'canonical')
         AND c.embedding IS NOT NULL
-        AND ${combineWithWritableScope(principal, vnextClaimScopeColumns, sql`TRUE`)}
+        AND ${combineWithWritableScope(principal, bridgeClaimScopeColumns, sql`TRUE`)}
         AND 1 - (c.embedding <=> ${embeddingStr}::vector) >= 0.75
         AND 1 - (c.embedding <=> ${embeddingStr}::vector) < ${CLAIM_DEDUP_SIMILARITY_THRESHOLD}
       GROUP BY c.id
