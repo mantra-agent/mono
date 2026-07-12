@@ -733,7 +733,7 @@ function itemFromNewsSignal(signal: SignalItem, index: number): SimpleFeedItem {
   const inboxAddedDate = dateInTimezone(observedAt);
   return {
     id: `news-${signal.id}`,
-    section: "inbox",
+    section: signal.snoozedUntil && signal.snoozedUntil.getTime() > Date.now() ? "snoozed" : "inbox",
     widgetType: "inbox_item",
     title,
     status: "active",
@@ -758,6 +758,7 @@ function itemFromNewsSignal(signal: SignalItem, index: number): SimpleFeedItem {
       matchedTopics: signal.matchedTopics,
       relevanceScore: signal.curationScore ?? signal.relevanceScore,
       inboxAddedAt: observedAt,
+      snoozedUntil: signal.snoozedUntil?.toISOString() ?? null,
     },
     actions: [
       { id: `open-news-${signal.id}`, label: "Open source", type: "open_source", href: signal.url, sourceRef },

@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SimpleCheckCircle } from "@/components/home/home-check-circle";
+import { ReminderPopover } from "@/components/library-reminder";
 import { apiRequest } from "@/lib/queryClient";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { cn } from "@/lib/utils";
@@ -113,7 +114,7 @@ export function SurfacedNewsRow({ item, dateLabel }: SurfacedNewsRowProps) {
           </span>
           <div className="relative min-w-0 flex-1 pl-2" onClick={(event) => event.stopPropagation()}>
             {reference ? (
-              <ReferenceRenderer refValue={reference} surface="simple-row" className="mx-0 max-w-full text-sm font-medium" />
+              <ReferenceRenderer refValue={reference} surface="simple-row" className="mx-0 max-w-full" />
             ) : (
               <span className="min-w-0 truncate text-sm font-medium">{item.title}</span>
             )}
@@ -137,6 +138,17 @@ export function SurfacedNewsRow({ item, dateLabel }: SurfacedNewsRowProps) {
                   <ExternalLink className="h-3.5 w-3.5 mr-2" />
                   Open source
                 </DropdownMenuItem>
+              )}
+              <DropdownMenuSeparator />
+              {signalId && (
+                <ReminderPopover
+                  title={item.title}
+                  postUrl={`/api/landscape/signals/${signalId}/reminder`}
+                  postMethod="PATCH"
+                  invalidateKeys={[["/api/home/feed"]]}
+                  allowNextBuild={false}
+                  onReminderSet={() => setMenuOpen(false)}
+                />
               )}
               <DropdownMenuSeparator />
               <DropdownMenuItem disabled={!signalId} onClick={(e) => { e.stopPropagation(); save(); setMenuOpen(false); }}>
