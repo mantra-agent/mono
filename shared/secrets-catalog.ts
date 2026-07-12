@@ -14,6 +14,8 @@ export type SecretSection =
   | "expo"
   | "sentry"
   | "recall"
+  | "twilio"
+  | "deepgram"
   | "sendgrid"
   | "storage";
 
@@ -49,6 +51,10 @@ export const SECRET_CATALOG: SecretSpec[] = [
   { name: "RECALL_REGION", section: "recall", label: "Recall.ai Region", description: "Region of your Recall.ai workspace: us-east-1 | us-west-2 | eu-central-1 | ap-northeast-1. Determines the API base URL (https://{region}.recall.ai)." },
   { name: "RECALL_WEBHOOK_SECRET", section: "recall", label: "Recall.ai Status Webhook Secret", description: "Svix signing secret (whsec_...) from the Recall.ai dashboard Webhooks endpoint. Used for bot lifecycle status events." },
   { name: "RECALL_WORKSPACE_VERIFICATION_SECRET", section: "recall", label: "Recall.ai Workspace Verification Secret", description: "Workspace secret (whsec_...) from Developers > API Keys & Secrets. Used for real-time transcript endpoints and callbacks. Legacy Recall workspaces require this separately from the status webhook secret." },
+  { name: "TWILIO_ACCOUNT_SID", section: "twilio", label: "Twilio Account SID", description: "AC-prefixed Account SID from the Twilio Console." },
+  { name: "TWILIO_AUTH_TOKEN", section: "twilio", label: "Twilio Auth Token", description: "Primary auth token paired with the Account SID. Keep it server-side." },
+  { name: "TWILIO_PHONE_NUMBER", section: "twilio", label: "Twilio Phone Number", description: "Purchased Twilio phone number in E.164 format, such as +13125551234." },
+  { name: "DEEPGRAM_API_KEY", section: "deepgram", label: "Deepgram API Key", description: "Server-side API key for Nova-3 streaming speech recognition." },
   { name: "SENDGRID_API_KEY", section: "sendgrid", label: "SendGrid API Key", description: "Server-side API key for Twilio SendGrid Mail Send." },
   { name: "SENDGRID_FROM_EMAIL", section: "sendgrid", label: "Verified From Email", description: "Default verified sender email or authenticated domain sender used for outbound notifications." },
   { name: "SENDGRID_FROM_NAME", section: "sendgrid", label: "From Name", description: "Optional display name for Mantra outbound notifications." },
