@@ -883,18 +883,55 @@ export class HybridStorage implements IStorage {
     return updated;
   }
 
+  /**
+   * A thread is "engaged" when Ray has sent an outbound message on it or when
+   * another message on it is already sitting in Review. Replies on engaged
+   * threads must never be auto-dismissed, regardless of classifier tier —
+   * a confirmation from a real correspondent is not FYI noise.
+   */
+  private async isThreadEngaged(messageId: number): Promise<boolean> {
+    const [row] = await db.select({ accountId: emailMessages.accountId, providerThreadId: emailMessages.providerThreadId })
+      .from(emailMessages)
+      .where(combineWithSensitiveVisible(emailMessageScopeColumns, eq(emailMessages.id, messageId)));
+    if (!row?.providerThreadId) return false;
+    const [engaged] = await db.select({ id: emailMessages.id })
+      .from(emailMessages)
+      .where(combineWithSensitiveVisible(emailMessageScopeColumns, and(
+        eq(emailMessages.accountId, row.accountId),
+        eq(emailMessages.providerThreadId, row.providerThreadId),
+        ne(emailMessages.id, messageId),
+        or(
+          eq(emailMessages.direction, "outbound"),
+          and(eq(emailMessages.triageStatus, "triaged"), eq(emailMessages.isDone, false)),
+        ),
+      )))
+      .limit(1);
+    return Boolean(engaged);
+  }
+
   async batchUpdateEmailTriageState(updates: Array<{ id: number; tier: string; reason: string }>): Promise<Array<{ accountId: string; providerMessageId: string }>> {
     const AUTO_DISMISS_TIERS = new Set(["🗑️", "📋"]);
     const dismissed: Array<{ accountId: string; providerMessageId: string }> = [];
     for (const u of updates) {
-      const autoDismiss = AUTO_DISMISS_TIERS.has(u.tier);
+      let tier = u.tier;
+      let reason = u.reason;
+      let autoDismiss = AUTO_DISMISS_TIERS.has(tier);
+
+      // Engaged-thread guard: keep replies on Ray-engaged threads in Review.
+      if (autoDismiss && await this.isThreadEngaged(u.id)) {
+        autoDismiss = false;
+        tier = "🟢";
+        reason = `${u.reason} — kept in Review: reply on a thread Ray is engaged in`;
+        log.log(`triage engaged-thread guard kept message ${u.id} in Review (classifier tier was ${u.tier})`);
+      }
+
       const [updated] = await db.update(emailMessages)
         .set({
           triageStatus: autoDismiss ? "dismissed" : "triaged",
-          triageTier: u.tier,
-          triageReason: u.reason,
+          triageTier: tier,
+          triageReason: reason,
           triagedAt: new Date(),
-          ...(autoDismiss ? { isDone: true, doneReason: u.tier === "🗑️" ? "auto_noise" : "auto_fyi", doneAt: new Date(), updatedAt: new Date() } : {}),
+          ...(autoDismiss ? { isDone: true, doneReason: tier === "🗑️" ? "auto_noise" : "auto_fyi", doneAt: new Date(), updatedAt: new Date() } : {}),
         })
         .where(combineWithSensitiveWritable(emailMessageScopeColumns, and(eq(emailMessages.id, u.id), sql`${emailMessages.ownerUserId} IS NOT NULL`, sql`${emailMessages.principalAccountId} IS NOT NULL`)))
         .returning();
@@ -905,10 +942,10 @@ export class HybridStorage implements IStorage {
           messageId: updated.id,
           providerThreadId: updated.providerThreadId || updated.providerMessageId,
           accountId: updated.accountId,
-          tier: u.tier,
+          tier,
           sender: updated.fromAddress || null,
           subject: updated.subject || null,
-          reason: `Auto-dismissed during triage: ${u.tier === "🗑️" ? "Noise" : "FYI"} tier — ${u.reason}`,
+          reason: `Auto-dismissed during triage: ${tier === "🗑️" ? "Noise" : "FYI"} tier — ${reason}`,
           dismissedBy: "auto",
           ...sensitiveOwnershipValues(),
         }).catch(() => {});

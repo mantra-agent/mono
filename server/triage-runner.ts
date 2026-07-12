@@ -57,6 +57,10 @@ Auto-dismiss to 🗑️ Noise:
 - Promotional / marketing / newsletter / retail / mass-market emails (List-Unsubscribe header, marketing-platform sender domains, "Save 20%", etc.).
 - Cold outbound from senders with no prior relationship (sales pitches, vendor outreach, recruiter spam, templated "quick question" intros).
 
+Never tier as 📋 FYI or 🗑️ Noise:
+- A reply on a thread Ray started or has replied on (a real correspondent responding to Ray is always at least 🟢).
+- A message that confirms, proposes, or changes a meeting time. Confirmation is not completion — the meeting still has to be put on the calendar, so it needs action: tier 🟡 or higher.
+
 When uncertain between two tiers, tier UP (more important).
 
 You will be given a JSON array of emails. Bodies may be truncated to a leading prefix — that is intentional; classify from headers + the prefix. Respond with a single JSON object of the form:
