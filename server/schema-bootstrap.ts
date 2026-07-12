@@ -1034,6 +1034,10 @@ export async function runSchemaBootstrap(
       BEGIN
         IF to_regclass('public.calendar_event_metadata') IS NOT NULL THEN
           ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agent_join_enabled BOOLEAN NOT NULL DEFAULT false;
+          ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agent_join_override BOOLEAN;
+          UPDATE calendar_event_metadata
+            SET agent_join_override = true
+            WHERE agent_join_enabled = true AND agent_join_override IS NULL;
           ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agent_join_status TEXT;
           ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agent_join_detail TEXT;
           ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agent_join_session_id TEXT;

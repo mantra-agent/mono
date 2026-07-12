@@ -1144,6 +1144,7 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
       accountId: event.accountId,
       calendarId: event.calendarId,
       agentJoinEnabled: meta?.agentJoinEnabled ?? false,
+      agentJoinOverride: meta?.agentJoinOverride ?? null,
       agentJoinStatus: meta?.agentJoinStatus ?? null,
       agentJoinDetail: meta?.agentJoinDetail ?? null,
       agentJoinSessionId: meta?.agentJoinSessionId ?? null,

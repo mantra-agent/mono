@@ -867,10 +867,13 @@ export const calendarEventMetadata = pgTable("calendar_event_metadata", {
   eventType: text("event_type").notNull().default("meeting"),
   capacityType: text("capacity_type"),
   notes: text("notes"),
-  // Meeting agent auto-join (per-event toggle). Status discriminant computed at
+  // Meeting agent auto-join materialization. Status discriminant computed at
   // the source: scheduled | no_link | joined | failed. Detail carries the
   // human-visible reason for no_link/failed.
   agentJoinEnabled: boolean("agent_join_enabled").notNull().default(false),
+  // Nullable explicit per-event override. null inherits the user policy,
+  // true forces join, false forces skip.
+  agentJoinOverride: boolean("agent_join_override"),
   agentJoinStatus: text("agent_join_status"),
   agentJoinDetail: text("agent_join_detail"),
   agentJoinSessionId: text("agent_join_session_id"),

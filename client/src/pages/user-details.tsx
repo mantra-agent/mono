@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { LogOut, Loader2, Save, X, Clock, Check, Monitor } from "lucide-react";
+import { LogOut, Loader2, Save, X, Clock, Check, Monitor, Bot } from "lucide-react";
 import { useUiScale } from "@/hooks/use-ui-scale";
 import { createLogger } from "@/lib/logger";
 
@@ -168,6 +168,8 @@ export default function UserDetailsPage() {
 
       <DisplaySection />
 
+      <MeetingAgentSection />
+
       <TimezoneSection />
 
       <Card>
@@ -271,6 +273,104 @@ function DisplaySection() {
         <p className="text-xs text-muted-foreground">
           Scales all text, spacing, and buttons. Syncs across devices.
         </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+type MeetingJoinPolicy = "all" | "only_toggled" | "exclude_external";
+
+const MEETING_JOIN_POLICY_OPTIONS: Array<{
+  value: MeetingJoinPolicy;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "all",
+    label: "All meetings",
+    description: "Join every Zoom or Google Meet event automatically.",
+  },
+  {
+    value: "exclude_external",
+    label: "Internal meetings",
+    description: "Join automatically unless an attendee uses another email domain.",
+  },
+  {
+    value: "only_toggled",
+    label: "Only toggled",
+    description: "Join only events you explicitly turn on from Home.",
+  },
+];
+
+function MeetingAgentSection() {
+  const { toast } = useToast();
+  const { data, isLoading } = useQuery<{ policy: MeetingJoinPolicy }>({
+    queryKey: ["/api/auth/meeting-join-policy"],
+  });
+
+  const mutation = useMutation({
+    mutationFn: async (policy: MeetingJoinPolicy) => {
+      const response = await apiRequest("PUT", "/api/auth/meeting-join-policy", { policy });
+      return response.json();
+    },
+    onSuccess: (result: { policy: MeetingJoinPolicy }) => {
+      queryClient.setQueryData(["/api/auth/meeting-join-policy"], result);
+      queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
+      toast({ title: "Meeting join policy updated" });
+    },
+    onError: (error: Error) => {
+      log.error("meeting join policy update failed:", error);
+      toast({ title: "Could not update meeting policy", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const current = data?.policy ?? "only_toggled";
+
+  return (
+    <Card className="overflow-hidden min-w-0">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-medium">
+          <Bot className="h-4 w-4" />
+          Meeting agent
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-1">
+          <Label>Automatic join policy</Label>
+          <p className="text-xs text-muted-foreground">
+            Per-event controls on Home override this policy in either direction.
+          </p>
+        </div>
+        {isLoading ? (
+          <Skeleton className="h-28 w-full" />
+        ) : (
+          <div className="overflow-hidden rounded-md border border-border">
+            {MEETING_JOIN_POLICY_OPTIONS.map((option) => {
+              const selected = current === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  disabled={mutation.isPending}
+                  onClick={() => !selected && mutation.mutate(option.value)}
+                  className={cn(
+                    "flex min-h-11 w-full items-start gap-3 border-b border-border/40 px-3 py-2 text-left last:border-b-0 hover:bg-accent/50",
+                    selected && "bg-accent/40",
+                  )}
+                  aria-pressed={selected}
+                >
+                  <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border">
+                    {selected && <span className="h-2 w-2 rounded-full bg-cta" />}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">{option.label}</span>
+                    <span className="block text-xs text-muted-foreground">{option.description}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

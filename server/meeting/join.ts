@@ -21,7 +21,7 @@ export function meetingPlatform(meetingUrl: string): "zoom" | "meet" | "unknown"
 }
 
 export class MeetingJoinError extends Error {
-  constructor(message: string) {
+  constructor(message: string, readonly sessionId?: string) {
     super(message);
     this.name = "MeetingJoinError";
   }
@@ -42,18 +42,43 @@ export interface MeetingJoinResult {
  * before the error propagates.
  */
 export async function joinMeetingByUrl(opts: { meetingUrl: string; title?: string }): Promise<MeetingJoinResult> {
+  const meetingUrl = opts.meetingUrl.trim();
+  if (!MEETING_URL_RE.test(meetingUrl)) {
+    throw new MeetingJoinError(`That doesn't look like a Zoom or Google Meet link: ${meetingUrl}`);
+  }
+
+  const platform = meetingPlatform(meetingUrl);
+  const title = opts.title?.trim() || "Meeting";
+  const { chatStorage } = await import("../integrations/chat/storage");
+  const session = await chatStorage.createMeetingSession(title, {
+    title,
+    platform,
+    participants: [],
+    botStatus: "dialing",
+    meetingUrl,
+  });
+
+  const failSession = async (message: string): Promise<never> => {
+    await chatStorage.updateMeetingMeta(session.id, {
+      botStatus: "failed",
+      statusDetail: message,
+      endedAt: new Date().toISOString(),
+    });
+    throw new MeetingJoinError(message, session.id);
+  };
+
   const recall = await import("../integrations/recall/client");
   const cfg = await recall.getRecallConfig();
   if (!recall.isRecallConfigured(cfg)) {
-    throw new MeetingJoinError(
+    return failSession(
       "Recall.ai is not configured. Enter the RECALL_API_KEY and RECALL_REGION in Settings → Integrations → Recall.ai, then retry.",
     );
   }
   const { getRuntimePublicBaseUrl, getRuntimeIdentity } = await import("../runtime-identity");
   const publicUrl = getRuntimePublicBaseUrl();
   if (!publicUrl) {
-    throw new MeetingJoinError(
-      "No public base URL available — the Recall transcript webhook needs a stable public URL. Configure PUBLIC_URL (or deploy behind a Railway public domain) and retry.",
+    return failSession(
+      "No public base URL available. Configure PUBLIC_URL or deploy behind a Railway public domain, then retry.",
     );
   }
   const runtime = getRuntimeIdentity();
@@ -62,26 +87,6 @@ export async function joinMeetingByUrl(opts: { meetingUrl: string; title?: strin
       `PUBLIC_URL mismatch detected; registering Recall transcript webhook against serving host ${publicUrl} for env ${runtime.environmentName}`,
     );
   }
-
-  const meetingUrl = opts.meetingUrl.trim();
-  if (!MEETING_URL_RE.test(meetingUrl)) {
-    throw new MeetingJoinError(`That doesn't look like a Zoom or Google Meet link: ${meetingUrl}`);
-  }
-
-  const platform = meetingPlatform(meetingUrl);
-  const title = opts.title?.trim() || "Meeting";
-
-  const { chatStorage } = await import("../integrations/chat/storage");
-
-  // Create the meeting session first so the bot carries the session id in its
-  // metadata — the webhook receiver routes events by bot.metadata.sessionId.
-  const session = await chatStorage.createMeetingSession(title, {
-    title,
-    platform,
-    participants: [],
-    botStatus: "dialing",
-    meetingUrl,
-  });
 
   let botId: string;
   try {
@@ -94,13 +99,9 @@ export async function joinMeetingByUrl(opts: { meetingUrl: string; title?: strin
     botId = bot.id;
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    await chatStorage.updateMeetingMeta(session.id, {
-      botStatus: "failed",
-      statusDetail: detail,
-      endedAt: new Date().toISOString(),
-    });
+    const message = `Recall bot creation failed: ${detail}`;
     log.error(`Recall bot creation failed for session ${session.id}: ${detail}`);
-    throw new MeetingJoinError(`Recall bot creation failed: ${detail}`);
+    return failSession(message);
   }
 
   await chatStorage.updateMeetingMeta(session.id, { botId });

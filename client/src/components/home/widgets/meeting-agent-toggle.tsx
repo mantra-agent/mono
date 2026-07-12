@@ -10,11 +10,13 @@ function str(payload: Record<string, unknown> | undefined, key: string): string 
   return typeof value === "string" && value ? value : null;
 }
 
+function explicitOverride(payload: Record<string, unknown> | undefined): boolean | null {
+  return typeof payload?.agentJoinOverride === "boolean" ? payload.agentJoinOverride : null;
+}
+
 /**
- * Per-event meeting agent auto-join toggle (M1.5).
- * Toggled on: the Recall.ai bot auto-joins at the meeting's start time.
- * Visual states: off (muted), scheduled (cta), no_link (amber + reason),
- * failed (destructive + reason), joined (green, links to the meeting session).
+ * Per-event meeting agent override.
+ * Click cycles inherit policy → force on → force off → inherit policy.
  */
 export function MeetingAgentToggle({ item }: { item: SimpleFeedItem }) {
   const queryClient = useQueryClient();
@@ -24,17 +26,18 @@ export function MeetingAgentToggle({ item }: { item: SimpleFeedItem }) {
   const accountId = str(payload, "accountId");
   const calendarId = str(payload, "calendarId");
   const enabled = payload?.agentJoinEnabled === true;
+  const override = explicitOverride(payload);
   const status = str(payload, "agentJoinStatus");
   const detail = str(payload, "agentJoinDetail");
   const sessionId = str(payload, "agentJoinSessionId");
 
   const mutation = useMutation({
-    mutationFn: async (nextEnabled: boolean) => {
+    mutationFn: async (nextOverride: boolean | null) => {
       const res = await apiRequest("POST", "/api/calendar/agent-join", {
         googleEventId,
         accountId,
         calendarId,
-        enabled: nextEnabled,
+        override: nextOverride,
       });
       return res.json();
     },
@@ -45,42 +48,42 @@ export function MeetingAgentToggle({ item }: { item: SimpleFeedItem }) {
 
   if (!googleEventId || !accountId || !calendarId) return null;
 
-  // Joined: the bot is in (or was in) the call — link to the meeting session.
-  if (enabled && status === "joined" && sessionId) {
+  if (sessionId && (status === "joined" || status === "failed")) {
     return (
       <Tooltip>
         <TooltipTrigger asChild>
           <a
             href={`/session?c=${sessionId}`}
-            onClick={(e) => e.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
             className="flex w-5 shrink-0 items-center justify-center rounded p-0.5 hover:bg-accent/60"
-            aria-label="Agent joined — open meeting session"
+            aria-label={status === "joined" ? "Agent joined; open meeting session" : "Agent failed; open meeting session"}
           >
-            <Bot className="h-3.5 w-3.5 text-emerald-500" />
+            <Bot className={cn("h-3.5 w-3.5", status === "joined" ? "text-active" : "text-destructive")} />
           </a>
         </TooltipTrigger>
-        <TooltipContent side="left">Agent joined — open the meeting session</TooltipContent>
+        <TooltipContent side="left">
+          {status === "joined" ? "Agent joined. Open the meeting session." : detail || "Agent failed. Open the meeting session."}
+        </TooltipContent>
       </Tooltip>
     );
   }
 
   const tone = !enabled
-    ? "text-muted-foreground/50 hover:text-muted-foreground"
-    : status === "no_link"
-      ? "text-amber-500"
-      : status === "failed"
-        ? "text-destructive"
+    ? override === false ? "text-destructive/70" : "text-muted-foreground/50 hover:text-muted-foreground"
+    : status === "no_link" ? "text-warning-foreground"
+      : status === "failed" ? "text-destructive"
         : "text-cta";
 
   const tooltip = mutation.isError
-    ? (mutation.error instanceof Error ? mutation.error.message : "Toggle failed")
-    : !enabled
-      ? "Send the agent to this meeting"
-      : status === "no_link"
-        ? (detail || "No meeting link found on this event")
-        : status === "failed"
-          ? (detail || "Agent failed to join")
-          : "Agent will join at start time";
+    ? mutation.error instanceof Error ? mutation.error.message : "Override failed"
+    : status === "no_link" ? detail || "No meeting link found on this event"
+      : status === "failed" ? detail || "Agent failed to join"
+        : override === true ? "Forced on. Click to force off."
+          : override === false ? "Forced off. Click to inherit your policy."
+            : enabled ? "Joining by policy. Click to force on."
+              : "Not joining by policy. Click to force on.";
+
+  const nextOverride = override === null ? true : override === true ? false : null;
 
   return (
     <Tooltip>
@@ -88,15 +91,15 @@ export function MeetingAgentToggle({ item }: { item: SimpleFeedItem }) {
         <button
           type="button"
           disabled={mutation.isPending}
-          onClick={(e) => {
-            e.stopPropagation();
-            mutation.mutate(!enabled);
+          onClick={(event) => {
+            event.stopPropagation();
+            mutation.mutate(nextOverride);
           }}
           className={cn(
             "flex w-5 shrink-0 items-center justify-center rounded p-0.5 transition-colors hover:bg-accent/60",
-            !enabled && "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+            override === null && !enabled && "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
           )}
-          aria-label={enabled ? "Disable agent auto-join" : "Enable agent auto-join"}
+          aria-label={tooltip}
           aria-pressed={enabled}
         >
           {mutation.isPending
