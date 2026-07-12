@@ -9097,7 +9097,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     const action = typeof args.action === "string" ? args.action : "";
     if (!action) return { result: "Missing 'action' parameter", error: true };
 
-    const allowed = new Set(["list_connections", "get_connection", "test_connection", "list_environments", "get_environment", "get_environment_status", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "create_product", "update_product", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "create_connection", "save_context_artifact", "get_context_artifacts", "remove_context_artifact"]);
+    const allowed = new Set(["list_connections", "get_connection", "test_connection", "list_environments", "get_environment", "get_environment_status", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "create_product", "update_product", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "create_connection", "save_context_artifact", "get_context_artifacts", "remove_context_artifact", "get_cloudflare_pages_project", "deploy_cloudflare_pages"]);
     if (!allowed.has(action)) {
       return { result: `Unknown platforms action: ${action}. Allowed: ${[...allowed].join(", ")}`, error: true };
     }
@@ -9422,6 +9422,31 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           hostingBinding: hostingBinding ? { provider: hostingBinding.provider, connectionId: hostingBinding.connectionId, projectId: hostingBinding.projectId, projectName: hostingBinding.projectName, providerEnvironmentId: hostingBinding.providerEnvironmentId, providerEnvironmentName: hostingBinding.providerEnvironmentName, serviceId: hostingBinding.serviceId, serviceName: hostingBinding.serviceName, publicUrl: hostingBinding.publicUrl } : null,
           runtimeVariables: runtimeVars.map(v => ({ key: v.key, category: v.category, required: v.required, configured: v.configured, source: v.source })),
         }, null, 2) };
+      }
+
+      // ── Cloudflare Pages provider controls ──
+      if (action === "get_cloudflare_pages_project" || action === "deploy_cloudflare_pages") {
+        const envId = positiveId(args.id);
+        if (!envId) return { result: "Missing positive environment id", error: true };
+        const principal = getCurrentPrincipalOrSystem();
+        const { principalHasPermission } = await import("./permissions");
+        const permission = action === "get_cloudflare_pages_project" ? "build:read" : "build:write";
+        if (!principalHasPermission(principal, permission)) return { result: `Permission required: ${permission}`, error: true };
+        const [binding] = await db.select().from(environmentHostingBindings).where(eq(environmentHostingBindings.environmentId, envId)).limit(1);
+        if (!binding || binding.provider !== "cloudflare" || !binding.connectionId || !binding.projectId || !binding.projectName) return { result: "Environment has no complete Cloudflare Pages hosting binding", error: true };
+        const [connection] = await db.select().from(providerConnections).where(visibleConn(eq(providerConnections.id, binding.connectionId))).limit(1);
+        if (!connection?.credentialRef) return { result: "Cloudflare provider connection has no credential", error: true };
+        const token = await getProviderCredential(connection.credentialRef);
+        if (!token) return { result: "Cloudflare provider credential could not be decrypted", error: true };
+        const controls = await import("./platforms/cloudflare-pages-service");
+        if (action === "get_cloudflare_pages_project") {
+          return { result: JSON.stringify(await controls.getCloudflarePagesProjectTruth(token, binding.projectId, binding.projectName)) };
+        }
+        const deploymentId = typeof args.deploymentId === "string" && args.deploymentId.trim() ? args.deploymentId.trim() : null;
+        const outcome = deploymentId
+          ? await controls.retryCloudflarePagesDeployment(token, binding.projectId, binding.projectName, deploymentId)
+          : await controls.triggerCloudflarePagesProductionDeployment(token, binding.projectId, binding.projectName);
+        return { result: JSON.stringify(outcome), error: outcome.outcome === "provider_error" || outcome.outcome === "rejected" };
       }
 
       // ── get_environment_status ──
