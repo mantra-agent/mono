@@ -42,6 +42,7 @@ import {
   writeVoiceJournal,
   publishVoiceEvent,
   publishVoiceDiagnostic,
+  publishVoiceLifecycleEvent,
   traceInflightDoneResolved,
   createVoiceSession,
   getVoiceSession,
