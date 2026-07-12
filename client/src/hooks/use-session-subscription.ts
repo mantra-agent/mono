@@ -165,14 +165,44 @@ export function useSessionSubscriptions(
     setStreams((prev) => {
       const connected = wsConnectedRef.current;
       const current = prev[sessionId] ?? { ...idleStreamState, wsConnected: connected };
-      return {
-        ...prev,
-        [sessionId]: {
-          ...current,
-          ...patch,
-          wsConnected: connected,
-        },
+      const incomingSeq = patch.eventSeq;
+      const currentSeq = current.eventSeq;
+
+      // Snapshots and deltas share one monotonically increasing server sequence.
+      // A delayed streaming payload must never resurrect a run after its terminal
+      // delta has already cleared the canonical projection.
+      if (
+        typeof incomingSeq === "number" &&
+        typeof currentSeq === "number" &&
+        incomingSeq < currentSeq
+      ) {
+        log.debug("STREAM:STALE_EVENT_REJECTED", {
+          sessionId,
+          incomingSeq,
+          currentSeq,
+          incomingStatus: patch.status,
+          currentStatus: current.status,
+        });
+        return prev;
+      }
+
+      const next = {
+        ...current,
+        ...patch,
+        wsConnected: connected,
       };
+      if (
+        next.status === current.status &&
+        next.streamingContent === current.streamingContent &&
+        next.runActive === current.runActive &&
+        next.canStop === current.canStop &&
+        next.visibleAssistantActivity === current.visibleAssistantActivity &&
+        next.eventSeq === current.eventSeq &&
+        next.wsConnected === current.wsConnected
+      ) {
+        return prev;
+      }
+      return { ...prev, [sessionId]: next };
     });
   }, []);
 
