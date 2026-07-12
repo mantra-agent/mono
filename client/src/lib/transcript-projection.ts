@@ -335,9 +335,11 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
   })();
 
   // --- Should clear pending turn ---
-  const shouldClearPendingTurn =
-    (assistantHasVisiblePersistedReply) ||
-    (!isSessionActive && pendingWasAdoptedByServer && pendingTurnPersisted);
+  // The server can briefly finalize the interrupted run before starting its
+  // replacement. That terminal snapshot must not clear an accepted pending turn:
+  // there is still no assistant reply for it, and clearing loses the causal anchor
+  // that lets the replacement stream render under the new user message.
+  const shouldClearPendingTurn = assistantHasVisiblePersistedReply;
 
   // --- One discriminant for assistant activity ---
   const assistantActivity: AssistantActivity =
