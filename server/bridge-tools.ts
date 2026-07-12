@@ -2985,18 +2985,10 @@ async function handleStrategyCreateArtifact(args: Record<string, any>, ss: any):
   const contentBuffer = Buffer.from(content, "utf-8");
 
   try {
-    const storageService = objectStorageService;
-    const uploadURL = await storageService.getObjectEntityUploadURL(ext || ".md");
-    const objectPath = storageService.normalizeObjectEntityPath(uploadURL);
-
-    const uploadRes = await fetch(uploadURL, {
-      method: "PUT",
-      headers: { "Content-Type": contentType },
-      body: contentBuffer,
+    const { objectPath } = await objectStorageService.uploadObjectEntity(contentBuffer, {
+      extension: ext || ".md",
+      contentType,
     });
-    if (!uploadRes.ok) {
-      return { result: `Failed to upload artifact to storage: ${uploadRes.status} ${uploadRes.statusText}`, error: true };
-    }
 
     const artifact = await ss.createArtifact({ goalId, fileName, fileSize: contentBuffer.length, contentType, objectPath });
     return { result: `Artifact created: "${artifact.fileName}" (ID: ${artifact.id}, ${(contentBuffer.length / 1024).toFixed(1)} KB)` };
@@ -5579,19 +5571,12 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
               mimeType = MIME_MAP[ext] || "application/octet-stream";
             }
 
-            const storageService = objectStorageService;
-            const uploadURL = await storageService.getObjectEntityUploadURL(extname(fileName));
-            objectKey = storageService.normalizeObjectEntityPath(uploadURL);
-
             const fileBuffer = await fs.readFile(absPath);
-            const uploadRes = await fetch(uploadURL, {
-              method: "PUT",
-              headers: { "Content-Type": mimeType },
-              body: fileBuffer,
+            const uploaded = await objectStorageService.uploadObjectEntity(fileBuffer, {
+              extension: extname(fileName),
+              contentType: mimeType,
             });
-            if (!uploadRes.ok) {
-              return { result: `Failed to upload file to object storage: ${uploadRes.status} ${uploadRes.statusText}`, error: true };
-            }
+            objectKey = uploaded.objectPath;
           }
 
           if (!fileName || !objectKey) return { result: "Missing fileName or fileObjectKey (or workspacePath)", error: true };
@@ -11006,20 +10991,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const contentType = outputFormat === "jpeg" ? "image/jpeg" : outputFormat === "webp" ? "image/webp" : "image/png";
           const fileName = `generated-image${ext}`;
 
-          const storageService = objectStorageService;
-          const uploadURL = await storageService.getObjectEntityUploadURL(ext);
-          const objectPath = storageService.normalizeObjectEntityPath(uploadURL);
-          const uploadRes = await fetch(uploadURL, {
-            method: "PUT",
-            headers: { "Content-Type": contentType },
-            body: buffer,
+          const { objectPath } = await objectStorageService.uploadObjectEntity(buffer, {
+            extension: ext,
+            contentType,
+            acl: { owner: "system", visibility: "public" },
           });
-          if (!uploadRes.ok) {
-            return { result: `Failed to upload generated image: ${uploadRes.status}`, error: true };
-          }
-          // Set public ACL so the image is accessible via download link
-          const objectKey = objectPath.startsWith("/objects/") ? `private/${objectPath.slice("/objects/".length)}` : objectPath;
-          await setObjectAclPolicy(objectKey, { owner: "system", visibility: "public" });
           const downloadLink = `${objectPath}?name=${encodeURIComponent(fileName)}`;
           log.debug(`[Images] generate complete: ${buffer.length} bytes → ${downloadLink}`);
           // Auto-register in media registry
@@ -11094,20 +11070,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const contentType = outputFormat === "jpeg" ? "image/jpeg" : outputFormat === "webp" ? "image/webp" : "image/png";
           const fileName = `edited-image${ext}`;
 
-          const storageService = objectStorageService;
-          const uploadURL = await storageService.getObjectEntityUploadURL(ext);
-          const objectPath = storageService.normalizeObjectEntityPath(uploadURL);
-          const uploadRes = await fetch(uploadURL, {
-            method: "PUT",
-            headers: { "Content-Type": contentType },
-            body: buffer,
+          const { objectPath } = await objectStorageService.uploadObjectEntity(buffer, {
+            extension: ext,
+            contentType,
+            acl: { owner: "system", visibility: "public" },
           });
-          if (!uploadRes.ok) {
-            return { result: `Failed to upload edited image: ${uploadRes.status}`, error: true };
-          }
-          // Set public ACL so the image is accessible via download link
-          const objectKey = objectPath.startsWith("/objects/") ? `private/${objectPath.slice("/objects/".length)}` : objectPath;
-          await setObjectAclPolicy(objectKey, { owner: "system", visibility: "public" });
           const downloadLink = `${objectPath}?name=${encodeURIComponent(fileName)}`;
           log.debug(`[Images] edit complete: ${buffer.length} bytes → ${downloadLink}`);
           // Auto-register in media registry
@@ -11779,26 +11746,16 @@ const persistentFileTools: Record<string, ToolHandler> = {
 
     try {
       const { extname } = await import("path");
-      const storageService = objectStorageService;
 
       const ext = extname(fileName).toLowerCase();
       const contentType = args.contentType || MIME_MAP[ext] || "application/octet-stream";
 
-      const uploadURL = await storageService.getObjectEntityUploadURL(ext || ".bin");
-      const objectPath = storageService.normalizeObjectEntityPath(uploadURL);
-
       const buffer = Buffer.from(content, "utf-8");
-      const uploadRes = await fetch(uploadURL, {
-        method: "PUT",
-        headers: { "Content-Type": contentType },
-        body: buffer,
+      const { objectPath } = await objectStorageService.uploadObjectEntity(buffer, {
+        extension: ext || ".bin",
+        contentType,
+        acl: { owner: "system", visibility: "public" },
       });
-      if (!uploadRes.ok) {
-        return { result: `Failed to upload to object storage: ${uploadRes.status} ${uploadRes.statusText}`, error: true };
-      }
-      // Set public ACL so the file is accessible via download link
-      const objectKey = objectPath.startsWith("/objects/") ? `private/${objectPath.slice("/objects/".length)}` : objectPath;
-      await setObjectAclPolicy(objectKey, { owner: "system", visibility: "public" });
 
       const encodedName = encodeURIComponent(fileName);
       const downloadLink = `${objectPath}?name=${encodedName}`;
@@ -11846,24 +11803,38 @@ const persistentFileTools: Record<string, ToolHandler> = {
     try {
       const { storageBackend, PRIVATE_PREFIX } = await import("./object_storage");
 
+      const { VAULT_PREFIX } = await import("./object_storage/vault-keys");
+      const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+
       const subPrefix = args.prefix || "uploads/";
-      const fullPrefix = `${PRIVATE_PREFIX}${subPrefix}`;
+      const legacyPrefix = `${PRIVATE_PREFIX}${subPrefix}`;
+      const vaultId = getCurrentPrincipalOrSystem()?.activeVaultId;
+      const vaultPrefix = vaultId ? `${VAULT_PREFIX}${vaultId}/${subPrefix}` : null;
 
-      const files = await storageBackend.listObjects(fullPrefix);
+      // Dual-read parity with getObjectEntityFile: vault-partitioned keys
+      // first, then legacy private/ keys.
+      const [vaultFiles, legacyFiles] = await Promise.all([
+        vaultPrefix ? storageBackend.listObjects(vaultPrefix) : Promise.resolve([]),
+        storageBackend.listObjects(legacyPrefix),
+      ]);
+      const entries = [
+        ...vaultFiles.map(f => ({ f, prefix: vaultPrefix! })),
+        ...legacyFiles.map(f => ({ f, prefix: legacyPrefix })),
+      ];
 
-      if (files.length === 0) return { result: "No persistent files found." };
+      if (entries.length === 0) return { result: "No persistent files found." };
 
-      const items = files.map(f => {
+      const items = entries.map(({ f, prefix }) => {
         const name = f.key;
         const size = f.size ? `${Math.round(f.size / 1024)}KB` : "?";
-        const relativeName = name.startsWith(fullPrefix) ? name.slice(fullPrefix.length) : name;
+        const relativeName = name.startsWith(prefix) ? name.slice(prefix.length) : name;
         const downloadPath = `/objects/${subPrefix}${relativeName}`;
         const displayName = relativeName || name;
         const encodedName = encodeURIComponent(displayName);
         return `- ${displayName} (${size}) → [${displayName}](${downloadPath}?name=${encodedName})`;
       });
 
-      return { result: `Persistent files (${files.length}):\n${items.join("\n")}` };
+      return { result: `Persistent files (${entries.length}):\n${items.join("\n")}` };
     } catch (err: any) {
       return { result: `Error listing files: ${err.message}`, error: true };
     }
@@ -12526,28 +12497,25 @@ const webTools: Record<string, ToolHandler> = {
       const { screenshotPage } = await import("./browser-manager");
       const result = await screenshotPage(targetUrl, { viewport, fullPage, delay });
 
-      // Upload to object storage for inline rendering
+      // Persist to object storage through the canonical verified-write path.
+      // Fail loudly if persistence cannot be verified so chat never embeds a
+      // dead /objects/ path.
       const buffer = await readFile(result.path);
-      const contentType = "image/png";
       const fileName = `screenshot-${Date.now()}.png`;
-      const storageService = objectStorageService;
-      const uploadURL = await storageService.getObjectEntityUploadURL(".png");
-      const objectPath = storageService.normalizeObjectEntityPath(uploadURL);
-      const uploadRes = await fetch(uploadURL, {
-        method: "PUT",
-        headers: { "Content-Type": contentType },
-        body: buffer,
-      });
-      if (!uploadRes.ok) {
-        // Fall back to scratch path if upload fails
+      let objectPath: string;
+      try {
+        ({ objectPath } = await objectStorageService.uploadObjectEntity(buffer, {
+          extension: ".png",
+          contentType: "image/png",
+          acl: { owner: "system", visibility: "public" },
+        }));
+      } catch (persistErr: unknown) {
+        const persistMsg = persistErr instanceof Error ? persistErr.message : String(persistErr);
         return {
-          result: `Screenshot saved to ${result.path} (${result.width}×${result.height}${
-            result.truncated ? ", truncated at 4000px height" : ""
-          }) — upload to object storage failed: ${uploadRes.status}`,
+          result: `Screenshot captured (${result.width}×${result.height}) but persisting to object storage failed: ${persistMsg}. Scratch copy at ${result.path}. Do not embed an /objects/ path for this capture.`,
+          error: true,
         };
       }
-      const objectKey = objectPath.startsWith("/objects/") ? `private/${objectPath.slice("/objects/".length)}` : objectPath;
-      await setObjectAclPolicy(objectKey, { owner: "system", visibility: "public" });
       const downloadLink = `${objectPath}?name=${encodeURIComponent(fileName)}`;
 
       const truncNote = result.truncated ? " (truncated at 4000px height)" : "";
