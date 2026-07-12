@@ -3,6 +3,7 @@
  * executor phase that wires the LLM agent into the voice pipeline.
  */
 import type { Response } from "express";
+import type { VoiceStreamChunkHandler } from "./turn-io";
 import type { VoiceSession, TurnContext } from "./types";
 import { agentExecutor } from "../agent-executor";
 import { createToolExecutor } from "../tool-execution";
@@ -148,7 +149,7 @@ export async function runExecutorPhase(
   session: VoiceSession, ctx: TurnContext, currentTurn: number,
   executorMessages: import("../agent-executor").ExecutorMessage[], tools: import("../tool-registry").ToolSchema[], turnAbort: AbortController,
   pipelineStart: number, systemPromptBytes: number,
-  sendChunk: (content: string) => void,
+  sendChunk: VoiceStreamChunkHandler,
   flushCoalesceBuffer: (trigger?: string, flush?: boolean) => void,
   stopFillerTimer: (reason: string) => void,
   res: Response, trackedWrite: (data: string, label: string) => boolean,
