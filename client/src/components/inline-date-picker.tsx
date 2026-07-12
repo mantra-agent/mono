@@ -1,13 +1,15 @@
-import { useRef, type MouseEvent, type ReactNode } from "react";
+import { type MouseEvent, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /**
  * InlineDatePicker — the canonical inline date-editing pattern.
  *
- * Renders a trigger (date label, calendar icon, etc.) with a visually hidden
- * native date input layered behind it. Clicking the trigger opens the OS date
- * picker directly via showPicker(); choosing a date commits immediately.
- * No intermediate edit box.
+ * Renders a trigger (date label, calendar icon, etc.) with an invisible
+ * native date input layered on top as the actual tap/click target. A direct
+ * user gesture on the input opens the OS picker natively on mobile (iOS
+ * ignores programmatic showPicker/click on hidden inputs); on desktop the
+ * same gesture calls showPicker() so the calendar opens immediately.
+ * Choosing a date commits immediately. No intermediate edit box.
  *
  * Extracted from the People profile "Met" field. Documented in DESIGN.md
  * under Components → Inputs.
@@ -28,35 +30,29 @@ export function InlineDatePicker({
   className?: string;
   testId?: string;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const openPicker = (e: MouseEvent) => {
+  const openPicker = (e: MouseEvent<HTMLInputElement>) => {
     e.stopPropagation();
-    const el = inputRef.current;
-    if (!el) return;
     try {
-      el.showPicker();
+      e.currentTarget.showPicker();
     } catch {
-      el.click();
+      // Mobile browsers open the native picker from the direct tap itself.
     }
   };
 
   return (
     <span
       className={cn("relative inline-flex cursor-pointer", className)}
-      onClick={openPicker}
+      onClick={(e) => e.stopPropagation()}
       data-testid={testId}
     >
       {children}
       <input
-        ref={inputRef}
         type="date"
         value={value || ""}
         onChange={(e) => onCommit(e.target.value || null)}
-        onClick={(e) => e.stopPropagation()}
-        className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
-        tabIndex={-1}
-        aria-hidden="true"
+        onClick={openPicker}
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+        aria-label="Edit date"
       />
     </span>
   );
