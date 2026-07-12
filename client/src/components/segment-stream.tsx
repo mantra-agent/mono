@@ -148,10 +148,9 @@ export function SegmentStream({ segments, isStreaming, layer, stripTags = false,
           }
           return null;
         })}
-        {!suppressTrailingThinking && isStreaming && !hasContent && !segments.some(seg =>
-          seg.type === "timeline" && seg.steps.some(s =>
-            (s.type === "thinking" && s.status === "active" && (layer <= 2 || !s.thinking)) ||
-            (s.type === "tool_call" && s.status === "active")
+        {!suppressTrailingThinking && isStreaming && !hasContent && !renderSegments.some(seg =>
+          seg.type === "timeline" && seg.segment.steps.some(step =>
+            (step.type === "thinking" || step.type === "tool_call") && step.status === "active"
           )
         ) && (
           <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1" data-testid="thinking-status-trailing">
