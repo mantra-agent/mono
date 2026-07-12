@@ -61,6 +61,12 @@ Key files:
 - `prompt-module-registry.ts` — typed prompt key/domain/call-site manifest
 - `prompt-module-defaults.ts` — bootstrap fixture, not live authority
 
+## Communications
+
+- `communications-storage.ts` is the canonical principal-scoped boundary for reusable People audiences and email campaign drafts.
+- `routes/communications.ts` exposes ADMIN CRUD only. It intentionally has no send, approve, schedule, test-send, or SendGrid endpoint.
+- People remains the canonical recipient identity source. Audience definitions store Person IDs, not copied contacts.
+
 ## Model Routing & Inference Tracking
 
 Single boundary: all text LLM calls must go through `model-client.ts`. Callers pass intent (activity, source, run/session/skill/tool/plan metadata); `model-client.ts` resolves routing through `job-profiles.ts`, executes the provider adapter, and records inference through `cost-tracker.ts`. Direct provider/client calls for text LLM work are architectural violations.

@@ -48,6 +48,7 @@ import { registerMobileDATDebugRoutes } from "./mobile-dat-debug";
 import { registerVaultRoutes } from "./vault-routes";
 import { registerHomeRoutes } from "./home";
 import { registerNotificationRoutes } from "./notifications";
+import { registerCommunicationRoutes } from "./communications";
 import mediaRoutes from "../media/media-routes";
 import renderRoutes from "../media/render-routes";
 
@@ -106,6 +107,7 @@ export async function registerDomainRoutes(
   registerProviderConnectionRoutes(app);
   registerHomeRoutes(app);
   registerNotificationRoutes(app);
+  registerCommunicationRoutes(app);
   registerMobileTelemetryRoutes(app);
   registerMobileDATDebugRoutes(app);
   registerVaultRoutes(app);

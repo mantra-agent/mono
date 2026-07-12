@@ -79,6 +79,8 @@ const SkillsPage = lazyWithRetry(() => import("@/pages/skills"));
 const ZeroPage = lazyWithRetry(() => import("@/pages/zero"));
 const GlassesStandalone = lazyWithRetry(() => import("@/pages/glasses-standalone"));
 const InterfacePreviewPage = lazyWithRetry(() => import("@/pages/interface-preview"));
+const AudiencesPage = lazyWithRetry(() => import("@/pages/audiences"));
+const CampaignsPage = lazyWithRetry(() => import("@/pages/campaigns"));
 
 function serializeCaughtValue(value: unknown): unknown {
   if (value instanceof Error) {
@@ -288,6 +290,8 @@ function Router() {
         <Route path="/interface-preview" component={InterfacePreviewPage} />
         <Route path="/library" component={InfoPage} />
         <Route path="/info" component={InfoPage} />
+        <Route path="/audiences">{() => <RequirePermission permission="system:read"><AudiencesPage /></RequirePermission>}</Route>
+        <Route path="/campaigns">{() => <RequirePermission permission="system:read"><CampaignsPage /></RequirePermission>}</Route>
         <Route path="/account" component={UserDetailsPage} />
         <Route component={NotFound} />
       </Switch>
