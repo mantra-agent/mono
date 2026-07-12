@@ -864,7 +864,7 @@ export class MemoryVnextClaimStorage {
         COALESCE(array_agg(DISTINCT e.entity_type || ':' || e.entity_id)
           FILTER (WHERE e.id IS NOT NULL), '{}') AS entity_keys
       FROM memory_vnext_claims c
-      LEFT JOIN memory_vnext_source_refs s ON s.claim_id = c.id
+      LEFT JOIN memory_vnext_sources s ON s.claim_id = c.id
       LEFT JOIN memory_vnext_entity_links e ON e.claim_id = c.id
       WHERE c.lifecycle_stage IN (${sql.join(eligibleStages.map((stage) => sql`${stage}`), sql`, `)})
         AND c.embedding IS NOT NULL
@@ -896,7 +896,7 @@ export class MemoryVnextClaimStorage {
         COALESCE(array_agg(DISTINCT e.entity_type || ':' || e.entity_id)
           FILTER (WHERE e.id IS NOT NULL), '{}') AS entity_keys
       FROM memory_vnext_claims c
-      LEFT JOIN memory_vnext_source_refs s ON s.claim_id = c.id
+      LEFT JOIN memory_vnext_sources s ON s.claim_id = c.id
       LEFT JOIN memory_vnext_entity_links e ON e.claim_id = c.id
       WHERE c.id <> ${claimId}
         AND c.lifecycle_stage IN ('sourced', 'linked', 'canonical')
