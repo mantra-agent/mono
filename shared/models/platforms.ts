@@ -206,10 +206,10 @@ export type InsertPlatformProduct = z.infer<typeof insertPlatformProductSchema>;
 export type PlatformProductEnvironment = typeof platformProductEnvironments.$inferSelect;
 export type InsertPlatformProductEnvironment = z.infer<typeof insertPlatformProductEnvironmentSchema>;
 
-export const lifecycleProviderKindSchema = z.enum(["railway", "eas", "cloudflare_pages", "manual"]);
+export const lifecycleProviderKindSchema = z.enum(["railway", "eas", "cloudflare", "cloudflare_pages", "manual"]);
 export const lifecycleAuthModeSchema = z.enum(["none", "provider_connection", "platform_binding", "custom"]);
 export const lifecycleDeployPolicySchema = z.object({
-  mode: z.enum(["manual", "auto_on_push", "manual_promote"]).default("manual"),
+  mode: z.enum(["automatic", "manual", "disabled", "unknown", "auto_on_push", "manual_promote"]).default("manual"),
   sourceBranch: z.string().trim().optional(),
   targetBranch: z.string().trim().optional().nullable(),
   requireApproval: z.boolean().optional(),

@@ -59,6 +59,7 @@ interface EnvironmentBinding {
   owner?: string;
   repo?: string;
   branch?: string;
+  /** @deprecated Deployment policy belongs to hosting/lifecycle provider truth. */
   autoDeploy?: boolean;
   codeIndexingEnabled?: boolean;
   projectId?: string;
@@ -208,6 +209,8 @@ interface BuildLifecycleStatus {
       } | null;
       publicUrl?: string | null;
       urlReachable?: boolean | null;
+      deploymentMode?: "automatic" | "manual" | "disabled" | "unknown";
+      project?: { productionBranch?: string | null; source?: { type?: string | null; owner?: string | null; repository?: string | null } | null; build?: { command?: string | null; destinationDirectory?: string | null; rootDirectory?: string | null }; deployments?: { enabled?: boolean | null; productionEnabled?: boolean | null; previewSetting?: string | null; automaticProductionDeployments?: boolean } };
     };
   };
   workflows: { recent: WorkflowRunSummary[] };
@@ -730,9 +733,6 @@ function SourceBindingCard({
       <ProfileTreeRow label="Branch" icon={<GitBranch className="h-3.5 w-3.5" />} hasValue showEmpty>
         <FieldInput value={binding.branch || ""} mono placeholder="e.g. main" onSave={(v) => saveMutation.mutate({ branch: v })} />
       </ProfileTreeRow>
-      <ProfileTreeRow label="Auto deploy" icon={<Zap className="h-3.5 w-3.5" />} hasValue showEmpty>
-        <FieldValue value={binding.autoDeploy} />
-      </ProfileTreeRow>
       <ProfileTreeRow
         label="Code indexing"
         icon={<Code2 className="h-3.5 w-3.5" />}
@@ -967,9 +967,9 @@ function policyLine(status: BuildLifecycleStatus | undefined, fallback: Environm
   const lifecycle = status?.lifecycle;
   const deployPolicy = configRecord(lifecycle?.deployPolicy);
   const branch = stringValue(deployPolicy.sourceBranch, source?.branch || fallback.promotion.sourceBranch || "branch not set");
-  const deployMode = stringValue(deployPolicy.mode, source?.autoDeploy ? "auto_on_push" : "manual");
+  const deployMode = status?.providers.cloudflare_pages?.deploymentMode || stringValue(deployPolicy.mode, "unknown");
   const provider = lifecycle?.providerKind || status?.hosting?.provider || fallback.hosting.provider || "provider";
-  const gate = deployMode === "manual_promote" ? "manual promote gate" : deployMode === "auto_on_push" ? "auto on push" : "manual run";
+  const gate = deployMode === "automatic" || deployMode === "auto_on_push" ? "automatic" : deployMode === "disabled" ? "disabled" : deployMode === "manual" || deployMode === "manual_promote" ? "manual" : "unknown";
   return `${humanize(provider)} · ${branch} · ${gate}`;
 }
 
@@ -1026,7 +1026,7 @@ function configDraft(config: BuildLifecycleConfig | null | undefined, details: E
   return {
     workflowTemplateId: config?.workflowTemplateId || "build-v1",
     providerKind: config?.providerKind || details.hosting.provider || "railway",
-    deployMode: stringValue(deployPolicy.mode, details.source.autoDeploy ? "auto_on_push" : "manual"),
+    deployMode: stringValue(deployPolicy.mode, "unknown"),
     sourceBranch: stringValue(deployPolicy.sourceBranch, details.source.branch || details.promotion.sourceBranch || ""),
     targetBranch: stringValue(deployPolicy.targetBranch, details.promotion.targetBranch || ""),
     requireApproval: booleanValue(deployPolicy.requireApproval, false),
@@ -1240,7 +1240,7 @@ function ConfigureLifecycleSheet({
                   <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="railway">Railway</SelectItem>
-                    <SelectItem value="cloudflare_pages">Cloudflare Pages</SelectItem>
+                    <SelectItem value="cloudflare">Cloudflare Pages</SelectItem>
                     <SelectItem value="eas">EAS</SelectItem>
                     <SelectItem value="manual">Manual</SelectItem>
                   </SelectContent>
@@ -1399,6 +1399,12 @@ function BuildLifecycleCard({ environmentId, details }: { environmentId: number;
               </Badge>
             </div>
             <CardDescription>{policyLine(data, details)}</CardDescription>
+            {data?.providers.cloudflare_pages?.project && (
+              <div className="space-y-0.5 text-xs text-muted-foreground">
+                <div>{data.providers.cloudflare_pages.project.source?.owner}/{data.providers.cloudflare_pages.project.source?.repository} · {data.providers.cloudflare_pages.project.productionBranch || "branch unknown"}</div>
+                <div>{data.providers.cloudflare_pages.project.build?.command || "No build command"} · {data.providers.cloudflare_pages.project.build?.destinationDirectory || "output unknown"}</div>
+              </div>
+            )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => refetch()} disabled={isFetching} title="Refresh status" aria-label="Refresh build lifecycle status">
