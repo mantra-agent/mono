@@ -33,6 +33,8 @@ export interface CalendarEvent {
   attendees: Array<{ email: string; displayName?: string; responseStatus?: string; self?: boolean; optional?: boolean }>;
   status: string;
   htmlLink?: string;
+  hangoutLink?: string;
+  conferenceEntryPoints?: string[];
   created?: string;
   updated?: string;
   organizer?: { email: string; displayName?: string; self?: boolean };
@@ -252,6 +254,10 @@ function mapEvent(ev: any, calendarId: string, accountId: string, accountEmail: 
     })),
     status: ev.status || 'confirmed',
     htmlLink: ev.htmlLink || undefined,
+    hangoutLink: ev.hangoutLink || undefined,
+    conferenceEntryPoints: (ev.conferenceData?.entryPoints || [])
+      .map((entry: any) => entry.uri)
+      .filter((uri: unknown): uri is string => typeof uri === "string" && uri.length > 0),
     created: ev.created || undefined,
     updated: ev.updated || undefined,
     organizer: ev.organizer ? {

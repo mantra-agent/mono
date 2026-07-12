@@ -19,6 +19,7 @@ import {
   setAgentJoin,
 } from "./calendar-metadata";
 import { extractMeetingUrl } from "./meeting/join";
+import { getMeetingJoinPolicy, shouldJoinMeeting } from "./meeting/join-policy";
 import { getBandwidthSummary } from "./calendar-bandwidth";
 
 const log = createLogger("CalendarRoutes");
@@ -506,22 +507,21 @@ export function registerCalendarRoutes(app: Express): void {
     googleEventId: z.string().min(1),
     accountId: z.string().min(1),
     calendarId: z.string().min(1),
-    enabled: z.boolean(),
+    override: z.boolean().nullable(),
   });
 
-  // Per-event agent auto-join toggle (M1.5). Enabling schedules the Recall.ai
-  // bot to join at the event's start time via the meeting auto-join scheduler.
+  // Per-event agent override. null inherits the user's policy, true forces a
+  // join, and false forces a skip. The scheduler materializes the decision.
   app.post("/api/calendar/agent-join", async (req, res) => {
     try {
       const parsed = agentJoinSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
-      const { googleEventId, accountId, calendarId, enabled } = parsed.data;
-
-      if (!enabled) {
-        const meta = await setAgentJoin(googleEventId, accountId, calendarId, false, {});
-        return res.json({ metadata: meta });
+      const { googleEventId, accountId, calendarId, override } = parsed.data;
+      const principal = req.principal;
+      if (!principal?.userId) {
+        return res.status(401).json({ error: "User session required" });
       }
 
       const event = await getEvent(accountId, calendarId, googleEventId);
@@ -537,14 +537,24 @@ export function registerCalendarRoutes(app: Express): void {
         return res.status(400).json({ error: "This event already started more than 10 minutes ago." });
       }
 
-      const meetingUrl = extractMeetingUrl(event.location, event.description, event.summary);
-      const meta = await setAgentJoin(googleEventId, accountId, calendarId, true, {
-        status: meetingUrl ? "scheduled" : "no_link",
-        detail: meetingUrl ? null : "No Zoom or Google Meet link found on this event",
-        startAt,
-        attemptedAt: null,
+      const policy = await getMeetingJoinPolicy(principal.userId);
+      const enabled = shouldJoinMeeting(event, policy, override);
+      const meetingUrl = extractMeetingUrl(
+        event.location,
+        event.description,
+        event.summary,
+        event.hangoutLink,
+        event.conferenceEntryPoints?.join("\n"),
+      );
+      const meta = await setAgentJoin(googleEventId, accountId, calendarId, enabled, {
+        override,
+        status: enabled ? meetingUrl ? "scheduled" : "no_link" : null,
+        detail: enabled && !meetingUrl ? "No Zoom or Google Meet link found on this event" : null,
+        sessionId: enabled ? undefined : null,
+        startAt: enabled ? startAt : null,
+        attemptedAt: enabled && override === true ? null : undefined,
       });
-      res.json({ metadata: meta });
+      res.json({ metadata: meta, policy });
     } catch (error: any) {
       log.error(`agent-join toggle failed: ${error.message}`);
       res.status(500).json({ error: error.message });

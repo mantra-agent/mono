@@ -205,11 +205,12 @@ export async function linkTask(
   return rows[0];
 }
 
-// ─── Agent auto-join (per-event meeting bot toggle) ───
+// ─── Agent auto-join policy materialization and per-event override ───
 
 export type AgentJoinStatus = "scheduled" | "no_link" | "joined" | "failed";
 
 export interface AgentJoinPatch {
+  override?: boolean | null;
   status?: AgentJoinStatus | null;
   detail?: string | null;
   sessionId?: string | null;
@@ -218,9 +219,9 @@ export interface AgentJoinPatch {
 }
 
 /**
- * Upsert the per-event agent auto-join toggle. Preserves the existing
- * eventType (defaulting to "meeting" for new rows). Toggling on rearms the
- * schedule by clearing attemptedAt unless the patch says otherwise.
+ * Materialize the effective per-event join decision. Preserves explicit
+ * override intent and rearms only when the start changes or the caller
+ * explicitly clears attemptedAt.
  */
 export async function setAgentJoin(
   googleEventId: string,
@@ -231,13 +232,22 @@ export async function setAgentJoin(
 ): Promise<CalendarEventMetadata> {
   log.log(`setAgentJoin event=${googleEventId} enabled=${enabled} status=${patch.status ?? "-"}`);
   const existing = await getMetadata(googleEventId, accountId, calendarId);
+  const nextStartAt = patch.startAt !== undefined ? patch.startAt : existing?.agentJoinStartAt ?? null;
+  const startChanged = existing?.agentJoinStartAt?.getTime() !== nextStartAt?.getTime();
   const joinFields = {
     agentJoinEnabled: enabled,
+    agentJoinOverride: patch.override !== undefined ? patch.override : existing?.agentJoinOverride ?? null,
     agentJoinStatus: enabled ? patch.status ?? null : null,
     agentJoinDetail: enabled ? patch.detail ?? null : null,
-    agentJoinSessionId: patch.sessionId !== undefined ? patch.sessionId : existing?.agentJoinSessionId ?? null,
-    agentJoinStartAt: patch.startAt !== undefined ? patch.startAt : existing?.agentJoinStartAt ?? null,
-    agentJoinAttemptedAt: patch.attemptedAt !== undefined ? patch.attemptedAt : null,
+    agentJoinSessionId: patch.sessionId !== undefined
+      ? patch.sessionId
+      : enabled && startChanged ? null : existing?.agentJoinSessionId ?? null,
+    agentJoinStartAt: enabled ? nextStartAt : null,
+    agentJoinAttemptedAt: enabled
+      ? patch.attemptedAt !== undefined
+        ? patch.attemptedAt
+        : startChanged ? null : existing?.agentJoinAttemptedAt ?? null
+      : null,
   };
 
   const rows = await db

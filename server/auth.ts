@@ -26,6 +26,7 @@ import {
 } from "./principal";
 import { PERMISSIONS, getUserEffectivePermissions, listUserPermissionOverrides, requirePermission, setUserPermissionOverrides } from "./permissions";
 import { runWithPrincipal } from "./principal-context";
+import { MEETING_JOIN_POLICIES, getMeetingJoinPolicy, setMeetingJoinPolicy } from "./meeting/join-policy";
 import { recordPrincipalDiagnosticEvent } from "./principal-diagnostics";
 
 const setupSchema = z.object({
@@ -750,6 +751,48 @@ export function setupAuth(app: Express) {
         res.json({ ok: true });
       } catch {
         res.status(500).json({ error: "Failed to update UI preferences" });
+      }
+    },
+  );
+
+  // ---- Meeting agent join policy (per-user) ----
+
+  app.get(
+    "/api/auth/meeting-join-policy",
+    requireAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const principal = getPrincipal(req);
+        if (!principal?.userId) {
+          return res.status(401).json({ error: "User session required" });
+        }
+        const policy = await getMeetingJoinPolicy(principal.userId);
+        res.json({ policy, options: MEETING_JOIN_POLICIES });
+      } catch (error) {
+        log.error("Failed to read meeting join policy", error);
+        res.status(500).json({ error: "Failed to read meeting join policy" });
+      }
+    },
+  );
+
+  app.put(
+    "/api/auth/meeting-join-policy",
+    requireAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const principal = getPrincipal(req);
+        if (!principal?.userId) {
+          return res.status(401).json({ error: "User session required" });
+        }
+        const parsed = z.enum(MEETING_JOIN_POLICIES).safeParse(req.body?.policy);
+        if (!parsed.success) {
+          return res.status(400).json({ error: "Invalid meeting join policy" });
+        }
+        await setMeetingJoinPolicy(principal.userId, parsed.data);
+        res.json({ policy: parsed.data });
+      } catch (error) {
+        log.error("Failed to update meeting join policy", error);
+        res.status(500).json({ error: "Failed to update meeting join policy" });
       }
     },
   );
