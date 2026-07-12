@@ -485,3 +485,7 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 - Finance routes must use `server/finance-scope.ts` for ownership predicates and schema healing. Do not add route-local finance ownership migrations or bespoke missing-column retry logic.
 - Finance user data must fail closed: if the finance ownership schema cannot be ensured, return an error rather than falling back to unscoped reads.
 - New finance tables that contain balances, transactions, assets, liabilities, income, or goals must be added to the finance sensitive table registry and queried through `visibleFinance` / `writableFinance` or the current-principal helper.
+
+## Cloudflare Pages provider boundary
+
+Cloudflare Pages project truth and deployment commands live in `server/platforms/cloudflare-pages-service.ts`. Callers supply a decrypted credential obtained through the scoped provider-connection store. The boundary uses bounded requests, returns provider project Git/build truth, and represents deployment commands with the single `outcome` discriminant. Never expose or log provider credentials.
