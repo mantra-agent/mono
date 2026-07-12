@@ -901,6 +901,27 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }
   });
 
+  app.patch("/api/sessions/:id/meeting-addressed-responses", async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      const { enabled } = req.body || {};
+      if (typeof enabled !== "boolean") {
+        return res.status(400).json({ error: "enabled (boolean) is required" });
+      }
+      const session = await chatStorage.getSession(id);
+      if (!session) return res.status(404).json({ error: "Session not found" });
+      if (session.type !== "meeting" || !session.meeting) {
+        return res.status(400).json({ error: "Session is not a meeting" });
+      }
+      const updated = await chatStorage.updateMeetingMeta(id, { addressedResponsesEnabled: enabled });
+      chatLog.log(`meeting addressed responses sessionId=${id} enabled=${enabled}`);
+      res.json({ ok: true, session: updated });
+    } catch (error) {
+      chatLog.error("Error updating meeting addressed responses:", error);
+      res.status(500).json({ error: "Failed to update meeting addressed responses" });
+    }
+  });
+
   app.patch("/api/sessions/:id", async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
@@ -2626,7 +2647,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }
     kickFinalization();
 
-    await chatStorage.createMeetingUserMessage(
+    const persistedMessage = await chatStorage.createMeetingUserMessage(
       sessionId,
       event.text,
       resolution.speaker,
@@ -2638,6 +2659,36 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       sessionId,
       title: session.title || undefined,
     });
+
+    const { classifyMeetingAddress } = await import("../../meeting/addressed-turn");
+    const addressDecision = classifyMeetingAddress(event.text);
+    chatLog.log(
+      `meeting address decision sessionId=${sessionId} messageId=${persistedMessage?.id || "none"} decision=${addressDecision.decision}`,
+    );
+
+    const addressedEnabled = meeting.addressedResponsesEnabled !== false;
+    const shouldTriggerAddressed =
+      addressedEnabled &&
+      addressDecision.decision === "addressed" &&
+      !!persistedMessage;
+
+    if (!addressedEnabled && addressDecision.decision === "addressed") {
+      chatLog.log(
+        `meeting address decision sessionId=${sessionId} messageId=${persistedMessage?.id || "none"} decision=disabled`,
+      );
+    }
+
+    // Non-addressed transcript is passive context only. Addressed turns are
+    // the sole path that may start an agent run without composer interaction.
+    if (!shouldTriggerAddressed) {
+      return {
+        ok: true,
+        sessionId,
+        sessionKey,
+        speaker: resolution.speaker,
+        queued: false,
+      };
+    }
 
     // If a run is already active, the transcript line is persisted and
     // visible; the agent finishes its current turn (no abort in meetings).
@@ -2676,10 +2727,28 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       );
 
     // The agent sees the attributed line; persisted content stays raw.
+    let streamContent = `[${resolution.speaker.label}] ${event.text}`;
+    let sayAddressedAloud = false;
+    if (shouldTriggerAddressed && persistedMessage) {
+      const { claimAddressedMeetingTurn } = await import("../../meeting/addressed-turn");
+      const claim = await claimAddressedMeetingTurn(sessionId, persistedMessage.id);
+      chatLog.log(
+        `meeting address claim sessionId=${sessionId} messageId=${persistedMessage.id} decision=${claim}`,
+      );
+      if (claim === "claimed") {
+        streamContent = `[${resolution.speaker.label}] ${addressDecision.prompt}`;
+        sayAddressedAloud = true;
+      }
+    }
+
     processChatStream(
       sessionKey,
       sessionId,
-      `[${resolution.speaker.label}] ${event.text}`,
+      streamContent,
+      undefined,
+      undefined,
+      undefined,
+      sayAddressedAloud,
     ).catch((err) => {
       chatLog.error("meeting ingest processChatStream error:", err);
     });
