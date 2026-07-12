@@ -171,6 +171,55 @@ export class ObjectStorageService {
     return storageBackend.getSignedPutUrl(key, { ttlSec: 900, contentType: opts.contentType });
   }
 
+  // Writes bytes directly to object storage through the canonical vault-aware
+  // key path, records the ACL on the actual key, and verifies the write before
+  // returning the `/objects/<category>/<filename>` entity path. This is the
+  // single server-side upload boundary: it throws on any failure so callers
+  // never hand out entity paths that were not durably persisted.
+  async uploadObjectEntity(
+    body: Buffer | string,
+    opts: {
+      extension?: string;
+      contentType?: string;
+      category?: string;
+      acl?: Omit<ObjectAclPolicy, "vaultId">;
+      principal?: Principal | null;
+    } = {},
+  ): Promise<{ objectPath: string; objectKey: string; size: number }> {
+    const principal = opts.principal ?? getCurrentPrincipalOrSystem();
+    const suffix = opts.extension
+      ? opts.extension.startsWith(".")
+        ? opts.extension
+        : `.${opts.extension}`
+      : "";
+    const category = opts.category?.replace(/^\/+|\/+$/g, "") || "uploads";
+    const filename = `${randomUUID()}${suffix}`;
+    const objectKey = vaultObjectKeyFromPrincipal(principal, category, filename);
+    const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body, "utf-8");
+
+    await storageBackend.putObject(objectKey, buffer, { contentType: opts.contentType });
+
+    if (opts.acl) {
+      await setObjectAclPolicy(objectKey, {
+        ...opts.acl,
+        vaultId: principal?.activeVaultId ?? undefined,
+      });
+    }
+
+    const meta = await storageBackend.headObject(objectKey);
+    if (!meta) {
+      throw new Error(`Object storage write verification failed: ${objectKey} not found after upload`);
+    }
+    if (typeof meta.contentLength === "number" && meta.contentLength !== buffer.length) {
+      throw new Error(
+        `Object storage write verification failed: ${objectKey} size mismatch (expected ${buffer.length} bytes, got ${meta.contentLength})`,
+      );
+    }
+
+    log.info(`uploadObjectEntity: persisted ${buffer.length} bytes to ${objectKey}`);
+    return { objectPath: `/objects/${category}/${filename}`, objectKey, size: buffer.length };
+  }
+
   // Gets the object entity file from the object path.
   // Supports dual-read: tries vault-prefixed key first (if principal has activeVaultId),
   // then falls back to legacy private/ key.
