@@ -144,10 +144,29 @@ export function useChatSend(deps: UseChatSendDeps) {
         throw new Error(errBody?.error || "Failed to send message");
       }
 
-      setPendingTurn({ clientTurnId, sessionId: convId, submittedAt, status: "streaming", content: fullMessage });
+      const responseBody = await response.json() as {
+        sessionKey?: string;
+        streamStartedAt?: string;
+        queued?: boolean;
+        interrupted?: number;
+      };
 
-      // Read response to get sessionKey + streamStartedAt for WS subscription
-      const { sessionKey, streamStartedAt } = await response.json();
+      // A 202 interrupt response means the user message is durable and the
+      // server owns the replacement run. Keep the optimistic turn alive across
+      // the old run's terminal snapshot so the next server stream has the right
+      // causal anchor instead of falling back to the interrupted turn.
+      setPendingTurn({ clientTurnId, sessionId: convId, submittedAt, status: "streaming", content: fullMessage });
+      if (response.status === 202 && responseBody.queued) {
+        log.info("STREAM:SEND:INTERRUPT_ACCEPTED", {
+          clientTurnId,
+          sessionId: convId,
+          interrupted: responseBody.interrupted ?? 0,
+        });
+        queryClient.invalidateQueries({ queryKey: ["/api/sessions", convId] });
+        queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+      }
+
+      const { sessionKey } = responseBody;
 
       if (sessionKey) {
         // Update session cache with the new sessionKey
