@@ -25,6 +25,7 @@ export type MeetingIngestFn = (event: {
     meetingUrl?: string;
   };
   speakerLabel?: string;
+  turnId?: string;
   text?: string;
   botStatus?: MeetingBotStatus;
   statusDetail?: string;
@@ -89,6 +90,7 @@ export function registerRecallRoutes(
     const result = await ingestMeetingEvent({
       sessionId: utterance.sessionId,
       speakerLabel: utterance.speakerLabel,
+      turnId: utterance.turnId,
       text: utterance.text,
     });
     if (!result.ok) {

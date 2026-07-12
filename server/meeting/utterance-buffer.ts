@@ -3,7 +3,7 @@ import { TurnAssembler, type CompleteTurn, type TurnCloseReason } from "../turn-
 const log = createLogger("MeetingUtteranceBuffer");
 const DEFAULT_SILENCE_MS = 1_800;
 export interface MeetingUtteranceChunk { sessionId: string; speakerKey: string; speakerLabel?: string; text: string; final: boolean; eventId?: string; }
-export interface FinalizedMeetingUtterance { sessionId: string; speakerLabel?: string; text: string; reason: "provider_final" | "silence" | "speaker_change" | "budget_exceeded"; }
+export interface FinalizedMeetingUtterance { sessionId: string; turnId: string; speakerLabel?: string; text: string; reason: "provider_final" | "silence" | "speaker_change" | "budget_exceeded"; }
 export type FinalizedMeetingUtteranceHandler = (utterance: FinalizedMeetingUtterance) => Promise<void>;
 interface Active { turnKey: string; speakerKey: string; sequence: number; timer: NodeJS.Timeout | null; }
 export class MeetingUtteranceBuffer {
@@ -26,5 +26,5 @@ export class MeetingUtteranceBuffer {
   }
   private enqueueFinish(sessionId: string, active: Active, reason: TurnCloseReason): Promise<void> { const prior = this.chains.get(sessionId) ?? Promise.resolve(); const next = prior.catch(() => undefined).then(() => this.finish(sessionId, active, reason)).finally(() => { if (this.chains.get(sessionId) === next) this.chains.delete(sessionId); }); this.chains.set(sessionId, next); return next; }
   private async finish(sessionId: string, active: Active, reason: TurnCloseReason): Promise<void> { if (this.activeBySession.get(sessionId)?.turnKey !== active.turnKey) return; if (active.timer) clearTimeout(active.timer); this.activeBySession.delete(sessionId); const outcome = this.assembler.close(active.turnKey, reason); if (outcome.outcome === "closed") await this.emit(outcome.turn); }
-  private async emit(turn: CompleteTurn): Promise<void> { if (!turn.text) return; const reason: FinalizedMeetingUtterance["reason"] = turn.closeReason === "speaker_change" ? "speaker_change" : turn.closeReason === "budget_exceeded" ? "budget_exceeded" : turn.closeReason === "provider_endpoint" ? "provider_final" : "silence"; try { await this.onFinalized({ sessionId: turn.streamId, speakerLabel: turn.speakerLabel, text: turn.text, reason }); } catch (error) { log.error(`utterance finalization failed sessionId=${turn.streamId}`, error); } }
+  private async emit(turn: CompleteTurn): Promise<void> { if (!turn.text) return; const reason: FinalizedMeetingUtterance["reason"] = turn.closeReason === "speaker_change" ? "speaker_change" : turn.closeReason === "budget_exceeded" ? "budget_exceeded" : turn.closeReason === "provider_endpoint" ? "provider_final" : "silence"; try { await this.onFinalized({ sessionId: turn.streamId, turnId: turn.turnKey, speakerLabel: turn.speakerLabel, text: turn.text, reason }); } catch (error) { log.error(`utterance finalization failed sessionId=${turn.streamId}`, error); } }
 }

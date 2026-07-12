@@ -2548,6 +2548,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       meetingUrl?: string;
     };
     speakerLabel?: string;
+    turnId?: string;
     text?: string;
     botStatus?: MeetingBotStatus;
     statusDetail?: string;
@@ -2667,10 +2668,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       title: session.title || undefined,
     });
 
-    const { classifyMeetingAddress } = await import("../../meeting/addressed-turn");
-    const addressDecision = classifyMeetingAddress(event.text);
+    const { inferAddressedMeetingTurn } = await import("../../meeting/addressed-turn");
+    const turnId = event.turnId || persistedMessage?.id || `${sessionId}:${Date.now()}`;
+    const addressDecision = await inferAddressedMeetingTurn({ sessionId, sessionKey, turnId, text: event.text, speakerLabel: resolution.speaker.label, participants: resolution.participants });
     chatLog.log(
-      `meeting address decision sessionId=${sessionId} messageId=${persistedMessage?.id || "none"} decision=${addressDecision.decision}`,
+      `meeting address decision sessionId=${sessionId} turnId=${turnId} messageId=${persistedMessage?.id || "none"} decision=${addressDecision.decision} reason=${addressDecision.reason} confidence=${addressDecision.confidence}`,
     );
 
     const addressedEnabled = meeting.addressedResponsesEnabled !== false;
@@ -2738,7 +2740,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     let sayAddressedAloud = false;
     if (shouldTriggerAddressed && persistedMessage) {
       const { claimAddressedMeetingTurn } = await import("../../meeting/addressed-turn");
-      const claim = await claimAddressedMeetingTurn(sessionId, persistedMessage.id);
+      const claim = await claimAddressedMeetingTurn(sessionId, turnId);
       chatLog.log(
         `meeting address claim sessionId=${sessionId} messageId=${persistedMessage.id} decision=${claim}`,
       );
