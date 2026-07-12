@@ -576,8 +576,8 @@ export interface MeetingSessionMeta {
   speechStatusDetail?: string;
   /** Whether finalized utterances that call Mantra by name may trigger a spoken answer. */
   addressedResponsesEnabled?: boolean;
-  /** Durable replay guard: message id most recently claimed for an addressed response. */
-  lastAddressedMessageId?: string;
+  /** Durable replay guard: complete assembled turn id most recently claimed for an addressed response. */
+  lastAddressedTurnId?: string;
 }
 
 /** Recap lifecycle discriminant — one discriminant per decision. */
