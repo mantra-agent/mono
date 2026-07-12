@@ -41,6 +41,7 @@ interface LiveSession {
   finalizedAt: number | null;
   cleanupTimer: ReturnType<typeof setTimeout> | null;
   eventSeq: number;
+  runGeneration: number;
 }
 
 export interface SessionSubscriberIdentity {
@@ -125,7 +126,7 @@ class SessionManager {
 
   // ── Registration ──────────────────────────────────────────────────
 
-  registerSession(sessionId: string, sessionKey: string, source: StreamingSource): void {
+  registerSession(sessionId: string, sessionKey: string, source: StreamingSource): number {
     const existing = this.sessions.get(sessionId);
     if (existing) {
       log.debug(`registerSession: already registered sessionId=${sessionId} — resetting`);
@@ -152,6 +153,7 @@ class SessionManager {
       finalizedAt: null,
       cleanupTimer: null,
       eventSeq: existing?.eventSeq ?? 0,
+      runGeneration: (existing?.runGeneration ?? 0) + 1,
     };
     this.sessions.set(sessionId, session);
 
@@ -180,6 +182,7 @@ class SessionManager {
     } else {
       log.log(`registerSession sessionId=${sessionId} source=${source} subscribers=${session.subscribers.size}`);
     }
+    return session.runGeneration;
   }
 
   // ── Event application ─────────────────────────────────────────────
@@ -447,10 +450,17 @@ class SessionManager {
 
   // ── Finalization ──────────────────────────────────────────────────
 
-  finalizeSession(sessionId: string): void {
+  finalizeSession(sessionId: string, runGeneration?: number): void {
     const session = this.sessions.get(sessionId);
     if (!session) {
       log.debug(`finalizeSession: no live session for sessionId=${sessionId}`);
+      return;
+    }
+
+    if (runGeneration !== undefined && session.runGeneration !== runGeneration) {
+      log.debug(
+        `finalizeSession: stale generation ignored sessionId=${sessionId} expected=${runGeneration} current=${session.runGeneration}`,
+      );
       return;
     }
 
