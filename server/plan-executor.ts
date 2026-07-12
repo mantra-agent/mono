@@ -343,10 +343,10 @@ export async function executePlan(
       // Keep the parent run's zombie idle timer fresh between steps.
       agentExecutor.heartbeatRunBySessionId(originSessionId);
 
-      if (stepResult.completed) {
+      if (stepResult.status === "completed") {
         completedCount++;
         totalDuration += stepResult.duration;
-        priorOutcomes.push({ title: currentStep.title, outcome: stepResult.outcome! });
+        priorOutcomes.push({ title: currentStep.title, outcome: stepResult.outcome });
         const nextPendingStep = steps.slice(i + 1).find((candidate) => candidate.status === "pending");
         if (nextPendingStep) {
           const progressLines = steps.map((st, idx) => {
@@ -360,6 +360,17 @@ export async function executePlan(
             `${outcomeText}Step ${i + 1} complete. Moving on to Step ${nextPendingStep.position + 1}.\n\n${progressLines}`,
           );
         }
+      } else if (stepResult.status === "halted") {
+        totalDuration += stepResult.duration;
+        await updatePlanStatus(planId, "paused");
+        await renderPlanToLibraryPage(planId);
+        await notifyOriginSession(originSessionId, planId, planTitle, currentStep, stepResult.stepStatus);
+        publishPlanEvent("plan.paused", { planId, stepId: currentStep.id, reason: stepResult.stepStatus });
+        activePlans.delete(planId);
+        return {
+          planId, status: "paused", completedSteps: completedCount,
+          totalSteps: steps.length, totalDuration,
+        };
       } else {
         // Step exhausted retries — plan is paused
         totalDuration += stepResult.duration;
@@ -441,12 +452,10 @@ interface ExecuteStepInput {
   priorOutcomes: Array<{ title: string; outcome: string }>;
 }
 
-interface ExecuteStepResult {
-  completed: boolean;
-  duration: number;
-  outcome?: string;
-  error?: string;
-}
+type ExecuteStepResult =
+  | { status: "completed"; duration: number; outcome: string }
+  | { status: "halted"; duration: number; stepStatus: "blocked" | "needs_review"; outcome?: string }
+  | { status: "failed"; duration: number; error: string };
 
 /**
  * Execute a single step with retry logic. All DB writes and fallible
@@ -517,6 +526,18 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
       // ── Handle result by discriminant (Violation #3 fix) ──
       switch (result.status) {
         case "completed": {
+          const persistedStep = (await getStepsFromDb(planId)).find((candidate) => candidate.id === step.id);
+          if (persistedStep?.status === "blocked" || persistedStep?.status === "needs_review") {
+            log.log(`[${planId}] Step ${stepIndex + 1} ended with externally reported ${persistedStep.status}`);
+            await renderPlanToLibraryPage(planId);
+            return {
+              status: "halted",
+              duration: lastDuration,
+              stepStatus: persistedStep.status,
+              outcome: persistedStep.outcome ?? undefined,
+            };
+          }
+
           const outcome = truncateOutcome(result.output || "Completed successfully");
           await transitionStep(
             planId, step.id, "running", "completed",
@@ -530,7 +551,7 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
             stepIndex, outcome, duration: lastDuration, sessionId: childSessionId,
           });
           log.log(`[${planId}] Step ${stepIndex + 1} completed in ${lastDuration}s (attempt ${attempt})`);
-          return { completed: true, duration: lastDuration, outcome };
+          return { status: "completed", duration: lastDuration, outcome };
         }
 
         case "idle_timeout": {
@@ -623,7 +644,7 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
   }
 
   // Should never reach here, but safety net
-  return { completed: false, duration: lastDuration, error: `Step "${step.title}" exhausted retries without resolution` };
+  return { status: "failed", duration: lastDuration, error: `Step "${step.title}" exhausted retries without resolution` };
 }
 
 /**
@@ -711,7 +732,7 @@ async function failStepFinal(
   publishPlanEvent("plan.paused", { planId, stepId: step.id, reason: "step_failed", error });
   log.warn(`[${planId}] Step ${stepIndex + 1} failed permanently: ${error}`);
 
-  return { completed: false, duration, error: `Step "${step.title}" failed: ${error}` };
+  return { status: "failed", duration, error: `Step "${step.title}" failed: ${error}` };
 }
 
 /**
