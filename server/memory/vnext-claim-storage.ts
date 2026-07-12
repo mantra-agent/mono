@@ -176,6 +176,15 @@ export interface VnextBridgeEdge {
   strength: number;
 }
 
+export interface VnextBridgeMutationResult {
+  status: "created" | "replaced" | "skipped";
+  edge: VnextBridgeEdge | null;
+  replacedEdgeId: number | null;
+  finalEdges: number;
+  ceiling: number;
+  reason?: "invalid_endpoint" | "pair_exists" | "at_ceiling" | "conflict";
+}
+
 export const VNEXT_BRIDGE_RELATIONSHIP = "bridged_to";
 
 /**
@@ -195,6 +204,44 @@ export const CLAIM_DEDUP_SIMILARITY_THRESHOLD = 0.85;
  * topics and entity mentions.
  */
 export const CLAIM_INTRA_BATCH_DEDUP_THRESHOLD = 0.85;
+
+function buildSourceComponents(rows: Array<{ claimId: number; sourceKey: string }>): Map<string, string> {
+  const parent = new Map<string, string>();
+  const find = (value: string): string => {
+    const current = parent.get(value) ?? value;
+    if (current === value) {
+      parent.set(value, value);
+      return value;
+    }
+    const root = find(current);
+    parent.set(value, root);
+    return root;
+  };
+  const union = (left: string, right: string): void => {
+    const leftRoot = find(left);
+    const rightRoot = find(right);
+    if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot);
+  };
+  const byClaim = new Map<number, string[]>();
+  for (const row of rows) {
+    const sources = byClaim.get(row.claimId) ?? [];
+    sources.push(row.sourceKey);
+    byClaim.set(row.claimId, sources);
+  }
+  for (const sources of byClaim.values()) {
+    for (let index = 1; index < sources.length; index++) union(sources[0], sources[index]);
+  }
+  return new Map([...parent.keys()].map((source) => [source, find(source)]));
+}
+
+function bridgeIslandPairKey(
+  leftSources: string[],
+  rightSources: string[],
+  componentBySource: Map<string, string>,
+): string {
+  const islandKey = (sources: string[]) => [...new Set(sources.map((source) => componentBySource.get(source) ?? source))].sort().join("|");
+  return [islandKey(leftSources), islandKey(rightSources)].sort().join("::");
+}
 
 const MIN_VNEXT_CLAIMS_PER_SESSION = 1;
 const MAX_VNEXT_CLAIMS_PER_SESSION = 3;
@@ -801,6 +848,9 @@ export class MemoryVnextClaimStorage {
 
   async listBridgeCandidates(limit = 50): Promise<VnextBridgeCandidate[]> {
     const principal = getCurrentPrincipalOrSystem();
+    if (!principal.userId) {
+      throw new Error("vNext bridge pass requires a user principal");
+    }
     const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), 200);
     const eligibleStages = [
       MEMORY_VNEXT_LIFECYCLE_STAGE.SOURCED,
@@ -819,7 +869,7 @@ export class MemoryVnextClaimStorage {
       WHERE c.lifecycle_stage IN (${sql.join(eligibleStages.map((stage) => sql`${stage}`), sql`, `)})
         AND c.embedding IS NOT NULL
         AND NOT COALESCE(c.metadata ? 'bridgeScannedAt', false)
-        AND ${combineWithVisibleScope(principal, vnextClaimScopeColumns, sql`TRUE`)}
+        AND ${combineWithWritableScope(principal, vnextClaimScopeColumns, sql`TRUE`)}
       GROUP BY c.id
       ORDER BY c.created_at ASC
       LIMIT ${boundedLimit}
@@ -833,6 +883,9 @@ export class MemoryVnextClaimStorage {
 
   async findBridgeNeighbors(claimId: number, embedding: number[], limit = 25): Promise<VnextBridgeNeighbor[]> {
     const principal = getCurrentPrincipalOrSystem();
+    if (!principal.userId) {
+      throw new Error("vNext bridge neighbor search requires a user principal");
+    }
     const embeddingStr = vectorLiteral(embedding);
     const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), 100);
     const rows = await db.execute(sql`
@@ -848,7 +901,7 @@ export class MemoryVnextClaimStorage {
       WHERE c.id <> ${claimId}
         AND c.lifecycle_stage IN ('sourced', 'linked', 'canonical')
         AND c.embedding IS NOT NULL
-        AND ${combineWithVisibleScope(principal, vnextClaimScopeColumns, sql`TRUE`)}
+        AND ${combineWithWritableScope(principal, vnextClaimScopeColumns, sql`TRUE`)}
         AND 1 - (c.embedding <=> ${embeddingStr}::vector) >= 0.75
         AND 1 - (c.embedding <=> ${embeddingStr}::vector) < ${CLAIM_DEDUP_SIMILARITY_THRESHOLD}
       GROUP BY c.id
@@ -864,11 +917,13 @@ export class MemoryVnextClaimStorage {
   }
 
   async countActiveClaims(): Promise<number> {
+    const principal = getCurrentPrincipalOrSystem();
+    if (!principal.userId) throw new Error("vNext bridge count requires a user principal");
     const [row] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(memoryVnextClaims)
-      .where(combineWithVisibleScope(
-        getCurrentPrincipalOrSystem(),
+      .where(combineWithWritableScope(
+        principal,
         vnextClaimScopeColumns,
         sql`${memoryVnextClaims.lifecycleStage} <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}`,
       ));
@@ -876,6 +931,8 @@ export class MemoryVnextClaimStorage {
   }
 
   async listBridgeEdges(): Promise<VnextBridgeEdge[]> {
+    const principal = getCurrentPrincipalOrSystem();
+    if (!principal.userId) throw new Error("vNext bridge listing requires a user principal");
     return db
       .select({
         id: memoryVnextClaimLinks.id,
@@ -884,8 +941,8 @@ export class MemoryVnextClaimStorage {
         strength: memoryVnextClaimLinks.strength,
       })
       .from(memoryVnextClaimLinks)
-      .where(combineWithVisibleScope(
-        getCurrentPrincipalOrSystem(),
+      .where(combineWithWritableScope(
+        principal,
         vnextClaimLinkScopeColumns,
         eq(memoryVnextClaimLinks.relationship, VNEXT_BRIDGE_RELATIONSHIP),
       ))
@@ -923,34 +980,154 @@ export class MemoryVnextClaimStorage {
       ));
   }
 
-  async linkClaims(
+  async createBoundedBridge(
     fromClaimId: number,
     toClaimId: number,
-    relationship: string,
-    strength = 0.5,
-  ): Promise<VnextBridgeEdge | null> {
+    strength: number,
+    leftSourceKeys: string[],
+    rightSourceKeys: string[],
+  ): Promise<VnextBridgeMutationResult> {
     const principal = getCurrentPrincipalOrSystem();
-    const [link] = await db
-      .insert(memoryVnextClaimLinks)
-      .values({
-        fromClaimId,
-        toClaimId,
-        relationship,
-        strength,
-        ...ownedInsertValues(principal, vnextClaimLinkScopeColumns),
-        createdByUserId: principal.userId ?? undefined,
-        updatedByUserId: principal.userId ?? undefined,
-      })
-      .onConflictDoNothing()
-      .returning({
-        id: memoryVnextClaimLinks.id,
-        fromClaimId: memoryVnextClaimLinks.fromClaimId,
-        toClaimId: memoryVnextClaimLinks.toClaimId,
-        strength: memoryVnextClaimLinks.strength,
-      });
-    await this.advanceLifecycleStage(fromClaimId, MEMORY_VNEXT_LIFECYCLE_STAGE.LINKED);
-    await this.advanceLifecycleStage(toClaimId, MEMORY_VNEXT_LIFECYCLE_STAGE.LINKED);
-    return link ?? null;
+    if (!principal.userId) {
+      throw new Error("vNext bridge mutation requires a user principal");
+    }
+    const normalizedFrom = Math.min(fromClaimId, toClaimId);
+    const normalizedTo = Math.max(fromClaimId, toClaimId);
+    const leftSources = [...new Set(leftSourceKeys)].sort();
+    const rightSources = [...new Set(rightSourceKeys)].sort();
+
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`memory-vnext-bridges:${principal.userId}`}))`);
+      const ownedClaimPredicate = combineWithWritableScope(
+        principal,
+        vnextClaimScopeColumns,
+        inArray(memoryVnextClaims.id, [normalizedFrom, normalizedTo]),
+      );
+      const endpoints = await tx
+        .select({ id: memoryVnextClaims.id })
+        .from(memoryVnextClaims)
+        .where(ownedClaimPredicate)
+        .limit(2);
+      if (endpoints.length !== 2) {
+        return { status: "skipped", edge: null, replacedEdgeId: null, finalEdges: 0, ceiling: 0, reason: "invalid_endpoint" };
+      }
+
+      const [activeRow] = await tx
+        .select({ count: sql<number>`count(*)::int` })
+        .from(memoryVnextClaims)
+        .where(combineWithWritableScope(
+          principal,
+          vnextClaimScopeColumns,
+          sql`${memoryVnextClaims.lifecycleStage} <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}`,
+        ));
+      const ceiling = Math.floor(Number(activeRow?.count ?? 0) * 0.2);
+      const existingEdges = await tx
+        .select({
+          id: memoryVnextClaimLinks.id,
+          fromClaimId: memoryVnextClaimLinks.fromClaimId,
+          toClaimId: memoryVnextClaimLinks.toClaimId,
+          strength: memoryVnextClaimLinks.strength,
+        })
+        .from(memoryVnextClaimLinks)
+        .where(combineWithWritableScope(
+          principal,
+          vnextClaimLinkScopeColumns,
+          eq(memoryVnextClaimLinks.relationship, VNEXT_BRIDGE_RELATIONSHIP),
+        ))
+        .orderBy(asc(memoryVnextClaimLinks.strength), asc(memoryVnextClaimLinks.id));
+
+      if (ceiling === 0) {
+        return { status: "skipped", edge: null, replacedEdgeId: null, finalEdges: existingEdges.length, ceiling, reason: "at_ceiling" };
+      }
+
+      const endpointIds = [...new Set([
+        normalizedFrom,
+        normalizedTo,
+        ...existingEdges.flatMap((edge) => [edge.fromClaimId, edge.toClaimId]),
+      ])];
+      const sourceRows = endpointIds.length === 0 ? [] : await tx
+        .select({
+          claimId: memoryVnextSourceRefs.claimId,
+          sourceKey: sql<string>`${memoryVnextSourceRefs.sourceType} || ':' || ${memoryVnextSourceRefs.sourceId}`,
+        })
+        .from(memoryVnextSourceRefs)
+        .where(combineWithVisibleScope(
+          principal,
+          vnextSourceScopeColumns,
+          inArray(memoryVnextSourceRefs.claimId, endpointIds),
+        ));
+      const sourcesByClaim = new Map<number, string[]>();
+      for (const row of sourceRows) {
+        const sources = sourcesByClaim.get(row.claimId) ?? [];
+        sources.push(row.sourceKey);
+        sourcesByClaim.set(row.claimId, sources);
+      }
+      const componentBySource = buildSourceComponents(sourceRows);
+      const candidateLeftSources = sourcesByClaim.get(normalizedFrom) ?? leftSources;
+      const candidateRightSources = sourcesByClaim.get(normalizedTo) ?? rightSources;
+      const candidatePairKey = bridgeIslandPairKey(candidateLeftSources, candidateRightSources, componentBySource);
+      for (const edge of existingEdges) {
+        const edgePairKey = bridgeIslandPairKey(
+          sourcesByClaim.get(edge.fromClaimId) ?? [],
+          sourcesByClaim.get(edge.toClaimId) ?? [],
+          componentBySource,
+        );
+        if (edgePairKey === candidatePairKey) {
+          return { status: "skipped", edge: null, replacedEdgeId: null, finalEdges: existingEdges.length, ceiling, reason: "pair_exists" };
+        }
+      }
+
+      let replacedEdgeId: number | null = null;
+      if (existingEdges.length >= ceiling) {
+        const weakest = existingEdges[0];
+        if (!weakest || strength <= weakest.strength) {
+          return { status: "skipped", edge: null, replacedEdgeId: null, finalEdges: existingEdges.length, ceiling, reason: "at_ceiling" };
+        }
+        const deleted = await tx
+          .delete(memoryVnextClaimLinks)
+          .where(combineWithWritableScope(
+            principal,
+            vnextClaimLinkScopeColumns,
+            and(eq(memoryVnextClaimLinks.id, weakest.id), eq(memoryVnextClaimLinks.relationship, VNEXT_BRIDGE_RELATIONSHIP)),
+          ))
+          .returning({ id: memoryVnextClaimLinks.id });
+        if (deleted.length !== 1) {
+          return { status: "skipped", edge: null, replacedEdgeId: null, finalEdges: existingEdges.length, ceiling, reason: "conflict" };
+        }
+        replacedEdgeId = weakest.id;
+      }
+
+      const [edge] = await tx
+        .insert(memoryVnextClaimLinks)
+        .values({
+          fromClaimId: normalizedFrom,
+          toClaimId: normalizedTo,
+          relationship: VNEXT_BRIDGE_RELATIONSHIP,
+          strength,
+          ...ownedInsertValues(principal, vnextClaimLinkScopeColumns),
+          createdByUserId: principal.userId,
+          updatedByUserId: principal.userId,
+        })
+        .onConflictDoNothing()
+        .returning({
+          id: memoryVnextClaimLinks.id,
+          fromClaimId: memoryVnextClaimLinks.fromClaimId,
+          toClaimId: memoryVnextClaimLinks.toClaimId,
+          strength: memoryVnextClaimLinks.strength,
+        });
+      if (!edge) {
+        if (replacedEdgeId) throw new Error("bridge replacement insert conflicted after deleting the weakest edge");
+        return { status: "skipped", edge: null, replacedEdgeId: null, finalEdges: existingEdges.length, ceiling, reason: "conflict" };
+      }
+      const finalEdges = existingEdges.length + (replacedEdgeId ? 0 : 1);
+      return {
+        status: replacedEdgeId ? "replaced" : "created",
+        edge,
+        replacedEdgeId,
+        finalEdges,
+        ceiling,
+      };
+    });
   }
 
   private extractionBudgetPredicate(scope: VnextExtractionBudgetScope) {

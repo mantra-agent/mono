@@ -2,7 +2,6 @@ import { createLogger } from "../log";
 import { MEMORY_VNEXT_LIFECYCLE_STAGE, type MemoryVnextClaim } from "@shared/schema";
 import {
   memoryVnextClaimStorage,
-  VNEXT_BRIDGE_RELATIONSHIP,
   type VnextBridgeCandidate,
   type VnextLifecycleCandidate,
 } from "./vnext-claim-storage";
@@ -205,12 +204,6 @@ function hasIntersection(left: string[], right: string[]): boolean {
   return left.some((value) => rightSet.has(value));
 }
 
-function islandPairKey(left: string[], right: string[]): string {
-  const leftKey = [...left].sort().join("|");
-  const rightKey = [...right].sort().join("|");
-  return [leftKey, rightKey].sort().join("::");
-}
-
 async function runBridgePass(limit: number, runId: string): Promise<VnextBridgeRunResult> {
   const candidates = await memoryVnextClaimStorage.listBridgeCandidates(limit);
   const activeClaims = await memoryVnextClaimStorage.countActiveClaims();
@@ -231,22 +224,8 @@ async function runBridgePass(limit: number, runId: string): Promise<VnextBridgeR
     errors: 0,
   };
 
-  const sourcesByClaim = new Map<number, string[]>();
-  const rememberSources = (candidate: VnextBridgeCandidate) => sourcesByClaim.set(candidate.claim.id, candidate.sourceKeys);
-  candidates.forEach(rememberSources);
-  const edgePairKeys = new Map<number, string>();
-  const existingPairs = new Set<string>();
-  for (const edge of edges) {
-    const [fromSources, toSources] = await Promise.all([
-      sourcesByClaim.get(edge.fromClaimId) ?? memoryVnextClaimStorage.listSourceRefs(edge.fromClaimId).then((refs) => refs.map((ref) => `${ref.sourceType}:${ref.sourceId}`)),
-      sourcesByClaim.get(edge.toClaimId) ?? memoryVnextClaimStorage.listSourceRefs(edge.toClaimId).then((refs) => refs.map((ref) => `${ref.sourceType}:${ref.sourceId}`)),
-    ]);
-    sourcesByClaim.set(edge.fromClaimId, fromSources);
-    sourcesByClaim.set(edge.toClaimId, toSources);
-    const pairKey = islandPairKey(fromSources, toSources);
-    existingPairs.add(pairKey);
-    edgePairKeys.set(edge.id, pairKey);
-  }
+  // The storage boundary owns island-pair uniqueness and ceiling replacement
+  // under a per-principal transaction lock. This in-memory list is reporting state only.
 
   logLifecycle("memory.vnext.bridge_candidates", { runId, count: candidates.length }, "info");
   logLifecycle("memory.vnext.bridge_ceiling", { runId, activeClaims, ceiling, existingEdges: edges.length }, "info");
@@ -268,43 +247,24 @@ async function runBridgePass(limit: number, runId: string): Promise<VnextBridgeR
           logLifecycle("memory.vnext.bridge_discard", { runId, claimId: candidate.claim.id, neighborId: neighbor.claimId, reason: "no_shared_entity" }, "debug");
           continue;
         }
-        const pairKey = islandPairKey(candidate.sourceKeys, neighbor.sourceKeys);
-        if (existingPairs.has(pairKey)) {
-          result.islandPairSkips++;
-          logLifecycle("memory.vnext.bridge_discard", { runId, claimId: candidate.claim.id, neighborId: neighbor.claimId, reason: "island_pair_exists" }, "debug");
-          continue;
-        }
-
-        if (edges.length >= ceiling) {
-          const persistedEdges = edges.filter((edge) => edge.id > 0);
-          const weakest = persistedEdges[0];
-          if (!weakest || neighbor.similarity <= weakest.strength) continue;
-          if (!await memoryVnextClaimStorage.removeBridgeEdge(weakest.id)) continue;
-          const removedPairKey = edgePairKeys.get(weakest.id);
-          if (removedPairKey) existingPairs.delete(removedPairKey);
-          edgePairKeys.delete(weakest.id);
-          edges = edges.slice(1);
-          result.replaced++;
-        }
-        if (ceiling === 0) continue;
-
-        const fromClaimId = Math.min(candidate.claim.id, neighbor.claimId);
-        const toClaimId = Math.max(candidate.claim.id, neighbor.claimId);
-        const createdEdge = await memoryVnextClaimStorage.linkClaims(
-          fromClaimId,
-          toClaimId,
-          VNEXT_BRIDGE_RELATIONSHIP,
+        const mutation = await memoryVnextClaimStorage.createBoundedBridge(
+          candidate.claim.id,
+          neighbor.claimId,
           neighbor.similarity,
+          candidate.sourceKeys,
+          neighbor.sourceKeys,
         );
-        if (!createdEdge) {
-          edges = await memoryVnextClaimStorage.listBridgeEdges();
+        if (mutation.status === "skipped") {
+          if (mutation.reason === "pair_exists") {
+            result.islandPairSkips++;
+            logLifecycle("memory.vnext.bridge_discard", { runId, claimId: candidate.claim.id, neighborId: neighbor.claimId, reason: "island_pair_exists" }, "debug");
+          }
           continue;
         }
-        edges.push(createdEdge);
-        edges.sort((a, b) => a.strength - b.strength);
-        existingPairs.add(pairKey);
-        edgePairKeys.set(createdEdge.id, pairKey);
+        if (mutation.status === "replaced") result.replaced++;
         result.created++;
+        edges = await memoryVnextClaimStorage.listBridgeEdges();
+        result.ceiling = mutation.ceiling;
         break;
       }
       await memoryVnextClaimStorage.markBridgeScanned(candidate.claim.id);
