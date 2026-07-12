@@ -351,6 +351,20 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: ["action"],
     },
   },
+  phone_call: {
+    description: "Prepare or confirm a user-initiated outbound phone call. Always prepare first to resolve the person and show a confirmation chip. Confirm only after the user presses Call.",
+    category: "communication",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["prepare", "confirm"], description: "prepare resolves the person and requests confirmation; confirm dials using the one-time token" },
+        query: { type: "string", description: "Person name or ID (required for prepare)" },
+        confirmationToken: { type: "string", description: "One-time token returned by prepare (required for confirm)" },
+        reasoning: { type: "string", description: "Why the call is being prepared or confirmed" },
+      },
+      required: ["action"],
+    },
+  },
   people: {
     description: "Manage personal contacts — query, search, get details, check outreach agenda, add notes, log interactions, update or delete interactions. Actions: list, query, get_many, get, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, create, scan_imports, scan_ignored, list/get/find import candidates, add/merge/skip/undo decisions, and preview/apply/get batches. Use canonical @person:id syntax in messages to link to people. Legacy [person:id] syntax is accepted during migration.",
     category: "communication",
