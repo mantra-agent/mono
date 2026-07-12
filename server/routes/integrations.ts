@@ -1148,6 +1148,60 @@ export async function registerIntegrationsRoutes(app: Express) {
   });
 
   // ---------------------------------------------------------------------------
+  // Twilio + Deepgram (phone agent)
+  // ---------------------------------------------------------------------------
+
+  const twilioStatus = async (req: any) => {
+    const { getTwilioConfig, testTwilioConnection } = await import("../integrations/twilio/client");
+    const { getRuntimePublicBaseUrl, getRuntimeIdentity } = await import("../runtime-identity");
+    const config = getTwilioConfig();
+    const test = config.hasAccountSid && config.hasAuthToken
+      ? await testTwilioConnection()
+      : { connected: false, ownedNumbers: [], configuredNumberOwned: false };
+    const runtime = getRuntimeIdentity();
+    const callbackBase = getRuntimePublicBaseUrl() || `${req.protocol}://${req.get("host")}`;
+    return {
+      ...test,
+      hasAccountSid: config.hasAccountSid,
+      hasAuthToken: config.hasAuthToken,
+      hasPhoneNumber: config.hasPhoneNumber,
+      configuredPhoneNumber: config.phoneNumber,
+      voiceWebhookUrl: `${callbackBase}/api/webhooks/twilio/voice`,
+      mediaStreamUrl: `${callbackBase.replace(/^http/, "ws")}/api/webhooks/twilio/media`,
+      runtimeEnvironment: runtime.environmentName,
+      servingHost: runtime.servingHost,
+      publicUrl: runtime.publicUrl,
+      publicUrlMismatch: runtime.publicUrlMismatch,
+    };
+  };
+
+  app.get("/api/integrations/twilio/status", requireAuth, requireAdmin, async (req, res) => {
+    try { res.json(await twilioStatus(req)); }
+    catch (error: any) { res.json({ connected: false, ownedNumbers: [], configuredNumberOwned: false, error: error.message }); }
+  });
+
+  app.post("/api/integrations/twilio/test", requireAuth, requireAdmin, async (req, res) => {
+    try { res.json(await twilioStatus(req)); }
+    catch (error: any) { res.status(500).json({ connected: false, ownedNumbers: [], configuredNumberOwned: false, error: error.message }); }
+  });
+
+  const deepgramStatus = async () => {
+    const { hasDeepgramApiKey, testDeepgramConnection } = await import("../integrations/deepgram/client");
+    const hasApiKey = hasDeepgramApiKey();
+    return { hasApiKey, ...(hasApiKey ? await testDeepgramConnection() : { connected: false }) };
+  };
+
+  app.get("/api/integrations/deepgram/status", requireAuth, requireAdmin, async (_req, res) => {
+    try { res.json(await deepgramStatus()); }
+    catch (error: any) { res.json({ connected: false, error: error.message }); }
+  });
+
+  app.post("/api/integrations/deepgram/test", requireAuth, requireAdmin, async (_req, res) => {
+    try { res.json(await deepgramStatus()); }
+    catch (error: any) { res.status(500).json({ connected: false, error: error.message }); }
+  });
+
+  // ---------------------------------------------------------------------------
   // Expo / EAS
   // ---------------------------------------------------------------------------
 

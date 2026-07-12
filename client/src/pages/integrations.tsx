@@ -113,6 +113,8 @@ const INTEGRATIONS: IntegrationDef[] = [
   { id: "google", name: "Google", icon: Mail, statusFields: ["gmail", "gdrive"], healthField: "gmailHealthy", route: "google" },
   { id: "elevenlabs", name: "ElevenLabs", icon: Volume2, statusFields: ["elevenlabs"], route: "elevenlabs" },
   { id: "cartesia", name: "Cartesia", icon: Volume2, statusFields: ["cartesia"], route: "cartesia" },
+  { id: "twilio", name: "Twilio Phone", icon: Phone, statusFields: ["twilio"], route: "twilio" },
+  { id: "deepgram", name: "Deepgram", icon: Mic, statusFields: ["deepgram"], route: "deepgram" },
   { id: "openai", name: "OpenAI", icon: Bot, statusFields: ["openai", "openaiSubscription"], route: "openai" },
   { id: "claude-cli", name: "Claude Code CLI", icon: Settings, statusFields: ["claudeCli"], route: "claude-cli" },
   { id: "twitter", name: "X (Twitter)", icon: () => <SiX className="h-5 w-5" />, statusFields: ["twitter"], route: "twitter" },
@@ -2916,6 +2918,96 @@ function RecallDetail() {
   );
 }
 
+
+interface TwilioStatus {
+  connected: boolean;
+  hasAccountSid?: boolean;
+  hasAuthToken?: boolean;
+  hasPhoneNumber?: boolean;
+  configuredPhoneNumber?: string | null;
+  configuredNumberOwned?: boolean;
+  accountName?: string;
+  accountStatus?: string;
+  ownedNumbers?: Array<{ sid: string; phoneNumber: string; friendlyName: string }>;
+  voiceWebhookUrl?: string;
+  mediaStreamUrl?: string;
+  servingHost?: string | null;
+  publicUrl?: string | null;
+  publicUrlMismatch?: boolean;
+  error?: string;
+}
+
+interface DeepgramStatus {
+  connected: boolean;
+  hasApiKey?: boolean;
+  projectCount?: number;
+  error?: string;
+}
+
+function ProviderConnectionRow({ provider, connected, error, pending, onTest }: {
+  provider: string;
+  connected: boolean;
+  error?: string;
+  pending: boolean;
+  onTest: () => void;
+}) {
+  return (
+    <ProfileTreeRow
+      label="Connection"
+      icon={connected ? <CheckCircle2 className="h-3.5 w-3.5 text-active" /> : <XCircle className="h-3.5 w-3.5 text-muted-foreground" />}
+      hasValue
+      showEmpty
+      expandedContent={error ? <p className="text-destructive">{error}</p> : undefined}
+    >
+      <Button variant="outline" size="sm" onClick={onTest} disabled={pending} data-testid={`button-${provider}-test-connection`}>
+        {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : connected ? "Test again" : "Test connection"}
+      </Button>
+    </ProfileTreeRow>
+  );
+}
+
+function TwilioDetail() {
+  const { toast } = useToast();
+  const { data: status, isLoading } = useQuery<TwilioStatus>({ queryKey: ["/api/integrations/twilio/status"], refetchInterval: false });
+  const test = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/integrations/twilio/test")).json() as Promise<TwilioStatus>,
+    onSuccess: (result) => {
+      queryClient.setQueryData(["/api/integrations/twilio/status"], result);
+      toast({ title: result.connected ? "Twilio connected" : "Twilio connection failed", description: result.connected ? `${result.ownedNumbers?.length ?? 0} owned number(s) found.` : result.error, variant: result.connected ? "default" : "destructive" });
+    },
+    onError: (error: Error) => toast({ title: "Twilio connection test failed", description: error.message, variant: "destructive" }),
+  });
+  const credentialsReady = Boolean(status?.hasAccountSid && status?.hasAuthToken && status?.hasPhoneNumber);
+  return (
+    <div className="min-w-0 space-y-2">
+      {status?.publicUrlMismatch && <div className="mx-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm"><div className="flex items-center gap-2 font-medium text-warning"><AlertTriangle className="h-4 w-4" />PUBLIC_URL mismatch</div><p className="mt-1 text-muted-foreground">Callbacks use the serving host <code>{status.servingHost}</code>, not <code>{status.publicUrl}</code>.</p></div>}
+      <IntegrationTreeSection label="Connection" initialOpen={!status?.connected}>
+        <ProviderConnectionRow provider="twilio" connected={Boolean(status?.connected)} error={status?.error} pending={test.isPending} onTest={() => test.mutate()} />
+        <ProfileTreeRow label="Account" icon={<Phone className="h-3.5 w-3.5" />} hasValue showEmpty>{isLoading ? <Skeleton className="h-4 w-24" /> : <span className="text-muted-foreground">{status?.accountName || status?.accountStatus || "Not verified"}</span>}</ProfileTreeRow>
+      </IntegrationTreeSection>
+      <IntegrationTreeSection label="Credentials" initialOpen={!credentialsReady}><div className="min-w-0 px-2 py-1.5"><SecretsForSection section="twilio" /></div></IntegrationTreeSection>
+      <IntegrationTreeSection label="Owned numbers" initialOpen={Boolean(status?.connected && !status.configuredNumberOwned)}>
+        {(status?.ownedNumbers ?? []).length ? (status?.ownedNumbers ?? []).map((number) => <ProfileTreeRow key={number.sid} label={number.friendlyName} icon={<Phone className="h-3.5 w-3.5" />} hasValue showEmpty><span className={number.phoneNumber === status?.configuredPhoneNumber ? "text-active" : "text-muted-foreground"}>{number.phoneNumber}{number.phoneNumber === status?.configuredPhoneNumber ? " · selected" : ""}</span></ProfileTreeRow>) : <p className="px-2 py-1.5 text-sm text-muted-foreground">No owned numbers found.</p>}
+      </IntegrationTreeSection>
+      <IntegrationTreeSection label="Phone endpoints">
+        <ProfileTreeRow label="Voice webhook" icon={<Globe className="h-3.5 w-3.5" />} hasValue showEmpty><code className="break-all text-xs">{status?.voiceWebhookUrl ?? "Available after setup"}</code></ProfileTreeRow>
+        <ProfileTreeRow label="Media stream" icon={<Radio className="h-3.5 w-3.5" />} hasValue showEmpty><code className="break-all text-xs">{status?.mediaStreamUrl ?? "Available after setup"}</code></ProfileTreeRow>
+      </IntegrationTreeSection>
+    </div>
+  );
+}
+
+function DeepgramDetail() {
+  const { toast } = useToast();
+  const { data: status } = useQuery<DeepgramStatus>({ queryKey: ["/api/integrations/deepgram/status"], refetchInterval: false });
+  const test = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/integrations/deepgram/test")).json() as Promise<DeepgramStatus>,
+    onSuccess: (result) => { queryClient.setQueryData(["/api/integrations/deepgram/status"], result); toast({ title: result.connected ? "Deepgram connected" : "Deepgram connection failed", description: result.connected ? "Nova-3 streaming credentials verified." : result.error, variant: result.connected ? "default" : "destructive" }); },
+    onError: (error: Error) => toast({ title: "Deepgram connection test failed", description: error.message, variant: "destructive" }),
+  });
+  return <div className="min-w-0 space-y-2"><IntegrationTreeSection label="Connection" initialOpen={!status?.connected}><ProviderConnectionRow provider="deepgram" connected={Boolean(status?.connected)} error={status?.error} pending={test.isPending} onTest={() => test.mutate()} /></IntegrationTreeSection><IntegrationTreeSection label="Credentials" initialOpen={!status?.hasApiKey}><div className="min-w-0 px-2 py-1.5"><SecretsForSection section="deepgram" /></div></IntegrationTreeSection></div>;
+}
+
 function SentryDetail() {
   return (
     <div className="space-y-4">
@@ -5347,6 +5439,8 @@ function IntegrationDetail({ provider }: { provider: string }) {
       {provider === "expo" && <ExpoDetail />}
       {provider === "sentry" && <SentryDetail />}
       {provider === "recall" && <RecallDetail />}
+      {provider === "twilio" && <TwilioDetail />}
+      {provider === "deepgram" && <DeepgramDetail />}
       {provider === "sendgrid" && <SendGridDetail />}
       {provider === "meta" && <MetaDetail />}
 
