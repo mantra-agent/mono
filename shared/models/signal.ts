@@ -61,6 +61,7 @@ export const signalItems = pgTable("signal_items", {
   matchingTheses: text("matching_theses").array().notNull().default(sql`'{}'::text[]`),
   fingerprint: text("fingerprint").notNull().unique(),
   status: text("status").notNull().default("new"),
+  snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
@@ -70,6 +71,7 @@ export const signalItems = pgTable("signal_items", {
   index("idx_signal_items_status").on(table.status),
   index("idx_signal_items_relevance").on(table.relevanceScore),
   index("idx_signal_items_scanned").on(table.scannedAt),
+  index("idx_signal_items_snoozed_until").on(table.snoozedUntil),
   index("idx_signal_items_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_signal_items_account").on(table.accountId),
 ]);

@@ -34,6 +34,25 @@ export function registerNewsRoutes(app: Express): void {
     }
   });
 
+  app.patch("/api/landscape/signals/:id/reminder", async (req, res) => {
+    try {
+      const rawFireAt = req.body?.fireAt;
+      if (typeof rawFireAt !== "string" || !rawFireAt.trim()) {
+        return res.status(400).json({ error: "fireAt is required" });
+      }
+      const snoozedUntil = new Date(rawFireAt);
+      if (Number.isNaN(snoozedUntil.getTime()) || snoozedUntil.getTime() <= Date.now()) {
+        return res.status(400).json({ error: "fireAt must be a future date" });
+      }
+      const updated = await signalStorage.updateSignalSnooze(req.params.id, snoozedUntil);
+      if (!updated) return res.status(404).json({ error: "Signal not found" });
+      res.json(updated);
+    } catch (err) {
+      log.error("PATCH /api/landscape/signals/:id/reminder error:", (err as Error).message);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   app.patch("/api/landscape/signals/:id/status", async (req, res) => {
     try {
       const { status } = req.body;

@@ -49,6 +49,7 @@ export function SimpleFeedView({ feed }: { feed: SimpleFeed }) {
   const now = useMemo(() => new Date(feed.generatedAt), [feed.generatedAt]);
   const peopleInboxItems = useMemo(() => feed.sections.find(s => s.section === "inbox")?.items.filter(item => item.widgetType === "person") ?? [], [feed.sections]);
   const newsInboxItems = useMemo(() => feed.sections.find(s => s.section === "inbox")?.items.filter(item => item.payload?.kind === "news_signal") ?? [], [feed.sections]);
+  const newsSnoozedItems = useMemo(() => feed.sections.find(s => s.section === "snoozed")?.items.filter(item => item.payload?.kind === "news_signal") ?? [], [feed.sections]);
   const emailInboxItems = useMemo(() => feed.sections.find(s => s.section === "inbox")?.items.filter(item => item.payload?.kind === "email_review") ?? [], [feed.sections]);
   const peopleSnoozedItems = useMemo(() => feed.sections.find(s => s.section === "snoozed")?.items.filter(item => item.widgetType === "person") ?? [], [feed.sections]);
   const feedSections = useMemo(() => feed.sections
@@ -78,7 +79,7 @@ export function SimpleFeedView({ feed }: { feed: SimpleFeed }) {
           timezone={feed.timezone}
         />
       ))}
-      <LibrarySurfaceSnoozed peopleItems={peopleSnoozedItems} />
+      <LibrarySurfaceSnoozed peopleItems={peopleSnoozedItems} newsItems={newsSnoozedItems} />
       {feed.sections.filter(s => s.section === "done").map(section => (
         <SimpleSectionGroup
           key={section.section}
@@ -332,7 +333,7 @@ function LibrarySurfaceInbox({ peopleItems, newsItems, emailItems }: { peopleIte
   );
 }
 
-function LibrarySurfaceSnoozed({ peopleItems }: { peopleItems: SimpleFeedItem[] }) {
+function LibrarySurfaceSnoozed({ peopleItems, newsItems }: { peopleItems: SimpleFeedItem[]; newsItems: SimpleFeedItem[] }) {
   const queryClient = useQueryClient();
   const [nowMs, setNowMs] = useState(() => Date.now());
   const { data: pages = [] } = useQuery<LibraryPage[]>({
@@ -362,7 +363,7 @@ function LibrarySurfaceSnoozed({ peopleItems }: { peopleItems: SimpleFeedItem[] 
     },
   });
 
-  const hasItems = snoozed.length > 0 || peopleItems.length > 0;
+  const hasItems = snoozed.length > 0 || peopleItems.length > 0 || newsItems.length > 0;
 
   if (!hasItems) return null;
 
@@ -379,6 +380,7 @@ function LibrarySurfaceSnoozed({ peopleItems }: { peopleItems: SimpleFeedItem[] 
       {expanded && (
         <div className="mt-0">
           {peopleItems.map(item => <SurfacedPersonRow key={item.id} item={item} dateLabel={surfacedDateLabel(item)} />)}
+          {newsItems.map(item => <SurfacedNewsRow key={item.id} item={item} dateLabel={surfacedDateLabel(item)} />)}
           {snoozed.map(page => (
             <SurfacedLibraryRow
               key={page.id}

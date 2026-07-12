@@ -327,6 +327,16 @@ export class SignalStorage {
     });
   }
 
+  async updateSignalSnooze(id: string, snoozedUntil: Date | null): Promise<SignalItem | undefined> {
+    return autoHeal(async () => {
+      const [row] = await db.update(signalItems)
+        .set({ snoozedUntil })
+        .where(writableItems(eq(signalItems.id, id)))
+        .returning();
+      return row;
+    });
+  }
+
   async surfaceSignal(id: string): Promise<SignalItem | undefined> {
     return autoHeal(async () => {
       const [row] = await db.update(signalItems)
@@ -647,6 +657,7 @@ export async function migrateSignalSchema(): Promise<void> {
        matching_theses text[] NOT NULL DEFAULT '{}'::text[],
        fingerprint text NOT NULL UNIQUE,
        status text NOT NULL DEFAULT 'new',
+       snoozed_until timestamptz,
        created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
      )`,
     // CREATE TABLE IF NOT EXISTS does not add columns to pre-existing tables —
@@ -668,6 +679,7 @@ export async function migrateSignalSchema(): Promise<void> {
     `ALTER TABLE signal_items ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'user'`,
     `ALTER TABLE signal_items ADD COLUMN IF NOT EXISTS owner_user_id text`,
     `ALTER TABLE signal_items ADD COLUMN IF NOT EXISTS account_id text`,
+    `ALTER TABLE signal_items ADD COLUMN IF NOT EXISTS snoozed_until timestamptz`,
     `CREATE INDEX IF NOT EXISTS idx_signal_sources_scope_owner ON signal_sources(scope, owner_user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_signal_sources_account ON signal_sources(account_id)`,
     `CREATE INDEX IF NOT EXISTS idx_signal_items_scope_owner ON signal_items(scope, owner_user_id)`,
@@ -675,6 +687,7 @@ export async function migrateSignalSchema(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_signal_items_status ON signal_items(status)`,
     `CREATE INDEX IF NOT EXISTS idx_signal_items_relevance ON signal_items(relevance_score DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_signal_items_scanned ON signal_items(scanned_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_signal_items_snoozed_until ON signal_items(snoozed_until)`,
     `CREATE TABLE IF NOT EXISTS scan_runs (
        id text PRIMARY KEY DEFAULT gen_random_uuid(),
        started_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
