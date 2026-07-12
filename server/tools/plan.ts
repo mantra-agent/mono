@@ -406,10 +406,6 @@ async function handleUpdateStep(args: Record<string, any>): Promise<ToolHandlerR
       return { result: `Invalid status "${requestedStatus}". Use pending, completed, failed, skipped, blocked, or needs_review.`, error: true };
     }
     setFields.status = requestedStatus;
-    if (requestedStatus === "blocked" || requestedStatus === "needs_review") {
-      await db.update(planExecutions).set({ status: "paused", updatedAt: new Date() })
-        .where(writablePlan(eq(planExecutions.id, resolvedPlanId)));
-    }
   }
   if (args.outcome) setFields.outcome = args.outcome;
   if (args.error) setFields.error = args.error;
