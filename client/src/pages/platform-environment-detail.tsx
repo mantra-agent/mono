@@ -912,6 +912,22 @@ function HostingBindingCard({
   );
 }
 
+
+type CloudflareState = "deployed" | "building" | "not_triggered" | "build_failed" | "configuration_error" | "authorization_required" | "provider_error";
+type CloudflareTruth = { outcome: string; diagnostic?: string; diagnosis?: { state: CloudflareState; diagnostic: string }; project?: { productionBranch?: string | null; build?: { command?: string | null; destinationDirectory?: string | null; rootDirectory?: string | null }; deployments?: { automaticProductionDeployments?: boolean } }; deployments?: Array<{ id: string; status: string; commitHash?: string | null; branch?: string | null; createdAt?: string | null }> };
+
+function CloudflarePagesCard({ environmentId }: { environmentId: number }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { data, isLoading, isFetching, refetch } = useQuery<CloudflareTruth>({ queryKey: ["/api/platforms/environments", environmentId, "cloudflare-pages"], staleTime: 15_000, refetchInterval: (q) => q.state.data?.diagnosis?.state === "building" ? 5_000 : false });
+  const latest = data?.deployments?.[0];
+  const state: CloudflareState = data?.outcome === "project_truth" ? data.diagnosis?.state || "provider_error" : "provider_error";
+  const action = useMutation({ mutationFn: async (body: Record<string, unknown>) => { const res = await fetch(`/api/platforms/environments/${environmentId}/cloudflare-pages/actions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const result = await res.json(); if (!res.ok || ["rejected", "unsupported", "provider_error", "authorization_required"].includes(result.outcome)) throw new Error(result.diagnostic || "Cloudflare Pages action failed"); return result; }, onSuccess: (result) => { toast({ title: humanize(result.outcome) }); queryClient.invalidateQueries({ queryKey: ["/api/platforms/environments", environmentId, "cloudflare-pages"] }); queryClient.invalidateQueries({ queryKey: ["/api/platforms/environments", environmentId, "build-status"] }); }, onError: (error: Error) => toast({ title: "Cloudflare action failed", description: error.message, variant: "destructive" }) });
+  const repair = () => { const project = data?.project; action.mutate({ action: "repair", repair: { productionBranch: project?.productionBranch || "main", buildCommand: project?.build?.command || "npm run build", destinationDirectory: project?.build?.destinationDirectory || "dist", rootDirectory: project?.build?.rootDirectory || "", deploymentsEnabled: true, productionDeploymentsEnabled: true } }); };
+  const stateClass = state === "deployed" ? familyClasses.succeeded : state === "building" ? familyClasses.deploying : ["build_failed", "configuration_error", "authorization_required", "provider_error"].includes(state) ? familyClasses.failed : familyClasses.unknown;
+  return <Card className={cn("min-w-0 overflow-hidden border-l-4", stateClass.border)}><CardHeader className="p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><CardTitle className="flex items-center gap-2 text-base"><Globe className="h-4 w-4" />Cloudflare Pages <Badge variant="outline" className={stateClass.badge}>{humanize(state)}</Badge></CardTitle><CardDescription className="mt-1">Provider truth, not source-binding policy.</CardDescription></div><Button variant="ghost" size="icon" className="h-11 w-11" onClick={() => refetch()} disabled={isFetching} aria-label="Diagnose Cloudflare Pages"><RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} /></Button></div></CardHeader><CardContent className="space-y-4 p-4 pt-0">{isLoading ? <Skeleton className="h-32" /> : <><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4"><ValueRow label="Commit" value={shortSha(latest?.commitHash)} mono /><ValueRow label="Production branch" value={data?.project?.productionBranch || "Not configured"} mono /><ValueRow label="Build" value={`${data?.project?.build?.command || "No command"} → ${data?.project?.build?.destinationDirectory || "No output"}`} mono /><ValueRow label="Last trigger" value={relativeTime(latest?.createdAt)} /></div><div className={cn("rounded-md border p-3 text-sm", stateClass.badge)}>{data?.diagnosis?.diagnostic || data?.diagnostic || "Provider status unavailable."}</div><div className="flex flex-wrap gap-2"><Button className="min-h-11" onClick={() => action.mutate({ action: "deploy" })} disabled={action.isPending || state === "building"}><Rocket className="mr-2 h-4 w-4" />Deploy</Button>{state === "build_failed" && latest ? <Button variant="outline" className="min-h-11" onClick={() => action.mutate({ action: "retry", deploymentId: latest.id })} disabled={action.isPending}><RefreshCw className="mr-2 h-4 w-4" />Retry</Button> : null}{state === "building" && latest ? <Button variant="destructive" className="min-h-11" onClick={() => action.mutate({ action: "cancel", deploymentId: latest.id })} disabled={action.isPending}><X className="mr-2 h-4 w-4" />Cancel</Button> : null}<Button variant="outline" className="min-h-11" onClick={() => refetch()} disabled={isFetching}><Search className="mr-2 h-4 w-4" />Diagnose</Button>{["configuration_error", "not_triggered"].includes(state) ? <Button variant="outline" className="min-h-11" onClick={repair} disabled={action.isPending}><Settings2 className="mr-2 h-4 w-4" />Safe repair</Button> : null}</div>{state === "authorization_required" ? <p className="text-sm text-warning">Git authorization must be repaired in Cloudflare Dashboard. The API cannot reconnect OAuth.</p> : null}</>}</CardContent></Card>;
+}
+
 // --- Deployment Status Card ---
 
 interface DeploymentStatus {
@@ -2049,6 +2065,7 @@ export default function PlatformEnvironmentDetailPage() {
     <div className="space-y-4 p-4">
       <div className="grid gap-4">
         <EnvironmentPipelineCard details={data} />
+        {data.hosting.provider === "cloudflare" ? <CloudflarePagesCard environmentId={environmentId} /> : null}
         <EnvironmentDetailsConfigureCard details={data} environmentId={environmentId} />
       </div>
     </div>
