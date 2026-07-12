@@ -53,9 +53,13 @@ export function getTwilioConfig(): TwilioConfig {
   };
 }
 
-async function fetchTwilioJson<T>(url: string, accountSid: string, authToken: string): Promise<T> {
+async function fetchTwilioJson<T>(url: string, accountSid: string, authToken: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(url, {
-    headers: { Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}` },
+    ...init,
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
+      ...init.headers,
+    },
     signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) {
@@ -96,4 +100,50 @@ export async function testTwilioConnection(): Promise<TwilioConnectionResult> {
       error: error instanceof Error ? error.message : "Twilio connection failed.",
     };
   }
+}
+
+
+export type TwilioCallStatus = "queued" | "ringing" | "in-progress" | "canceled" | "completed" | "busy" | "no-answer" | "failed";
+
+export interface TwilioCall {
+  sid: string;
+  status: TwilioCallStatus;
+}
+
+interface TwilioCallResponse {
+  sid?: string;
+  status?: TwilioCallStatus;
+}
+
+export async function createTwilioCall(input: {
+  to: string;
+  twimlUrl: string;
+  statusCallbackUrl: string;
+}): Promise<TwilioCall> {
+  const config = getTwilioConfig();
+  if (!config.accountSid || !config.authToken || !config.phoneNumber) {
+    throw new Error("Twilio account SID, auth token, and phone number are required");
+  }
+  const form = new URLSearchParams({
+    To: input.to,
+    From: config.phoneNumber,
+    Url: input.twimlUrl,
+    Method: "POST",
+    StatusCallback: input.statusCallbackUrl,
+    StatusCallbackMethod: "POST",
+    StatusCallbackEvent: "initiated ringing answered completed",
+  });
+  const encodedSid = encodeURIComponent(config.accountSid);
+  const call = await fetchTwilioJson<TwilioCallResponse>(
+    `${TWILIO_API_BASE}/Accounts/${encodedSid}/Calls.json`,
+    config.accountSid,
+    config.authToken,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
+    },
+  );
+  if (!call.sid || !call.status) throw new Error("Twilio returned an incomplete call response");
+  return { sid: call.sid, status: call.status };
 }

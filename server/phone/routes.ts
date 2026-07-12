@@ -11,6 +11,8 @@ import { DeepgramSTTProvider } from "./stt/provider";
 import { PhoneTurnDetector } from "./turn-detector";
 import { clearPhoneSpeech, sendPhoneSpeech } from "./audio";
 import type { MessageSpeakerMeta } from "@shared/models/chat";
+import { applyOutboundCallStatus, getOutboundCall } from "./outbound";
+import type { TwilioCallStatus } from "../integrations/twilio/client";
 
 const log = createLogger("PhoneTransport");
 const pendingCalls = new Map<string, { sessionId: string; caller: string; principal: ReturnType<typeof getCurrentPrincipalOrSystem>; callerName: string }>();
@@ -33,6 +35,31 @@ function xmlEscape(value: string): string { return value.replace(/[<>&"']/g, (c)
 export function registerPhoneRoutes(app: Express, deps: { ingestPhoneTurn: PhoneIngestFn }): void {
   const wss = new WebSocketServer({ noServer: true });
   const sttProvider = new DeepgramSTTProvider();
+
+  app.post("/api/webhooks/twilio/outbound-voice", async (req: Request, res: Response) => {
+    const callSid = typeof req.body?.CallSid === "string" ? req.body.CallSid : "";
+    const sessionId = typeof req.query?.sessionId === "string" ? req.query.sessionId : "";
+    const outbound = getOutboundCall(callSid, sessionId);
+    if (!callSid || !outbound) return res.status(404).type("text/xml").send("<Response><Hangup/></Response>");
+    pendingCalls.set(callSid, { sessionId: outbound.sessionId, caller: outbound.phoneNumber, principal: outbound.principal, callerName: outbound.personName });
+    const base = getRuntimePublicBaseUrl().replace(/^http/, "ws");
+    const streamUrl = `${base}/ws/twilio-media?callSid=${encodeURIComponent(callSid)}`;
+    log.info(`outbound media accepted callSid=${callSid} sessionId=${outbound.sessionId}`);
+    res.type("text/xml").send(`<Response><Connect><Stream url="${xmlEscape(streamUrl)}" /></Connect></Response>`);
+  });
+
+  app.post("/api/webhooks/twilio/call-status", async (req: Request, res: Response) => {
+    const callSid = typeof req.body?.CallSid === "string" ? req.body.CallSid : "";
+    const status = typeof req.body?.CallStatus === "string" ? req.body.CallStatus as TwilioCallStatus : null;
+    if (!callSid || !status) return res.status(400).json({ error: "CallSid and CallStatus are required" });
+    try {
+      await applyOutboundCallStatus(callSid, status, typeof req.body?.ErrorMessage === "string" ? req.body.ErrorMessage : undefined);
+      res.sendStatus(204);
+    } catch (error) {
+      log.error(`outbound status failed callSid=${callSid} status=${status}: ${error instanceof Error ? error.message : String(error)}`);
+      res.status(500).json({ error: "Unable to update call status" });
+    }
+  });
 
   app.post("/api/webhooks/twilio/voice", async (req: Request, res: Response) => {
     const callSid = typeof req.body?.CallSid === "string" ? req.body.CallSid : "";
@@ -91,8 +118,10 @@ export function registerPhoneRoutes(app: Express, deps: { ingestPhoneTurn: Phone
             const message = JSON.parse(data.toString()) as { event?: string; streamSid?: string; media?: { payload?: string }; mark?: { name?: string }; start?: { streamSid?: string } };
             if (message.event === "start") {
               streamSid = message.start?.streamSid || message.streamSid || "";
-              await chatStorage.updateMeetingMeta(call.sessionId, { botStatus: "live", statusDetail: `Inbound call live (${call.caller})` });
-              await sendPhoneSpeech(socket, streamSid, call.callerName === "Caller" ? "Hello, this is Mantra. How can I help?" : `Hello ${call.callerName}, this is Mantra. How can I help?`, "greeting");
+              const outbound = getOutboundCall(callSid);
+              await chatStorage.updateMeetingMeta(call.sessionId, { botStatus: "live", statusDetail: outbound ? `Call with ${call.callerName} live` : `Inbound call live (${call.caller})` });
+              const greeting = outbound ? `Hello ${call.callerName}, this is Mantra, an AI assistant calling for Ray.` : call.callerName === "Caller" ? "Hello, this is Mantra. How can I help?" : `Hello ${call.callerName}, this is Mantra. How can I help?`;
+              await sendPhoneSpeech(socket, streamSid, greeting, "greeting");
               speaking = true;
               log.info(`media stream started callSid=${callSid} streamSid=${streamSid} sessionId=${call.sessionId}`);
             } else if (message.event === "media" && message.media?.payload) stt.sendAudio(Buffer.from(message.media.payload, "base64"));

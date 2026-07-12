@@ -48,9 +48,11 @@ import {
   Send,
   Bot,
   Mic,
+  Phone,
 } from "lucide-react";
 import { resolveToolIcon } from "@/lib/tool-icons";
 import { Button } from "@/components/ui/button";
+import { apiRequest } from "@/lib/queryClient";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
@@ -382,6 +384,41 @@ function extractToolComment(toolName: string, args?: Record<string, any>): strin
   return null;
 }
 
+type PhoneConfirmationResult = { kind: "phone_call_confirmation"; status: "awaiting_confirmation"; confirmationToken: string; personId: string; personName: string; phoneNumber: string; expiresAt: string };
+
+function parsePhoneConfirmation(result: unknown): PhoneConfirmationResult | null {
+  try {
+    const value = typeof result === "string" ? JSON.parse(result) : result;
+    if (!value || typeof value !== "object" || (value as { kind?: string }).kind !== "phone_call_confirmation") return null;
+    return value as PhoneConfirmationResult;
+  } catch { return null; }
+}
+
+function PhoneCallConfirmationChip({ confirmation }: { confirmation: PhoneConfirmationResult }) {
+  const [state, setState] = useState<"ready" | "calling" | "called" | "error">("ready");
+  const [detail, setDetail] = useState("");
+  const confirm = async () => {
+    setState("calling");
+    try {
+      const response = await apiRequest("POST", "/api/agent/tools/phone_call", {
+        arguments: { action: "confirm", confirmationToken: confirmation.confirmationToken, reasoning: `User confirmed calling ${confirmation.personName}` },
+      });
+      const body = await response.json() as { result?: string; error?: boolean };
+      if (body.error) throw new Error(body.result || "Call failed");
+      const result = body.result ? JSON.parse(body.result) as { status?: string } : {};
+      setDetail(result.status ? `Call ${result.status}` : "Call started");
+      setState("called");
+    } catch (error) { setDetail(error instanceof Error ? error.message : "Call failed"); setState("error"); }
+  };
+  return (
+    <div className="ml-7 my-2 flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2" data-testid="phone-call-confirmation">
+      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-active/10"><Phone className="h-4 w-4 text-active" /></div>
+      <div className="min-w-0 flex-1"><div className="text-sm font-medium">Call {confirmation.personName}?</div><div className="text-xs text-muted-foreground">{confirmation.phoneNumber}</div>{detail && <div className={`text-xs ${state === "error" ? "text-error" : "text-success"}`}>{detail}</div>}</div>
+      <Button size="sm" onClick={confirm} disabled={state !== "ready"} data-testid="button-confirm-phone-call">{state === "calling" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : state === "called" ? "Called" : "Call"}</Button>
+    </div>
+  );
+}
+
 function ToolStepRow({ step, iconOverrides, summaryOnly, layer }: { step: ExecutionStep; iconOverrides?: Record<string, string>; summaryOnly?: boolean; layer?: 1 | 2 | 3 | 4 }) {
   const [expanded, setExpanded] = useState(false);
   const ToolIcon = resolveToolIcon(step.toolName || "", iconOverrides);
@@ -404,6 +441,8 @@ function ToolStepRow({ step, iconOverrides, summaryOnly, layer }: { step: Execut
   const iconColor = isError ? "text-error" : isDone ? "text-success" : isActive ? "text-active" : "text-info";
   const bgColor = isError ? "bg-error/10" : isDone ? "bg-success/10" : isActive ? "bg-active/15" : "bg-info/15";
   const canExpand = !summaryOnly && (isDone || isError) && !isDetailLayer;
+
+  const phoneConfirmation = rawToolName === "phone_call" && isDone ? parsePhoneConfirmation(step.result) : null;
 
   const filteredArgs = step.arguments
     ? Object.fromEntries(Object.entries(step.arguments).filter(([k]) => k !== "reasoning"))
@@ -466,6 +505,7 @@ function ToolStepRow({ step, iconOverrides, summaryOnly, layer }: { step: Execut
           <ChevronRight className={`h-3 w-3 text-muted-foreground/40 shrink-0 transition-transform duration-150 ${expanded ? "rotate-90" : ""}`} />
         )}
       </div>
+      {phoneConfirmation && <PhoneCallConfirmationChip confirmation={phoneConfirmation} />}
       {expanded && (
         <div className="ml-7 mt-1 mb-2 space-y-2 text-xs" data-testid={`tool-expanded-${step.id}`}>
           {Object.keys(filteredArgs).length > 0 && (
