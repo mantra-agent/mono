@@ -9,6 +9,7 @@ import type {
 const log = createLogger("RecallWebhooks");
 
 import { recordRecallDelivery } from "../integrations/recall/delivery-diagnostics";
+import { MeetingUtteranceBuffer } from "../meeting/utterance-buffer";
 
 function webhookId(req: Request): string | null {
   const value = req.get("webhook-id") ?? req.get("svix-id");
@@ -71,7 +72,8 @@ function sessionIdFromBotMetadata(payload: unknown): string | null {
  *
  * - POST /api/webhooks/recall — bot status-change events (dashboard-configured
  *   webhook endpoint; one-time setup in the Recall dashboard).
- * - POST /api/webhooks/recall/transcript — real-time transcript.data events
+ * - POST /api/webhooks/recall/transcript — real-time transcript.data and
+ *   transcript.partial_data events
  *   (configured per-bot via recording_config.realtime_endpoints).
  *
  * Both return 2xx immediately after verification and process async. Bot →
@@ -83,6 +85,18 @@ export function registerRecallRoutes(
   deps: { ingestMeetingEvent: MeetingIngestFn },
 ): void {
   const { ingestMeetingEvent } = deps;
+  const utteranceBuffer = new MeetingUtteranceBuffer(async (utterance) => {
+    const result = await ingestMeetingEvent({
+      sessionId: utterance.sessionId,
+      speakerLabel: utterance.speakerLabel,
+      text: utterance.text,
+    });
+    if (!result.ok) {
+      log.error(
+        `Recall transcript ingest failed sessionId=${utterance.sessionId}: ${result.error}`,
+      );
+    }
+  });
 
   app.post("/api/webhooks/recall", async (req: Request, res: Response) => {
     log.info(`Status webhook received event=${typeof req.body?.event === "string" ? req.body.event : "unknown"}`);
@@ -187,39 +201,55 @@ export function registerRecallRoutes(
         data?: {
           data?: {
             words?: Array<{ text?: string }>;
-            participant?: { name?: string | null };
+            participant?: { id?: number | string; name?: string | null };
+            is_final?: boolean;
+            final?: boolean;
           };
-          bot?: { metadata?: Record<string, unknown> };
+          bot?: { id?: string; metadata?: Record<string, unknown> };
+          transcript?: { id?: string };
         };
       };
-      if (body?.event !== "transcript.data") {
-        log.debug(`Ignoring realtime event: ${body?.event || "(none)"}`);
+      const eventName = body?.event;
+      if (eventName !== "transcript.data" && eventName !== "transcript.partial_data") {
+        log.debug(`Ignoring realtime event: ${eventName || "(none)"}`);
         return;
       }
       const sessionId = sessionIdFromBotMetadata(body);
       if (!sessionId) {
-        log.warn("transcript.data without bot.metadata.sessionId — cannot route");
+        log.warn(`${eventName} without bot.metadata.sessionId — cannot route`);
         return;
       }
-      const words = body?.data?.data?.words || [];
+      const transcriptData = body?.data?.data;
+      const words = transcriptData?.words || [];
       const text = words
         .map((w) => (typeof w?.text === "string" ? w.text : ""))
         .filter(Boolean)
         .join(" ")
         .trim();
       if (!text) return;
-      const speakerLabel = body?.data?.data?.participant?.name || undefined;
+      const participant = transcriptData?.participant;
+      const speakerLabel = participant?.name || undefined;
+      const speakerKey = participant?.id != null
+        ? `participant:${String(participant.id)}`
+        : `label:${speakerLabel?.trim().toLowerCase() || "unknown"}`;
+      const explicitFinal = transcriptData?.is_final ?? transcriptData?.final;
+      const final = eventName === "transcript.data" || explicitFinal === true;
+      const providerEventId = webhookId(req);
+      const transcriptId = body?.data?.transcript?.id;
+      const eventId = providerEventId
+        ? `webhook:${providerEventId}`
+        : final && transcriptId
+          ? `transcript:${transcriptId}:${speakerKey}`
+          : undefined;
       try {
-        const result = await ingestMeetingEvent({
+        await utteranceBuffer.push({
           sessionId,
+          speakerKey,
           speakerLabel,
           text,
+          final,
+          eventId,
         });
-        if (!result.ok) {
-          log.error(
-            `Recall transcript ingest failed sessionId=${sessionId}: ${result.error}`,
-          );
-        }
       } catch (err) {
         log.error("Recall transcript webhook processing error", err);
       }
