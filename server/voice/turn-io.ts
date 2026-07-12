@@ -9,6 +9,7 @@ import { publishVoiceDiagnostic } from "./session";
 import { createLogger } from "../log";
 import { getVerifiedCascadeTimeoutSeconds, getVerifiedSoftTimeoutSeconds } from "../elevenlabs";
 import { computeSoftTimeoutBufferMs, KEEPALIVE_SAFETY_MARGIN_MS } from "../voice-keepalive-buffer";
+import { TurnAssembler, type TurnCloseReason } from "../turn-assembly";
 
 const log = createLogger("VoiceTurnIO");
 
@@ -183,13 +184,59 @@ export function createTurnIOHandlers(
 
 // ── Stream Chunk Handler ─────────────────────────────────────────────────
 
+export interface VoiceStreamChunkHandler {
+  (content: string): void;
+  close(reason?: TurnCloseReason): void;
+}
+
 export function createStreamChunkHandler(
   res: Response, ctx: TurnContext, session: VoiceSession, currentTurn: number,
   flushCoalesceBuffer: (trigger?: string, flush?: boolean) => void,
-): (content: string) => void {
+): VoiceStreamChunkHandler {
+  const assembler = new TurnAssembler({
+    maxActiveTurns: 1,
+    maxFragmentsPerTurn: 2_048,
+    maxBytesPerTurn: 256 * 1_024,
+    maxOpenAgeMs: 90_000,
+  });
+  const streamId = `voice:${session.id}`;
+  const turnKey = ctx.assistantAttemptId;
+  let sequence = 0;
   let firstRealChunkFlushed = false;
-  return (content: string) => {
+  let terminal = false;
+
+  const close = (reason: TurnCloseReason = "completed"): void => {
+    if (terminal) return;
+    terminal = true;
+    const outcome = reason === "cancelled" || reason === "superseded"
+      ? assembler.cancel(turnKey, reason)
+      : assembler.close(turnKey, reason);
+    if (outcome.outcome === "closed") {
+      log.info(`voice_output_closed session=${session.id} turn=${currentTurn} turnKey=${turnKey} reason=${reason} fragments=${outcome.turn.rawFragments.length} degraded=${outcome.turn.degraded}`);
+    }
+  };
+
+  const handler = ((content: string): void => {
+    if (terminal) {
+      log.warn(`voice_output_late_delta session=${session.id} turn=${currentTurn} turnKey=${turnKey} bytes=${Buffer.byteLength(content)}`);
+      return;
+    }
+    const now = Date.now();
+    const outcome = assembler.accept({ streamId, turnKey, sequence: sequence++, direction: "outbound", text: content, stability: "stable", providerEventId: `${turnKey}:${sequence - 1}`, occurredAtMs: now, receivedAtMs: now });
+    if (outcome.outcome === "closed") {
+      terminal = true;
+      ctx.turnEndCause = outcome.turn.closeReason;
+      log.error(`voice_output_budget_exceeded session=${session.id} turn=${currentTurn} turnKey=${turnKey} fragments=${outcome.turn.rawFragments.length}`);
+      publishVoiceDiagnostic(session, "coalesce_truncation", "Voice output budget exceeded; terminating turn without silent truncation", { turn: currentTurn, status: "error" }, ctx);
+      ctx.turnAbort.abort();
+      return;
+    }
+    if (outcome.outcome !== "accepted") {
+      log.warn(`voice_output_fragment_rejected session=${session.id} turn=${currentTurn} turnKey=${turnKey} outcome=${outcome.outcome}`);
+      return;
+    }
     if (!isResponseAlive(res)) {
+      close("transport_failed");
       log.warn(`CONTENT_DROPPED_DEAD_RESPONSE location=streamChunkHandler contentBytes=${content.length} turn=${currentTurn} elapsed=${Date.now() - ctx.turnStart}ms session=${session.id}`);
       if (!ctx.contentDroppedPublished) {
         ctx.contentDroppedPublished = true;
@@ -197,24 +244,16 @@ export function createStreamChunkHandler(
       }
       return;
     }
-    ctx.lastAudibleDeltaAt = Date.now();
+    ctx.lastAudibleDeltaAt = now;
     ctx.audibleDeltaCount++;
+    ctx.coalesceBuf.value += content;
     if (!firstRealChunkFlushed) {
       firstRealChunkFlushed = true;
-      ctx.coalesceBuf.value += content;
-      if (!ctx.bp.active) { flushCoalesceBuffer("first_real_content"); }
+      if (!ctx.bp.active) flushCoalesceBuffer("first_real_content");
       return;
     }
-    ctx.coalesceBuf.value += content;
-    if (ctx.coalesceBuf.value.length > COALESCE_BUFFER_MAX_BYTES) {
-      if (!ctx.bp.active) { flushCoalesceBuffer("overflow"); }
-      else {
-        const discarded = ctx.coalesceBuf.value.length - COALESCE_BUFFER_MAX_BYTES;
-        ctx.bp.totalBytes += ctx.coalesceBuf.value.length;
-        log.warn(`coalesce buffer truncated during backpressure: discarded=${discarded} bytes retained=${COALESCE_BUFFER_MAX_BYTES} session=${session.id} turn=${currentTurn}`);
-        ctx.coalesceBuf.value = ctx.coalesceBuf.value.slice(-COALESCE_BUFFER_MAX_BYTES);
-        publishVoiceDiagnostic(session, "coalesce_truncation", `Coalesce buffer truncated (discarded=${discarded} bytes)`, { turn: currentTurn, status: "error" }, ctx);
-      }
-    }
-  };
+    if (ctx.coalesceBuf.value.length > COALESCE_BUFFER_MAX_BYTES && !ctx.bp.active) flushCoalesceBuffer("overflow");
+  }) as VoiceStreamChunkHandler;
+  handler.close = close;
+  return handler;
 }

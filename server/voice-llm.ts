@@ -625,15 +625,18 @@ async function executeVoiceTurnBody(
     );
 
     if (turnAbort.signal.aborted) {
+      sendChunk.close("cancelled");
       await handleAbortedTurn(session, ctx, currentTurn, trackedWrite, res);
       return;
     }
 
     thinkingFilter.finalize();
+    sendChunk.close("completed");
     await handleSuccessfulTurn(session, ctx, result, conversationMessages, currentTurn, systemPromptBytes, thinkingFilter, trackedWrite, flushCoalesceBuffer);
     res.end();
 
   } catch (err: unknown) {
+    sendChunk.close(turnAbort.signal.aborted ? "cancelled" : "transport_failed");
     await handleTurnError(err instanceof Error ? err : new Error(String(err)), session, ctx, currentTurn, turnAbort, trackedWrite, res, resolveDone);
   } finally {
     // Only the current committed attempt may settle the visible stream.
