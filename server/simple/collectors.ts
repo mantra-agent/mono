@@ -1004,7 +1004,7 @@ function formatMeetingTime(event: CalendarEvent, timezone: string, includeDate: 
     month: "numeric",
   }).formatToParts(date);
   const get = (type: string) => parts.find(part => part.type === type)?.value ?? "";
-  return `${time}\n${get("day")}/${get("month")}`;
+  return `${time}\n${get("month")}/${get("day")}`;
 }
 
 
