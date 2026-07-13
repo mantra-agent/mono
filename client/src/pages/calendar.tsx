@@ -21,6 +21,7 @@ import {
   Clock,
   Search,
   Brain,
+  Heart,
   SlidersHorizontal,
   FileText,
   Plane,
@@ -873,6 +874,8 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
   const people = data?.people ?? [];
   const artifacts = data?.artifacts ?? [];
   const hasDetails = Boolean(event.location || people.length || artifacts.length);
+  const focusLabel = event.summary.replace(/^Focus:\s*/i, "");
+  const isWellnessBlock = isFocusBlock && /^Wellness\b/i.test(focusLabel);
 
   if (isFocusBlock) {
     return (
@@ -886,8 +889,12 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
         style={{ gridColumn: 3, gridRow: `${rowStart} / span ${rowSpan}`, position: "relative" }}
         data-testid={`event-row-${event.id}`}
       >
-        <EventTypeIcon event={event} eventType="focus_block" className="mt-px h-3.5 w-3.5 shrink-0 text-foreground/75" />
-        <span className="truncate">{event.summary}</span>
+        {isWellnessBlock ? (
+          <Heart className="mt-px h-3.5 w-3.5 shrink-0 text-foreground/75" aria-hidden="true" />
+        ) : (
+          <EventTypeIcon event={event} eventType="focus_block" className="mt-px h-3.5 w-3.5 shrink-0 text-foreground/75" />
+        )}
+        <span className="truncate">{focusLabel}</span>
       </button>
     );
   }
