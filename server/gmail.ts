@@ -466,8 +466,70 @@ export async function sendEmail(to: string, subject: string, body: string, accou
 }
 
 /**
+ * Reply context resolved from the thread being replied to: RFC threading
+ * headers plus a plain-text quoted history block, mirroring what mail
+ * clients append below a reply.
+ */
+interface ReplyContext {
+  inReplyTo: string | null;
+  references: string | null;
+  quotedHistory: string | null;
+}
+
+/**
+ * Resolve threading headers and quoted history for a reply by fetching the
+ * thread and locating the message being replied to (by RFC Message-ID when
+ * known, otherwise the newest message in the thread).
+ */
+async function resolveReplyContext(
+  threadId: string,
+  inReplyTo: string | null,
+  accountId?: string,
+): Promise<ReplyContext> {
+  const gmail = await getReadClientAuto(accountId);
+  const res = await gmail.users.threads.get({
+    userId: "me",
+    id: threadId,
+    format: "full",
+  });
+  const messages = res.data.messages || [];
+  if (messages.length === 0) return { inReplyTo, references: null, quotedHistory: null };
+
+  const byInternalDate = [...messages].sort(
+    (a, b) => parseInt(a.internalDate || "0") - parseInt(b.internalDate || "0"),
+  );
+  const matched = inReplyTo
+    ? byInternalDate.find(m => getHeader(m.payload?.headers as any, "Message-ID") === inReplyTo)
+    : undefined;
+  const target = matched || byInternalDate[byInternalDate.length - 1];
+
+  const targetHeaders = target.payload?.headers as any;
+  const messageId = getHeader(targetHeaders, "Message-ID");
+  const priorReferences = getHeader(targetHeaders, "References");
+  const references = [priorReferences, messageId].filter(Boolean).join(" ") || null;
+
+  const { text } = extractBody(target.payload);
+  const bodyText = text || target.snippet || null;
+  let quotedHistory: string | null = null;
+  if (bodyText) {
+    const from = getHeader(targetHeaders, "From") || "the sender";
+    const dateHeader = getHeader(targetHeaders, "Date");
+    const dateVal = dateHeader ? new Date(dateHeader) : (target.internalDate ? new Date(parseInt(target.internalDate)) : null);
+    const dateStr = dateVal && !isNaN(dateVal.getTime())
+      ? dateVal.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
+      : "an earlier date";
+    const quotedLines = bodyText.replace(/\r\n/g, "\n").split("\n").map(line => `> ${line}`).join("\n");
+    quotedHistory = `On ${dateStr}, ${from} wrote:\n${quotedLines}`;
+  }
+
+  return { inReplyTo: messageId || inReplyTo, references, quotedHistory };
+}
+
+/**
  * Send an email from a persisted EmailDraft record.
  * Supports threading via threadId, In-Reply-To, and References headers.
+ * For replies (threadId present), appends the quoted thread history below
+ * the draft body so the reply chain is preserved for recipients.
  */
 export async function sendEmailFromDraft(draft: {
   gmailAccountId: string | null;
@@ -481,19 +543,32 @@ export async function sendEmailFromDraft(draft: {
 }) {
   const gmail = await getReadClientAuto(draft.gmailAccountId ?? undefined);
 
+  let replyContext: ReplyContext = { inReplyTo: draft.inReplyTo, references: draft.inReplyTo, quotedHistory: null };
+  if (draft.threadId) {
+    try {
+      replyContext = await resolveReplyContext(draft.threadId, draft.inReplyTo, draft.gmailAccountId ?? undefined);
+    } catch (err: any) {
+      log.warn(`sendEmailFromDraft: failed to resolve reply context for thread ${draft.threadId}, sending without quoted history: ${err.message}`);
+    }
+  }
+
   const headers: string[] = [
     `To: ${draft.to.join(", ")}`,
   ];
   if (draft.cc.length > 0) headers.push(`Cc: ${draft.cc.join(", ")}`);
   if (draft.bcc.length > 0) headers.push(`Bcc: ${draft.bcc.join(", ")}`);
   headers.push(`Subject: ${draft.subject}`);
-  if (draft.inReplyTo) {
-    headers.push(`In-Reply-To: ${draft.inReplyTo}`);
-    headers.push(`References: ${draft.inReplyTo}`);
+  if (replyContext.inReplyTo) {
+    headers.push(`In-Reply-To: ${replyContext.inReplyTo}`);
+    headers.push(`References: ${replyContext.references || replyContext.inReplyTo}`);
   }
   headers.push("Content-Type: text/plain; charset=utf-8");
 
-  const rawMimeMessage = `${headers.join("\r\n")}\r\n\r\n${draft.body}`;
+  const outgoingBody = replyContext.quotedHistory
+    ? `${draft.body}\r\n\r\n${replyContext.quotedHistory}`
+    : draft.body;
+
+  const rawMimeMessage = `${headers.join("\r\n")}\r\n\r\n${outgoingBody}`;
   const rawMessage = Buffer.from(rawMimeMessage)
     .toString("base64")
     .replace(/\+/g, "-")

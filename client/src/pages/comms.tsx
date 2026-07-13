@@ -1382,7 +1382,26 @@ function ReviewTab({ onHover, onSwitchTab }: { onHover: (ids: number[] | null) =
 
   const draftSessionMutation = useMutation({
     mutationFn: async (thread: ThreadGroup) => {
-      const msg = thread.latestMessage;
+      // Resolve the true newest message in the thread regardless of triage or
+      // enrichment status — the Review tab only holds triaged+enriched
+      // messages, so thread.latestMessage can be stale when a newer message
+      // has arrived but not yet been triaged.
+      let msg = thread.latestMessage;
+      try {
+        const params = new URLSearchParams({
+          threadId: thread.threadId,
+          accountId: thread.latestMessage.accountId,
+          includeSnoozed: "true",
+          limit: "1",
+        });
+        const freshRes = await fetch(`/api/email/messages?${params.toString()}`);
+        if (freshRes.ok) {
+          const fresh: { messages: EmailMessage[] } = await freshRes.json();
+          if (fresh.messages?.[0]) msg = fresh.messages[0];
+        }
+      } catch {
+        // Fall back to the Review tab's view of the thread.
+      }
       const sender = parseSender(msg.fromAddress);
       const subject = msg.subject || "(no subject)";
       const titleText = `Draft: ${subject}`.slice(0, 80);
