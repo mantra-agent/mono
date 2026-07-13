@@ -8672,11 +8672,13 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
 
     // join — delegates to the canonical join path in server/meeting/join.ts
-    const { extractMeetingUrl, joinMeetingByUrl, MeetingJoinError, MEETING_URL_RE } = await import("./meeting/join");
+    const { joinMeetingByUrl, MeetingJoinError, MEETING_URL_RE } = await import("./meeting/join");
+    const { meetingUrlForEvent } = await import("./meeting/identity");
 
     let meetingUrl = typeof args.url === "string" ? args.url.trim() : "";
     let resolvedTitle = typeof args.title === "string" && args.title.trim() ? args.title.trim() : "";
     let resolvedAgenda: string | undefined;
+    let explicitEvent: import("./meeting/identity").ExplicitMeetingEventIdentity | undefined;
 
     if (meetingUrl && !MEETING_URL_RE.test(meetingUrl)) {
       return { result: `That doesn't look like a Zoom or Google Meet link: ${meetingUrl}`, error: true };
@@ -8698,13 +8700,22 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           return ta - tb;
         });
         for (const ev of sorted) {
-          const found = extractMeetingUrl(ev.location, ev.description, ev.summary);
+          const found = meetingUrlForEvent(ev);
           if (found) {
             meetingUrl = found;
             if (!resolvedTitle) resolvedTitle = ev.summary || "";
             const { getMetadata } = await import("./calendar-metadata");
             const metadata = await getMetadata(ev.id, ev.accountId, ev.calendarId);
             resolvedAgenda = metadata?.agenda?.trim() || undefined;
+            explicitEvent = {
+              accountId: ev.accountId,
+              calendarId: ev.calendarId,
+              providerEventId: ev.id,
+              eventStart: ev.start.dateTime || ev.start.date || undefined,
+              eventEnd: ev.end.dateTime || ev.end.date || undefined,
+              title: ev.summary || undefined,
+              agenda: resolvedAgenda,
+            };
             break;
           }
         }
@@ -8718,7 +8729,12 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
     let joined;
     try {
-      joined = await joinMeetingByUrl({ meetingUrl, title: resolvedTitle || "Meeting", agenda: resolvedAgenda });
+      joined = await joinMeetingByUrl({
+        meetingUrl,
+        title: resolvedTitle || "Meeting",
+        agenda: resolvedAgenda,
+        explicitEvent,
+      });
     } catch (err) {
       if (err instanceof MeetingJoinError) {
         return { result: err.message, error: true };

@@ -1,4 +1,5 @@
 import { createLogger } from "../log";
+import type { ExplicitMeetingEventIdentity } from "./identity";
 
 const log = createLogger("MeetingJoin");
 
@@ -41,22 +42,40 @@ export interface MeetingJoinResult {
  * any failure; on bot-creation failure the meeting session is marked failed
  * before the error propagates.
  */
-export async function joinMeetingByUrl(opts: { meetingUrl: string; title?: string; agenda?: string }): Promise<MeetingJoinResult> {
+export async function joinMeetingByUrl(opts: {
+  meetingUrl: string;
+  title?: string;
+  agenda?: string;
+  explicitEvent?: ExplicitMeetingEventIdentity;
+}): Promise<MeetingJoinResult> {
   const meetingUrl = opts.meetingUrl.trim();
   if (!MEETING_URL_RE.test(meetingUrl)) {
     throw new MeetingJoinError(`That doesn't look like a Zoom or Google Meet link: ${meetingUrl}`);
   }
 
   const platform = meetingPlatform(meetingUrl);
-  const title = opts.title?.trim() || "Meeting";
+  const { resolveMeetingIdentity } = await import("./identity");
+  const identity = await resolveMeetingIdentity({
+    meetingUrl,
+    title: opts.title,
+    agenda: opts.agenda,
+    explicitEvent: opts.explicitEvent,
+  });
+  const title = identity.title;
   const { chatStorage } = await import("../integrations/chat/storage");
   const session = await chatStorage.createMeetingSession(title, {
     title,
     platform,
     participants: [],
     botStatus: "dialing",
-    meetingUrl,
-    agenda: opts.agenda?.trim() || undefined,
+    meetingUrl: identity.meetingUrl,
+    agenda: identity.agenda,
+    calendarAccountId: identity.calendarAccountId,
+    calendarId: identity.calendarId,
+    providerEventId: identity.providerEventId,
+    eventStart: identity.eventStart,
+    eventEnd: identity.eventEnd,
+    resolutionSource: identity.resolutionSource,
   });
 
   const failSession = async (message: string): Promise<never> => {
