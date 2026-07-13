@@ -915,7 +915,7 @@ export function RailwaySetupTab({ children }: { children?: ReactNode }) {
     <div className="min-w-0 space-y-2" data-testid="railway-setup-tab">
       {children}
 
-      <RailwayTreeSection label="LEGACY" initialOpen={!tokenSet}>
+      <RailwayTreeSection label="LEGACY">
         <p className="px-2 py-1.5 text-sm text-muted-foreground">
           Fallback configuration used by Publish and older Railway operations. Keep this complete until connector-backed publishing replaces it.
         </p>

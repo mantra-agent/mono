@@ -15,6 +15,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useVaults } from "@/hooks/use-vaults";
 import {
@@ -4290,6 +4300,7 @@ function HostingConnectorsDetail({ provider }: { provider: "railway" | "cloudfla
   const [label, setLabel] = useState("");
   const [credential, setCredential] = useState("");
   const [accountType, setAccountType] = useState("hosting");
+  const [pendingDelete, setPendingDelete] = useState<ProviderConnection | null>(null);
 
   const { data: connections = [], isLoading, refetch } = useQuery<ProviderConnection[]>({
     queryKey: ["/api/provider-connections"],
@@ -4382,21 +4393,21 @@ function HostingConnectorsDetail({ provider }: { provider: "railway" | "cloudfla
       const response = await apiRequest("DELETE", `/api/provider-connections/${connection.id}`);
       return response.json() as Promise<{ success: boolean }>;
     },
-    onSuccess: () => { toast({ title: "Hosting connector deleted" }); refresh(); },
+    onSuccess: () => { setPendingDelete(null); toast({ title: "Hosting connector deleted" }); refresh(); },
     onError: (error: Error) => toast({ title: "Delete blocked", description: error.message, variant: "destructive" }),
   });
 
   return (
     <div className="min-w-0 space-y-2" data-testid={`${provider}-hosting-connectors`}>
-      <IntegrationTreeSection label="Hosting Connectors" initialOpen testIdPrefix={provider}>
-        <button
-          type="button"
-          className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-cta transition-colors hover:bg-accent/70"
-          onClick={() => openDialog()}
-          data-testid={`button-${provider}-new-hosting-connector`}
-        >
-          <Plus className="h-3.5 w-3.5" /> New Hosting Connector
-        </button>
+      <button
+        type="button"
+        className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-cta transition-colors hover:bg-accent/70"
+        onClick={() => openDialog()}
+        data-testid={`button-${provider}-new-hosting-connector`}
+      >
+        <Plus className="h-3.5 w-3.5" /> New Connector
+      </button>
+      <IntegrationTreeSection label="Connectors" initialOpen testIdPrefix={provider}>
         {isLoading ? <Skeleton className="mx-2 h-8" /> : hostingConnectors.length === 0 ? (
           <p className="px-2 py-1.5 text-sm text-muted-foreground">No {providerName} hosting connectors.</p>
         ) : hostingConnectors.map((connection) => {
@@ -4405,7 +4416,7 @@ function HostingConnectorsDetail({ provider }: { provider: "railway" | "cloudfla
             <ProfileTreeRow
               key={connection.id}
               label={connection.label}
-              icon={<ProviderIcon className={cn("h-3.5 w-3.5", connection.status === "active" ? "text-active" : "text-muted-foreground")} />}
+              icon={<ProviderIcon className={cn("h-3.5 w-3.5", usage.length > 0 ? "text-foreground" : "text-muted-foreground")} />}
               hasValue
               showEmpty
               testId={`${provider}-hosting-connector-${connection.id}`}
@@ -4425,16 +4436,37 @@ function HostingConnectorsDetail({ provider }: { provider: "railway" | "cloudfla
                   <div className="flex flex-wrap gap-2">
                     <Button variant="outline" size="sm" onClick={() => test.mutate(connection)} disabled={test.isPending}>Test</Button>
                     <Button variant="ghost" size="sm" onClick={() => openDialog(connection)}>Edit</Button>
-                    <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" onClick={() => remove.mutate(connection)} disabled={remove.isPending || usage.length > 0}>Delete</Button>
+                    <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" onClick={() => setPendingDelete(connection)} disabled={remove.isPending || usage.length > 0}>Delete</Button>
                   </div>
                 </>
               }
             >
-              <span className={connection.status === "active" ? "text-active" : "text-muted-foreground"}>{connection.status}</span>
+              <span className={usage.length > 0 ? "text-foreground" : "text-muted-foreground"}>{usage.length > 0 ? "In use" : "Not in use"}</span>
             </ProfileTreeRow>
           );
         })}
       </IntegrationTreeSection>
+
+      <AlertDialog open={Boolean(pendingDelete)} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete connector?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDelete ? `Delete ${pendingDelete.label}? This permanently removes its stored credential.` : "This permanently removes the stored credential."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => { if (pendingDelete) remove.mutate(pendingDelete); }}
+              disabled={remove.isPending}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) resetDialog(); }}>
         <DialogContent>
@@ -5489,7 +5521,7 @@ function IntegrationDetail({ provider }: { provider: string }) {
 
   return (
     <div className="space-y-4">
-      {provider !== "recall" && (
+      {provider !== "recall" && provider !== "railway" && (
         <div className="flex items-center gap-3">
           <Icon className="h-6 w-6" />
           <h2 className="text-lg font-semibold">{integration.name}</h2>
@@ -5617,9 +5649,12 @@ export default function IntegrationsPage() {
     refetchInterval: 15000,
   });
 
-  usePageHeader({ title: "Integrations", titleHref: "/integrations" });
-
   const [match, params] = useRoute("/integrations/:provider");
+  const integration = match && params?.provider
+    ? INTEGRATIONS.find((item) => item.route === params.provider)
+    : null;
+
+  usePageHeader({ title: integration?.name || "Integrations", titleHref: "/integrations" });
 
   return (
     <div className="flex flex-col gap-6 p-6">
