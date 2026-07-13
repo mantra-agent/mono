@@ -53,6 +53,7 @@ const LogsPage = lazyWithRetry(() => import("@/pages/logs"));
 const UserDetailsPage = lazyWithRetry(() => import("@/pages/user-details"));
 const LoginPage = lazyWithRetry(() => import("@/pages/login"));
 const RegisterPage = lazyWithRetry(() => import("@/pages/register"));
+const WaitlistPage = lazyWithRetry(() => import("@/pages/waitlist"));
 const BuildPage = lazyWithRetry(() => import("@/pages/build"));
 const DatabasePage = lazyWithRetry(() => import("@/pages/build").then(m => ({ default: m.DatabasePage })));
 const DesignPage = lazyWithRetry(() => import("@/pages/design"));
@@ -310,6 +311,14 @@ function AuthGate({ children }: { children: ReactNode }) {
       <div className="flex items-center justify-center h-screen bg-background">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
       </div>
+    );
+  }
+
+  if (location === "/waitlist") {
+    return (
+      <Suspense fallback={<PageFallback />}>
+        <WaitlistPage />
+      </Suspense>
     );
   }
 

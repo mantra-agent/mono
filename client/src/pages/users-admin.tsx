@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, Clock, Glasses, Globe2, Loader2, MoreHorizontal, Shield, Smartphone, Trash2, User, Users } from "lucide-react";
+import { ArrowLeft, ChevronRight, Clock, Glasses, Globe2, Loader2, Mail, MoreHorizontal, Shield, Smartphone, Trash2, User, Users } from "lucide-react";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -33,7 +33,14 @@ interface WaitlistApplicationRow {
   email: string;
   position: number;
   status: string;
+  role: string;
+  needs: string[];
+  readiness: string;
+  source: string | null;
+  attribution: Record<string, unknown>;
+  confirmationEmailStatus: string;
   createdAt: string;
+  updatedAt: string;
 }
 
 interface UsersResponse {
@@ -155,6 +162,37 @@ function DeleteUserDialog({ user, open, onOpenChange, onDeleted }: { user: Admin
   );
 }
 
+
+const WAITLIST_STATUS_OPTIONS = ["waiting", "reviewing", "invited", "deferred", "declined"];
+const WAITLIST_LABELS: Record<string, string> = {
+  founder: "Founder or business owner", executive: "Executive or operator", investor: "Investor",
+  coach: "Coach or advisor", creator: "Creator", other: "Other",
+  priorities: "Priorities and follow-through", work: "Work and projects", relationships: "Relationships and communication",
+  decisions: "Decisions and knowledge", health: "Health and energy", money: "Money and planning", connection: "Keeping everything connected",
+  ready: "Ready now", possible: "Possible if valuable", lower_cost: "Prefers a lower-cost plan", curious: "Mainly curious",
+};
+
+function WaitlistDetail({ application, canWrite, onBack }: { application: WaitlistApplicationRow; canWrite: boolean; onBack: () => void }) {
+  const { toast } = useToast();
+  const mutation = useMutation({
+    mutationFn: async (status: string) => (await apiRequest("PATCH", `/api/admin/waitlist/${application.id}`, { status })).json(),
+    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["/api/auth/users"] }); toast({ title: "Waitlist status updated" }); },
+    onError: (error: Error) => toast({ title: "Could not update status", description: error.message, variant: "destructive" }),
+  });
+  return <div className="p-2">
+    <div className="mb-2 flex items-start gap-2 px-2 py-1.5"><Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 @md:hidden" onClick={onBack}><ArrowLeft className="h-4 w-4" /></Button><div className="min-w-0"><h2 className="truncate text-lg font-semibold text-foreground">#{application.position} · {application.email}</h2><p className="text-sm capitalize text-muted-foreground">{application.status}</p></div></div>
+    <div className="space-y-0">
+      <ProfileTreeRow label="Role" icon={<User className="h-3.5 w-3.5" />} hasValue showEmpty><span>{WAITLIST_LABELS[application.role] || application.role}</span></ProfileTreeRow>
+      <ProfileTreeRow label="Needs" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty expandedContent={<div className="space-y-1 text-sm text-foreground">{application.needs.map((need) => <div key={need}>{WAITLIST_LABELS[need] || need}</div>)}</div>}><span>{application.needs.length}</span></ProfileTreeRow>
+      <ProfileTreeRow label="Readiness" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty><span>{WAITLIST_LABELS[application.readiness] || application.readiness}</span></ProfileTreeRow>
+      <ProfileTreeRow label="Source" icon={<Globe2 className="h-3.5 w-3.5" />} hasValue={!!application.source} showEmpty><span>{application.source || "Direct"}</span></ProfileTreeRow>
+      <ProfileTreeRow label="Email" icon={<Mail className="h-3.5 w-3.5" />} hasValue showEmpty><span className="capitalize">{application.confirmationEmailStatus}</span></ProfileTreeRow>
+      <ProfileTreeRow label="Applied" icon={<Clock className="h-3.5 w-3.5" />} hasValue showEmpty><span>{formatDateTime(application.createdAt)}</span></ProfileTreeRow>
+      <ProfileTreeRow label="Status" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty expandedContent={<div className="flex flex-wrap gap-2">{WAITLIST_STATUS_OPTIONS.map((status) => <Button key={status} size="sm" variant={application.status === status ? "default" : "outline"} disabled={!canWrite || mutation.isPending || application.status === status} onClick={() => mutation.mutate(status)} className="capitalize">{status}</Button>)}</div>}><span className="capitalize">{application.status}</span></ProfileTreeRow>
+    </div>
+  </div>;
+}
+
 function UserDetail({ user, availablePermissions, canWrite, draft, onDraftChange, onBack }: { user: AdminUserRow; availablePermissions: string[]; canWrite: boolean; draft: Set<string>; onDraftChange: (next: Set<string>) => void; onBack: () => void }) {
   const mutation = useMutation({
     mutationFn: async (permissions: string[]) => (await apiRequest("PATCH", `/api/auth/users/${user.id}/permissions`, { permissions })).json(),
@@ -192,6 +230,7 @@ export default function UsersAdminPage() {
   const canRead = hasPermission("users:read");
   const { data, isLoading } = useQuery<UsersResponse>({ queryKey: ["/api/auth/users"], enabled: canRead, refetchInterval: 15_000 });
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [selectedWaitlistId, setSelectedWaitlistId] = useState<string | null>(null);
   const [deleteUser, setDeleteUser] = useState<AdminUserRow | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Set<string>>>({});
   usePageHeader({ title: "Users" });
@@ -201,6 +240,7 @@ export default function UsersAdminPage() {
   const activeUsers = useMemo(() => users.filter((user) => user.presence.length > 0), [users]);
   const inactiveUsers = useMemo(() => users.filter((user) => user.presence.length === 0), [users]);
   const selectedUser = users.find((user) => user.id === selectedUserId) ?? null;
+  const selectedWaitlist = waitlist.find((application) => application.id === selectedWaitlistId) ?? null;
   const draftFor = useCallback((user: AdminUserRow) => drafts[user.id] ?? new Set(user.permissionOverrides), [drafts]);
   if (!canRead) return <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">Users administration requires users:read.</div>;
   if (isLoading) return <div className="flex h-full items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
@@ -209,7 +249,7 @@ export default function UsersAdminPage() {
     const selected = selectedUserId === user.id;
     return (
       <div key={user.id} className={cn("group relative flex w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm transition-colors", selected ? "bg-accent" : "hover:bg-accent/70")} data-testid={`user-row-${user.id}`}>
-        <button type="button" onClick={() => setSelectedUserId(user.id)} className="absolute inset-0" aria-label={`View ${user.email}`} />
+        <button type="button" onClick={() => { setSelectedUserId(user.id); setSelectedWaitlistId(null); }} className="absolute inset-0" aria-label={`View ${user.email}`} />
         <User className={cn("pointer-events-none h-3.5 w-3.5 shrink-0", selected ? "text-foreground" : "text-muted-foreground")} />
         <span className={cn("pointer-events-none min-w-0 flex-1 truncate pr-6", selected ? "text-foreground" : "text-muted-foreground")}>{user.email}</span>
         {user.presence.length > 0 ? <div className="pointer-events-none"><UserPresence presence={user.presence} /></div> : null}
@@ -220,14 +260,14 @@ export default function UsersAdminPage() {
 
   return (
     <div className="flex h-full bg-black" data-testid="users-page">
-      <div className={cn("w-full shrink-0 flex-col bg-black @md:flex @md:w-72", selectedUser ? "hidden" : "flex")}>
+      <div className={cn("w-full shrink-0 flex-col bg-black @md:flex @md:w-72", selectedUser || selectedWaitlist ? "hidden" : "flex")}>
         <ScrollArea className="flex-1"><div className="space-y-1 p-2">
-          <UserGroupSection label="Waitlist" count={waitlist.length} defaultOpen={false} storageKey="users:list:waitlist:open">{waitlist.length > 0 ? waitlist.map((application) => <div key={application.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground"><span className="w-7 shrink-0 text-right text-xs tabular-nums">#{application.position}</span><span className="min-w-0 flex-1 truncate">{application.email}</span></div>) : <div className="px-7 py-1.5 text-sm text-muted-foreground">No one is waiting.</div>}</UserGroupSection>
+          <UserGroupSection label="Waitlist" count={waitlist.length} defaultOpen={false} storageKey="users:list:waitlist:open">{waitlist.length > 0 ? waitlist.map((application) => <button type="button" key={application.id} onClick={() => { setSelectedWaitlistId(application.id); setSelectedUserId(null); }} className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm", selectedWaitlistId === application.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70")}><span className="w-7 shrink-0 text-right text-xs tabular-nums">#{application.position}</span><span className="min-w-0 flex-1 truncate">{application.email}</span></button>) : <div className="px-7 py-1.5 text-sm text-muted-foreground">No one is waiting.</div>}</UserGroupSection>
           <UserGroupSection label="Active" count={activeUsers.length} defaultOpen storageKey="users:list:active:open">{activeUsers.length > 0 ? activeUsers.map(renderUserRow) : <div className="px-7 py-1.5 text-sm text-muted-foreground">No active users.</div>}</UserGroupSection>
           <UserGroupSection label="Inactive" count={inactiveUsers.length} defaultOpen={false} storageKey="users:list:inactive:open">{inactiveUsers.map(renderUserRow)}</UserGroupSection>
         </div></ScrollArea>
       </div>
-      <div className={cn("min-w-0 flex-1 flex-col", selectedUser ? "flex" : "hidden @md:flex")}>{selectedUser ? <div className="flex-1 overflow-y-auto scrollbar-thin"><UserDetail user={selectedUser} availablePermissions={availablePermissions} canWrite={canWrite} draft={draftFor(selectedUser)} onDraftChange={(next) => setDrafts((current) => ({ ...current, [selectedUser.id]: next }))} onBack={() => setSelectedUserId(null)} /></div> : <div className="flex h-full items-center justify-center"><p className="text-sm text-muted-foreground">Select a user to view their access.</p></div>}</div>
+      <div className={cn("min-w-0 flex-1 flex-col", selectedUser || selectedWaitlist ? "flex" : "hidden @md:flex")}>{selectedWaitlist ? <div className="flex-1 overflow-y-auto scrollbar-thin"><WaitlistDetail application={selectedWaitlist} canWrite={canWrite} onBack={() => setSelectedWaitlistId(null)} /></div> : selectedUser ? <div className="flex-1 overflow-y-auto scrollbar-thin"><UserDetail user={selectedUser} availablePermissions={availablePermissions} canWrite={canWrite} draft={draftFor(selectedUser)} onDraftChange={(next) => setDrafts((current) => ({ ...current, [selectedUser.id]: next }))} onBack={() => setSelectedUserId(null)} /></div> : <div className="flex h-full items-center justify-center"><p className="text-sm text-muted-foreground">Select a user or waitlist application.</p></div>}</div>
       <DeleteUserDialog user={deleteUser} open={!!deleteUser} onOpenChange={(open) => { if (!open) setDeleteUser(null); }} onDeleted={() => setSelectedUserId(null)} />
     </div>
   );

@@ -46,7 +46,14 @@ interface WaitlistApplicationRow {
   email: string;
   position: number;
   status: string;
+  role: string;
+  needs: string[];
+  readiness: string;
+  source: string | null;
+  attribution: Record<string, unknown>;
+  confirmationEmailStatus: string;
   createdAt: string;
+  updatedAt: string;
 }
 
 async function getAdminUserActivity(): Promise<Map<string, string>> {
@@ -79,19 +86,34 @@ async function getWaitlistApplications(): Promise<WaitlistApplicationRow[]> {
       email: string;
       position: number;
       status: string;
+      role: string;
+      needs: string[];
+      readiness: string;
+      source: string | null;
+      attribution: Record<string, unknown>;
+      confirmation_email_status: string;
       created_at: Date | string;
+      updated_at: Date | string;
     }>(sql`
-      SELECT id, email, position, status, created_at
+      SELECT id, email, position, status, role, needs, readiness, source,
+             attribution, confirmation_email_status, created_at, updated_at
       FROM waitlist_applications
       ORDER BY position ASC
-      LIMIT 500
+      LIMIT 1000
     `);
     return result.rows.map((row) => ({
       id: row.id,
       email: row.email,
       position: row.position,
       status: row.status,
+      role: row.role,
+      needs: row.needs,
+      readiness: row.readiness,
+      source: row.source,
+      attribution: row.attribution,
+      confirmationEmailStatus: row.confirmation_email_status,
       createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
     }));
   } catch (error) {
     if ((error as { code?: string }).code === "42P01") return [];
