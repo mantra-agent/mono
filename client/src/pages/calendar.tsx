@@ -1,5 +1,6 @@
 import { useRoute } from "wouter";
 import { EventDetailView } from "@/components/calendar/event-detail-view";
+import { useEventMetadata } from "@/components/calendar/use-event-metadata";
 import { useState, useMemo } from "react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useTimezone } from "@/hooks/use-timezone";
@@ -203,12 +204,6 @@ interface DayEventBlock {
   event: CalendarEvent;
   rowStart: number;
   rowSpan: number;
-}
-
-interface DayEventMetadataResponse {
-  metadata: { eventType?: string | null } | null;
-  people?: Array<{ id: string; name: string }>;
-  artifacts?: Array<{ id: number; libraryPageId: string; title?: string | null; artifactKind?: string | null; slug?: string | null }>;
 }
 
 function getEventEndHour(event: CalendarEvent, timezone: string): number {
@@ -871,15 +866,7 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
 }) {
   const { event, rowStart, rowSpan } = block;
   const [expanded, setExpanded] = useState(false);
-  const { data } = useQuery<DayEventMetadataResponse>({
-    queryKey: ["/api/calendar/metadata", event.id, event.accountId, event.calendarId],
-    queryFn: async () => {
-      const response = await fetch(`/api/calendar/metadata/${encodeURIComponent(event.id)}?accountId=${encodeURIComponent(event.accountId)}&calendarId=${encodeURIComponent(event.calendarId)}`, { credentials: "include" });
-      if (!response.ok) throw new Error("Failed to load event metadata");
-      return response.json();
-    },
-    retry: false,
-  });
+  const { data } = useEventMetadata(event.id, event.accountId, event.calendarId);
   const isFocusBlock = data?.metadata?.eventType === "focus_block";
   const optional = isOptionalForMe(event);
   const external = hasExternalAttendees(event, accountEmails);
