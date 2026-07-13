@@ -496,41 +496,65 @@ async function collectEmailReviewThreads(): Promise<EmailReviewThread[]> {
       : "TRUE";
 
     const result = await db.execute(sql.raw(`
-      SELECT DISTINCT ON (em.account_id, em.provider, COALESCE(em.provider_thread_id, em.provider_message_id))
-        em.id,
-        COALESCE(em.provider_thread_id, em.provider_message_id) AS provider_thread_id,
-        em.account_id,
-        em.subject,
-        em.from_address,
-        em.snippet,
-        em.date::text,
-        em.triage_tier,
-        em.triage_reason,
-        (SELECT ARRAY_AGG(t.id ORDER BY t.date DESC) FROM email_messages t WHERE t.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id) AND t.account_id = em.account_id AND t.provider = em.provider) AS message_ids,
-        (SELECT COUNT(*) FROM email_messages t WHERE t.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id) AND t.account_id = em.account_id AND t.provider = em.provider) AS message_count,
-        (SELECT COUNT(*) FROM email_messages t WHERE t.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id) AND t.account_id = em.account_id AND t.provider = em.provider AND t.is_read = false) AS unread_count,
-        ee.summary AS enrichment_summary,
-        ee.actions AS enrichment_actions
-      FROM email_messages em
-      LEFT JOIN email_enrichments ee ON ee.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id) AND ee.account_id = em.account_id
-      WHERE ${ownerWhere}
-        AND em.triage_status = 'triaged'
-        AND em.is_done = false
-        AND (em.snoozed_until IS NULL OR em.snoozed_until <= NOW())
-        AND EXISTS (SELECT 1 FROM email_enrichments ee2 WHERE ee2.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id) AND ee2.account_id = em.account_id)
-        AND NOT EXISTS (
-          SELECT 1 FROM email_dismissals ed
-          WHERE ed.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id)
-            AND ed.account_id = em.account_id
-            AND ed.dismissed_at >= COALESCE(
-              (SELECT MAX(em2.date) FROM email_messages em2
-               WHERE em2.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id)
-                 AND em2.account_id = em.account_id
-                 AND em2.direction = 'inbound'),
-              '1970-01-01'::timestamptz
-            )
-        )
-      ORDER BY em.account_id, em.provider, COALESCE(em.provider_thread_id, em.provider_message_id), em.date DESC
+      WITH latest_review_threads AS (
+        SELECT DISTINCT ON (em.account_id, em.provider, COALESCE(em.provider_thread_id, em.provider_message_id))
+          em.id,
+          em.provider,
+          COALESCE(em.provider_thread_id, em.provider_message_id) AS provider_thread_id,
+          em.account_id,
+          em.subject,
+          em.from_address,
+          em.snippet,
+          em.date,
+          em.triage_tier,
+          em.triage_reason,
+          ee.summary AS enrichment_summary,
+          ee.actions AS enrichment_actions
+        FROM email_messages em
+        LEFT JOIN email_enrichments ee ON ee.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id) AND ee.account_id = em.account_id
+        WHERE ${ownerWhere}
+          AND em.triage_status = 'triaged'
+          AND em.is_done = false
+          AND (em.snoozed_until IS NULL OR em.snoozed_until <= NOW())
+          AND EXISTS (SELECT 1 FROM email_enrichments ee2 WHERE ee2.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id) AND ee2.account_id = em.account_id)
+          AND NOT EXISTS (
+            SELECT 1 FROM email_dismissals ed
+            WHERE ed.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id)
+              AND ed.account_id = em.account_id
+              AND ed.dismissed_at >= COALESCE(
+                (SELECT MAX(em2.date) FROM email_messages em2
+                 WHERE em2.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id)
+                   AND em2.account_id = em.account_id
+                   AND em2.direction = 'inbound'),
+                '1970-01-01'::timestamptz
+              )
+          )
+        ORDER BY em.account_id, em.provider, COALESCE(em.provider_thread_id, em.provider_message_id), em.date DESC
+      )
+      SELECT
+        rt.id,
+        rt.provider_thread_id,
+        rt.account_id,
+        rt.subject,
+        rt.from_address,
+        rt.snippet,
+        rt.date::text,
+        rt.triage_tier,
+        rt.triage_reason,
+        (SELECT ARRAY_AGG(t.id ORDER BY t.date DESC) FROM email_messages t WHERE t.provider_thread_id = rt.provider_thread_id AND t.account_id = rt.account_id AND t.provider = rt.provider) AS message_ids,
+        (SELECT COUNT(*) FROM email_messages t WHERE t.provider_thread_id = rt.provider_thread_id AND t.account_id = rt.account_id AND t.provider = rt.provider) AS message_count,
+        (SELECT COUNT(*) FROM email_messages t WHERE t.provider_thread_id = rt.provider_thread_id AND t.account_id = rt.account_id AND t.provider = rt.provider AND t.is_read = false) AS unread_count,
+        rt.enrichment_summary,
+        rt.enrichment_actions
+      FROM latest_review_threads rt
+      ORDER BY
+        CASE rt.triage_tier
+          WHEN 'red' THEN 0
+          WHEN 'yellow' THEN 1
+          WHEN 'green' THEN 2
+          ELSE 3
+        END,
+        rt.date DESC
       LIMIT ${EMAIL_INBOX_LIMIT}
     `));
 
