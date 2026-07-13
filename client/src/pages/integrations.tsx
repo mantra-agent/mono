@@ -1943,17 +1943,23 @@ function TwitterAccountsSection() {
 }
 
 
-function GoogleAccountsSection() {
+function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }) {
   const { toast } = useToast();
   const [addLabel, setAddLabel] = useState("Work");
   const [showAddForm, setShowAddForm] = useState(false);
-  const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
 
-  const { data: gmailStatus } = useQuery<{ oauthConfigured: boolean }>({
-    queryKey: ["/api/gmail/status"],
-  });
-
-  const { data: accountsData, isLoading } = useQuery<{ accounts: Array<{ id: string; email: string; label: string; addedAt: string; scopes?: { hasGmailRead: boolean; hasSend: boolean }; healthy?: boolean; healthError?: string }> }>({
+  const { data: accountsData, isLoading } = useQuery<{
+    accounts: Array<{
+      id: string;
+      email: string;
+      label: string;
+      addedAt: string;
+      scopes?: { hasGmailRead: boolean; hasSend: boolean; missingScopes?: string[] };
+      missingScopes?: string[];
+      healthy?: boolean;
+      healthError?: string;
+    }>;
+  }>({
     queryKey: ["/api/gmail/accounts"],
   });
 
@@ -1996,218 +2002,162 @@ function GoogleAccountsSection() {
   });
 
   const accounts = accountsData?.accounts || [];
-  const permAccounts = (permsData?.accounts || []).filter((a) => a.provider === "google");
-
-  const toggleExpanded = (accountId: string) => {
-    setExpandedAccounts((prev) => {
-      const next = new Set(prev);
-      if (next.has(accountId)) next.delete(accountId);
-      else next.add(accountId);
-      return next;
-    });
-  };
+  const permAccounts = (permsData?.accounts || []).filter((account) => account.provider === "google");
+  const needsAttention = !oauthConfigured || accounts.some((account) => {
+    const missingScopes = account.missingScopes || account.scopes?.missingScopes || [];
+    return account.healthy === false || missingScopes.length > 0 || Boolean(account.scopes && !account.scopes.hasGmailRead);
+  });
 
   const handlePermToggle = (accountId: string, key: keyof GooglePermissions, currentValue: boolean) => {
-    const permLabel = [...GMAIL_PERMISSIONS, ...CALENDAR_PERMISSIONS].find((p) => p.key === key)?.label || key;
-    const accountEmail = permAccounts.find((a) => a.accountId === accountId)?.email || accountId;
+    const permLabel = [...GMAIL_PERMISSIONS, ...CALENDAR_PERMISSIONS].find((permission) => permission.key === key)?.label || key;
+    const accountEmail = permAccounts.find((account) => account.accountId === accountId)?.email || accountId;
     const label = `${!currentValue ? "Enabled" : "Disabled"}: ${permLabel} for ${accountEmail}`;
     permMutation.mutate({ accountId, perms: { [key]: !currentValue }, label });
   };
 
-  if (!gmailStatus?.oauthConfigured) {
-    return (
-      <Card data-testid="card-google-accounts">
-        <CardHeader>
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <Mail className="h-4 w-4" />
-            Google Accounts
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground" data-testid="text-google-oauth-required">
-            Google integration requires OAuth credentials. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your Secrets to enable account connections.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
+  const startOAuth = async (label: string, accountId?: string) => {
+    try {
+      const res = await apiRequest("POST", "/api/gmail/accounts/add", { label });
+      const data = await res.json();
+      if (data.url) {
+        window.open(data.url, "_blank", "width=500,height=700");
+        setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/setup/secrets-status"] });
+          if (!accountId) setShowAddForm(false);
+        }, 5000);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      log.error(accountId ? "Google reauth failed:" : "Google OAuth failed:", error);
+      toast({
+        title: accountId ? "Failed to start re-authorization" : "Failed to start OAuth",
+        description: message,
+        variant: "destructive",
+      });
+    }
+  };
 
   return (
-    <Card data-testid="card-google-accounts">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-        <CardTitle className="text-base font-semibold flex items-center gap-2">
-          <Mail className="h-4 w-4" />
-          Google Accounts
-        </CardTitle>
-        <Badge variant="secondary" className="font-mono px-1 py-0" data-testid="badge-google-account-count">
-          {accounts.length} connected
-        </Badge>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {isLoading ? (
-          <div className="space-y-2">
-            <Skeleton className="h-12" />
-            <Skeleton className="h-12" />
-          </div>
-        ) : accounts.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-4 text-center" data-testid="text-no-google-accounts">
-            No Google accounts connected yet. Add one to enable Gmail import and email features.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {accounts.map((account) => {
-              const missingScopes: string[] = (account as any).missingScopes || ((account.scopes as any)?.missingScopes) || [];
-              const needsReauth = missingScopes.length > 0 || (account.scopes && !account.scopes.hasGmailRead);
-              const tokenExpired = account.healthy === false;
-              const isHealthy = account.healthy === true && !needsReauth;
-              const showReauth = needsReauth || tokenExpired;
-              const permAccount = permAccounts.find((p) => p.email === account.email);
-              const isExpanded = expandedAccounts.has(account.id);
-              return (
-                <div
-                  key={account.id}
-                  className={`rounded-md border overflow-hidden ${
-                    showReauth ? "border-destructive/40 bg-destructive/5" : isHealthy ? "border-primary/30 bg-primary/5" : ""
-                  }`}
-                  data-testid={`google-account-${account.id}`}
-                >
-                <div className="flex items-center gap-3 p-3">
-                  {showReauth ? (
-                    <XCircle className="h-4 w-4 shrink-0 text-destructive" />
-                  ) : isHealthy ? (
-                    <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />
-                  ) : (
-                    <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium truncate" data-testid={`text-account-email-${account.id}`}>
-                        {account.email}
-                      </span>
-                      <Badge variant="secondary" className="bg-cat-channel/15 text-cat-channel-foreground border border-cat-channel/30 rounded-sm text-xs font-medium px-2 py-0.5" data-testid={`badge-account-label-${account.id}`}>
-                        {account.label}
-                      </Badge>
-                      {tokenExpired && (
-                        <Badge variant="destructive" data-testid={`badge-token-expired-${account.id}`}>
-                          Token Expired
-                        </Badge>
-                      )}
-                      {needsReauth && !tokenExpired && (
-                        <Badge variant="destructive" data-testid={`badge-needs-reauth-${account.id}`}>
-                          Missing permissions
-                        </Badge>
-                      )}
-                      {missingScopes.length > 0 && (
-                        <span className="text-xs text-destructive" data-testid={`text-missing-scopes-${account.id}`}>
-                          Missing: {missingScopes.map(s => s.split('/').pop() || s).join(', ')}
-                        </span>
-                      )}
-                      {isHealthy && (
-                        <Badge variant="default" data-testid={`badge-verified-${account.id}`}>
-                          Verified
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-0.5" data-testid={`text-account-date-${account.id}`}>
-                      Added {new Date(account.addedAt).toLocaleDateString()}
-                      {account.healthError && <span className="text-destructive ml-2">— {account.healthError}</span>}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant={showReauth ? "outline" : "ghost"}
-                      size="sm"
-                      onClick={async () => {
-                        try {
-                          const res = await apiRequest("POST", "/api/gmail/accounts/add", { label: account.label });
-                          const data = await res.json();
-                          if (data.url) {
-                            window.open(data.url, "_blank", "width=500,height=700");
-                            setTimeout(() => {
-                              queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] });
-                              queryClient.invalidateQueries({ queryKey: ["/api/setup/secrets-status"] });
-                            }, 5000);
-                          }
-                        } catch (err: any) {
-                          log.error("Google reauth failed:", err);
-                          toast({ title: "Failed to start re-authorization", description: err.message, variant: "destructive" });
-                        }
-                      }}
-                      data-testid={`button-reauth-account-${account.id}`}
-                    >
-                      <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-                      Reconnect
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeMutation.mutate(account.id)}
-                      disabled={removeMutation.isPending}
-                      data-testid={`button-remove-account-${account.id}`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => toggleExpanded(account.id)}
-                      data-testid={`button-expand-perms-${account.id}`}
-                    >
-                      <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", isExpanded && "rotate-90")} />
-                    </Button>
-                  </div>
-                </div>
-                {isExpanded && permAccount && (
-                  <div className="px-3 pb-3 space-y-4 border-t pt-3">
-                    <div className="space-y-2">
-                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Gmail</h4>
-                      {GMAIL_PERMISSIONS.map((perm) => (
-                        <div key={perm.key} className="flex items-center justify-between gap-3 py-1.5 min-h-[44px]" data-testid={`perm-row-${permAccount.accountId}-${perm.key}`}>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-medium">{perm.label}</div>
-                            <div className="text-xs text-muted-foreground">{perm.description}</div>
-                          </div>
-                          <Switch
-                            checked={permAccount.permissions[perm.key]}
-                            onCheckedChange={() => handlePermToggle(permAccount.accountId, perm.key, permAccount.permissions[perm.key])}
-                            disabled={permMutation.isPending}
-                            data-testid={`switch-perm-${permAccount.accountId}-${perm.key}`}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                    <div className="border-t" />
-                    <div className="space-y-2">
-                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Calendar</h4>
-                      {CALENDAR_PERMISSIONS.map((perm) => (
-                        <div key={perm.key} className="flex items-center justify-between gap-3 py-1.5 min-h-[44px]" data-testid={`perm-row-${permAccount.accountId}-${perm.key}`}>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-medium">{perm.label}</div>
-                            <div className="text-xs text-muted-foreground">{perm.description}</div>
-                          </div>
-                          <Switch
-                            checked={permAccount.permissions[perm.key]}
-                            onCheckedChange={() => handlePermToggle(permAccount.accountId, perm.key, permAccount.permissions[perm.key])}
-                            disabled={permMutation.isPending}
-                            data-testid={`switch-perm-${permAccount.accountId}-${perm.key}`}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+    <IntegrationTreeSection label="Accounts" initialOpen={needsAttention} testIdPrefix="google">
+      {!oauthConfigured ? (
+        <p className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-google-oauth-required">
+          Add the Google client ID and client secret under Credentials before connecting an account.
+        </p>
+      ) : isLoading ? (
+        <div className="space-y-1 px-2 py-1.5">
+          <Skeleton className="h-8" />
+          <Skeleton className="h-8" />
+        </div>
+      ) : accounts.length === 0 ? (
+        <p className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-no-google-accounts">
+          No Google accounts connected.
+        </p>
+      ) : accounts.map((account) => {
+        const missingScopes = account.missingScopes || account.scopes?.missingScopes || [];
+        const needsReauth = missingScopes.length > 0 || Boolean(account.scopes && !account.scopes.hasGmailRead);
+        const tokenExpired = account.healthy === false;
+        const isHealthy = account.healthy === true && !needsReauth;
+        const showReauth = needsReauth || tokenExpired;
+        const permAccount = permAccounts.find((permissionAccount) => permissionAccount.email === account.email);
+        const status = tokenExpired ? "Token expired" : needsReauth ? "Missing permissions" : isHealthy ? "Verified" : "Connected";
 
-        {showAddForm && (
-          <div className="border rounded-md p-3 space-y-2">
-            <label className="text-xs font-medium">Account label</label>
-            <div className="flex gap-2">
+        return (
+          <ProfileTreeRow
+            key={account.id}
+            label={account.email}
+            icon={showReauth
+              ? <XCircle className="h-3.5 w-3.5 text-destructive" />
+              : isHealthy
+                ? <CheckCircle2 className="h-3.5 w-3.5 text-active" />
+                : <Mail className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            testId={`google-account-${account.id}`}
+            defaultOpen={showReauth}
+            expandedContentClassName="min-w-0 space-y-4"
+            expandedContent={
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => startOAuth(account.label, account.id)}
+                    data-testid={`button-reauth-account-${account.id}`}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Reconnect
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => removeMutation.mutate(account.id)}
+                    disabled={removeMutation.isPending}
+                    data-testid={`button-remove-account-${account.id}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Remove
+                  </Button>
+                </div>
+                <p className="text-muted-foreground" data-testid={`text-account-date-${account.id}`}>
+                  {account.label} · Added {new Date(account.addedAt).toLocaleDateString()}
+                  {account.healthError ? <span className="text-destructive"> · {account.healthError}</span> : null}
+                </p>
+                {missingScopes.length > 0 ? (
+                  <p className="text-destructive" data-testid={`text-missing-scopes-${account.id}`}>
+                    Missing: {missingScopes.map((scope) => scope.split("/").pop() || scope).join(", ")}
+                  </p>
+                ) : null}
+                {permAccount ? (
+                  <div className="space-y-4">
+                    {[
+                      { label: "Gmail", permissions: GMAIL_PERMISSIONS },
+                      { label: "Calendar", permissions: CALENDAR_PERMISSIONS },
+                    ].map((group) => (
+                      <div key={group.label} className="space-y-1">
+                        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{group.label}</p>
+                        {group.permissions.map((permission) => (
+                          <div
+                            key={permission.key}
+                            className="flex min-h-11 items-center justify-between gap-3"
+                            data-testid={`perm-row-${permAccount.accountId}-${permission.key}`}
+                          >
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium">{permission.label}</p>
+                              <p className="text-xs text-muted-foreground">{permission.description}</p>
+                            </div>
+                            <Switch
+                              checked={permAccount.permissions[permission.key]}
+                              onCheckedChange={() => handlePermToggle(
+                                permAccount.accountId,
+                                permission.key,
+                                permAccount.permissions[permission.key],
+                              )}
+                              disabled={permMutation.isPending}
+                              data-testid={`switch-perm-${permAccount.accountId}-${permission.key}`}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            }
+          >
+            <span className={cn(showReauth ? "text-destructive" : isHealthy ? "text-active" : "text-muted-foreground")}>
+              {status}
+            </span>
+          </ProfileTreeRow>
+        );
+      })}
+
+      {oauthConfigured ? (
+        showAddForm ? (
+          <ProfileTreeRow label="New account" icon={<Plus className="h-3.5 w-3.5" />} hasValue showEmpty testId="row-new-google-account">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <Select value={addLabel} onValueChange={setAddLabel}>
-                <SelectTrigger data-testid="select-google-account-label" className="flex-1">
+                <SelectTrigger data-testid="select-google-account-label" className="w-32">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -2215,41 +2165,51 @@ function GoogleAccountsSection() {
                   <SelectItem value="Personal">Personal</SelectItem>
                 </SelectContent>
               </Select>
-              <Button
-                onClick={async () => {
-                  try {
-                    const res = await apiRequest("POST", "/api/gmail/accounts/add", { label: addLabel });
-                    const data = await res.json();
-                    if (data.url) {
-                      window.open(data.url, "_blank", "width=500,height=700");
-                      setTimeout(() => {
-                        queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] });
-                        setShowAddForm(false);
-                      }, 5000);
-                    }
-                  } catch (err: any) {
-                    log.error("Google OAuth failed:", err);
-                    toast({ title: "Failed to start OAuth", description: err.message, variant: "destructive" });
-                  }
-                }}
-                data-testid="button-connect-google-account"
-              >
-                Connect
-              </Button>
+              <Button onClick={() => startOAuth(addLabel)} data-testid="button-connect-google-account">Connect</Button>
+              <Button variant="ghost" size="sm" onClick={() => setShowAddForm(false)}>Cancel</Button>
             </div>
+          </ProfileTreeRow>
+        ) : (
+          <div className="px-2 py-1">
+            <Button variant="ghost" size="sm" onClick={() => setShowAddForm(true)} data-testid="button-add-google-account">
+              <Plus className="h-3.5 w-3.5" />
+              Google account
+            </Button>
           </div>
-        )}
+        )
+      ) : null}
+    </IntegrationTreeSection>
+  );
+}
 
-        <Button
-          variant="outline"
-          onClick={() => setShowAddForm(!showAddForm)}
-          data-testid="button-add-google-account"
-        >
-          <Plus className="h-4 w-4 mr-1.5" />
-          Add Google Account
-        </Button>
-      </CardContent>
-    </Card>
+function GoogleDetail() {
+  const { data: gmailStatus, isLoading } = useQuery<{ oauthConfigured: boolean }>({
+    queryKey: ["/api/gmail/status"],
+  });
+  const oauthConfigured = Boolean(gmailStatus?.oauthConfigured);
+
+  if (isLoading) {
+    return (
+      <div className="space-y-2 px-2 py-1.5">
+        <Skeleton className="h-8" />
+        <Skeleton className="h-8" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-w-0 space-y-2">
+      <IntegrationTreeSection
+        label="Credentials"
+        initialOpen={!isLoading && !oauthConfigured}
+        testIdPrefix="google"
+      >
+        <div className="min-w-0 px-2 py-1.5">
+          <SecretsForSection section="google" />
+        </div>
+      </IntegrationTreeSection>
+      <GoogleAccountsSection oauthConfigured={oauthConfigured} />
+    </div>
   );
 }
 
@@ -2710,10 +2670,12 @@ function IntegrationTreeSection({
   label,
   children,
   initialOpen = false,
+  testIdPrefix = "recall",
 }: {
   label: string;
   children: React.ReactNode;
   initialOpen?: boolean;
+  testIdPrefix?: string;
 }) {
   const [open, setOpen] = useState(initialOpen);
 
@@ -2721,7 +2683,7 @@ function IntegrationTreeSection({
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger
         className="flex min-h-11 w-full items-center gap-1.5 rounded-md px-2 py-2 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate"
-        data-testid={`button-recall-section-${label.toLowerCase().replaceAll(" ", "-")}`}
+        data-testid={`button-${testIdPrefix}-section-${label.toLowerCase().replaceAll(" ", "-")}`}
       >
         <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
         {label}
@@ -5329,19 +5291,7 @@ function IntegrationDetail({ provider }: { provider: string }) {
         </div>
       )}
 
-      {provider === "google" && (
-        <div className="space-y-4">
-          <Card data-testid="card-secret-google-oauth">
-            <CardHeader>
-              <CardTitle className="text-base font-semibold">Google OAuth Client</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <SecretsForSection section="google" />
-            </CardContent>
-          </Card>
-          <GoogleAccountsSection />
-        </div>
-      )}
+      {provider === "google" && <GoogleDetail />}
 
       {provider === "elevenlabs" && (
         <div className="space-y-4">
