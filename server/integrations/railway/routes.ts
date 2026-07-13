@@ -48,6 +48,8 @@ interface PublishCommitHead {
  */
 interface PublishSummaryResponse {
   ready: boolean;
+  sourcePlatformEnvironmentId: number;
+  targetPlatformEnvironmentId: number;
   reason: string | null;
   repo: string | null;
   devBranch: string | null;
@@ -92,6 +94,11 @@ export function registerRailwayRoutes(app: Express) {
     limit: z.coerce.number().int().min(1).max(500).optional(),
   });
   const deploymentBodySchema = z.object({ deploymentId: z.string().min(1).optional() });
+  const publishContextSchema = z.object({
+    sourcePlatformEnvironmentId: z.coerce.number().int().positive(),
+    targetPlatformEnvironmentId: z.coerce.number().int().positive(),
+  });
+  const parsePublishContext = (input: unknown) => publishContextSchema.safeParse(input);
 
   const parseEnvironment = async (req: Request, res: Response) => {
     const parsed = environmentParamsSchema.safeParse(req.params);
@@ -316,19 +323,23 @@ export function registerRailwayRoutes(app: Express) {
   // ── Publish (dev → live) ────────────────────────────────────────────────
   // Returns the static publish-tab summary: prereqs, dev/prod commits, the
   // commits that *would* be promoted, and the current/last in-flight run.
-  app.get("/api/railway/publish/summary", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  app.get("/api/railway/publish/summary", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const prereqs = await checkPrereqs();
+      const context = parsePublishContext(req.query);
+      if (!context.success) return res.status(400).json({ error: "sourcePlatformEnvironmentId and targetPlatformEnvironmentId are required." });
+      const prereqs = await checkPrereqs(context.data.sourcePlatformEnvironmentId, context.data.targetPlatformEnvironmentId);
       const run = await getDisplayRun();
       const versioning = await getReleaseVersionSummary();
 
       const summary: PublishSummaryResponse = {
         ready: prereqs.ready,
+        sourcePlatformEnvironmentId: context.data.sourcePlatformEnvironmentId,
+        targetPlatformEnvironmentId: context.data.targetPlatformEnvironmentId,
         reason: prereqs.reason,
         repo: prereqs.repo ? `${prereqs.repo.owner}/${prereqs.repo.repo}` : null,
         devBranch: prereqs.devBranch,
-        prodBranch: prereqs.prodCfg.liveBranch,
-        prodUrl: prereqs.prodCfg.prodUrl ?? null,
+        prodBranch: prereqs.prodBranch,
+        prodUrl: prereqs.prodUrl,
         devCommit: null,
         prodCommit: null,
         aheadBy: 0,
@@ -340,13 +351,13 @@ export function registerRailwayRoutes(app: Express) {
 
       if (prereqs.ready && prereqs.repo && prereqs.devBranch) {
         try {
-          const cmp = await compareRefs(prereqs.repo, prereqs.prodCfg.liveBranch, prereqs.devBranch);
+          const cmp = await compareRefs(prereqs.repo, prereqs.prodBranch, prereqs.devBranch);
           summary.aheadBy = cmp.aheadBy;
           summary.commits = cmp.commits.map(toPublishCommit);
           // Branch heads are best-effort — failure here is fine.
           const [devHead, prodHead] = await Promise.all([
             getBranchHead(prereqs.repo, prereqs.devBranch).catch(() => null),
-            getBranchHead(prereqs.repo, prereqs.prodCfg.liveBranch).catch(() => null),
+            getBranchHead(prereqs.repo, prereqs.prodBranch).catch(() => null),
           ]);
           if (devHead) summary.devCommit = { sha: devHead.sha, shortSha: devHead.sha.slice(0, 7), message: devHead.message };
           if (prodHead) summary.prodCommit = { sha: prodHead.sha, shortSha: prodHead.sha.slice(0, 7), message: prodHead.message };
@@ -364,10 +375,10 @@ export function registerRailwayRoutes(app: Express) {
 
   app.post("/api/railway/publish/start", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const parsed = z.object({ increment: z.enum(["minor", "major", "flagship"]) }).safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: "Choose a minor, major, or flagship version increment." });
+      const parsed = publishContextSchema.extend({ increment: z.enum(["minor", "major", "flagship"]) }).safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Choose a version increment and provide source/target Platform Environment IDs." });
       const actor = await resolvePublishActor(req);
-      const run = await startRun(actor, parsed.data.increment as VersionIncrement);
+      const run = await startRun(actor, parsed.data.increment as VersionIncrement, parsed.data.sourcePlatformEnvironmentId, parsed.data.targetPlatformEnvironmentId);
       res.json({ ok: true, run: toPublicRun(run) });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -404,9 +415,11 @@ export function registerRailwayRoutes(app: Express) {
   // visits GitHub. Surfaced from the Publish tab's failure card; gated
   // client-side behind a confirm dialog. Idempotent — calling it after the
   // PR is already merged returns `merged: true` without erroring.
-  app.post("/api/railway/publish/reconcile", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  app.post("/api/railway/publish/reconcile", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const result = await reconcileLiveIntoDev();
+      const context = parsePublishContext(req.body);
+      if (!context.success) return res.status(400).json({ error: "sourcePlatformEnvironmentId and targetPlatformEnvironmentId are required." });
+      const result = await reconcileLiveIntoDev(context.data.sourcePlatformEnvironmentId, context.data.targetPlatformEnvironmentId);
       res.json({ ok: true, ...result });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -422,8 +435,10 @@ export function registerRailwayRoutes(app: Express) {
 
   app.post("/api/railway/publish/retry", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
+      const context = parsePublishContext(req.body);
+      if (!context.success) return res.status(400).json({ error: "sourcePlatformEnvironmentId and targetPlatformEnvironmentId are required." });
       const actor = await resolvePublishActor(req);
-      const run = await retryRun(actor);
+      const run = await retryRun(actor, context.data.sourcePlatformEnvironmentId, context.data.targetPlatformEnvironmentId);
       res.json({ ok: true, run: toPublicRun(run) });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

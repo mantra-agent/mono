@@ -192,6 +192,8 @@ interface PublishRun {
   prNumber: number | null;
   deploymentId: string | null;
   deploymentUrl: string | null;
+  sourcePlatformEnvironmentId: number;
+  targetPlatformEnvironmentId: number;
   newProdCommitSha: string | null;
   release: {
     increment: VersionIncrement;
@@ -206,6 +208,8 @@ interface PublishRun {
 
 export interface PublishSummary {
   ready: boolean;
+  sourcePlatformEnvironmentId: number;
+  targetPlatformEnvironmentId: number;
   reason: string | null;
   repo: string | null;
   devBranch: string | null;
@@ -230,9 +234,10 @@ export interface PublishSummary {
 
 // ─── Hooks ─────────────────────────────────────────────────────────────────────
 
-export function usePublishSummary() {
+export function usePublishSummary(sourcePlatformEnvironmentId: number, targetPlatformEnvironmentId: number) {
+  const path = `/api/railway/publish/summary?sourcePlatformEnvironmentId=${sourcePlatformEnvironmentId}&targetPlatformEnvironmentId=${targetPlatformEnvironmentId}`;
   return useQuery<PublishSummary>({
-    queryKey: ["/api/railway/publish/summary"],
+    queryKey: [path],
     refetchInterval: (query) => {
       const data = query.state.data as PublishSummary | undefined;
       return data?.run?.status === "running" ? 2000 : 30000;
@@ -968,9 +973,10 @@ function RunHeader({
 
 // ─── Main tab ──────────────────────────────────────────────────────────────────
 
-export function DevPublishTab({ platformEnvironmentId }: { platformEnvironmentId: number }) {
-  const { data, isLoading, error, refetch, isFetching } = usePublishSummary();
-  const { data: prodStatus } = useProdStatus(platformEnvironmentId);
+export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvironmentId }: { sourcePlatformEnvironmentId: number; targetPlatformEnvironmentId: number }) {
+  const summaryPath = `/api/railway/publish/summary?sourcePlatformEnvironmentId=${sourcePlatformEnvironmentId}&targetPlatformEnvironmentId=${targetPlatformEnvironmentId}`;
+  const { data, isLoading, error, refetch, isFetching } = usePublishSummary(sourcePlatformEnvironmentId, targetPlatformEnvironmentId);
+  const { data: prodStatus } = useProdStatus(targetPlatformEnvironmentId);
   const { toast } = useToast();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [versionIncrement, setVersionIncrement] = useState<VersionIncrement>("minor");
@@ -985,12 +991,12 @@ export function DevPublishTab({ platformEnvironmentId }: { platformEnvironmentId
 
   const startMut = useMutation<unknown, Error, VersionIncrement>({
     mutationFn: async (increment) => {
-      const res = await apiRequest("POST", "/api/railway/publish/start", { increment });
+      const res = await apiRequest("POST", "/api/railway/publish/start", { increment, sourcePlatformEnvironmentId, targetPlatformEnvironmentId });
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({
-        queryKey: ["/api/railway/publish/summary"],
+        queryKey: [summaryPath],
       });
       toast({ title: "Publish started", description: "Promoting dev → live." });
     },
@@ -1010,7 +1016,7 @@ export function DevPublishTab({ platformEnvironmentId }: { platformEnvironmentId
     },
     onSuccess: () => {
       queryClient.invalidateQueries({
-        queryKey: ["/api/railway/publish/summary"],
+        queryKey: [summaryPath],
       });
       toast({ title: "Publish cancelled" });
     },
@@ -1038,13 +1044,13 @@ export function DevPublishTab({ platformEnvironmentId }: { platformEnvironmentId
       const res = await apiRequest(
         "POST",
         "/api/railway/publish/reconcile",
-        {},
+        { sourcePlatformEnvironmentId, targetPlatformEnvironmentId },
       );
       return res.json();
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({
-        queryKey: ["/api/railway/publish/summary"],
+        queryKey: [summaryPath],
       });
       const title = result.merged
         ? `Reconciled live → dev (PR #${result.number} merged)`
@@ -1066,12 +1072,12 @@ export function DevPublishTab({ platformEnvironmentId }: { platformEnvironmentId
 
   const retryMut = useMutation<unknown, Error, void>({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/railway/publish/retry", {});
+      const res = await apiRequest("POST", "/api/railway/publish/retry", { sourcePlatformEnvironmentId, targetPlatformEnvironmentId });
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({
-        queryKey: ["/api/railway/publish/summary"],
+        queryKey: [summaryPath],
       });
       toast({ title: "Retrying from failed stage" });
     },
@@ -1086,13 +1092,13 @@ export function DevPublishTab({ platformEnvironmentId }: { platformEnvironmentId
 
   const redeployMut = useMutation<unknown, Error, void>({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/railway/environments/${platformEnvironmentId}/redeploy`, {});
+      const res = await apiRequest("POST", `/api/railway/environments/${targetPlatformEnvironmentId}/redeploy`, {});
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/railway/environments", platformEnvironmentId, "status"] });
       queryClient.invalidateQueries({
-        queryKey: ["/api/railway/publish/summary"],
+        queryKey: [summaryPath],
       });
       toast({
         title: "Production redeploy triggered",

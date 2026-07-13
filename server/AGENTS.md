@@ -494,6 +494,10 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 - Finance user data must fail closed: if the finance ownership schema cannot be ensured, return an error rather than falling back to unscoped reads.
 - New finance tables that contain balances, transactions, assets, liabilities, income, or goals must be added to the finance sensitive table registry and queried through `visibleFinance` / `writableFinance` or the current-principal helper.
 
+## Platform environment publishing
+
+Production publishing is addressed as an explicit `sourcePlatformEnvironmentId -> targetPlatformEnvironmentId` promotion. `server/integrations/railway/publish.ts` resolves source and target GitHub bindings, Railway hosting bindings/connectors, and enabled lifecycle configuration before any branch or deployment mutation. The target lifecycle must be `manual_promote`, bind the exact source and target branches, use `platform_binding` auth, and require human approval. Publish runs persist both environment IDs so retries cannot silently switch targets. Railway API calls receive the target connector credential explicitly. The live branch remains human-promoted, and Railway deployment rollback remains the provider rollback path.
+
 ## Cloudflare Pages provider boundary
 
 Cloudflare Pages project truth and deployment commands live in `server/platforms/cloudflare-pages-service.ts`. Callers supply a decrypted credential obtained through the scoped provider-connection store. The boundary uses bounded requests, returns provider project Git/build truth, and represents deployment commands with the single `outcome` discriminant. Never expose or log provider credentials.
