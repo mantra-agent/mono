@@ -3,11 +3,13 @@ import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { useReferenceLabel } from "@/hooks/use-reference-label";
 import { useTaskModal } from "@/contexts/task-modal-context";
+import { useSidebar } from "@/components/ui/sidebar";
 import type { ClientResolvedReference } from "./reference-registry";
 
 export function ReferenceChip({ resolved, className }: { resolved: ClientResolvedReference; className?: string }) {
   const [, navigate] = useLocation();
   const { openTaskModal } = useTaskModal();
+  const { closeSidebar } = useSidebar();
   const isDegraded = resolved.status !== "resolved";
   const label = useReferenceLabel(resolved.ref.type, resolved.ref.id, resolved.label);
 
@@ -16,6 +18,8 @@ export function ReferenceChip({ resolved, className }: { resolved: ClientResolve
 
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLAnchorElement>) => {
+      closeSidebar();
+
       // Task references open in the modal instead of navigating
       if (resolved.ref.type === "task") {
         e.preventDefault();
@@ -28,7 +32,7 @@ export function ReferenceChip({ resolved, className }: { resolved: ClientResolve
         navigate(resolved.href);
       }
     },
-    [isExternal, resolved.href, navigate, resolved.ref.type, resolved.ref.id, openTaskModal],
+    [closeSidebar, isExternal, resolved.href, navigate, resolved.ref.type, resolved.ref.id, openTaskModal],
   );
 
   const Icon = resolved.Icon;
