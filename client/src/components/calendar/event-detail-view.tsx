@@ -47,6 +47,12 @@ import { useToast } from "@/hooks/use-toast";
 import { useTimezone } from "@/hooks/use-timezone";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import {
+  eventMetadataQueryKey,
+  useEventMetadata,
+  type LinkedPersonRef,
+  type LinkedTaskRef,
+} from "@/components/calendar/use-event-metadata";
 
 // --- Shared types (duplicated from calendar.tsx for now, will extract later) ---
 
@@ -115,16 +121,8 @@ interface CalendarMetadata {
   capacityType: CapacityTypeValue | null;
   notes: string | null;
   agenda: string | null;
-  linkedTasks: Array<{
-    id: number;
-    taskId: number | null;
-    priorityTitle: string | null;
-    taskTitle?: string;
-    taskPriority?: string;
-    estimateLow?: number | null;
-    estimateHigh?: number | null;
-  }>;
-  linkedPeople: Array<{ id: string; name: string }>;
+  linkedTasks: LinkedTaskRef[];
+  linkedPeople: LinkedPersonRef[];
 }
 
 interface ActiveTask {
@@ -229,31 +227,17 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   });
 
   // --- Metadata (edit mode only) ---
-  const metadataQueryKey = ["/api/calendar/metadata", eventId, accountId, calendarId];
-  const { data: metadata, isLoading: metaLoading } = useQuery<CalendarMetadata | null>({
-    queryKey: metadataQueryKey,
-    queryFn: async () => {
-      try {
-        const res = await fetch(
-          `/api/calendar/metadata/${encodeURIComponent(eventId)}?accountId=${encodeURIComponent(accountId || "")}&calendarId=${encodeURIComponent(calendarId || "")}`,
-          { credentials: "include" },
-        );
-        if (res.status === 404) return null;
-        if (!res.ok) throw new Error("Failed to fetch metadata");
-        const data = await res.json();
-        if (!data.metadata) return null;
-        return {
-          ...data.metadata,
-          linkedTasks: data.tasks ?? [],
-          linkedPeople: data.people ?? [],
-        } as CalendarMetadata;
-      } catch {
-        return null;
+  const metadataQueryKey = eventMetadataQueryKey(eventId, accountId, calendarId);
+  const { data: metadataData, isLoading: metaLoading } = useEventMetadata(eventId, accountId, calendarId, !isCreate);
+  const metadata: CalendarMetadata | null = metadataData?.metadata
+    ? {
+        ...(metadataData.metadata as Omit<CalendarMetadata, "linkedTasks" | "linkedPeople">),
+        eventType: isEventTypeValue(metadataData.metadata.eventType) ? metadataData.metadata.eventType : null,
+        capacityType: (metadataData.metadata.capacityType as CapacityTypeValue | null) ?? null,
+        linkedTasks: metadataData.tasks,
+        linkedPeople: metadataData.people,
       }
-    },
-    enabled: !isCreate,
-    retry: false,
-  });
+    : null;
 
   // --- Email map for people linking ---
   const { data: emailMapData } = useQuery<{ emailMap: Record<string, { id: string; name: string }> }>({
