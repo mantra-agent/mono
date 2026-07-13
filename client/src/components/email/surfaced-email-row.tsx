@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ReminderPopover } from "@/components/library-reminder";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { SimpleCheckCircle } from "@/components/home/home-check-circle";
 import { apiRequest } from "@/lib/queryClient";
 import { useFocusSession } from "@/hooks/use-focus-session";
@@ -54,6 +55,7 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
   const [open, setOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const sender = payloadString(item, "sender") ?? "Unknown";
+  const senderReference = item.references?.find(ref => ref.type === "person") ?? null;
   const reason = payloadString(item, "reason");
   const snippet = payloadString(item, "snippet");
   const triageTier = payloadString(item, "triageTier");
@@ -165,9 +167,15 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
           <div className="relative min-w-0 flex-1 pl-2">
             <span className="inline-flex max-w-full items-center gap-1 text-sm">
               <Mail className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              <span className="shrink-0 text-muted-foreground">{sender}</span>
+              <span className="shrink-0 text-muted-foreground">Reply from</span>
+              {senderReference ? (
+                <span onClick={(e) => e.stopPropagation()}>
+                  <ReferenceRenderer refValue={senderReference} surface="simple-row" className="mx-0" />
+                </span>
+              ) : (
+                <span className="min-w-0 truncate font-medium">{sender}</span>
+              )}
               {tierIcon && <span className="shrink-0 text-xs">{tierIcon}</span>}
-              <span className="min-w-0 truncate font-medium">{item.title}</span>
             </span>
           </div>
           <CollapsibleTrigger type="button" className="ml-1 shrink-0 rounded p-0.5 hover:bg-accent/60" aria-label={`${open ? "Collapse" : "Expand"} ${item.title}`} onClick={(event) => event.stopPropagation()}>

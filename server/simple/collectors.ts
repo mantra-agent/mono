@@ -655,10 +655,19 @@ function emailSenderName(fromAddress: string | null): string {
   return fromAddress.split("@")[0];
 }
 
-function itemFromEmailReview(thread: EmailReviewThread, index: number, options?: { done?: boolean }): SimpleFeedItem {
+function emailSenderAddress(fromAddress: string | null): string | null {
+  if (!fromAddress) return null;
+  const match = fromAddress.match(/<([^>]+)>/);
+  const address = (match ? match[1] : fromAddress).trim().toLowerCase();
+  return address.includes("@") ? address : null;
+}
+
+function itemFromEmailReview(thread: EmailReviewThread, index: number, emailMap: EmailPersonMap, options?: { done?: boolean }): SimpleFeedItem {
   const done = options?.done === true;
   const title = thread.subject || "(no subject)";
   const sender = emailSenderName(thread.fromAddress);
+  const senderAddress = emailSenderAddress(thread.fromAddress);
+  const senderPerson = senderAddress ? emailMap.get(senderAddress) ?? null : null;
   const observedAt = thread.date || new Date().toISOString();
   const sourceRef: SimpleSourceRef = {
     type: "email",
@@ -686,10 +695,16 @@ function itemFromEmailReview(thread: EmailReviewThread, index: number, options?:
         id: String(messageId),
         metadata: { label: `${title} latest message`, href: "/comms" },
       })),
+      ...(senderPerson ? [createReferenceRef({
+        type: "person",
+        id: senderPerson.id,
+        metadata: { label: senderPerson.name, href: `/people/${senderPerson.id}` },
+      })] : []),
     ],
     payload: {
       kind: "email_review",
       sender,
+      senderPersonId: senderPerson?.id ?? null,
       fromAddress: thread.fromAddress,
       snippet: thread.snippet?.slice(0, 200) || null,
       reason: thread.enrichmentSummary || thread.triageReason || null,
@@ -1478,12 +1493,15 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     errors.push({ source: "news", message });
   }
 
+  // Shared email→person map (email review sender chips + meeting attendee matching)
+  const emailMap = await buildEmailPersonMap();
+
   // Email Review (enriched triaged threads needing attention)
   try {
     const emailReviewThreads = await collectEmailReviewThreads();
-    emailReviewThreads.forEach((thread, index) => items.push(itemFromEmailReview(thread, index)));
+    emailReviewThreads.forEach((thread, index) => items.push(itemFromEmailReview(thread, index, emailMap)));
     const emailDoneThreads = await collectEmailDoneToday();
-    emailDoneThreads.forEach((thread, index) => items.push(itemFromEmailReview(thread, index, { done: true })));
+    emailDoneThreads.forEach((thread, index) => items.push(itemFromEmailReview(thread, index, emailMap, { done: true })));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error(`email review collection failed: ${message}`);
@@ -1492,7 +1510,6 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
 
   // Meetings (calendar events for today through this week)
   try {
-    const emailMap = await buildEmailPersonMap();
     const todayStart = `${today}T00:00:00-05:00`;
     const lookAhead = addDays(today, 7);
     const lookAheadEnd = `${lookAhead}T23:59:59-05:00`;
