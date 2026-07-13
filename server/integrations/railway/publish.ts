@@ -29,6 +29,13 @@ import {
   type PublishCommit,
   type PRFile,
 } from "../github-pr";
+import {
+  buildReleaseDraft,
+  publishVersionFile,
+  recordSuccessfulRelease,
+  type ReleaseDraft,
+  type VersionIncrement,
+} from "./release-versioning";
 
 const log = createLogger("RailwayPublish");
 const PUBLISH_RUN_STATE_KEY = "system.railway.publish.latestRun";
@@ -150,6 +157,15 @@ export interface PublishRun {
    */
   baselineDeploymentId: string | null;
   newProdCommitSha: string | null;
+  release: {
+    increment: VersionIncrement;
+    previousVersion: string;
+    version: string;
+    versionFileUrl: string;
+    versionFileCommitSha: string | null;
+    notes: ReleaseDraft["notes"];
+    markdown: string;
+  } | null;
   prodUrl: string | null;
   // Stage to resume from on retry; null when starting fresh.
   resumeFromStage: PublishStageName | null;
@@ -548,7 +564,9 @@ export class NothingToPublishError extends Error {
  * implementation details and shouldn't be exposed to clients (e.g. the
  * pre-merge baseline deployment id used internally to detect Railway races).
  */
-export type PublicPublishRun = Omit<PublishRun, "baselineDeploymentId">;
+export type PublicPublishRun = Omit<PublishRun, "baselineDeploymentId" | "release"> & {
+  release: Omit<NonNullable<PublishRun["release"]>, "markdown"> | null;
+};
 
 /** Drop internal-only fields before sending a run to the client. */
 export function toPublicRun(run: PublishRun): PublicPublishRun;
@@ -557,9 +575,15 @@ export function toPublicRun(run: PublishRun | null): PublicPublishRun | null {
   if (!run) return null;
   // Destructure to strip internal-only fields cleanly without mutating the
   // original (which is still the live module-state object).
-  const { baselineDeploymentId: _baselineDeploymentId, ...publicRun } = run;
+  const { baselineDeploymentId: _baselineDeploymentId, release, ...publicRun } = run;
   void _baselineDeploymentId;
-  return publicRun;
+  const publicRelease = release
+    ? (({ markdown: _markdown, ...value }) => {
+        void _markdown;
+        return value;
+      })(release)
+    : null;
+  return { ...publicRun, release: publicRelease };
 }
 
 /**
@@ -576,7 +600,10 @@ function acquireStartSlot(): void {
   runStartLock = true;
 }
 
-export async function startRun(actor: { id: string; name: string | null }): Promise<PublishRun> {
+export async function startRun(
+  actor: { id: string; name: string | null },
+  increment: VersionIncrement,
+): Promise<PublishRun> {
   await ensurePublishRunLoaded();
   acquireStartSlot();
   try {
@@ -621,8 +648,19 @@ export async function startRun(actor: { id: string; name: string | null }): Prom
       log.warn(`Failed to snapshot branch heads: ${err instanceof Error ? err.message : String(err)}`);
     }
 
+    const runId = newRunId();
+    const targetCommitSha = summary.devCommit?.sha;
+    if (!targetCommitSha) throw new Error(`Couldn't resolve HEAD of '${devBranch}' for release notes.`);
+    const releaseDraft = await buildReleaseDraft(
+      repo,
+      summary.commits,
+      increment,
+      runId,
+      targetCommitSha,
+    );
+
     const run: PublishRun = {
-      id: newRunId(),
+      id: runId,
       status: "running",
       startedAt: new Date().toISOString(),
       finishedAt: null,
@@ -636,6 +674,15 @@ export async function startRun(actor: { id: string; name: string | null }): Prom
       deploymentUrl: null,
       baselineDeploymentId: null,
       newProdCommitSha: null,
+      release: {
+        increment: releaseDraft.increment,
+        previousVersion: releaseDraft.currentVersion,
+        version: releaseDraft.nextVersion,
+        versionFileUrl: releaseDraft.fileUrl,
+        versionFileCommitSha: null,
+        notes: releaseDraft.notes,
+        markdown: releaseDraft.markdown,
+      },
       prodUrl: prereqs.prodCfg.prodUrl ?? null,
       resumeFromStage: null,
     };
@@ -1364,11 +1411,40 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
 
     // ─── Stage 7: ready ─────────────────────────────────────────────────────
     startStage(run, "ready");
+    if (run.release?.versionFileCommitSha) {
+      finishStage(run, "ready", {
+        status: "succeeded",
+        message: `${run.release.version} release metadata already recorded.`,
+      });
+      finalize("succeeded");
+      return;
+    }
+    if (!run.release || !run.summary.repo || !run.newProdCommitSha) {
+      throw new Error("Release metadata is incomplete after a successful deployment.");
+    }
+    const releaseDraft: ReleaseDraft = {
+      increment: run.release.increment,
+      currentVersion: run.release.previousVersion,
+      nextVersion: run.release.version,
+      notes: run.release.notes,
+      markdown: run.release.markdown,
+      fileUrl: run.release.versionFileUrl,
+    };
+    const versionFile = await publishVersionFile(repo, releaseDraft, run.newProdCommitSha);
+    run.release.versionFileCommitSha = versionFile.commitSha;
+    await recordSuccessfulRelease({
+      publishRunId: run.id,
+      actorUserId: run.startedBy,
+      draft: releaseDraft,
+      promotedCommitSha: run.newProdCommitSha,
+      versionFileCommitSha: versionFile.commitSha,
+      deploymentId: run.deploymentId,
+    });
     const totalMs = Date.now() - Date.parse(run.startedAt);
     const totalLabel = totalMs < 60_000 ? `${Math.round(totalMs / 1000)}s` : `${Math.floor(totalMs / 60_000)}m ${Math.round((totalMs % 60_000) / 1000)}s`;
     finishStage(run, "ready", {
       status: "succeeded",
-      message: `Live at ${prodCfg.prodUrl} — ${run.newProdCommitSha?.slice(0, 7) ?? "—"} (took ${totalLabel}).`,
+      message: `${run.release.version} live at ${prodCfg.prodUrl} — ${run.newProdCommitSha?.slice(0, 7) ?? "—"} (took ${totalLabel}).`,
     });
     finalize("succeeded");
   } catch (err) {

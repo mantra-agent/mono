@@ -254,6 +254,53 @@ export async function getBranchHead(
   }
 }
 
+export async function getRepositoryFile(
+  ref: RepoRef,
+  path: string,
+  branch: string,
+): Promise<{ content: string; sha: string } | null> {
+  try {
+    const data = await gh<{ content: string; encoding: string; sha: string }>(
+      "GET",
+      `/repos/${ref.owner}/${ref.repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(branch)}`,
+    );
+    if (data.encoding !== "base64") throw new Error(`Unsupported GitHub content encoding: ${data.encoding}`);
+    return { content: Buffer.from(data.content.replace(/\n/g, ""), "base64").toString("utf8"), sha: data.sha };
+  } catch (err) {
+    if (err instanceof GitHubError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+export async function updateRepositoryFile(
+  ref: RepoRef,
+  input: {
+    path: string;
+    branch: string;
+    content: string;
+    message: string;
+    expectedBranchSha: string;
+  },
+): Promise<{ commitSha: string; contentSha: string }> {
+  const branchHead = await getBranchHead(ref, input.branch);
+  if (!branchHead || branchHead.sha !== input.expectedBranchSha) {
+    throw new Error(`Branch '${input.branch}' moved while preparing release notes. Refresh and publish again.`);
+  }
+  const existing = await getRepositoryFile(ref, input.path, input.branch);
+  const data = await gh<{ content: { sha: string }; commit: { sha: string } }>(
+    "PUT",
+    `/repos/${ref.owner}/${ref.repo}/contents/${encodeURIComponent(input.path)}`,
+    {
+      message: input.message,
+      content: Buffer.from(input.content, "utf8").toString("base64"),
+      branch: input.branch,
+      ...(existing ? { sha: existing.sha } : {}),
+    },
+  );
+  log.info(`Updated ${input.path} on ${input.branch} at ${data.commit.sha.slice(0, 7)}`);
+  return { commitSha: data.commit.sha, contentSha: data.content.sha };
+}
+
 /**
  * Find an existing open PR with the given head and base. Returns null if none
  * is open (so callers can create a new one).

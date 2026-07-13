@@ -44,6 +44,7 @@ import {
   NothingToPublishError,
   type PublicPublishRun,
 } from "./publish";
+import { getReleaseVersionSummary, type VersionIncrement } from "./release-versioning";
 import {
   compareRefs,
   getBranchHead,
@@ -74,6 +75,7 @@ interface PublishSummaryResponse {
   aheadBy: number;
   commits: PublishCommit[];
   compareError: string | null;
+  versioning: Awaited<ReturnType<typeof getReleaseVersionSummary>>;
   run: PublicPublishRun | null;
 }
 
@@ -842,6 +844,7 @@ export function registerRailwayRoutes(app: Express) {
     try {
       const prereqs = await checkPrereqs();
       const run = await getDisplayRun();
+      const versioning = await getReleaseVersionSummary(prereqs.repo);
 
       const summary: PublishSummaryResponse = {
         ready: prereqs.ready,
@@ -855,6 +858,7 @@ export function registerRailwayRoutes(app: Express) {
         aheadBy: 0,
         commits: [],
         compareError: null,
+        versioning,
         run: toPublicRun(run),
       };
 
@@ -884,8 +888,10 @@ export function registerRailwayRoutes(app: Express) {
 
   app.post("/api/railway/publish/start", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
+      const parsed = z.object({ increment: z.enum(["minor", "major", "flagship"]) }).safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Choose a minor, major, or flagship version increment." });
       const actor = await resolvePublishActor(req);
-      const run = await startRun(actor);
+      const run = await startRun(actor, parsed.data.increment as VersionIncrement);
       res.json({ ok: true, run: toPublicRun(run) });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
