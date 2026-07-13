@@ -1197,19 +1197,21 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
 // ─── Milestones (independent) ───
 
 function milestoneSection(milestone: Milestone, today: string, weekEnd: string, monthEnd: string, quarterEnd: string, yearEnd: string, nextYearEnd: string): SimpleSection {
-  if (!milestone.dueDate) return "today"; // dateless milestones surface in today with needsDate flag
-  if (milestone.dueDate < today) return "now"; // overdue
-  if (milestone.dueDate <= weekEnd) return "this_week";
+  const dueDate = dateOnlyString(milestone.dueDate);
+  if (!dueDate) return "today"; // dateless milestones surface in today with needsDate flag
+  if (dueDate < today) return "now"; // overdue
+  if (dueDate === today) return "today";
+  if (dueDate <= weekEnd) return "this_week";
   const nextWeekEnd = addDays(weekEnd, 7);
-  if (milestone.dueDate <= nextWeekEnd) return "next_week";
-  if (milestone.dueDate <= monthEnd) return "this_month";
+  if (dueDate <= nextWeekEnd) return "next_week";
+  if (dueDate <= monthEnd) return "this_month";
   const nextMonthEnd = endOfMonth(addDays(monthEnd, 1));
-  if (milestone.dueDate <= nextMonthEnd) return "next_month";
-  if (milestone.dueDate <= quarterEnd) return "this_quarter";
+  if (dueDate <= nextMonthEnd) return "next_month";
+  if (dueDate <= quarterEnd) return "this_quarter";
   const nextQuarterEnd = endOfQuarter(addDays(quarterEnd, 1));
-  if (milestone.dueDate <= nextQuarterEnd) return "next_quarter";
-  if (milestone.dueDate <= yearEnd) return "this_year";
-  if (milestone.dueDate <= nextYearEnd) return "next_year";
+  if (dueDate <= nextQuarterEnd) return "next_quarter";
+  if (dueDate <= yearEnd) return "this_year";
+  if (dueDate <= nextYearEnd) return "next_year";
   return "this_year"; // beyond next year remains clamped to this_year
 }
 
@@ -1614,13 +1616,16 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     const project = Number.isFinite(projectId) ? projectById.get(projectId) : undefined;
     const projectItem = Number.isFinite(projectId) ? projectItemsById.get(projectId) : undefined;
     const goalItem = project?.goalId ? goalItemsById.get(project.goalId) : undefined;
-    const parentItem = firstSameSection(item, milestoneItem, projectItem, goalItem);
+    const taskHasExplicitDeadline = Boolean(dateOnlyString(item.payload?.deadline));
+    const parentItem = milestoneItem && !taskHasExplicitDeadline
+      ? milestoneItem
+      : firstSameSection(item, milestoneItem, projectItem, goalItem);
     if (!parentItem || parentItem.id === item.id) continue;
 
-    const parentDate = parentItem.payload?.dueDate as string | undefined;
-    const childDate = item.payload?.effectiveDeadline as string | undefined;
-    const childItem = (parentDate && childDate && parentDate === childDate)
-      ? { ...item, time: undefined }
+    const parentDate = dateOnlyString(parentItem.payload?.dueDate);
+    const childDate = dateOnlyString(item.payload?.effectiveDeadline);
+    const childItem = parentItem.section !== item.section || (parentDate && childDate && parentDate === childDate)
+      ? { ...item, section: parentItem.section, time: undefined }
       : item;
     nestChild(parentItem, childItem);
     nestedItemIds.add(item.id);
