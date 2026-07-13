@@ -264,7 +264,7 @@ function isItemActive(itemUrl: string, location: string): boolean {
  */
 export function NavPage() {
   const [location, navigate] = useLocation();
-  const { setOpen, setOpenMobile, isMobile } = useSidebar();
+  const { closeSidebar } = useSidebar();
   const { hasPermission } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -307,11 +307,6 @@ export function NavPage() {
       return next;
     });
   }, []);
-
-  const closeSidebar = useCallback(() => {
-    if (isMobile) setOpenMobile(false);
-    else setOpen(false);
-  }, [isMobile, setOpen, setOpenMobile]);
 
   const handleNav = useCallback(
     (url: string) => {
