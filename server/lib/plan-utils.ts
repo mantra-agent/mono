@@ -10,7 +10,7 @@ const log = createLogger("PlanUtils");
 
 // ─── Types ───────────────────────────────────────────────────────────
 
-export type PlanStatus = "created" | "executing" | "paused" | "completed" | "completed_with_failures" | "failed" | "aborted";
+export type PlanStatus = "created" | "executing" | "paused" | "needs_review" | "completed" | "completed_with_failures" | "failed" | "aborted";
 export type StepStatus = "pending" | "running" | "completed" | "failed" | "skipped" | "blocked" | "needs_review";
 
 export interface PlanStep {
@@ -57,6 +57,11 @@ export interface PlanCreateInput {
  */
 export function isStepResolved(step: { status: string }): boolean {
   return step.status === "completed" || step.status === "skipped" || step.status === "failed";
+}
+
+/** A step has finished executing even when its output still requires human review. */
+export function isStepProgressed(step: { status: string }): boolean {
+  return isStepResolved(step) || step.status === "needs_review";
 }
 
 /**
@@ -372,9 +377,10 @@ ${retrySection ? `\n${retrySection}\n` : ""}
  */
 export function formatPlanSummary(meta: PlanMeta, title: string): string {
   const completed = meta.steps.filter(s => s.status === "completed").length;
+  const needsReview = meta.steps.filter(s => s.status === "needs_review").length;
   const skipped = meta.steps.filter(s => s.status === "skipped").length;
   const failed = meta.steps.filter(s => s.status === "failed").length;
-  const resolved = completed + skipped + failed;
+  const resolved = completed + skipped + failed + needsReview;
   const total = meta.steps.length;
   const totalDuration = meta.steps.reduce((sum, s) => sum + (s.duration || 0), 0);
 
@@ -382,6 +388,7 @@ export function formatPlanSummary(meta: PlanMeta, title: string): string {
     created: "📋",
     executing: "⏳",
     paused: "⏸️",
+    needs_review: "👀",
     completed: "✅",
     completed_with_failures: "⚠️",
     failed: "❌",
@@ -389,12 +396,13 @@ export function formatPlanSummary(meta: PlanMeta, title: string): string {
   }[meta.status] || "📋";
 
   const stepLines = meta.steps.map((s, i) => {
-    const icon = { pending: "□", running: "⏳", completed: "✅", failed: "❌", skipped: "⏭️" }[s.status] || "□";
+    const icon = { pending: "□", running: "⏳", completed: "✅", failed: "❌", skipped: "⏭️", blocked: "⛔", needs_review: "👀" }[s.status] || "□";
     const duration = s.duration ? ` (${formatDuration(s.duration)})` : "";
     return `  ${i + 1}. ${icon} ${s.title}${duration}`;
   });
 
   const breakdown: string[] = [];
+  if (needsReview > 0) breakdown.push(`${needsReview} needs review`);
   if (skipped > 0) breakdown.push(`${skipped} skipped`);
   if (failed > 0) breakdown.push(`${failed} failed`);
   const breakdownStr = breakdown.length > 0 ? ` (${breakdown.join(", ")})` : "";

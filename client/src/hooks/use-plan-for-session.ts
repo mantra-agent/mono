@@ -134,6 +134,12 @@ export function usePlanForSession(messages: ChatMessage[], serverPlanPageId?: st
       case "plan.paused":
         dispatch({ type: "status_update", status: "paused" });
         break;
+      case "plan.needs_review":
+        if (event.stepId) {
+          dispatch({ type: "step_update", stepId: event.stepId, override: { status: "needs_review" } });
+        }
+        dispatch({ type: "status_update", status: "needs_review" });
+        break;
     }
   }, []);
 
