@@ -282,6 +282,10 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
           commitValue(next.value, next.cursor);
           return;
         }
+        case "deleteByCut":
+        case "deleteByDrag":
+        case "deleteByComposition":
+        case "deleteContent":
         case "deleteContentBackward": {
           inputEvent.preventDefault();
           if (selection.start !== selection.end) {
@@ -289,6 +293,7 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
             commitValue(next.value, next.cursor);
             return;
           }
+          if (inputEvent.inputType !== "deleteContentBackward") return;
           const start = Math.max(0, selection.start - 1);
           const next = replaceRange(value, { start, end: selection.end }, "");
           commitValue(next.value, next.cursor);
