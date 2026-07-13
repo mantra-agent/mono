@@ -115,6 +115,20 @@ function currentHourInTimezone(timezone: string): number {
   return Number(parts.find(p => p.type === "hour")?.value ?? "12");
 }
 
+function weeklyMondayDateKey(timezone: string, weekOffsetDays = 0): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const local = new Date(`${parts}T12:00:00`);
+  const day = local.getDay();
+  const daysSinceMonday = day === 0 ? 6 : day - 1;
+  const monday = new Date(local.getFullYear(), local.getMonth(), local.getDate() - daysSinceMonday + weekOffsetDays);
+  return `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`;
+}
+
 /** Map of section → { periodType, dateKeyFn, artifactField, skillName } */
 const PLAN_ARTIFACT_CONFIG: Record<string, {
   periodType: "daily" | "weekly" | "monthly" | "quarterly";
@@ -135,15 +149,14 @@ const PLAN_ARTIFACT_CONFIG: Record<string, {
     artifactField: "weeklyPlanPageId",
     skillName: "plan",
     planCadence: "weekly",
-    dateKey: (tz) => {
-      const d = new Date();
-      const parts = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
-      const local = new Date(parts + "T12:00:00");
-      const day = local.getDay();
-      const diff = day === 0 ? 6 : day - 1;
-      const monday = new Date(local.getFullYear(), local.getMonth(), local.getDate() - diff);
-      return `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`;
-    },
+    dateKey: (tz) => weeklyMondayDateKey(tz),
+  },
+  next_week: {
+    periodType: "weekly",
+    artifactField: "weeklyPlanPageId",
+    skillName: "plan",
+    planCadence: "weekly",
+    dateKey: (tz) => weeklyMondayDateKey(tz, 7),
   },
   this_month: {
     periodType: "monthly",
