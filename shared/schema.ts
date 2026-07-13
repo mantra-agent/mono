@@ -456,6 +456,7 @@ export const tasks = pgTable("tasks", {
   output: text("output").notNull().default(""),
   deadline: text("deadline"),
   tokenEstimate: integer("token_estimate"),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),

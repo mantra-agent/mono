@@ -1,4 +1,4 @@
-import { and, count, eq, gte, lt } from "drizzle-orm";
+import { and, count, gte, lt } from "drizzle-orm";
 import { opportunityInteractions, tasks, wellnessLogs } from "@shared/schema";
 import { db } from "./db";
 import type { Principal } from "./principal";
@@ -89,7 +89,7 @@ async function countCompletedTasks(date: string, principal: Principal): Promise<
     .where(combineWithVisibleScope(
       principal,
       taskScope,
-      and(eq(tasks.status, "done"), gte(tasks.updatedAt, start), lt(tasks.updatedAt, exclusiveEnd)),
+      and(gte(tasks.completedAt, start), lt(tasks.completedAt, exclusiveEnd)),
     ));
   return Number(row?.value ?? 0);
 }

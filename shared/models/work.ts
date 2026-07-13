@@ -107,6 +107,7 @@ export interface Task {
   output: string;
   deadline: string | null;
   tokenEstimate: number | null;
+  completedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
