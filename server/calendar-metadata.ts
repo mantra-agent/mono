@@ -14,6 +14,7 @@ import { createLogger } from "./log";
 import { TTLCache } from "./utils/ttl-cache";
 import { eventBus } from "./event-bus";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { combineWithVisibleScope } from "./scoped-storage";
 import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwnershipValues } from "./sensitive-scope";
 
 const log = createLogger("CalendarMetadata");
@@ -424,6 +425,32 @@ export async function getLinkedArtifacts(metadataId: number): Promise<CalendarEv
   return _calendarCache.getOrFetch(`linkedArtifacts:${principalCacheKey()}:${metadataId}`, async () => {
     return db.select().from(calendarEventArtifacts).where(combineWithSensitiveVisible(calendarArtifactOwnerColumns, eq(calendarEventArtifacts.metadataId, metadataId)));
   });
+}
+
+/** Resolve the meeting agenda from its canonical metadata, falling back to the
+ * first linked brief. The explicit agenda always wins. */
+export async function resolveMeetingAgenda(metadata: CalendarEventMetadata): Promise<string | undefined> {
+  const explicitAgenda = metadata.agenda?.trim();
+  if (explicitAgenda) return explicitAgenda;
+
+  const linkedBrief = (await getLinkedArtifacts(metadata.id)).find(
+    artifact => artifact.artifactKind === "brief" && artifact.artifactType === "library_page",
+  );
+  if (!linkedBrief) return undefined;
+
+  const { libraryPages } = await import("@shared/models/info");
+  const principal = getCurrentPrincipalOrSystem();
+  const libraryScope = {
+    scope: libraryPages.scope,
+    ownerUserId: libraryPages.ownerUserId,
+    accountId: libraryPages.accountId,
+  };
+  const [page] = await db
+    .select({ plainTextContent: libraryPages.plainTextContent })
+    .from(libraryPages)
+    .where(combineWithVisibleScope(principal, libraryScope, eq(libraryPages.id, linkedBrief.libraryPageId)))
+    .limit(1);
+  return page?.plainTextContent?.trim() || undefined;
 }
 
 // ─── getLinkedArtifactsByMetadataIds (bulk) ───
