@@ -5032,7 +5032,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         return { result: `Invalid eventType "${eventType}". Valid types: ${EVENT_TYPES.join(", ")}`, error: true };
       }
 
-      const meta = await setMetadata(googleEventId, accountId, calendarId, eventType, args.notes, attendeeEmails);
+      const meta = await setMetadata(googleEventId, accountId, calendarId, eventType, args.notes, attendeeEmails, undefined, args.agenda);
       const linkedPeople = await getLinkedPeople(meta.id);
       const peopleStr = linkedPeople.length > 0
         ? ` Auto-linked people: ${linkedPeople.map(p => p.personName).join(", ")}.`
@@ -5055,7 +5055,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
       }
 
-      return { result: `Metadata set for event ${googleEventId}: type=${eventType}${args.notes ? `, notes recorded` : ""}.${peopleStr}${interactionStr} (metadataId: ${meta.id})` };
+      return { result: `Metadata set for event ${googleEventId}: type=${eventType}${args.notes ? `, notes recorded` : ""}${args.agenda ? `, agenda recorded` : ""}.${peopleStr}${interactionStr} (metadataId: ${meta.id})` };
     } catch (err: any) {
       return { result: `Failed to set metadata: ${err.message}`, error: true };
     }
@@ -5082,6 +5082,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         `Event: ${googleEventId}`,
         `Type: ${meta.eventType}`,
         ...(meta.notes ? [`Notes: ${meta.notes}`] : []),
+        ...(meta.agenda ? [`Private agenda:\n${meta.agenda}`] : []),
       ];
 
       if (tasks.length > 0) {
@@ -8675,6 +8676,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
     let meetingUrl = typeof args.url === "string" ? args.url.trim() : "";
     let resolvedTitle = typeof args.title === "string" && args.title.trim() ? args.title.trim() : "";
+    let resolvedAgenda: string | undefined;
 
     if (meetingUrl && !MEETING_URL_RE.test(meetingUrl)) {
       return { result: `That doesn't look like a Zoom or Google Meet link: ${meetingUrl}`, error: true };
@@ -8700,6 +8702,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           if (found) {
             meetingUrl = found;
             if (!resolvedTitle) resolvedTitle = ev.summary || "";
+            const { getMetadata } = await import("./calendar-metadata");
+            const metadata = await getMetadata(ev.id, ev.accountId, ev.calendarId);
+            resolvedAgenda = metadata?.agenda?.trim() || undefined;
             break;
           }
         }
@@ -8713,7 +8718,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
     let joined;
     try {
-      joined = await joinMeetingByUrl({ meetingUrl, title: resolvedTitle || "Meeting" });
+      joined = await joinMeetingByUrl({ meetingUrl, title: resolvedTitle || "Meeting", agenda: resolvedAgenda });
     } catch (err) {
       if (err instanceof MeetingJoinError) {
         return { result: err.message, error: true };

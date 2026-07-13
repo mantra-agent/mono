@@ -893,6 +893,8 @@ export const calendarEventMetadata = pgTable("calendar_event_metadata", {
   eventType: text("event_type").notNull().default("meeting"),
   capacityType: text("capacity_type"),
   notes: text("notes"),
+  /** Private agenda visible only through Mantra's user-scoped meeting metadata. */
+  agenda: text("agenda"),
   // Meeting agent auto-join materialization. Status discriminant computed at
   // the source: scheduled | no_link | joined | failed. Detail carries the
   // human-visible reason for no_link/failed.

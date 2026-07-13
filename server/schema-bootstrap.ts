@@ -1060,12 +1060,13 @@ export async function runSchemaBootstrap(
     await ensureFinanceSensitiveSchema();
   });
 
-  await heal("calendar metadata capacity type column", async () => {
+  await heal("calendar metadata private fields", async () => {
     await pool.query(`
       DO $migration$
       BEGIN
         IF to_regclass('public.calendar_event_metadata') IS NOT NULL THEN
           ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS capacity_type TEXT;
+          ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agenda TEXT;
         END IF;
       END $migration$;
     `);

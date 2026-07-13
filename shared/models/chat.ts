@@ -562,6 +562,8 @@ export interface MeetingSessionMeta {
   botId?: string;
   /** Original meeting join URL (Zoom/Meet). */
   meetingUrl?: string;
+  /** Private agenda copied from user-scoped calendar metadata at join time. */
+  agenda?: string;
   /** Human-readable detail for denied/failed states (e.g. sub_code). */
   statusDetail?: string;
   /** End-of-meeting recap lifecycle state. */

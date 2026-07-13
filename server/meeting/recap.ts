@@ -187,7 +187,12 @@ async function generateRecapContent(
       },
       {
         role: "user",
-        content: `Meeting: ${meeting.title || sessionTitle}\nParticipants: ${participantList}\n\nTranscript:\n${transcript}`,
+        content: [
+          `Meeting: ${meeting.title || sessionTitle}`,
+          `Participants: ${participantList}`,
+          ...(meeting.agenda ? [`Private agenda:\n${meeting.agenda}`] : []),
+          `Transcript:\n${transcript}`,
+        ].join("\n\n"),
       },
     ],
   });
@@ -234,6 +239,7 @@ function buildRecapMarkdown(recap: RecapContent, meeting: MeetingSessionMeta): s
   const listOrNone = (items: string[]) => items.length > 0
     ? items.map((item) => `- ${item}`).join("\n")
     : "- None.";
+  if (meeting.agenda) parts.push(`## Agenda\n\n${meeting.agenda}`);
   parts.push(`## Summary\n\n${recap.summary}`);
   parts.push(`## Details\n\n${recap.details}`);
   parts.push(`## Key Decisions\n\n${listOrNone(recap.decisions)}`);

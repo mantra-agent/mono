@@ -1,4 +1,4 @@
-import { Calendar, MapPin, Users } from "lucide-react";
+import { Calendar, ListChecks, MapPin, Users } from "lucide-react";
 import type { SimpleFeedItem } from "@shared/models/simple";
 import { sourceRefToReferenceRef } from "@shared/simple-references";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
@@ -39,6 +39,7 @@ export function MeetingWidget({ item, inline }: { item: SimpleFeedItem; inline?:
 
   const time = stringPayload(item, "time");
   const location = stringPayload(item, "location");
+  const agenda = stringPayload(item, "agenda");
   const attendees = arrayPayload(item, "attendees");
   const attendeeCount = numberPayload(item, "attendeeCount") ?? attendees.length;
   const href = item.actions?.find(a => a.type === "navigate")?.href ?? "/schedule";
@@ -70,6 +71,12 @@ export function MeetingWidget({ item, inline }: { item: SimpleFeedItem; inline?:
             </span>
           )}
         </div>
+        {agenda && (
+          <div className="mt-1 flex min-w-0 items-start gap-1.5 text-sm text-muted-foreground">
+            <ListChecks className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="line-clamp-2 whitespace-pre-line">{agenda}</span>
+          </div>
+        )}
       </div>
     </a>
   );

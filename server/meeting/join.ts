@@ -41,7 +41,7 @@ export interface MeetingJoinResult {
  * any failure; on bot-creation failure the meeting session is marked failed
  * before the error propagates.
  */
-export async function joinMeetingByUrl(opts: { meetingUrl: string; title?: string }): Promise<MeetingJoinResult> {
+export async function joinMeetingByUrl(opts: { meetingUrl: string; title?: string; agenda?: string }): Promise<MeetingJoinResult> {
   const meetingUrl = opts.meetingUrl.trim();
   if (!MEETING_URL_RE.test(meetingUrl)) {
     throw new MeetingJoinError(`That doesn't look like a Zoom or Google Meet link: ${meetingUrl}`);
@@ -56,6 +56,7 @@ export async function joinMeetingByUrl(opts: { meetingUrl: string; title?: strin
     participants: [],
     botStatus: "dialing",
     meetingUrl,
+    agenda: opts.agenda?.trim() || undefined,
   });
 
   const failSession = async (message: string): Promise<never> => {
