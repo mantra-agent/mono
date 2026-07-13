@@ -443,12 +443,24 @@ export async function getThread(threadId: string, accountId?: string) {
   return res.data;
 }
 
+/**
+ * Encode a MIME unstructured header value per RFC 2047 when it contains
+ * non-ASCII text. Raw UTF-8 bytes in Subject headers are not portable and
+ * can be decoded as Latin-1 mojibake by recipients.
+ */
+function encodeMimeHeader(value: string): string {
+  const unfolded = value.replace(/[\r\n]+/g, " ").trim();
+  if (/^[\x20-\x7E]*$/.test(unfolded)) return unfolded;
+  return `=?UTF-8?B?${Buffer.from(unfolded, "utf8").toString("base64")}?=`;
+}
+
 export async function sendEmail(to: string, subject: string, body: string, accountId?: string) {
   const gmail = await getReadClientAuto(accountId);
 
   const messageParts = [
     `To: ${to}`,
-    `Subject: ${subject}`,
+    `Subject: ${encodeMimeHeader(subject)}`,
+    'MIME-Version: 1.0',
     'Content-Type: text/html; charset=utf-8',
     '',
     body,
@@ -558,11 +570,12 @@ export async function sendEmailFromDraft(draft: {
   ];
   if (draft.cc.length > 0) headers.push(`Cc: ${draft.cc.join(", ")}`);
   if (draft.bcc.length > 0) headers.push(`Bcc: ${draft.bcc.join(", ")}`);
-  headers.push(`Subject: ${draft.subject}`);
+  headers.push(`Subject: ${encodeMimeHeader(draft.subject)}`);
   if (replyContext.inReplyTo) {
     headers.push(`In-Reply-To: ${replyContext.inReplyTo}`);
     headers.push(`References: ${replyContext.references || replyContext.inReplyTo}`);
   }
+  headers.push("MIME-Version: 1.0");
   headers.push("Content-Type: text/plain; charset=utf-8");
 
   const outgoingBody = replyContext.quotedHistory
@@ -591,7 +604,8 @@ export async function createDraft(to: string, subject: string, body: string, acc
 
   const messageParts = [
     `To: ${to}`,
-    `Subject: ${subject}`,
+    `Subject: ${encodeMimeHeader(subject)}`,
+    'MIME-Version: 1.0',
     'Content-Type: text/html; charset=utf-8',
     '',
     body,
