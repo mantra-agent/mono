@@ -139,8 +139,9 @@ export interface CreateBotParams {
 
 /**
  * Create an ad-hoc Recall bot with real-time transcript streaming.
- * Per Recall docs: recallai_streaming provider + final and partial realtime
- * webhook events, with separate diarization streams for speaker attribution.
+ * Per Recall docs: recallai_streaming finalized utterances, with separate
+ * diarization streams for speaker attribution. Partial captions are not sent
+ * into the durable conversation path.
  */
 export async function createRecallBot(params: CreateBotParams): Promise<RecallBot> {
   const body = {
@@ -165,7 +166,7 @@ export async function createRecallBot(params: CreateBotParams): Promise<RecallBo
         {
           type: "webhook",
           url: params.webhookUrl,
-          events: ["transcript.data", "transcript.partial_data"],
+          events: ["transcript.data"],
         },
       ],
     },

@@ -1040,6 +1040,7 @@ export interface IChatFileStorage {
     sessionId: string,
     content: string,
     speaker: MessageSpeakerMeta,
+    turnId?: string,
   ): Promise<FileMessage | null>;
   createAssistantDraft(
     sessionId: string,
@@ -1345,11 +1346,13 @@ export const chatFileStorage: IChatFileStorage = {
         data.title = title;
       }
       const previousStatus = data.status;
-      data.status = "saved";
+      data.status = data.type === "meeting" && data.meeting?.botStatus === "live"
+        ? "streaming"
+        : "saved";
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
       invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
-      publishSessionStatusChanged(data, previousStatus, "saved");
+      publishSessionStatusChanged(data, previousStatus, data.status);
       queueSessionMemoryMirror(data, "saveSession");
       import("./chat-markdown")
         .then((m) => m.generateChatMarkdown(id))
@@ -1631,6 +1634,9 @@ export const chatFileStorage: IChatFileStorage = {
         ...patch,
         participants: patch.participants ?? existing.participants,
       };
+      if (patch.botStatus === "live") data.status = "streaming";
+      if (patch.botStatus === "failed") data.status = "failed";
+      if (patch.botStatus === "ended" || patch.botStatus === "denied") data.status = "saved";
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
       const meta = convToMeta(data);
@@ -1675,6 +1681,7 @@ export const chatFileStorage: IChatFileStorage = {
     sessionId: string,
     content: string,
     speaker: MessageSpeakerMeta,
+    turnId?: string,
   ) {
     return withConvLock(sessionId, async () => {
       const data = await readConv(sessionId);
@@ -1682,6 +1689,10 @@ export const chatFileStorage: IChatFileStorage = {
         log.warn(
           `[ChatFileStorage] createMeetingUserMessage: session ${sessionId} not found, skipping`,
         );
+        return null;
+      }
+      if (turnId && data.messages.some((message) => message.role === "user" && message.turnId === turnId)) {
+        log.debug(`[ChatFileStorage] duplicate meeting turn ignored session=${sessionId} turnId=${turnId}`);
         return null;
       }
       const now = new Date().toISOString();
@@ -1697,6 +1708,7 @@ export const chatFileStorage: IChatFileStorage = {
         createdAt: now,
         updatedAt: now,
         speaker,
+        ...(turnId ? { turnId } : {}),
       };
       data.messages.push(msg);
       data.updatedAt = now;
