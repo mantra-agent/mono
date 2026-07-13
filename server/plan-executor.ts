@@ -226,7 +226,7 @@ export interface PlanExecutionResult {
 }
 
 export type PlanResumeReadiness =
-  | { ready: true; planId: string; status: "paused"; recovered: boolean; totalSteps: number }
+  | { ready: true; planId: string; status: "paused" | "needs_review"; recovered: boolean; totalSteps: number }
   | { ready: false; planId: string; status: PlanStatus; recovered: boolean; totalSteps: number; error: string };
 
 /**
@@ -293,11 +293,12 @@ export async function executePlan(
 
       // Gate: stop execution at review/block boundaries
       if (step.status === "needs_review" || step.status === "blocked") {
-        log.log(`[${planId}] Step ${i + 1} is ${step.status} — pausing execution for review`);
-        await updatePlanStatus(planId, "paused");
+        const haltedPlanStatus: PlanStatus = step.status === "needs_review" ? "needs_review" : "paused";
+        log.log(`[${planId}] Step ${i + 1} is ${step.status} — halting execution at gate`);
+        await updatePlanStatus(planId, haltedPlanStatus);
         await renderPlanToLibraryPage(planId);
         await notifyOriginSession(originSessionId, planId, planTitle, step, step.status);
-        publishPlanEvent("plan.paused", { planId, stepId: step.id, reason: step.status });
+        publishPlanEvent(step.status === "needs_review" ? "plan.needs_review" : "plan.paused", { planId, stepId: step.id, reason: step.status });
         break;
       }
 
@@ -317,11 +318,12 @@ export async function executePlan(
 
       // Gate after re-read: check if step was changed to review/block while we were executing prior steps
       if (currentStep && (currentStep.status === "needs_review" || currentStep.status === "blocked")) {
-        log.log(`[${planId}] Step ${i + 1} is ${currentStep.status} (detected after re-read) — pausing execution for review`);
-        await updatePlanStatus(planId, "paused");
+        const haltedPlanStatus: PlanStatus = currentStep.status === "needs_review" ? "needs_review" : "paused";
+        log.log(`[${planId}] Step ${i + 1} is ${currentStep.status} (detected after re-read) — halting execution at gate`);
+        await updatePlanStatus(planId, haltedPlanStatus);
         await renderPlanToLibraryPage(planId);
         await notifyOriginSession(originSessionId, planId, planTitle, currentStep, currentStep.status);
-        publishPlanEvent("plan.paused", { planId, stepId: currentStep.id, reason: currentStep.status });
+        publishPlanEvent(currentStep.status === "needs_review" ? "plan.needs_review" : "plan.paused", { planId, stepId: currentStep.id, reason: currentStep.status });
         break;
       }
 
@@ -362,13 +364,15 @@ export async function executePlan(
         }
       } else if (stepResult.status === "halted") {
         totalDuration += stepResult.duration;
-        await updatePlanStatus(planId, "paused");
+        const haltedPlanStatus: PlanStatus = stepResult.stepStatus === "needs_review" ? "needs_review" : "paused";
+        if (stepResult.stepStatus === "needs_review") completedCount++;
+        await updatePlanStatus(planId, haltedPlanStatus);
         await renderPlanToLibraryPage(planId);
         await notifyOriginSession(originSessionId, planId, planTitle, currentStep, stepResult.stepStatus);
-        publishPlanEvent("plan.paused", { planId, stepId: currentStep.id, reason: stepResult.stepStatus });
+        publishPlanEvent(stepResult.stepStatus === "needs_review" ? "plan.needs_review" : "plan.paused", { planId, stepId: currentStep.id, reason: stepResult.stepStatus });
         activePlans.delete(planId);
         return {
-          planId, status: "paused", completedSteps: completedCount,
+          planId, status: haltedPlanStatus, completedSteps: completedCount,
           totalSteps: steps.length, totalDuration,
         };
       } else {
@@ -776,10 +780,10 @@ export async function preparePlanForResume(planId: string): Promise<PlanResumeRe
   }
 
   const steps = await getStepsFromDb(planId);
-  if (currentStatus !== "paused") {
+  if (currentStatus !== "paused" && currentStatus !== "needs_review") {
     return {
       ready: false, planId, status: currentStatus, recovered, totalSteps: steps.length,
-      error: `Plan status is "${currentStatus}", not paused`,
+      error: `Plan status is "${currentStatus}", not paused or needs_review`,
     };
   }
 
@@ -825,7 +829,7 @@ export async function preparePlanForResume(planId: string): Promise<PlanResumeRe
   }
 
   await renderPlanToLibraryPage(planId);
-  return { ready: true, planId, status: "paused", recovered, totalSteps: steps.length };
+  return { ready: true, planId, status: currentStatus, recovered, totalSteps: steps.length };
 }
 
 /**
@@ -988,7 +992,7 @@ async function notifyOriginSession(
     if (event === "completed") {
       msg = `Plan completed: **${planTitle}** — all steps passed.`;
     } else if (event === "needs_review" && step) {
-      msg = `⏸️ Plan **${planTitle}** paused at step "${step.title}" — step requires review before execution. Use plan(action: "resume") to approve and continue.`;
+      msg = `👀 Plan **${planTitle}** needs review at step "${step.title}" — the step finished executing and its output is ready for your review. Use plan(action: "resume") to approve and continue.`;
     } else if (event === "blocked" && step) {
       msg = `⏸️ Plan **${planTitle}** paused at step "${step.title}" — step is blocked. Resolve the blocker, then use plan(action: "resume") to continue.`;
     } else if (step) {

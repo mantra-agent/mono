@@ -18,6 +18,7 @@ import {
   buildPlanPageContent,
   formatPlanSummary,
   isStepResolved,
+  isStepProgressed,
   isPlanDone,
   parsePlanFromContent,
   type PlanMeta,
@@ -253,14 +254,14 @@ async function handleList(args: Record<string, any>): Promise<ToolHandlerResult>
   }
 
   const statusIcon: Record<string, string> = {
-    created: "📋", executing: "⏳", paused: "⏸️", completed: "✅",
+    created: "📋", executing: "⏳", paused: "⏸️", needs_review: "👀", completed: "✅",
     completed_with_failures: "⚠️", failed: "❌", aborted: "🚫",
   };
 
   const lines: string[] = [];
   for (const p of plans) {
     const steps = await db.select().from(planSteps).where(visiblePlanStep(eq(planSteps.planId, p.id)));
-    const resolved = steps.filter(s => isStepResolved(s)).length;
+    const resolved = steps.filter(isStepProgressed).length;
     const page = await getLibraryPage(p.pageId);
     const title = page?.title || "Untitled";
     const slug = page?.slug || "";
@@ -282,8 +283,8 @@ async function handleExecute(args: Record<string, any>): Promise<ToolHandlerResu
   const { plan, page } = resolved;
   const planId = plan.id;
 
-  if (plan.status !== "created" && plan.status !== "paused") {
-    return { result: `Plan status is "${plan.status}" — can only execute plans with status "created" or "paused". Use plan(action: "resume") for paused plans.`, error: true };
+  if (plan.status !== "created" && plan.status !== "paused" && plan.status !== "needs_review") {
+    return { result: `Plan status is "${plan.status}" — can only execute plans with status "created", "paused", or "needs_review". Use plan(action: "resume") for paused or review-pending plans.`, error: true };
   }
 
   const sessionId = args._sessionId as string || plan.originSessionId;
@@ -303,6 +304,8 @@ async function handleExecute(args: Record<string, any>): Promise<ToolHandlerResu
   const isComplete = result.status === "completed" || result.status === ("completed_with_failures" as PlanStatus);
   if (isComplete) {
     return { result: `✅ Plan **${planTitle}** completed — ${result.completedSteps}/${result.totalSteps} steps in ${formatDuration(result.totalDuration)}.${page ? ` [page:${page.slug}]` : ""}` };
+  } else if (result.status === "needs_review") {
+    return { result: `👀 Plan **${planTitle}** needs review — ${result.completedSteps}/${result.totalSteps} steps executed.${page ? ` [page:${page.slug}]` : ""}` };
   } else if (result.status === "paused") {
     return { result: `⚠️ Plan **${planTitle}** paused — ${result.completedSteps}/${result.totalSteps} steps completed. ${result.error || ""}. Use plan(action: "resume", planId: "${planId}") to retry.${page ? ` [page:${page.slug}]` : ""}`, error: true };
   } else {
@@ -375,6 +378,8 @@ async function handleExecuteLegacy(args: Record<string, any>): Promise<ToolHandl
   const isLegacyComplete = result.status === "completed" || result.status === "completed_with_failures";
   if (isLegacyComplete) {
     return { result: `✅ Plan **${planTitle}** completed — ${result.completedSteps}/${result.totalSteps} steps in ${formatDuration(result.totalDuration)}. [page:${page.slug}]` };
+  } else if (result.status === "needs_review") {
+    return { result: `👀 Plan **${planTitle}** needs review. Use plan(action: "resume", planId: "${meta.id}") to approve and continue. [page:${page.slug}]` };
   } else if (result.status === "paused") {
     return { result: `⚠️ Plan **${planTitle}** paused — ${result.error || ""}. Use plan(action: "resume", planId: "${meta.id}") to retry. [page:${page.slug}]`, error: true };
   } else {
@@ -577,8 +582,8 @@ async function handleResume(args: Record<string, any>): Promise<ToolHandlerResul
   const { plan, page } = resolved;
   const resolvedPlanId = plan.id;
 
-  if (plan.status !== "paused") {
-    return { result: `Plan status is "${plan.status}" — can only resume paused plans.`, error: true };
+  if (plan.status !== "paused" && plan.status !== "needs_review") {
+    return { result: `Plan status is "${plan.status}" — can only resume paused or review-pending plans.`, error: true };
   }
 
   const sessionId = args._sessionId as string || plan.originSessionId;
@@ -598,6 +603,8 @@ async function handleResume(args: Record<string, any>): Promise<ToolHandlerResul
   const isResumeComplete = result.status === "completed" || result.status === "completed_with_failures";
   if (isResumeComplete) {
     return { result: `✅ Plan **${planTitle}** completed — ${result.completedSteps}/${result.totalSteps} steps.${page ? ` [page:${page.slug}]` : ""}` };
+  } else if (result.status === "needs_review") {
+    return { result: `👀 Plan **${planTitle}** still needs review.${page ? ` [page:${page.slug}]` : ""}` };
   } else if (result.status === "paused") {
     return { result: `⚠️ Plan **${planTitle}** paused again — ${result.error || ""}.${page ? ` [page:${page.slug}]` : ""}`, error: true };
   } else {

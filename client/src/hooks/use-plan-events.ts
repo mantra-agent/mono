@@ -15,7 +15,8 @@ export type PlanEventType =
   | "plan.step.completed"
   | "plan.step.failed"
   | "plan.completed"
-  | "plan.paused";
+  | "plan.paused"
+  | "plan.needs_review";
 
 export interface PlanEvent {
   type: PlanEventType;

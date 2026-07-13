@@ -129,11 +129,18 @@ export function PlanCard({ planId, title, initialData }: PlanCardProps) {
         setLocalStatus("paused");
         queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
         break;
+      case "plan.needs_review":
+        setLocalStatus("needs_review");
+        if (event.stepId) {
+          setLocalSteps(prev => prev.map(step => step.id === event.stepId ? { ...step, status: "needs_review" } : step));
+        }
+        queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
+        break;
     }
   }, []), planId);
 
   // Derive stats
-  const completedCount = localSteps.filter(s => s.status === "completed" || s.status === "skipped" || s.status === "failed").length;
+  const completedCount = localSteps.filter(s => s.status === "completed" || s.status === "skipped" || s.status === "failed" || s.status === "needs_review").length;
   const totalCount = localSteps.length;
   const currentStep = localSteps.find(s => s.status === "running");
   const currentStepIndex = currentStep ? localSteps.indexOf(currentStep) : -1;
@@ -141,6 +148,7 @@ export function PlanCard({ planId, title, initialData }: PlanCardProps) {
   const isExecuting = localStatus === "executing";
   const isTerminal = localStatus === "completed" || localStatus === "failed" || localStatus === "aborted";
   const isPaused = localStatus === "paused";
+  const needsReview = localStatus === "needs_review";
   const isCreated = localStatus === "created";
   const totalDuration = localSteps.reduce((sum, s) => sum + (s.duration || 0), 0);
   const pageSlug = planData?.pageSlug || "";
@@ -199,6 +207,7 @@ export function PlanCard({ planId, title, initialData }: PlanCardProps) {
       localStatus === "completed" && "border-success/20",
       localStatus === "failed" && "border-destructive/20",
       isPaused && "border-warning/20",
+      needsReview && "border-foreground/30",
     )}>
       <div className="p-4 space-y-3">
         {/* Header */}
@@ -288,7 +297,7 @@ export function PlanCard({ planId, title, initialData }: PlanCardProps) {
               Pause
             </Button>
           )}
-          {isPaused && (
+          {(isPaused || needsReview) && (
             <>
               <Button
                 size="sm"
@@ -297,7 +306,7 @@ export function PlanCard({ planId, title, initialData }: PlanCardProps) {
                 disabled={resumeMutation.isPending}
               >
                 <Play className="h-3 w-3" />
-                Resume
+                {needsReview ? "Review" : "Resume"}
               </Button>
               {pageSlug && (
                 <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5" asChild>

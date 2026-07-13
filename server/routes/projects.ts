@@ -480,7 +480,7 @@ export async function registerProjectsRoutes(app: Express) {
 
         if (summary.archivedAt) {
           archived.push(summary);
-        } else if (summary.status === "created" || summary.status === "executing" || summary.status === "paused") {
+        } else if (summary.status === "created" || summary.status === "executing" || summary.status === "paused" || summary.status === "needs_review") {
           active.push(summary);
         } else if (summary.status === "failed" || summary.status === "aborted") {
           failed.push(summary);
@@ -565,8 +565,8 @@ export async function registerProjectsRoutes(app: Express) {
       if (!parsed) return res.status(404).json({ error: "Page does not contain plan data" });
 
       const effectiveStatus = dbStatus ?? parsed.meta.status;
-      if (effectiveStatus !== "created" && effectiveStatus !== "paused") {
-        return res.status(409).json({ error: `Plan status is "${effectiveStatus}" — can only execute created or paused plans.` });
+      if (effectiveStatus !== "created" && effectiveStatus !== "paused" && effectiveStatus !== "needs_review") {
+        return res.status(409).json({ error: `Plan status is "${effectiveStatus}" — can only execute created, paused, or review-pending plans.` });
       }
 
       const internalId = dbPlan?.id ?? parsed.meta.id;

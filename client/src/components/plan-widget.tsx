@@ -72,6 +72,8 @@ function getBorderColor(status: PlanStatus, isFlashing: boolean): string {
     case "failed":
     case "aborted":
       return "border-l-destructive/20";
+    case "needs_review":
+      return "border-l-foreground/30";
     case "paused":
       return "border-l-warning/20";
     default:
@@ -88,7 +90,7 @@ function getTerminalLabel(status: PlanStatus): string | null {
 }
 
 function isProgressedStep(step: PlanStep): boolean {
-  return step.status === "completed" || step.status === "skipped" || step.status === "failed";
+  return step.status === "completed" || step.status === "skipped" || step.status === "failed" || step.status === "needs_review";
 }
 
 function PlanStepCheckbox({ step }: { step: PlanStep }) {
@@ -123,10 +125,10 @@ function PlanStepCheckbox({ step }: { step: PlanStep }) {
           )}
           aria-hidden="true"
         >
-          {checked && <CircleCheck className="h-3.5 w-3.5" />}
+          {checked && !needsReview && <CircleCheck className="h-3.5 w-3.5" />}
           {isRunning && !checked && <ActiveStatusSpinner className="h-3.5 w-3.5" />}
           {isBlocked && !checked && <OctagonAlert className="h-3 w-3" />}
-          {needsReview && !checked && <MailOpen className="h-3 w-3" />}
+          {needsReview && checked && <MailOpen className="h-3 w-3" />}
           {!checked && !isRunning && !isBlocked && !needsReview && <Circle className="h-3.5 w-3.5" />}
         </span>
         <div className="min-w-0 flex-1">
@@ -142,7 +144,7 @@ function PlanStepCheckbox({ step }: { step: PlanStep }) {
               {step.title}
             </span>
             {isBlocked && <span className="shrink-0 rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive">Blocked</span>}
-            {needsReview && <span className="shrink-0 rounded border border-foreground/25 bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground">Unread</span>}
+            {needsReview && <span className="shrink-0 rounded border border-foreground/25 bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground">Needs Review</span>}
           </div>
           {stepErrorText && (
             <p className="mt-0.5 line-clamp-2 text-xs text-destructive">{stepErrorText}</p>
@@ -171,10 +173,11 @@ export function PlanWidget({
     plan.status === "failed" ||
     plan.status === "aborted";
   const isPaused = plan.status === "paused";
+  const needsReview = plan.status === "needs_review";
   const isCreated = plan.status === "created";
   const isArchived = Boolean(plan.archivedAt);
   const canPause = !isArchived && isExecuting;
-  const canResume = !isArchived && (isPaused || isCreated || plan.status === "failed");
+  const canResume = !isArchived && (isPaused || needsReview || isCreated || plan.status === "failed");
   const canArchive = showArchiveAction && !isArchived && !isExecuting;
 
   const progressedCount = plan.steps.filter(isProgressedStep).length;
@@ -345,7 +348,7 @@ export function PlanWidget({
                 {canResume && (
                   <DropdownMenuItem onClick={() => resumeMutation.mutate()} disabled={resumeMutation.isPending}>
                     <Play className="mr-2 h-4 w-4" />
-                    {isCreated ? "Execute" : plan.status === "failed" ? "Retry" : "Resume"}
+                    {isCreated ? "Execute" : plan.status === "failed" ? "Retry" : needsReview ? "Review" : "Resume"}
                   </DropdownMenuItem>
                 )}
                 {canArchive && (

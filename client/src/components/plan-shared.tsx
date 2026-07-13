@@ -22,7 +22,7 @@ import { formatDiagnosticValue } from "@/lib/diagnostic-error";
 
 // ─── Types ───────────────────────────────────────────────────────────
 
-export type PlanStatus = "created" | "executing" | "paused" | "completed" | "completed_with_failures" | "failed" | "aborted";
+export type PlanStatus = "created" | "executing" | "paused" | "needs_review" | "completed" | "completed_with_failures" | "failed" | "aborted";
 export type StepStatus = "pending" | "running" | "completed" | "failed" | "skipped" | "blocked" | "needs_review";
 
 export interface PlanStepSessionLink {
@@ -92,6 +92,8 @@ export function getStatusBadge(status: PlanStatus) {
       return <Badge variant="default" className="bg-warning/15 text-warning border-warning/20 text-xs">Warnings</Badge>;
     case "failed":
       return <Badge variant="destructive" className="text-xs">Failed</Badge>;
+    case "needs_review":
+      return <Badge variant="default" className="bg-foreground/10 text-foreground border-foreground/20 text-xs">Needs Review</Badge>;
     case "paused":
       return <Badge variant="default" className="bg-warning/15 text-warning border-warning/20 text-xs">Paused</Badge>;
     case "aborted":

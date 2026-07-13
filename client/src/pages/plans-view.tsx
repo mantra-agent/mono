@@ -69,7 +69,7 @@ function PlansZeroState() {
 // ─── Plan Row ────────────────────────────────────────────────────────
 
 function PlanRow({ plan }: { plan: PlanSummary }) {
-  const isActive = !plan.archivedAt && (plan.status === "executing" || plan.status === "created");
+  const isActive = !plan.archivedAt && (plan.status === "executing" || plan.status === "created" || plan.status === "needs_review");
 
   return (
     <Card className={isActive ? "border-info/20" : undefined}>
