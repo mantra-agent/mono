@@ -23,6 +23,9 @@ import { ReferenceChip } from "@/components/references/reference-chip";
 import { resolveReference } from "@/components/references/reference-registry";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { ProfileDetailSection } from "@/components/profile-detail-section";
+import { ExpandableInteractionRow } from "@/components/people/expandable-interaction-row";
+import type { OpportunityInteractionActivity } from "@shared/models/opportunities";
 
 // ── Types ──────────────────────────────────────────────────────────
 interface LinkedSkill {
@@ -673,24 +676,43 @@ function OpportunityDetail({
     };
   }, []);
 
-  return (
-    <div className="flex flex-col gap-4 p-4 overflow-y-auto h-full" onBlur={handleBlur}>
-      {/* Header: Title + Save Status */}
-      <div className="flex items-center gap-2">
-        <Input
-          value={form.title}
-          onChange={e => patch("title", e.target.value)}
-          className="text-lg font-semibold border-none px-0 focus-visible:ring-0 h-auto flex-1"
-          placeholder="Opportunity title"
-        />
-        <div className="text-xs text-muted-foreground shrink-0 w-16 text-right">
-          {saveStatus === "saving" && <span className="flex items-center gap-1 justify-end"><Loader2 className="h-3 w-3 animate-spin" />Saving</span>}
-          {saveStatus === "saved" && <span className="flex items-center gap-1 justify-end text-success"><Check className="h-3 w-3" />Saved</span>}
-        </div>
-      </div>
+  const { data: activities = [], isLoading: activitiesLoading } = useQuery<OpportunityInteractionActivity[]>({
+    queryKey: ["/api/exec/opportunities", opportunity.id, "activities"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/exec/opportunities/${opportunity.id}/activities`);
+      return res.json();
+    },
+  });
 
+  const sortedActivities = useMemo(
+    () => [...activities].sort((a, b) => new Date(b.interaction.date).getTime() - new Date(a.interaction.date).getTime()),
+    [activities],
+  );
+
+  return (
+    <div className="h-full space-y-6 overflow-y-auto p-4" onBlur={handleBlur} data-testid="opportunity-detail-view">
+      <div className="space-y-0">
+        <ProfileDetailSection
+          title={(
+            <Input
+              value={form.title}
+              onChange={e => patch("title", e.target.value)}
+              className="h-auto w-full border-0 bg-transparent p-0 text-xs font-bold uppercase leading-none tracking-wider text-muted-foreground shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              placeholder="Opportunity title"
+            />
+          )}
+          defaultOpen
+          testId="section-opportunity-profile"
+          headerAction={(
+            <div className="w-16 shrink-0 text-right text-xs font-normal normal-case tracking-normal text-muted-foreground">
+              {saveStatus === "saving" && <span className="flex items-center justify-end gap-1"><Loader2 className="h-3 w-3 animate-spin" />Saving</span>}
+              {saveStatus === "saved" && <span className="flex items-center justify-end gap-1 text-success"><Check className="h-3 w-3" />Saved</span>}
+            </div>
+          )}
+        >
+          <div className="space-y-4 overflow-hidden rounded-md border border-border/20 p-3">
       {/* Type, Status & Priority */}
-      <div className="flex gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_7rem]">
         <div className="flex-1">
           <label className="text-xs text-muted-foreground mb-1 block">Type</label>
           <Select value={form.type} onValueChange={v => patch("type", v)}>
@@ -709,7 +731,7 @@ function OpportunityDetail({
             </SelectContent>
           </Select>
         </div>
-        <div className="w-28">
+        <div className="sm:w-28">
           <label className="text-xs text-muted-foreground mb-1 block">Priority</label>
           <Select value={form.priority || ""} onValueChange={v => patch("priority", v || null)}>
             <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
@@ -815,7 +837,7 @@ function OpportunityDetail({
       </div>
 
       {/* Follow-Up */}
-      <div className="flex gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="flex-1">
           <label className="text-xs text-muted-foreground mb-1 block">Follow Up By</label>
           <Input
@@ -824,7 +846,7 @@ function OpportunityDetail({
             onChange={e => patch("followUpBy", e.target.value || null)}
           />
         </div>
-        <div className="flex-[2]">
+        <div className="sm:col-span-2">
           <label className="text-xs text-muted-foreground mb-1 block">Follow-Up Note</label>
           <Input
             value={form.followUpNote || ""}
@@ -901,11 +923,37 @@ function OpportunityDetail({
         />
       </div>
 
-      {/* Delete button */}
-      <div className="flex justify-end mt-auto pt-4 border-t">
-        <Button variant="destructive" size="sm" onClick={() => setShowDelete(true)}>
-          <Trash2 className="h-4 w-4 mr-1" /> Delete
-        </Button>
+          {/* Delete button */}
+          <div className="flex justify-end border-t pt-4">
+            <Button variant="destructive" size="sm" onClick={() => setShowDelete(true)}>
+              <Trash2 className="mr-1 h-4 w-4" /> Delete
+            </Button>
+          </div>
+        </div>
+      </ProfileDetailSection>
+
+      <ProfileDetailSection title="Activities" count={sortedActivities.length} defaultOpen testId="section-opportunity-activities">
+        <div className="overflow-hidden rounded-md border border-border/20" data-testid="opportunity-activity-tree">
+          {activitiesLoading ? (
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading activities…</div>
+          ) : sortedActivities.length === 0 ? (
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">No linked activities.</div>
+          ) : sortedActivities.map(activity => (
+            <ExpandableInteractionRow
+              key={activity.associationId}
+              interaction={activity.interaction}
+              personName={activity.personName}
+              testId={`opportunity-activity-${activity.associationId}`}
+              leadingContent={(
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <ReferenceChip resolved={resolveReference({ type: "interaction", id: `${activity.personId}~${activity.interaction.id}`, canonical: activity.reference })} />
+                  <ReferenceChip resolved={resolveReference({ type: "person", id: activity.personId, canonical: `@person:${activity.personId}` })} />
+                </div>
+              )}
+            />
+          ))}
+        </div>
+      </ProfileDetailSection>
       </div>
 
       <AlertDialog open={showDelete} onOpenChange={setShowDelete}>

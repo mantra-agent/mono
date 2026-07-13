@@ -33,8 +33,8 @@ export interface PersonInteraction {
 interface ExpandableInteractionRowProps {
   interaction: PersonInteraction;
   personName?: string;
+  leadingContent?: ReactNode;
   menuContent?: ReactNode;
-  className?: string;
   testId?: string;
 }
 
@@ -66,7 +66,7 @@ function formatShortDate(value: string): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export function ExpandableInteractionRow({ interaction, personName, menuContent, className, testId }: ExpandableInteractionRowProps) {
+export function ExpandableInteractionRow({ interaction, personName, leadingContent, menuContent, testId }: ExpandableInteractionRowProps) {
   const Icon = icons[interaction.type] || Calendar;
   const DirectionIcon = interaction.direction === "inbound"
     ? ArrowDownLeft
@@ -84,7 +84,6 @@ export function ExpandableInteractionRow({ interaction, personName, menuContent,
       icon={<Icon className="h-3.5 w-3.5 text-muted-foreground" />}
       hasValue
       showEmpty
-      className={className}
       expandedContent={(
         <div className="max-h-80 max-w-none overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-sm leading-tight text-white scrollbar-thin">
           {personName && <p className="mb-2 text-xs text-muted-foreground">{personName}</p>}
@@ -105,6 +104,7 @@ export function ExpandableInteractionRow({ interaction, personName, menuContent,
       testId={testId || `interaction-${interaction.id}`}
     >
       <div className="flex min-w-0 items-center justify-end gap-1.5">
+        {leadingContent}
         <span className={cn("truncate text-xs", interaction.responseOwed ? "text-foreground" : "text-muted-foreground")}>{interaction.summary}</span>
         {DirectionIcon && <DirectionIcon className="h-3 w-3 shrink-0 text-muted-foreground" aria-label={interaction.direction} />}
       </div>

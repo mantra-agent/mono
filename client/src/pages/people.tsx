@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef, Fragment, type ReactNode } from "react";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ExpandableInteractionRow, type PersonInteraction } from "@/components/people/expandable-interaction-row";
 import { InlineDatePicker } from "@/components/inline-date-picker";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -2021,49 +2022,6 @@ function ConnectionsCard({ person }: { person: Person }) {
   );
 }
 
-function PeopleDetailSection({
-  title,
-  count,
-  defaultOpen = false,
-  children,
-  collapsedContent,
-  testId,
-  headerAction,
-}: {
-  title: ReactNode;
-  count?: number;
-  defaultOpen?: boolean;
-  children: ReactNode;
-  collapsedContent?: ReactNode;
-  testId?: string;
-  headerAction?: ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-
-  return (
-    <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
-      <div className="group flex w-full items-center gap-1.5 px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate">
-        <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
-          <span className="min-w-0 flex-1 text-left">{title}</span>
-          {count !== undefined && <span className="ml-auto text-[10px] font-normal text-muted-foreground/70">{count}</span>}
-        </CollapsibleTrigger>
-        {headerAction}
-      </div>
-      {!open && collapsedContent && (
-        <div className="px-2 pb-1">
-          {collapsedContent}
-        </div>
-      )}
-      <CollapsibleContent>
-        <div className="space-y-1 pt-1">
-          {children}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
 function PersonDetailView({ personId, onClose, onDelete }: { personId: string; onClose: () => void; onDelete: () => void }) {
   const { toast } = useToast();
   const [editingName, setEditingName] = useState(false);
@@ -2232,7 +2190,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
   return (
     <div className="space-y-6" data-testid="person-detail-view">
       <div className="space-y-0">
-      <PeopleDetailSection
+      <ProfileDetailSection
         title={editingName ? (
           <Input
             value={editName}
@@ -2422,7 +2380,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
           {showAddContact ? <ProfileTreeRow label="New contact" icon={<Plus className="h-3.5 w-3.5" />} hasValue={true} showEmpty={true} testId="row-profile-new-contact"><div className="flex flex-wrap items-center justify-end gap-1.5"><Select value={newContactType} onValueChange={(v) => setNewContactType(v as any)}><SelectTrigger className="w-48" data-testid="select-contact-type"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="email">Email</SelectItem><SelectItem value="phone">Phone</SelectItem><SelectItem value="social">Social</SelectItem><SelectItem value="other">Other</SelectItem></SelectContent></Select><Input value={newContactLabel} onChange={(e) => setNewContactLabel(e.target.value)} placeholder="Label" className="h-8 w-20 text-right" data-testid="input-contact-label" /><Input value={newContactValue} onChange={(e) => setNewContactValue(e.target.value)} placeholder="Value" className="h-8 min-w-[120px] flex-1 text-right" data-testid="input-contact-value" /><Button size="sm" onClick={() => { if (newContactValue.trim()) { updateMutation.mutate({ contactInfo: [...person.contactInfo, { type: newContactType, label: newContactLabel || contactTypeLabels[newContactType], value: newContactValue }] }); setShowAddContact(false); setNewContactLabel(""); setNewContactValue(""); } }} data-testid="button-save-contact">Add</Button><Button variant="ghost" size="icon" onClick={() => setShowAddContact(false)}><X className="h-3 w-3" /></Button></div></ProfileTreeRow> : <div className="px-2 py-1"><Button variant="ghost" size="sm" onClick={() => setShowAddContact(true)} data-testid="button-add-contact"><Plus className="mr-1 h-3 w-3" />Contact info</Button></div>}
         </div>
 
-      </PeopleDetailSection>
+      </ProfileDetailSection>
 
       <InteractionsTab person={person} onUpdate={handleRefetch} showAdd={showNewLog} setShowAdd={setShowNewLog} />
 
