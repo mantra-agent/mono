@@ -567,6 +567,8 @@ async function spawnWorkflowStageChild(parentSessionId: string, detail: Workflow
     waitForCompletion: false,
     titleOverride: `Workflow: ${stageTitle} #${attemptNumber}`,
     sessionKeyOverride: `workflow:${detail.run.id}:${stageKey}`,
+    admissionTier: "realtime",
+    lineageId: parentSessionId,
   });
   return result.sessionId;
 }

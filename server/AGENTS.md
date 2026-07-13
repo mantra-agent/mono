@@ -298,9 +298,12 @@ Four interacting layers: intention stack (what), timer scheduler (when), skill r
 ### Admission Controller
 - **4 tiers:** communication (highest, always granted), realtime, request, background (lowest)
 - **Partitioned budget:** `RUN_ADMISSION_FOREGROUND_BUDGET` defaults to 7 and caps communication/realtime/request work; `RUN_ADMISSION_BACKGROUND_BUDGET` defaults to 3 and caps background work. Total concurrency is their sum, default 10.
+- **Inherited work:** user-originated plan and workflow children run at foreground realtime priority and share the root session lineage; runs in one lineage never preempt one another.
+- **Blocking children:** a parent executor suspends its slot while a blocking plan execute/resume tool owns execution, then reacquires before continuing.
+- **Yield contract:** a genuine yield is terminal for that child attempt. Persist the failed session/spawn/block state so the plan or workflow monitor can retry or pause; never leave a yielded session streaming.
 - **Background lifetime:** background slots have a 15-minute max age
 - **Cooldown:** env-configurable post-communication cooldown via `RUN_ADMISSION_IDLE_THRESHOLD_MS`, default 60 seconds; cooldown blocks background runs
-- **Preemption:** Higher tier can set `yieldRequested` on lower-tier slots
+- **Preemption:** Higher tier can set `yieldRequested` on lower-tier slots outside its execution lineage
 
 ### Hook System
 - Event-driven: glob pattern match → AND-condition on payload → cooldown check → rate limit (100/min)

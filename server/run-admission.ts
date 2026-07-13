@@ -11,6 +11,7 @@ export interface AdmissionSlot {
   tier: AdmissionTier;
   sessionId?: string;
   activity?: string;
+  lineageId?: string;
   yieldRequested: boolean;
   grantedAt: number;
 }
@@ -20,6 +21,7 @@ interface QueuedRequest {
   tier: AdmissionTier;
   sessionId?: string;
   activity?: string;
+  lineageId?: string;
   resolve: (slot: AdmissionSlot) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout> | null;
@@ -165,13 +167,14 @@ export class RunAdmissionController {
   async requestSlot(
     tier: AdmissionTier,
     runId: string,
-    options?: { sessionId?: string; activity?: string; timeout?: number; signal?: AbortSignal },
+    options?: { sessionId?: string; activity?: string; lineageId?: string; timeout?: number; signal?: AbortSignal },
   ): Promise<AdmissionSlot> {
     const slot: AdmissionSlot = {
       runId,
       tier,
       sessionId: options?.sessionId,
       activity: options?.activity,
+      lineageId: options?.lineageId,
       yieldRequested: false,
       grantedAt: Date.now(),
     };
@@ -186,7 +189,7 @@ export class RunAdmissionController {
       const foregroundOverflow = Math.max(0, this.getForegroundCount() - this.foregroundBudget);
       const totalOverflow = Math.max(0, this.getActiveCount() - this.concurrencyBudget);
       if (foregroundOverflow > 0 || totalOverflow > 0) {
-        this.yieldLowestTierRuns(tier, Math.max(foregroundOverflow, totalOverflow));
+        this.yieldLowestTierRuns(tier, Math.max(foregroundOverflow, totalOverflow), options?.lineageId);
       }
       log.verbose(() => `Communication slot granted: ${runId}`);
       return slot;
@@ -205,9 +208,9 @@ export class RunAdmissionController {
       }
 
       const timeout = options?.timeout ?? DEFAULT_ADMISSION_TIMEOUT_MS;
-      this.yieldLowestTierRuns(tier, 1);
+      this.yieldLowestTierRuns(tier, 1, options?.lineageId);
       log.verbose(() => `Realtime run queued (with preemption signal): ${runId} (queue depth: ${this.queue.length + 1}, timeout: ${timeout}ms)`);
-      return this.enqueue(runId, tier, timeout, options?.signal, { sessionId: options?.sessionId, activity: options?.activity });
+      return this.enqueue(runId, tier, timeout, options?.signal, { sessionId: options?.sessionId, activity: options?.activity, lineageId: options?.lineageId });
     }
 
     if (tier === "request") {
@@ -223,9 +226,9 @@ export class RunAdmissionController {
       }
 
       const timeout = options?.timeout ?? DEFAULT_ADMISSION_TIMEOUT_MS;
-      this.yieldLowestTierRuns(tier, 1);
+      this.yieldLowestTierRuns(tier, 1, options?.lineageId);
       log.verbose(() => `Request run queued: ${runId} (queue depth: ${this.queue.length + 1}, timeout: ${timeout}ms)`);
-      return this.enqueue(runId, tier, timeout, options?.signal, { sessionId: options?.sessionId, activity: options?.activity });
+      return this.enqueue(runId, tier, timeout, options?.signal, { sessionId: options?.sessionId, activity: options?.activity, lineageId: options?.lineageId });
     }
 
     if (this.canAdmitBackground({ activity: options?.activity })) {
@@ -237,7 +240,7 @@ export class RunAdmissionController {
 
     const timeout = options?.timeout ?? DEFAULT_ADMISSION_TIMEOUT_MS;
     log.verbose(() => `Background run queued: ${runId} (queue depth: ${this.queue.length + 1}, timeout: ${timeout}ms)`);
-    return this.enqueue(runId, tier, timeout, options?.signal, { sessionId: options?.sessionId, activity: options?.activity });
+    return this.enqueue(runId, tier, timeout, options?.signal, { sessionId: options?.sessionId, activity: options?.activity, lineageId: options?.lineageId });
   }
 
   /** Whether a background run can be admitted right now (public for pre-flight checks). */
@@ -267,7 +270,7 @@ export class RunAdmissionController {
     tier: AdmissionTier,
     timeout: number,
     signal?: AbortSignal,
-    options?: { sessionId?: string; activity?: string },
+    options?: { sessionId?: string; activity?: string; lineageId?: string },
   ): Promise<AdmissionSlot> {
     return new Promise<AdmissionSlot>((resolve, reject) => {
       // If already aborted before queueing, reject immediately
@@ -324,6 +327,7 @@ export class RunAdmissionController {
         tier,
         sessionId: options?.sessionId,
         activity: options?.activity,
+        lineageId: options?.lineageId,
         resolve: wrappedResolve,
         reject: wrappedReject,
         timer,
@@ -363,10 +367,29 @@ export class RunAdmissionController {
     return slot?.yieldRequested ?? false;
   }
 
-  private yieldLowestTierRuns(callerTier: AdmissionTier, count: number): void {
+  async withSuspendedSlot<T>(runId: string, fn: () => Promise<T>): Promise<T> {
+    const slot = this.slots.get(runId);
+    if (!slot) return fn();
+
+    this.releaseSlot(runId);
+    log.debug(`Admission slot suspended: ${runId} tier=${slot.tier} lineageId=${slot.lineageId ?? "none"}`);
+    try {
+      return await fn();
+    } finally {
+      await this.requestSlot(slot.tier, runId, {
+        sessionId: slot.sessionId,
+        activity: slot.activity,
+        lineageId: slot.lineageId,
+      });
+      log.debug(`Admission slot resumed: ${runId} tier=${slot.tier} lineageId=${slot.lineageId ?? "none"}`);
+    }
+  }
+
+  private yieldLowestTierRuns(callerTier: AdmissionTier, count: number, callerLineageId?: string): void {
     const candidates = Array.from(this.slots.values())
       .filter(s => {
         if (s.yieldRequested) return false;
+        if (callerLineageId && s.lineageId === callerLineageId) return false;
         if (s.tier === "realtime") return false;
         if (callerTier === "communication") {
           return s.tier === "request" || s.tier === "background";
@@ -422,6 +445,7 @@ export class RunAdmissionController {
         tier: next.tier,
         sessionId: next.sessionId,
         activity: next.activity,
+        lineageId: next.lineageId,
         yieldRequested: false,
         grantedAt: Date.now(),
       };
@@ -459,6 +483,7 @@ export class RunAdmissionController {
       tier: request.tier,
       sessionId: request.sessionId,
       activity: request.activity,
+      lineageId: request.lineageId,
       yieldRequested: false,
       grantedAt: Date.now(),
     };
