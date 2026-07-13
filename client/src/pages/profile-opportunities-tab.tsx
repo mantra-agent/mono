@@ -18,12 +18,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, Trash2, Loader2, DollarSign, Check, Search, FileText, ExternalLink, Download, ChevronRight, MoreHorizontal, X, Briefcase, Handshake, Building2, PiggyBank } from "lucide-react";
+import { Plus, Trash2, Loader2, DollarSign, Check, Search, FileText, ExternalLink, Download, ChevronRight, MoreHorizontal, X, Briefcase, Handshake, Building2, PiggyBank, MapPin, ContactRound, Trophy, Gauge, Clock, Calendar, ListChecks, AlignLeft, Link2, Sparkles } from "lucide-react";
 import { ReferenceChip } from "@/components/references/reference-chip";
 import { resolveReference } from "@/components/references/reference-registry";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { ExpandableInteractionRow } from "@/components/people/expandable-interaction-row";
 import type { OpportunityInteractionActivity } from "@shared/models/opportunities";
 
@@ -689,6 +690,15 @@ function OpportunityDetail({
     [activities],
   );
 
+  const showCompany = form.type === "job";
+  const hasCommitment = form.isFullTime || form.hoursPerWeek != null;
+  const commitmentLabel = form.isFullTime ? "Full time" : form.hoursPerWeek ? `${form.hoursPerWeek} hrs / week` : "—";
+  const hasFollowUp = Boolean(form.followUpBy || form.followUpNote);
+  const hasDescription = Boolean(form.description?.trim());
+  const hasJobDescription = Boolean(form.jdText?.trim());
+  const hasJobUrl = Boolean(form.jobUrl?.trim());
+  const hasSkills = Boolean(opportunity.linkedSkills?.length);
+
   return (
     <div className="h-full space-y-6 overflow-y-auto p-4" onBlur={handleBlur} data-testid="opportunity-detail-view">
       <div className="space-y-0">
@@ -696,266 +706,270 @@ function OpportunityDetail({
           title={(
             <Input
               value={form.title}
-              onChange={e => patch("title", e.target.value)}
+              onClick={event => event.stopPropagation()}
+              onChange={event => patch("title", event.target.value)}
               className="h-auto w-full border-0 bg-transparent p-0 text-xs font-bold uppercase leading-none tracking-wider text-muted-foreground shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
               placeholder="Opportunity title"
+              data-testid="input-opportunity-title"
             />
           )}
           defaultOpen
           testId="section-opportunity-profile"
+          collapsedContent={hasDescription ? (
+            <div className="whitespace-pre-wrap text-[14px] leading-tight text-white/80">
+              {form.description}
+            </div>
+          ) : undefined}
           headerAction={(
-            <div className="w-16 shrink-0 text-right text-xs font-normal normal-case tracking-normal text-muted-foreground">
-              {saveStatus === "saving" && <span className="flex items-center justify-end gap-1"><Loader2 className="h-3 w-3 animate-spin" />Saving</span>}
-              {saveStatus === "saved" && <span className="flex items-center justify-end gap-1 text-success"><Check className="h-3 w-3" />Saved</span>}
+            <div className="flex shrink-0 items-center gap-1">
+              <div className="w-16 text-right text-xs font-normal normal-case tracking-normal text-muted-foreground">
+                {saveStatus === "saving" && <span className="flex items-center justify-end gap-1"><Loader2 className="h-3 w-3 animate-spin" />Saving</span>}
+                {saveStatus === "saved" && <span className="flex items-center justify-end gap-1 text-success"><Check className="h-3 w-3" />Saved</span>}
+              </div>
+              <DropdownMenu modal={false}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
+                    aria-label="Opportunity actions"
+                    data-testid="button-opportunity-overflow"
+                  >
+                    <MoreHorizontal className="h-3 w-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" onCloseAutoFocus={event => event.preventDefault()}>
+                  <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setShowDelete(true)}>
+                    <Trash2 className="mr-2 h-3.5 w-3.5" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           )}
         >
-          <div className="space-y-4 overflow-hidden rounded-md border border-border/20 p-3">
-      {/* Type, Status & Priority */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_7rem]">
-        <div className="flex-1">
-          <label className="text-xs text-muted-foreground mb-1 block">Type</label>
-          <Select value={form.type} onValueChange={v => patch("type", v)}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {TYPES.map(t => <SelectItem key={t} value={t}>{TYPE_LABELS[t]}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex-1">
-          <label className="text-xs text-muted-foreground mb-1 block">Status</label>
-          <Select value={form.status} onValueChange={v => patch("status", v)}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {STATUSES.map(s => <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="sm:w-28">
-          <label className="text-xs text-muted-foreground mb-1 block">Priority</label>
-          <Select value={form.priority || ""} onValueChange={v => patch("priority", v || null)}>
-            <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
-            <SelectContent>
-              {PRIORITIES.map(p => (
-                <SelectItem key={p} value={p}>
-                  <span className={`capitalize ${PRIORITY_COLORS[p]}`}>{p}</span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+          <div className="overflow-hidden rounded-md border border-border/20" data-testid="opportunity-profile-tree">
+            <ProfileTreeRow label="Type" icon={<Briefcase className="h-3.5 w-3.5" />} hasValue showEmpty testId="row-opportunity-type">
+              <Select value={form.type} onValueChange={value => patch("type", value)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{TYPES.map(type => <SelectItem key={type} value={type}>{TYPE_LABELS[type]}</SelectItem>)}</SelectContent>
+              </Select>
+            </ProfileTreeRow>
 
-      {/* Company (job only) */}
-      {form.type === "job" && (
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Company</label>
-          <Input
-            value={form.company || ""}
-            onChange={e => patch("company", e.target.value || null)}
-            placeholder="Company name"
-          />
-        </div>
-      )}
+            <ProfileTreeRow label="Status" icon={<Gauge className="h-3.5 w-3.5" />} hasValue showEmpty testId="row-opportunity-status">
+              <Select value={form.status} onValueChange={value => patch("status", value)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{STATUSES.map(status => <SelectItem key={status} value={status} className="capitalize">{status}</SelectItem>)}</SelectContent>
+              </Select>
+            </ProfileTreeRow>
 
-      {/* Location */}
-      <div>
-        <label className="text-xs text-muted-foreground mb-1 block">Location</label>
-        <Input
-          value={form.location || ""}
-          onChange={e => patch("location", e.target.value || null)}
-          placeholder="Remote, Chicago, San Francisco..."
-        />
-      </div>
+            <ProfileTreeRow label="Priority" icon={<Sparkles className="h-3.5 w-3.5" />} hasValue={Boolean(form.priority)} showEmpty testId="row-opportunity-priority">
+              <Select value={form.priority || ""} onValueChange={value => patch("priority", value || null)}>
+                <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                <SelectContent>{PRIORITIES.map(priority => <SelectItem key={priority} value={priority}><span className={cn("capitalize", PRIORITY_COLORS[priority])}>{priority}</span></SelectItem>)}</SelectContent>
+              </Select>
+            </ProfileTreeRow>
 
-      {/* Introduction (Contact Person) */}
-      <div>
-        <label className="text-xs text-muted-foreground mb-1 block">Introduction</label>
-        <PeopleSearch
-          value={form.contactPersonId}
-          onChange={(id) => patch("contactPersonId", id)}
-        />
-      </div>
+            {showCompany && (
+              <ProfileTreeRow label="Company" icon={<Building2 className="h-3.5 w-3.5" />} hasValue={Boolean(form.company)} showEmpty testId="row-opportunity-company">
+                <Input value={form.company || ""} onChange={event => patch("company", event.target.value || null)} placeholder="Company" />
+              </ProfileTreeRow>
+            )}
 
-      {/* Champion */}
-      <div>
-        <label className="text-xs text-muted-foreground mb-1 block">Champion</label>
-        <PeopleSearch
-          value={form.championPersonId}
-          onChange={(id) => patch("championPersonId", id)}
-        />
-      </div>
+            <ProfileTreeRow label="Location" icon={<MapPin className="h-3.5 w-3.5" />} hasValue={Boolean(form.location)} showEmpty testId="row-opportunity-location">
+              <Input value={form.location || ""} onChange={event => patch("location", event.target.value || null)} placeholder="Location" />
+            </ProfileTreeRow>
 
-      {/* Probability */}
-      <div>
-        <label className="text-xs text-muted-foreground mb-1 block">Probability: {Math.round(form.probability * 100)}%</label>
-        <input
-          type="range" min="0" max="100" step="5"
-          value={Math.round(form.probability * 100)}
-          onChange={e => patch("probability", parseInt(e.target.value) / 100)}
-          className="w-full accent-primary"
-        />
-      </div>
+            <ProfileTreeRow label="Contact" icon={<ContactRound className="h-3.5 w-3.5" />} hasValue={Boolean(form.contactPersonId)} showEmpty testId="row-opportunity-contact">
+              <PeopleSearch value={form.contactPersonId} onChange={personId => patch("contactPersonId", personId)} />
+            </ProfileTreeRow>
 
-      {/* Computed EV */}
-      <div className="bg-muted/50 rounded-lg p-3 text-center">
-        <div className="text-xs text-muted-foreground">Expected Value</div>
-        <div className="text-2xl font-bold">{formatEv(form.computedEv)}</div>
-      </div>
+            <ProfileTreeRow label="Champion" icon={<Trophy className="h-3.5 w-3.5" />} hasValue={Boolean(form.championPersonId)} showEmpty testId="row-opportunity-champion">
+              <PeopleSearch value={form.championPersonId} onChange={personId => patch("championPersonId", personId)} />
+            </ProfileTreeRow>
 
-      {/* EV Inputs */}
-      <div>
-        <label className="text-xs text-muted-foreground mb-1 block font-medium">EV Inputs</label>
-        <EvInputForm type={form.type} evInputs={form.evInputs || {}} onChange={inputs => patch("evInputs", inputs)} />
-      </div>
+            <ProfileTreeRow
+              label="Probability"
+              icon={<Gauge className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              expandedContent={(
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value={Math.round(form.probability * 100)}
+                  onChange={event => patch("probability", parseInt(event.target.value) / 100)}
+                  className="w-full accent-cta"
+                  aria-label="Opportunity probability"
+                />
+              )}
+              testId="row-opportunity-probability"
+            >
+              <span className="text-foreground">{Math.round(form.probability * 100)}%</span>
+            </ProfileTreeRow>
 
-      {/* Time Commitment */}
-      <div className="flex gap-3 items-end">
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={form.isFullTime}
-            onChange={e => {
-              patch("isFullTime", e.target.checked);
-              if (e.target.checked) patch("hoursPerWeek", null);
-            }}
-          />
-          Full Time
-        </label>
-        {!form.isFullTime && (
-          <div className="flex-1">
-            <label className="text-xs text-muted-foreground mb-1 block">Hours per week</label>
-            <Input type="number" value={form.hoursPerWeek ?? ""} onChange={e => patch("hoursPerWeek", parseInt(e.target.value) || null)} />
-          </div>
-        )}
-      </div>
+            <ProfileTreeRow
+              label="Expected value"
+              icon={<DollarSign className="h-3.5 w-3.5" />}
+              hasValue={form.computedEv != null}
+              showEmpty
+              expandedContent={<EvInputForm type={form.type} evInputs={form.evInputs || {}} onChange={inputs => patch("evInputs", inputs)} />}
+              testId="row-opportunity-expected-value"
+            >
+              <span className="font-medium text-foreground">{formatEv(form.computedEv)}</span>
+            </ProfileTreeRow>
 
-      {/* Time Horizon */}
-      <div>
-        <label className="text-xs text-muted-foreground mb-1 block">Income starts in (months)</label>
-        <Input type="number" value={form.timeHorizonMonths ?? ""} onChange={e => patch("timeHorizonMonths", parseInt(e.target.value) || null)} />
-      </div>
-
-      {/* Follow-Up */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div className="flex-1">
-          <label className="text-xs text-muted-foreground mb-1 block">Follow Up By</label>
-          <Input
-            type="date"
-            value={form.followUpBy || ""}
-            onChange={e => patch("followUpBy", e.target.value || null)}
-          />
-        </div>
-        <div className="sm:col-span-2">
-          <label className="text-xs text-muted-foreground mb-1 block">Follow-Up Note</label>
-          <Input
-            value={form.followUpNote || ""}
-            onChange={e => patch("followUpNote", e.target.value || null)}
-            placeholder="What to follow up on..."
-          />
-        </div>
-      </div>
-
-      {/* Next Steps */}
-      <div>
-        <label className="text-xs text-muted-foreground mb-1 block">Next Steps</label>
-        <Textarea
-          value={form.nextSteps || ""}
-          onChange={e => patch("nextSteps", e.target.value || null)}
-          rows={2}
-          placeholder="What needs to happen next..."
-        />
-      </div>
-
-      {/* Description */}
-      <div>
-        <label className="text-xs text-muted-foreground mb-1 block">Description</label>
-        <Textarea
-          value={form.description || ""}
-          onChange={e => patch("description", e.target.value)}
-          rows={4}
-          placeholder="Notes, context, analysis..."
-        />
-      </div>
-
-      {/* Job URL */}
-      <div>
-        <label className="text-xs text-muted-foreground mb-1 block">Job Posting URL</label>
-        <div className="flex gap-2">
-          <Input
-            value={form.jobUrl || ""}
-            onChange={e => patch("jobUrl", e.target.value || null)}
-            placeholder="https://..."
-            className="flex-1"
-          />
-          {form.jobUrl && (
-            <a href={form.jobUrl} target="_blank" rel="noopener noreferrer">
-              <Button variant="outline" size="icon" className="shrink-0" type="button">
-                <ExternalLink className="h-4 w-4" />
-              </Button>
-            </a>
-          )}
-        </div>
-      </div>
-
-      {/* Job Description */}
-      <div>
-        <label className="text-xs text-muted-foreground mb-1 block">Job Description</label>
-        <Textarea
-          value={form.jdText || ""}
-          onChange={e => patch("jdText", e.target.value || null)}
-          rows={8}
-          placeholder="Paste the full job description here..."
-          className="text-sm font-mono"
-        />
-      </div>
-
-      {/* Artifact Rail */}
-      <ArtifactRail opportunityId={opportunity.id} jdText={form.jdText} />
-
-      {/* Linked Skills */}
-      <div>
-        <label className="text-xs text-muted-foreground mb-1 block">Skills</label>
-        <SkillMultiSelect
-          opportunityId={opportunity.id}
-          linkedSkills={opportunity.linkedSkills || []}
-          onChanged={() => {}}
-        />
-      </div>
-
-          {/* Delete button */}
-          <div className="flex justify-end border-t pt-4">
-            <Button variant="destructive" size="sm" onClick={() => setShowDelete(true)}>
-              <Trash2 className="mr-1 h-4 w-4" /> Delete
-            </Button>
-          </div>
-        </div>
-      </ProfileDetailSection>
-
-      <ProfileDetailSection title="Activities" count={sortedActivities.length} defaultOpen testId="section-opportunity-activities">
-        <div className="overflow-hidden rounded-md border border-border/20" data-testid="opportunity-activity-tree">
-          {activitiesLoading ? (
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading activities…</div>
-          ) : sortedActivities.length === 0 ? (
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">No linked activities.</div>
-          ) : sortedActivities.map(activity => (
-            <ExpandableInteractionRow
-              key={activity.associationId}
-              interaction={activity.interaction}
-              personName={activity.personName}
-              testId={`opportunity-activity-${activity.associationId}`}
-              leadingContent={(
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <ReferenceChip resolved={resolveReference({ type: "interaction", id: `${activity.personId}~${activity.interaction.id}`, canonical: activity.reference })} />
-                  <ReferenceChip resolved={resolveReference({ type: "person", id: activity.personId, canonical: `@person:${activity.personId}` })} />
+            <ProfileTreeRow
+              label="Commitment"
+              icon={<Clock className="h-3.5 w-3.5" />}
+              hasValue={hasCommitment}
+              showEmpty
+              expandedContent={(
+                <div className="flex flex-wrap items-end gap-3">
+                  <label className="flex min-h-11 items-center gap-2 text-sm sm:min-h-0">
+                    <input
+                      type="checkbox"
+                      checked={form.isFullTime}
+                      onChange={event => {
+                        patch("isFullTime", event.target.checked);
+                        if (event.target.checked) patch("hoursPerWeek", null);
+                      }}
+                    />
+                    Full time
+                  </label>
+                  {!form.isFullTime && (
+                    <Input
+                      type="number"
+                      value={form.hoursPerWeek ?? ""}
+                      onChange={event => patch("hoursPerWeek", parseInt(event.target.value) || null)}
+                      placeholder="Hours per week"
+                      className="w-40"
+                    />
+                  )}
                 </div>
               )}
-            />
-          ))}
-        </div>
-      </ProfileDetailSection>
-      </div>
+              testId="row-opportunity-commitment"
+            >
+              <span>{commitmentLabel}</span>
+            </ProfileTreeRow>
 
+            <ProfileTreeRow label="Income start" icon={<Calendar className="h-3.5 w-3.5" />} hasValue={form.timeHorizonMonths != null} showEmpty testId="row-opportunity-income-start">
+              <Input type="number" value={form.timeHorizonMonths ?? ""} onChange={event => patch("timeHorizonMonths", parseInt(event.target.value) || null)} placeholder="Months" />
+            </ProfileTreeRow>
+
+            <ProfileTreeRow
+              label="Follow up"
+              icon={<Calendar className="h-3.5 w-3.5" />}
+              hasValue={hasFollowUp}
+              showEmpty
+              expandedContent={(
+                <div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)]">
+                  <Input type="date" value={form.followUpBy || ""} onChange={event => patch("followUpBy", event.target.value || null)} />
+                  <Input value={form.followUpNote || ""} onChange={event => patch("followUpNote", event.target.value || null)} placeholder="What to follow up on" />
+                </div>
+              )}
+              testId="row-opportunity-follow-up"
+            >
+              <span className="truncate">{form.followUpBy || form.followUpNote || "—"}</span>
+            </ProfileTreeRow>
+
+            <ProfileTreeRow
+              label="Next steps"
+              icon={<ListChecks className="h-3.5 w-3.5" />}
+              hasValue={Boolean(form.nextSteps)}
+              showEmpty
+              expandedContent={<Textarea value={form.nextSteps || ""} onChange={event => patch("nextSteps", event.target.value || null)} rows={3} placeholder="What happens next" />}
+              testId="row-opportunity-next-steps"
+            >
+              <span className="truncate">{form.nextSteps || "—"}</span>
+            </ProfileTreeRow>
+
+            <ProfileTreeRow
+              label="Description"
+              icon={<AlignLeft className="h-3.5 w-3.5" />}
+              hasValue={hasDescription}
+              showEmpty
+              expandedContent={<Textarea value={form.description || ""} onChange={event => patch("description", event.target.value || null)} rows={5} placeholder="Notes, context, analysis" />}
+              testId="row-opportunity-description"
+            >
+              <span className="truncate">{form.description || "—"}</span>
+            </ProfileTreeRow>
+
+            <ProfileTreeRow
+              label="Job posting"
+              icon={<Link2 className="h-3.5 w-3.5" />}
+              hasValue={hasJobUrl}
+              showEmpty={form.type === "job"}
+              actionContent={form.jobUrl ? (
+                <a href={form.jobUrl} target="_blank" rel="noopener noreferrer" className="flex h-5 w-5 items-center justify-center text-muted-foreground hover:text-cta" aria-label="Open job posting">
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              ) : undefined}
+              testId="row-opportunity-job-url"
+            >
+              <Input value={form.jobUrl || ""} onChange={event => patch("jobUrl", event.target.value || null)} placeholder="https://…" />
+            </ProfileTreeRow>
+
+            <ProfileTreeRow
+              label="Job description"
+              icon={<FileText className="h-3.5 w-3.5" />}
+              hasValue={hasJobDescription}
+              showEmpty={form.type === "job"}
+              expandedContent={<Textarea value={form.jdText || ""} onChange={event => patch("jdText", event.target.value || null)} rows={12} placeholder="Paste the job description" className="font-mono" />}
+              testId="row-opportunity-job-description"
+            >
+              <span className="truncate">{form.jdText || "—"}</span>
+            </ProfileTreeRow>
+
+            <ProfileTreeRow
+              label="Artifacts"
+              icon={<FileText className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              expandedContent={<ArtifactRail opportunityId={opportunity.id} jdText={form.jdText} />}
+              testId="row-opportunity-artifacts"
+            >
+              <span>Resume · Cover letter · Research</span>
+            </ProfileTreeRow>
+
+            <ProfileTreeRow
+              label="Skills"
+              icon={<Sparkles className="h-3.5 w-3.5" />}
+              hasValue={hasSkills}
+              showEmpty
+              expandedContent={<SkillMultiSelect opportunityId={opportunity.id} linkedSkills={opportunity.linkedSkills || []} onChanged={() => {}} />}
+              testId="row-opportunity-skills"
+            >
+              <span className="truncate">{opportunity.linkedSkills?.map(skill => skill.name).join(", ") || "—"}</span>
+            </ProfileTreeRow>
+          </div>
+        </ProfileDetailSection>
+
+        <ProfileDetailSection title="Activities" count={sortedActivities.length} defaultOpen testId="section-opportunity-activities">
+          <div className="overflow-hidden rounded-md border border-border/20" data-testid="opportunity-activity-tree">
+            {activitiesLoading ? (
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading activities…</div>
+            ) : sortedActivities.length === 0 ? (
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">No linked activities.</div>
+            ) : sortedActivities.map(activity => (
+              <ExpandableInteractionRow
+                key={activity.associationId}
+                interaction={activity.interaction}
+                personName={activity.personName}
+                testId={`opportunity-activity-${activity.associationId}`}
+                leadingContent={(
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <ReferenceChip resolved={resolveReference({ type: "interaction", id: `${activity.personId}~${activity.interaction.id}`, canonical: activity.reference })} />
+                    <ReferenceChip resolved={resolveReference({ type: "person", id: activity.personId, canonical: `@person:${activity.personId}` })} />
+                  </div>
+                )}
+              />
+            ))}
+          </div>
+        </ProfileDetailSection>
+      </div>
       <AlertDialog open={showDelete} onOpenChange={setShowDelete}>
         <AlertDialogContent>
           <AlertDialogHeader>
