@@ -22,6 +22,13 @@ import {
   Brain,
   SlidersHorizontal,
   FileText,
+  Plane,
+  Video,
+  Phone,
+  Dumbbell,
+  ClipboardList,
+  UserRound,
+  BriefcaseBusiness,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
@@ -196,7 +203,6 @@ interface DayEventBlock {
   event: CalendarEvent;
   rowStart: number;
   rowSpan: number;
-  column: number;
 }
 
 interface DayEventMetadataResponse {
@@ -231,7 +237,8 @@ function getDayEventBlocks(rows: DayHourRow[], events: CalendarEvent[], timezone
   if (rows.length === 0) return [];
   const firstHour = rows[0].hour;
   const lastHour = rows[rows.length - 1].hour;
-  const timedEvents = events
+
+  return events
     .filter(event => !isAllDay(event) && event.start.dateTime)
     .map(event => ({
       event,
@@ -239,24 +246,51 @@ function getDayEventBlocks(rows: DayHourRow[], events: CalendarEvent[], timezone
       endHour: Math.min(lastHour, getEventEndHour(event, timezone)),
     }))
     .filter(({ startHour, endHour }) => startHour <= endHour)
-    .sort((a, b) => a.startHour - b.startHour || a.endHour - b.endHour);
-  const columnEndHours: number[] = [];
-
-  return timedEvents.map(({ event, startHour, endHour }) => {
-    const availableColumn = columnEndHours.findIndex(columnEndHour => columnEndHour < startHour);
-    const column = availableColumn === -1 ? columnEndHours.length : availableColumn;
-    columnEndHours[column] = endHour;
-    return {
+    .sort((a, b) => a.startHour - b.startHour || a.endHour - b.endHour)
+    .map(({ event, startHour, endHour }) => ({
       event,
       rowStart: startHour - firstHour + 1,
       rowSpan: endHour - startHour + 1,
-      column,
-    };
-  });
+    }));
 }
 
 function formatHourLabel(hour: number): string {
   return new Date(2000, 0, 1, hour).toLocaleTimeString([], { hour: "numeric" });
+}
+
+const EVENT_TYPE_ICONS: Record<string, typeof CalendarIcon> = {
+  focus_block: Brain,
+  travel: Plane,
+  video_meeting: Video,
+  call: Phone,
+  exercise: Dumbbell,
+  planning: ClipboardList,
+  personal: UserRound,
+  admin: BriefcaseBusiness,
+  meeting: Users,
+};
+
+function inferEventType(event: CalendarEvent, explicitType?: string | null): string {
+  if (explicitType) return explicitType;
+  const text = `${event.summary} ${event.description ?? ""} ${event.location ?? ""}`.toLowerCase();
+  if (/\b(focus|deep work)\b/.test(text)) return "focus_block";
+  if (/\b(travel|flight|airport|train|transit|drive)\b/.test(text)) return "travel";
+  if (/\b(zoom|google meet|meet\.google|teams meeting|video)\b/.test(text)) return "video_meeting";
+  if (/\b(call|phone)\b/.test(text)) return "call";
+  if (/\b(workout|exercise|wellness|gym|run|yoga)\b/.test(text)) return "exercise";
+  if (/\b(plan|planning|review)\b/.test(text)) return "planning";
+  if (/\b(admin|chores|errand)\b/.test(text)) return "admin";
+  if (event.attendees?.some(attendee => !attendee.self)) return "meeting";
+  return "personal";
+}
+
+function EventTypeIcon({ event, eventType, className }: {
+  event: CalendarEvent;
+  eventType?: string | null;
+  className?: string;
+}) {
+  const Icon = EVENT_TYPE_ICONS[inferEventType(event, eventType)] ?? CalendarIcon;
+  return <Icon className={className} aria-hidden="true" />;
 }
 
 function isHighPrep(event: CalendarEvent): boolean {
@@ -799,7 +833,6 @@ function DayTimeline({ rows, events, accountEmails, timezone, onEventClick }: {
   onEventClick: (event: CalendarEvent) => void;
 }) {
   const blocks = useMemo(() => getDayEventBlocks(rows, events, timezone), [rows, events, timezone]);
-  const columnCount = Math.max(1, ...blocks.map(block => block.column + 1));
   if (rows.length === 0) return null;
 
   return (
@@ -823,7 +856,6 @@ function DayTimeline({ rows, events, accountEmails, timezone, onEventClick }: {
         <DayEventBlockView
           key={`${block.event.calendarId}:${block.event.id}`}
           block={block}
-          columnCount={columnCount}
           accountEmails={accountEmails}
           onEventClick={onEventClick}
         />
@@ -832,13 +864,12 @@ function DayTimeline({ rows, events, accountEmails, timezone, onEventClick }: {
   );
 }
 
-function DayEventBlockView({ block, columnCount, accountEmails, onEventClick }: {
+function DayEventBlockView({ block, accountEmails, onEventClick }: {
   block: DayEventBlock;
-  columnCount: number;
   accountEmails: string[];
   onEventClick: (event: CalendarEvent) => void;
 }) {
-  const { event, rowStart, rowSpan, column } = block;
+  const { event, rowStart, rowSpan } = block;
   const [expanded, setExpanded] = useState(false);
   const { data } = useQuery<DayEventMetadataResponse>({
     queryKey: ["/api/calendar/metadata", event.id, event.accountId, event.calendarId],
@@ -855,11 +886,6 @@ function DayEventBlockView({ block, columnCount, accountEmails, onEventClick }: 
   const people = data?.people ?? [];
   const artifacts = data?.artifacts ?? [];
   const hasDetails = Boolean(event.location || people.length || artifacts.length);
-  const columnWidth = 100 / columnCount;
-  const horizontalStyle = {
-    left: `calc(${column * columnWidth}% + ${column * 2}px)`,
-    width: `calc(${columnWidth}% - ${Math.max(0, columnCount - 1) * 2 / columnCount}px)`,
-  };
 
   if (isFocusBlock) {
     return (
@@ -867,13 +893,18 @@ function DayEventBlockView({ block, columnCount, accountEmails, onEventClick }: 
         type="button"
         onClick={() => onEventClick(event)}
         className={cn(
-          "z-10 m-0.5 flex min-h-0 min-w-0 items-start gap-1.5 overflow-hidden rounded-md border border-foreground/30 bg-black/30 px-1.5 py-1 text-left text-xs font-medium text-foreground hover:bg-black/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          "z-20 my-0.5 ml-0.5 mr-0 flex min-h-0 min-w-0 items-start gap-1.5 overflow-hidden bg-background/80 py-1 pl-5 pr-1.5 text-left text-xs font-medium text-foreground hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
           optional && "opacity-60",
         )}
-        style={{ gridColumn: 3, gridRow: `${rowStart} / span ${rowSpan}`, ...horizontalStyle, position: "relative" }}
+        style={{ gridColumn: 3, gridRow: `${rowStart} / span ${rowSpan}`, position: "relative" }}
         data-testid={`event-row-${event.id}`}
       >
-        <Brain className="mt-px h-3.5 w-3.5 shrink-0 text-foreground/75" />
+        <span className="pointer-events-none absolute inset-y-0 left-1 w-3" aria-hidden="true">
+          <span className="absolute inset-y-0 left-0 border-l-2 border-foreground/45" />
+          <span className="absolute left-0 top-0 w-3 border-t-2 border-foreground/45" />
+          <span className="absolute bottom-0 left-0 w-3 border-b-2 border-foreground/45" />
+        </span>
+        <EventTypeIcon event={event} eventType="focus_block" className="mt-px h-3.5 w-3.5 shrink-0 text-foreground/75" />
         <span className="truncate">{event.summary}</span>
       </button>
     );
@@ -886,7 +917,7 @@ function DayEventBlockView({ block, columnCount, accountEmails, onEventClick }: 
         expanded ? "z-30 overflow-visible shadow-lg" : "overflow-hidden",
         optional && "opacity-60",
       )}
-      style={{ gridColumn: 3, gridRow: `${rowStart} / span ${rowSpan}`, ...horizontalStyle, position: "relative" }}
+      style={{ gridColumn: 3, gridRow: `${rowStart} / span ${rowSpan}`, position: "relative" }}
       data-testid={`event-row-${event.id}`}
     >
       <div
@@ -900,7 +931,7 @@ function DayEventBlockView({ block, columnCount, accountEmails, onEventClick }: 
           hasDetails ? setExpanded(value => !value) : onEventClick(event);
         }}
       >
-        <CalendarIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <EventTypeIcon event={event} eventType={data?.metadata?.eventType} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="truncate">{event.summary}</span>
         {isHighPrep(event) && <Star className="h-3 w-3 shrink-0 fill-warning text-warning" />}
         {external && <span className="shrink-0 text-[10px] text-muted-foreground">EXT</span>}
