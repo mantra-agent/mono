@@ -844,7 +844,7 @@ export function registerRailwayRoutes(app: Express) {
     try {
       const prereqs = await checkPrereqs();
       const run = await getDisplayRun();
-      const versioning = await getReleaseVersionSummary(prereqs.repo);
+      const versioning = await getReleaseVersionSummary();
 
       const summary: PublishSummaryResponse = {
         ready: prereqs.ready,

@@ -197,8 +197,7 @@ interface PublishRun {
     increment: VersionIncrement;
     previousVersion: string;
     version: string;
-    versionFileUrl: string;
-    versionFileCommitSha: string | null;
+    recordedAt: string | null;
     notes: ReleaseNotes;
   } | null;
   prodUrl: string | null;
@@ -224,9 +223,7 @@ export interface PublishSummary {
       increment: VersionIncrement;
       promotedCommitSha: string;
       promotedAt: string;
-      versionFileUrl: string;
     } | null;
-    versionFileUrl: string | null;
   };
   run: PublishRun | null;
 }
@@ -1438,17 +1435,9 @@ export function DevPublishTab() {
           {
             label: "Version",
             value: data.versioning.currentVersion,
-            detail: data.versioning.versionFileUrl ? (
-              <a
-                href={data.versioning.versionFileUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-info hover:underline"
-              >
-                <FileText className="h-3.5 w-3.5" />
-                VERSION.md
-              </a>
-            ) : "VERSION.md unavailable",
+            detail: data.versioning.latestRelease
+              ? `Release metadata recorded for ${data.versioning.latestRelease.promotedCommitSha.slice(0, 7)}`
+              : "No production release recorded yet",
           },
           {
             label: "Production",
