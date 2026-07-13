@@ -160,7 +160,14 @@ export async function recordSuccessfulRelease(input: {
 }
 
 export async function getReleaseVersionSummary() {
-  const latest = await latestRelease();
+  let latest: Awaited<ReturnType<typeof latestRelease>> = null;
+  try {
+    latest = await latestRelease();
+  } catch (err) {
+    log.warn("Release history unavailable; publish summary continuing without version data", {
+      reason: err instanceof Error ? err.message : String(err),
+    });
+  }
   return {
     currentVersion: latest?.version ?? "0.00",
     latestRelease: latest
