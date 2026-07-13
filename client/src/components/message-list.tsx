@@ -218,7 +218,7 @@ export function MessageList({
 }: MessageListProps) {
   const { layer } = useVisibilityLayer();
   const { childBlocks, crossMessages } = useLiveSessionBlocks(activeSession);
-  const liveDraftCreatedAtRef = useRef<{ id: string; createdAt: string; ts: number } | null>(null);
+  const liveDraftCreatedAtRef = useRef<{ id: string; anchorId: string | null; createdAt: string; ts: number } | null>(null);
   // Keep optimistic and server-empty Thinking on the same render path. When
   // the assistant is known to be working but no server segments are visible yet,
   // expose an active empty stream instead of fabricating a fake timeline step.
@@ -501,13 +501,24 @@ export function MessageList({
       }
     }
     if (streamingTargetIdx === -1) {
-      if (liveDraftCreatedAtRef.current?.id !== activeStreamingDraftId) {
-        const anchorTs = activeTurnUserItemIndex >= 0 ? items[activeTurnUserItemIndex].ts : Date.now();
-        const createdAt = activeTurnUserItemIndex >= 0 && items[activeTurnUserItemIndex].kind === "message"
-          ? items[activeTurnUserItemIndex].msg.createdAt
+      const anchorItem = activeTurnUserItemIndex >= 0 ? items[activeTurnUserItemIndex] : null;
+      const anchorId = anchorItem?.kind === "message" ? anchorItem.msg.id : null;
+      if (
+        liveDraftCreatedAtRef.current?.id !== activeStreamingDraftId ||
+        liveDraftCreatedAtRef.current.anchorId !== anchorId
+      ) {
+        const anchorTs = anchorItem?.ts ?? Date.now();
+        const createdAt = anchorItem?.kind === "message"
+          ? anchorItem.msg.createdAt
           : activeTurn?.submittedAt ?? new Date().toISOString();
+        // The first stream event can beat persistence of the user message that
+        // started the turn. In that gap the best available anchor is the prior
+        // user message. Once the canonical turn user appears, re-anchor the
+        // synthetic assistant draft instead of preserving the guessed slot for
+        // the rest of the turn. Causal turn order outranks timestamp stability.
         liveDraftCreatedAtRef.current = {
           id: activeStreamingDraftId,
+          anchorId,
           createdAt,
           ts: anchorTs + 1,
         };
