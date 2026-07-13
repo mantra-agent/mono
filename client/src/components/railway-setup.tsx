@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, type ReactNode } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { CheckCircle2, ExternalLink, FileText, Globe, Loader2, PlugZap, RefreshCw, Rocket, Wand2, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronRight, ExternalLink, FileText, Globe, Loader2, PlugZap, RefreshCw, Rocket, Wand2, XCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,8 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { SecretControl } from "@/components/SecretControl";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 interface SecretMetadataDto {
   name: string;
@@ -889,84 +891,83 @@ function RailwayConfigWizard({ tokenSet }: { tokenSet: boolean }) {
  * wrapper. The Dev page uses this slot to append the read-only environment
  * variables view, so Config and Setup live on a single page.
  */
+function RailwayTreeSection({ label, children, initialOpen = false }: { label: string; children: ReactNode; initialOpen?: boolean }) {
+  const [open, setOpen] = useState(initialOpen);
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger className="flex min-h-11 w-full items-center gap-1.5 rounded-md px-2 py-2 text-xs font-bold uppercase tracking-wider text-muted-foreground hover:bg-accent/70">
+        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
+        {label}
+      </CollapsibleTrigger>
+      <CollapsibleContent><div className="space-y-0">{children}</div></CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 export function RailwaySetupTab({ children }: { children?: ReactNode }) {
   const { data: secretsMeta } = useQuery<{ secrets: SecretMetadataDto[] }>({
     queryKey: ["/api/secrets/metadata"],
   });
-  const tokenSet = !!secretsMeta?.secrets.find((s) => s.name === "RAILWAY_API_TOKEN")?.isSet;
+  const tokenSet = !!secretsMeta?.secrets.find((secret) => secret.name === "RAILWAY_API_TOKEN")?.isSet;
   const [showOverrides, setShowOverrides] = useState(false);
 
   return (
-    <div className="space-y-4 p-4" data-testid="railway-setup-tab">
-      <Card data-testid="card-secret-railway">
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">Railway Connection</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            Save a Railway Personal Access Token, then pick your project and dev environment.
-            Service and URL are detected automatically.
-          </p>
-          <SecretControl name="RAILWAY_API_TOKEN" />
-          <RailwayConnectionTester />
-        </CardContent>
-      </Card>
-
-      <Card data-testid="card-railway-wizard">
-        <CardHeader>
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <Wand2 className="h-4 w-4" /> Dev Target
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <RailwayConfigWizard tokenSet={tokenSet} />
-
-          <div className="pt-2 border-t">
-            <button
-              type="button"
-              className="text-xs text-muted-foreground hover:text-foreground underline"
-              onClick={() => setShowOverrides((v) => !v)}
-              data-testid="button-toggle-overrides"
-            >
-              {showOverrides ? "Hide" : "Show"} advanced overrides (service ID, URL)
-            </button>
-            {showOverrides && (
-              <div className="mt-3 space-y-2" data-testid="section-overrides">
-                <p className="text-xs text-muted-foreground">
-                  Override the auto-detected values — for example, to pin a specific app service in
-                  a multi-service project, or to point the preview at a custom domain. Leave empty
-                  to use auto-detection.
-                </p>
-                <SecretControl name="RAILWAY_DEV_SERVICE_ID" />
-                <SecretControl name="RAILWAY_DEV_URL" />
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card data-testid="card-railway-prod">
-        <CardHeader>
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <Wand2 className="h-4 w-4" /> Prod Target (for Publish)
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            Required for the Publish tab. Point Mantra at the Railway environment + service that
-            tracks your <code>live</code> branch, and tell it which URL to health-check after
-            promotion.
-          </p>
-          <SecretControl name="RAILWAY_PROD_ENVIRONMENT_ID" />
-          <SecretControl name="RAILWAY_PROD_SERVICE_ID" />
-          <SecretControl name="RAILWAY_PROD_URL" />
-          <SecretControl name="RAILWAY_LIVE_BRANCH" />
-        </CardContent>
-      </Card>
-
-      <RailwayManagementSection />
-
+    <div className="min-w-0 space-y-2" data-testid="railway-setup-tab">
       {children}
+
+      <RailwayTreeSection label="LEGACY" initialOpen={!tokenSet}>
+        <p className="px-2 py-1.5 text-sm text-muted-foreground">
+          Fallback configuration used by Publish and older Railway operations. Keep this complete until connector-backed publishing replaces it.
+        </p>
+        <ProfileTreeRow
+          label="API token"
+          icon={<PlugZap className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          defaultOpen={!tokenSet}
+          expandedContent={<div className="space-y-3"><SecretControl name="RAILWAY_API_TOKEN" /><RailwayConnectionTester /></div>}
+        >
+          <span className={tokenSet ? "text-active" : "text-muted-foreground"}>{tokenSet ? "Configured" : "Required"}</span>
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="Development target"
+          icon={<Wand2 className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          expandedContentClassName="space-y-3"
+          expandedContent={
+            <>
+              <RailwayConfigWizard tokenSet={tokenSet} />
+              <button type="button" className="text-xs text-cta hover:text-active" onClick={() => setShowOverrides((value) => !value)} data-testid="button-toggle-overrides">
+                {showOverrides ? "Hide" : "Show"} advanced overrides
+              </button>
+              {showOverrides && <div className="space-y-2" data-testid="section-overrides"><SecretControl name="RAILWAY_DEV_SERVICE_ID" /><SecretControl name="RAILWAY_DEV_URL" /></div>}
+            </>
+          }
+        >
+          <span className="text-muted-foreground">Fallback</span>
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="Production target"
+          icon={<Rocket className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          expandedContentClassName="space-y-2"
+          expandedContent={<><SecretControl name="RAILWAY_PROD_ENVIRONMENT_ID" /><SecretControl name="RAILWAY_PROD_SERVICE_ID" /><SecretControl name="RAILWAY_PROD_URL" /><SecretControl name="RAILWAY_LIVE_BRANCH" /></>}
+        >
+          <span className="text-muted-foreground">Publish fallback</span>
+        </ProfileTreeRow>
+        <ProfileTreeRow
+          label="Railway management"
+          icon={<Rocket className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          expandedContent={<RailwayManagementSection />}
+          expandedContentClassName="min-w-0"
+        >
+          <span className="text-muted-foreground">Legacy API</span>
+        </ProfileTreeRow>
+      </RailwayTreeSection>
     </div>
   );
 }

@@ -123,6 +123,7 @@ const INTEGRATIONS: IntegrationDef[] = [
   { id: "brave", name: "Brave Search", icon: Globe, statusFields: ["brave"], route: "brave" },
   { id: "github", name: "GitHub", icon: Github, statusFields: ["github"], route: "github" },
   { id: "railway", name: "Railway", icon: Train, statusFields: ["railway"], route: "railway" },
+  { id: "cloudflare", name: "Cloudflare", icon: Globe, statusFields: [], route: "cloudflare" },
   { id: "automation-auth", name: "Automation Auth", icon: Shield, statusFields: ["automationAuth"], route: "automation-auth" },
   { id: "expo", name: "Expo Mobile", icon: Smartphone, statusFields: ["expo"], route: "expo" },
   { id: "sentry", name: "Sentry", icon: Shield, statusFields: ["sentry"], route: "sentry" },
@@ -4271,6 +4272,192 @@ interface GitHubStatus {
   credentials?: GitHubCredential[];
 }
 
+
+
+interface HostingConnectorUsage {
+  id: number;
+  platformName: string;
+  productName: string;
+  environmentName: string;
+}
+
+function HostingConnectorsDetail({ provider }: { provider: "railway" | "cloudflare" }) {
+  const { toast } = useToast();
+  const providerName = provider === "railway" ? "Railway" : "Cloudflare";
+  const ProviderIcon = provider === "railway" ? Train : Globe;
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<ProviderConnection | null>(null);
+  const [label, setLabel] = useState("");
+  const [credential, setCredential] = useState("");
+  const [accountType, setAccountType] = useState("hosting");
+
+  const { data: connections = [], isLoading, refetch } = useQuery<ProviderConnection[]>({
+    queryKey: ["/api/provider-connections"],
+  });
+  const hostingConnectors = connections.filter((connection) => connection.provider === provider);
+  const { data: platformsData = [] } = useQuery<PlatformListItem[]>({ queryKey: ["/api/platforms"] });
+  const environmentIds = useMemo(() => platformsData.flatMap((platform) =>
+    (platform.products || []).flatMap((product) =>
+      (product.environments || []).map((environment) => environment.id),
+    ),
+  ), [platformsData]);
+  const environmentQueries = useQueries({
+    queries: environmentIds.map((environmentId) => ({
+      queryKey: [`/api/platforms/environments/${environmentId}/details`],
+      enabled: Number.isFinite(environmentId),
+    })),
+  });
+  const usageByConnectionId = useMemo(() => {
+    const usage = new Map<number, HostingConnectorUsage[]>();
+    for (const query of environmentQueries) {
+      const details = query.data as (PlatformEnvironmentDetails & { hosting?: { connectionId?: number | null } | null }) | undefined;
+      const connectionId = details?.hosting?.connectionId;
+      if (!details || !connectionId) continue;
+      const list = usage.get(connectionId) || [];
+      list.push({
+        id: details.environment.id,
+        platformName: details.platform.name,
+        productName: details.product.name,
+        environmentName: details.environment.name,
+      });
+      usage.set(connectionId, list);
+    }
+    return usage;
+  }, [environmentQueries.map((query) => query.dataUpdatedAt).join(":")]);
+
+  const resetDialog = () => {
+    setDialogOpen(false);
+    setEditing(null);
+    setLabel("");
+    setCredential("");
+    setAccountType("hosting");
+  };
+  const openDialog = (connection?: ProviderConnection) => {
+    setEditing(connection || null);
+    setLabel(connection?.label || "");
+    setCredential("");
+    setAccountType(connection?.accountType || "hosting");
+    setDialogOpen(true);
+  };
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/provider-connections"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/platforms"] });
+    refetch();
+  };
+  const save = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, string> = {
+        provider,
+        label: label.trim(),
+        accountType: accountType.trim() || "hosting",
+      };
+      if (credential.trim()) body.credential = credential.trim();
+      if (!body.label) throw new Error("Label required");
+      if (!editing && !credential.trim()) throw new Error("Credential required");
+      const response = editing
+        ? await apiRequest("PUT", `/api/provider-connections/${editing.id}`, body)
+        : await apiRequest("POST", "/api/provider-connections", body);
+      return response.json() as Promise<ProviderConnection>;
+    },
+    onSuccess: () => {
+      toast({ title: editing ? "Hosting connector updated" : "Hosting connector created" });
+      resetDialog();
+      refresh();
+    },
+    onError: (error: Error) => toast({ title: "Connector save failed", description: error.message, variant: "destructive" }),
+  });
+  const test = useMutation({
+    mutationFn: async (connection: ProviderConnection) => {
+      const response = await apiRequest("POST", `/api/provider-connections/${connection.id}/test`, {});
+      return response.json() as Promise<{ ok: boolean; message: string }>;
+    },
+    onSuccess: (result) => {
+      toast({ title: result.ok ? "Hosting connector healthy" : "Connector test failed", description: result.message, variant: result.ok ? "default" : "destructive" });
+      refresh();
+    },
+    onError: (error: Error) => toast({ title: "Connector test failed", description: error.message, variant: "destructive" }),
+  });
+  const remove = useMutation({
+    mutationFn: async (connection: ProviderConnection) => {
+      const response = await apiRequest("DELETE", `/api/provider-connections/${connection.id}`);
+      return response.json() as Promise<{ success: boolean }>;
+    },
+    onSuccess: () => { toast({ title: "Hosting connector deleted" }); refresh(); },
+    onError: (error: Error) => toast({ title: "Delete blocked", description: error.message, variant: "destructive" }),
+  });
+
+  return (
+    <div className="min-w-0 space-y-2" data-testid={`${provider}-hosting-connectors`}>
+      <IntegrationTreeSection label="Hosting Connectors" initialOpen testIdPrefix={provider}>
+        <button
+          type="button"
+          className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-cta transition-colors hover:bg-accent/70"
+          onClick={() => openDialog()}
+          data-testid={`button-${provider}-new-hosting-connector`}
+        >
+          <Plus className="h-3.5 w-3.5" /> New Hosting Connector
+        </button>
+        {isLoading ? <Skeleton className="mx-2 h-8" /> : hostingConnectors.length === 0 ? (
+          <p className="px-2 py-1.5 text-sm text-muted-foreground">No {providerName} hosting connectors.</p>
+        ) : hostingConnectors.map((connection) => {
+          const usage = usageByConnectionId.get(connection.id) || [];
+          return (
+            <ProfileTreeRow
+              key={connection.id}
+              label={connection.label}
+              icon={<ProviderIcon className={cn("h-3.5 w-3.5", connection.status === "active" ? "text-active" : "text-muted-foreground")} />}
+              hasValue
+              showEmpty
+              testId={`${provider}-hosting-connector-${connection.id}`}
+              expandedContentClassName="space-y-2"
+              expandedContent={
+                <>
+                  <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                    <span>ID {connection.id}</span>
+                    <span>·</span>
+                    <span>{connection.lastVerifiedAt ? `verified ${new Date(connection.lastVerifiedAt).toLocaleString()}` : "not verified"}</span>
+                  </div>
+                  {usage.length > 0 ? usage.map((item) => (
+                    <a key={item.id} href={`/platforms/environments/${item.id}`} className="block text-cta hover:text-active">
+                      {item.platformName} / {item.productName} / {item.environmentName}
+                    </a>
+                  )) : <p className="text-muted-foreground">Not used by an environment.</p>}
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" onClick={() => test.mutate(connection)} disabled={test.isPending}>Test</Button>
+                    <Button variant="ghost" size="sm" onClick={() => openDialog(connection)}>Edit</Button>
+                    <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" onClick={() => remove.mutate(connection)} disabled={remove.isPending || usage.length > 0}>Delete</Button>
+                  </div>
+                </>
+              }
+            >
+              <span className={connection.status === "active" ? "text-active" : "text-muted-foreground"}>{connection.status}</span>
+            </ProfileTreeRow>
+          );
+        })}
+      </IntegrationTreeSection>
+
+      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) resetDialog(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editing ? "Edit" : "New"} {providerName} Hosting Connector</DialogTitle>
+            <DialogDescription>Credentials are encrypted and reused by Platform Environment hosting bindings.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2"><Label htmlFor={`${provider}-connector-label`}>Label</Label><Input id={`${provider}-connector-label`} value={label} onChange={(event) => setLabel(event.target.value)} placeholder={`${providerName} account`} /></div>
+            <div className="space-y-2"><Label htmlFor={`${provider}-connector-type`}>Credential type</Label><Input id={`${provider}-connector-type`} value={accountType} onChange={(event) => setAccountType(event.target.value)} placeholder="hosting" /></div>
+            <div className="space-y-2"><Label htmlFor={`${provider}-connector-credential`}>{editing ? "Replacement credential" : "Credential"}</Label><Input id={`${provider}-connector-credential`} type="password" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder={editing ? "Leave blank to keep current credential" : "Required"} autoComplete="new-password" /></div>
+          </div>
+          <DialogFooter><Button variant="ghost" onClick={resetDialog}>Cancel</Button><Button onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}Save</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function CloudflareDetail() {
+  return <HostingConnectorsDetail provider="cloudflare" />;
+}
+
 function GitHubDetail() {
   const { toast } = useToast();
   const { data, isLoading } = useQuery<GitHubStatus>({
@@ -5397,7 +5584,9 @@ function IntegrationDetail({ provider }: { provider: string }) {
 
       {provider === "github" && <GitHubDetail />}
 
-      {provider === "railway" && <RailwaySetupTab />}
+      {provider === "railway" && <RailwaySetupTab><HostingConnectorsDetail provider="railway" /></RailwaySetupTab>}
+
+      {provider === "cloudflare" && <CloudflareDetail />}
 
       {provider === "automation-auth" && (
         <div className="space-y-4">
