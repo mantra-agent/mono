@@ -117,19 +117,8 @@ function signalKey(message: EmailSignalMessage, email?: string): string {
   return `${baseSignalKey(message)}${suffix}`;
 }
 
-function shouldClearResponseOwed(interaction: Person["interactions"][number], outboundDate: Date): boolean {
-  if (!interaction.responseOwed) return false;
-
-  const interactionDate = interaction.date ? new Date(interaction.date) : null;
-  if (interactionDate && !Number.isNaN(interactionDate.getTime()) && interactionDate.getTime() > outboundDate.getTime()) {
-    return false;
-  }
-
-  return true;
-}
-
-async function clearPriorResponseOwed(person: Person, outboundDate: Date): Promise<number> {
-  const owedInteractions = (person.interactions || []).filter((interaction) => shouldClearResponseOwed(interaction, outboundDate));
+async function clearResponseOwed(person: Person): Promise<number> {
+  const owedInteractions = (person.interactions || []).filter((interaction) => interaction.responseOwed);
   for (const interaction of owedInteractions) {
     await peopleStorage.updateInteraction(person.id, interaction.id, {
       responseOwed: false,
@@ -178,7 +167,7 @@ async function logKnownContactInteraction(personId: string, message: EmailSignal
   const direction = getMessageDirection(message) === "outbound" ? "outbound" : "inbound";
 
   if (direction === "outbound") {
-    const cleared = await clearPriorResponseOwed(person, safeDate);
+    const cleared = await clearResponseOwed(person);
     if (cleared > 0) {
       log.info(`cleared ${cleared} response-owed interaction(s) for personId=${personId} from outbound email providerMessageId=${message.providerMessageId}`);
     }

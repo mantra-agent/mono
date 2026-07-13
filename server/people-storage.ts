@@ -992,22 +992,22 @@ export class PeopleStorage {
     log.debug(`addInteraction personId=${personId} type=${interaction.type} date=${interaction.date}`);
     const person = await this.getPerson(personId);
     if (!person) throw new Error(`Person ${personId} not found`);
-    // When logging an outbound contact, clear responseOwed on all prior interactions
-    const outboundTypes = new Set(["text", "call", "email", "in_person", "video", "social"]);
-    if (outboundTypes.has(interaction.type)) {
+    // Direction, not channel, determines whether this contact satisfies an obligation.
+    // Inbound email/text/call interactions can legitimately create responseOwed work.
+    if (interaction.direction === "outbound") {
       for (const ix of person.interactions) {
         if (ix.responseOwed) {
-          log.debug(`clearing responseOwed on interaction ${ix.id} for person ${personId} — new ${interaction.type} contact logged`);
+          log.debug(`clearing responseOwed on interaction ${ix.id} for person ${personId} — new outbound ${interaction.type} contact logged`);
           ix.responseOwed = false;
+          ix.responseDueBy = undefined;
         }
       }
     }
 
-    // Guard: outbound contact types cannot have responseOwed — that's nonsensical.
-    // The caller may accidentally pass it; silently correct rather than surface a confusing flag.
-    if (outboundTypes.has(interaction.type) && interaction.responseOwed) {
-      log.warn(`addInteraction: stripping responseOwed=true from outbound ${interaction.type} for person ${personId} — outbound contact satisfies obligations, it doesn't create them`);
-      interaction = { ...interaction, responseOwed: false };
+    // An outbound interaction cannot itself create a response obligation.
+    if (interaction.direction === "outbound" && interaction.responseOwed) {
+      log.warn(`addInteraction: stripping responseOwed=true from outbound ${interaction.type} for person ${personId}`);
+      interaction = { ...interaction, responseOwed: false, responseDueBy: undefined };
     }
 
     const createdInteraction: Interaction = {
