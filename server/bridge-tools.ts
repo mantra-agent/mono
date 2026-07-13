@@ -2256,7 +2256,7 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
     if (afterCounts.awaitingEnrichment > 0) {
       const { runEnrichment } = await import("./email-enrichment");
       enrichmentResult = await runEnrichment();
-      log.log(`run_downstream enrichment: dismissed=${enrichmentResult.dismissed} skillRunStarted=${enrichmentResult.skillRunStarted}`);
+      log.log(`run_downstream enrichment: dismissed=${enrichmentResult.dismissed} runStatus=${enrichmentResult.runStatus}`);
     }
 
     const finalCounts = await storage.getEmailPipelineCounts();
@@ -2264,7 +2264,7 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
       beforeCounts: counts,
       triageResult: triageResult ? { processed: triageResult.processed, triaged: triageResult.triaged, status: triageResult.status } : "skipped (untriaged=0)",
       afterTriageCounts: afterCounts,
-      enrichmentResult: enrichmentResult ? { dismissed: enrichmentResult.dismissed, skillRunStarted: enrichmentResult.skillRunStarted } : "skipped (awaitingEnrichment=0)",
+      enrichmentResult: enrichmentResult ? { dismissed: enrichmentResult.dismissed, runStatus: enrichmentResult.runStatus } : "skipped (awaitingEnrichment=0)",
       finalCounts,
     }, { label: "bridge.gmail.run_downstream" }) };
   }

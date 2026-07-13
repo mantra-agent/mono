@@ -104,13 +104,16 @@ const SYSTEM_COMMAND_HANDLERS: Record<string, SystemCommandHandler> = {
       }
 
       const afterTriage = await storage.getEmailPipelineCounts();
-      let enrichmentStarted = false;
+      let enrichmentRunStatus: "not_needed" | "completed" | "deferred" | "failed" = "not_needed";
       let enrichmentDismissed = 0;
       if (afterTriage.awaitingEnrichment > 0) {
         const { runEnrichment } = await import("./email-enrichment");
         const enrichment = await runEnrichment();
-        enrichmentStarted = enrichment.skillRunStarted;
+        enrichmentRunStatus = enrichment.runStatus;
         enrichmentDismissed = enrichment.dismissed;
+        if (enrichmentRunStatus !== "completed") {
+          downstreamDegradedReason = `enrichment_${enrichmentRunStatus}`;
+        }
       }
 
       const output = {
@@ -120,12 +123,12 @@ const SYSTEM_COMMAND_HANDLERS: Record<string, SystemCommandHandler> = {
         triageProcessed,
         triageTriaged,
         triageDismissed,
-        enrichmentStarted,
+        enrichmentRunStatus,
         enrichmentDismissed,
       };
 
       log.log(
-        `email-sync downstream complete: untriagedBefore=${before.untriaged} awaitingBefore=${before.awaitingEnrichment} triageProcessed=${triageProcessed} triaged=${triageTriaged} triageDismissed=${triageDismissed} awaitingAfter=${afterTriage.awaitingEnrichment} enrichmentStarted=${enrichmentStarted} enrichmentDismissed=${enrichmentDismissed}`,
+        `email-sync downstream complete: untriagedBefore=${before.untriaged} awaitingBefore=${before.awaitingEnrichment} triageProcessed=${triageProcessed} triaged=${triageTriaged} triageDismissed=${triageDismissed} awaitingAfter=${afterTriage.awaitingEnrichment} enrichmentRunStatus=${enrichmentRunStatus} enrichmentDismissed=${enrichmentDismissed}`,
       );
 
       if (downstreamDegradedReason) {
