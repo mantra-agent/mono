@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ChevronRight, Loader2, Plus, Search, Trash2, Users, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Loader2, Plus, Search, Trash2, Users, X } from "lucide-react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -60,24 +60,35 @@ export default function AudiencesPage() {
   if (isLoading) return <div className="flex justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden md:grid-cols-[minmax(240px,32%)_1fr]">
-      <div className="min-w-0 overflow-y-auto border-b border-border p-2 md:border-b-0 md:border-r">
-        <div className="relative mb-1">
-          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search audiences" className="h-7 pl-7 pr-7 text-xs" />
-          {search && <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"><X className="h-3 w-3" /></button>}
+    <div className="flex h-full min-h-0 overflow-hidden bg-background">
+      <div className={`w-full shrink-0 flex-col overflow-y-auto bg-background @md:w-64 ${selected ? "hidden @md:flex" : "flex"}`}>
+        <div className="p-2">
+          <div className="relative mb-1">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search audiences" className="h-7 pl-7 pr-7 text-xs" />
+            {search && <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"><X className="h-3 w-3" /></button>}
+          </div>
+          <button disabled={!canWrite} onClick={() => setCreating(true)} className="mb-1 flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta hover:bg-accent/70 disabled:opacity-50">
+            <Plus className="h-3.5 w-3.5" /> New Audience
+          </button>
+          {creating && <NewAudience onSubmit={(name) => createMutation.mutate(name)} onCancel={() => setCreating(false)} />}
+          <AudienceSection title="Active" items={filtered.filter((item) => item.status === "active")} selectedId={selectedId} onSelect={setSelectedId} />
+          <AudienceSection title="Archived" items={filtered.filter((item) => item.status === "archived")} selectedId={selectedId} onSelect={setSelectedId} />
         </div>
-        <button disabled={!canWrite} onClick={() => setCreating(true)} className="mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta hover:bg-accent/70 disabled:opacity-50">
-          <Plus className="h-3.5 w-3.5" /> New Audience
-        </button>
-        {creating && <NewAudience onSubmit={(name) => createMutation.mutate(name)} onCancel={() => setCreating(false)} />}
-        <AudienceSection title="Active" items={filtered.filter((item) => item.status === "active")} selectedId={selectedId} onSelect={setSelectedId} />
-        <AudienceSection title="Archived" items={filtered.filter((item) => item.status === "archived")} selectedId={selectedId} onSelect={setSelectedId} />
       </div>
-      <div className="min-w-0 overflow-y-auto p-4 md:p-6">
+      <div className={`min-w-0 flex-1 flex-col overflow-y-auto ${selected ? "flex" : "hidden @md:flex"}`}>
         {selected ? (
-          <AudienceEditor audience={selected} people={people} canWrite={canWrite} saving={updateMutation.isPending} onSave={(patch) => updateMutation.mutate({ id: selected.id, patch })} onDelete={() => deleteMutation.mutate(selected.id)} />
-        ) : <div className="px-2 py-1.5 text-sm text-muted-foreground">Select an audience to manage its People.</div>}
+          <>
+            <div className="flex min-h-11 items-center border-b border-border/20 px-2 @md:hidden">
+              <Button variant="ghost" size="sm" onClick={() => setSelectedId(null)}>
+                <ArrowLeft className="mr-2 h-4 w-4" /> Audiences
+              </Button>
+            </div>
+            <div className="p-4 @md:p-6">
+              <AudienceEditor audience={selected} people={people} canWrite={canWrite} saving={updateMutation.isPending} onSave={(patch) => updateMutation.mutate({ id: selected.id, patch })} onDelete={() => deleteMutation.mutate(selected.id)} />
+            </div>
+          </>
+        ) : <div className="px-4 py-6 text-sm text-muted-foreground">Select an audience to manage its People.</div>}
       </div>
     </div>
   );
@@ -94,7 +105,7 @@ function AudienceSection({ title, items, selectedId, onSelect }: { title: string
     <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover:bg-accent/70 hover:text-foreground">
       <ChevronRight className={`h-3 w-3 transition-transform ${open ? "rotate-90" : ""}`} /><span>{title}</span><span className="ml-auto text-[10px] font-normal">{items.length || ""}</span>
     </button>
-    {open && <div className="pb-2">{items.length === 0 ? <div className="ml-5 px-2 py-1.5 text-sm text-muted-foreground">No {title.toLowerCase()} audiences.</div> : items.map((item) => <button key={item.id} onClick={() => onSelect(item.id)} className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${selectedId === item.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70 hover:text-foreground"}`}><Users className="h-3.5 w-3.5" /><span className="min-w-0 flex-1 truncate">{item.name}</span><span className="text-xs">{item.definition.personIds.length}</span></button>)}</div>}
+    {open && <div className="pb-2">{items.length === 0 ? <div className="ml-5 px-2 py-1.5 text-sm text-muted-foreground">No {title.toLowerCase()} audiences.</div> : items.map((item) => <button key={item.id} onClick={() => onSelect(item.id)} className={`flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${selectedId === item.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70 hover:text-foreground"}`}><Users className="h-3.5 w-3.5" /><span className="min-w-0 flex-1 truncate">{item.name}</span><span className="text-xs">{item.definition.personIds.length}</span></button>)}</div>}
   </section>;
 }
 
@@ -104,7 +115,7 @@ function AudienceEditor({ audience, people, canWrite, saving, onSave, onDelete }
   const [personIds, setPersonIds] = useState<string[]>(audience.definition.personIds);
   const [personSearch, setPersonSearch] = useState("");
   const visiblePeople = people.filter((person) => `${person.name} ${person.emails.join(" ")}`.toLowerCase().includes(personSearch.toLowerCase()));
-  return <div className="max-w-5xl space-y-6">
+  return <div className="w-full space-y-6">
     <div><h1 className="text-xl font-semibold text-foreground">{audience.name}</h1><p className="text-sm text-muted-foreground">A reusable definition over People. Campaigns snapshot recipients later.</p></div>
     <Card className="min-w-0 overflow-hidden p-4 space-y-4">
       <label className="block space-y-1"><span className="text-sm font-medium">Name</span><Input value={name} onChange={(event) => setName(event.target.value)} disabled={!canWrite} /></label>
