@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, FileText, Loader2, Plus, Search, Trash2, X } from "lucide-react";
+import { AlignLeft, ArrowLeft, ChevronRight, Eye, FileText, Mail, Plus, Reply, Search, Send, Trash2, Type, Users, X } from "lucide-react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 
 interface Audience { id: string; name: string; definition: { kind: "manual"; personIds: string[] } }
 interface Campaign { id: string; name: string; status: "draft"; audienceId: string | null; senderName: string; senderEmail: string; replyToEmail: string; subject: string; body: string; updatedAt: string }
@@ -85,19 +85,78 @@ function CampaignSection({ title, items, selectedId, onSelect }: { title: string
 
 function CampaignEditor({ campaign, audiences, canWrite, saving, onSave, onDelete }: { campaign: Campaign; audiences: Audience[]; canWrite: boolean; saving: boolean; onSave: (patch: Partial<Campaign>) => void; onDelete: () => void }) {
   const [draft, setDraft] = useState(campaign);
-  const [preview, setPreview] = useState(false);
   useEffect(() => setDraft(campaign), [campaign]);
   const audience = useMemo(() => audiences.find((item) => item.id === draft.audienceId), [audiences, draft.audienceId]);
+  const bodySummary = draft.body.trim()
+    ? `${draft.body.trim().slice(0, 72)}${draft.body.trim().length > 72 ? "…" : ""}`
+    : "Write the email";
+
   return <div className="mx-auto max-w-5xl space-y-6 px-4 py-5 sm:px-6 sm:py-8">
-    <div><h1 className="text-xl font-semibold text-foreground">{campaign.name}</h1><p className="text-sm text-muted-foreground">Draft and preview only. Sending remains a separate human action.</p></div>
-    <Card className="min-w-0 overflow-hidden p-4 space-y-4">
-      <div className="grid gap-4 md:grid-cols-2"><label className="space-y-1"><span className="text-sm font-medium">Campaign name</span><Input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} disabled={!canWrite} /></label><label className="space-y-1"><span className="text-sm font-medium">Audience</span><Select value={draft.audienceId ?? "none"} onValueChange={(value) => setDraft({ ...draft, audienceId: value === "none" ? null : value })} disabled={!canWrite}><SelectTrigger><SelectValue placeholder="Choose an audience" /></SelectTrigger><SelectContent><SelectItem value="none">No audience selected</SelectItem>{audiences.map((item) => <SelectItem key={item.id} value={item.id}>{item.name} · {item.definition.personIds.length}</SelectItem>)}</SelectContent></Select></label></div>
-      <div className="grid gap-4 md:grid-cols-3"><label className="space-y-1"><span className="text-sm font-medium">Sender name</span><Input value={draft.senderName} onChange={(event) => setDraft({ ...draft, senderName: event.target.value })} disabled={!canWrite} /></label><label className="space-y-1"><span className="text-sm font-medium">From</span><Input type="email" value={draft.senderEmail} onChange={(event) => setDraft({ ...draft, senderEmail: event.target.value })} disabled={!canWrite} /></label><label className="space-y-1"><span className="text-sm font-medium">Reply to</span><Input type="email" value={draft.replyToEmail} onChange={(event) => setDraft({ ...draft, replyToEmail: event.target.value })} disabled={!canWrite} /></label></div>
-      <label className="block space-y-1"><span className="text-sm font-medium">Subject</span><Input value={draft.subject} onChange={(event) => setDraft({ ...draft, subject: event.target.value })} disabled={!canWrite} /></label>
-      <label className="block space-y-1"><span className="text-sm font-medium">Body</span><Textarea value={draft.body} onChange={(event) => setDraft({ ...draft, body: event.target.value })} disabled={!canWrite} rows={12} placeholder="Write the update…" /></label>
-      <p className="text-xs text-muted-foreground">{audience ? `${audience.definition.personIds.length} People currently match ${audience.name}. Recipient snapshots and delivery records activate with the future human send action.` : "Choose an audience before this campaign can eventually be sent."}</p>
-    </Card>
-    {preview && <Card className="min-w-0 overflow-hidden p-6"><div className="mx-auto max-w-3xl space-y-4"><div className="border-b border-border pb-4"><div className="text-xs text-muted-foreground">From {draft.senderName} &lt;{draft.senderEmail}&gt;</div><div className="mt-2 text-lg font-semibold text-foreground">{draft.subject || "Untitled email"}</div></div><div className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{draft.body || "Nothing written yet."}</div></div></Card>}
-    <div className="flex flex-wrap items-center gap-2"><Button disabled={!canWrite || saving || !draft.name.trim()} onClick={() => onSave({ name: draft.name.trim(), audienceId: draft.audienceId, senderName: draft.senderName, senderEmail: draft.senderEmail, replyToEmail: draft.replyToEmail, subject: draft.subject, body: draft.body })}>{saving ? "Saving…" : "Save Draft"}</Button><Button variant="outline" onClick={() => setPreview(!preview)}>{preview ? "Hide Preview" : "Preview"}</Button><span className="text-xs text-muted-foreground">No send control is enabled.</span><Button variant="ghost" className="ml-auto text-destructive" disabled={!canWrite} onClick={onDelete}><Trash2 className="mr-2 h-4 w-4" />Delete</Button></div>
+    <div>
+      <h1 className="text-xl font-semibold text-foreground">{campaign.name}</h1>
+      <p className="text-sm text-muted-foreground">Draft and preview only. Sending remains a separate human action.</p>
+    </div>
+
+    <div className="overflow-hidden rounded-md border border-border/20">
+      <ProfileTreeRow label="Campaign name" icon={<FileText className="h-3.5 w-3.5" />} hasValue={Boolean(draft.name)} showEmpty testId="row-campaign-name">
+        <Input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} disabled={!canWrite} aria-label="Campaign name" />
+      </ProfileTreeRow>
+
+      <ProfileTreeRow label="Audience" icon={<Users className="h-3.5 w-3.5" />} hasValue={Boolean(draft.audienceId)} showEmpty testId="row-campaign-audience">
+        <Select value={draft.audienceId ?? "none"} onValueChange={(value) => setDraft({ ...draft, audienceId: value === "none" ? null : value })} disabled={!canWrite}>
+          <SelectTrigger aria-label="Audience"><SelectValue placeholder="Choose an audience" /></SelectTrigger>
+          <SelectContent><SelectItem value="none">No audience</SelectItem>{audiences.map((item) => <SelectItem key={item.id} value={item.id}>{item.name} · {item.definition.personIds.length}</SelectItem>)}</SelectContent>
+        </Select>
+      </ProfileTreeRow>
+
+      <ProfileTreeRow label="Sender name" icon={<Send className="h-3.5 w-3.5" />} hasValue={Boolean(draft.senderName)} showEmpty testId="row-campaign-sender-name">
+        <Input value={draft.senderName} onChange={(event) => setDraft({ ...draft, senderName: event.target.value })} disabled={!canWrite} aria-label="Sender name" />
+      </ProfileTreeRow>
+
+      <ProfileTreeRow label="From" icon={<Mail className="h-3.5 w-3.5" />} hasValue={Boolean(draft.senderEmail)} showEmpty testId="row-campaign-from">
+        <Input type="email" value={draft.senderEmail} onChange={(event) => setDraft({ ...draft, senderEmail: event.target.value })} disabled={!canWrite} aria-label="From email" />
+      </ProfileTreeRow>
+
+      <ProfileTreeRow label="Reply to" icon={<Reply className="h-3.5 w-3.5" />} hasValue={Boolean(draft.replyToEmail)} showEmpty testId="row-campaign-reply-to">
+        <Input type="email" value={draft.replyToEmail} onChange={(event) => setDraft({ ...draft, replyToEmail: event.target.value })} disabled={!canWrite} aria-label="Reply-to email" />
+      </ProfileTreeRow>
+
+      <ProfileTreeRow label="Subject" icon={<Type className="h-3.5 w-3.5" />} hasValue={Boolean(draft.subject)} showEmpty testId="row-campaign-subject">
+        <Input value={draft.subject} onChange={(event) => setDraft({ ...draft, subject: event.target.value })} disabled={!canWrite} aria-label="Subject" />
+      </ProfileTreeRow>
+
+      <ProfileTreeRow
+        label="Content"
+        icon={<AlignLeft className="h-3.5 w-3.5" />}
+        hasValue={Boolean(draft.body)}
+        showEmpty
+        defaultOpen={!draft.body}
+        testId="row-campaign-content"
+        expandedContentClassName="pt-1"
+        expandedContent={<Textarea value={draft.body} onChange={(event) => setDraft({ ...draft, body: event.target.value })} disabled={!canWrite} rows={12} placeholder="Write the update…" aria-label="Campaign body" />}
+      >
+        <span className="block max-w-48 truncate text-muted-foreground">{bodySummary}</span>
+      </ProfileTreeRow>
+
+      <ProfileTreeRow
+        label="Preview"
+        icon={<Eye className="h-3.5 w-3.5" />}
+        hasValue={Boolean(draft.subject || draft.body)}
+        showEmpty
+        testId="row-campaign-preview"
+        expandedContentClassName="pt-2"
+        expandedContent={<div className="rounded-md bg-muted/30 p-4 sm:p-6"><div className="border-b border-border/20 pb-4"><div className="text-xs text-muted-foreground">From {draft.senderName || "Sender"} &lt;{draft.senderEmail || "email"}&gt;</div><div className="mt-2 text-lg font-semibold text-foreground">{draft.subject || "Untitled email"}</div></div><div className="whitespace-pre-wrap pt-4 text-sm leading-relaxed text-foreground">{draft.body || "Nothing written yet."}</div></div>}
+      >
+        <span className="text-muted-foreground">Open email preview</span>
+      </ProfileTreeRow>
+    </div>
+
+    <p className="text-xs text-muted-foreground">{audience ? `${audience.definition.personIds.length} People currently match ${audience.name}. Recipient snapshots and delivery records activate with the future human send action.` : "Choose an audience before this campaign can eventually be sent."}</p>
+
+    <div className="flex flex-wrap items-center gap-2">
+      <Button disabled={!canWrite || saving || !draft.name.trim()} onClick={() => onSave({ name: draft.name.trim(), audienceId: draft.audienceId, senderName: draft.senderName, senderEmail: draft.senderEmail, replyToEmail: draft.replyToEmail, subject: draft.subject, body: draft.body })}>{saving ? "Saving…" : "Save Draft"}</Button>
+      <span className="text-xs text-muted-foreground">No send control is enabled.</span>
+      <Button variant="ghost" className="ml-auto text-destructive" disabled={!canWrite} onClick={onDelete}><Trash2 className="mr-2 h-4 w-4" />Delete</Button>
+    </div>
   </div>;
 }
