@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ActivityHeatmap, type ActivityHeatmapDay } from "@/components/activity-heatmap";
+import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePageHeader } from "@/hooks/use-page-header";
@@ -12,9 +14,16 @@ interface DashboardKpi {
   value: number;
 }
 
+interface DashboardSeries {
+  key: DashboardKpi["key"];
+  label: string;
+  days: ActivityHeatmapDay[];
+}
+
 interface DashboardActivity {
   date: string;
   kpis: DashboardKpi[];
+  series: DashboardSeries[];
 }
 
 function localDateToday(): string {
@@ -69,6 +78,27 @@ export default function DashboardPage() {
                   </Card>
                 ))}
           </div>
+        )}
+
+        {!query.isLoading && !query.isError && query.data && (
+          <Card className="min-w-0 overflow-hidden bg-card p-2">
+            {query.data.series.map((series) => (
+              <ProfileDetailSection
+                key={series.key}
+                title={series.label}
+                count={series.days.reduce((total, day) => total + day.value, 0)}
+                defaultOpen
+                testId={`section-dashboard-${series.key}`}
+              >
+                <ActivityHeatmap
+                  days={series.days}
+                  selectedDate={date}
+                  onSelectDate={setDate}
+                  valueLabel={series.label.toLowerCase()}
+                />
+              </ProfileDetailSection>
+            ))}
+          </Card>
         )}
       </div>
     </div>
