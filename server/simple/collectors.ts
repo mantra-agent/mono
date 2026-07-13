@@ -1308,12 +1308,14 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
   try {
     // Compute period keys for daily/weekly/monthly queries. Longer horizons are not period-key scoped.
     const currentWeek = isoWeekString(today);
+    const nextWeek = isoWeekString(addDays(today, 7));
     const currentMonth = today.slice(0, 7);
 
-    const [dailyGoals, tomorrowGoals, weeklyGoals, monthlyGoals, quarterlyGoals, yearlyGoals, threeYearGoals, tenYearGoals, lifetimeGoals] = await Promise.all([
+    const [dailyGoals, tomorrowGoals, weeklyGoals, nextWeekGoals, monthlyGoals, quarterlyGoals, yearlyGoals, threeYearGoals, tenYearGoals, lifetimeGoals] = await Promise.all([
       goalsService.listAll({ horizon: "today", periodDate: today, periodScoped: true }),
       goalsService.listAll({ horizon: "today", periodDate: tomorrow, periodScoped: true }),
       goalsService.listAll({ horizon: "this_week", periodWeek: currentWeek, periodScoped: true }),
+      goalsService.listAll({ horizon: "this_week", periodWeek: nextWeek, periodScoped: true }),
       goalsService.listAll({ horizon: "this_month", periodMonth: currentMonth, periodScoped: true }),
       goalsService.listAll({ horizon: "this_quarter", periodScoped: true }),
       goalsService.listAll({ horizon: "this_year", periodScoped: true }),
@@ -1337,6 +1339,9 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
         if (goal.status !== "achieved") items.push(itemFromGoal(goal, 5 + index, "tomorrow"));
       });
     weeklyGoals.filter(doneVisible).forEach((goal, index) => items.push(itemFromGoal(goal, 10 + index, "this_week")));
+    nextWeekGoals
+      .filter(goal => goal.periodWeek === nextWeek && goal.status !== "achieved")
+      .forEach((goal, index) => items.push(itemFromGoal(goal, 15 + index, "next_week")));
     monthlyGoals.filter(doneVisible).forEach((goal, index) => items.push(itemFromGoal(goal, 20 + index, "this_month")));
     quarterlyGoals.filter(doneVisible).forEach((goal, index) => items.push(itemFromGoal(goal, 30 + index)));
     yearlyGoals.filter(doneVisible).forEach((goal, index) => items.push(itemFromGoal(goal, 40 + index)));
