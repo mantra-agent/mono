@@ -14,7 +14,7 @@
 import { createLogger } from "../log";
 import { chatStorage } from "../integrations/chat/storage";
 import { chatCompletion } from "../model-client";
-import { ACTIVITY_FRAMING } from "../job-profiles";
+import { ACTIVITY_RECALL } from "../job-profiles";
 import { createFiledLibraryPage } from "../library-save";
 import { recordSessionArtifact } from "../session-artifacts";
 import { peopleStorage } from "../people-storage";
@@ -166,11 +166,11 @@ async function generateRecapContent(
 ): Promise<RecapContent> {
   const participantList = meeting.participants.map((p) => p.label).join(", ") || "unknown";
   const result = await chatCompletion({
-    activity: ACTIVITY_FRAMING,
+    activity: ACTIVITY_RECALL,
     jsonMode: true,
     maxTokens: 2500,
     temperature: 0.2,
-    metadata: { source: "meeting-recap", sessionId, activity: ACTIVITY_FRAMING },
+    metadata: { source: "meeting-recap", sessionId, activity: ACTIVITY_RECALL },
     messages: [
       {
         role: "system",
