@@ -1,5 +1,4 @@
 import { eventBus } from "./event-bus";
-import { ACTIVITY_MEMORY } from "./job-profiles";
 import { createLogger } from "./log";
 
 const log = createLogger("Admission");
@@ -28,9 +27,8 @@ interface QueuedRequest {
 }
 
 const DEFAULT_IDLE_THRESHOLD_MS = 60 * 1000;
-const DEFAULT_CONCURRENCY_BUDGET = 5;
-const DEFAULT_BACKGROUND_RESERVE = 1;
-const DEFAULT_MAINTENANCE_RESERVE = 0;
+const DEFAULT_FOREGROUND_BUDGET = 7;
+const DEFAULT_BACKGROUND_BUDGET = 3;
 const DEFAULT_ADMISSION_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const MAX_BACKGROUND_SLOT_AGE_MS = 15 * 60 * 1000;
 
@@ -54,14 +52,13 @@ function parseEnvInt(name: string, fallback: number, options?: { min?: number; m
 }
 
 function getInitialAdmissionConfig() {
-  const concurrencyBudget = parseEnvInt("RUN_ADMISSION_CONCURRENCY_BUDGET", DEFAULT_CONCURRENCY_BUDGET, { min: 1, max: 25 });
-  const backgroundReserve = parseEnvInt("RUN_ADMISSION_BACKGROUND_RESERVE", DEFAULT_BACKGROUND_RESERVE, { min: 0, max: Math.max(0, concurrencyBudget - 1) });
-  const maintenanceReserve = parseEnvInt("RUN_ADMISSION_MAINTENANCE_RESERVE", DEFAULT_MAINTENANCE_RESERVE, { min: 0, max: Math.max(0, concurrencyBudget - 1) });
+  const foregroundBudget = parseEnvInt("RUN_ADMISSION_FOREGROUND_BUDGET", DEFAULT_FOREGROUND_BUDGET, { min: 1, max: 25 });
+  const backgroundBudget = parseEnvInt("RUN_ADMISSION_BACKGROUND_BUDGET", DEFAULT_BACKGROUND_BUDGET, { min: 0, max: 25 });
   return {
     idleThresholdMs: parseEnvInt("RUN_ADMISSION_IDLE_THRESHOLD_MS", DEFAULT_IDLE_THRESHOLD_MS, { min: 0, max: 30 * 60 * 1000 }),
-    concurrencyBudget,
-    backgroundReserve,
-    maintenanceReserve,
+    foregroundBudget,
+    backgroundBudget,
+    concurrencyBudget: foregroundBudget + backgroundBudget,
   };
 }
 
@@ -80,18 +77,18 @@ export class RunAdmissionController {
   private slotAgeTimer: ReturnType<typeof setInterval> | null = null;
   private idleThresholdMs: number;
   private concurrencyBudget: number;
-  private backgroundReserve: number;
-  private maintenanceReserve: number;
+  private foregroundBudget: number;
+  private backgroundBudget: number;
 
   constructor() {
     const config = getInitialAdmissionConfig();
     this.idleThresholdMs = config.idleThresholdMs;
     this.concurrencyBudget = config.concurrencyBudget;
-    this.backgroundReserve = config.backgroundReserve;
-    this.maintenanceReserve = config.maintenanceReserve;
+    this.foregroundBudget = config.foregroundBudget;
+    this.backgroundBudget = config.backgroundBudget;
     log.debug(
-      `Initialized admission config: budget=${this.concurrencyBudget}, idleThreshold=${this.idleThresholdMs}ms, ` +
-      `backgroundReserve=${this.backgroundReserve}, maintenanceReserve=${this.maintenanceReserve}`
+      `Initialized admission config: budget=${this.concurrencyBudget}, foregroundBudget=${this.foregroundBudget}, ` +
+      `backgroundBudget=${this.backgroundBudget}, idleThreshold=${this.idleThresholdMs}ms`
     );
     this.slotAgeTimer = setInterval(() => this.enforceMaxSlotAge(), 60_000);
   }
@@ -132,6 +129,15 @@ export class RunAdmissionController {
 
   private getActiveCount(): number {
     return this.slots.size;
+  }
+
+  private getForegroundCount(): number {
+    const counts = this.getTierCounts();
+    return counts.communication + counts.realtime + counts.request;
+  }
+
+  private canAdmitForeground(): boolean {
+    return this.getForegroundCount() < this.foregroundBudget && this.getActiveCount() < this.concurrencyBudget;
   }
 
   private setState(newState: AdmissionState): void {
@@ -177,15 +183,17 @@ export class RunAdmissionController {
         this.cooldownTimer = null;
       }
       this.setState("active");
-      if (this.getActiveCount() > this.concurrencyBudget) {
-        this.yieldLowestTierRuns(tier, this.getActiveCount() - this.concurrencyBudget);
+      const foregroundOverflow = Math.max(0, this.getForegroundCount() - this.foregroundBudget);
+      const totalOverflow = Math.max(0, this.getActiveCount() - this.concurrencyBudget);
+      if (foregroundOverflow > 0 || totalOverflow > 0) {
+        this.yieldLowestTierRuns(tier, Math.max(foregroundOverflow, totalOverflow));
       }
       log.verbose(() => `Communication slot granted: ${runId}`);
       return slot;
     }
 
     if (tier === "realtime") {
-      if (this.getActiveCount() < this.concurrencyBudget) {
+      if (this.canAdmitForeground()) {
         this.slots.set(runId, slot);
         if (this.cooldownTimer) {
           clearTimeout(this.cooldownTimer);
@@ -203,7 +211,7 @@ export class RunAdmissionController {
     }
 
     if (tier === "request") {
-      if (this.getActiveCount() < this.concurrencyBudget) {
+      if (this.canAdmitForeground()) {
         if (this.cooldownTimer) {
           clearTimeout(this.cooldownTimer);
           this.cooldownTimer = null;
@@ -233,33 +241,25 @@ export class RunAdmissionController {
   }
 
   /** Whether a background run can be admitted right now (public for pre-flight checks). */
-  canAdmitBackground(options?: { activity?: string }): boolean {
+  canAdmitBackground(_options?: { activity?: string }): boolean {
     if (this.cooldownTimer !== null) return false;
-    const reserve = this.getBackgroundReserve(options?.activity);
-    return this.getActiveCount() < Math.max(1, this.concurrencyBudget - reserve);
+    return this.getTierCounts().background < this.backgroundBudget && this.getActiveCount() < this.concurrencyBudget;
   }
 
-  getAdmissionSnapshot(options?: { activity?: string }) {
+  getAdmissionSnapshot(_options?: { activity?: string }) {
     return {
       state: this.state,
       tierCounts: this.getTierCounts(),
       queueDepth: this.getQueueDepth(),
       queuedByTier: this.getQueuedByTier(),
       activeCount: this.getActiveCount(),
+      foregroundCount: this.getForegroundCount(),
       concurrencyBudget: this.concurrencyBudget,
-      backgroundReserve: this.getBackgroundReserve(options?.activity),
+      foregroundBudget: this.foregroundBudget,
+      backgroundBudget: this.backgroundBudget,
       idleThresholdMs: this.idleThresholdMs,
       cooldownActive: this.cooldownTimer !== null,
-      maintenance: this.isMaintenanceActivity(options?.activity),
     };
-  }
-
-  private isMaintenanceActivity(activity?: string): boolean {
-    return activity === ACTIVITY_MEMORY;
-  }
-
-  private getBackgroundReserve(activity?: string): number {
-    return this.isMaintenanceActivity(activity) ? this.maintenanceReserve : this.backgroundReserve;
   }
 
   private enqueue(
@@ -414,7 +414,7 @@ export class RunAdmissionController {
         i++;
         continue;
       }
-      if (this.getActiveCount() >= this.concurrencyBudget) break;
+      if (!this.canAdmitForeground()) break;
       this.queue.splice(i, 1);
       if (next.timer) clearTimeout(next.timer);
       const slot: AdmissionSlot = {
@@ -442,7 +442,7 @@ export class RunAdmissionController {
       if (next.tier === "background") {
         if (!this.canAdmitBackground({ activity: next.activity })) break;
       } else {
-        if (this.getActiveCount() >= this.concurrencyBudget) break;
+        if (!this.canAdmitForeground()) break;
       }
       this.grantNextFromQueue();
     }
@@ -483,24 +483,23 @@ export class RunAdmissionController {
     }
   }
 
-  configure(options: { idleThresholdMs?: number; concurrencyBudget?: number; backgroundReserve?: number; maintenanceReserve?: number }): void {
+  configure(options: { idleThresholdMs?: number; foregroundBudget?: number; backgroundBudget?: number }): void {
     if (options.idleThresholdMs !== undefined) {
       this.idleThresholdMs = options.idleThresholdMs;
       log.verbose(() => `Idle threshold updated: ${this.idleThresholdMs}ms`);
     }
-    if (options.concurrencyBudget !== undefined) {
-      this.concurrencyBudget = Math.max(1, options.concurrencyBudget);
-      this.backgroundReserve = Math.min(this.backgroundReserve, Math.max(0, this.concurrencyBudget - 1));
-      this.maintenanceReserve = Math.min(this.maintenanceReserve, Math.max(0, this.concurrencyBudget - 1));
-      log.verbose(() => `Concurrency budget updated: ${this.concurrencyBudget}`);
+    if (options.foregroundBudget !== undefined) {
+      this.foregroundBudget = Math.max(1, options.foregroundBudget);
     }
-    if (options.backgroundReserve !== undefined) {
-      this.backgroundReserve = Math.min(Math.max(0, options.backgroundReserve), Math.max(0, this.concurrencyBudget - 1));
-      log.verbose(() => `Background reserve updated: ${this.backgroundReserve}`);
+    if (options.backgroundBudget !== undefined) {
+      this.backgroundBudget = Math.max(0, options.backgroundBudget);
     }
-    if (options.maintenanceReserve !== undefined) {
-      this.maintenanceReserve = Math.min(Math.max(0, options.maintenanceReserve), Math.max(0, this.concurrencyBudget - 1));
-      log.verbose(() => `Maintenance reserve updated: ${this.maintenanceReserve}`);
+    if (options.foregroundBudget !== undefined || options.backgroundBudget !== undefined) {
+      this.concurrencyBudget = this.foregroundBudget + this.backgroundBudget;
+      log.verbose(
+        () => `Admission budgets updated: total=${this.concurrencyBudget}, ` +
+          `foreground=${this.foregroundBudget}, background=${this.backgroundBudget}`,
+      );
     }
   }
 
