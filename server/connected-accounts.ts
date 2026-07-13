@@ -1,6 +1,6 @@
 import { db } from "./db";
-import { connectedAccounts, type ConnectedAccount } from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import { connectedAccounts, vaults, type ConnectedAccount } from "@shared/schema";
+import { eq, and, inArray } from "drizzle-orm";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwnershipValues } from "./sensitive-scope";
 import { createLogger } from "./log";
@@ -39,6 +39,38 @@ export const DEFAULT_GOOGLE_PERMISSIONS: GoogleAccountPermissions = {
   calendarDelete: true,
 };
 
+
+export async function listVisibleConnectedAccounts(provider?: string): Promise<ConnectedAccount[]> {
+  const principal = getCurrentPrincipalOrSystem();
+  const predicates = [provider ? eq(connectedAccounts.provider, provider) : undefined];
+  if (principal.actorType !== "system") {
+    if (principal.visibleVaultIds.length === 0) return [];
+    predicates.push(inArray(connectedAccounts.vaultId, principal.visibleVaultIds));
+  }
+  const domain = predicates.filter(Boolean) as ReturnType<typeof eq>[];
+  return db.select().from(connectedAccounts).where(combineWithSensitiveVisible({ ownerUserId: connectedAccounts.ownerUserId, principalAccountId: connectedAccounts.principalAccountId }, domain.length ? and(...domain) : undefined, principal));
+}
+
+export async function getVisibleConnectedAccount(accountId: string): Promise<ConnectedAccount | null> {
+  const accounts = await listVisibleConnectedAccounts();
+  return accounts.find(account => account.accountId === accountId) || null;
+}
+
+export async function createConnectedAccountInVault(data: Parameters<typeof createAccount>[0], vaultId: string): Promise<ConnectedAccount> {
+  const principal = getCurrentPrincipalOrSystem();
+  if (!principal.accountId) throw new Error("Account principal required");
+  const [vault] = await db.select({ id: vaults.id }).from(vaults).where(and(eq(vaults.id, vaultId), eq(vaults.accountId, principal.accountId), eq(vaults.isArchived, false))).limit(1);
+  if (!vault) throw new Error("Selected Vault is unavailable");
+  const existing = data.email ? (await listAccounts(data.provider)).find(account => account.email?.toLowerCase() === data.email?.toLowerCase()) : null;
+  if (existing) {
+    if (!existing.vaultId || existing.vaultId !== vaultId) throw new Error("Connected account is already bound to another Vault or requires explicit Vault assignment");
+    const updated = await updateAccount(existing.accountId, { tokens: data.tokens, permissions: data.permissions });
+    if (!updated) throw new Error("Connected account reconnect failed");
+    return updated;
+  }
+  return createAccount({ ...data, vaultId });
+}
+
 export async function listAccounts(provider?: string): Promise<ConnectedAccount[]> {
   const principal = getCurrentPrincipalOrSystem();
   const predicate = combineWithSensitiveVisible({ ownerUserId: connectedAccounts.ownerUserId, principalAccountId: connectedAccounts.principalAccountId }, provider ? eq(connectedAccounts.provider, provider) : undefined, principal);
@@ -60,6 +92,8 @@ export async function createAccount(data: {
   tokens?: unknown;
   permissions?: unknown;
   addedAt?: Date;
+  vaultId?: string;
+  providerAccountId?: string;
 }): Promise<ConnectedAccount> {
   const encryptedTokens = data.tokens ? await encryptTokens(data.tokens) : null;
   const rows = await db
@@ -68,6 +102,8 @@ export async function createAccount(data: {
       accountId: data.accountId,
       ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()),
       provider: data.provider,
+      vaultId: data.vaultId || null,
+      providerAccountId: data.providerAccountId || null,
       email: data.email || null,
       label: data.label || "Personal",
       workspaceName: data.workspaceName || null,
@@ -104,6 +140,7 @@ export async function updateAccount(
     healthError: string | null;
     healthCheckedAt: Date;
     missingScopes: string[] | null;
+    vaultId: string;
   }>
 ): Promise<ConnectedAccount | null> {
   const updateFields = { ...fields, updatedAt: new Date() };
@@ -118,6 +155,20 @@ export async function updateAccount(
   if (rows.length === 0) return null;
   log.debug(`updateAccount accountId=${accountId} fields=${Object.keys(fields).join(",")}`);
   return rows[0];
+}
+
+export async function assignConnectedAccountVault(accountId: string, vaultId: string): Promise<ConnectedAccount> {
+  const principal = getCurrentPrincipalOrSystem();
+  if (!principal.accountId) throw new Error("Account principal required");
+  const [vault] = await db.select({ id: vaults.id }).from(vaults).where(and(eq(vaults.id, vaultId), eq(vaults.accountId, principal.accountId), eq(vaults.isArchived, false))).limit(1);
+  if (!vault) throw new Error("Selected Vault is unavailable");
+  const account = await getAccount(accountId);
+  if (!account || account.provider !== "google") throw new Error("Google account not found");
+  if (account.vaultId === vaultId) return account;
+  if (account.vaultId) throw new Error("Vault moves are blocked until resumable derived-data migration ships");
+  const updated = await updateAccount(accountId, { vaultId });
+  if (!updated) throw new Error("Google account Vault assignment failed");
+  return updated;
 }
 
 export async function deleteAccount(accountId: string): Promise<boolean> {

@@ -1011,6 +1011,8 @@ export async function runSchemaBootstrap(
     const cols = [
       "owner_user_id TEXT",
       "principal_account_id TEXT",
+      "vault_id TEXT",
+      "provider_account_id TEXT",
       "permissions JSONB",
       "healthy BOOLEAN DEFAULT true",
       "health_error TEXT",
@@ -1029,6 +1031,9 @@ export async function runSchemaBootstrap(
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_connected_accounts_principal_account ON connected_accounts(principal_account_id)`,
     );
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_connected_accounts_vault ON connected_accounts(vault_id)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS google_oauth_transactions (token_hash TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL, principal_account_id TEXT NOT NULL, vault_id TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'google', label TEXT, redirect_origin TEXT, expires_at TIMESTAMPTZ NOT NULL, consumed_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_google_oauth_transactions_expires ON google_oauth_transactions(expires_at)`);
     await pool.query(`
       DO $migration$
       DECLARE
