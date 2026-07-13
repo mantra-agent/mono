@@ -105,6 +105,18 @@ function runtimeProjection(session: LiveSession) {
   };
 }
 
+/**
+ * Event sequence numbers are wall-clock anchored so they stay strictly
+ * monotonic per sessionId across live-entry recreation and server restarts.
+ * Clients reject deltas whose seq regresses below the last seen value, so a
+ * recreated entry (after finalize + cleanup) or a new boot must always outrank
+ * every previously delivered seq for that session. Anchoring to Date.now()
+ * encodes that invariant in the value domain without any retained state.
+ */
+function nextEventSeq(prior: number): number {
+  return Math.max(Date.now(), prior + 1);
+}
+
 // ---------------------------------------------------------------------------
 // SessionManager
 // ---------------------------------------------------------------------------
@@ -152,7 +164,7 @@ class SessionManager {
       subscribers: mergedSubscribers,
       finalizedAt: null,
       cleanupTimer: null,
-      eventSeq: existing?.eventSeq ?? 0,
+      eventSeq: nextEventSeq(existing?.eventSeq ?? 0),
       runGeneration: (existing?.runGeneration ?? 0) + 1,
     };
     this.sessions.set(sessionId, session);
@@ -492,8 +504,9 @@ class SessionManager {
 
     // Finalized state is already durable and terminal subscribers received the
     // authoritative delta above. Remove the runtime entry after the recovery
-    // window even when clients remain subscribed; a future duplicate subscribe
-    // will receive an idle snapshot, while a new run registers a fresh entry.
+    // window even when clients remain subscribed; a later subscribe pending-queues
+    // (and receives an idle snapshot) until a new run registers a fresh entry,
+    // which drains the pending queue and re-attaches those sockets.
     session.cleanupTimer = setTimeout(() => {
       const current = this.sessions.get(sessionId);
       if (current !== session || current.status === "streaming") return;
@@ -521,7 +534,7 @@ class SessionManager {
   // ── Broadcasting ──────────────────────────────────────────────────
 
   private broadcastDelta(session: LiveSession, delta: SessionDelta): void {
-    session.eventSeq += 1;
+    session.eventSeq = nextEventSeq(session.eventSeq);
     const eventSeq = session.eventSeq;
     const payload = JSON.stringify({
       type: "session.delta",
