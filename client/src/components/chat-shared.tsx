@@ -1418,6 +1418,39 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
   }
 
   const hasContent = segments.some(s => s.type === "content" && s.content);
+  const draftIdsFromContent = segments.flatMap((segment) =>
+    segment.type === "content"
+      ? parseReferenceText(segment.content)
+          .filter((part) => part.kind === "reference" && part.ref.type === "email_draft")
+          .map((part) => part.ref.id)
+      : [],
+  );
+  const draftIdsFromToolResults = [...new Set(segments.flatMap((segment) => {
+    if (segment.type !== "timeline") return [];
+    return segment.steps.flatMap((tool) => {
+      const action = typeof tool.arguments?.action === "string" ? tool.arguments.action : null;
+      if (tool.type !== "tool_call" || tool.toolName !== "gmail" || (action !== "draft" && action !== "update_draft")) return [];
+      if (typeof tool.result !== "string") return [];
+      return parseReferenceText(tool.result)
+        .filter((part) => part.kind === "reference" && part.ref.type === "email_draft")
+        .map((part) => part.ref.id);
+    });
+  }))];
+  const visibleEmailDraftIds = [...new Set([...draftIdsFromContent, ...draftIdsFromToolResults])];
+  const unpromotedDraftIds = draftIdsFromToolResults.filter((id) => !draftIdsFromContent.includes(id));
+  const hasUnpromotedDraftWidget = unpromotedDraftIds.length > 0;
+
+  useEffect(() => {
+    if (visibleEmailDraftIds.length === 0) return;
+    log.debug("EMAIL_DRAFT_WIDGET:DERIVED", {
+      messageId: message.id,
+      draftIds: visibleEmailDraftIds,
+      contentDraftCount: draftIdsFromContent.length,
+      toolResultDraftCount: draftIdsFromToolResults.length,
+      promotedFromToolResult: hasUnpromotedDraftWidget,
+      isStreaming: isActiveStreaming,
+    });
+  }, [message.id, visibleEmailDraftIds.join("|"), draftIdsFromContent.length, draftIdsFromToolResults.length, hasUnpromotedDraftWidget, isActiveStreaming]);
 
   const handleCopy = useCallback(() => {
     const allContent = segments
@@ -1597,6 +1630,9 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
               </div>
             )
           )}
+          {unpromotedDraftIds.map((id) => (
+            <EmailDraftWidget key={`tool-draft-${id}`} draftId={id} />
+          ))}
         </div>
         <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground/50 text-left" data-testid={`text-message-time-${message.id}`}>
           {layer >= 3 && (isActiveStreaming ? <StreamingTierBadge model={streaming?.model} autoTier={streaming?.autoTier} /> : message.model && <ModelTierBadge model={message.model} />)}
