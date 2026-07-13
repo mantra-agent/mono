@@ -1,7 +1,6 @@
-import { useMemo, useState, type ComponentType } from "react";
+import { useMemo, useState } from "react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Collapsible,
@@ -13,28 +12,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import {
-  Brain,
-  BriefcaseBusiness,
-  CalendarDays,
-  ChevronRight,
-  Clock,
-  CloudSun,
-  Code2,
-  Coins,
-  FileText,
-  Globe2,
-  HeartPulse,
-  Image,
-  Lightbulb,
-  MessageCircle,
-  Mic,
-  Pencil,
-  Play,
-  Settings2,
-  Wrench,
-  Zap,
-} from "lucide-react";
+import { ChevronRight, Clock, Pencil, Wrench, Zap } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -65,28 +43,6 @@ interface ToolCategory {
   usageCount: number;
   activeCount: number;
 }
-
-type TreeIcon = ComponentType<{ className?: string }>;
-
-const CATEGORY_ICONS: Record<string, TreeIcon> = {
-  calendar: CalendarDays,
-  code: Code2,
-  cognition: Brain,
-  communication: MessageCircle,
-  execution: Play,
-  file: FileText,
-  finance: Coins,
-  health: HeartPulse,
-  knowledge: Lightbulb,
-  media: Image,
-  memory: Brain,
-  strategy: Lightbulb,
-  system: Settings2,
-  voice: Mic,
-  weather: CloudSun,
-  web: Globe2,
-  work: BriefcaseBusiness,
-};
 
 function formatCategoryName(category: string): string {
   return category
@@ -154,11 +110,15 @@ function IconPicker({ toolName, currentIconName }: { toolName: string; currentIc
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-muted-foreground/50 transition-colors hover:bg-accent hover:text-foreground sm:min-h-7 sm:min-w-7 sm:opacity-0 sm:group-hover:opacity-100 sm:data-[state=open]:opacity-100"
+          className={cn(
+            "absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center h-6 w-6 rounded-md transition-opacity hover:bg-accent bg-accent/50",
+            open ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+          )}
+          onClick={(e) => e.stopPropagation()}
           aria-label={`Change ${toolName} icon`}
           data-testid={`button-pick-icon-${toolName}`}
         >
-          <Pencil className="h-3 w-3" />
+          <Pencil className="h-3.5 w-3.5" />
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-64 p-2" align="end">
@@ -196,81 +156,58 @@ function ToolRow({ tool, iconOverrides }: { tool: ToolInfo; iconOverrides: Recor
   const currentIconName = resolveToolIconName(tool.name, iconOverrides);
 
   return (
-    <Collapsible open={expanded} onOpenChange={setExpanded}>
-      <div className="relative flex min-w-0 items-stretch pl-4 sm:pl-6">
-        <div className="relative mr-1 w-5 shrink-0 self-stretch" aria-hidden="true">
-          <div className="absolute bottom-1/2 left-1/2 top-0 -translate-x-px border-l border-border" />
-          <div className="absolute left-1/2 right-0 top-1/2 border-t border-border" />
-        </div>
-        <div className="group min-w-0 flex-1">
-          <div className="flex min-w-0 items-center rounded-md transition-colors hover:bg-accent/70">
-            <CollapsibleTrigger asChild>
-              <button
-                type="button"
-                className="flex min-h-11 min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left sm:min-h-0"
-                data-testid={`tool-row-${tool.name}`}
-                aria-label={`${expanded ? "Collapse" : "Expand"} ${tool.name}`}
-              >
-                <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-90")} />
-                <ToolIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                {active && <ActivityIndicator />}
-                <span className={cn("min-w-0 flex-1 truncate font-mono text-sm", active ? "font-medium text-foreground" : "text-foreground/80")}>
-                  {tool.name}
-                </span>
-                {tool.usageCount > 0 && (
-                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">{tool.usageCount} calls</span>
-                )}
-              </button>
-            </CollapsibleTrigger>
-            <IconPicker toolName={tool.name} currentIconName={currentIconName} />
-          </div>
-          <CollapsibleContent>
-            <p
-              className="px-8 pb-2 text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap"
-              data-testid={`text-tool-desc-${tool.name}`}
-            >
-              {description}
-            </p>
-          </CollapsibleContent>
-        </div>
+    <div className="min-w-0">
+      <div
+        className={cn(
+          "group relative flex items-center gap-2 rounded-md px-2 py-1.5 text-sm w-full text-left cursor-pointer select-none transition-colors overflow-hidden hover:bg-accent/70",
+          active ? "text-active font-medium" : "text-muted-foreground",
+        )}
+        onClick={() => setExpanded((prev) => !prev)}
+        data-testid={`session-item-tool-${tool.name}`}
+      >
+        <ToolIcon className="h-3.5 w-3.5 shrink-0" />
+        {active && <ActivityIndicator />}
+        <span className="flex-1 min-w-0 pr-6 truncate">{tool.name}</span>
+        {tool.usageCount > 0 && (
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70 group-hover:opacity-0 transition-opacity">
+            {tool.usageCount}
+          </span>
+        )}
+        <IconPicker toolName={tool.name} currentIconName={currentIconName} />
       </div>
-    </Collapsible>
+      {expanded && (
+        <p
+          className="px-2 pb-1.5 pl-[30px] text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap"
+          data-testid={`text-tool-desc-${tool.name}`}
+        >
+          {description}
+        </p>
+      )}
+    </div>
   );
 }
 
-function CategoryNode({ category, iconOverrides }: { category: ToolCategory; iconOverrides: Record<string, string> }) {
-  const [expanded, setExpanded] = useState(true);
-  const CategoryIcon = CATEGORY_ICONS[category.name] || Wrench;
+function CategorySection({ category, iconOverrides }: { category: ToolCategory; iconOverrides: Record<string, string> }) {
+  const [open, setOpen] = useState(true);
 
   return (
-    <Collapsible open={expanded} onOpenChange={setExpanded}>
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/70 sm:min-h-0"
-          aria-label={`${expanded ? "Collapse" : "Expand"} ${formatCategoryName(category.name)}`}
-          data-testid={`tool-category-${category.name}`}
-        >
-          <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-90")} />
-          <CategoryIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger
+        className="flex items-center gap-1.5 w-full px-2 py-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider hover-elevate rounded-md"
+        data-testid={`button-group-${category.name}`}
+      >
+        <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
+        <span className="flex items-center gap-1.5">
+          {formatCategoryName(category.name)}
           {category.activeCount > 0 && <ActivityIndicator />}
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-            {formatCategoryName(category.name)}
-          </span>
-          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-            {category.tools.length} {category.tools.length === 1 ? "tool" : "tools"}
-          </span>
-          {category.usageCount > 0 && (
-            <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground/60 sm:inline">
-              {category.usageCount} calls
-            </span>
-          )}
-        </button>
+        </span>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        {category.tools.map((tool) => (
-          <ToolRow key={tool.name} tool={tool} iconOverrides={iconOverrides} />
-        ))}
+        <div className="space-y-0 mt-0">
+          {category.tools.map((tool) => (
+            <ToolRow key={tool.name} tool={tool} iconOverrides={iconOverrides} />
+          ))}
+        </div>
       </CollapsibleContent>
     </Collapsible>
   );
@@ -293,16 +230,16 @@ export default function ToolsPage({ embedded }: { embedded?: boolean }) {
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden">
-      <div className="flex-1 space-y-3 overflow-auto p-4">
+      <div className="flex-1 overflow-auto p-2">
         {isLoading ? (
-          <div className="space-y-3">
-            <Skeleton className="h-10 w-full" />
+          <div className="space-y-2 p-2">
+            <Skeleton className="h-6 w-full" />
             <Skeleton className="h-32 w-full" />
             <Skeleton className="h-32 w-full" />
           </div>
         ) : tools.length === 0 ? (
           <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-tools-empty">
-            No tools available.
+            No tools yet.
           </div>
         ) : (
           <>
@@ -336,13 +273,9 @@ export default function ToolsPage({ embedded }: { embedded?: boolean }) {
               )}
             </div>
 
-            <Card className="min-w-0 overflow-hidden">
-              <CardContent className="space-y-0.5 p-2">
-                {categories.map((category) => (
-                  <CategoryNode key={category.name} category={category} iconOverrides={iconOverrides || {}} />
-                ))}
-              </CardContent>
-            </Card>
+            {categories.map((category) => (
+              <CategorySection key={category.name} category={category} iconOverrides={iconOverrides || {}} />
+            ))}
           </>
         )}
       </div>
