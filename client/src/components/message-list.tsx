@@ -3,6 +3,8 @@ import { Loader2 } from "lucide-react";
 import { ChatEmptyState } from "@/components/chat-empty-state";
 import {
   ChatTurn,
+  segmentsFromSavedMessage,
+  emailDraftIdsFromSegments,
   type ChatMessage as Message,
   type ChildSessionBlockMeta,
   type CrossSessionMeta,
@@ -19,6 +21,19 @@ import {
   useLiveSessionBlocks,
 } from "@/components/inline-session-blocks";
 import { SystemNoticeMessage, parseSystemNotice } from "@/components/system-notice-message";
+
+// Cache of email draft IDs extracted from saved messages, keyed by message
+// object identity — avoids reparsing segments/tool results on every render.
+const savedDraftIdCache = new WeakMap<Message, string[]>();
+
+function draftIdsForSavedMessage(msg: Message): string[] {
+  const cached = savedDraftIdCache.get(msg);
+  if (cached) return cached;
+  const { fromContent, fromToolResults } = emailDraftIdsFromSegments(segmentsFromSavedMessage(msg));
+  const ids = [...new Set([...fromContent, ...fromToolResults])];
+  savedDraftIdCache.set(msg, ids);
+  return ids;
+}
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("MessageList");
@@ -547,6 +562,25 @@ export function MessageList({
   }
 
 
+  // Cross-message email draft widget dedup: a draft renders exactly once in a
+  // chat, at its latest occurrence. Earlier inline widgets are suppressed.
+  const emailDraftOwnerByDraftId = new Map<string, string>();
+  const draftIdsByMessageId = new Map<string, string[]>();
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it.kind !== "message") continue;
+    const useStreamingSegments = i === streamingTargetIdx && effectiveStreaming.segments.length > 0;
+    const ids = useStreamingSegments
+      ? (() => {
+          const { fromContent, fromToolResults } = emailDraftIdsFromSegments(effectiveStreaming.segments);
+          return [...new Set([...fromContent, ...fromToolResults])];
+        })()
+      : draftIdsForSavedMessage(it.msg);
+    if (ids.length === 0) continue;
+    draftIdsByMessageId.set(it.msg.id, ids);
+    for (const id of ids) emailDraftOwnerByDraftId.set(id, it.msg.id);
+  }
+
   const renderItem = (item: ListItem, isLast: boolean, isStreamingTarget: boolean): JSX.Element => {
     if (item.kind === "voice_transcript") {
       return <VoiceTranscriptBubble key={`vt-${item.entry.transcriptId || item.entry.turnId || item.index}`} entry={item.entry} index={item.index} />;
@@ -611,6 +645,7 @@ export function MessageList({
         return <SystemNoticeMessage key={msg.id} notice={notice} timestamp={msg.createdAt} />;
       }
     }
+    const suppressed = draftIdsByMessageId.get(msg.id)?.filter((id) => emailDraftOwnerByDraftId.get(id) !== msg.id);
     return (
       <ChatTurn
         key={msg.id}
@@ -619,6 +654,7 @@ export function MessageList({
         streaming={isStreamingTarget ? effectiveStreaming : undefined}
         sessionKey={sessionKey ?? undefined}
         compactReferences={compactReferences}
+        suppressedEmailDraftIds={suppressed && suppressed.length > 0 ? suppressed.join("|") : undefined}
       />
     );
   };
