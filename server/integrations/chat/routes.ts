@@ -2603,14 +2603,22 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
     const { inferAddressedMeetingTurn } = await import("../../meeting/addressed-turn");
     const turnId = event.turnId || persistedMessage?.id || `${sessionId}:${Date.now()}`;
-    const addressDecision = await inferAddressedMeetingTurn({ sessionId, sessionKey, turnId, text: event.text, speakerLabel: resolution.speaker.label, participants: resolution.participants });
+    const addressDecision = await inferAddressedMeetingTurn({
+      sessionId,
+      sessionKey,
+      turnId,
+      text: event.text,
+      speakerLabel: resolution.speaker.label,
+      participants: resolution.participants,
+      meetingBehavior: "on_address",
+    });
     chatLog.log(
-      `meeting address decision sessionId=${sessionId} turnId=${turnId} messageId=${persistedMessage?.id || "none"} decision=${addressDecision.decision} reason=${addressDecision.reason} confidence=${addressDecision.confidence}`,
+      `meeting address decision sessionId=${sessionId} turnId=${turnId} messageId=${persistedMessage.id} outcome=${addressDecision.outcome} shouldRespond=${addressDecision.shouldRespond} reason=${addressDecision.reason} confidence=${addressDecision.confidence} latencyMs=${addressDecision.latencyMs} classifierFailure=${addressDecision.classifierFailure || "none"}`,
     );
 
     const shouldTriggerAddressed =
-      addressDecision.decision === "addressed" &&
-      !!persistedMessage;
+      addressDecision.shouldRespond &&
+      !!addressDecision.prompt;
 
     // Non-addressed transcript is passive context only. Addressed turns are
     // the sole path that may start an agent run without composer interaction.
