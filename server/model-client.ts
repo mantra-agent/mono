@@ -1164,7 +1164,8 @@ export type StreamEvent =
   | { type: "keepalive"; reason: string }
   | { type: "ttft_breakdown"; breakdown: TtftBreakdown }
   | { type: "connected"; metadata?: Record<string, unknown> }
-  | { type: "request_sent"; metadata?: Record<string, unknown> };
+  | { type: "request_sent"; metadata?: Record<string, unknown> }
+  | { type: "headers_received"; metadata?: Record<string, unknown> };
 
 export async function* chatCompletionStream(options: ChatCompletionStreamOptions): AsyncGenerator<StreamEvent> {
   const activity = options.activity || options.metadata?.activity || ACTIVITY_CHAT;
@@ -1328,7 +1329,9 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
   let yieldedRealEvent = false;
 
   try {
+    const authStart = Date.now();
     const accessToken = await getOpenAISubscriptionAccessToken();
+    const authMs = Date.now() - authStart;
 
     const modelInfo = getModel(model);
     const codexModel = modelInfo?.codexModelId ?? model;
@@ -1372,6 +1375,11 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
 
     // This loop is the sole retry owner. Retries are allowed only before any
     // downstream event, keeping replay safe for tools and visible content.
+    // HTTP dispatch boundary: auth + request build complete — everything before
+    // this is local overhead, everything after is network/provider time.
+    yield { type: "request_sent", metadata: { authMs, buildMs: Date.now() - authStart - authMs } };
+    let headersEmitted = false;
+
     streamRetryLoop: for (let attempt = 0; attempt < CODEX_STREAM_MAX_ATTEMPTS; attempt++) {
       if (attempt > 0) {
         log.warn(
@@ -1410,6 +1418,12 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
         if (err.retryable && attempt < CODEX_STREAM_MAX_ATTEMPTS - 1) continue streamRetryLoop;
         yield { type: "error", error: codexUnavailableFromAttempt(err, attempt + 1).message };
         return;
+      }
+
+      if (!headersEmitted) {
+        headersEmitted = true;
+        // Response headers landed — TTFB boundary. `connected` fires on the first SSE event.
+        yield { type: "headers_received", metadata: { headersMs: Date.now() - scope.startedAt, status: response.status, attempt: attempt + 1 } };
       }
 
       // Reset per-attempt parser state so a retry starts clean (no leftover
@@ -1638,6 +1652,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
 
 async function* anthropicStream(model: string, options: ChatCompletionStreamOptions): AsyncGenerator<StreamEvent> {
   const client = getAnthropicClient();
+  const buildStart = Date.now();
 
   let systemPrompt: string | undefined;
   const messages: Array<any> = [];
@@ -1756,6 +1771,9 @@ async function* anthropicStream(model: string, options: ChatCompletionStreamOpti
   let eventCount = 0;
   const streamLoopStart = Date.now();
   let connectedEmitted = false;
+
+  // HTTP dispatch boundary: message conversion + params build complete.
+  yield { type: "request_sent", metadata: { buildMs: Date.now() - buildStart } };
 
   const OVERLOAD_RETRY_DELAYS_MS = [1000, 2000, 4000];
   let lastOverloadErr: any = null;
@@ -1914,7 +1932,12 @@ async function* openaiResponsesStream(model: string, options: ChatCompletionStre
     const pendingToolCalls = new Map<string, { callId: string; name: string; argsAccumulator: string; reasoningEmitted: boolean }>();
     let connectedEmitted = false;
 
+    // HTTP dispatch boundary: request build complete, dispatching to OpenAI.
+    yield { type: "request_sent", metadata: { buildMs: Date.now() - start } };
+    const dispatchAt = Date.now();
     const stream: any = await client.responses.create(params as any, { signal: options.signal });
+    // responses.create resolves once response headers land — TTFB boundary.
+    yield { type: "headers_received", metadata: { headersMs: Date.now() - dispatchAt } };
 
     for await (const chunk of stream) {
       eventCount++;
@@ -2015,6 +2038,7 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
   }
 
   const client = getOpenAIClient();
+  const buildStart = Date.now();
 
   const messages: Array<any> = options.messages.flatMap(m => {
     if (m.role === "tool" || m.role === "tool_result") {
@@ -2070,9 +2094,14 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
   }
 
   try {
+    // HTTP dispatch boundary: request build complete, dispatching to OpenAI.
+    yield { type: "request_sent", metadata: { buildMs: Date.now() - buildStart } };
+    const dispatchAt = Date.now();
     const stream = await client.chat.completions.create(params, {
       signal: options.signal,
     });
+    // completions.create resolves once response headers land — TTFB boundary.
+    yield { type: "headers_received", metadata: { headersMs: Date.now() - dispatchAt } };
 
     let inThinking = false;
     let stopReason: "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" = "end_turn";
