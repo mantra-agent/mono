@@ -499,11 +499,6 @@ async function resolveRuntimeIdentitySection(): Promise<string> {
       id.gitCommit ? `Commit: ${id.gitCommit.slice(0, 12)}` : null,
       id.dbHost ? `Database host: ${id.dbHost}` : null,
     ].filter(Boolean) as string[];
-    if (id.publicUrlMismatch) {
-      lines.push(
-        `⚠ STALE PUBLIC_URL ENV VARIABLE: the PUBLIC_URL Railway variable (${id.envPublicUrl}) disagrees with the canonical public URL and is ignored. Remove or correct the variable on this Railway service.`,
-      );
-    }
     return lines.join("\n");
   } catch {
     return "Runtime identity unavailable.";

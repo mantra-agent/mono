@@ -1124,8 +1124,6 @@ export async function registerIntegrationsRoutes(app: Express) {
         runtimeEnvironment: runtime.environmentName,
         servingHost: runtime.servingHost,
         publicUrl: runtime.publicUrl,
-        envPublicUrl: runtime.envPublicUrl,
-        publicUrlMismatch: runtime.publicUrlMismatch,
         error: test.error,
       });
     } catch (error: any) {
@@ -1154,8 +1152,6 @@ export async function registerIntegrationsRoutes(app: Express) {
         runtimeEnvironment: runtime.environmentName,
         servingHost: runtime.servingHost,
         publicUrl: runtime.publicUrl,
-        envPublicUrl: runtime.envPublicUrl,
-        publicUrlMismatch: runtime.publicUrlMismatch,
         error: test.error,
       });
     } catch (error: any) {
@@ -1187,8 +1183,6 @@ export async function registerIntegrationsRoutes(app: Express) {
       runtimeEnvironment: runtime.environmentName,
       servingHost: runtime.servingHost,
       publicUrl: runtime.publicUrl,
-      envPublicUrl: runtime.envPublicUrl,
-      publicUrlMismatch: runtime.publicUrlMismatch,
     };
   };
 

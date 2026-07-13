@@ -318,8 +318,8 @@ app.use((req, res, next) => {
 
   // Resolve runtime identity first: which platform/env/host this process IS.
   // The async Platforms lookup is cached for the process lifetime, adopts the
-  // hosting binding's publicUrl as the canonical public base URL, and logs
-  // loudly on unresolved bindings or a stale PUBLIC_URL env variable.
+  // hosting binding's publicUrl as the canonical public base URL and logs
+  // loudly when the runtime binding cannot be resolved.
   const { resolveRuntimeIdentity, describeRuntimeIdentity } = await import("./runtime-identity");
   const runtimeIdentity = await resolveRuntimeIdentity();
   log(`[startup] ${describeRuntimeIdentity(runtimeIdentity)}`, "boot");

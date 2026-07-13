@@ -41,7 +41,6 @@ const runtimeVariableTemplates: RuntimeVariableTemplate[] = [
   { key: "SESSION_SECRET", category: "boot-critical", required: true, source: "railway-variable" },
   { key: "ENCRYPTION_KEY", category: "boot-critical", required: true, source: "railway-variable" },
   { key: "ENCRYPTION_KEY_PREVIOUS", category: "boot-critical", required: false, source: "railway-variable" },
-  { key: "PUBLIC_URL", category: "runtime", required: false, source: "railway-variable" },
   { key: "NODE_ENV", category: "runtime", required: true, source: "railway-variable" },
   { key: "PORT", category: "runtime", required: true, source: "railway-variable" },
   { key: "TZ", category: "runtime", required: false, source: "railway-variable" },

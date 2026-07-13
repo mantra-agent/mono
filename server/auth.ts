@@ -272,7 +272,6 @@ function isDevelopmentPreviewEnvironment(): boolean {
     process.env.NODE_ENV,
     process.env.RAILWAY_ENVIRONMENT,
     process.env.RAILWAY_ENVIRONMENT_NAME,
-    process.env.PUBLIC_URL,
     process.env.RAILWAY_STATIC_URL,
   ]
     .filter((value): value is string => Boolean(value))
