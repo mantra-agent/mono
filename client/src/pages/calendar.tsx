@@ -833,19 +833,18 @@ function DayTimeline({ rows, events, accountEmails, timezone, onEventClick }: {
 
   return (
     <div
-      className="grid w-full grid-cols-[3.5rem_1rem_minmax(0,1fr)] gap-x-2 pr-2"
+      className="grid w-full grid-cols-[3.5rem_minmax(0,1fr)] pr-2"
       style={{ gridTemplateRows: `repeat(${rows.length}, 1.75rem)` }}
     >
       {rows.map((row, index) => (
         <div key={row.hour} className="contents" data-testid={`schedule-hour-${formatHourLabel(row.hour)}`}>
           <span
-            className="self-center text-right pr-1.5 text-[11px] leading-none tabular-nums text-muted-foreground"
+            className="self-center pr-2 text-right text-[11px] leading-none tabular-nums text-muted-foreground"
             style={{ gridColumn: 1, gridRow: index + 1 }}
           >
             {formatHourLabel(row.hour)}
           </span>
-          <span style={{ gridColumn: 2, gridRow: index + 1 }} />
-          <span className="border-b border-border/30" style={{ gridColumn: 3, gridRow: index + 1 }} />
+          <span className="border-b border-l border-border/30" style={{ gridColumn: 2, gridRow: index + 1 }} />
         </div>
       ))}
       {blocks.map(block => (
@@ -886,7 +885,7 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
           "z-20 my-0.5 flex min-h-0 min-w-0 items-start gap-1.5 overflow-hidden rounded-lg border border-l-4 border-border border-l-foreground/50 bg-card py-1.5 pl-2.5 pr-1.5 text-left text-xs font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
           optional && "opacity-60",
         )}
-        style={{ gridColumn: 3, gridRow: `${rowStart} / span ${rowSpan}`, position: "relative" }}
+        style={{ gridColumn: 2, gridRow: `${rowStart} / span ${rowSpan}`, position: "relative" }}
         data-testid={`event-row-${event.id}`}
       >
         {isWellnessBlock ? (
@@ -906,7 +905,7 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
         expanded ? "z-30 overflow-visible shadow-lg" : "overflow-hidden",
         optional && "opacity-60",
       )}
-      style={{ gridColumn: 3, gridRow: `${rowStart} / span ${rowSpan}`, position: "relative" }}
+      style={{ gridColumn: 2, gridRow: `${rowStart} / span ${rowSpan}`, position: "relative" }}
       data-testid={`event-row-${event.id}`}
     >
       <div
