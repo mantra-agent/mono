@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ChevronRight, FileText, Loader2, Plus, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, FileText, Loader2, Plus, Search, Trash2, X } from "lucide-react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -43,20 +43,34 @@ export default function CampaignsPage() {
   if (!hasPermission("system:read")) return <div className="p-6 text-sm text-muted-foreground">Campaigns requires system:read.</div>;
   if (campaignsQuery.isLoading || audiencesQuery.isLoading) return <div className="flex justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
 
-  return <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden md:grid-cols-[minmax(240px,32%)_1fr]">
-    <div className="min-w-0 overflow-y-auto border-b border-border p-2 md:border-b-0 md:border-r">
+  if (selected) {
+    return <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-2 sm:px-4">
+        <Button variant="ghost" size="sm" onClick={() => setSelectedId(null)} className="h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground">
+          <ArrowLeft className="h-4 w-4" />
+          <span>Campaigns</span>
+        </Button>
+        <span className="text-muted-foreground">/</span>
+        <span className="min-w-0 truncate text-sm font-medium text-foreground">{selected.name}</span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <CampaignEditor key={selected.id} campaign={selected} audiences={audiences} canWrite={canWrite} saving={updateMutation.isPending} onSave={(patch) => updateMutation.mutate({ id: selected.id, patch })} onDelete={() => deleteMutation.mutate(selected.id)} />
+      </div>
+    </div>;
+  }
+
+  return <div className="h-full min-h-0 overflow-y-auto p-2 sm:p-4">
+    <div className="mx-auto max-w-5xl">
       <div className="relative mb-1"><Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search campaigns" className="h-7 pl-7 pr-7 text-xs" />{search && <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"><X className="h-3 w-3" /></button>}</div>
       <button disabled={!canWrite} onClick={() => setCreating(true)} className="mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta hover:bg-accent/70 disabled:opacity-50"><Plus className="h-3.5 w-3.5" /> New Campaign</button>
       {creating && <NewCampaign onSubmit={(name) => createMutation.mutate(name)} onCancel={() => setCreating(false)} />}
-      <CampaignSection title="Draft" items={filtered} selectedId={selectedId} onSelect={setSelectedId} />
-      <CampaignSection title="Scheduled" items={[]} selectedId={selectedId} onSelect={setSelectedId} />
-      <CampaignSection title="Sent" items={[]} selectedId={selectedId} onSelect={setSelectedId} />
-      <CampaignSection title="Archived" items={[]} selectedId={selectedId} onSelect={setSelectedId} />
-    </div>
-    <div className="min-w-0 overflow-y-auto p-4 md:p-6">
-      {selected ? <CampaignEditor key={selected.id} campaign={selected} audiences={audiences} canWrite={canWrite} saving={updateMutation.isPending} onSave={(patch) => updateMutation.mutate({ id: selected.id, patch })} onDelete={() => deleteMutation.mutate(selected.id)} /> : <div className="px-2 py-1.5 text-sm text-muted-foreground">Select a campaign to write and preview it.</div>}
+      <CampaignSection title="Draft" items={filtered} selectedId={null} onSelect={setSelectedId} />
+      <CampaignSection title="Scheduled" items={[]} selectedId={null} onSelect={setSelectedId} />
+      <CampaignSection title="Sent" items={[]} selectedId={null} onSelect={setSelectedId} />
+      <CampaignSection title="Archived" items={[]} selectedId={null} onSelect={setSelectedId} />
     </div>
   </div>;
+
 }
 
 function NewCampaign({ onSubmit, onCancel }: { onSubmit: (name: string) => void; onCancel: () => void }) {
@@ -74,7 +88,7 @@ function CampaignEditor({ campaign, audiences, canWrite, saving, onSave, onDelet
   const [preview, setPreview] = useState(false);
   useEffect(() => setDraft(campaign), [campaign]);
   const audience = useMemo(() => audiences.find((item) => item.id === draft.audienceId), [audiences, draft.audienceId]);
-  return <div className="max-w-5xl space-y-6">
+  return <div className="mx-auto max-w-5xl space-y-6 px-4 py-5 sm:px-6 sm:py-8">
     <div><h1 className="text-xl font-semibold text-foreground">{campaign.name}</h1><p className="text-sm text-muted-foreground">Draft and preview only. Sending remains a separate human action.</p></div>
     <Card className="min-w-0 overflow-hidden p-4 space-y-4">
       <div className="grid gap-4 md:grid-cols-2"><label className="space-y-1"><span className="text-sm font-medium">Campaign name</span><Input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} disabled={!canWrite} /></label><label className="space-y-1"><span className="text-sm font-medium">Audience</span><Select value={draft.audienceId ?? "none"} onValueChange={(value) => setDraft({ ...draft, audienceId: value === "none" ? null : value })} disabled={!canWrite}><SelectTrigger><SelectValue placeholder="Choose an audience" /></SelectTrigger><SelectContent><SelectItem value="none">No audience selected</SelectItem>{audiences.map((item) => <SelectItem key={item.id} value={item.id}>{item.name} · {item.definition.personIds.length}</SelectItem>)}</SelectContent></Select></label></div>
