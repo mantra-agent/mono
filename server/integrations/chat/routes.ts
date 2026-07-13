@@ -1193,6 +1193,20 @@ export async function registerChatRoutes(app: Express): Promise<void> {
   }> {
     onProgress?.("ctx_history", "started");
     const histStart = Date.now();
+    // Sub-step tracker: exposes DB load, token estimation, payload repair, and
+    // between-turn compaction as independent diagnostic rows under ctx_history.
+    let openSubStep: (() => void) | undefined;
+    const beginSubStep = (name: string): (() => void) => {
+      onProgress?.(name, "started");
+      const subStart = Date.now();
+      const end = () => {
+        openSubStep = undefined;
+        onProgress?.(name, "done", Date.now() - subStart);
+      };
+      openSubStep = end;
+      return end;
+    };
+    const endLoad = beginSubStep("ctx_history_load");
     chatLog.log(`loadHistory START sessionId=${sessionId}`);
     let existingMessages = await chatStorage.getMessagesBySession(sessionId);
     chatLog.log(
@@ -1260,6 +1274,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     };
 
     rebuildConversationHistory(existingMessages);
+    endLoad();
 
     let durableCompactionAttempted = false;
     let durableCompactionApplied = false;
@@ -1267,6 +1282,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     let preRunCompactionThreshold = 0;
 
     try {
+      const endTokens = beginSubStep("ctx_history_tokens");
       const { runBetweenTurnCompaction, estimateTokens } =
         await import("../../agent-context");
       const { getContextWindow } = await import("../../model-registry");
@@ -1296,8 +1312,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       preRunCompactionThreshold = Math.floor(convBudget * 0.6);
       durableCompactionAttempted =
         preRunConversationTokens > preRunCompactionThreshold;
+      endTokens();
 
       if (durableCompactionAttempted) {
+        const endRepair = beginSubStep("ctx_history_repair");
         const repair = await chatStorage.repairOversizedContextPayloads(
           sessionId,
           { maxInlineTokens: 200, reason: "pre_run_context_pressure" },
@@ -1312,8 +1330,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           durableCompactionAttempted =
             preRunConversationTokens > preRunCompactionThreshold;
         }
+        endRepair();
       }
 
+      const endCompaction = durableCompactionAttempted
+        ? beginSubStep("ctx_history_compact")
+        : undefined;
       const compacted = durableCompactionAttempted
         ? await runBetweenTurnCompaction(
             sessionId,
@@ -1332,7 +1354,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           `betweenTurnCompaction reloaded ${conversationHistory.length} messages sessionId=${sessionId}`,
         );
       }
+      endCompaction?.();
     } catch (compactErr: unknown) {
+      // Close any sub-step left open by the failure so the diagnostic timeline stays coherent.
+      openSubStep?.();
       chatLog.warn(
         `betweenTurnCompaction failed (non-fatal) sessionId=${sessionId}: ${compactErr instanceof Error ? compactErr.message : String(compactErr)}`,
       );

@@ -196,6 +196,22 @@ function formatModelConnectionDetail(ctx: RunIterationContext): string {
   return [name, provider, tier ? `tier=${tier}` : undefined].filter(Boolean).join(" \u00b7 ");
 }
 
+/** Compact key=value detail for dispatch diagnostics (pool acquisition, auth, build, TTFB). */
+function formatDispatchDetail(metadata?: Record<string, unknown>): string | undefined {
+  if (!metadata) return undefined;
+  const pieces: string[] = [];
+  if (typeof metadata.poolHit === "boolean") pieces.push(metadata.poolHit ? "pool=warm" : "pool=cold");
+  if (typeof metadata.preSdkMs === "number") pieces.push(`pre=${metadata.preSdkMs}ms`);
+  if (typeof metadata.sdkImportMs === "number" && metadata.sdkImportMs > 0) pieces.push(`import=${metadata.sdkImportMs}ms`);
+  if (typeof metadata.poolAcquireMs === "number") pieces.push(`acquire=${metadata.poolAcquireMs}ms`);
+  if (typeof metadata.authMs === "number") pieces.push(`auth=${metadata.authMs}ms`);
+  if (typeof metadata.buildMs === "number") pieces.push(`build=${metadata.buildMs}ms`);
+  if (typeof metadata.headersMs === "number") pieces.push(`ttfb=${metadata.headersMs}ms`);
+  if (typeof metadata.status === "number") pieces.push(`status=${metadata.status}`);
+  if (typeof metadata.attempt === "number" && metadata.attempt > 1) pieces.push(`attempt=${metadata.attempt}`);
+  return pieces.length > 0 ? pieces.join(" \u00b7 ") : undefined;
+}
+
 function normalizeToolFailureSignature(call: { name: string; args: Record<string, unknown>; result: string }): string {
   const args = safeStringify(call.args, { maxBytes: 8 * 1024, label: "agent-executor.repeatedToolFailure.args" });
   return `${call.name}::${args}::${call.result}`;
@@ -710,6 +726,7 @@ interface RunIterationContext {
   firstTokenEmitted?: boolean;
   llmConnectedEmitted?: boolean;
   llmConnectedDoneEmitted?: boolean;
+  llmHeadersEmitted?: boolean;
   thinkingStepActive?: boolean;
   activeToolUseSteps: Map<string, number>;
   // Chronology state — built incrementally by processStreamEvent
@@ -991,8 +1008,19 @@ export class AgentExecutor extends EventEmitter {
           const elapsed = now - ctx.llmCallStartTime;
           ctx.llmConnectedEmitted = true;
           ctx.llmConnectedTime = now;
-          ctx.publish("system_step", { step: "llm_request_sent", status: "done", elapsedMs: elapsed });
+          ctx.publish("system_step", { step: "llm_request_sent", status: "done", elapsedMs: elapsed, detail: formatDispatchDetail((event as { metadata?: Record<string, unknown> }).metadata) });
           ctx.publish("system_step", { step: "llm_connected", status: "started" });
+        }
+        break;
+      }
+      case "headers_received": {
+        // Provider HTTP response headers arrived: splits network/queueing from prompt prefill.
+        if (!ctx.llmHeadersEmitted && !ctx.llmConnectedDoneEmitted && ctx.llmCallStartTime) {
+          ctx.llmHeadersEmitted = true;
+          const now = Date.now();
+          const sinceDispatch = now - (ctx.llmConnectedTime || ctx.llmCallStartTime);
+          ctx.publish("system_step", { step: "llm_headers", status: "started" });
+          ctx.publish("system_step", { step: "llm_headers", status: "done", elapsedMs: sinceDispatch, detail: formatDispatchDetail((event as { metadata?: Record<string, unknown> }).metadata) });
         }
         break;
       }
