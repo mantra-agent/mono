@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { createLogger } from "@/lib/logger";
 import {
   PenLine,
   Send,
@@ -19,6 +20,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+
+const log = createLogger("EmailDraftWidget");
 
 // ---------------------------------------------------------------------------
 // Types
@@ -226,9 +229,20 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
   }>({
     queryKey: ["/api/email-drafts", draftId],
     queryFn: async () => {
+      log.debug("EMAIL_DRAFT_WIDGET:LOAD_START", { draftId });
       const res = await fetch(`/api/email-drafts/${draftId}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load draft");
-      return res.json();
+      if (!res.ok) {
+        log.error("EMAIL_DRAFT_WIDGET:LOAD_FAILED", { draftId, status: res.status });
+        throw new Error(`Failed to load draft (${res.status})`);
+      }
+      const payload = await res.json();
+      log.debug("EMAIL_DRAFT_WIDGET:LOAD_SUCCESS", {
+        draftId,
+        status: payload?.draft?.status ?? null,
+        recipientCount: Array.isArray(payload?.draft?.to) ? payload.draft.to.length : null,
+        threadMessageCount: Array.isArray(payload?.threadMessages) ? payload.threadMessages.length : null,
+      });
+      return payload;
     },
     refetchInterval: (query) =>
       query.state.data?.draft.status === "draft" ? 3_000 : false,
