@@ -6,8 +6,8 @@ import { storage } from "../../storage";
 import type { SegmentChronologyEntry } from "../../chat-file-storage";
 import { WORKSPACE_DIR } from "../../paths";
 import {
-  getModelForActivity,
   isAutoRouting,
+  resolveModelForActivity,
   classifyComplexity,
   ACTIVITY_CHAT,
 } from "../../job-profiles";
@@ -1637,6 +1637,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       durableCompactionApplied: boolean;
     },
     onEvent?: Parameters<typeof agentExecutor.run>[0]["onEvent"],
+    routingTier?: string,
   ): Promise<ExecutorRunResult> {
     const toolExecutor = async (name: string, args: Record<string, any>) => {
       const toolCallId = generateToolCallId();
@@ -1659,6 +1660,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       toolExecutor,
       activity: ACTIVITY_CHAT,
       model: chatModel,
+      routingTier,
       contextPressure,
       onEvent,
     });
@@ -1701,7 +1703,15 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         detail: selectedAutoTier || chatModel,
       });
     }
-    chatModel ||= getModelForActivity(ACTIVITY_CHAT);
+    // Track the real routing tier so the executor's Connected diagnostic can show
+    // it instead of "explicit-override" (the executor receives our pre-resolved model
+    // as an override and would otherwise lose the tier).
+    let chatRoutingTier = selectedAutoTier || undefined;
+    if (!chatModel) {
+      const chatRoutingDecision = resolveModelForActivity(ACTIVITY_CHAT);
+      chatModel = chatRoutingDecision.modelString;
+      chatRoutingTier ||= chatRoutingDecision.tier;
+    }
 
     // Every execution enters through this boundary, including interrupt re-triggers.
     // HTTP/meeting callers may pre-register so pre-executor events are visible;
@@ -1850,6 +1860,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             checkpointAssistantDraft();
           }
         },
+        chatRoutingTier,
       );
       if (assistantDraftCheckpointPending) {
         clearTimeout(assistantDraftCheckpointPending);

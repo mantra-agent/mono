@@ -77,6 +77,8 @@ export interface ExecutorRunOptions {
   toolExecutor?: ToolExecutor;
   activity?: ActivityId;
   model?: string;
+  /** Actual routing tier when the caller pre-resolved the model (e.g. chat auto-routing); without it an explicit model override reports tier=explicit-override. */
+  routingTier?: string;
   temperature?: number;
   thinkingBudget?: number;
   thinking?: ThinkingTierConfig;
@@ -192,7 +194,7 @@ function formatModelConnectionDetail(ctx: RunIterationContext): string {
   const modelId = raw.includes("/") ? raw.split("/").slice(1).join("/") : raw;
   const name = getModelName(modelId);
   const provider = ctx.resolvedProvider || ctx.routingDecision.provider;
-  const tier = ctx.routingDecision.tier;
+  const tier = ctx.routingTier;
   return [name, provider, tier ? `tier=${tier}` : undefined].filter(Boolean).join(" \u00b7 ");
 }
 
@@ -691,6 +693,7 @@ interface RunIterationContext {
   resolvedModel: string;
   resolvedProvider: string;
   routingDecision: ModelRoutingDecision;
+  routingTier: string;
   iteration: number;
   emergencyCompactionRetries: number;
   aborted: boolean;
@@ -1752,7 +1755,7 @@ export class AgentExecutor extends EventEmitter {
       : getThinkingForActivity(activityForRouting);
     const parsedModelForResolve = modelString.includes("/") ? modelString.split("/").slice(1).join("/") : modelString;
     const thinking = resolveThinkingConfig(parsedModelForResolve, tierThinking);
-    const routingTier = routingDecision.tier;
+    const routingTier = options.routingTier || routingDecision.tier;
     const thinkingBudget = thinking.thinking.type === "enabled" ? (thinking.thinking.budgetTokens ?? 0) : 0;
     const runEntry = this.activeRuns.get(runId);
     if (runEntry) runEntry.model = modelString;
@@ -1822,7 +1825,7 @@ export class AgentExecutor extends EventEmitter {
       runId, modelString, emit, journal, publish,
       allThinking: [], resolvedToolCalls: [],
       totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-      resolvedModel: modelString, resolvedProvider: routingDecision.provider, routingDecision,
+      resolvedModel: modelString, resolvedProvider: routingDecision.provider, routingDecision, routingTier,
       iteration: 0, emergencyCompactionRetries: 0, aborted: false,
       iterationThinking: "", iterationText: "",
       iterationUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
