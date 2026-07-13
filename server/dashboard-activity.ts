@@ -1,11 +1,12 @@
-import { and, count, gte, lt } from "drizzle-orm";
-import { opportunityInteractions, wellnessLogs } from "@shared/schema";
+import { and, count, eq, gte, lt } from "drizzle-orm";
+import { opportunityInteractions, tasks, wellnessLogs } from "@shared/schema";
 import { db } from "./db";
 import type { Principal } from "./principal";
 import { peopleStorage } from "./people-storage";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { combineWithSensitiveVisible } from "./sensitive-scope";
 import { userDayBounds } from "./utils/user-time";
+import { fetchVersionTimeline } from "./integrations/github-timeline";
 
 const opportunityInteractionScope = {
   scope: opportunityInteractions.scope,
@@ -18,8 +19,14 @@ const wellnessLogScope = {
   principalAccountId: wellnessLogs.principalAccountId,
 };
 
+const taskScope = {
+  scope: tasks.scope,
+  ownerUserId: tasks.ownerUserId,
+  accountId: tasks.accountId,
+};
+
 export interface ActivityDashboardKpi {
-  key: "opportunity_interactions" | "wellness_completions";
+  key: "opportunity_interactions" | "wellness_completions" | "completed_tasks" | "shipped_prs";
   label: string;
   value: number;
 }
@@ -73,6 +80,35 @@ async function countWellnessCompletions(date: string, principal: Principal): Pro
   return Number(row?.value ?? 0);
 }
 
+async function countCompletedTasks(date: string, principal: Principal): Promise<number> {
+  const { start, end } = userDayBounds(date);
+  const exclusiveEnd = new Date(end.getTime() + 1);
+  const [row] = await db
+    .select({ value: count() })
+    .from(tasks)
+    .where(combineWithVisibleScope(
+      principal,
+      taskScope,
+      and(eq(tasks.status, "done"), gte(tasks.updatedAt, start), lt(tasks.updatedAt, exclusiveEnd)),
+    ));
+  return Number(row?.value ?? 0);
+}
+
+async function countShippedPrs(date: string): Promise<number> {
+  const { start, end } = userDayBounds(date);
+  const exclusiveEnd = new Date(end.getTime() + 1);
+  const timeline = await fetchVersionTimeline();
+  const prs = [
+    ...timeline.pending,
+    ...timeline.deployments.flatMap((deployment) => deployment.prs),
+  ];
+  const distinctPrs = new Map(prs.map((pr) => [pr.number, pr]));
+  return [...distinctPrs.values()].filter((pr) => {
+    const mergedAt = new Date(pr.mergedAt);
+    return mergedAt >= start && mergedAt < exclusiveEnd;
+  }).length;
+}
+
 const KPI_DEFINITIONS: readonly KpiDefinition[] = [
   {
     key: "opportunity_interactions",
@@ -83,6 +119,16 @@ const KPI_DEFINITIONS: readonly KpiDefinition[] = [
     key: "wellness_completions",
     label: "Wellness completions",
     count: countWellnessCompletions,
+  },
+  {
+    key: "completed_tasks",
+    label: "Completed tasks",
+    count: countCompletedTasks,
+  },
+  {
+    key: "shipped_prs",
+    label: "Shipped PRs",
+    count: countShippedPrs,
   },
 ];
 
