@@ -50,13 +50,18 @@ export function usePinnedScroll({
   }, [bottomThreshold, resetKey]);
 
   const onUserScrollIntent = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
     userScrollIntentRef.current = true;
-  }, []);
+  }, [containerRef]);
 
   const onScroll = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
     if (programmaticScrollRef.current && !userScrollIntentRef.current) return;
+    // Layout growth fires scroll events too. It must not revoke follow mode.
+    // Only a preceding wheel/touch intent is allowed to change pinned state.
+    if (!userScrollIntentRef.current) return;
     updatePinnedState(container);
   }, [containerRef, updatePinnedState]);
 

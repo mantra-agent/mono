@@ -80,11 +80,10 @@ export async function inferAddressedMeetingTurn(input: AddressedInferenceInput):
   } finally { clearTimeout(timeout); }
 }
 
-export type AddressedTurnClaim = "claimed" | "duplicate" | "disabled" | "not_meeting";
+export type AddressedTurnClaim = "claimed" | "duplicate" | "not_meeting";
 export async function claimAddressedMeetingTurn(sessionId: string, turnId: string): Promise<AddressedTurnClaim> {
   const session = await chatStorage.getSession(sessionId);
   if (!session?.meeting || session.type !== "meeting") return "not_meeting";
-  if (session.meeting.addressedResponsesEnabled === false) return "disabled";
   if (session.meeting.lastAddressedTurnId === turnId) return "duplicate";
   await chatStorage.updateMeetingMeta(sessionId, { lastAddressedTurnId: turnId });
   return "claimed";

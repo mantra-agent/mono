@@ -35,7 +35,7 @@ import {
   Radio,
   Timer,
 } from "lucide-react";
-import type { ChatSession } from "@shared/models/chat";
+import { isDurablyActiveSession, type ChatSession } from "@shared/models/chat";
 import { SessionActionsMenuItems } from "@/components/session-actions-menu";
 import { SessionDetailsModal } from "@/components/session-details-modal";
 import {
@@ -84,7 +84,7 @@ export function groupSessions(sessions: ChatSession[], opts?: { activeVoiceSessi
     // Streaming, actively running, plan-executing, or voice-connected sessions go to "Active".
     // hasActivePlan keeps a session in Active during the gap between plan steps,
     // when no child session is streaming yet.
-    if (conv.status === "streaming" || conv.hasActiveDescendant || conv.hasActivePlan || (voiceId && conv.id === voiceId)) {
+    if (isDurablyActiveSession(conv) || (voiceId && conv.id === voiceId)) {
       active.push(conv);
       continue;
     }
@@ -592,7 +592,7 @@ export function SessionGroupSection({
   onArchive: (id: string) => void;
   onTogglePin?: (id: string, pinned: boolean) => void;
 }) {
-  const hasLiveConv = group.sessions.some(c => c.status === "streaming");
+  const hasLiveConv = group.sessions.some(isDurablyActiveSession);
   const hasActiveSess = !!activeSession && group.sessions.some(c => c.id === activeSession);
   const staysCollapsedByDefault = group.label === "Snooze" || group.label === "Archive";
   const [open, setOpen] = useState(

@@ -19,7 +19,7 @@ import { VaultToggles } from "@/components/vault-toggles";
 import { apiRequest } from "@/lib/queryClient";
 import { deleteSessionTree } from "@/lib/session-deletion";
 import { getSessionStreamState, useSessionSubscriptions } from "@/hooks/use-session-subscription";
-import type { ChatSession as Session, PageContext } from "@shared/models/chat";
+import { isDurablyActiveSession, type ChatSession as Session, type PageContext } from "@shared/models/chat";
 import { ConversationSidebar } from "@/components/conversation-sidebar";
 import { BottomBar } from "@/components/bottom-bar";
 import { useSessionActivityState } from "@/components/thought-indicator";
@@ -518,7 +518,7 @@ function FocusWidgetPanel({ isAgentRunning }: FocusWidgetPanelProps) {
     const ids = new Set<string>();
     if (activeSession) ids.add(activeSession);
     for (const session of sessions) {
-      if (session.status !== "streaming") continue;
+      if (!isDurablyActiveSession(session)) continue;
       ids.add(session.id);
       if (ids.size >= 8) break;
     }

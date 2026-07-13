@@ -423,14 +423,15 @@ export function MessageList({
     return false;
   });
   const hasActiveAssistantPlaceholder =
-    !!activeTurn &&
+    !!activeSession &&
     effectiveStreaming.segments.length === 0 &&
     effectiveStreaming.source !== null &&
-    (isSessionStreaming || !!pendingTurn);
+    (runActive ?? isSessionStreaming);
   const hasRenderableStreamForTurn = hasVisibleStreamingPayload || hasActiveAssistantPlaceholder;
   const hasServerAuthoritativeStream =
     !!activeSession &&
-    effectiveStreaming.segments.length > 0 &&
+    effectiveStreaming.source !== null &&
+    (effectiveStreaming.segments.length > 0 || hasActiveAssistantPlaceholder) &&
     ((runActive ?? isSessionStreaming) || !!liveStreamRenderId);
   const activeTurnKey = activeTurn
     ? activeTurn.clientTurnId
