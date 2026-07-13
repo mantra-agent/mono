@@ -9,7 +9,6 @@ import type {
 const log = createLogger("RecallWebhooks");
 
 import { recordRecallDelivery } from "../integrations/recall/delivery-diagnostics";
-import { MeetingUtteranceBuffer } from "../meeting/utterance-buffer";
 
 function webhookId(req: Request): string | null {
   const value = req.get("webhook-id") ?? req.get("svix-id");
@@ -73,8 +72,7 @@ function sessionIdFromBotMetadata(payload: unknown): string | null {
  *
  * - POST /api/webhooks/recall — bot status-change events (dashboard-configured
  *   webhook endpoint; one-time setup in the Recall dashboard).
- * - POST /api/webhooks/recall/transcript — real-time transcript.data and
- *   transcript.partial_data events
+ * - POST /api/webhooks/recall/transcript — finalized transcript.data events
  *   (configured per-bot via recording_config.realtime_endpoints).
  *
  * Both return 2xx immediately after verification and process async. Bot →
@@ -86,19 +84,7 @@ export function registerRecallRoutes(
   deps: { ingestMeetingEvent: MeetingIngestFn },
 ): void {
   const { ingestMeetingEvent } = deps;
-  const utteranceBuffer = new MeetingUtteranceBuffer(async (utterance) => {
-    const result = await ingestMeetingEvent({
-      sessionId: utterance.sessionId,
-      speakerLabel: utterance.speakerLabel,
-      turnId: utterance.turnId,
-      text: utterance.text,
-    });
-    if (!result.ok) {
-      log.error(
-        `Recall transcript ingest failed sessionId=${utterance.sessionId}: ${result.error}`,
-      );
-    }
-  });
+
 
   app.post("/api/webhooks/recall", async (req: Request, res: Response) => {
     log.info(`Status webhook received event=${typeof req.body?.event === "string" ? req.body.event : "unknown"}`);
@@ -202,7 +188,11 @@ export function registerRecallRoutes(
         event?: string;
         data?: {
           data?: {
-            words?: Array<{ text?: string }>;
+            words?: Array<{
+              text?: string;
+              start_timestamp?: { relative?: number };
+              end_timestamp?: { relative?: number } | null;
+            }>;
             participant?: { id?: number | string; name?: string | null };
             is_final?: boolean;
             final?: boolean;
@@ -212,8 +202,8 @@ export function registerRecallRoutes(
         };
       };
       const eventName = body?.event;
-      if (eventName !== "transcript.data" && eventName !== "transcript.partial_data") {
-        log.debug(`Ignoring realtime event: ${eventName || "(none)"}`);
+      if (eventName !== "transcript.data") {
+        log.debug(`Ignoring non-final realtime event: ${eventName || "(none)"}`);
         return;
       }
       const sessionId = sessionIdFromBotMetadata(body);
@@ -234,23 +224,23 @@ export function registerRecallRoutes(
       const speakerKey = participant?.id != null
         ? `participant:${String(participant.id)}`
         : `label:${speakerLabel?.trim().toLowerCase() || "unknown"}`;
-      const explicitFinal = transcriptData?.is_final ?? transcriptData?.final;
-      const final = eventName === "transcript.data" || explicitFinal === true;
-      const providerEventId = webhookId(req);
-      const transcriptId = body?.data?.transcript?.id;
-      const eventId = providerEventId
-        ? `webhook:${providerEventId}`
-        : final && transcriptId
-          ? `transcript:${transcriptId}:${speakerKey}`
-          : undefined;
+      const transcriptId = body?.data?.transcript?.id || "unknown";
+      const firstRelative = words[0]?.start_timestamp?.relative;
+      const lastRelative = words.at(-1)?.end_timestamp?.relative;
+      const timeRange = firstRelative != null
+        ? `${firstRelative}:${lastRelative ?? "open"}`
+        : `webhook:${webhookId(req) || "unknown"}`;
+      const turnId = `recall:${transcriptId}:${speakerKey}:${timeRange}`;
       try {
-        await utteranceBuffer.push({
+        await ingestMeetingEvent({
           sessionId,
-          speakerKey,
           speakerLabel,
+          turnId,
           text,
-          final,
-          eventId,
+          // A finalized transcript is authoritative evidence that the bot is
+          // live even when the separate dashboard status webhook is delayed or
+          // misrouted.
+          botStatus: "live",
         });
       } catch (err) {
         log.error("Recall transcript webhook processing error", err);

@@ -2567,7 +2567,19 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       sessionId,
       event.text,
       resolution.speaker,
+      event.turnId,
     );
+    // A replayed provider turn has already crossed the canonical persistence
+    // boundary. Do not publish it, infer addressing again, or start another run.
+    if (!persistedMessage) {
+      return {
+        ok: true,
+        sessionId,
+        sessionKey,
+        speaker: resolution.speaker,
+        queued: false,
+      };
+    }
 
     publishChatStreamEvent(sessionKey, sessionId, {
       type: "user_message",
