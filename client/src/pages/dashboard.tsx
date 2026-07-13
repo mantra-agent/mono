@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { usePageHeader } from "@/hooks/use-page-header";
 
 interface DashboardKpi {
-  key: "opportunity_interactions" | "wellness_completions";
+  key: "opportunity_interactions" | "wellness_completions" | "completed_tasks" | "shipped_prs";
   label: string;
   value: number;
 }
@@ -52,7 +52,7 @@ export default function DashboardPage() {
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {query.isLoading
-              ? ["opportunity", "wellness"].map((key) => (
+              ? ["opportunity", "wellness", "tasks", "prs"].map((key) => (
                   <Card key={key} className="min-w-0 overflow-hidden bg-card">
                     <CardHeader><Skeleton className="h-4 w-40" /></CardHeader>
                     <CardContent><Skeleton className="h-8 w-16" /></CardContent>
