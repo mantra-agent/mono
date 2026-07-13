@@ -314,6 +314,51 @@ function vectorLiteral(embedding: number[]): string {
   return `[${embedding.join(",")}]`;
 }
 
+function toClaimDate(value: unknown): Date | null {
+  if (value instanceof Date) return value;
+  if (typeof value === "string" || typeof value === "number") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  return null;
+}
+
+/**
+ * Canonical mapper from raw snake_case SQL claim rows to the Drizzle
+ * MemoryVnextClaim shape. Every raw db.execute() read of memory_vnext_claims
+ * must go through this — casting raw rows to MemoryVnextClaim leaves all
+ * camelCase fields (createdAt, lifecycleStage, ...) undefined.
+ */
+function mapRawVnextClaimRow(row: Record<string, unknown>): MemoryVnextClaim {
+  return {
+    id: Number(row.id),
+    title: (row.title as string | null) ?? null,
+    content: String(row.content ?? ""),
+    claimType: String(row.claim_type ?? ""),
+    confidence: Number(row.confidence ?? 0),
+    topics: (row.topics as string[] | null) ?? [],
+    entityMentions: row.entity_mentions ?? [],
+    sourceClaimIndex: (row.source_claim_index as number | null) ?? null,
+    lifecycleStage: String(row.lifecycle_stage ?? ""),
+    lifecycleStageUpdatedAt: toClaimDate(row.lifecycle_stage_updated_at) ?? new Date(0),
+    contentHash: String(row.content_hash ?? ""),
+    embedding: (row.embedding as MemoryVnextClaim["embedding"]) ?? null,
+    sourceMemoryId: (row.source_memory_id as number | null) ?? null,
+    source: String(row.source ?? "manual"),
+    sourceId: (row.source_id as string | null) ?? null,
+    scope: String(row.scope ?? "user"),
+    ownerUserId: (row.owner_user_id as string | null) ?? null,
+    accountId: (row.account_id as string | null) ?? null,
+    createdByUserId: (row.created_by_user_id as string | null) ?? null,
+    updatedByUserId: (row.updated_by_user_id as string | null) ?? null,
+    metadata: row.metadata ?? {},
+    recallCount: Number(row.recall_count ?? 0),
+    lastRecalledAt: toClaimDate(row.last_recalled_at),
+    createdAt: toClaimDate(row.created_at) ?? new Date(0),
+    updatedAt: toClaimDate(row.updated_at) ?? new Date(0),
+  };
+}
+
 export async function executeVnextClaimSemanticSearch(
   queryEmbedding: number[],
   limit: number,
@@ -324,7 +369,7 @@ export async function executeVnextClaimSemanticSearch(
     ? sql``
     : sql`AND (scope = 'global' OR owner_user_id = ${principal.userId} OR account_id = ${principal.accountId})`;
   const results = await db.execute(sql`
-    SELECT id, content, claim_type, confidence, topics, entity_mentions, source_claim_index,
+    SELECT id, title, content, claim_type, confidence, topics, entity_mentions, source_claim_index,
       content_hash, embedding, source_memory_id, source, source_id, lifecycle_stage,
       lifecycle_stage_updated_at, scope, owner_user_id, account_id, created_by_user_id, updated_by_user_id, metadata, recall_count,
       last_recalled_at, created_at, updated_at,
@@ -336,8 +381,8 @@ export async function executeVnextClaimSemanticSearch(
     ORDER BY embedding <=> ${embeddingStr}::vector
     LIMIT ${limit}
   `);
-  return (results.rows as unknown as Array<MemoryVnextClaim & { similarity?: string | number }>).map((row) => ({
-    row,
+  return (results.rows as Array<Record<string, unknown>>).map((row) => ({
+    row: mapRawVnextClaimRow(row),
     similarity: parseFloat(String(row.similarity ?? "0")),
   }));
 }
@@ -888,14 +933,17 @@ export class MemoryVnextClaimStorage {
       ORDER BY c.created_at ASC
       LIMIT ${boundedLimit}
     `);
-    return (rows.rows as unknown as Array<MemoryVnextClaim & { source_keys?: string[]; entity_keys?: string[] }>).map((row) => ({
-      claim: {
-        ...row,
-        embedding: parseVnextEmbedding(row.embedding, `bridge_candidate:${row.id}`),
-      },
-      sourceKeys: row.source_keys ?? [],
-      entityKeys: row.entity_keys ?? [],
-    }));
+    return (rows.rows as Array<Record<string, unknown>>).map((raw) => {
+      const claim = mapRawVnextClaimRow(raw);
+      return {
+        claim: {
+          ...claim,
+          embedding: parseVnextEmbedding(raw.embedding, `bridge_candidate:${claim.id}`),
+        },
+        sourceKeys: (raw.source_keys as string[] | undefined) ?? [],
+        entityKeys: (raw.entity_keys as string[] | undefined) ?? [],
+      };
+    });
   }
 
   async findBridgeNeighbors(claimId: number, embedding: number[], limit = 25): Promise<VnextBridgeNeighbor[]> {

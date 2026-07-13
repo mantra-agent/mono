@@ -96,10 +96,8 @@ The context system builds the LLM prompt from ~40 dynamically resolved sections.
 - **3 cache layers:** Section cache (in-memory Map, TTL by freshness policy), Calendar background cache (15min TTL), Graph memory cache (5min TTL, SHA-256 keyed)
 - **Event-based invalidation:** `INVALIDATION_EVENT_MAP` maps 11 event types to cache-invalidated sections
 - **Coalescing:** `_sectionInFlight` Map prevents duplicate concurrent resolves
-- **Graph memory retrieval:** `resolveGraphMemory()` uses tiered context assembly — persona-driven token budget, unified pgvector seed search (limit 80) + recency seeds, multi-signal scoring (causal, contrastive, temporal, source-backed boost), and greedy knapsack allocation across Signal/Detail/Full tiers. Weights modulated by session type and emotional state. No LLM calls at query time
-- **Tiered rendering:** `allocateTiers()` greedy knapsack assigns richest affordable tier per candidate. `renderTieredEntry()` outputs depth-appropriate markdown (Signal: title+score, Detail: +summary+tags, Full: +content excerpt). Budget read from persona `cognitiveOverrides.memoryGraphTokenBudget`
-- **Semantic seed search:** `semanticSeedSearch()` in `memory/semantic-seed-search.ts` — single pgvector cosine query across all `memory_entries`, source-backed boost, 450ms timeout, graceful fallback
-- **Memory injection:** `injectMemoryEntryChildren()` adds short (15), mid (10), and long (20) entries as dynamic children
+- **Graph memory retrieval:** `resolveGraphMemory()` is vNext-only — `retrieveVnextContext()` over `memory_vnext_claims` (semantic + causal + contrastive + temporal blend, weights modulated by session type and emotional state), rendered by `renderVnextContext()` with tiered allocation (`allocateTiers()`). No legacy fallback: errors return "Graph memory temporarily unavailable.", empty results render empty. No LLM calls at query time
+- **No layer sections:** short/mid/long-term memory layers are no longer context sections. `memory_entries` remains a write-side store only (session summaries, sleep cycle) pending full retirement
 - **Pre-warming:** 7 storage layers pre-warmed at boot (people, projects, tasks, principles, rules, goals, skills)
 - **Budget:** compact boot context target; heavy docs render as retrieval references, no truncation of source data
 
