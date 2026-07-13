@@ -49,6 +49,7 @@ import { registerVaultRoutes } from "./vault-routes";
 import { registerHomeRoutes } from "./home";
 import { registerDashboardRoutes } from "./dashboard";
 import { registerNotificationRoutes } from "./notifications";
+import { registerWaitlistRoutes } from "./waitlist";
 import { registerCommunicationRoutes } from "./communications";
 import mediaRoutes from "../media/media-routes";
 import renderRoutes from "../media/render-routes";
@@ -109,6 +110,7 @@ export async function registerDomainRoutes(
   registerHomeRoutes(app);
   registerDashboardRoutes(app);
   registerNotificationRoutes(app);
+  registerWaitlistRoutes(app);
   registerCommunicationRoutes(app);
   registerMobileTelemetryRoutes(app);
   registerMobileDATDebugRoutes(app);
