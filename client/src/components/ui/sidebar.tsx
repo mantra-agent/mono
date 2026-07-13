@@ -55,6 +55,15 @@ function useSidebar() {
   return context
 }
 
+/**
+ * Context-tolerant variant for components that may mount in detached React
+ * roots (e.g. TipTap decoration widgets) where SidebarProvider is absent.
+ * Returns null instead of throwing.
+ */
+function useOptionalSidebar() {
+  return React.useContext(SidebarContext)
+}
+
 function SidebarProvider({
   defaultOpen = true,
   open: openProp,
@@ -772,4 +781,5 @@ export {
   SidebarSeparator,
   SidebarTrigger,
   useSidebar,
+  useOptionalSidebar,
 }
