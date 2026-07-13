@@ -1,6 +1,7 @@
 import { getPublicBaseUrl } from "./voice-llm";
 import { createLogger } from "./log";
 import { getSecretSync, onSecretChange } from "./secrets-store";
+import { HIGH_QUALITY_SCRIBE_POLICY } from "./voice/stt";
 
 const log = createLogger("ElevenLabs");
 const ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1";
@@ -256,7 +257,7 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
       tts: ttsPayload,
       asr: {
         quality: "high",
-        provider: "scribe_realtime",
+        provider: HIGH_QUALITY_SCRIBE_POLICY.provider,
       },
       turn: {
         mode: "turn",

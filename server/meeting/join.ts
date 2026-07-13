@@ -110,12 +110,18 @@ export async function joinMeetingByUrl(opts: {
 
   const { outputMediaPageUrl } = await import("./output-media");
   const outputMediaUrl = outputMediaPageUrl(publicUrl, session.id);
+  const { canonicalMeetingSTTEnabled, meetingSTTAudioToken } = await import("./stt");
+  const audioToken = meetingSTTAudioToken();
+  const participantAudioUrl = canonicalMeetingSTTEnabled() && audioToken
+    ? `${publicUrl.replace(/^http/, "ws")}/ws/recall-participant-audio?token=${encodeURIComponent(audioToken)}`
+    : undefined;
   let botId: string;
   try {
     const bot = await recall.createRecallBot({
       meetingUrl,
       botName: "Mantra Agent",
       webhookUrl: `${publicUrl}/api/webhooks/recall/transcript`,
+      participantAudioUrl,
       metadata: { sessionId: session.id },
       outputMediaUrl,
     });
@@ -127,7 +133,18 @@ export async function joinMeetingByUrl(opts: {
     return failSession(message);
   }
 
-  await chatStorage.updateMeetingMeta(session.id, { botId, outputMediaUrl });
+  await chatStorage.updateMeetingMeta(session.id, {
+    botId,
+    outputMediaUrl,
+    sttProvider: participantAudioUrl ? "scribe_realtime" : "recallai_streaming",
+    sttModel: participantAudioUrl ? "scribe_v2_realtime" : "prioritize_low_latency",
+    sttSource: participantAudioUrl ? "recall_participant_audio" : "recall_transcript_webhook",
+    sttFallback: !participantAudioUrl,
+    sttStatus: participantAudioUrl ? "inactive" : "fallback",
+    sttStatusDetail: participantAudioUrl
+      ? "Waiting for Recall participant audio"
+      : "Canonical meeting STT disabled; Recall transcript webhook fallback active",
+  });
   log.log(`Bot ${botId} dispatched to ${platform} meeting "${title}" (session ${session.id})`);
 
   return { sessionId: session.id, botId, platform, title };

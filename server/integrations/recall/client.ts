@@ -133,6 +133,7 @@ export interface CreateBotParams {
   meetingUrl: string;
   botName: string;
   webhookUrl: string;
+  participantAudioUrl?: string;
   metadata: Record<string, string>;
   outputMediaUrl?: string;
 }
@@ -162,12 +163,18 @@ export async function createRecallBot(params: CreateBotParams): Promise<RecallBo
           use_separate_streams_when_available: true,
         },
       },
+      ...(params.participantAudioUrl ? { audio_separate_raw: {} } : {}),
       realtime_endpoints: [
         {
           type: "webhook",
           url: params.webhookUrl,
           events: ["transcript.data"],
         },
+        ...(params.participantAudioUrl ? [{
+          type: "websocket",
+          url: params.participantAudioUrl,
+          events: ["audio_separate_raw.data"],
+        }] : []),
       ],
     },
   };
