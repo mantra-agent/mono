@@ -88,8 +88,8 @@ function ChildPages({ pageId, pages }: { pageId: string; pages: LibraryPage[] })
 
   return (
     <div className="border-t border-border/60 px-10 py-3 space-y-1.5" data-testid="library-child-pages">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Child pages</div>
-      <div className="flex flex-wrap gap-1.5">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Children</div>
+      <div className="flex flex-col items-start gap-1.5">
         {children.map((page) => (
           <ReferenceRenderer
             key={page.id}

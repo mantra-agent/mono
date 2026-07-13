@@ -133,7 +133,6 @@ export function TopBar() {
       >
         {!previewOwnsAgentIcon && <XyzIconButton />}
         <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} />
-        <div className="flex-1" />
       </div>
     );
   }
