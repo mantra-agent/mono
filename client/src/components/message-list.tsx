@@ -392,6 +392,16 @@ export function MessageList({
   if (activeTurnUserItemIndex < 0 && lastUserBeforeStream?.id) {
     activeTurnUserItemIndex = items.findIndex((item) => item.kind === "message" && item.msg.id === lastUserBeforeStream!.id);
   }
+  // Meeting sessions have no local composer turn, and new transcript utterances
+  // keep persisting while the agent streams, so "last user message" is a moving
+  // anchor. When the server projection carries the canonical turnId, anchor to
+  // the user message that actually started this turn instead.
+  if (!activeTurn && effectiveStreaming.turnId) {
+    const turnAnchorIndex = items.findIndex(
+      (item) => item.kind === "message" && item.msg.role === "user" && item.msg.turnId === effectiveStreaming.turnId,
+    );
+    if (turnAnchorIndex >= 0) activeTurnUserItemIndex = turnAnchorIndex;
+  }
   const streamTurnAnchorIndex = activeTurn
     ? persistedUserForPendingTurnIndex
     : lastUserBeforeStreamIndex;
@@ -502,7 +512,17 @@ export function MessageList({
         // Thread canonical turnId from server projection when available.
         ...(effectiveStreaming.turnId ? { turnId: effectiveStreaming.turnId } : {}),
       };
-      const insertAt = activeTurnUserItemIndex >= 0 ? activeTurnUserItemIndex + 1 : items.length;
+      // Insert at the frozen-ts sorted position so the live draft occupies the
+      // same slot the persisted assistant message will land in. Splicing at the
+      // moving last-user index reorders the transcript in meeting sessions
+      // where new utterances persist while the agent is still streaming.
+      let insertAt = items.length;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].ts > draftTs) {
+          insertAt = i;
+          break;
+        }
+      }
       items.splice(insertAt, 0, { kind: "message", msg: draft, ts: draftTs });
       streamingTargetIdx = insertAt;
     }
