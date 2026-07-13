@@ -61,12 +61,24 @@ function getPageTitle(pathname: string) {
   return navMatch.title === "Info" ? "Library" : navMatch.title;
 }
 
-function PageTitle({ title, customContent }: { title: string; customContent?: ReactNode }) {
+function PageTitle({ title, customContent, href }: { title: string; customContent?: ReactNode; href?: string }) {
   if (customContent) {
     return (
       <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground" data-testid="top-bar-page-title" title={title}>
         {customContent}
       </div>
+    );
+  }
+  if (href) {
+    return (
+      <a
+        href={href}
+        className="min-w-0 truncate text-sm font-medium text-foreground transition-colors hover:text-cta"
+        data-testid="top-bar-page-title"
+        title={title}
+      >
+        {title}
+      </a>
     );
   }
   return (
@@ -133,7 +145,7 @@ export function TopBar() {
         data-testid="top-bar"
       >
         {!previewOwnsAgentIcon && <XyzIconButton />}
-        {!navOpen && <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} />}
+        {!navOpen && <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} href={pageHeaderConfig?.titleHref} />}
       </div>
     );
   }
@@ -150,7 +162,7 @@ export function TopBar() {
       data-testid="top-bar"
     >
       {!previewOwnsAgentIcon && <XyzIconButton />}
-      {!navOpen && <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} />}
+      {!navOpen && <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} href={pageHeaderConfig?.titleHref} />}
       <div className="flex-1" />
       <ConnectionsIndicator />
       {converseButton}
