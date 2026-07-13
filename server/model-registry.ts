@@ -516,7 +516,7 @@ export function getModelCostPerMillion(modelId: string): { input: number; output
 export function getContextWindow(modelId: string): number {
   if (REGISTRY[modelId]) return REGISTRY[modelId].contextWindow;
   const fallback = modelId.includes("claude-fable") ? 1000000 : modelId.includes("claude") ? 200000 : modelId.includes("gpt-5") ? 1000000 : modelId.includes("gpt-4") ? 128000 : DEFAULT_CONTEXT_WINDOW;
-  log.debug(`getContextWindow id=${modelId} usingFallback=${fallback}`);
+  log.warn(`getContextWindow fallback for unregistered model id="${modelId}" window=${fallback}`);
   return fallback;
 }
 

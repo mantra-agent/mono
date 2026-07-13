@@ -1801,7 +1801,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       const { messages, toolDefs, contextPressure } = await buildChatHistory(
         sessionId,
         content,
-        resolvedModel,
+        chatModel,
         onCtxProgress,
       );
       chatRunLifecycle.assertCurrent(lease);
