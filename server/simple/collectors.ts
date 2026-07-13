@@ -1428,15 +1428,22 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
   try {
     const now = new Date();
     const activities = await queryActivityStatus();
-    activities
+    const visibleActivities = activities
       .map((activity, index) => ({ activity, section: wellnessSection(activity, now, timezone), index }))
-      .filter((entry): entry is { activity: WellnessActivityStatus; section: SimpleSection; index: number } => entry.section != null)
+      .filter((entry): entry is { activity: WellnessActivityStatus; section: SimpleSection; index: number } => entry.section != null);
+
+    const actionableActivities = visibleActivities
+      .filter(entry => entry.section !== "done")
       .sort((a, b) => {
-        if (a.activity.doneForCurrentPeriod !== b.activity.doneForCurrentPeriod) return a.activity.doneForCurrentPeriod ? 1 : -1;
         if (a.activity.inWindow !== b.activity.inWindow) return a.activity.inWindow ? -1 : 1;
         return b.activity.urgency - a.activity.urgency;
       })
-      .slice(0, 6)
+      .slice(0, 6);
+    const completedTodayActivities = visibleActivities
+      .filter(entry => entry.section === "done")
+      .sort((a, b) => new Date(b.activity.lastCompletedAt ?? 0).getTime() - new Date(a.activity.lastCompletedAt ?? 0).getTime());
+
+    [...actionableActivities, ...completedTodayActivities]
       .forEach(({ activity, section }, index) => items.push(itemFromWellnessActivity(activity, section, index)));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
