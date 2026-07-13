@@ -154,7 +154,11 @@ export class ScribeRealtimeSTTProvider implements STTProvider {
           log.info(`scribe session started streamId=${stream.streamId} participantId=${stream.participant.transportId}`);
           return;
         }
-        const isFinal = message.message_type === "committed_transcript" || message.message_type === "committed_transcript_with_timestamps";
+        // With include_timestamps=true ElevenLabs sends BOTH committed_transcript and
+        // committed_transcript_with_timestamps for every committed segment. Treat only the
+        // with_timestamps variant (the one carrying word timings we request) as final so
+        // each utterance is emitted exactly once.
+        const isFinal = message.message_type === "committed_transcript_with_timestamps";
         const isPartial = message.message_type === "partial_transcript";
         if (!isFinal && !isPartial) {
           if (message.message_type?.includes("error")) {
