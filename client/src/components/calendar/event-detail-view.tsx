@@ -300,11 +300,11 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   }, [eventData, isCreate, initialized]);
 
   useEffect(() => {
-    if (!isCreate && !metaLoading && !agendaInitialized) {
+    if (!isCreate && metadataData !== undefined && !agendaInitialized) {
       setAgenda(metadata?.agenda || "");
       setAgendaInitialized(true);
     }
-  }, [agendaInitialized, isCreate, metaLoading, metadata?.agenda]);
+  }, [agendaInitialized, isCreate, metadata?.agenda, metadataData]);
 
   // Set default calendar when calendars load for create mode
   useEffect(() => {
