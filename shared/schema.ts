@@ -593,6 +593,8 @@ export const connectedAccounts = pgTable("connected_accounts", {
   accountId: text("account_id").notNull().unique(),
   ownerUserId: text("owner_user_id"),
   principalAccountId: text("principal_account_id"),
+  vaultId: text("vault_id"),
+  providerAccountId: text("provider_account_id"),
   provider: text("provider").notNull(),
   email: text("email"),
   label: text("label").notNull().default("Personal"),
@@ -605,7 +607,22 @@ export const connectedAccounts = pgTable("connected_accounts", {
   missingScopes: jsonb("missing_scopes").$type<string[]>(),
   addedAt: timestamp("added_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-});
+}, (table) => [
+  index("idx_connected_accounts_vault").on(table.vaultId),
+]);
+
+export const googleOAuthTransactions = pgTable("google_oauth_transactions", {
+  tokenHash: text("token_hash").primaryKey(),
+  ownerUserId: text("owner_user_id").notNull(),
+  principalAccountId: text("principal_account_id").notNull(),
+  vaultId: text("vault_id").notNull(),
+  provider: text("provider").notNull().default("google"),
+  label: text("label"),
+  redirectOrigin: text("redirect_origin"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [index("idx_google_oauth_transactions_expires").on(table.expiresAt)]);
 
 export const insertConnectedAccountSchema = createInsertSchema(connectedAccounts).omit({
   id: true,

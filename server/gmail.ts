@@ -2,11 +2,14 @@
 import { createLogger } from './log';
 import { storage } from './storage';
 import { google } from 'googleapis';
+import crypto from 'crypto';
 import { getSecretSync } from './secrets-store';
+import type { Principal } from './principal';
+import { createGoogleOAuthTransaction, consumeGoogleOAuthTransaction } from './google-oauth-transactions';
 import {
   listAccounts,
   getAccount,
-  createAccount,
+  createConnectedAccountInVault,
   updateAccount,
   deleteAccount,
   getAccountTokens,
@@ -52,59 +55,25 @@ export async function saveAccountTokens(accountId: string, tokens: GoogleTokens)
   await setAccountTokens(accountId, tokens);
 }
 
-export async function getAuthUrlForAccount(label: string, originHost?: string): Promise<string> {
+export async function getAuthUrlForAccount(label: string, vaultId: string, principal: Principal, originHost?: string): Promise<string> {
   const oauth2Client = await getOAuth2Client(originHost);
-  const state = Buffer.from(JSON.stringify({ label, multiAccount: true })).toString('base64url');
-  return oauth2Client.generateAuthUrl({
-    access_type: 'offline',
-    scope: GOOGLE_SCOPES,
-    prompt: 'consent',
-    state,
-  });
+  const state = await createGoogleOAuthTransaction(principal, { vaultId, label, redirectOrigin: originHost });
+  return oauth2Client.generateAuthUrl({ access_type: 'offline', scope: GOOGLE_SCOPES, prompt: 'consent', state });
 }
 
-export function parseOAuthState(stateRaw: string | undefined): { label?: string; multiAccount?: boolean } {
-  if (!stateRaw) return {};
-  try {
-    return JSON.parse(Buffer.from(stateRaw, 'base64url').toString());
-  } catch {
-    return {};
-  }
-}
-
-export async function handleAccountOAuthCallback(code: string, label: string, originHost?: string): Promise<GmailAccount> {
+export async function handleAccountOAuthCallback(code: string, stateToken: string, principal: Principal, originHost?: string): Promise<GmailAccount> {
+  const transaction = await consumeGoogleOAuthTransaction(stateToken, principal);
   const oauth2Client = await getOAuth2Client(originHost);
   const { tokens } = await oauth2Client.getToken(code);
   oauth2Client.setCredentials(tokens);
-
-  let email = '';
-  try {
-    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
-    const userInfo = await oauth2.userinfo.get();
-    email = userInfo.data.email || '';
-  } catch (err: unknown) {
-    log.warn("userinfo lookup failed", err instanceof Error ? err.message : err);
-  }
-
-  const accounts = await listAccounts("google");
-  const existing = accounts.find(a => (a.email || '').toLowerCase() === email.toLowerCase());
-
-  if (existing) {
-    await setAccountTokens(existing.accountId, { ...tokens, email } as GoogleTokens);
-    clearHealthCache(existing.accountId);
-    return { id: existing.accountId, email: existing.email || '', label: existing.label, addedAt: existing.addedAt.toISOString() };
-  }
-
-  const id = email.split('@')[0].replace(/[^a-z0-9]/gi, '_').toLowerCase() || `account_${Date.now()}`;
-  const account = await createAccount({
-    accountId: id,
-    provider: 'google',
-    email,
-    label: label || 'Personal',
-    tokens: { ...tokens, email } as unknown,
-  });
-  clearHealthCache(id);
-  log.debug(`handleAccountOAuthCallback new account id=${id} email=${email}`);
+  const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+  const userInfo = await oauth2.userinfo.get();
+  const email = userInfo.data.email?.toLowerCase();
+  if (!email) throw new Error('Google account email is required');
+  const existing = (await listAccounts('google')).find(a => a.email?.toLowerCase() === email);
+  const accountId = existing?.accountId || `google_${crypto.randomUUID()}`;
+  const account = await createConnectedAccountInVault({ accountId, provider: 'google', email, label: transaction.label || 'Personal', tokens: { ...tokens, email } as unknown }, transaction.vaultId);
+  clearHealthCache(account.accountId);
   return { id: account.accountId, email: account.email || '', label: account.label, addedAt: account.addedAt.toISOString() };
 }
 

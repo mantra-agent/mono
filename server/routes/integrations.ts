@@ -120,18 +120,20 @@ export async function registerIntegrationsRoutes(app: Express) {
     }
   });
 
-  app.get("/api/gmail/oauth/start", async (req, res) => {
+  app.get("/api/gmail/oauth/start", requireAuth, async (req, res) => {
     try {
       const { getAuthUrlForAccount } = await import("../gmail");
       const originHost = req.get("host") || undefined;
-      const url = await getAuthUrlForAccount('Personal', originHost);
+      const vaultId = String(req.query.vaultId || '');
+      if (!vaultId || !req.principal) return res.status(400).json({ error: 'vaultId is required' });
+      const url = await getAuthUrlForAccount('Personal', vaultId, req.principal, originHost);
       res.json({ url });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.get("/api/gmail/oauth/callback", async (req, res) => {
+  app.get("/api/gmail/oauth/callback", requireAuth, async (req, res) => {
     try {
       const code = req.query.code as string;
       const stateRaw = req.query.state as string | undefined;
@@ -139,12 +141,10 @@ export async function registerIntegrationsRoutes(app: Express) {
         return res.status(400).send("Missing authorization code");
       }
 
-      const { parseOAuthState, handleAccountOAuthCallback } = await import("../gmail");
-      const state = parseOAuthState(stateRaw);
+      if (!stateRaw || !req.principal) return res.status(400).send('Missing OAuth transaction');
+      const { handleAccountOAuthCallback } = await import("../gmail");
       const originHost = req.get("host") || undefined;
-      const label = state.label || 'Personal';
-
-      const account = await handleAccountOAuthCallback(code, label, originHost);
+      const account = await handleAccountOAuthCallback(code, stateRaw, req.principal, originHost);
       res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0a0a0a;color:#e0e0e0"><h2>Account Connected</h2><p><strong>${account.email}</strong> (${account.label})</p><p>You can close this tab.</p><script>setTimeout(()=>window.close(),3000)</script></body></html>`);
     } catch (error: any) {
       res.status(500).send(`<html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0a0a0a;color:#e0e0e0"><h2>Authorization Failed</h2><p>${error.message}</p></body></html>`);
@@ -228,12 +228,14 @@ export async function registerIntegrationsRoutes(app: Express) {
     }
   });
 
-  app.post("/api/gmail/accounts/add", async (req, res) => {
+  app.post("/api/gmail/accounts/add", requireAuth, async (req, res) => {
     try {
       const { getAuthUrlForAccount } = await import("../gmail");
       const label = req.body.label || 'Personal';
+      const vaultId = String(req.body.vaultId || '');
+      if (!vaultId || !req.principal) return res.status(400).json({ error: 'vaultId is required' });
       const originHost = req.get("host") || undefined;
-      const url = await getAuthUrlForAccount(label, originHost);
+      const url = await getAuthUrlForAccount(label, vaultId, req.principal, originHost);
       res.json({ url });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
