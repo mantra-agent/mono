@@ -1180,6 +1180,7 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
       googleEventId: event.id,
       accountId: event.accountId,
       calendarId: event.calendarId,
+      agenda: meta?.agenda ?? null,
       agentJoinEnabled: meta?.agentJoinEnabled ?? false,
       agentJoinOverride: meta?.agentJoinOverride ?? null,
       agentJoinStatus: meta?.agentJoinStatus ?? null,

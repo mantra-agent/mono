@@ -242,7 +242,11 @@ async function processDueJoin(row: DueJoinRow): Promise<void> {
     }
 
     try {
-      const result = await joinMeetingByUrl({ meetingUrl, title: event?.summary || "Meeting" });
+      const result = await joinMeetingByUrl({
+        meetingUrl,
+        title: event?.summary || "Meeting",
+        agenda: row.agenda ?? undefined,
+      });
       await updateAgentJoinOutcome(row.id, {
         status: "joined",
         detail: null,

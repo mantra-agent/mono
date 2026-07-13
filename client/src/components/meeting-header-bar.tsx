@@ -6,7 +6,7 @@
  * pattern used by plans/workflows.
  */
 import { useEffect, useState } from "react";
-import { AlertCircle, FileText, Hourglass, Loader2, Radio, Users } from "lucide-react";
+import { AlertCircle, FileText, Hourglass, ListChecks, Loader2, Radio, Users } from "lucide-react";
 import { Link } from "wouter";
 import { cn } from "@/lib/utils";
 import type { MeetingSessionMeta, MeetingBotStatus } from "@shared/models/chat";
@@ -137,6 +137,15 @@ export function MeetingHeaderBar({
         </div>
       )}
     </div>
+    {meeting.agenda && (
+      <div className="flex items-start gap-2 border-t border-border/20 px-4 py-2 text-sm text-muted-foreground">
+        <ListChecks className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <div className="min-w-0">
+          <span className="font-medium text-foreground">Agenda</span>
+          <div className="mt-0.5 whitespace-pre-line">{meeting.agenda}</div>
+        </div>
+      </div>
+    )}
     {meeting.recap?.status === "generating" && (
       <div
         className="flex items-center gap-2 px-4 py-1.5 text-xs text-muted-foreground"

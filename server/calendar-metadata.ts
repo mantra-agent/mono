@@ -122,16 +122,19 @@ export async function setMetadata(
   eventType: EventType,
   notes?: string,
   attendeeEmails?: string[],
-  capacityType?: CapacityType | null
+  capacityType?: CapacityType | null,
+  agenda?: string
 ): Promise<CalendarEventMetadata> {
   log.log(`setMetadata event=${googleEventId} type=${eventType}`);
   const existing = await getMetadata(googleEventId, accountId, calendarId);
   const hasNotesPatch = notes !== undefined;
   const hasCapacityPatch = capacityType !== undefined;
+  const hasAgendaPatch = agenda !== undefined;
   const storedCapacityType = eventType === "focus_block"
     ? (hasCapacityPatch ? capacityType ?? null : existing?.capacityType ?? null)
     : null;
   const storedNotes = hasNotesPatch ? notes ?? null : existing?.notes ?? null;
+  const storedAgenda = hasAgendaPatch ? agenda ?? null : existing?.agenda ?? null;
 
   const rows = await db
     .insert(calendarEventMetadata)
@@ -142,6 +145,7 @@ export async function setMetadata(
       eventType,
       capacityType: storedCapacityType,
       notes: storedNotes,
+      agenda: storedAgenda,
       createdAt: sql`CURRENT_TIMESTAMP`,
       updatedAt: sql`CURRENT_TIMESTAMP`,
       ...sensitiveOwnershipValues(),
@@ -152,6 +156,7 @@ export async function setMetadata(
         eventType,
         capacityType: storedCapacityType,
         ...(hasNotesPatch ? { notes: storedNotes } : {}),
+        ...(hasAgendaPatch ? { agenda: storedAgenda } : {}),
         updatedAt: sql`CURRENT_TIMESTAMP`,
         ...sensitiveOwnershipValues(),
       },
@@ -259,6 +264,7 @@ export async function setAgentJoin(
       eventType: existing?.eventType ?? "meeting",
       capacityType: existing?.capacityType ?? null,
       notes: existing?.notes ?? null,
+      agenda: existing?.agenda ?? null,
       ...joinFields,
       createdAt: sql`CURRENT_TIMESTAMP`,
       updatedAt: sql`CURRENT_TIMESTAMP`,

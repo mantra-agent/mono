@@ -452,6 +452,7 @@ export function registerCalendarRoutes(app: Express): void {
     eventType: z.enum(EVENT_TYPES as [EventType, ...EventType[]]),
     capacityType: z.enum(CAPACITY_TYPES as [CapacityType, ...CapacityType[]]).nullable().optional(),
     notes: z.string().optional(),
+    agenda: z.string().min(1).optional(),
     attendeeEmails: z.array(z.string()).optional(),
   });
 
@@ -461,7 +462,7 @@ export function registerCalendarRoutes(app: Express): void {
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
-      const { googleEventId, accountId, calendarId, eventType, notes, capacityType } = parsed.data;
+      const { googleEventId, accountId, calendarId, eventType, notes, capacityType, agenda } = parsed.data;
       let attendeeEmails = parsed.data.attendeeEmails;
       let eventEndTime: string | undefined;
       let eventDate: string | undefined;
@@ -481,7 +482,7 @@ export function registerCalendarRoutes(app: Express): void {
         }
       }
 
-      const meta = await setMetadata(googleEventId, accountId, calendarId, eventType, notes, attendeeEmails, capacityType);
+      const meta = await setMetadata(googleEventId, accountId, calendarId, eventType, notes, attendeeEmails, capacityType, agenda);
       const [tasks, people, artifacts] = await Promise.all([getLinkedTasks(meta.id), getLinkedPeople(meta.id), getLinkedArtifacts(meta.id)]);
 
       // Auto-log meeting interactions for linked people when the event has ended
