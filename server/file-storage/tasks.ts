@@ -36,6 +36,7 @@ function rowToTask(row: typeof tasks.$inferSelect): Task {
     output: row.output,
     deadline: row.deadline,
     tokenEstimate: row.tokenEstimate,
+    completedAt: row.completedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -133,6 +134,7 @@ export class FileTaskStorage {
       output: input.output || "",
       deadline: input.deadline ?? null,
       tokenEstimate: input.tokenEstimate ?? null,
+      completedAt: (input.status || "ready") === "done" ? now : null,
       createdAt: now,
       updatedAt: now,
       ...ownedInsertValues(getCurrentPrincipalOrSystem(), taskScopeColumns),
@@ -167,6 +169,13 @@ export class FileTaskStorage {
     if (updates.output !== undefined) setValues.output = updates.output;
     if (updates.deadline !== undefined) setValues.deadline = updates.deadline;
     if (updates.tokenEstimate !== undefined) setValues.tokenEstimate = updates.tokenEstimate;
+    if (updates.status !== undefined && updates.status !== existing.status) {
+      if (updates.status === "done") {
+        setValues.completedAt = new Date();
+      } else if (existing.status === "done") {
+        setValues.completedAt = null;
+      }
+    }
 
     const [row] = await db.update(tasks).set(setValues).where(
       combineWithWritableScope(getCurrentPrincipalOrSystem(), taskScopeColumns, eq(tasks.id, id)),

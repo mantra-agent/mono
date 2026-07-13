@@ -498,6 +498,7 @@ export async function runSchemaBootstrap(
     // Keep the fresh-foundation path idempotent by ensuring index dependencies
     // immediately after table creation.
     await pool.query(`ALTER TABLE timers ADD COLUMN IF NOT EXISTS system_key TEXT`);
+    await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_timers_system_key_unique ON timers(system_key)`);
 
     await pool.query(`
