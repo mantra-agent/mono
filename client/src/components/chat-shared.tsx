@@ -1543,7 +1543,7 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
               </div>
             )}
           </div>
-          <div className="mt-1 flex items-center justify-end gap-1 text-xs text-muted-foreground/50 text-right" data-testid={`text-message-time-${message.id}`}>
+          <div className="mt-1 flex min-h-9 items-center justify-end gap-1 text-xs text-muted-foreground/50 text-right" data-testid={`text-message-time-${message.id}`}>
             {isVoiceMessage && (
               <>
                 <Mic className="h-2.5 w-2.5" />
