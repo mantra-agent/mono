@@ -808,7 +808,7 @@ function DayAllDayRow({ events, onEventClick }: {
             key={`${event.calendarId}:${event.id}`}
             type="button"
             onClick={() => onEventClick(event)}
-            className="flex min-w-0 items-center gap-1.5 rounded px-1 text-left text-xs font-medium text-foreground hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className="flex min-w-0 items-center gap-1.5 rounded px-1 text-left text-sm font-medium text-foreground hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             data-testid={`event-row-${event.id}`}
           >
             <CalendarIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -882,7 +882,7 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
         type="button"
         onClick={() => onEventClick(event)}
         className={cn(
-          "z-20 my-0.5 flex min-h-0 min-w-0 items-start gap-1.5 overflow-hidden rounded-lg border border-l-4 border-border border-l-foreground/50 bg-card py-1.5 pl-2.5 pr-1.5 text-left text-xs font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          "z-20 my-0.5 flex min-h-0 min-w-0 items-start gap-1.5 overflow-hidden rounded-lg border border-l-4 border-border border-l-foreground/50 bg-card py-1.5 pl-2.5 pr-1.5 text-left text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
           optional && "opacity-60",
         )}
         style={{ gridColumn: 2, gridRow: `${rowStart} / span ${rowSpan}`, position: "relative" }}
@@ -909,7 +909,7 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
       data-testid={`event-row-${event.id}`}
     >
       <div
-        className={cn("group flex h-7 min-w-0 items-center gap-1.5 px-1.5 text-xs font-medium hover:bg-accent/50", hasDetails && "cursor-pointer")}
+        className={cn("group flex h-7 min-w-0 items-center gap-1.5 px-1.5 text-sm font-medium hover:bg-accent/50", hasDetails && "cursor-pointer")}
         onClick={() => hasDetails ? setExpanded(value => !value) : onEventClick(event)}
         role="button"
         tabIndex={0}
@@ -996,7 +996,7 @@ function ScheduleEventRow({ event, mode, timezone, isExternal, isPersonal, onCli
           <span className="absolute left-0 top-1/2 w-4 border-t border-border/70" />
         </span>
         <span className="flex min-w-0 items-center gap-1.5">
-          <span className={cn("truncate text-xs font-medium", optional ? "text-muted-foreground" : "text-foreground")}>{event.summary}</span>
+          <span className={cn("truncate text-sm font-medium", optional ? "text-muted-foreground" : "text-foreground")}>{event.summary}</span>
           {highPrep && <Star className="h-3 w-3 shrink-0 fill-warning text-warning" />}
           {isPersonal && <span className="shrink-0 text-[10px] font-medium text-info-foreground">PERSONAL</span>}
           {isExternal && !isPersonal && <span className="shrink-0 text-[10px] font-medium text-cat-ai-foreground">EXT</span>}
