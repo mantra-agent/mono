@@ -21,6 +21,7 @@ import {
   Search,
   Brain,
   SlidersHorizontal,
+  FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
@@ -198,6 +199,12 @@ interface DayEventBlock {
   column: number;
 }
 
+interface DayEventMetadataResponse {
+  metadata: { eventType?: string | null } | null;
+  people?: Array<{ id: string; name: string }>;
+  artifacts?: Array<{ id: number; libraryPageId: string; title?: string | null; artifactKind?: string | null; slug?: string | null }>;
+}
+
 function getEventEndHour(event: CalendarEvent, timezone: string): number {
   if (!event.end.dateTime) return getEventHour(event, timezone);
   const end = getPartsInTimezone(event.end.dateTime, timezone);
@@ -209,13 +216,13 @@ function getDayHourRows(section: ScheduleSection, events: CalendarEvent[], timez
   const today = isToday(section.start, timezone);
   const startHour = today ? getPartsInTimezone(now.toISOString(), timezone).hour : 5;
   const timedEvents = events.filter(event => !isAllDay(event) && event.start.dateTime);
-  const latestEventHour = timedEvents.reduce(
-    (latest, event) => Math.max(latest, getEventEndHour(event, timezone)),
-    startHour,
-  );
-  const endHour = today ? 23 : latestEventHour;
+  const latestEventHour = timedEvents.reduce<number | null>((latest, event) => {
+    const endHour = getEventEndHour(event, timezone);
+    return latest === null ? endHour : Math.max(latest, endHour);
+  }, null);
+  if (latestEventHour === null || latestEventHour < startHour) return [];
 
-  return Array.from({ length: Math.max(1, endHour - startHour + 1) }, (_, index) => ({
+  return Array.from({ length: latestEventHour - startHour + 1 }, (_, index) => ({
     hour: startHour + index,
   }));
 }
@@ -793,12 +800,12 @@ function DayTimeline({ rows, events, accountEmails, timezone, onEventClick }: {
 }) {
   const blocks = useMemo(() => getDayEventBlocks(rows, events, timezone), [rows, events, timezone]);
   const columnCount = Math.max(1, ...blocks.map(block => block.column + 1));
-  const rowTemplate = `repeat(${rows.length}, 1.75rem)`;
+  if (rows.length === 0) return null;
 
   return (
     <div
       className="grid w-full grid-cols-[3.5rem_1rem_minmax(0,1fr)] gap-x-2 pr-2"
-      style={{ gridTemplateRows: rowTemplate }}
+      style={{ gridTemplateRows: `repeat(${rows.length}, 1.75rem)` }}
     >
       {rows.map((row, index) => (
         <div key={row.hour} className="contents" data-testid={`schedule-hour-${formatHourLabel(row.hour)}`}>
@@ -809,45 +816,123 @@ function DayTimeline({ rows, events, accountEmails, timezone, onEventClick }: {
             {formatHourLabel(row.hour)}
           </span>
           <span style={{ gridColumn: 2, gridRow: index + 1 }} />
-          <span
-            className="border-b border-border/30"
-            style={{ gridColumn: 3, gridRow: index + 1 }}
-          />
+          <span className="border-b border-border/30" style={{ gridColumn: 3, gridRow: index + 1 }} />
         </div>
       ))}
+      {blocks.map(block => (
+        <DayEventBlockView
+          key={`${block.event.calendarId}:${block.event.id}`}
+          block={block}
+          columnCount={columnCount}
+          accountEmails={accountEmails}
+          onEventClick={onEventClick}
+        />
+      ))}
+    </div>
+  );
+}
+
+function DayEventBlockView({ block, columnCount, accountEmails, onEventClick }: {
+  block: DayEventBlock;
+  columnCount: number;
+  accountEmails: string[];
+  onEventClick: (event: CalendarEvent) => void;
+}) {
+  const { event, rowStart, rowSpan, column } = block;
+  const [expanded, setExpanded] = useState(false);
+  const { data } = useQuery<DayEventMetadataResponse>({
+    queryKey: ["/api/calendar/metadata", event.id, event.accountId, event.calendarId],
+    queryFn: async () => {
+      const response = await fetch(`/api/calendar/metadata/${encodeURIComponent(event.id)}?accountId=${encodeURIComponent(event.accountId)}&calendarId=${encodeURIComponent(event.calendarId)}`, { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to load event metadata");
+      return response.json();
+    },
+    retry: false,
+  });
+  const isFocusBlock = data?.metadata?.eventType === "focus_block";
+  const optional = isOptionalForMe(event);
+  const external = hasExternalAttendees(event, accountEmails);
+  const people = data?.people ?? [];
+  const artifacts = data?.artifacts ?? [];
+  const hasDetails = Boolean(event.location || people.length || artifacts.length);
+  const columnWidth = 100 / columnCount;
+  const horizontalStyle = {
+    left: `calc(${column * columnWidth}% + ${column * 2}px)`,
+    width: `calc(${columnWidth}% - ${Math.max(0, columnCount - 1) * 2 / columnCount}px)`,
+  };
+
+  if (isFocusBlock) {
+    return (
+      <button
+        type="button"
+        onClick={() => onEventClick(event)}
+        className={cn(
+          "z-10 m-0.5 flex min-h-0 min-w-0 items-start gap-1.5 overflow-hidden rounded-md border border-foreground/30 bg-black/30 px-1.5 py-1 text-left text-xs font-medium text-foreground hover:bg-black/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          optional && "opacity-60",
+        )}
+        style={{ gridColumn: 3, gridRow: `${rowStart} / span ${rowSpan}`, ...horizontalStyle, position: "relative" }}
+        data-testid={`event-row-${event.id}`}
+      >
+        <Brain className="mt-px h-3.5 w-3.5 shrink-0 text-foreground/75" />
+        <span className="truncate">{event.summary}</span>
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        "z-10 m-0.5 min-h-0 min-w-0 rounded-md bg-background/95",
+        expanded ? "z-30 overflow-visible shadow-lg" : "overflow-hidden",
+        optional && "opacity-60",
+      )}
+      style={{ gridColumn: 3, gridRow: `${rowStart} / span ${rowSpan}`, ...horizontalStyle, position: "relative" }}
+      data-testid={`event-row-${event.id}`}
+    >
       <div
-        className="grid min-h-0 min-w-0 gap-1 py-0.5"
-        style={{
-          gridColumn: 3,
-          gridRow: `1 / span ${rows.length}`,
-          gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))`,
-          gridTemplateRows: rowTemplate,
+        className={cn("group flex h-7 min-w-0 items-center gap-1.5 px-1.5 text-xs font-medium hover:bg-accent/50", hasDetails && "cursor-pointer")}
+        onClick={() => hasDetails ? setExpanded(value => !value) : onEventClick(event)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(keyEvent) => {
+          if (keyEvent.key !== "Enter" && keyEvent.key !== " ") return;
+          keyEvent.preventDefault();
+          hasDetails ? setExpanded(value => !value) : onEventClick(event);
         }}
       >
-        {blocks.map(({ event, rowStart, rowSpan, column }) => {
-          const optional = isOptionalForMe(event);
-          const external = hasExternalAttendees(event, accountEmails);
-          return (
-            <button
-              key={`${event.calendarId}:${event.id}`}
-              type="button"
-              onClick={() => onEventClick(event)}
-              className={cn(
-                "z-10 flex min-h-0 min-w-0 items-start gap-1.5 overflow-hidden rounded-md bg-muted/70 px-1.5 py-1 text-left text-xs font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-                optional && "opacity-60",
-              )}
-              style={{ gridColumn: column + 1, gridRow: `${rowStart} / span ${rowSpan}` }}
-              data-testid={`event-row-${event.id}`}
-            >
-              <CalendarIcon className="mt-px h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              <span className="truncate">{event.summary}</span>
-              {isHighPrep(event) && <Star className="mt-px h-3 w-3 shrink-0 fill-warning text-warning" />}
-              {external && <span className="shrink-0 text-[10px] font-medium text-muted-foreground">EXT</span>}
-              {optional && <span className="shrink-0 text-[10px] font-medium text-muted-foreground">OPT</span>}
-            </button>
-          );
-        })}
+        <CalendarIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="truncate">{event.summary}</span>
+        {isHighPrep(event) && <Star className="h-3 w-3 shrink-0 fill-warning text-warning" />}
+        {external && <span className="shrink-0 text-[10px] text-muted-foreground">EXT</span>}
+        {hasDetails && <ChevronRight className={cn("ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-90")} />}
       </div>
+      {expanded && hasDetails && (
+        <div className="space-y-1 border-t border-border/60 bg-background px-2 py-1.5 text-[11px] text-muted-foreground">
+          {event.location && (
+            <div className="flex min-w-0 items-center gap-1.5">
+              <MapPin className="h-3 w-3 shrink-0" />
+              <span className="truncate">{event.location}</span>
+            </div>
+          )}
+          {people.map(person => (
+            <a key={person.id} href={`/people/${person.id}`} className="flex items-center gap-1.5 hover:text-foreground">
+              <Users className="h-3 w-3 shrink-0" />
+              <span className="truncate">{person.name}</span>
+            </a>
+          ))}
+          {artifacts.map(artifact => (
+            <a
+              key={artifact.id}
+              href={`/info#library?page=${encodeURIComponent(artifact.slug || artifact.libraryPageId)}`}
+              className="flex items-center gap-1.5 hover:text-foreground"
+            >
+              <FileText className="h-3 w-3 shrink-0" />
+              <span className="truncate">{artifact.title || artifact.artifactKind || "Meeting artifact"}</span>
+            </a>
+          ))}
+          <button type="button" onClick={() => onEventClick(event)} className="text-cta hover:underline">Open event</button>
+        </div>
+      )}
     </div>
   );
 }
