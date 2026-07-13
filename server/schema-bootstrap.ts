@@ -2928,8 +2928,6 @@ export async function runSchemaBootstrap(
   });
 
   await heal("email_drafts table v2", async () => {
-    // Drop the old table if it exists (legacy approval-based schema)
-    await pool.query(`DROP TABLE IF EXISTS email_drafts CASCADE`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS email_drafts (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -2937,6 +2935,7 @@ export async function runSchemaBootstrap(
         account_id TEXT,
         scope TEXT NOT NULL DEFAULT 'user',
         created_by_user_id TEXT,
+        vault_id TEXT,
         session_id TEXT,
         gmail_account_id TEXT,
         "to" TEXT[] NOT NULL DEFAULT '{}',
@@ -2953,9 +2952,11 @@ export async function runSchemaBootstrap(
         updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
       )
     `);
+    await pool.query(`ALTER TABLE email_drafts ADD COLUMN IF NOT EXISTS vault_id TEXT`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_drafts_owner ON email_drafts (owner_user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_drafts_account ON email_drafts (account_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_drafts_session ON email_drafts (session_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_drafts_vault ON email_drafts (vault_id)`);
   });
 
   await heal("magic demo sessions tables", async () => {
