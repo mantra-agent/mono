@@ -84,6 +84,7 @@ const navSections: NavSection[] = [
     defaultOpen: true,
     items: [
       { title: "Home", url: "/home", icon: Home },
+      { title: "Dashboard", url: "/dashboard", icon: Gauge, permission: "system:read" },
       { title: "News", url: "/news", icon: Newspaper },
       { title: "Email", url: "/email", icon: Mail },
       { title: "Library", url: "/library", icon: BookOpen },

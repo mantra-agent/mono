@@ -43,6 +43,7 @@ const IntegrationsPage = lazyWithRetry(() => import("@/pages/integrations"));
 const Goals = lazyWithRetry(() => import("@/pages/goals"));
 const VisionPage = lazyWithRetry(() => import("@/pages/goals-future"));
 const HomePage = lazyWithRetry(() => import("@/pages/simple"));
+const DashboardPage = lazyWithRetry(() => import("@/pages/dashboard"));
 const SessionPage = lazyWithRetry(() => import("@/pages/session"));
 const GoalDetail = lazyWithRetry(() => import("@/pages/goal-detail"));
 const ProjectsPage = lazyWithRetry(() => import("@/pages/work"));
@@ -236,6 +237,7 @@ function Router() {
         <Route path="/system">{() => <RequirePermission permission="system:read"><SystemPage /></RequirePermission>}</Route>
         <Route path="/logs">{() => <LogsPage />}</Route>
         <Route path="/goals/:id" component={GoalDetail} />
+        <Route path="/dashboard">{() => <RequirePermission permission="system:read"><DashboardPage /></RequirePermission>}</Route>
         <Route path="/home">{() => {
           const target = sessionRedirectFromQuery();
           return target === "/home" ? <HomePage /> : <Redirect to={target} />;
