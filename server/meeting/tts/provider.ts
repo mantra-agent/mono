@@ -44,7 +44,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128&optimize_streaming_latency=3`, {
       method: "POST",
       headers: { "xi-api-key": apiKey, Accept: "audio/mpeg", "Content-Type": "application/json" },
-      body: JSON.stringify({ text, model_id: "eleven_flash_v2_5" }),
+      body: JSON.stringify({ text, model_id: "eleven_v3" }),
       signal: AbortSignal.timeout(30_000),
     });
     return audioResponse(res, this.name);
