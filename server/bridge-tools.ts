@@ -1354,6 +1354,82 @@ function optionalDraftRecipients(value: unknown): string[] | undefined {
   return recipients.length > 0 ? recipients : undefined;
 }
 
+function extractReplyAddress(fromAddress: string | null): string | undefined {
+  if (!fromAddress) return undefined;
+  const angleMatch = fromAddress.match(/<([^<>\s]+@[^<>\s]+)>/);
+  if (angleMatch) return angleMatch[1];
+  const plainMatch = fromAddress.match(/[^\s<>]+@[^\s<>]+/);
+  return plainMatch?.[0];
+}
+
+async function handleGmailReply(args: Record<string, any>): Promise<ToolHandlerResult> {
+  const ref = optionalDraftText(args.ref);
+  const body = optionalDraftText(args.body);
+  if (!ref || !body) return { result: "Missing ref or body", error: true };
+
+  const withoutAt = ref.startsWith("@") ? ref.slice(1) : ref;
+  const firstColon = withoutAt.indexOf(":");
+  const refType = firstColon > 0 ? withoutAt.slice(0, firstColon) : "email_thread";
+  const refId = firstColon > 0 ? withoutAt.slice(firstColon + 1) : withoutAt;
+
+  const { db } = await import("./db");
+  const { emailMessages } = await import("@shared/schema");
+  const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+  const { combineWithVisibleScope } = await import("./scoped-storage");
+  const { and: andOp, desc: descOp, eq: eqOp } = await import("drizzle-orm");
+  const principal = getCurrentPrincipalOrSystem();
+  const emailScope = { ownerUserId: emailMessages.ownerUserId, accountId: emailMessages.principalAccountId };
+
+  let accountId: string | undefined;
+  let providerThreadId: string | null = null;
+  if (refType === "email_message") {
+    const messageId = Number(refId);
+    if (!Number.isFinite(messageId)) return { result: `Invalid email_message ref: ${ref}`, error: true };
+    const [message] = await db.select({ accountId: emailMessages.accountId, providerThreadId: emailMessages.providerThreadId, providerMessageId: emailMessages.providerMessageId })
+      .from(emailMessages)
+      .where(combineWithVisibleScope(principal, emailScope, eqOp(emailMessages.id, messageId)))
+      .limit(1);
+    if (!message) return { result: `Email message ${messageId} not found.`, error: true };
+    accountId = message.accountId;
+    providerThreadId = message.providerThreadId || message.providerMessageId;
+  } else if (refType === "email_thread") {
+    const idColon = refId.indexOf(":");
+    if (idColon > 0) {
+      accountId = refId.slice(0, idColon);
+      providerThreadId = refId.slice(idColon + 1);
+    } else {
+      providerThreadId = refId;
+    }
+  } else {
+    return { result: `Unsupported reply ref: ${ref}`, error: true };
+  }
+  if (!providerThreadId) return { result: `Invalid email thread ref: ${ref}`, error: true };
+
+  const conditions = [eqOp(emailMessages.providerThreadId, providerThreadId)];
+  if (accountId) conditions.push(eqOp(emailMessages.accountId, accountId));
+  const [latest] = await db.select({
+    accountId: emailMessages.accountId,
+    subject: emailMessages.subject,
+    fromAddress: emailMessages.fromAddress,
+  }).from(emailMessages)
+    .where(combineWithVisibleScope(principal, emailScope, andOp(...conditions)))
+    .orderBy(descOp(emailMessages.date))
+    .limit(1);
+  if (!latest) return { result: `Email thread ${providerThreadId} not found.`, error: true };
+
+  const to = extractReplyAddress(latest.fromAddress);
+  if (!to) return { result: "Could not derive a reply recipient from the latest message", error: true };
+  const subject = latest.subject?.toLowerCase().startsWith("re:") ? latest.subject : `Re: ${latest.subject || ""}`;
+  return handleGmailDraft({
+    ...args,
+    account: latest.accountId,
+    to,
+    subject,
+    body,
+    thread_id: providerThreadId,
+  });
+}
+
 async function handleGmailDraft(args: Record<string, any>): Promise<ToolHandlerResult> {
   const permCheck = await checkGmailPermission(args.account, "gmailDraft", "create drafts");
   if (permCheck.denied) return permCheck.result;
@@ -2278,6 +2354,7 @@ const gmailSubHandlers: Record<string, (args: Record<string, any>) => Promise<To
   read: handleGmailRead,
   batch_read: handleGmailBatchRead,
   draft: handleGmailDraft,
+  reply: handleGmailReply,
   update_draft: handleGmailDraftUpdate,
   recent: handleGmailRecent,
   download_attachment: handleGmailDownloadAttachment,
@@ -4682,7 +4759,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
   async gmail(args) {
     const action = args.action || "status";
     const handler = gmailSubHandlers[action];
-    if (!handler) return { result: `Unknown gmail action: ${action}. Available: status, search, read, batch_read, draft, update_draft, recent, download_attachment, triage_log, email_cache`, error: true };
+    if (!handler) return { result: `Unknown gmail action: ${action}. Available: status, search, read, batch_read, draft, reply, update_draft, recent, download_attachment, triage_log, email_cache`, error: true };
     try {
       return await handler(args);
     } catch (err: any) {
