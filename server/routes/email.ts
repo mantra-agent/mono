@@ -36,6 +36,7 @@ export function registerEmailRoutes(app: Express) {
   app.get("/api/email/messages", async (req: Request, res: Response) => {
     try {
       const accountId = req.query.accountId as string | undefined;
+      const threadId = req.query.threadId as string | undefined;
       const triageTier = req.query.triageTier as string | undefined;
       const triageStatus = req.query.triageStatus as string | undefined;
       const isRead = req.query.isRead as string | undefined;
@@ -53,6 +54,7 @@ export function registerEmailRoutes(app: Express) {
         conditions.push(sql`(${emailMessages.snoozedUntil} IS NULL OR ${emailMessages.snoozedUntil} <= NOW())`);
       }
       if (accountId) conditions.push(eq(emailMessages.accountId, accountId));
+      if (threadId) conditions.push(eq(emailMessages.providerThreadId, threadId));
       if (triageTier) {
         const tiers = triageTier.split(",").map(t => t.trim()).filter(Boolean);
         if (tiers.length === 1) {
@@ -94,6 +96,7 @@ export function registerEmailRoutes(app: Express) {
           rawConditions.push(sql`(em.snoozed_until IS NULL OR em.snoozed_until <= NOW())`);
         }
         if (accountId) rawConditions.push(sql`em.account_id = ${accountId}`);
+        if (threadId) rawConditions.push(sql`em.provider_thread_id = ${threadId}`);
         if (triageTier) {
           const tiers = triageTier.split(",").map(t => t.trim()).filter(Boolean);
           if (tiers.length === 1) {
