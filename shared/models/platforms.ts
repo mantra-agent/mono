@@ -87,6 +87,33 @@ export const environmentBuildLifecycleConfigs = pgTable(
   ],
 );
 
+export const environmentPromotionReleases = pgTable(
+  "environment_promotion_releases",
+  {
+    id: serial("id").primaryKey(),
+    environmentId: integer("environment_id").notNull().references(() => platformProductEnvironments.id, { onDelete: "cascade" }),
+    publishRunId: text("publish_run_id").notNull(),
+    version: text("version").notNull(),
+    incrementKind: text("increment_kind").notNull(),
+    promotedCommitSha: text("promoted_commit_sha").notNull(),
+    versionFileCommitSha: text("version_file_commit_sha").notNull(),
+    versionFilePath: text("version_file_path").notNull().default("VERSION.md"),
+    versionFileUrl: text("version_file_url").notNull(),
+    releaseNotes: jsonb("release_notes").notNull().default(sql`'{"newFeatures":[],"improvements":[],"fixes":[]}'::jsonb`),
+    deploymentId: text("deployment_id"),
+    promotedByUserId: text("promoted_by_user_id"),
+    promotedAt: timestamp("promoted_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_environment_promotion_releases_run").on(table.publishRunId),
+    uniqueIndex("idx_environment_promotion_releases_version").on(table.environmentId, table.version),
+    index("idx_environment_promotion_releases_environment_time").on(table.environmentId, table.promotedAt),
+  ],
+);
+
+export type EnvironmentPromotionRelease = typeof environmentPromotionReleases.$inferSelect;
+
 export const providerConnections = pgTable(
   "provider_connections",
   {

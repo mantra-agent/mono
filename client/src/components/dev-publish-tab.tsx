@@ -9,6 +9,7 @@ import {
   ExternalLink,
   GitCommit,
   GitMerge,
+  FileText,
   Loader2,
   MoreHorizontal,
   Play,
@@ -163,6 +164,14 @@ interface PublishStage {
   dirtyMerge?: DirtyMergeDiagnosis | null;
 }
 
+type VersionIncrement = "minor" | "major" | "flagship";
+
+interface ReleaseNotes {
+  newFeatures: string[];
+  improvements: string[];
+  fixes: string[];
+}
+
 interface PublishRun {
   id: string;
   status: "running" | "succeeded" | "failed" | "cancelled";
@@ -184,6 +193,14 @@ interface PublishRun {
   deploymentId: string | null;
   deploymentUrl: string | null;
   newProdCommitSha: string | null;
+  release: {
+    increment: VersionIncrement;
+    previousVersion: string;
+    version: string;
+    versionFileUrl: string;
+    versionFileCommitSha: string | null;
+    notes: ReleaseNotes;
+  } | null;
   prodUrl: string | null;
   resumeFromStage: StageName | null;
 }
@@ -200,6 +217,17 @@ export interface PublishSummary {
   aheadBy: number;
   commits: CommitSummary[];
   compareError?: string;
+  versioning: {
+    currentVersion: string;
+    latestRelease: {
+      version: string;
+      increment: VersionIncrement;
+      promotedCommitSha: string;
+      promotedAt: string;
+      versionFileUrl: string;
+    } | null;
+    versionFileUrl: string | null;
+  };
   run: PublishRun | null;
 }
 
@@ -942,6 +970,7 @@ export function DevPublishTab() {
   const { data: prodStatus } = useProdStatus();
   const { toast } = useToast();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [versionIncrement, setVersionIncrement] = useState<VersionIncrement>("minor");
   const [reconcileConfirmOpen, setReconcileConfirmOpen] = useState(false);
   const [redeployConfirmOpen, setRedeployConfirmOpen] = useState(false);
 
@@ -951,9 +980,9 @@ export function DevPublishTab() {
     return err instanceof Error ? err.message : String(err);
   }
 
-  const startMut = useMutation<unknown, Error, void>({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/railway/publish/start", {});
+  const startMut = useMutation<unknown, Error, VersionIncrement>({
+    mutationFn: async (increment) => {
+      const res = await apiRequest("POST", "/api/railway/publish/start", { increment });
       return res.json();
     },
     onSuccess: () => {
@@ -1407,6 +1436,21 @@ export function DevPublishTab() {
               : "GitHub branch comparison",
           },
           {
+            label: "Version",
+            value: data.versioning.currentVersion,
+            detail: data.versioning.versionFileUrl ? (
+              <a
+                href={data.versioning.versionFileUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-info hover:underline"
+              >
+                <FileText className="h-3.5 w-3.5" />
+                VERSION.md
+              </a>
+            ) : "VERSION.md unavailable",
+          },
+          {
             label: "Production",
             value: prodDeploying
               ? "Deploying"
@@ -1449,6 +1493,26 @@ export function DevPublishTab() {
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="space-y-2">
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Version increment</div>
+            <div className="grid grid-cols-3 gap-2">
+              {(["minor", "major", "flagship"] as VersionIncrement[]).map((increment) => (
+                <Button
+                  key={increment}
+                  type="button"
+                  variant={versionIncrement === increment ? "default" : "outline"}
+                  className="min-h-11 capitalize"
+                  onClick={() => setVersionIncrement(increment)}
+                  data-testid={`button-version-${increment}`}
+                >
+                  {increment}
+                </Button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Current {data.versioning.currentVersion}. Release notes will be generated from the commits since the last live publish and stored in VERSION.md.
+            </p>
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel data-testid="button-cancel-confirm">
               Cancel
@@ -1456,7 +1520,7 @@ export function DevPublishTab() {
             <AlertDialogAction
               onClick={() => {
                 setConfirmOpen(false);
-                startMut.mutate();
+                startMut.mutate(versionIncrement);
               }}
               data-testid="button-confirm-publish"
             >
