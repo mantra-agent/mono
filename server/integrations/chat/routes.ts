@@ -2464,6 +2464,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     text?: string;
     botStatus?: MeetingBotStatus;
     statusDetail?: string;
+    stt?: {
+      provider: string;
+      model: string;
+      source: "recall_participant_audio" | "recall_transcript_webhook";
+      fallback: boolean;
+    };
   }): Promise<
     | {
         ok: true;
@@ -2506,6 +2512,34 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       participants: [],
       botStatus: "live" as const,
     };
+
+    if (event.stt) {
+      const currentSource = meeting.sttSource;
+      const canonicalAudioActive =
+        currentSource === "recall_participant_audio" && meeting.sttStatus === "active";
+      // A delayed Recall transcript webhook must not overwrite an active
+      // participant-audio stream. It remains available as a replay-safe
+      // fallback if canonical audio never connected or degraded.
+      if (event.stt.fallback && canonicalAudioActive) {
+        chatLog.debug(
+          `meeting ingest: ignored transcript fallback while canonical STT active sessionId=${sessionId} provider=${event.stt.provider}`,
+        );
+        return { ok: true, sessionId, sessionKey, queued: false };
+      }
+      await chatStorage.updateMeetingMeta(sessionId, {
+        sttProvider: event.stt.provider,
+        sttModel: event.stt.model,
+        sttSource: event.stt.source,
+        sttFallback: event.stt.fallback,
+        sttStatus: event.stt.fallback ? "fallback" : "active",
+        sttStatusDetail: event.stt.fallback
+          ? "Recall transcript webhook fallback active"
+          : "Canonical participant audio STT active",
+      });
+      chatLog.info(
+        `meeting STT sessionId=${sessionId} provider=${event.stt.provider} model=${event.stt.model} source=${event.stt.source} fallback=${event.stt.fallback}`,
+      );
+    }
 
     // M2: fire end-of-meeting finalization exactly once on the ended
     // transition. The recap claim in storage is atomic, so duplicate end
@@ -2734,6 +2768,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
   // Recall.ai webhook receiver — registered with the canonical ingest path.
   const { registerRecallRoutes } = await import("../../routes/recall");
   registerRecallRoutes(app, { ingestMeetingEvent });
+  const { registerMeetingSTTAudioTransport } = await import("../../meeting/stt");
+  app.locals.recallMeetingAudioUpgrade = registerMeetingSTTAudioTransport({ ingestMeetingEvent });
 
   // M0 dev loopback transport — POST attributed transcript text into a
   // meeting session through the canonical ingest path.

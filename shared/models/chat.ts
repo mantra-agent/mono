@@ -591,6 +591,13 @@ export interface MeetingSessionMeta {
   /** Whether finalized utterances that call Mantra by name may trigger a spoken answer. */
   /** Durable replay guard: complete assembled turn id most recently claimed for an addressed response. */
   lastAddressedTurnId?: string;
+  /** Canonical recognition boundary telemetry. Recall transcript webhooks remain the explicit fallback. */
+  sttProvider?: string;
+  sttModel?: string;
+  sttSource?: "recall_participant_audio" | "recall_transcript_webhook";
+  sttFallback?: boolean;
+  sttStatus?: "active" | "fallback" | "inactive";
+  sttStatusDetail?: string;
 }
 
 /** Recap lifecycle discriminant — one discriminant per decision. */

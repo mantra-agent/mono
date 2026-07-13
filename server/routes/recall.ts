@@ -28,6 +28,12 @@ export type MeetingIngestFn = (event: {
   text?: string;
   botStatus?: MeetingBotStatus;
   statusDetail?: string;
+  stt?: {
+    provider: string;
+    model: string;
+    source: "recall_participant_audio" | "recall_transcript_webhook";
+    fallback: boolean;
+  };
 }) => Promise<
   | {
       ok: true;
@@ -237,6 +243,12 @@ export function registerRecallRoutes(
           speakerLabel,
           turnId,
           text,
+          stt: {
+            provider: "recallai_streaming",
+            model: "prioritize_low_latency",
+            source: "recall_transcript_webhook",
+            fallback: true,
+          },
           // A finalized transcript is authoritative evidence that the bot is
           // live even when the separate dashboard status webhook is delayed or
           // misrouted.
