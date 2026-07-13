@@ -90,7 +90,8 @@ export function TopBar() {
   const { route, widgetOpen, setWidgetOpen, clearSessionForRoute, requestSessionMenuReset, mobileSessionTitle } = useFocusSession();
   const configuredTitle = pageHeaderConfig?.title || pageTitle;
   const displayTitle = isMobile && mobileSessionTitle ? mobileSessionTitle : configuredTitle;
-  const { setOpenMobile } = useSidebar();
+  const { open, openMobile, isMobile: sidebarIsMobile, setOpenMobile } = useSidebar();
+  const navOpen = sidebarIsMobile ? openMobile : open;
   const { hasStreaming } = useSessionActivityState();
 
   // The mobile top-bar converse button is an entrypoint to the Session Menu,
@@ -132,7 +133,7 @@ export function TopBar() {
         data-testid="top-bar"
       >
         {!previewOwnsAgentIcon && <XyzIconButton />}
-        <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} />
+        {!navOpen && <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} />}
       </div>
     );
   }
@@ -149,7 +150,7 @@ export function TopBar() {
       data-testid="top-bar"
     >
       {!previewOwnsAgentIcon && <XyzIconButton />}
-      <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} />
+      {!navOpen && <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} />}
       <div className="flex-1" />
       <ConnectionsIndicator />
       {converseButton}
