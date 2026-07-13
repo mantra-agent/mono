@@ -69,37 +69,27 @@ function inferredBranch(name: string): string {
   return "main";
 }
 
-function configKeyForEnvironment(name: string, suffix: string): string | null {
-  const kind = environmentKind(name);
-  if (kind === "development") return `RAILWAY_DEV_${suffix}`;
-  if (kind === "production") return `RAILWAY_PROD_${suffix}`;
-  return null;
-}
-
-function inferredEnvironmentConfig(environmentName: string) {
-  const environmentIdKey = configKeyForEnvironment(environmentName, "ENVIRONMENT_ID");
-  const serviceIdKey = configKeyForEnvironment(environmentName, "SERVICE_ID");
-  const urlKey = configKeyForEnvironment(environmentName, "URL");
+function emptyEnvironmentBindings(environmentName: string) {
   return {
     source: {
-      provider: "github",
+      provider: "",
       owner: "",
       repo: "",
       branch: inferredBranch(environmentName),
-      autoDeploy: true,
-      inferred: true,
+      autoDeploy: false,
+      inferred: false,
     },
     hosting: {
-      provider: "railway",
-      projectId: getSecretSync("RAILWAY_PROJECT_ID") || process.env.RAILWAY_PROJECT_ID || "",
-      projectName: process.env.RAILWAY_PROJECT_NAME || "mantra",
-      providerEnvironmentId: environmentIdKey ? getSecretSync(environmentIdKey) || process.env[environmentIdKey] || "" : "",
-      providerEnvironmentName: environmentKind(environmentName),
-      serviceId: serviceIdKey ? getSecretSync(serviceIdKey) || process.env[serviceIdKey] || "" : "",
-      serviceName: process.env.RAILWAY_SERVICE_NAME || "mantra",
-      publicUrl: urlKey ? getSecretSync(urlKey) || process.env[urlKey] || "" : "",
-      staticUrl: process.env.RAILWAY_STATIC_URL || "",
-      inferred: true,
+      provider: "",
+      projectId: "",
+      projectName: "",
+      providerEnvironmentId: "",
+      providerEnvironmentName: "",
+      serviceId: "",
+      serviceName: "",
+      publicUrl: "",
+      staticUrl: "",
+      inferred: false,
     },
   };
 }
@@ -229,7 +219,7 @@ export function registerPlatformRoutes(app: Express): void {
           .from(environmentCapabilityBindings)
           .where(eq(environmentCapabilityBindings.environmentId, environmentId));
       } catch (err) {
-        log.debug("Binding table query failed, using inferred config", { error: err instanceof Error ? err.message : String(err) });
+        log.debug("Binding table query failed; returning unbound environment", { error: err instanceof Error ? err.message : String(err) });
       }
 
       // Context artifacts in a separate try/catch so binding failures don't silently kill artifact loading
@@ -252,7 +242,7 @@ export function registerPlatformRoutes(app: Express): void {
         log.warn("Context artifact query failed", { error: err instanceof Error ? err.message : String(err), environmentId });
       }
 
-      const inferred = inferredEnvironmentConfig(row.platform_product_environments.name);
+      const inferred = emptyEnvironmentBindings(row.platform_product_environments.name);
       const source = sourceRows[0]
         ? { ...sourceRows[0], connection: connectionRows.find(connection => connection.id === sourceRows[0].connectionId) || null, inferred: false }
         : { ...inferred.source, connection: null };

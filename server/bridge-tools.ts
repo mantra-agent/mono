@@ -8847,272 +8847,119 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
   async railway(args: Record<string, any>): Promise<ToolHandlerResult> {
     const action = typeof args.action === "string" ? args.action : "";
-    const environment = typeof args.environment === "string" ? args.environment : "";
-    const positiveNumber = (value: unknown): number | null => {
-      if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
-      return value;
-    };
-    const connectionId = positiveNumber(args.connectionId);
-    const platformEnvironmentId = positiveNumber(args.platformEnvironmentId);
+    const platformEnvironmentId = typeof args.platformEnvironmentId === "number"
+      && Number.isInteger(args.platformEnvironmentId)
+      && args.platformEnvironmentId > 0
+      ? args.platformEnvironmentId
+      : undefined;
     if (!action) return { result: "Missing 'action' parameter", error: true };
 
     const allowed = new Set(["status", "deployments", "logs", "build_logs", "list_variables", "redeploy", "restart"]);
     if (!allowed.has(action)) {
       return {
-        result: `Unknown railway action: ${action}. Allowed: status, deployments, logs, build_logs, list_variables, redeploy, restart. Destructive actions (rollback, stop, secret reveal) are intentionally not exposed — use the Dev page.`,
+        result: `Unknown railway action: ${action}. Allowed: ${[...allowed].join(", ")}. Destructive actions are intentionally not exposed.`,
         error: true,
       };
     }
 
-    // Determine routing mode: connection-based or legacy dev/prod
-    const useConnectionRouting = connectionId !== null || platformEnvironmentId !== null;
-    if (!useConnectionRouting && environment !== "dev" && environment !== "prod") {
-      return { result: "Missing or invalid 'environment' — must be 'dev' or 'prod', or provide connectionId/platformEnvironmentId for multi-account routing.", error: true };
+    const selfInspectionActions = new Set(["status", "logs", "build_logs"]);
+    if (platformEnvironmentId === undefined && !selfInspectionActions.has(action)) {
+      return {
+        result: `platformEnvironmentId is required for Railway ${action}; omission is permitted only for current-runtime status, logs, and build_logs.`,
+        error: true,
+      };
     }
 
     const {
-      getRailwayConfig,
-      isRailwayConfigResolved,
-      getRailwayTokenForConnection,
-      getRailwayTokenForEnvironment,
-      fetchDeploymentsForEnvironment,
-      fetchDeploymentLogs,
-      fetchBuildLogs,
-      fetchServiceVariables,
-      redeployDeployment,
-      restartDeployment,
-      extractDeploymentMeta,
-      RailwayApiError,
-    } = await import("./integrations/railway/client");
-    const { environmentHostingBindings } = await import("@shared/models/platforms");
-    const { eq } = await import("drizzle-orm");
+      resolveRailwayEnvironmentControl,
+      fetchEnvironmentDeployments,
+      fetchEnvironmentRuntimeLogs,
+      fetchEnvironmentBuildLogs,
+      resolveEnvironmentDeploymentId,
+      listEnvironmentVariableNames,
+      redeployEnvironment,
+      restartEnvironment,
+      serializeEnvironmentDeployment,
+    } = await import("./integrations/railway/environment-control");
+    const { RailwayApiError } = await import("./integrations/railway/client");
 
-    // Resolve token, projectId, environmentId (Railway), serviceId, and url
-    let token: string | undefined;
-    let projectId: string;
-    let railwayEnvironmentId: string;
-    let serviceId: string;
-    let url: string | undefined;
-    let envLabel: string = environment || "custom";
-
-    if (useConnectionRouting) {
-      // --- Multi-account routing via connection or platform environment ---
-      try {
-        let resolvedConnectionId: number | null = connectionId;
-        let binding: { projectId: string; providerEnvironmentId: string; serviceId: string; publicUrl: string } | null = null;
-
-        if (platformEnvironmentId !== null) {
-          // Look up hosting binding for the platform environment
-          const { db } = await import("./db");
-          const [row] = await db
-            .select({
-              connectionId: environmentHostingBindings.connectionId,
-              projectId: environmentHostingBindings.projectId,
-              providerEnvironmentId: environmentHostingBindings.providerEnvironmentId,
-              serviceId: environmentHostingBindings.serviceId,
-              publicUrl: environmentHostingBindings.publicUrl,
-            })
-            .from(environmentHostingBindings)
-            .where(eq(environmentHostingBindings.environmentId, platformEnvironmentId))
-            .limit(1);
-          if (!row) {
-            return { result: `No hosting binding found for platform environment ${platformEnvironmentId}`, error: true };
-          }
-          if (row.connectionId) resolvedConnectionId = row.connectionId;
-          binding = { projectId: row.projectId, providerEnvironmentId: row.providerEnvironmentId, serviceId: row.serviceId, publicUrl: row.publicUrl };
-          envLabel = `env:${platformEnvironmentId}`;
-        } else if (resolvedConnectionId !== null) {
-          // Look up hosting binding by connectionId
-          const { db } = await import("./db");
-          const [row] = await db
-            .select({
-              projectId: environmentHostingBindings.projectId,
-              providerEnvironmentId: environmentHostingBindings.providerEnvironmentId,
-              serviceId: environmentHostingBindings.serviceId,
-              publicUrl: environmentHostingBindings.publicUrl,
-            })
-            .from(environmentHostingBindings)
-            .where(eq(environmentHostingBindings.connectionId, resolvedConnectionId))
-            .limit(1);
-          if (row) {
-            binding = { projectId: row.projectId, providerEnvironmentId: row.providerEnvironmentId, serviceId: row.serviceId, publicUrl: row.publicUrl };
-          }
-          envLabel = `conn:${resolvedConnectionId}`;
-        }
-
-        // Resolve token
-        if (resolvedConnectionId !== null) {
-          token = await getRailwayTokenForConnection(resolvedConnectionId);
-        } else if (platformEnvironmentId !== null) {
-          token = await getRailwayTokenForEnvironment(platformEnvironmentId);
-        }
-
-        // Resolve Railway IDs from binding
-        if (binding && binding.projectId && binding.providerEnvironmentId && binding.serviceId) {
-          projectId = binding.projectId;
-          railwayEnvironmentId = binding.providerEnvironmentId;
-          serviceId = binding.serviceId;
-          url = binding.publicUrl || undefined;
-        } else {
-          return {
-            result: `Connection ${resolvedConnectionId ?? "unknown"} has no complete hosting binding (need projectId, providerEnvironmentId, serviceId). Bind a hosting configuration to this connection first.`,
-            error: true,
-          };
-        }
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { result: `Railway connection routing failed: ${msg}`, error: true };
-      }
-    } else {
-      // --- Legacy dev/prod routing ---
-      const cfg = await getRailwayConfig(environment as "dev" | "prod");
-      if (!isRailwayConfigResolved(cfg)) {
-        const missing: string[] = [];
-        if (!cfg.hasToken) missing.push("RAILWAY_API_TOKEN");
-        if (!cfg.projectId) missing.push("RAILWAY_PROJECT_ID");
-        if (environment === "prod") {
-          if (!cfg.environmentId) missing.push("RAILWAY_PROD_ENVIRONMENT_ID");
-          if (!cfg.serviceId) missing.push("RAILWAY_PROD_SERVICE_ID (or RAILWAY_DEV_SERVICE_ID fallback)");
-          if (!cfg.url) missing.push("RAILWAY_PROD_URL");
-        } else {
-          if (!cfg.environmentId) missing.push("RAILWAY_DEV_ENVIRONMENT_ID");
-          if (!cfg.serviceId) missing.push("RAILWAY_DEV_SERVICE_ID");
-          if (!cfg.url) missing.push("RAILWAY_DEV_URL");
-        }
-        return {
-          result: `Railway ${environment} environment not configured. Missing: ${missing.join(", ")}.`,
-          error: true,
-        };
-      }
-      projectId = cfg.projectId!;
-      railwayEnvironmentId = cfg.environmentId!;
-      serviceId = cfg.serviceId!;
-      url = cfg.url;
-      // token stays undefined — legacy functions fall back to RAILWAY_API_TOKEN internally
-    }
-
-    const resolveLatestDeploymentId = async (): Promise<string | null> => {
-      const latest = await fetchDeploymentsForEnvironment(projectId, serviceId, railwayEnvironmentId, 1, token);
-      return latest.length > 0 ? latest[0].id : null;
-    };
-
+    let environmentLabel = platformEnvironmentId ? `platformEnvironment:${platformEnvironmentId}` : "current-runtime";
     try {
+      const control = await resolveRailwayEnvironmentControl(platformEnvironmentId, {
+        allowCurrentRuntime: platformEnvironmentId === undefined && selfInspectionActions.has(action),
+      });
+      environmentLabel = `${control.environment.platformName} / ${control.environment.productName} / ${control.environment.platformEnvironmentName}`;
+      const base = {
+        platformEnvironmentId: control.environment.platformEnvironmentId,
+        environment: environmentLabel,
+        url: control.publicUrl,
+      };
+
       switch (action) {
         case "status": {
-          const deployments = await fetchDeploymentsForEnvironment(projectId, serviceId, railwayEnvironmentId, 1, token);
-          if (deployments.length === 0) {
-            return { result: JSON.stringify({ environment: envLabel, url, deployment: null }) };
-          }
-          const d = deployments[0];
-          const meta = extractDeploymentMeta(d.meta);
-          return {
-            result: JSON.stringify({
-              environment: envLabel,
-              url,
-              deployment: {
-                id: d.id,
-                status: d.status,
-                createdAt: d.createdAt,
-                updatedAt: d.updatedAt,
-                staticUrl: d.staticUrl,
-                commitHash: meta.commitHash,
-                commitMessage: meta.commitMessage,
-                commitAuthor: meta.commitAuthor,
-                branch: meta.branch,
-              },
-            }),
-          };
+          const deployments = await fetchEnvironmentDeployments(control, 1);
+          return { result: JSON.stringify({ ...base, deployment: serializeEnvironmentDeployment(deployments[0] ?? null) }) };
         }
         case "deployments": {
           const limit = Math.min(50, Math.max(1, Number(args.limit) || 10));
-          const deployments = await fetchDeploymentsForEnvironment(projectId, serviceId, railwayEnvironmentId, limit, token);
-          const items = deployments.map((d) => {
-            const meta = extractDeploymentMeta(d.meta);
-            return {
-              id: d.id,
-              status: d.status,
-              createdAt: d.createdAt,
-              updatedAt: d.updatedAt,
-              commitHash: meta.commitHash,
-              commitMessage: meta.commitMessage,
-              commitAuthor: meta.commitAuthor,
-              branch: meta.branch,
-            };
-          });
-          return { result: JSON.stringify({ environment: envLabel, count: items.length, deployments: items }) };
+          const deployments = await fetchEnvironmentDeployments(control, limit);
+          return {
+            result: JSON.stringify({
+              ...base,
+              count: deployments.length,
+              deployments: deployments.map(serializeEnvironmentDeployment),
+            }),
+          };
         }
         case "logs": {
           const limit = Math.min(500, Math.max(1, Number(args.limit) || 200));
-          let deploymentId = typeof args.deploymentId === "string" ? args.deploymentId : null;
-          if (!deploymentId) {
-            deploymentId = await resolveLatestDeploymentId();
-            if (!deploymentId) return { result: JSON.stringify({ environment: envLabel, deploymentId: null, logs: [] }) };
-          }
-          const logs = await fetchDeploymentLogs(deploymentId, limit, token);
-          return { result: JSON.stringify({ environment: envLabel, deploymentId, count: logs.length, logs }) };
+          const deploymentId = await resolveEnvironmentDeploymentId(
+            control,
+            typeof args.deploymentId === "string" ? args.deploymentId : undefined,
+          );
+          if (!deploymentId) return { result: JSON.stringify({ ...base, deploymentId: null, logs: [] }) };
+          const logs = await fetchEnvironmentRuntimeLogs(control, deploymentId, limit);
+          return { result: JSON.stringify({ ...base, deploymentId, count: logs.length, logs }) };
         }
         case "build_logs": {
           const limit = Math.min(500, Math.max(1, Number(args.limit) || 200));
-          let deploymentId = typeof args.deploymentId === "string" ? args.deploymentId : null;
-          if (!deploymentId) {
-            const recent = await fetchDeploymentsForEnvironment(projectId, serviceId, railwayEnvironmentId, 5, token);
-            if (recent.length === 0) {
-              return { result: JSON.stringify({ environment: envLabel, deploymentId: null, logs: [] }) };
-            }
-            const inFlightStatuses = new Set(["BUILDING", "DEPLOYING", "WAITING", "QUEUED", "INITIALIZING"]);
-            const inFlight = recent.find((d) => inFlightStatuses.has((d.status || "").toUpperCase()));
-            deploymentId = (inFlight ?? recent[0]).id;
-          }
-          const [buildResult, deployResult] = await Promise.allSettled([
-            fetchBuildLogs(deploymentId, limit, token),
-            fetchDeploymentLogs(deploymentId, limit, token),
-          ]);
-          const build = buildResult.status === "fulfilled" ? buildResult.value : [];
-          const deploy = deployResult.status === "fulfilled" ? deployResult.value : [];
-          const merged = [...build, ...deploy].sort((a, b) => {
-            const ta = Date.parse(a.timestamp);
-            const tb = Date.parse(b.timestamp);
-            if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
-            if (Number.isNaN(ta)) return 1;
-            if (Number.isNaN(tb)) return -1;
-            return ta - tb;
-          });
-          return { result: JSON.stringify({ environment: envLabel, deploymentId, count: merged.length, logs: merged }) };
+          const deploymentId = await resolveEnvironmentDeploymentId(
+            control,
+            typeof args.deploymentId === "string" ? args.deploymentId : undefined,
+            true,
+          );
+          if (!deploymentId) return { result: JSON.stringify({ ...base, deploymentId: null, logs: [] }) };
+          const logs = await fetchEnvironmentBuildLogs(control, deploymentId, limit);
+          return { result: JSON.stringify({ ...base, deploymentId, count: logs.length, logs }) };
         }
         case "list_variables": {
-          const all = await fetchServiceVariables(projectId, railwayEnvironmentId, serviceId, token);
-          const names = Object.keys(all).sort();
-          return { result: JSON.stringify({ environment: envLabel, count: names.length, names }) };
+          const names = await listEnvironmentVariableNames(control);
+          return { result: JSON.stringify({ ...base, count: names.length, names }) };
         }
         case "redeploy": {
-          let deploymentId = typeof args.deploymentId === "string" ? args.deploymentId : null;
-          if (!deploymentId) {
-            deploymentId = await resolveLatestDeploymentId();
-            if (!deploymentId) return { result: `No deployment to redeploy in ${envLabel}`, error: true };
-          }
-          const result = await redeployDeployment(deploymentId, token);
-          return { result: JSON.stringify({ environment: envLabel, ok: true, deploymentId: result.id, status: result.status }) };
+          const deployment = await redeployEnvironment(
+            control,
+            typeof args.deploymentId === "string" ? args.deploymentId : undefined,
+          );
+          return { result: JSON.stringify({ ...base, ok: true, deploymentId: deployment.id, status: deployment.status }) };
         }
         case "restart": {
-          let deploymentId = typeof args.deploymentId === "string" ? args.deploymentId : null;
-          if (!deploymentId) {
-            deploymentId = await resolveLatestDeploymentId();
-            if (!deploymentId) return { result: `No deployment to restart in ${envLabel}`, error: true };
-          }
-          const ok = await restartDeployment(deploymentId, token);
-          return { result: JSON.stringify({ environment: envLabel, ok, deploymentId }) };
+          const result = await restartEnvironment(
+            control,
+            typeof args.deploymentId === "string" ? args.deploymentId : undefined,
+          );
+          return { result: JSON.stringify({ ...base, ...result }) };
         }
       }
       return { result: `Unhandled railway action: ${action}`, error: true };
     } catch (err: unknown) {
       if (err instanceof RailwayApiError) {
-        return { result: `Railway ${action} (${envLabel}) failed: ${err.message} (status=${err.status})`, error: true };
+        return { result: `Railway ${action} (${environmentLabel}) failed: ${err.message} (status=${err.status})`, error: true };
       }
       const msg = err instanceof Error ? err.message : String(err);
-      return { result: `Railway ${action} (${envLabel}) failed: ${msg}`, error: true };
+      return { result: `Railway ${action} (${environmentLabel}) failed: ${msg}`, error: true };
     }
   },
-
 
   async platforms(args: Record<string, any>): Promise<ToolHandlerResult> {
     const action = typeof args.action === "string" ? args.action : "";

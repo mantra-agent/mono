@@ -205,12 +205,9 @@ export interface BuildStatusPanelProps {
   /** Endpoint to POST to when the user clicks "Retry build" (only used on failure).
    *  When omitted, the retry button is hidden. */
   retryUrl?: string;
-  /** Human label for the environment, used in the panel heading and in the
-   *  default invalidation key. Defaults to "dev" for backwards compatibility. */
+  /** Human label for the environment, used in the panel heading. */
   environmentLabel?: string;
-  /** Query keys to invalidate after a successful retry. Defaults to the dev
-   *  status / deployments queries so the existing Development tab keeps the
-   *  exact same behaviour without callers having to opt in. */
+  /** Query keys to invalidate after a successful retry. */
   invalidateOnRetry?: readonly (readonly string[])[];
 }
 
@@ -219,10 +216,7 @@ export function BuildStatusPanel({
   buildLogsUrl,
   retryUrl,
   environmentLabel = "dev",
-  invalidateOnRetry = [
-    ["/api/railway/dev/status"],
-    ["/api/railway/dev/deployments"],
-  ],
+  invalidateOnRetry = [],
 }: BuildStatusPanelProps) {
   const { toast } = useToast();
   const family = statusFamily(deployment.status);
@@ -413,7 +407,8 @@ export function BuildLogStream({
   pollMs: number | false;
   buildLogsUrl?: string;
 }) {
-  const url = buildLogsUrl ?? "/api/railway/dev/build-logs";
+  if (!buildLogsUrl) return null;
+  const url = buildLogsUrl;
   const [logs, setLogs] = useState<DevLogEntry[]>([]);
   const containerRef = useRef<HTMLDivElement | null>(null);
 

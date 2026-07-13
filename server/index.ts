@@ -8,7 +8,8 @@ import { createServer } from "http";
 import { executorManager } from "./executor-manager";
 import { apiTimingMiddleware, startEventLoopMonitor, recordBootTiming } from "./performance-monitor";
 import { startMemoryWatchdog } from "./memory-watchdog";
-import { describeServiceInstanceLimits, fetchServiceInstanceLimits, getRailwayConfig, resolveServiceInstanceMemoryMB } from "./integrations/railway/client";
+import { describeServiceInstanceLimits, fetchServiceInstanceLimits, resolveServiceInstanceMemoryMB } from "./integrations/railway/client";
+import { resolveRailwayEnvironmentControl } from "./integrations/railway/environment-control";
 import { initTimezone, getTimezone } from "./timezone";
 import { initProfiles } from "./job-profiles";
 import { spawn } from "child_process";
@@ -680,14 +681,13 @@ app.use((req, res, next) => {
       setTimeout(runMeetingAutoJoin, 20_000).unref();
       setInterval(runMeetingAutoJoin, 60_000).unref();
 
-      getRailwayConfig(process.env.RAILWAY_ENVIRONMENT === "production" ? "prod" : "dev")
-        .then(async (cfg) => {
-          const serviceId = process.env.RAILWAY_SERVICE_ID || cfg.serviceId;
-          const environmentId = process.env.RAILWAY_ENVIRONMENT_ID || cfg.environmentId;
-          if (!cfg.hasToken || !serviceId || !environmentId) {
-            throw new Error(`Railway config incomplete for memory watchdog: hasToken=${cfg.hasToken} serviceId=${!!serviceId} environmentId=${!!environmentId}`);
-          }
-          const limits = await fetchServiceInstanceLimits(serviceId, environmentId);
+      resolveRailwayEnvironmentControl(undefined, { allowCurrentRuntime: true })
+        .then(async (control) => {
+          const limits = await fetchServiceInstanceLimits(
+            control.serviceId,
+            control.railwayEnvironmentId,
+            control.token,
+          );
           const maxMemoryMB = resolveServiceInstanceMemoryMB(limits);
           if (maxMemoryMB === null) {
             throw new Error(`Railway serviceInstanceLimits returned no supported memory field: ${describeServiceInstanceLimits(limits)}`);

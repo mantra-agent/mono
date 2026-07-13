@@ -92,7 +92,6 @@ import {
 import { SiX } from "react-icons/si";
 import { SecretsForSection } from "@/components/SecretControl";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
-import { RailwaySetupTab } from "@/components/railway-setup";
 import { VoiceV3WebhookSecretCard } from "@/components/VoiceV3WebhookSecretCard";
 import { usePlaidLink } from "react-plaid-link";
 import { useRoute, useLocation } from "wouter";
@@ -5616,7 +5615,7 @@ function IntegrationDetail({ provider }: { provider: string }) {
 
       {provider === "github" && <GitHubDetail />}
 
-      {provider === "railway" && <RailwaySetupTab><HostingConnectorsDetail provider="railway" /></RailwaySetupTab>}
+      {provider === "railway" && <HostingConnectorsDetail provider="railway" />}
 
       {provider === "cloudflare" && <CloudflareDetail />}
 

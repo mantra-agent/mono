@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../../db";
 import { getSecret } from "../../secrets-store";
 import { getProviderCredential } from "../../provider-credential-store";
-import { providerConnections, environmentHostingBindings } from "@shared/models/platforms";
+import { providerConnections } from "@shared/models/platforms";
 import { createLogger } from "../../log";
 
 const log = createLogger("RailwayClient");
@@ -10,8 +10,8 @@ const log = createLogger("RailwayClient");
 const RAILWAY_GRAPHQL_ENDPOINT = "https://backboard.railway.app/graphql/v2";
 
 /**
- * Resolve a Railway API token from a provider connection's encrypted credential.
- * Throws if the connection doesn't exist, has no credential, or decryption fails.
+ * @deprecated Migration boundary for db-sync only. Active Railway operations
+ * must resolve credentials through resolvePlatformEnvironment().
  */
 export async function getRailwayTokenForConnection(connectionId: number): Promise<string> {
   const [conn] = await db
@@ -24,26 +24,6 @@ export async function getRailwayTokenForConnection(connectionId: number): Promis
   if (!conn.credentialRef) throw new RailwayApiError(`Connection ${connectionId} has no stored credential`, 400);
   const token = await getProviderCredential(conn.credentialRef);
   if (!token) throw new RailwayApiError(`Failed to decrypt credential for connection ${connectionId}`, 500);
-  return token;
-}
-
-/**
- * Resolve a Railway API token for a platform environment by following the
- * hosting binding chain: environment → hosting binding → connection → credential.
- * Falls back to the global RAILWAY_API_TOKEN if no hosting binding exists.
- */
-export async function getRailwayTokenForEnvironment(environmentId: number): Promise<string> {
-  const [binding] = await db
-    .select({ connectionId: environmentHostingBindings.connectionId })
-    .from(environmentHostingBindings)
-    .where(eq(environmentHostingBindings.environmentId, environmentId))
-    .limit(1);
-  if (binding?.connectionId) {
-    return getRailwayTokenForConnection(binding.connectionId);
-  }
-  // Fall back to global token
-  const token = await getSecret("RAILWAY_API_TOKEN");
-  if (!token) throw new RailwayApiError("No hosting binding found and RAILWAY_API_TOKEN is not configured", 400);
   return token;
 }
 
@@ -121,41 +101,9 @@ export class RailwayApiError extends Error {
   }
 }
 
-export async function isRailwayConfigured(): Promise<boolean> {
-  const token = await getSecret("RAILWAY_API_TOKEN");
-  return !!(token && token.length > 0);
-}
-
-/**
- * Build a redacted, structured token diagnostic so we can tell *why* Railway
- * rejected a request without ever leaking the token value. Source = "db" when
- * the secret is overriding any host env var, "env" when only the env var is
- * set, "none" when missing.
- */
-export async function getRailwayTokenDiagnostics(): Promise<{
-  source: "db" | "env" | "none";
-  length: number;
-  last4: string | null;
-  envAlsoSet: boolean;
-}> {
-  const token = await getSecret("RAILWAY_API_TOKEN");
-  const envVal = process.env.RAILWAY_API_TOKEN;
-  const envAlsoSet = !!(envVal && envVal.length > 0);
-  if (!token) return { source: "none", length: 0, last4: null, envAlsoSet };
-  // If the cleartext we got back is exactly the env var, the env value won.
-  // Otherwise the DB-stored secret won (overriding env). This matches the
-  // precedence in getSecretSync: cache first, then process.env.
-  const source: "db" | "env" = envAlsoSet && token === envVal ? "env" : "db";
-  const last4 = token.length >= 4 ? token.slice(-4) : token;
-  return { source, length: token.length, last4, envAlsoSet };
-}
-
 async function railwayRequest<T>(query: string, variables?: Record<string, unknown>, token?: string): Promise<T> {
   if (!token) {
-    token = await getSecret("RAILWAY_API_TOKEN") ?? undefined;
-  }
-  if (!token) {
-    throw new RailwayApiError("RAILWAY_API_TOKEN is not configured", 400);
+    throw new RailwayApiError("A Railway provider connector credential is required", 400);
   }
   let res: Response;
   try {
@@ -179,27 +127,16 @@ async function railwayRequest<T>(query: string, variables?: Record<string, unkno
     throw new RailwayApiError(`Railway returned non-JSON response (HTTP ${res.status})`, res.status || 502);
   }
 
-  const buildAuthHint = async (): Promise<string> => {
-    const diag = await getRailwayTokenDiagnostics();
-    const parts = [
-      `source=${diag.source}`,
-      `length=${diag.length}`,
-      diag.last4 ? `last4=${diag.last4}` : "",
-      diag.envAlsoSet && diag.source === "db" ? "env-var-overridden-by-saved-secret" : "",
-    ].filter(Boolean);
-    return ` [token: ${parts.join(" ")}]`;
-  };
-
   if (!res.ok) {
     const message = (body as any)?.errors?.[0]?.message || (body as any)?.message || `HTTP ${res.status}`;
-    const hint = res.status === 401 || /not authorized/i.test(String(message)) ? await buildAuthHint() : "";
+    const hint = res.status === 401 || /not authorized/i.test(String(message)) ? " [connector authentication rejected]" : "";
     throw new RailwayApiError(`Railway API error: ${message}${hint}`, res.status, body);
   }
 
   const errors = (body as any)?.errors;
   if (Array.isArray(errors) && errors.length > 0) {
     const message = errors.map((e: any) => e?.message).filter(Boolean).join("; ") || "GraphQL error";
-    const hint = /not authorized|unauthorized/i.test(message) ? await buildAuthHint() : "";
+    const hint = /not authorized|unauthorized/i.test(message) ? " [connector authentication rejected]" : "";
     throw new RailwayApiError(`Railway API error: ${message}${hint}`, 400, errors);
   }
 
@@ -771,6 +708,7 @@ export interface RailwayDevConfig {
   hasToken: boolean;
 }
 
+/** @deprecated Migration boundary for db-sync, publish, and timeline callers only. */
 export async function getDevConfig(): Promise<RailwayDevConfig> {
   // All five settings come from the secrets store, which transparently falls
   // back to process.env so existing host-level env vars keep working.
@@ -812,6 +750,7 @@ export interface RailwayProdConfig {
  * aren't set, since the typical layout is one project + one app service with
  * separate environments.
  */
+/** @deprecated Migration boundary for db-sync, publish, and timeline callers only. */
 export async function getProdConfig(): Promise<RailwayProdConfig> {
   const [token, projectId, devServiceId, prodEnv, prodService, prodUrl, liveBranch] = await Promise.all([
     getSecret("RAILWAY_API_TOKEN"),
@@ -834,50 +773,6 @@ export async function getProdConfig(): Promise<RailwayProdConfig> {
 
 export function isProdConfigComplete(cfg: RailwayProdConfig): boolean {
   return !!(cfg.hasToken && cfg.projectId && cfg.environmentId && cfg.serviceId && cfg.prodUrl);
-}
-
-export type RailwayEnvName = "dev" | "prod";
-
-export interface RailwayResolvedConfig {
-  environment: RailwayEnvName;
-  projectId: string | undefined;
-  environmentId: string | undefined;
-  serviceId: string | undefined;
-  url: string | undefined;
-  hasToken: boolean;
-}
-
-/**
- * Unified accessor that returns the resolved Railway config for either the
- * dev or prod environment. Mirrors `getDevConfig` / `getProdConfig` so the
- * agent-facing `railway` tool can dispatch by environment from a single
- * helper.
- */
-export async function getRailwayConfig(environment: RailwayEnvName): Promise<RailwayResolvedConfig> {
-  if (environment === "prod") {
-    const cfg = await getProdConfig();
-    return {
-      environment,
-      projectId: cfg.projectId,
-      environmentId: cfg.environmentId,
-      serviceId: cfg.serviceId,
-      url: cfg.prodUrl,
-      hasToken: cfg.hasToken,
-    };
-  }
-  const cfg = await getDevConfig();
-  return {
-    environment,
-    projectId: cfg.projectId,
-    environmentId: cfg.environmentId,
-    serviceId: cfg.serviceId,
-    url: cfg.devUrl,
-    hasToken: cfg.hasToken,
-  };
-}
-
-export function isRailwayConfigResolved(cfg: RailwayResolvedConfig): boolean {
-  return !!(cfg.hasToken && cfg.projectId && cfg.environmentId && cfg.serviceId && cfg.url);
 }
 
 // ── Shared deployment status query ──

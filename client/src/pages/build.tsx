@@ -22,7 +22,6 @@ import {
   ExternalLink,
   FileText,
   Eye,
-  EyeOff,
   FlaskConical,
   GitBranch,
   History,
@@ -200,14 +199,14 @@ function StatusBadge({ status }: { status: string | undefined | null }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Status hook (polls /api/railway/dev/status every 15s)
+// Status hook (polls /api/railway/runtime/status every 15s)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function useDevStatus() {
   return useQuery<DevStatus>({
-    queryKey: ["/api/railway/dev/status"],
+    queryKey: ["/api/railway/runtime/status"],
     queryFn: async () => {
-      const res = await fetch("/api/railway/dev/status", {
+      const res = await fetch("/api/railway/runtime/status", {
         credentials: "include",
       });
       if (res.status === 503) {
@@ -247,8 +246,8 @@ function useStageAutomationLoginUrl(_path = "/") {
 }
 
 function refreshDevStatus() {
-  queryClient.invalidateQueries({ queryKey: ["/api/railway/dev/status"] });
-  queryClient.invalidateQueries({ queryKey: ["/api/railway/dev/deployments"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/railway/runtime/status"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/railway/runtime/deployments"] });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1414,8 +1413,7 @@ function DevStatusBar({
   const action = useMutation({
     mutationFn: async (which: "redeploy" | "restart" | "stop") => {
       setPendingAction(which);
-      const res = await apiRequest("POST", `/api/railway/dev/${which}`, {});
-      return res.json();
+      throw new Error("Open the canonical Platform Environment page to manage this deployment.");
     },
     onSuccess: (_data, which) => {
       toast({ title: `Triggered ${which}` });
@@ -1637,8 +1635,7 @@ function DevPreviewIframe({ status }: { status: DevStatusOk }) {
 
   const startMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/railway/dev/redeploy", {});
-      return res.json();
+      throw new Error("Open the canonical Platform Environment page to redeploy this environment.");
     },
     onSuccess: () => {
       toast({ title: "Starting development instance…" });
@@ -1682,7 +1679,7 @@ function DevPreviewIframe({ status }: { status: DevStatusOk }) {
   // that never refreshes. Re-mounting on success guarantees a clean reload.
   if (family === "deploying" && dep) {
     return (
-      <BuildStatusPanel deployment={dep} retryUrl="/api/railway/dev/redeploy" />
+      <BuildStatusPanel deployment={dep} />
     );
   }
 
@@ -1691,7 +1688,7 @@ function DevPreviewIframe({ status }: { status: DevStatusOk }) {
   // failed" empty card.
   if (family === "failed" && dep) {
     return (
-      <BuildStatusPanel deployment={dep} retryUrl="/api/railway/dev/redeploy" />
+      <BuildStatusPanel deployment={dep} />
     );
   }
 
@@ -1817,9 +1814,9 @@ function DeploymentsTable({ status }: { status: DevStatusOk }) {
   const { data, isLoading, error, refetch } = useQuery<{
     deployments: DevDeploymentSummary[];
   }>({
-    queryKey: ["/api/railway/dev/deployments"],
+    queryKey: ["/api/railway/runtime/deployments"],
     queryFn: async () => {
-      const res = await fetch("/api/railway/dev/deployments?limit=20", {
+      const res = await fetch("/api/railway/runtime/deployments?limit=20", {
         credentials: "include",
       });
       if (!res.ok)
@@ -1832,9 +1829,7 @@ function DeploymentsTable({ status }: { status: DevStatusOk }) {
 
   const redeploy = useMutation({
     mutationFn: async (deploymentId: string) => {
-      const res = await apiRequest("POST", "/api/railway/dev/redeploy", {
-        deploymentId,
-      });
+      throw new Error("Open the canonical Platform Environment page to redeploy this deployment.");
       return res.json();
     },
     onSuccess: () => {
@@ -1853,10 +1848,7 @@ function DeploymentsTable({ status }: { status: DevStatusOk }) {
 
   const rollback = useMutation({
     mutationFn: async (deploymentId: string) => {
-      const res = await apiRequest("POST", "/api/railway/dev/rollback", {
-        deploymentId,
-      });
-      return res.json();
+      throw new Error("Open Railway directly for a human-approved rollback.");
     },
     onSuccess: () => {
       toast({ title: "Rollback triggered" });
@@ -2110,8 +2102,7 @@ function DevLogViewer() {
     setNotConfigured(false);
   }, [env]);
 
-  const logsUrl =
-    env === "prod" ? "/api/railway/prod/logs" : "/api/railway/dev/logs";
+  const logsUrl = "/api/railway/runtime/logs";
 
   const { data, error, isLoading, refetch, isFetching } = useQuery<{
     logs: DevLogEntry[];
@@ -2333,9 +2324,9 @@ const CATEGORY_ORDER = ["Database", "Auth", "Services", "Railway", "Other"];
 function DevConfigView({ status }: { status: DevStatusOk }) {
   const { toast } = useToast();
   const { data, isLoading, error } = useQuery<{ variables: DevVariable[] }>({
-    queryKey: ["/api/railway/dev/variables"],
+    queryKey: ["/api/railway/runtime/variables"],
     queryFn: async () => {
-      const res = await fetch("/api/railway/dev/variables", {
+      const res = await fetch("/api/railway/runtime/variables", {
         credentials: "include",
       });
       if (!res.ok)
@@ -2346,40 +2337,6 @@ function DevConfigView({ status }: { status: DevStatusOk }) {
     },
   });
 
-  const [revealed, setRevealed] = useState<Record<string, string>>({});
-  const [revealing, setRevealing] = useState<string | null>(null);
-
-  const reveal = async (name: string) => {
-    if (revealed[name]) {
-      setRevealed((r) => {
-        const copy = { ...r };
-        delete copy[name];
-        return copy;
-      });
-      return;
-    }
-    try {
-      setRevealing(name);
-      const res = await fetch(
-        `/api/railway/dev/variables?reveal=${encodeURIComponent(name)}`,
-        { credentials: "include" },
-      );
-      if (!res.ok)
-        throw new Error(
-          `${res.status}: ${(await res.text()) || res.statusText}`,
-        );
-      const body = (await res.json()) as { name: string; value: string };
-      setRevealed((r) => ({ ...r, [name]: body.value }));
-    } catch (err) {
-      toast({
-        title: "Failed to reveal",
-        description: err instanceof Error ? err.message : String(err),
-        variant: "destructive",
-      });
-    } finally {
-      setRevealing(null);
-    }
-  };
 
   const grouped = useMemo(() => {
     const map = new Map<string, DevVariable[]>();
@@ -2453,44 +2410,16 @@ function DevConfigView({ status }: { status: DevStatusOk }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0 space-y-1">
-            {vars.map((v) => {
-              const isRevealed = !!revealed[v.name];
-              return (
-                <div
-                  key={v.name}
-                  className="flex items-center gap-2 py-1.5 border-b last:border-b-0"
-                  data-testid={`row-var-${v.name}`}
-                >
-                  <span className="font-mono text-xs flex-1 truncate">
-                    {v.name}
-                  </span>
-                  <span
-                    className={cn(
-                      "font-mono text-xs text-muted-foreground truncate max-w-[40%]",
-                      !isRevealed && "tracking-widest",
-                    )}
-                  >
-                    {isRevealed ? revealed[v.name] : "••••••••"}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0"
-                    onClick={() => reveal(v.name)}
-                    disabled={revealing === v.name}
-                    data-testid={`button-reveal-${v.name}`}
-                  >
-                    {revealing === v.name ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : isRevealed ? (
-                      <EyeOff className="h-3.5 w-3.5" />
-                    ) : (
-                      <Eye className="h-3.5 w-3.5" />
-                    )}
-                  </Button>
-                </div>
-              );
-            })}
+            {vars.map((v) => (
+              <div
+                key={v.name}
+                className="flex items-center gap-2 border-b py-1.5 last:border-b-0"
+                data-testid={`row-var-${v.name}`}
+              >
+                <span className="flex-1 truncate font-mono text-xs">{v.name}</span>
+                <span className="text-xs text-muted-foreground">Value hidden</span>
+              </div>
+            ))}
           </CardContent>
         </Card>
       ))}

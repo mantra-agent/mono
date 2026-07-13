@@ -244,11 +244,11 @@ interface DevStatusMissing {
 
 type DevStatus = DevStatusOk | DevStatusMissing;
 
-function useDevStatus() {
+function useDevStatus(platformEnvironmentId: number) {
   return useQuery<DevStatus>({
-    queryKey: ["/api/railway/dev/status"],
+    queryKey: ["/api/railway/environments", platformEnvironmentId, "status"],
     queryFn: async () => {
-      const res = await fetch("/api/railway/dev/status", { credentials: "include" });
+      const res = await fetch(`/api/railway/environments/${platformEnvironmentId}/status`, { credentials: "include" });
       if (res.status === 503) return (await res.json()) as DevStatus;
       if (!res.ok) throw new Error(`${res.status}: ${(await res.text()) || res.statusText}`);
       return (await res.json()) as DevStatus;
@@ -263,8 +263,8 @@ function useDevStatus() {
   });
 }
 
-function DevelopmentPipelineCard() {
-  const { data: status, isLoading, error, refetch, isFetching } = useDevStatus();
+function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmentId: number }) {
+  const { data: status, isLoading, error, refetch, isFetching } = useDevStatus(platformEnvironmentId);
 
   if (isLoading && !status) return <Skeleton className="h-96 w-full" />;
 
@@ -291,17 +291,26 @@ function DevelopmentPipelineCard() {
     );
   }
 
-  return <BuildStatusPanel deployment={status.deployment} />;
+  return <BuildStatusPanel
+    deployment={status.deployment}
+    buildLogsUrl={`/api/railway/environments/${platformEnvironmentId}/build-logs`}
+    retryUrl={`/api/railway/environments/${platformEnvironmentId}/redeploy`}
+    environmentLabel="stage"
+    invalidateOnRetry={[
+      ["/api/railway/environments", String(platformEnvironmentId), "status"],
+      ["/api/railway/environments", String(platformEnvironmentId), "deployments"],
+    ]}
+  />;
 }
 
-function EnvironmentPipelineCard({ details }: { details: EnvironmentDetails }) {
+function EnvironmentPipelineCard({ details, environmentId }: { details: EnvironmentDetails; environmentId: number }) {
   const platformName = details.platform.name.toLowerCase();
   const productName = details.product.name.toLowerCase();
   const environmentName = details.environment.name.toLowerCase();
 
   if (platformName !== "mantra") return null;
-  if (productName === "web" && environmentName === "stage") return <DevelopmentPipelineCard />;
-  if (productName === "web" && environmentName === "live") return <DevPublishTab />;
+  if (productName === "web" && environmentName === "stage") return <DevelopmentPipelineCard platformEnvironmentId={environmentId} />;
+  if (productName === "web" && environmentName === "live") return <DevPublishTab platformEnvironmentId={environmentId} />;
   if (productName === "mobile" && environmentName === "dev") return <MobileBuildCard />;
   return null;
 }
@@ -2064,7 +2073,7 @@ export default function PlatformEnvironmentDetailPage() {
   return (
     <div className="space-y-4 p-4">
       <div className="grid gap-4">
-        <EnvironmentPipelineCard details={data} />
+        <EnvironmentPipelineCard details={data} environmentId={environmentId} />
         {data.hosting.provider === "cloudflare" ? <CloudflarePagesCard environmentId={environmentId} /> : null}
         <EnvironmentDetailsConfigureCard details={data} environmentId={environmentId} />
       </div>
