@@ -297,8 +297,8 @@ Four interacting layers: intention stack (what), timer scheduler (when), skill r
 
 ### Admission Controller
 - **4 tiers:** communication (highest, always granted), realtime, request, background (lowest)
-- **Budget:** env-configurable concurrent slots via `RUN_ADMISSION_CONCURRENCY_BUDGET`, default 5; 15-minute max age for background
-- **Background reserves:** ordinary background preserves `RUN_ADMISSION_BACKGROUND_RESERVE` slots, default 1; memory maintenance uses `RUN_ADMISSION_MAINTENANCE_RESERVE`, default 0
+- **Partitioned budget:** `RUN_ADMISSION_FOREGROUND_BUDGET` defaults to 7 and caps communication/realtime/request work; `RUN_ADMISSION_BACKGROUND_BUDGET` defaults to 3 and caps background work. Total concurrency is their sum, default 10.
+- **Background lifetime:** background slots have a 15-minute max age
 - **Cooldown:** env-configurable post-communication cooldown via `RUN_ADMISSION_IDLE_THRESHOLD_MS`, default 60 seconds; cooldown blocks background runs
 - **Preemption:** Higher tier can set `yieldRequested` on lower-tier slots
 
