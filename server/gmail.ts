@@ -242,7 +242,8 @@ export async function getOAuth2Client(originHost?: string) {
     const protocol = originHost.includes('localhost') ? 'http' : 'https';
     redirectUri = `${protocol}://${originHost}/api/gmail/oauth/callback`;
   } else {
-    const publicUrl = process.env.PUBLIC_URL?.replace(/\/$/, "");
+    const { getRuntimePublicBaseUrl } = await import("./runtime-identity");
+    const publicUrl = await getRuntimePublicBaseUrl();
     redirectUri = publicUrl
       ? `${publicUrl}/api/gmail/oauth/callback`
       : 'http://localhost:5000/api/gmail/oauth/callback';
