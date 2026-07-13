@@ -102,11 +102,6 @@ export async function joinMeetingByUrl(opts: {
     );
   }
   const runtime = await getRuntimeIdentity();
-  if (runtime.publicUrlMismatch) {
-    log.warn(
-      `Stale PUBLIC_URL env variable detected; registering Recall transcript webhook against canonical ${publicUrl} for env ${runtime.environmentName}`,
-    );
-  }
 
   const { outputMediaPageUrl } = await import("./output-media");
   const outputMediaUrl = outputMediaPageUrl(publicUrl, session.id);
