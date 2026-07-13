@@ -16,6 +16,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { usePageHeader } from "@/hooks/use-page-header";
+import { useVaults } from "@/hooks/use-vaults";
 import {
   Select,
   SelectContent,
@@ -1627,6 +1628,8 @@ interface ConnectedAccountWithPerms {
   provider: string;
   email: string | null;
   label: string;
+  vaultId: string | null;
+  vault: { id: string; name: string; color: string | null } | null;
   permissions: GooglePermissions;
 }
 
@@ -1945,8 +1948,9 @@ function TwitterAccountsSection() {
 
 function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }) {
   const { toast } = useToast();
-  const [addLabel, setAddLabel] = useState("Work");
   const [showAddForm, setShowAddForm] = useState(false);
+  const [selectedVaultId, setSelectedVaultId] = useState("");
+  const { vaults } = useVaults();
 
   const { data: accountsData, isLoading } = useQuery<{
     accounts: Array<{
@@ -2005,7 +2009,8 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
   const permAccounts = (permsData?.accounts || []).filter((account) => account.provider === "google");
   const needsAttention = !oauthConfigured || accounts.some((account) => {
     const missingScopes = account.missingScopes || account.scopes?.missingScopes || [];
-    return account.healthy === false || missingScopes.length > 0 || Boolean(account.scopes && !account.scopes.hasGmailRead);
+    const bound = permAccounts.find((candidate) => candidate.email === account.email);
+    return !bound?.vaultId || account.healthy === false || missingScopes.length > 0 || Boolean(account.scopes && !account.scopes.hasGmailRead);
   });
 
   const handlePermToggle = (accountId: string, key: keyof GooglePermissions, currentValue: boolean) => {
@@ -2015,9 +2020,9 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
     permMutation.mutate({ accountId, perms: { [key]: !currentValue }, label });
   };
 
-  const startOAuth = async (label: string, accountId?: string) => {
+  const startOAuth = async (vaultId: string, accountId?: string) => {
     try {
-      const res = await apiRequest("POST", "/api/gmail/accounts/add", { label });
+      const res = await apiRequest("POST", "/api/gmail/accounts/add", { vaultId });
       const data = await res.json();
       if (data.url) {
         window.open(data.url, "_blank", "width=500,height=700");
@@ -2060,7 +2065,8 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
         const isHealthy = account.healthy === true && !needsReauth;
         const showReauth = needsReauth || tokenExpired;
         const permAccount = permAccounts.find((permissionAccount) => permissionAccount.email === account.email);
-        const status = tokenExpired ? "Token expired" : needsReauth ? "Missing permissions" : isHealthy ? "Verified" : "Connected";
+        const vaultRequired = !permAccount?.vaultId;
+        const status = vaultRequired ? "Vault required" : tokenExpired ? "Token expired" : needsReauth ? "Missing permissions" : isHealthy ? "Verified" : "Connected";
 
         return (
           <ProfileTreeRow
@@ -2074,7 +2080,7 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
             hasValue
             showEmpty
             testId={`google-account-${account.id}`}
-            defaultOpen={showReauth}
+            defaultOpen={showReauth || vaultRequired}
             expandedContentClassName="min-w-0 space-y-4"
             expandedContent={
               <>
@@ -2082,7 +2088,8 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => startOAuth(account.label, account.id)}
+                    onClick={() => permAccount?.vaultId && startOAuth(permAccount.vaultId, account.id)}
+                    disabled={!permAccount?.vaultId}
                     data-testid={`button-reauth-account-${account.id}`}
                   >
                     <RefreshCw className="h-3.5 w-3.5" />
@@ -2100,9 +2107,27 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
                   </Button>
                 </div>
                 <p className="text-muted-foreground" data-testid={`text-account-date-${account.id}`}>
-                  {account.label} · Added {new Date(account.addedAt).toLocaleDateString()}
+                  {permAccount?.vault ? <><span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: permAccount.vault.color || undefined }} /> {permAccount.vault.name} · </> : null}Added {new Date(account.addedAt).toLocaleDateString()}
                   {account.healthError ? <span className="text-destructive"> · {account.healthError}</span> : null}
                 </p>
+                {vaultRequired && permAccount ? (
+                  <div className="space-y-2">
+                    <p className="text-sm text-foreground">Choose where this account and its email data belong.</p>
+                    <div className="flex flex-wrap gap-2">
+                      <Select value={selectedVaultId} onValueChange={setSelectedVaultId}>
+                        <SelectTrigger className="w-48" aria-label="Select Vault"><SelectValue placeholder="Select Vault" /></SelectTrigger>
+                        <SelectContent>{vaults.map((vault) => <SelectItem key={vault.id} value={vault.id}>{vault.name}</SelectItem>)}</SelectContent>
+                      </Select>
+                      <Button disabled={!selectedVaultId} onClick={async () => {
+                        await apiRequest("PUT", `/api/connected-accounts/${permAccount.accountId}/vault`, { vaultId: selectedVaultId });
+                        queryClient.invalidateQueries({ queryKey: ["/api/connected-accounts", "google"] });
+                        queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] });
+                      }}>Assign Vault</Button>
+                    </div>
+                  </div>
+                ) : permAccount?.vaultId ? (
+                  <p className="text-xs text-muted-foreground">Moving this account is unavailable until its derived email data can migrate durably.</p>
+                ) : null}
                 {missingScopes.length > 0 ? (
                   <p className="text-destructive" data-testid={`text-missing-scopes-${account.id}`}>
                     Missing: {missingScopes.map((scope) => scope.split("/").pop() || scope).join(", ")}
@@ -2156,16 +2181,11 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
         showAddForm ? (
           <ProfileTreeRow label="New account" icon={<Plus className="h-3.5 w-3.5" />} hasValue showEmpty testId="row-new-google-account">
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <Select value={addLabel} onValueChange={setAddLabel}>
-                <SelectTrigger data-testid="select-google-account-label" className="w-32">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Work">Work</SelectItem>
-                  <SelectItem value="Personal">Personal</SelectItem>
-                </SelectContent>
+              <Select value={selectedVaultId} onValueChange={setSelectedVaultId}>
+                <SelectTrigger data-testid="select-google-account-vault" className="w-48"><SelectValue placeholder="Select Vault" /></SelectTrigger>
+                <SelectContent>{vaults.map((vault) => <SelectItem key={vault.id} value={vault.id}>{vault.name}</SelectItem>)}</SelectContent>
               </Select>
-              <Button onClick={() => startOAuth(addLabel)} data-testid="button-connect-google-account">Connect</Button>
+              <Button disabled={!selectedVaultId} onClick={() => startOAuth(selectedVaultId)} data-testid="button-connect-google-account">Connect</Button>
               <Button variant="ghost" size="sm" onClick={() => setShowAddForm(false)}>Cancel</Button>
             </div>
           </ProfileTreeRow>
