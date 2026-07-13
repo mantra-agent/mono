@@ -988,11 +988,23 @@ function meetingSection(event: CalendarEvent, today: string, tomorrow: string, w
   return "this_month";
 }
 
-function formatMeetingTime(event: CalendarEvent, timezone: string): string {
-  const dt = event.start.dateTime;
-  if (!dt) return "All day";
-  const d = new Date(dt);
-  return d.toLocaleTimeString("en-US", { timeZone: timezone, hour: "numeric", minute: "2-digit", hour12: true });
+function formatMeetingTime(event: CalendarEvent, timezone: string, includeDate: boolean): string {
+  const start = event.start.dateTime ?? event.start.date;
+  if (!start) return "All day";
+
+  const date = new Date(event.start.dateTime ?? `${start}T12:00:00Z`);
+  const time = event.start.dateTime
+    ? date.toLocaleTimeString("en-US", { timeZone: timezone, hour: "numeric", minute: "2-digit", hour12: true })
+    : "All day";
+  if (!includeDate) return time;
+
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: timezone,
+    day: "numeric",
+    month: "numeric",
+  }).formatToParts(date);
+  const get = (type: string) => parts.find(part => part.type === type)?.value ?? "";
+  return `${time}\n${get("day")}/${get("month")}`;
 }
 
 
@@ -1042,7 +1054,7 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
     href: `/calendar`,
     observedAt: event.start.dateTime ?? event.start.date,
   };
-  const timeLabel = formatMeetingTime(event, timezone);
+  const timeLabel = formatMeetingTime(event, timezone, section !== "now" && section !== "earlier");
   const attendeeNames = event.attendees
     .filter(a => !a.self)
     .map(a => a.displayName || a.email.split("@")[0])
