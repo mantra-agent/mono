@@ -267,6 +267,28 @@ function mergeTimeline(
   return { pending, deployments, githubConnected };
 }
 
+
+export async function fetchMergedPrsSince(since: Date): Promise<TimelinePR[]> {
+  const repoRef = repoRefFromUrl();
+  if (!repoRef) return [];
+  const results: TimelinePR[] = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const raw = await gh<GHPullRaw[]>(
+      "GET",
+      `/repos/${repoRef.owner}/${repoRef.repo}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=100&page=${page}`,
+    );
+    if (raw.length === 0) break;
+    for (const pr of raw) {
+      if (!pr.merged_at) continue;
+      const mergedAt = new Date(pr.merged_at);
+      if (mergedAt < since) continue;
+      results.push({ number: pr.number, title: pr.title, author: pr.user?.login ?? null, htmlUrl: pr.html_url, mergedAt: pr.merged_at, mergeCommitSha: pr.merge_commit_sha, commits: [] });
+    }
+    if (raw.length < 100) break;
+  }
+  return results;
+}
+
 // ── Public API ─────────────────────────────────────────────────────────
 
 export async function fetchVersionTimeline(): Promise<TimelineResponse> {
