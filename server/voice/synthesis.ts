@@ -40,8 +40,13 @@ export async function synthesizeVoiceAudio(text: string): Promise<VoiceAudio> {
     : normalized.replace(/\[(?:excited|calm|sighs|laughs|pause|nervous|cheerfully|whispers|curious|gravitas)\]\s*/gi, "");
   const dictionary = await getDictionaryLocator();
 
+  const query = new URLSearchParams({ output_format: "mp3_44100_128" });
+  if (modelId !== "eleven_v3") {
+    query.set("optimize_streaming_latency", "3");
+  }
+
   const response = await fetch(
-    `${ELEVENLABS_API_BASE}/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128&optimize_streaming_latency=3`,
+    `${ELEVENLABS_API_BASE}/text-to-speech/${encodeURIComponent(voiceId)}?${query.toString()}`,
     {
       method: "POST",
       headers: {
