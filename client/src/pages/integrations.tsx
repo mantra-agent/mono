@@ -54,7 +54,6 @@ import {
   Mail,
   Sparkles,
   ArrowRight,
-  ArrowLeft,
   Bot,
   Eye,
   EyeOff,
@@ -2194,10 +2193,15 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
           />
         ) : (
           <div className="px-2 py-1">
-            <Button variant="ghost" size="sm" onClick={() => setShowAddForm(true)} data-testid="button-add-google-account">
-              <Plus className="h-3.5 w-3.5" />
-              Google account
-            </Button>
+            <button
+              type="button"
+              onClick={() => setShowAddForm(true)}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80"
+              data-testid="button-add-google-account"
+            >
+              <Plus className="h-3.5 w-3.5 shrink-0" />
+              <span>New Account</span>
+            </button>
           </div>
         )
       ) : null}
@@ -2222,6 +2226,7 @@ function GoogleDetail() {
 
   return (
     <div className="min-w-0 space-y-2">
+      <GoogleAccountsSection oauthConfigured={oauthConfigured} />
       <IntegrationTreeSection
         label="Credentials"
         initialOpen={!isLoading && !oauthConfigured}
@@ -2231,7 +2236,6 @@ function GoogleDetail() {
           <SecretsForSection section="google" />
         </div>
       </IntegrationTreeSection>
-      <GoogleAccountsSection oauthConfigured={oauthConfigured} />
     </div>
   );
 }
@@ -5280,10 +5284,6 @@ function IntegrationDetail({ provider }: { provider: string }) {
   if (!integration) {
     return (
       <div className="space-y-4">
-        <Button variant="ghost" onClick={() => setLocation("/integrations")} data-testid="button-back-to-grid">
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Integrations
-        </Button>
         <Card>
           <CardContent className="py-8 text-center">
             <p className="text-muted-foreground" data-testid="text-integration-not-found">
@@ -5302,11 +5302,6 @@ function IntegrationDetail({ provider }: { provider: string }) {
 
   return (
     <div className="space-y-4">
-      <Button variant="ghost" onClick={() => setLocation("/integrations")} data-testid="button-back-to-grid">
-        <ArrowLeft className="h-4 w-4 mr-2" />
-        Integrations
-      </Button>
-
       {provider !== "recall" && (
         <div className="flex items-center gap-3">
           <Icon className="h-6 w-6" />
@@ -5433,7 +5428,7 @@ export default function IntegrationsPage() {
     refetchInterval: 15000,
   });
 
-  usePageHeader({ title: "Integrations" });
+  usePageHeader({ title: "Integrations", titleHref: "/integrations" });
 
   const [match, params] = useRoute("/integrations/:provider");
 

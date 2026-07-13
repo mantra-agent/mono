@@ -20,6 +20,7 @@ interface PageHeaderConfig {
   activeTab?: string;
   onTabChange?: (tab: string) => void;
   customContent?: ReactNode;
+  titleHref?: string;
   skip?: boolean;
 }
 
@@ -76,6 +77,7 @@ export function usePageHeader(config: PageHeaderConfig) {
       activeTab: config.activeTab,
       onTabChange: stableOnTabChange,
       customContent: config.customContent,
+      titleHref: config.titleHref,
     });
-  }, [config.skip, config.title, config.activeTab, stableTabs, stableOnTabChange, config.customContent, setConfig]);
+  }, [config.skip, config.title, config.activeTab, stableTabs, stableOnTabChange, config.customContent, config.titleHref, setConfig]);
 }
