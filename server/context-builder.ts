@@ -236,6 +236,7 @@ const sectionResolvers: Record<string, SectionResolver> = {
   "world_model.decisions": resolveOpenDecisions,
   "world_model.theses": resolveActiveTheses,
   "world_model.calendar": resolveCalendar,
+  "world_model.meeting": async (request) => request.meetingContext ?? "",
   "memory": async () => "",
   "memory.recent_sessions": resolveRecentSessions,
   "memory.graph": resolveGraphMemory,
@@ -2289,7 +2290,7 @@ export class ContextBuilder {
         || sectionId.startsWith("world_model.active_work.")) {
         return "ctx_wm_work";
       }
-      if (sectionId === "world_model.calendar") {
+      if (sectionId === "world_model.calendar" || sectionId === "world_model.meeting") {
         return "ctx_wm_calendar";
       }
       if (sectionId === "world_model.beliefs") {

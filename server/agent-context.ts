@@ -334,6 +334,8 @@ export async function assembleContext(options: {
   includeSections?: string[];
   /** Current user message text — threaded to graph resolver to avoid storage race on first turn. */
   currentMessage?: string;
+  /** Prebuilt, principal-scoped meeting packet for meeting-session assemblies. */
+  meetingContext?: string;
   onProgress?: (step: string, status: "started" | "done", elapsedMs?: number) => void;
 }): Promise<AssembledContext> {
   const {
@@ -344,6 +346,7 @@ export async function assembleContext(options: {
     excludeSections,
     includeSections,
     currentMessage,
+    meetingContext,
   } = options;
 
   const activityId: ActivityId = activity || (profile === "chat" ? ACTIVITY_CHAT : profile === "voice" ? ACTIVITY_VOICE : ACTIVITY_FRAMING);
@@ -428,6 +431,7 @@ export async function assembleContext(options: {
     includeSections: resolvedIncludeSections,
     excludeSections: resolvedExcludeSections,
     currentMessage: currentMessage || undefined,
+    meetingContext: meetingContext || undefined,
   };
 
   let spinePrompt: string;

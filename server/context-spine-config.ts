@@ -340,6 +340,18 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     includedIn: ["full", "world"],
     bootstrap: true,
   },
+  {
+    id: "world_model.meeting",
+    layer: "state",
+    title: "Current Meeting",
+    parentId: "world_model",
+    sourceType: "dynamic",
+    freshnessPolicy: "real-time",
+    priority: 3.1,
+    includedIn: ["full", "world"],
+    defaultIncluded: true,
+  },
+
 
   {
     id: "memory",

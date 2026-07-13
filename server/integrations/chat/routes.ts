@@ -1352,6 +1352,18 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
     const contextBuildStart = Date.now();
     chatLog.log(`contextAssembly START sessionId=${sessionId}`);
+    const session = await chatStorage.getSession(sessionId);
+    let meetingContext: string | undefined;
+    if (session?.type === "meeting" && session.meeting) {
+      try {
+        const { buildMeetingContextPacket, renderMeetingContextPacket } = await import("../../meeting/context-packet");
+        const packet = await buildMeetingContextPacket(session.meeting);
+        meetingContext = packet ? renderMeetingContextPacket(packet) : undefined;
+      } catch (err) {
+        chatLog.warn(`meetingContext degraded sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
     const context = await assembleContext({
       profile: "chat",
       conversationHistory,
@@ -1362,6 +1374,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       model: resolvedModel,
       sessionId,
       currentMessage: enrichedContent,
+      meetingContext,
       onProgress,
     });
     chatLog.log(

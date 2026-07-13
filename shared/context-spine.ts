@@ -108,6 +108,8 @@ export interface ContextRequest {
   excludeSections?: string[];
   /** Current user message text — passed synchronously to avoid storage race on first turn. */
   currentMessage?: string;
+  /** Prebuilt, principal-scoped meeting packet rendered only for meeting sessions. */
+  meetingContext?: string;
 }
 
 export interface SpineSectionConfig {
