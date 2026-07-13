@@ -1,6 +1,7 @@
 // Use createLogger for logging ONLY
 import { createLogger } from "@/lib/logger";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -80,6 +81,33 @@ function LinkedSessions({ slug }: { slug: string }) {
   );
 }
 
+function ChildPages({ pageId, pages }: { pageId: string; pages: LibraryPage[] }) {
+  const children = useMemo(() => pages.filter((page) => page.parentId === pageId), [pageId, pages]);
+
+  if (children.length === 0) return null;
+
+  return (
+    <div className="border-t border-border/60 px-10 py-3 space-y-1.5" data-testid="library-child-pages">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Child pages</div>
+      <div className="flex flex-wrap gap-1.5">
+        {children.map((page) => (
+          <ReferenceRenderer
+            key={page.id}
+            refValue={{
+              type: "page",
+              id: page.slug,
+              canonical: `@page:${page.slug}`,
+              metadata: { label: page.title || "Untitled", href: `/info#library?page=${encodeURIComponent(page.slug)}` },
+            }}
+            surface="chat-inline"
+            className="max-w-full"
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 interface LibraryPageEditorProps {
   selectedId: string;
   selectedPage: LibraryPageFull;
@@ -97,6 +125,12 @@ export function LibraryPageEditor({
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [bodyFocused, setBodyFocused] = useState(false);
+  const [headerTarget, setHeaderTarget] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const nextTarget = document.getElementById("library-page-header-slot");
+    if (nextTarget !== headerTarget) setHeaderTarget(nextTarget);
+  });
 
   const selectedPageContent = useMemo((): JSONContent | null => {
     const rawContent = selectedPage.content;
@@ -175,10 +209,11 @@ export function LibraryPageEditor({
 
   return (
     <>
-      <div className="px-10 py-4 flex items-start gap-3">
-        <Popover open={emojiPickerOpen} onOpenChange={setEmojiPickerOpen}>
-          <PopoverTrigger asChild>
-            <button className="mt-1 shrink-0 h-8 w-8 flex items-center justify-center rounded hover:bg-accent transition-colors" data-testid="button-emoji-picker" title="Set page icon">
+      {headerTarget && createPortal(
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <Popover open={emojiPickerOpen} onOpenChange={setEmojiPickerOpen}>
+            <PopoverTrigger asChild>
+            <button className="shrink-0 h-7 w-7 flex items-center justify-center rounded hover:bg-accent transition-colors" data-testid="button-emoji-picker" title="Set page icon">
               <PageEmoji emoji={selectedPage.emoji} size="md" />
             </button>
           </PopoverTrigger>
@@ -191,8 +226,8 @@ export function LibraryPageEditor({
             )}
           </PopoverContent>
         </Popover>
-        <Input ref={titleInputRef} value={editTitle} onChange={(e) => handleTitleChange(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); editorRef.current?.focus(); } }} placeholder="New page" className="flex-1 h-auto min-h-12 text-4xl font-semibold tracking-tight border-none shadow-none focus-visible:ring-0 p-0 bg-transparent placeholder:text-muted-foreground" data-testid="input-library-title" />
-        <div className={cn("flex items-center gap-1.5 shrink-0", bodyFocused && "invisible pointer-events-none")}>
+        <Input ref={titleInputRef} value={editTitle} onChange={(e) => handleTitleChange(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); editorRef.current?.focus(); } }} placeholder="New page" className="min-w-0 flex-1 h-7 border-none bg-transparent p-0 text-sm font-medium shadow-none placeholder:text-muted-foreground focus-visible:ring-0" data-testid="input-library-title" />
+        <div className={cn("ml-auto flex shrink-0 items-center gap-1", bodyFocused && "invisible pointer-events-none")}>
           {saveMutation.isPending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
@@ -219,9 +254,14 @@ export function LibraryPageEditor({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      </div>
+        </div>,
+        headerTarget,
+      )}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <RichTextEditor ref={editorRef} key={selectedId} value={editContent} onChange={handleContentChange} placeholder="Write your page content here..." className="flex-1 overflow-hidden" data-testid="editor-library-content" onInsertLink={() => { setSpecPickerQuery(""); setSpecPickerOpen(true); }} plainTextFallback={selectedPage.plainTextContent || ""} onFocusChange={setBodyFocused} contentFooter={<LinkedSessions slug={selectedPage.slug} />} />
+        <RichTextEditor ref={editorRef} key={selectedId} value={editContent} onChange={handleContentChange} placeholder="Write your page content here..." className="flex-1 overflow-hidden" data-testid="editor-library-content" onInsertLink={() => { setSpecPickerQuery(""); setSpecPickerOpen(true); }} plainTextFallback={selectedPage.plainTextContent || ""} onFocusChange={setBodyFocused} contentFooter={<>
+          <ChildPages pageId={selectedPage.id} pages={pages} />
+          <LinkedSessions slug={selectedPage.slug} />
+        </>} />
       </div>
       <PageLinkPickerDialog open={specPickerOpen} onOpenChange={setSpecPickerOpen} query={specPickerQuery} onQueryChange={setSpecPickerQuery} pages={pages} editorRef={editorRef} />
       <PageDetailsDialog open={detailsDialogOpen} onOpenChange={setDetailsDialogOpen} page={selectedPage} pages={pages} />

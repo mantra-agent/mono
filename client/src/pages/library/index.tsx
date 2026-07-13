@@ -73,8 +73,9 @@ function LibraryTopbarBreadcrumbs({ trail, onSelectLibrary, onSelectPage }: {
   const visibleTrail = trail.length > 3 ? trail.slice(-3) : trail;
   const collapsed = trail.length > visibleTrail.length;
   return (
-    <div className="flex min-w-0 items-center gap-1 truncate text-sm font-medium text-foreground">
-      <button type="button" className="shrink-0 hover:text-cta" onClick={onSelectLibrary} data-testid="topbar-library-root">Library</button>
+    <div className="flex min-w-0 flex-1 items-center gap-1 text-sm font-medium text-foreground">
+      <div className="flex min-w-0 shrink items-center gap-1 truncate">
+        <button type="button" className="shrink-0 hover:text-cta" onClick={onSelectLibrary} data-testid="topbar-library-root">Library</button>
       {collapsed && (
         <>
           <span className="text-muted-foreground">/</span>
@@ -95,6 +96,9 @@ function LibraryTopbarBreadcrumbs({ trail, onSelectLibrary, onSelectPage }: {
           </button>
         </span>
       ))}
+      </div>
+      <span className="shrink-0 text-muted-foreground">/</span>
+      <div id="library-page-header-slot" className="flex min-w-0 flex-1 items-center" />
     </div>
   );
 }
