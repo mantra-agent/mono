@@ -211,6 +211,20 @@ export const CLAIM_DEDUP_SIMILARITY_THRESHOLD = 0.85;
  */
 export const CLAIM_INTRA_BATCH_DEDUP_THRESHOLD = 0.85;
 
+/**
+ * Similarity floor for title-collision deduplication. When a candidate's
+ * normalized title exactly matches an existing active claim's title
+ * (case-insensitive), the pair is treated as a duplicate at a much lower
+ * embedding similarity than the general 0.85 gate. Calibration from the
+ * 2026-07-13 duplicate audit: every same-fact restatement pair extracted
+ * on different days scored 0.579–0.841 (Sleep Conflict 0.669, Income
+ * Barbell 0.716, Buyer Proof 0.579, Healthcare Deadline 0.605), while the
+ * one genuinely-distinct title twin pair (iOS Contacts: missing creation
+ * date vs available fields) scored 0.538. 0.55 merges restatements and
+ * preserves distinct same-titled facts.
+ */
+export const CLAIM_TITLE_DEDUP_SIMILARITY_THRESHOLD = 0.55;
+
 function buildSourceComponents(rows: Array<{ claimId: number; sourceKey: string }>): Map<string, string> {
   const parent = new Map<string, string>();
   const find = (value: string): string => {
@@ -385,6 +399,43 @@ export async function executeVnextClaimSemanticSearch(
     row: mapRawVnextClaimRow(row),
     similarity: parseFloat(String(row.similarity ?? "0")),
   }));
+}
+
+/**
+ * Find the most similar active claim whose title exactly matches (case-insensitive).
+ * Used by the title-collision dedup phase in persistClaimCandidates: identical
+ * short titles are a strong duplicate signal, so they are compared against
+ * CLAIM_TITLE_DEDUP_SIMILARITY_THRESHOLD instead of the general 0.85 gate.
+ */
+export async function executeVnextClaimTitleTwinSearch(
+  title: string,
+  queryEmbedding: number[],
+): Promise<{ row: MemoryVnextClaim; similarity: number } | undefined> {
+  const embeddingStr = vectorLiteral(queryEmbedding);
+  const principal = getCurrentPrincipalOrSystem();
+  const visibilityCondition = principal.actorType === "system"
+    ? sql``
+    : sql`AND (scope = 'global' OR owner_user_id = ${principal.userId} OR account_id = ${principal.accountId})`;
+  const results = await db.execute(sql`
+    SELECT id, title, content, claim_type, confidence, topics, entity_mentions, source_claim_index,
+      content_hash, embedding, source_memory_id, source, source_id, lifecycle_stage,
+      lifecycle_stage_updated_at, scope, owner_user_id, account_id, created_by_user_id, updated_by_user_id, metadata, recall_count,
+      last_recalled_at, created_at, updated_at,
+      1 - (embedding <=> ${embeddingStr}::vector) AS similarity
+    FROM memory_vnext_claims
+    WHERE embedding IS NOT NULL
+      AND lifecycle_stage <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}
+      AND lower(title) = lower(${title})
+      ${visibilityCondition}
+    ORDER BY embedding <=> ${embeddingStr}::vector
+    LIMIT 1
+  `);
+  const first = (results.rows as Array<Record<string, unknown>>)[0];
+  if (!first) return undefined;
+  return {
+    row: mapRawVnextClaimRow(first),
+    similarity: parseFloat(String(first.similarity ?? "0")),
+  };
 }
 
 export class MemoryVnextClaimStorage {
@@ -1564,6 +1615,19 @@ export async function persistClaimCandidates(
         );
         if (match) {
           nearDuplicate = { id: match.row.id, similarity: match.similarity };
+        }
+        // Title-collision dedup: an identical title on an active claim is a
+        // strong duplicate signal, so same-titled claims dedup at the lower
+        // CLAIM_TITLE_DEDUP_SIMILARITY_THRESHOLD. Catches same-fact
+        // restatements extracted on different days that drift below 0.85.
+        if (!nearDuplicate && claim.title?.trim()) {
+          const twin = await executeVnextClaimTitleTwinSearch(claim.title.trim(), embedding);
+          if (twin && twin.similarity >= CLAIM_TITLE_DEDUP_SIMILARITY_THRESHOLD) {
+            nearDuplicate = { id: twin.row.id, similarity: twin.similarity };
+            log.debug(
+              `${logPrefix}: title-collision dedup matched claim #${twin.row.id} title="${claim.title.trim()}" (similarity=${twin.similarity.toFixed(3)})`,
+            );
+          }
         }
       } catch (err) {
         log.warn(
