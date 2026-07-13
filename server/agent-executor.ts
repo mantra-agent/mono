@@ -10,7 +10,7 @@ const log = createLogger("Executor");
 import { writeJournal, publishJournalToUI, type JournalEntry } from "./chat-journal";
 import { getThinkingForActivity, ACTIVITY_CHAT, ACTIVITY_FRAMING, resolveModelForActivity, type ActivityId, type ModelRoutingDecision } from "./job-profiles";
 import { resolveThinkingConfig, thinkingBudgetToTier, type ResolvedThinking, type ThinkingTierConfig } from "./thinking-config";
-import { getThinkingInfo } from "./model-registry";
+import { getThinkingInfo, getModelName } from "./model-registry";
 // logApiCall import removed — inference recording is handled at the model-client
 // boundary (recordInference). See logIterationCost comment for context.
 import { getPromptModulePromptEntry } from "./prompt-modules";
@@ -184,6 +184,16 @@ function formatInputContextDetail(contextPressure: ExecutorRunOptions["contextPr
   if (contextPressure.durableCompactionApplied) pieces.push("durable=applied");
   else if (contextPressure.durableCompactionAttempted) pieces.push("durable=attempted");
   return pieces.join(" · ");
+}
+
+/** Human-readable model identity for the Connected diagnostic: display name, provider (call type), routing tier. */
+function formatModelConnectionDetail(ctx: RunIterationContext): string {
+  const raw = ctx.resolvedModel || ctx.modelString;
+  const modelId = raw.includes("/") ? raw.split("/").slice(1).join("/") : raw;
+  const name = getModelName(modelId);
+  const provider = ctx.resolvedProvider || ctx.routingDecision.provider;
+  const tier = ctx.routingDecision.tier;
+  return [name, provider, tier ? `tier=${tier}` : undefined].filter(Boolean).join(" \u00b7 ");
 }
 
 function normalizeToolFailureSignature(call: { name: string; args: Record<string, unknown>; result: string }): string {
@@ -1001,7 +1011,7 @@ export class AgentExecutor extends EventEmitter {
         if (!ctx.llmConnectedDoneEmitted) {
           ctx.llmConnectedDoneEmitted = true;
           const connectedElapsed = now - (ctx.llmConnectedTime || ctx.llmCallStartTime || now);
-          ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed });
+          ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed, detail: formatModelConnectionDetail(ctx) });
         }
         break;
       }
@@ -1019,7 +1029,7 @@ export class AgentExecutor extends EventEmitter {
           if (!ctx.llmConnectedDoneEmitted) {
             ctx.llmConnectedDoneEmitted = true;
             const connectedElapsed = now - (ctx.llmConnectedTime || ctx.llmCallStartTime);
-            ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed });
+            ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed, detail: formatModelConnectionDetail(ctx) });
           }
           ctx.publish("system_step", { step: "first_token", status: "started" });
           ctx.publish("system_step", { step: "first_token", status: "done", elapsedMs: ttft, detail: formatInputContextDetail(options.contextPressure), metadata: options.contextPressure });
@@ -1060,7 +1070,7 @@ export class AgentExecutor extends EventEmitter {
           if (!ctx.llmConnectedDoneEmitted) {
             ctx.llmConnectedDoneEmitted = true;
             const connectedElapsed = now - (ctx.llmConnectedTime || ctx.llmCallStartTime);
-            ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed });
+            ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed, detail: formatModelConnectionDetail(ctx) });
           }
           ctx.publish("system_step", { step: "first_token", status: "started" });
           ctx.publish("system_step", { step: "first_token", status: "done", elapsedMs: ttft, detail: formatInputContextDetail(options.contextPressure), metadata: options.contextPressure });
@@ -1110,7 +1120,7 @@ export class AgentExecutor extends EventEmitter {
           if (!ctx.llmConnectedDoneEmitted) {
             ctx.llmConnectedDoneEmitted = true;
             const connectedElapsed = now - (ctx.llmConnectedTime || ctx.llmCallStartTime);
-            ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed });
+            ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed, detail: formatModelConnectionDetail(ctx) });
           }
         }
         if (ctx.thinkingStepActive) {
@@ -1211,7 +1221,7 @@ export class AgentExecutor extends EventEmitter {
           if (!ctx.llmConnectedDoneEmitted) {
             ctx.llmConnectedDoneEmitted = true;
             const connectedElapsed = now - (ctx.llmConnectedTime || ctx.llmCallStartTime);
-            ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed });
+            ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed, detail: formatModelConnectionDetail(ctx) });
           }
         }
         if (ctx.thinkingStepActive) {
@@ -2151,7 +2161,7 @@ export class AgentExecutor extends EventEmitter {
         if (!ctx.llmConnectedDoneEmitted) {
           ctx.llmConnectedDoneEmitted = true;
           const connectedElapsed = now - (ctx.llmConnectedTime || ctx.llmCallStartTime);
-          ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed });
+          ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed, detail: formatModelConnectionDetail(ctx) });
         }
       }
       if (ctx.thinkingStepActive) {
