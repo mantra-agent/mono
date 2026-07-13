@@ -11,12 +11,14 @@ function stringPayload(item: SimpleFeedItem, key: string): string | null {
 function InboxItemInline({ item }: { item: SimpleFeedItem }) {
   const kind = stringPayload(item, "kind");
   const href = item.actions?.find(a => a.type === "navigate")?.href;
+  const completed = item.status === "completed";
+  const showKind = kind && kind !== "email_review";
 
   const inner = (
     <div className="flex items-center gap-2">
       <Inbox className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      <span className="truncate text-sm font-medium">{item.title}</span>
-      {kind && <span className="shrink-0 text-xs text-muted-foreground capitalize">{kind.replace(/_/g, " ")}</span>}
+      <span className={cn("truncate text-sm font-medium", completed && "text-neutral line-through decoration-neutral/60")}>{item.title}</span>
+      {showKind && <span className="shrink-0 text-xs text-muted-foreground capitalize">{kind.replace(/_/g, " ")}</span>}
     </div>
   );
 
