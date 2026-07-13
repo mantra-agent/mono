@@ -175,7 +175,7 @@ export const environmentHostingBindings = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
   (table) => [
-    index("idx_environment_hosting_bindings_environment").on(table.environmentId),
+    uniqueIndex("idx_environment_hosting_bindings_environment_unique").on(table.environmentId),
     index("idx_environment_hosting_bindings_connection").on(table.connectionId),
   ],
 );
