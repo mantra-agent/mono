@@ -21,7 +21,7 @@ import { peopleStorage } from "../people-storage";
 import { storage } from "../storage";
 import { createUserPrincipalFromUser } from "../principal";
 import { runWithPrincipal } from "../principal-context";
-import { getDateInTimezone } from "../timezone";
+import { formatInTimezone, getDateInTimezone } from "../timezone";
 import { eventBus } from "../event-bus";
 import type { MeetingParticipant, MeetingSessionMeta } from "@shared/models/chat";
 
@@ -33,8 +33,10 @@ const TRANSCRIPT_CHAR_BUDGET = 150_000;
 interface RecapContent {
   title: string;
   summary: string;
+  details: string;
   decisions: string[];
-  actionItems: string[];
+  openQuestions: string[];
+  followUps: string[];
 }
 
 /**
@@ -173,13 +175,14 @@ async function generateRecapContent(
       {
         role: "system",
         content: [
-          "You write concise meeting recaps. Given a meeting transcript, return JSON with:",
-          '{"title": string, "summary": string, "decisions": string[], "actionItems": string[]}',
-          "- title: short descriptive meeting title (3-8 words), no dates",
-          "- summary: 2-5 sentence factual summary of what was discussed",
+          "You write structured meeting recaps. Given a meeting transcript, return JSON with:",
+          '{"summary": string, "details": string, "decisions": string[], "openQuestions": string[], "followUps": string[]}',
+          "- summary: one or two short factual sentences only",
+          "- details: the complete useful meeting narrative, preserving important context without repeating the summary",
           "- decisions: key decisions made (empty array if none)",
-          "- actionItems: concrete action items with owner when stated (empty array if none)",
-          "Only report what the transcript supports. Never invent decisions or action items.",
+          "- openQuestions: unresolved questions or ambiguities (empty array if none)",
+          "- followUps: concrete next actions with owner when stated (empty array if none)",
+          "Only report what the transcript supports. Never invent decisions, questions, or follow-ups.",
         ].join("\n"),
       },
       {
@@ -197,10 +200,20 @@ async function generateRecapContent(
   }
   const toStrings = (v: unknown): string[] =>
     Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0) : [];
-  const title = typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : (meeting.title || sessionTitle || "Meeting Recap");
+  const meetingName = (meeting.title || sessionTitle || "Untitled").trim();
+  const title = `Meeting: ${meetingName.replace(/^Meeting:\s*/i, "")}`;
   const summary = typeof parsed.summary === "string" && parsed.summary.trim() ? parsed.summary.trim() : "";
+  const details = typeof parsed.details === "string" && parsed.details.trim() ? parsed.details.trim() : "";
   if (!summary) throw new Error("Recap model returned no summary");
-  return { title, summary, decisions: toStrings(parsed.decisions), actionItems: toStrings(parsed.actionItems) };
+  if (!details) throw new Error("Recap model returned no details");
+  return {
+    title,
+    summary,
+    details,
+    decisions: toStrings(parsed.decisions),
+    openQuestions: toStrings(parsed.openQuestions),
+    followUps: toStrings(parsed.followUps),
+  };
 }
 
 function participantRef(p: MeetingParticipant): string {
@@ -214,16 +227,18 @@ function buildRecapMarkdown(recap: RecapContent, meeting: MeetingSessionMeta): s
   if (meeting.startedAt) {
     const started = new Date(meeting.startedAt);
     if (!Number.isNaN(started.getTime())) {
-      parts.push(`**Date:** ${started.toISOString().slice(0, 10)}`);
+      parts.push(`**Date:** ${formatInTimezone(started, { year: "numeric", month: "short", day: "numeric" })}`);
+      parts.push(`**Time:** ${formatInTimezone(started, { hour: "numeric", minute: "2-digit", timeZoneName: "short" })}`);
     }
   }
+  const listOrNone = (items: string[]) => items.length > 0
+    ? items.map((item) => `- ${item}`).join("\n")
+    : "- None.";
   parts.push(`## Summary\n\n${recap.summary}`);
-  if (recap.decisions.length > 0) {
-    parts.push(`## Decisions\n\n${recap.decisions.map((d) => `- ${d}`).join("\n")}`);
-  }
-  if (recap.actionItems.length > 0) {
-    parts.push(`## Action Items\n\n${recap.actionItems.map((a) => `- ${a}`).join("\n")}`);
-  }
+  parts.push(`## Details\n\n${recap.details}`);
+  parts.push(`## Key Decisions\n\n${listOrNone(recap.decisions)}`);
+  parts.push(`## Open Questions\n\n${listOrNone(recap.openQuestions)}`);
+  parts.push(`## Follow-ups\n\n${listOrNone(recap.followUps)}`);
   return parts.join("\n\n");
 }
 

@@ -20,6 +20,15 @@ export function useTaskModal() {
   return ctx;
 }
 
+/**
+ * Reference widgets can render in isolated React roots inside TipTap. Those
+ * roots intentionally do not own app-level modal state, so task references
+ * degrade to ordinary navigation instead of crashing every reference widget.
+ */
+export function useOptionalTaskModal() {
+  return useContext(TaskModalContext);
+}
+
 export function TaskModalProvider({ children }: { children: ReactNode }) {
   const [openTaskId, setOpenTaskId] = useState<number | null>(null);
 
