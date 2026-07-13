@@ -1,7 +1,7 @@
 import type { Express, Response, Request } from "express";
 import { execSkillStorage, execExperienceStorage, execPassionStorage, execMetricsStorage, execEducationStorage, migrateExecSchema } from "../exec-storage";
 import { opportunityStorage, migrateOpportunitySchema } from "../opportunity-storage";
-import { insertExecSkillSchema, insertExecExperienceSchema, insertExecPassionSchema, insertExecMetricSchema, insertExecEducationSchema, insertOpportunitySchema, artifactKinds, type ArtifactKind } from "@shared/schema";
+import { insertExecSkillSchema, insertExecExperienceSchema, insertExecPassionSchema, insertExecMetricSchema, insertExecEducationSchema, insertOpportunitySchema, createOpportunityInteractionSchema, updateOpportunityInteractionSchema, artifactKinds, type ArtifactKind } from "@shared/schema";
 import { z } from "zod";
 import { createLogger } from "../log";
 import { eventBus } from "../event-bus";
@@ -27,10 +27,14 @@ function handleError(prefix: string, err: unknown, res: Response): Response {
   return res.status(500).json({ error: errMsg(err) });
 }
 
-function currentUserId(req: Request): string {
+function currentPrincipal(req: Request) {
   const principal = getPrincipal(req);
   if (!principal?.userId) throw Object.assign(new Error("User session required"), { status: 401 });
-  return principal.userId;
+  return principal;
+}
+
+function currentUserId(req: Request): string {
+  return currentPrincipal(req).userId!;
 }
 
 export function registerExecRoutes(app: Express): void {
@@ -203,7 +207,7 @@ export function registerExecRoutes(app: Express): void {
       const filters: { status?: string; type?: string } = {};
       if (typeof req.query.status === "string") filters.status = req.query.status;
       if (typeof req.query.type === "string") filters.type = req.query.type;
-      const list = await opportunityStorage.listWithSkills(currentUserId(req), filters);
+      const list = await opportunityStorage.listWithSkills(currentPrincipal(req), filters);
       res.json(list);
     } catch (err) {
       handleError("GET /api/exec/opportunities", err, res);
@@ -213,7 +217,7 @@ export function registerExecRoutes(app: Express): void {
   app.post("/api/exec/opportunities", async (req, res) => {
     try {
       const parsed = insertOpportunitySchema.parse(req.body);
-      const row = await opportunityStorage.create(currentUserId(req), parsed);
+      const row = await opportunityStorage.create(currentPrincipal(req), parsed);
       publishChanged("create_opportunity");
       res.status(201).json(row);
     } catch (err) {
@@ -225,8 +229,8 @@ export function registerExecRoutes(app: Express): void {
     try {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-      const uid = currentUserId(req);
-      const opp = await opportunityStorage.getWithSkills(id, uid);
+      const principal = currentPrincipal(req);
+      const opp = await opportunityStorage.getWithSkills(id, principal);
       if (!opp) return res.status(404).json({ error: "Opportunity not found" });
       const artifacts = await opportunityStorage.getArtifacts(id);
       res.json({ ...opp, artifacts });
@@ -240,7 +244,7 @@ export function registerExecRoutes(app: Express): void {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
       const parsed = insertOpportunitySchema.partial().parse(req.body);
-      const row = await opportunityStorage.update(id, parsed, currentUserId(req));
+      const row = await opportunityStorage.update(id, parsed, currentPrincipal(req));
       if (!row) return res.status(404).json({ error: "Opportunity not found" });
       publishChanged("update_opportunity");
       res.json(row);
@@ -253,12 +257,65 @@ export function registerExecRoutes(app: Express): void {
     try {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-      const deleted = await opportunityStorage.delete(id, currentUserId(req));
+      const deleted = await opportunityStorage.delete(id, currentPrincipal(req));
       if (!deleted) return res.status(404).json({ error: "Opportunity not found" });
       publishChanged("delete_opportunity");
       res.json({ success: true });
     } catch (err) {
       handleError("DELETE /api/exec/opportunities/:id", err, res);
+    }
+  });
+
+  // ── Opportunity ↔ Person interaction activities ───────────────
+  app.get("/api/exec/opportunities/:id/activities", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+      res.json(await opportunityStorage.listActivities(id, currentPrincipal(req)));
+    } catch (err) {
+      handleError("GET /api/exec/opportunities/:id/activities", err, res);
+    }
+  });
+
+  app.post("/api/exec/opportunities/:id/activities", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+      const input = createOpportunityInteractionSchema.parse(req.body);
+      const activity = await opportunityStorage.createOrLinkActivity(id, input, currentPrincipal(req));
+      publishChanged("create_or_link_opportunity_activity");
+      res.status(201).json(activity);
+    } catch (err) {
+      handleError("POST /api/exec/opportunities/:id/activities", err, res);
+    }
+  });
+
+  app.patch("/api/exec/opportunities/:id/activities/:associationId", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const associationId = parseInt(req.params.associationId, 10);
+      if (isNaN(id) || isNaN(associationId)) return res.status(400).json({ error: "Invalid ID" });
+      const updates = updateOpportunityInteractionSchema.parse(req.body);
+      const activity = await opportunityStorage.updateActivity(id, associationId, updates, currentPrincipal(req));
+      if (!activity) return res.status(404).json({ error: "Activity association not found" });
+      publishChanged("update_opportunity_activity");
+      res.json(activity);
+    } catch (err) {
+      handleError("PATCH /api/exec/opportunities/:id/activities/:associationId", err, res);
+    }
+  });
+
+  app.delete("/api/exec/opportunities/:id/activities/:associationId", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const associationId = parseInt(req.params.associationId, 10);
+      if (isNaN(id) || isNaN(associationId)) return res.status(400).json({ error: "Invalid ID" });
+      const removed = await opportunityStorage.unlinkActivity(id, associationId, currentPrincipal(req));
+      if (!removed) return res.status(404).json({ error: "Activity association not found" });
+      publishChanged("unlink_opportunity_activity");
+      res.json({ success: true });
+    } catch (err) {
+      handleError("DELETE /api/exec/opportunities/:id/activities/:associationId", err, res);
     }
   });
 
@@ -358,7 +415,7 @@ export function registerExecRoutes(app: Express): void {
         return res.status(400).json({ error: `Invalid artifact kind "${req.params.kind}". Valid: ${artifactKinds.join(", ")}` });
       }
 
-      const opportunity = await opportunityStorage.get(id, currentUserId(req));
+      const opportunity = await opportunityStorage.get(id, currentPrincipal(req));
       if (!opportunity) return res.status(404).json({ error: "Opportunity not found" });
 
       // Cover letters and resumes require a job description to target.

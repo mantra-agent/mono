@@ -14199,7 +14199,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
     const { execSkillStorage, execExperienceStorage, execPassionStorage, execMetricsStorage, execEducationStorage } = await import("./exec-storage");
     const { opportunityStorage } = await import("./opportunity-storage");
     const { eventBus } = await import("./event-bus");
-    const { insertExecSkillSchema, insertExecExperienceSchema, insertOpportunitySchema, insertExecPassionSchema } = await import("@shared/schema");
+    const { insertExecSkillSchema, insertExecExperienceSchema, insertOpportunitySchema, insertExecPassionSchema, createOpportunityInteractionSchema, updateOpportunityInteractionSchema } = await import("@shared/schema");
 
     const action = (args.action as string | undefined) || "list_skills";
     const { getCurrentPrincipal } = await import("./principal-context");
@@ -14222,7 +14222,8 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       evInputs?: Record<string, any>; contactPersonId?: string; championPersonId?: string; followUpBy?: string; followUpNote?: string;
       sourceType?: string; sourceSignalId?: string; requiredSkills?: string[];
       statusFilter?: string; typeFilter?: string;
-      opportunityId?: number; skillId?: number; experienceId?: number;
+      opportunityId?: number; skillId?: number; experienceId?: number; associationId?: number;
+      personId?: string; interactionId?: string; date?: string; summary?: string; direction?: string; meaningfulness?: string; responseOwed?: boolean; responseDueBy?: string | null; capitalImpact?: string; tags?: string[];
       content?: string; tier?: string; position?: number; sourceRef?: string;
       jdText?: string; format?: string; jobUrl?: string;
       startDate?: string; endDate?: string; company?: string;
@@ -14413,7 +14414,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           const filters: { status?: string; type?: string } = {};
           if (a.statusFilter) filters.status = a.statusFilter;
           if (a.typeFilter) filters.type = a.typeFilter;
-          const list = await opportunityStorage.listWithSkills(userId, filters);
+          const list = await opportunityStorage.listWithSkills(principal, filters);
           if (list.length === 0) return { result: "No opportunities found." };
           const lines = list.map(o => {
             const ev = o.computedEv != null ? `${Math.round(o.computedEv).toLocaleString()}` : "—";
@@ -14425,7 +14426,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         }
         case "get_opportunity": {
           if (typeof a.id !== "number") return { result: "Missing required: id", error: true };
-          const o = await opportunityStorage.getWithSkills(a.id, userId);
+          const o = await opportunityStorage.getWithSkills(a.id, principal);
           if (!o) return { result: `Opportunity ${a.id} not found`, error: true };
           const artifacts = await opportunityStorage.getArtifacts(a.id);
           const ev = o.computedEv != null ? `${Math.round(o.computedEv).toLocaleString()}` : "—";
@@ -14478,7 +14479,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           if (a.followUpBy !== undefined) fields.followUpBy = a.followUpBy;
           if (a.followUpNote !== undefined) fields.followUpNote = a.followUpNote;
           const parsed = insertOpportunitySchema.parse(fields);
-          const row = await opportunityStorage.create(userId, parsed);
+          const row = await opportunityStorage.create(principal, parsed);
           publish("create_opportunity");
           return { result: `Created opportunity ${row.id} "${row.title}" (EV=${Math.round(row.computedEv ?? 0).toLocaleString()}).` };
         }
@@ -14510,17 +14511,61 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           if (a.followUpNote !== undefined) updates.followUpNote = a.followUpNote;
           if (Object.keys(updates).length === 0) return { result: "No fields to update", error: true };
           const parsed = insertOpportunitySchema.partial().parse(updates);
-          const row = await opportunityStorage.update(a.id, parsed, userId);
+          const row = await opportunityStorage.update(a.id, parsed, principal);
           if (!row) return { result: `Opportunity ${a.id} not found`, error: true };
           publish("update_opportunity");
           return { result: `Updated opportunity ${row.id} "${row.title}" (EV=${Math.round(row.computedEv ?? 0).toLocaleString()}).` };
         }
         case "delete_opportunity": {
           if (typeof a.id !== "number") return { result: "Missing required: id", error: true };
-          const deleted = await opportunityStorage.delete(a.id, userId);
+          const deleted = await opportunityStorage.delete(a.id, principal);
           if (!deleted) return { result: `Opportunity ${a.id} not found`, error: true };
           publish("delete_opportunity");
           return { result: `Deleted opportunity ${a.id}.` };
+        }
+
+        // ── Opportunity ↔ Person interaction activities ───────
+        case "list_opportunity_activities": {
+          const opportunityId = a.opportunityId ?? a.id;
+          if (typeof opportunityId !== "number") return { result: "Missing required: opportunityId (or id)", error: true };
+          const activities = await opportunityStorage.listActivities(opportunityId, principal);
+          if (activities.length === 0) return { result: "No linked activities." };
+          return { result: activities.map(activity => `[${activity.associationId}] ${activity.interaction.date} ${activity.personName}: ${activity.interaction.summary} ${activity.reference}`).join("\n") };
+        }
+        case "create_or_link_opportunity_activity": {
+          const opportunityId = a.opportunityId ?? a.id;
+          if (typeof opportunityId !== "number") return { result: "Missing required: opportunityId (or id)", error: true };
+          const input = createOpportunityInteractionSchema.parse({
+            personId: a.personId, interactionId: a.interactionId, date: a.date, type: a.type,
+            summary: a.summary, context: a.context, direction: a.direction, meaningfulness: a.meaningfulness,
+            responseOwed: a.responseOwed, responseDueBy: a.responseDueBy, capitalImpact: a.capitalImpact, tags: a.tags,
+          });
+          const activity = await opportunityStorage.createOrLinkActivity(opportunityId, input, principal);
+          publish("create_or_link_opportunity_activity");
+          return { result: `Linked activity ${activity.associationId} to opportunity ${opportunityId}: ${activity.reference}` };
+        }
+        case "update_opportunity_activity": {
+          const opportunityId = a.opportunityId ?? a.id;
+          if (typeof opportunityId !== "number") return { result: "Missing required: opportunityId (or id)", error: true };
+          if (typeof a.associationId !== "number") return { result: "Missing required: associationId", error: true };
+          const updates = updateOpportunityInteractionSchema.parse({
+            date: a.date, type: a.type, summary: a.summary, context: a.context, direction: a.direction,
+            meaningfulness: a.meaningfulness, responseOwed: a.responseOwed, responseDueBy: a.responseDueBy,
+            capitalImpact: a.capitalImpact, tags: a.tags,
+          });
+          const activity = await opportunityStorage.updateActivity(opportunityId, a.associationId, updates, principal);
+          if (!activity) return { result: "Activity association not found", error: true };
+          publish("update_opportunity_activity");
+          return { result: `Updated ${activity.reference}.` };
+        }
+        case "unlink_opportunity_activity": {
+          const opportunityId = a.opportunityId ?? a.id;
+          if (typeof opportunityId !== "number") return { result: "Missing required: opportunityId (or id)", error: true };
+          if (typeof a.associationId !== "number") return { result: "Missing required: associationId", error: true };
+          const removed = await opportunityStorage.unlinkActivity(opportunityId, a.associationId, principal);
+          if (!removed) return { result: "Activity association not found", error: true };
+          publish("unlink_opportunity_activity");
+          return { result: `Unlinked activity ${a.associationId} from opportunity ${opportunityId}. The Person interaction was preserved.` };
         }
 
         // ── Opportunity ↔ Skill Linking ────────────────────────
@@ -14696,7 +14741,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
 
         default:
           return {
-            result: `Unknown exec action: ${action}. Available: list_skills, get_skill, create_skill, update_skill, delete_skill, list_experience, get_experience, create_experience, update_experience, delete_experience, link_skill_to_experience, unlink_skill_from_experience, list_opportunities, get_opportunity, create_opportunity, update_opportunity, delete_opportunity, link_skill, unlink_skill, list_passions/list_mission, get_passion/get_mission_item, create_passion/create_mission_item, update_passion/update_mission_item, delete_passion/delete_mission_item, list_metrics, create_metric, update_metric, delete_metric, list_education, create_education, update_education, delete_education, set_artifact, get_opportunity_artifacts, render_artifact_docx`,
+            result: `Unknown exec action: ${action}. Available: list_skills, get_skill, create_skill, update_skill, delete_skill, list_experience, get_experience, create_experience, update_experience, delete_experience, link_skill_to_experience, unlink_skill_from_experience, list_opportunities, get_opportunity, create_opportunity, update_opportunity, delete_opportunity, list_opportunity_activities, create_or_link_opportunity_activity, update_opportunity_activity, unlink_opportunity_activity, link_skill, unlink_skill, list_passions/list_mission, get_passion/get_mission_item, create_passion/create_mission_item, update_passion/update_mission_item, delete_passion/delete_mission_item, list_metrics, create_metric, update_metric, delete_metric, list_education, create_education, update_education, delete_education, set_artifact, get_opportunity_artifacts, render_artifact_docx`,
             error: true,
           };
       }

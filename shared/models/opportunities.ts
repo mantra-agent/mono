@@ -1,4 +1,4 @@
-import { pgTable, text, integer, timestamp, serial, real, boolean, jsonb, unique } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, timestamp, serial, real, boolean, jsonb, unique, index } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -23,6 +23,9 @@ export type CommitmentPeriod = typeof commitmentPeriods[number];
 export const opportunities = pgTable("opportunities", {
   id: serial("id").primaryKey(),
   userId: text("user_id").notNull(),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
   title: text("title").notNull(),
   description: text("description"),
   type: text("type").notNull(),
@@ -49,7 +52,10 @@ export const opportunities = pgTable("opportunities", {
   followUpNote: text("follow_up_note"),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-});
+}, (t) => [
+  index("idx_opportunities_scope_owner").on(t.scope, t.ownerUserId),
+  index("idx_opportunities_account").on(t.accountId),
+]);
 
 export const opportunitySkills = pgTable("opportunity_skills", {
   id: serial("id").primaryKey(),
@@ -59,6 +65,90 @@ export const opportunitySkills = pgTable("opportunity_skills", {
 }, (t) => [
   unique("uq_opportunity_skill").on(t.opportunityId, t.skillId),
 ]);
+
+
+// ── Opportunity activity associations ─────────────────────────────
+// Interactions remain canonical inside the owning Person record. This
+// table stores only the principal-owned many-to-many association.
+export const opportunityInteractions = pgTable("opportunity_interactions", {
+  id: serial("id").primaryKey(),
+  opportunityId: integer("opportunity_id").notNull(),
+  personId: text("person_id").notNull(),
+  interactionId: text("interaction_id").notNull(),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (t) => [
+  unique("uq_opportunity_interaction").on(t.opportunityId, t.personId, t.interactionId),
+  index("idx_opportunity_interactions_opportunity").on(t.opportunityId),
+  index("idx_opportunity_interactions_interaction").on(t.personId, t.interactionId),
+  index("idx_opportunity_interactions_scope_owner").on(t.scope, t.ownerUserId),
+  index("idx_opportunity_interactions_account").on(t.accountId),
+]);
+
+export const interactionTypes = ["message", "call", "meeting", "email", "note", "text", "in_person", "video", "social", "gift", "introduction", "favor", "support"] as const;
+export const interactionDirections = ["inbound", "outbound", "mutual"] as const;
+export const interactionMeaningfulness = ["high", "medium", "low"] as const;
+export const interactionCapitalImpacts = ["deposit", "withdrawal", "neutral"] as const;
+
+export const createOpportunityInteractionSchema = z.object({
+  personId: z.string().min(1),
+  interactionId: z.string().min(1).optional(),
+  date: z.string().min(1).optional(),
+  type: z.enum(interactionTypes).optional(),
+  summary: z.string().min(1).optional(),
+  context: z.string().optional(),
+  direction: z.enum(interactionDirections).optional(),
+  meaningfulness: z.enum(interactionMeaningfulness).optional(),
+  responseOwed: z.boolean().optional(),
+  responseDueBy: z.string().optional().nullable(),
+  capitalImpact: z.enum(interactionCapitalImpacts).optional(),
+  tags: z.array(z.string()).optional(),
+}).superRefine((value, context) => {
+  if (!value.interactionId && !value.summary) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "summary is required when creating a new interaction", path: ["summary"] });
+  }
+});
+
+export const updateOpportunityInteractionSchema = z.object({
+  date: z.string().min(1).optional(),
+  type: z.enum(interactionTypes).optional(),
+  summary: z.string().min(1).optional(),
+  context: z.string().optional(),
+  direction: z.enum(interactionDirections).optional(),
+  meaningfulness: z.enum(interactionMeaningfulness).optional(),
+  responseOwed: z.boolean().optional(),
+  responseDueBy: z.string().optional().nullable(),
+  capitalImpact: z.enum(interactionCapitalImpacts).optional(),
+  tags: z.array(z.string()).optional(),
+});
+
+export type OpportunityInteractionRow = typeof opportunityInteractions.$inferSelect;
+export type CreateOpportunityInteractionInput = z.infer<typeof createOpportunityInteractionSchema>;
+export type UpdateOpportunityInteractionInput = z.infer<typeof updateOpportunityInteractionSchema>;
+
+export interface OpportunityInteractionActivity {
+  associationId: number;
+  opportunityId: number;
+  personId: string;
+  personName: string;
+  interaction: {
+    id: string;
+    date: string;
+    type: string;
+    summary: string;
+    context?: string;
+    direction?: "inbound" | "outbound" | "mutual";
+    meaningfulness?: "high" | "medium" | "low";
+    responseOwed?: boolean;
+    responseDueBy?: string;
+    capitalImpact?: "deposit" | "withdrawal" | "neutral";
+    tags?: string[];
+  };
+  reference: string;
+  createdAt: Date;
+}
 
 // ── Artifact Slots ─────────────────────────────────────────────────
 // Each opportunity has up to one artifact per kind. The slot row maps
@@ -131,6 +221,9 @@ export const insertOpportunitySchema = createInsertSchema(opportunities).omit({
   computedEv: true,
   createdAt: true,
   updatedAt: true,
+  scope: true,
+  ownerUserId: true,
+  accountId: true,
 }).extend({
   title: z.string().min(1),
   type: z.enum(opportunityTypes),

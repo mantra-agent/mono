@@ -98,6 +98,17 @@ export function registerReferenceRoutes(app: Express) {
               if (person) results[key] = person.name;
               break;
             }
+            case "interaction": {
+              const [rawPersonId, rawInteractionId] = id.split("~");
+              if (rawPersonId && rawInteractionId) {
+                const personId = decodeURIComponent(rawPersonId);
+                const interactionId = decodeURIComponent(rawInteractionId);
+                const person = await peopleStorage.getPerson(personId);
+                const interaction = person?.interactions.find(item => item.id === interactionId);
+                if (person && interaction) results[key] = `${person.name}: ${interaction.summary}`;
+              }
+              break;
+            }
             case "page": {
               const pageScope = { ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, scope: libraryPages.scope };
               const matchers = [eq(libraryPages.slug, id), eq(libraryPages.id, id)];

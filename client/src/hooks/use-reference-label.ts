@@ -15,7 +15,7 @@ export function useReferenceLabel(
   const looksUnresolved =
     staticLabel === id ||
     /^\d+$/.test(staticLabel) ||
-    /^(Task|Project|Milestone|Intention|Event|Session) \S+$/.test(staticLabel);
+    /^(Task|Project|Milestone|Intention|Event|Session|Interaction) \S+$/.test(staticLabel);
 
   const { data } = useQuery<string>({
     queryKey: ["reference-label", type, id],

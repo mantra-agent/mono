@@ -1,6 +1,7 @@
 export const REFERENCE_TYPES = [
   "page",
   "person",
+  "interaction",
   "goal",
   "task",
   "project",
