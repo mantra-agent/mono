@@ -14,10 +14,14 @@ function InboxItemInline({ item }: { item: SimpleFeedItem }) {
   const completed = item.status === "completed";
   const showKind = kind && kind !== "email_review";
 
-  const inner = (
+  const inner = completed ? (
+    <span className="inline-flex min-w-0 max-w-full truncate text-xs font-medium text-neutral line-through transition-all duration-200">
+      {item.title}
+    </span>
+  ) : (
     <div className="flex items-center gap-2">
       <Inbox className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      <span className={cn("truncate text-sm font-medium", completed && "text-neutral line-through decoration-neutral/60")}>{item.title}</span>
+      <span className="truncate text-sm font-medium">{item.title}</span>
       {showKind && <span className="shrink-0 text-xs text-muted-foreground capitalize">{kind.replace(/_/g, " ")}</span>}
     </div>
   );
