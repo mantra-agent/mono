@@ -7,8 +7,6 @@ export type { EvaluatedLink } from "./graph-discovery";
 export { cosineSimilarity, walkGraph } from "./graph-walker";
 export type { RankedEntry, WalkGraphOptions } from "./graph-walker";
 export { unifiedMemorySearch } from "./unified-search";
-export { semanticSeedSearch } from "./semantic-seed-search";
-export type { SemanticSeedSearchOptions, SemanticSeedSearchResult } from "./semantic-seed-search";
 export type { UnifiedSearchOptions, UnifiedSearchResult } from "./unified-search";
 export { registerMemoryListener } from "./memory-listener";
 export { registerMemoryRoutes } from "./memory-routes";

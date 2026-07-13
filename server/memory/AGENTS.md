@@ -133,19 +133,19 @@ The `memory.graph` context section uses tiered context assembly instead of flat 
 ```
 persona cognitiveOverrides.memoryGraphTokenBudget (default 4000)
   → build focus text from session context
-  → semanticSeedSearch() — single pgvector cosine query, limit 80, 450ms timeout
-  → parallel: getLayer("short", 5) recency seeds
-  → deduplicate seeds
-  → score: causal (graph walk), contrastive (contradicts/evolves), temporal (±3 days)
-  → source-backed boost (entries with memory_sources rows)
+  → retrieveVnextContext() — pgvector semantic search over memory_vnext_claims
+  → blend signals: semantic, causal (claim links), contrastive, temporal
   → modulateWeights() by session type + emotional state
   → allocateTiers() greedy knapsack → Signal/Detail/Full
-  → renderTieredEntry() per tier
+  → renderVnextContext() per tier
 ```
+
+vNext-only. No legacy `memory_entries` fallback — retrieval errors return "Graph memory temporarily unavailable."; empty results render empty. Short/mid/long layer sections were removed from context assembly entirely.
 
 **Key files:**
 - `server/context-builder.ts` — `resolveGraphMemory()`, `getMemoryGraphTokenBudget()`, `allocateTiers()`, `renderTieredEntry()`
-- `server/memory/semantic-seed-search.ts` — `semanticSeedSearch()` unified vector retrieval
+- `server/memory/vnext-context-retrieval.ts` — `retrieveVnextContext()` blend scoring over claims
+- `server/memory/vnext-claim-storage.ts` — semantic claim search + canonical `mapRawVnextClaimRow()` mapper
 - `server/memory/associative-retrieval.ts` — `modulateWeights()`, `detectSessionType()`, `BLEND_WEIGHTS`
 
 **Tiers:**

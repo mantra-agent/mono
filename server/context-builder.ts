@@ -39,7 +39,6 @@ import { listGmailAccounts } from "./gmail";
 import { getJournalEntriesSince } from "./thoughts";
 import { getRecentThoughts } from "./thoughts";
 import { CAUSAL_RELATIONSHIP_TYPES, detectSessionType, BLEND_WEIGHTS, modulateWeights } from "./memory/associative-retrieval";
-import { semanticSeedSearch } from "./memory/semantic-seed-search";
 import { getSkillDefinitionsForContext, getToolSchemas } from "./tool-registry";
 import { withTimeout, isTimeoutError, SECTION_RESOLVE_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";
@@ -239,9 +238,6 @@ const sectionResolvers: Record<string, SectionResolver> = {
   "world_model.calendar": resolveCalendar,
   "memory": async () => "",
   "memory.recent_sessions": resolveRecentSessions,
-  "memory.short_term": resolveShortTermMemory,
-  "memory.mid_term": resolveMidTermMemory,
-  "memory.long_term": resolveLongTermMemory,
   "memory.graph": resolveGraphMemory,
   "session_context": resolveSessionContext,
   "thoughts": resolveThoughts,
@@ -368,9 +364,6 @@ const SECTION_CATALOG: Record<string, { description: string; recommendedFor: str
   "world_model.active_work.projects": { description: "Active projects with milestones", recommendedFor: "planning, review", tokenCost: "small" },
   "world_model.decisions": { description: "Open strategic decisions", recommendedFor: "strategy, decision-making", tokenCost: "small" },
   "memory": { description: "Memory wrapper (enables all memory sub-sections)", recommendedFor: "conversations", tokenCost: "small" },
-  "memory.short_term": { description: "Recent exchanges and observations", recommendedFor: "conversations (continuity)", tokenCost: "large" },
-  "memory.mid_term": { description: "Working knowledge from recent activity", recommendedFor: "conversations (context)", tokenCost: "large" },
-  "memory.long_term": { description: "Deep knowledge and extracted patterns", recommendedFor: "conversations, coaching", tokenCost: "large" },
   "memory.graph": { description: "Semantically linked memory entries", recommendedFor: "conversations", tokenCost: "medium" },
   "memory.recent_sessions": { description: "Recent session titles and topics (artifact dedup)", recommendedFor: "conversations", tokenCost: "medium" },
   "session_context": { description: "Current session metadata and history", recommendedFor: "conversations", tokenCost: "medium" },
@@ -1434,19 +1427,6 @@ async function resolveRecentSessions(): Promise<string> {
   }
 }
 
-async function resolveShortTermMemory(): Promise<string> {
-  return "Recent exchanges and observations.";
-}
-
-function getEntryTitle(
-  e: { id: number; title: string | null; content: string },
-  options?: { libraryTitle?: string | null }
-): string {
-  const libraryTitle = (options?.libraryTitle || "").trim();
-  const raw = (e.title || libraryTitle || e.content.slice(0, 50).replace(/\n/g, " ").trim() || `Entry ${e.id}`).slice(0, 80);
-  return raw.replace(/"/g, "'");
-}
-
 const SUMMARY_MISSING_MARKER = "[Summary missing — pending re-enrichment]";
 const MAX_CONTEXT_SUMMARY_LENGTH = 2000; // Safety cap for rendered summaries — full data stays in DB
 
@@ -1465,33 +1445,6 @@ function memoryConfidence(e: { metadata: unknown }): number {
   return Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0.7;
 }
 
-function memoryStageWeight(e: { integrationStage?: string | null; layer: string }): number {
-  switch (e.integrationStage) {
-    case "stage_4": return 1.25;
-    case "stage_3": return 1.18;
-    case "stage_2": return 1.1;
-    case "stage_1": return 0.95;
-    case "stage_0": return 0.75;
-    default: return e.layer === "long" ? 1.15 : e.layer === "mid" ? 1.05 : 0.9;
-  }
-}
-
-function memoryProcessedFreshness(e: { processedAt?: Date | null; createdAt: Date }): number {
-  const basis = e.processedAt ?? e.createdAt;
-  const ageDays = Math.max(0, (Date.now() - new Date(basis).getTime()) / 86_400_000);
-  return 0.85 + 0.25 / (1 + ageDays / 90);
-}
-
-function isDefaultRawMemorySource(e: { source: string; sourceId: string | null; tags: string[] | null; metadata: unknown; integrationStage?: string | null; layer: string }): boolean {
-  const meta = (e.metadata || {}) as Record<string, unknown>;
-  if (meta.mirrorKind === "session_summary") return false;
-  if (e.source === "chat" || e.source === "voice_session") return true;
-  if (e.source === "conversation") {
-    return String(e.sourceId || "").startsWith("exchange-") || ((e.tags || []) as string[]).includes("exchange");
-  }
-  return e.integrationStage === "stage_0" && e.layer === "short";
-}
-
 function hasExchangeDerivedSignal(e: { sourceId: string | null; tags: string[] | null; metadata: unknown }): boolean {
   const meta = (e.metadata || {}) as Record<string, unknown>;
   const sourceId = String(e.sourceId || "");
@@ -1501,17 +1454,6 @@ function hasExchangeDerivedSignal(e: { sourceId: string | null; tags: string[] |
     || String(meta.sourceId || "").startsWith("exchange-")
     || String(meta.sessionId || "").startsWith("exchange-")
     || String(meta.mirrorKind || "") === "exchange";
-}
-
-function isLegacyBeliefGarbage(e: { source: string; sourceId: string | null; tags: string[] | null; metadata: unknown; content?: string | null; summary?: string | null; title?: string | null }): boolean {
-  if (e.source !== "belief") return false;
-  const text = `${e.title || ""}
-${e.summary || ""}
-${e.content || ""}`;
-  return hasExchangeDerivedSignal(e)
-    || /\[(?:User|Assistant|Tool Result)\]/i.test(text)
-    || /<(?:turn|entry)\b/i.test(text)
-    || /^Belief:?\s*$/i.test((e.title || "").trim());
 }
 
 function isSourceBackedVNextMemory(e: { integrationStage?: string | null; title?: string | null; summary?: string | null; tags?: string[] | null }, refs: ContextSourceRef[]): boolean {
@@ -1527,50 +1469,6 @@ function isSourceBackedVNextMemory(e: { integrationStage?: string | null; title?
 
 function contextMemoryText(e: { summary: string | null; oneLiner: string | null; content: string }): string {
   return (e.summary || "").trim() || (e.oneLiner || "").trim() || sanitizeSummary(e.content || "").slice(0, MAX_CONTEXT_SUMMARY_LENGTH) || SUMMARY_MISSING_MARKER;
-}
-
-async function fetchTopSourceRefsForEntries(ids: number[]): Promise<Map<number, ContextSourceRef[]>> {
-  if (ids.length === 0) return new Map();
-  try {
-    const rows = await db
-      .select({
-        memoryId: memorySourceRefs.memoryId,
-        sourceType: memorySourceRefs.sourceType,
-        sourceId: memorySourceRefs.sourceId,
-        relationship: memorySourceRefs.relationship,
-        strength: memorySourceRefs.strength,
-        context: memorySourceRefs.context,
-      })
-      .from(memorySourceRefs)
-      .where(inArray(memorySourceRefs.memoryId, ids));
-    const map = new Map<number, ContextSourceRef[]>();
-    for (const row of rows) {
-      const refs = map.get(row.memoryId) ?? [];
-      refs.push({
-        sourceType: row.sourceType,
-        sourceId: row.sourceId,
-        relationship: row.relationship,
-        strength: Number(row.strength ?? 0),
-        context: row.context || "",
-      });
-      map.set(row.memoryId, refs);
-    }
-    for (const refs of map.values()) refs.sort((a, b) => b.strength - a.strength);
-    return map;
-  } catch (err) {
-    log.warn(`fetchTopSourceRefsForEntries failed: ${err instanceof Error ? err.message : String(err)}`);
-    return new Map();
-  }
-}
-
-function rankContextMemories<T extends { metadata: unknown; integrationStage?: string | null; layer: string; processedAt?: Date | null; createdAt: Date; id: number }>(entries: T[], sourceRefs: Map<number, ContextSourceRef[]>): T[] {
-  return [...entries].sort((a, b) => {
-    const score = (e: T) => {
-      const sourceStrength = Math.max(0, ...(sourceRefs.get(e.id) ?? []).map(ref => ref.strength));
-      return memoryStageWeight(e) * (0.75 + memoryConfidence(e) * 0.35) * memoryProcessedFreshness(e) * (0.9 + Math.min(1, sourceStrength) * 0.2);
-    };
-    return score(b) - score(a);
-  });
 }
 
 function formatSourceRefs(refs: ContextSourceRef[]): string {
@@ -1606,153 +1504,10 @@ function isConsequentialMemory(e: { integrationStage?: string | null; layer: str
   return e.integrationStage === "stage_3" || e.integrationStage === "stage_4" || e.layer === "long" || memoryConfidence(e) >= 0.85 || refs.some(ref => ref.strength >= 0.8);
 }
 
-async function fetchLibraryTitlesForEntries(
-  entries: Array<{ source: string; sourceId: string | null }>
-): Promise<Map<string, string>> {
-  const ids = entries
-    .filter(e => e.source === "library" && e.sourceId)
-    .map(e => e.sourceId as string);
-  if (ids.length === 0) return new Map();
-  try {
-    const { libraryPages } = await import("@shared/models/info");
-    const rows = await db
-      .select({ id: libraryPages.id, title: libraryPages.title })
-      .from(libraryPages)
-      .where(inArray(libraryPages.id, ids));
-    return new Map(rows.map(r => [r.id, r.title || ""]));
-  } catch (err) {
-    log.warn(`fetchLibraryTitlesForEntries failed: ${err instanceof Error ? err.message : String(err)}`);
-    return new Map();
-  }
-}
-
-async function injectMemoryEntryChildren(sections: ResolvedSection[], activeSessionId?: string): Promise<void> {
-  const now = new Date().toISOString();
-  const tz = getTimezone();
-  const timeOpts = { month: "2-digit" as const, day: "2-digit" as const, year: "numeric" as const, hour: "2-digit" as const, minute: "2-digit" as const };
-  const activeExchangeSourceId = activeSessionId ? `exchange-${activeSessionId}` : null;
-  for (const section of sections) {
-    if (section.id === "memory.short_term") {
-      try {
-        const entries = await memoryStorage.getLayer("short", MEMORY_THRESHOLDS.SHORT_ENTRIES_IN_CONTEXT, 0);
-        const libraryTitles = await fetchLibraryTitlesForEntries(entries);
-        for (let i = 0; i < entries.length; i++) {
-          const e = entries[i];
-          if (activeExchangeSourceId && e.sourceId === activeExchangeSourceId) {
-            log.verbose(() => `Dedup: skipping short-term entry #${e.id} (sourceId=${e.sourceId}) — active conversation already in message history`);
-            continue;
-          }
-          const libTitle = e.source === "library" && e.sourceId ? libraryTitles.get(e.sourceId) ?? null : null;
-          const title = getEntryTitle(e, { libraryTitle: libTitle });
-          const ts = formatInTimezone(e.createdAt, timeOpts);
-          section.children.push({
-            id: `memory.short_term.${e.id}`,
-            title: `#${e.id} ${title} (${ts})`,
-            parentId: "memory.short_term",
-            sourceType: "dynamic",
-            freshnessPolicy: "real-time",
-            priority: i + 1,
-            enabled: true,
-            content: e.content,
-            tokenCount: estimateTokens(e.content),
-            resolvedAt: now,
-            children: [],
-          });
-        }
-      } catch (err) { log.warn(`resolveMemorySections short_term failed: ${safeStringify(err, { maxBytes: 4 * 1024, label: "ctx.resolveMemorySections.short.err" })}`); }
-    } else if (section.id === "memory.mid_term") {
-      try {
-        const rawEntries = await memoryStorage.getLayer("mid", Math.max(50, MEMORY_THRESHOLDS.MID_ENTRIES_IN_CONTEXT * 4), 0);
-        const sourceRefs = await fetchTopSourceRefsForEntries(rawEntries.map(e => e.id));
-        const eligible = rawEntries.filter(e => !isDefaultRawMemorySource(e) && !isLegacyBeliefGarbage(e));
-        const vNext = eligible.filter(e => isSourceBackedVNextMemory(e, sourceRefs.get(e.id) ?? []));
-        const fallback = eligible.filter(e => !isSourceBackedVNextMemory(e, sourceRefs.get(e.id) ?? []));
-        const entries = [
-          ...rankContextMemories(vNext, sourceRefs),
-          ...rankContextMemories(fallback, sourceRefs),
-        ].slice(0, MEMORY_THRESHOLDS.MID_ENTRIES_IN_CONTEXT);
-        const libraryTitles = await fetchLibraryTitlesForEntries(entries);
-        for (let i = 0; i < entries.length; i++) {
-          const e = entries[i];
-          const libTitle = e.source === "library" && e.sourceId ? libraryTitles.get(e.sourceId) ?? null : null;
-          const title = getEntryTitle(e, { libraryTitle: libTitle });
-          const ts = formatInTimezone(e.createdAt, timeOpts);
-          const refs = sourceRefs.get(e.id) ?? [];
-          const text = renderContextMemory(e, refs);
-          section.children.push({
-            id: `memory.mid_term.${e.id}`,
-            title: `#${e.id} ${title} (${ts})`,
-            parentId: "memory.mid_term",
-            sourceType: "dynamic",
-            freshnessPolicy: "per-session",
-            priority: i + 1,
-            enabled: true,
-            content: text,
-            tokenCount: estimateTokens(text),
-            resolvedAt: now,
-            children: [],
-          });
-        }
-      } catch (err) { log.warn(`resolveMemorySections mid_term failed: ${safeStringify(err, { maxBytes: 4 * 1024, label: "ctx.resolveMemorySections.mid.err" })}`); }
-    } else if (section.id === "memory.long_term") {
-      try {
-        const longEntries = await memoryStorage.getLayer("long", 80, 0);
-        const sourceRefs = await fetchTopSourceRefsForEntries(longEntries.map(e => e.id));
-        const eligible = longEntries.filter(e => !e.graphed && !isDefaultRawMemorySource(e) && !isLegacyBeliefGarbage(e));
-        const vNext = eligible.filter(e => isSourceBackedVNextMemory(e, sourceRefs.get(e.id) ?? []));
-        const fallback = eligible.filter(e => !isSourceBackedVNextMemory(e, sourceRefs.get(e.id) ?? []));
-        const filtered = [
-          ...rankContextMemories(vNext, sourceRefs),
-          ...rankContextMemories(fallback, sourceRefs),
-        ].slice(0, 20);
-        const libraryTitles = await fetchLibraryTitlesForEntries(filtered);
-        let priority = 1;
-        for (const e of filtered) {
-          const libTitle = e.source === "library" && e.sourceId ? libraryTitles.get(e.sourceId) ?? null : null;
-          const title = getEntryTitle(e, { libraryTitle: libTitle });
-          const ts = formatInTimezone(e.createdAt, timeOpts);
-          const refs = sourceRefs.get(e.id) ?? [];
-          const text = renderContextMemory(e, refs);
-          section.children.push({
-            id: `memory.long_term.${e.id}`,
-            title: `#${e.id} ${title} (${ts})`,
-            parentId: "memory.long_term",
-            sourceType: "dynamic",
-            freshnessPolicy: "per-session",
-            priority: priority++,
-            enabled: true,
-            content: text,
-            tokenCount: estimateTokens(text),
-            resolvedAt: now,
-            children: [],
-          });
-        }
-      } catch (err) { log.warn(`resolveMemorySections long_term failed: ${safeStringify(err, { maxBytes: 4 * 1024, label: "ctx.resolveMemorySections.long.err" })}`); }
-    }
-    if (section.children.length > 0) {
-      await injectMemoryEntryChildren(section.children, activeSessionId);
-    }
-  }
-}
-
 function escapeXmlAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, " ");
 }
 
-
-async function resolveMidTermMemory(): Promise<string> {
-  return "Working knowledge consolidated from recent activity.";
-}
-
-async function resolveLongTermMemory(): Promise<string> {
-  try {
-    const longEntries = await memoryStorage.getLayer("long", 1, 0);
-    if (longEntries.length === 0) {
-      return "Empty.";
-    }
-  } catch (err) { log.warn(`resolveLongTermMemory failed: ${safeStringify(err, { maxBytes: 4 * 1024, label: "ctx.resolveLongTermMemory.err" })}`); }
-  return "Deep knowledge and extracted patterns.";
-}
 
 async function resolveSessionContext(request: ContextRequest): Promise<string> {
   if (!request.sessionId) return "No active session.";
@@ -1791,7 +1546,6 @@ async function resolveSessionContext(request: ContextRequest): Promise<string> {
 }
 
 const GRAPH_MEMORY_CACHE_TTL_MS = 5 * 60 * 1000;
-const GRAPH_SEMANTIC_SEED_TIMEOUT_MS = 500;
 const _graphMemoryCache = new TTLCache<string>("GraphMemory", GRAPH_MEMORY_CACHE_TTL_MS);
 
 function getQueryHash(query: string): string {
@@ -1903,544 +1657,6 @@ async function getMemoryGraphTokenBudget(): Promise<number> {
   return DEFAULT_MEMORY_GRAPH_TOKEN_BUDGET;
 }
 
-interface CacheSignalEntry {
-  id: number;
-  score: number;
-  source: ("causal" | "contrastive" | "temporal")[];
-  hop?: number;
-  relationshipType?: string;
-}
-
-function scoreCausalFromCache(
-  seeds: import("@shared/schema").MemoryEntry[],
-  getNeighborhoodCacheFn: (e: import("@shared/schema").MemoryEntry) => import("@shared/schema").NeighborhoodCache | null,
-  causalRelTypes: string[]
-): CacheSignalEntry[] {
-  const results = new Map<number, CacheSignalEntry>();
-  const seedIds = new Set(seeds.map(s => s.id));
-  const HOP_DECAY = 0.6;
-
-  for (const seed of seeds) {
-    const cache = getNeighborhoodCacheFn(seed);
-    if (!cache) continue;
-
-    for (const neighbor of cache.entries) {
-      if (seedIds.has(neighbor.id)) continue;
-      if (!causalRelTypes.includes(neighbor.relationshipType)) continue;
-
-      const hopDecay = Math.pow(HOP_DECAY, neighbor.hop);
-      const score = neighbor.strength * hopDecay;
-
-      const existing = results.get(neighbor.id);
-      if (!existing || score > existing.score) {
-        results.set(neighbor.id, {
-          id: neighbor.id,
-          score,
-          source: ["causal"],
-          hop: neighbor.hop,
-          relationshipType: neighbor.relationshipType,
-        });
-      }
-    }
-  }
-
-  return Array.from(results.values());
-}
-
-function scoreContrastiveFromCache(
-  seeds: import("@shared/schema").MemoryEntry[],
-  getNeighborhoodCacheFn: (e: import("@shared/schema").MemoryEntry) => import("@shared/schema").NeighborhoodCache | null
-): CacheSignalEntry[] {
-  const results = new Map<number, CacheSignalEntry>();
-  const seedIds = new Set(seeds.map(s => s.id));
-
-  const allSeedTags = new Set<string>();
-  for (const seed of seeds) {
-    for (const tag of ((seed.tags || []) as string[])) {
-      allSeedTags.add(tag.toLowerCase());
-    }
-  }
-
-  for (const seed of seeds) {
-    const cache = getNeighborhoodCacheFn(seed);
-    if (!cache) continue;
-
-    for (const neighbor of cache.entries) {
-      if (seedIds.has(neighbor.id)) continue;
-
-      const isContradictOrEvolves = neighbor.relationshipType === "contradicts" || neighbor.relationshipType === "evolves";
-
-      const neighborTags = new Set((neighbor.tags || []).map((t: string) => t.toLowerCase()));
-      let intersection = 0;
-      for (const t of allSeedTags) {
-        if (neighborTags.has(t)) intersection++;
-      }
-      const union = new Set([...allSeedTags, ...neighborTags]).size;
-      const jaccard = union > 0 ? intersection / union : 0;
-
-      let score = 0;
-      if (isContradictOrEvolves) {
-        score = Math.max(0.5, jaccard) * neighbor.strength;
-      } else if (jaccard > 0.1) {
-        score = jaccard * neighbor.strength * 0.5;
-      }
-
-      if (score <= 0) continue;
-
-      const existing = results.get(neighbor.id);
-      if (!existing || score > existing.score) {
-        results.set(neighbor.id, {
-          id: neighbor.id,
-          score,
-          source: ["contrastive"],
-          hop: neighbor.hop,
-          relationshipType: neighbor.relationshipType,
-        });
-      }
-    }
-  }
-
-  return Array.from(results.values());
-}
-
-async function queryTemporalNeighbors(seeds: import("@shared/schema").MemoryEntry[]): Promise<CacheSignalEntry[]> {
-  if (seeds.length === 0) return [];
-
-  const seedIds = new Set(seeds.map(s => s.id));
-  const TEMPORAL_WINDOW_DAYS = 3;
-  const windowMs = TEMPORAL_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-
-  const windowClauses = seeds.slice(0, 5).map(s => {
-    const lo = new Date(s.createdAt.getTime() - windowMs);
-    const hi = new Date(s.createdAt.getTime() + windowMs);
-    return sql`(${memoryEntries.createdAt} >= ${lo} AND ${memoryEntries.createdAt} <= ${hi})`;
-  });
-
-  const rows = await db.select({
-    id: memoryEntries.id,
-    createdAt: memoryEntries.createdAt,
-  }).from(memoryEntries).where(
-    and(
-      sql`/* context:graph:temporal */ TRUE`,
-      or(eq(memoryEntries.layer, "mid"), eq(memoryEntries.layer, "long")),
-      or(...windowClauses),
-    )
-  ).orderBy(desc(memoryEntries.createdAt)).limit(30);
-
-  const results: CacheSignalEntry[] = [];
-  for (const row of rows) {
-    if (seedIds.has(row.id)) continue;
-
-    let bestProximity = 0;
-    for (const seed of seeds) {
-      const diffMs = Math.abs(seed.createdAt.getTime() - row.createdAt.getTime());
-      if (diffMs > windowMs) continue;
-      const proximity = 1 / (1 + diffMs / 1000 / 86400);
-      if (proximity > bestProximity) bestProximity = proximity;
-    }
-
-    if (bestProximity > 0.05) {
-      results.push({
-        id: row.id,
-        score: bestProximity,
-        source: ["temporal"],
-      });
-    }
-  }
-
-  return results;
-}
-
-function blendCacheSignals(
-  causal: CacheSignalEntry[],
-  contrastive: CacheSignalEntry[],
-  temporal: CacheSignalEntry[],
-  weights: import("./memory/associative-retrieval").BlendWeights
-): Map<number, { score: number; sources: string[] }> {
-
-  const merged = new Map<number, { causal: number; contrastive: number; temporal: number; sources: Set<string> }>();
-
-  const upsert = (entries: CacheSignalEntry[], signal: "causal" | "contrastive" | "temporal") => {
-    for (const e of entries) {
-      const existing = merged.get(e.id);
-      if (existing) {
-        existing[signal] = Math.max(existing[signal], e.score);
-        existing.sources.add(signal);
-      } else {
-        merged.set(e.id, { causal: 0, contrastive: 0, temporal: 0, sources: new Set([signal]), [signal]: e.score });
-      }
-    }
-  };
-
-  upsert(causal, "causal");
-  upsert(contrastive, "contrastive");
-  upsert(temporal, "temporal");
-
-  const allCausal = Array.from(merged.values()).map(m => m.causal);
-  const allContrastive = Array.from(merged.values()).map(m => m.contrastive);
-  const allTemporal = Array.from(merged.values()).map(m => m.temporal);
-  const maxCausal = Math.max(...allCausal, 0.001);
-  const maxContrastive = Math.max(...allContrastive, 0.001);
-  const maxTemporal = Math.max(...allTemporal, 0.001);
-
-  // Renormalize the 3 graph-only weights so scores use the full 0-1 range.
-  // The shared BlendWeights include a semantic component (~0.40) that the graph
-  // resolver doesn't use. Without renormalization, max possible score is ~0.58,
-  // compressing meaningful differences and making thresholds unintuitive.
-  const graphSum = weights.causal + weights.contrastive + weights.temporal || 1;
-  const wCausal = weights.causal / graphSum;
-  const wContrastive = weights.contrastive / graphSum;
-  const wTemporal = weights.temporal / graphSum;
-
-  const result = new Map<number, { score: number; sources: string[] }>();
-  for (const [id, m] of merged) {
-    const score =
-      wCausal * (m.causal / maxCausal) +
-      wContrastive * (m.contrastive / maxContrastive) +
-      wTemporal * (m.temporal / maxTemporal);
-    result.set(id, { score, sources: Array.from(m.sources) });
-  }
-
-  return result;
-}
-
-async function resolveLegacyGraphMemory(request: ContextRequest): Promise<string> {
-  const start = Date.now();
-  try {
-    let focusText = "";
-    let focusSource = "none";
-
-    if (request.sessionId) {
-      try {
-        const conv = await chatFileStorage.getSession(request.sessionId);
-        if (conv) {
-          const sessionParts: string[] = [];
-          if (conv.title && conv.title !== "New Session" && conv.title !== "New Chat") {
-            sessionParts.push(conv.title);
-          }
-          if (conv.topics && conv.topics.length > 0) {
-            sessionParts.push(conv.topics.join(" "));
-          }
-          if (sessionParts.length > 0) {
-            focusText = sessionParts.join(" ") + "\n";
-            focusSource = "sessionMeta";
-          }
-        }
-      } catch {
-      }
-    }
-
-    if (request.memoryQuery) {
-      focusText += request.memoryQuery.slice(0, 1000);
-      focusSource = focusSource === "sessionMeta" ? "sessionMeta+memoryQuery" : "memoryQuery";
-    } else {
-      // Current message dominates the focus text so mid-conversation topic pivots
-      // actually shift the graph. Session metadata and history provide arc context
-      // but must not drown out what the user just said.
-      if (request.currentMessage) {
-        const msg = request.currentMessage.slice(0, 1000);
-        // Prepend currentMessage before session metadata so it anchors the embedding.
-        focusText = msg + "\n" + focusText;
-        focusSource = focusSource === "sessionMeta" ? "currentMessage+sessionMeta" : "currentMessage";
-      }
-      if (request.conversationHistory && request.conversationHistory.length > 0) {
-        const recentMessages = request.conversationHistory.slice(-3);
-        const historyText = recentMessages.map(m => m.content).join("\n").slice(-300);
-        focusText += (focusText ? "\n" : "") + historyText;
-        focusSource = focusSource.includes("currentMessage") ? focusSource + "+history" :
-          focusSource === "sessionMeta" ? "sessionMeta+conversationHistory" : "conversationHistory";
-      }
-      // Last resort: fetch from storage when neither currentMessage nor history are available.
-      if (!request.currentMessage && (!request.conversationHistory || request.conversationHistory.length === 0) && request.sessionId) {
-        try {
-          const storedMessages = await chatFileStorage.getMessagesBySession(request.sessionId);
-          if (storedMessages.length > 0) {
-            const recentStored = storedMessages.slice(-3);
-            focusText += recentStored.map(m => m.content || "").join("\n").slice(-500);
-            focusSource = focusSource === "sessionMeta" ? "sessionMeta+storedMessages" : "storedMessages";
-          }
-        } catch {
-          // storage read failed — continue without
-        }
-      }
-    }
-
-    if (!focusText) {
-      log.verbose(() => `resolveGraphMemory: no focus text (source=${focusSource}) — returning empty`);
-      return "";
-    }
-
-    log.verbose(() => `resolveGraphMemory START source=${focusSource} focusText="${focusText.slice(0, 80)}${focusText.length > 80 ? "..." : ""}"`);
-
-        // Read persona-driven token budget for tiered rendering
-    const tokenBudget = await getMemoryGraphTokenBudget();
-    const queryHash = `${contextPrincipalKey()}::${getQueryHash(focusText)}::${tokenBudget}`;
-    const cached = _graphMemoryCache.get(queryHash);
-    if (cached !== undefined) {
-      log.verbose(() => `resolveGraphMemory: cache hit hash=${queryHash.slice(0, 8)}`);
-      return cached;
-    }
-
-    // Load seed entries from two sources:
-    // 1. Recency: small set of most recent short-term entries (ensures very recent context)
-    // 2. Semantic: unified vector search across ALL layers using focusText
-    // Combined seeds let the graph traverse from both recent AND topically relevant memories.
-    const seedStart = Date.now();
-    const semanticSeedPromise = focusText
-      ? withTimeout(
-          semanticSeedSearch({
-            query: focusText,
-            limit: 80,
-            queryTag: "graph:semantic-seed",
-          }),
-          GRAPH_SEMANTIC_SEED_TIMEOUT_MS,
-          "memory.graph semantic seed search",
-        ).catch(err => {
-          if (isTimeoutError(err)) {
-            log.warn(`resolveGraphMemory semantic seed search timed out after ${GRAPH_SEMANTIC_SEED_TIMEOUT_MS}ms; falling back to recency seeds`);
-          } else {
-            log.warn(`resolveGraphMemory semantic seed search failed: ${err instanceof Error ? err.message : String(err)}`);
-          }
-          return [] as Awaited<ReturnType<typeof semanticSeedSearch>>;
-        })
-      : Promise.resolve([] as Awaited<ReturnType<typeof semanticSeedSearch>>);
-
-    // Small recency seed ensures very recent memories surface even without embeddings
-    const [recencyEntries, semanticResults] = await Promise.all([
-      memoryStorage.getLayer("short", RECENCY_SEED_COUNT, 0),
-      semanticSeedPromise,
-    ]);
-    // Deduplicate: recency seeds take priority, semantic adds novel entries
-    const seenIds = new Set<number>();
-    const recencySeeds = recencyEntries;
-    for (const s of recencySeeds) seenIds.add(s.id);
-    const semanticSeeds = semanticResults
-      .map(r => r.entry)
-      .filter(e => !seenIds.has(e.id));
-    // Preserve semantic scores for direct inclusion in output —
-    // seeds are systematically excluded by graph traversal (causal/contrastive/temporal
-    // skip seed IDs), so without this, the most topically relevant memories get thrown away.
-    const semanticScoreMap = new Map<number, number>();
-    for (const r of semanticResults) {
-      semanticScoreMap.set(r.entry.id, r.score);
-    }
-    const allSeeds = [...recencySeeds, ...semanticSeeds];
-    const seedMs = Date.now() - seedStart;
-    // Always log seed pipeline diagnostics (not verbose) so we can trace graph behavior
-    log.log(`[GraphMemory] focusText="${focusText.slice(0, 120)}${focusText.length > 120 ? "..." : ""}" focusSource=${focusSource}`);
-    log.log(`[GraphMemory] seeds: recency=${recencySeeds.length} semanticRaw=${semanticResults.length} semanticNovel=${semanticSeeds.length} total=${allSeeds.length} elapsed=${seedMs}ms`);
-    if (semanticResults.length > 0) {
-      const topSemantic = semanticResults.slice(0, 5).map(r => `#${r.entry.id}(${r.score.toFixed(3)},"${(r.entry.title || r.entry.oneLiner || "").slice(0, 40)}")`);
-      log.log(`[GraphMemory] semanticResults top5: ${topSemantic.join(", ")}`);
-    }
-    if (semanticScoreMap.size > 0) {
-      const scoreEntries = Array.from(semanticScoreMap.entries()).map(([id, s]) => `#${id}=${s.toFixed(3)}`);
-      log.log(`[GraphMemory] semanticScoreMap: ${scoreEntries.join(", ")}`);
-    }
-
-    if (allSeeds.length === 0) {
-      log.verbose(() => `resolveGraphMemory DONE no seeds elapsed=${Date.now() - start}ms`);
-      return "No matching memories found.";
-    }
-
-    let cacheMissCount = 0;
-    for (const seed of allSeeds) {
-      if (!getNeighborhoodCache(seed)) cacheMissCount++;
-    }
-    if (cacheMissCount > 0) {
-      log.verbose(() => `resolveGraphMemory: ${cacheMissCount}/${allSeeds.length} seed entries had no neighborhood cache — contributing only temporal signal`);
-    }
-
-    const sessionTopics: string[] = [];
-    if (request.sessionId) {
-      try {
-        const conv = await chatFileStorage.getSession(request.sessionId);
-        if (conv?.topics) sessionTopics.push(...conv.topics);
-      } catch (err) { log.warn(`resolveGraphMemory session topics fetch failed: ${err instanceof Error ? err.message : String(err)}`); }
-    }
-
-    const detection = detectSessionType(focusText + " " + sessionTopics.join(" "));
-    const baseWeights = BLEND_WEIGHTS[detection.type];
-
-    // Modulate weights by emotional state if present and not stale
-    let emotionInput: { valence: number; arousal: number } | null = null;
-    try {
-      const currentEmotion = await fileEmotionalStateStorage.getCurrent();
-      if (currentEmotion && !currentEmotion.stale) {
-        emotionInput = { valence: currentEmotion.valence, arousal: currentEmotion.arousal };
-      }
-    } catch { /* emotion optional */ }
-
-    const { weights, modulated, deltas } = modulateWeights(baseWeights, emotionInput);
-    if (modulated) {
-      log.verbose(() => `resolveGraphMemory emotional_modulation ${deltas}`);
-    }
-
-    const temporalPromise = queryTemporalNeighbors(allSeeds);
-    const temporalStart = Date.now();
-
-    const causalStart = Date.now();
-    let causalResults: CacheSignalEntry[] = [];
-    try {
-      causalResults = scoreCausalFromCache(allSeeds, getNeighborhoodCache, CAUSAL_RELATIONSHIP_TYPES as string[]);
-    } catch (err) {
-      log.warn(`resolveGraphMemory scoreCausalFromCache ERROR seeds=${allSeeds.length} cacheMisses=${cacheMissCount}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    const causalMs = Date.now() - causalStart;
-
-    const contrastiveStart = Date.now();
-    let contrastiveResults: CacheSignalEntry[] = [];
-    try {
-      contrastiveResults = scoreContrastiveFromCache(allSeeds, getNeighborhoodCache);
-    } catch (err) {
-      log.warn(`resolveGraphMemory scoreContrastiveFromCache ERROR seeds=${allSeeds.length} cacheMisses=${cacheMissCount}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    const contrastiveMs = Date.now() - contrastiveStart;
-
-    let temporalResults: CacheSignalEntry[] = [];
-    try {
-      temporalResults = await temporalPromise;
-    } catch (err) {
-      log.warn(`resolveGraphMemory queryTemporalNeighbors ERROR seeds=${allSeeds.length}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    const temporalMs = Date.now() - temporalStart;
-
-    const blended = blendCacheSignals(causalResults, contrastiveResults, temporalResults, weights);
-
-    if (blended.size === 0) {
-      log.verbose(() => `resolveGraphMemory DONE no blended results seeds=${allSeeds.length} elapsed=${Date.now() - start}ms`);
-      return "No matching memories found.";
-    }
-
-    // After renormalization, temporal-only memories max out at ~0.33.
-    // A 0.35 floor filters single-signal noise and keeps memories with
-    // at least two signal paths (causal+temporal, contrastive+temporal, etc).
-    const GRAPH_MIN_SCORE = 0.35;
-    const SEMANTIC_MIN_SCORE = 0.20;
-    const graphResults = Array.from(blended.entries())
-      .filter(([, info]) => info.score >= GRAPH_MIN_SCORE);
-
-    // Merge semantic seeds directly into output. The graph traversal functions
-    // (scoreCausalFromCache, scoreContrastiveFromCache, temporal query) all
-    // explicitly skip seed IDs, so topically relevant seeds get thrown away
-    // even though they're the best matches. Fix: include them with their
-    // embedding similarity score mapped to the "semantic" source tag.
-    const graphResultIds = new Set(graphResults.map(([id]) => id));
-    const semanticDirectEntries: [number, { score: number; sources: string[] }][] = [];
-    for (const [id, score] of semanticScoreMap) {
-      if (!graphResultIds.has(id) && score >= SEMANTIC_MIN_SCORE) {
-        semanticDirectEntries.push([id, { score, sources: ["semantic"] }]);
-      }
-    }
-
-    log.log(`[GraphMemory] signals: causal=${causalResults.length} contrastive=${contrastiveResults.length} temporal=${temporalResults.length} blended=${blended.size}`);
-    log.log(`[GraphMemory] filtering: graphResults(>=0.35)=${graphResults.length} semanticDirect(>=0.20)=${semanticDirectEntries.length}`);
-    if (semanticDirectEntries.length > 0) {
-      const semDetail = semanticDirectEntries.slice(0, 5).map(([id, info]) => `#${id}(${info.score.toFixed(3)})`);
-      log.log(`[GraphMemory] semanticDirect top5: ${semDetail.join(", ")}`);
-    }
-    if (graphResults.length > 0) {
-      const graphDetail = graphResults.slice(0, 5).map(([id, info]) => `#${id}(${info.score.toFixed(3)},${info.sources.join("+")})`);
-      log.log(`[GraphMemory] graphResults top5: ${graphDetail.join(", ")}`);
-    }
-
-    // Balanced selection: guarantee ~50/50 split between semantic and recency sources.
-    // Without this, recency seeds (50) drown semantic seeds (20) and the graph
-    // neighborhood of recent technical work overwhelms topically relevant memories.
-    const MAX_RESULTS = 25;
-    const halfSlots = Math.floor(MAX_RESULTS / 2); // 12
-
-    const allCandidates = [...graphResults, ...semanticDirectEntries];
-    const candidateIds = allCandidates.map(([id]) => id);
-    const preliminaryEntryMap = new Map<number, import("@shared/schema").MemoryEntry>();
-    for (const e of allSeeds) preliminaryEntryMap.set(e.id, e);
-    const missingCandidateIds = candidateIds.filter(id => !preliminaryEntryMap.has(id));
-    let preliminaryFetchedEntries: import("@shared/schema").MemoryEntry[] = [];
-    if (missingCandidateIds.length > 0) {
-      const { memoryStorage } = await import("./memory/memory-storage");
-      preliminaryFetchedEntries = await memoryStorage.getEntriesForDisplay(missingCandidateIds);
-      for (const e of preliminaryFetchedEntries) preliminaryEntryMap.set(e.id, e);
-    }
-
-    const sourceRefs = await fetchTopSourceRefsForEntries(candidateIds);
-    const eligibleCandidates = allCandidates.filter(([id]) => {
-      const entry = preliminaryEntryMap.get(id);
-      if (!entry) return false;
-      return !isDefaultRawMemorySource(entry) && !isLegacyBeliefGarbage(entry);
-    });
-    // vNext source-backed scoring boost: entries with memory_sources rows get
-    // a 15% multiplicative score increase, surfacing higher-provenance memories
-    // naturally through the score-based allocation rather than positional ordering.
-    const SOURCE_BACKED_BOOST = 1.15;
-    let sourceBoostCount = 0;
-    const boostedCandidates = eligibleCandidates.map(([id, info]) => {
-      const entry = preliminaryEntryMap.get(id);
-      const isBacked = entry ? isSourceBackedVNextMemory(entry, sourceRefs.get(id) ?? []) : false;
-      if (isBacked) sourceBoostCount++;
-      return [id, {
-        score: isBacked ? Math.min(info.score * SOURCE_BACKED_BOOST, 1.0) : info.score,
-        sources: info.sources,
-      }] as [number, { score: number; sources: string[] }];
-    });
-    if (sourceBoostCount > 0) {
-      log.verbose(() => `resolveGraphMemory: boosted ${sourceBoostCount}/${eligibleCandidates.length} source-backed entries by ${((SOURCE_BACKED_BOOST - 1) * 100).toFixed(0)}%`);
-    }
-    const orderedCandidates = boostedCandidates.sort((a, b) => b[1].score - a[1].score);
-
-    const semanticPool = orderedCandidates
-      .filter(([id]) => semanticScoreMap.has(id))
-      .sort((a, b) => b[1].score - a[1].score);
-    const recencyPool = orderedCandidates
-      .filter(([id]) => !semanticScoreMap.has(id))
-      .sort((a, b) => b[1].score - a[1].score);
-
-    // Take half from each bucket; if one is underfull, the other fills the gap
-    const semanticTake = semanticPool.slice(0, halfSlots);
-    const recencyTake = recencyPool.slice(0, halfSlots);
-    const remaining = MAX_RESULTS - semanticTake.length - recencyTake.length;
-    const overflow = [...semanticPool.slice(halfSlots), ...recencyPool.slice(halfSlots)]
-      .sort((a, b) => b[1].score - a[1].score)
-      .slice(0, remaining);
-
-    const sorted = [...semanticTake, ...recencyTake, ...overflow]
-      .sort((a, b) => b[1].score - a[1].score);
-
-    log.log(`[GraphMemory] balanced: semantic=${semanticTake.length}/${semanticPool.length} recency=${recencyTake.length}/${recencyPool.length} overflow=${overflow.length} final=${sorted.length}`);
-    log.log(`[GraphMemory] final: ${sorted.length} entries, scores=${sorted.slice(0, 5).map(([id, info]) => `#${id}(${info.score.toFixed(3)})`).join(", ")}`);
-
-    const fetchStart = Date.now();
-    const fetchMs = Date.now() - fetchStart;
-
-    const entryMap = preliminaryEntryMap;
-    const fetchedEntries = preliminaryFetchedEntries;
-
-    // Tiered rendering: allocate token budget across candidates by score
-    const tieredCandidates = sorted.map(([id, info]) => ({ id, score: info.score, sources: info.sources }));
-    const allocated = allocateTiers(tieredCandidates, entryMap as Map<number, any>, sourceRefs, tokenBudget);
-
-    const lines: string[] = ["Memories matching query:"];
-    for (const item of allocated) {
-      lines.push(item.rendered);
-    }
-
-    const result = lines.join("\n");
-    _graphMemoryCache.set(queryHash, result);
-    while (_graphMemoryCache.size > 50) {
-      _graphMemoryCache.evictOldest();
-    }
-
-    const tierCounts = { full: 0, detail: 0, signal: 0 };
-    for (const item of allocated) tierCounts[item.tier]++;
-    log.log(`[GraphMemory] tiered: budget=${tokenBudget} full=${tierCounts.full} detail=${tierCounts.detail} signal=${tierCounts.signal} total=${allocated.length} chars=${result.length}`);
-    log.verbose(() => `resolveGraphMemory DONE seeds=${allSeeds.length} cacheMisses=${cacheMissCount} causal=${causalResults.length}(${causalMs}ms) contrastive=${contrastiveResults.length}(${contrastiveMs}ms) temporal=${temporalResults.length}(${temporalMs}ms) fetched=${fetchedEntries.length}(${fetchMs}ms) seedLoad=${seedMs}ms blended=${sorted.length} chars=${result.length} elapsed=${Date.now() - start}ms`);
-    return result;
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    log.warn(`resolveGraphMemory error: ${message}`);
-    return "Graph memory temporarily unavailable.";
-  }
-}
-
 interface VnextTierEntry {
   id: number;
   title: string | null;
@@ -2545,16 +1761,17 @@ async function resolveGraphMemory(request: ContextRequest): Promise<string> {
       }));
       return result;
     }
-    log.warn(JSON.stringify({ event: "memory.graph.context_fallback", path: "legacy", reason: "vnext_empty" }));
+    log.debug(JSON.stringify({ event: "memory.graph.context_empty", path: "vnext" }));
+    _graphMemoryCache.set(queryHash, "");
+    return "";
   } catch (err) {
-    log.warn(JSON.stringify({
-      event: "memory.graph.context_fallback",
-      path: "legacy",
-      reason: "vnext_error",
+    log.error(JSON.stringify({
+      event: "memory.graph.context_error",
+      path: "vnext",
       error: err instanceof Error ? err.message : String(err),
     }));
+    return "Graph memory temporarily unavailable.";
   }
-  return resolveLegacyGraphMemory(request);
 }
 
 async function resolveTemporalLog(): Promise<string> {
@@ -3177,7 +2394,6 @@ export class ContextBuilder {
 
     onProgress?.("ctx_render", "started");
     const sections = buildSectionTree(resolvedMap);
-    await injectMemoryEntryChildren(sections, request.sessionId);
     const totalTokens = countTokensRecursive(sections);
     const sectionCount = countSections(sections, () => true);
     const activeSectionCount = countSections(sections, s => s.content.length > 0 && s.sourceType !== "placeholder");
