@@ -76,6 +76,7 @@ import {
   Circle,
   CircleCheck,
   ExternalLink,
+  Train,
   Smartphone,
   Phone,
   Save,
@@ -130,6 +131,7 @@ const INTEGRATIONS: IntegrationDef[] = [
   { id: "plaid", name: "Plaid", icon: Landmark, statusFields: ["plaid"], route: "plaid" },
   { id: "brave", name: "Brave Search", icon: Globe, statusFields: ["brave"], route: "brave" },
   { id: "github", name: "GitHub", icon: Github, statusFields: ["github"], route: "github" },
+  { id: "railway", name: "Railway", icon: Train, statusFields: [], route: "railway" },
   { id: "cloudflare", name: "Cloudflare", icon: Globe, statusFields: [], route: "cloudflare" },
   { id: "automation-auth", name: "Automation Auth", icon: Shield, statusFields: ["automationAuth"], route: "automation-auth" },
   { id: "expo", name: "Expo Mobile", icon: Smartphone, statusFields: ["expo"], route: "expo" },
@@ -4288,10 +4290,10 @@ interface HostingConnectorUsage {
   environmentName: string;
 }
 
-function HostingConnectorsDetail({ provider }: { provider: "cloudflare" }) {
+function HostingConnectorsDetail({ provider }: { provider: "railway" | "cloudflare" }) {
   const { toast } = useToast();
-  const providerName = "Cloudflare";
-  const ProviderIcon = Globe;
+  const providerName = provider === "railway" ? "Railway" : "Cloudflare";
+  const ProviderIcon = provider === "railway" ? Train : Globe;
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ProviderConnection | null>(null);
   const [label, setLabel] = useState("");
@@ -5613,6 +5615,7 @@ function IntegrationDetail({ provider }: { provider: string }) {
 
       {provider === "github" && <GitHubDetail />}
 
+      {provider === "railway" && <HostingConnectorsDetail provider="railway" />}
 
       {provider === "cloudflare" && <CloudflareDetail />}
 
