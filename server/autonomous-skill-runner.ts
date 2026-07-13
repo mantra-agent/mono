@@ -504,6 +504,10 @@ export async function executeAutonomousSkillRun(
      * into the sidebar title (e.g. "Advocate A — Round 2").
      */
     titleOverride?: string;
+    /** Admission priority inherited from the root session that initiated this run. */
+    admissionTier?: AdmissionTier;
+    /** Stable root session identity shared by this run and all descendants. */
+    lineageId?: string;
   } = {}
 ): Promise<AutonomousRunResult | null> {
   // ── Ensure user principal context ───────────────────────────────────
@@ -790,16 +794,32 @@ export async function executeAutonomousSkillRun(
       : await runSkillPipeline(config, sessionId, options);
 
     if (result.status === "yielded") {
-      logger.log(`[SkillChat] [${sessionId}] Skill pipeline yielded to interactive session`);
-      storage.updateSkillRunStatus(sessionId, "yielded", result.durationMs).catch((e: unknown) => {
+      const error = "Execution yielded under genuine capacity pressure. The parent may retry or resume this child.";
+      logger.warn(`[SkillChat] [${sessionId}] ${error}`);
+      if (await conversationExists(sessionId)) {
+        await chatFileStorage.setEndReason(sessionId, "yield_to_interactive").catch(() => undefined);
+        await chatFileStorage.setErrorSeverity(sessionId, "warn").catch(() => undefined);
+        await chatFileStorage.updateSessionStatus(sessionId, "failed");
+      }
+      storage.updateSkillRunStatus(sessionId, "yielded", result.durationMs, error).catch((e: unknown) => {
         logger.error(`[SkillChat] [${sessionId}] Failed to update skill_runs status to yielded: ${e instanceof Error ? e.message : String(e)}`);
       });
+      if (options.parentSessionId) {
+        const { onChildSessionCompleted } = await import("./sessions/child-block-lifecycle");
+        const { updateSpawnStatus } = await import("./sessions/tree");
+        await onChildSessionCompleted(options.parentSessionId, sessionId, {
+          status: "failed",
+          error,
+          durationMs: result.durationMs,
+        }).catch((e: unknown) => logger.warn(`[SkillChat] [${sessionId}] Failed to close yielded child block: ${e instanceof Error ? e.message : String(e)}`));
+        await updateSpawnStatus(sessionId, "failed");
+      }
       eventBus.publish({
         category: "chat",
         event: "chat.autonomous.yielded",
-        payload: { sessionId, skillId, skillName: config.label, durationMs: result.durationMs, reason: "yield_to_interactive" },
+        payload: { sessionId, skillId, skillName: config.label, durationMs: result.durationMs, reason: "yield_to_interactive", terminal: true },
       });
-      return result;
+      return { ...result, error };
     }
 
     if (await conversationExists(sessionId)) {
@@ -988,10 +1008,12 @@ async function runCouncilPipeline(
 async function runSkillPipeline(
   config: SkillRunConfig,
   sessionId: string,
-  options: { preContext?: string; parentSessionId?: string; spawnReason?: string; spawnerTool?: string; spawnerSkillRun?: string; modelOverride?: string; sessionKeyOverride?: string }
+  options: { preContext?: string; parentSessionId?: string; spawnReason?: string; spawnerTool?: string; spawnerSkillRun?: string; modelOverride?: string; sessionKeyOverride?: string; admissionTier?: AdmissionTier; lineageId?: string }
 ): Promise<AutonomousRunResult> {
   const startTime = Date.now();
   const abortController = new AbortController();
+  const effectiveAdmissionTier = options.admissionTier ?? (options.parentSessionId ? "realtime" : (config.admissionTier ?? "background"));
+  const effectiveLineageId = options.lineageId ?? options.parentSessionId ?? sessionId;
 
   // Deferred: inactivity timer starts only after admission is granted, not while
   // waiting in the admission queue. This prevents the timer from killing runs
@@ -1083,7 +1105,7 @@ async function runSkillPipeline(
         lifecycleLog.debug(
           `phase=executor-started sessionId=${sessionId} parentSessionId=${options.parentSessionId ?? "none"} ` +
           `skillId=${config.skillId || "skillless"} activity=${config.activity} ` +
-          `tier=${options.parentSessionId ? "request" : "background"}`,
+          `tier=${effectiveAdmissionTier} lineageId=${effectiveLineageId}`,
         );
         logger.log(`[SkillChat] [${sessionId}] Admission granted — inactivity timer started`);
         return;
@@ -1097,7 +1119,7 @@ async function runSkillPipeline(
     lifecycleLog.debug(
       `phase=execution-requested sessionId=${sessionId} parentSessionId=${options.parentSessionId ?? "none"} ` +
       `skillId=${config.skillId || "skillless"} activity=${config.activity} ` +
-      `tier=${options.parentSessionId ? "request" : "background"} toolCount=${tools.length}`,
+      `tier=${effectiveAdmissionTier} lineageId=${effectiveLineageId} toolCount=${tools.length}`,
     );
     logger.log(`[SkillChat] [${sessionId}] Starting executor (${tools.length} tools, temp=${config.temperature})`);
     const result = await raceAbort(
@@ -1116,7 +1138,8 @@ async function runSkillPipeline(
         signal: abortController.signal,
         onEvent: onEvent as any,
         querySubsystem: "autonomous",
-        tier: options.parentSessionId ? "request" : (config.admissionTier ?? "background"),
+        tier: effectiveAdmissionTier,
+        lineageId: effectiveLineageId,
       }),
       abortController.signal,
       15_000,

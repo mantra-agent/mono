@@ -4,6 +4,7 @@ import { eq, and, sql, isNull, inArray } from "drizzle-orm";
 import { createLogger } from "../log";
 import { createHash } from "node:crypto";
 import type { TriggerType } from "@shared/models/chat";
+import type { AdmissionTier } from "../run-admission";
 
 const log = createLogger("SessionTree");
 
@@ -48,6 +49,10 @@ export interface SpawnChildSessionOptions {
    * directly in the sidebar.
    */
   titleOverride?: string;
+  /** Root-derived admission priority. User-originated descendants are foreground. */
+  admissionTier?: AdmissionTier;
+  /** Stable root session identity shared by the parent and all descendants. */
+  lineageId?: string;
   /** Provenance: override trigger type for the spawned session */
   hookTriggerId?: string;
   hookTriggerName?: string;
@@ -391,7 +396,7 @@ export async function spawnChildSession(
 ): Promise<SpawnChildSessionResult> {
   const model = options.model ?? options.skillId;
   if (!model && !options.preContext) throw new Error("spawnChildSession: either `model` (skill identifier) or `preContext` is required");
-  const { spawnReason, spawnerTool, spawnerSkillRun, preContext, waitForCompletion, modelOverride, sessionKeyOverride, titleOverride, hookTriggerId, hookTriggerName } = options;
+  const { spawnReason, spawnerTool, spawnerSkillRun, preContext, waitForCompletion, modelOverride, sessionKeyOverride, titleOverride, admissionTier, lineageId, hookTriggerId, hookTriggerName } = options;
 
   const { executeAutonomousSkillRun } = await import("../autonomous-skill-runner");
 
@@ -429,6 +434,8 @@ export async function spawnChildSession(
       modelOverride,
       sessionKeyOverride,
       titleOverride,
+      admissionTier,
+      lineageId: lineageId ?? parentId,
       hookTriggerId,
       hookTriggerName,
       onSessionCreated: (id: string) => {

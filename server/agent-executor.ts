@@ -84,8 +84,15 @@ export interface ExecutorRunOptions {
   onEvent?: (event: StreamEvent) => void;
   querySubsystem?: import("./db").QuerySubsystem;
   tier?: import("./run-admission").AdmissionTier;
+  /** Stable root identity shared by parent and descendant runs for lineage-safe admission. */
+  lineageId?: string;
   /** Voice session ID for claiming pre-warmed CLI handles on the first turn. */
   voiceSessionId?: string;
+}
+
+function toolTransfersExecutionToChild(name: string, args: Record<string, unknown>): boolean {
+  if (name !== "plan") return false;
+  return args.action === "execute" || args.action === "resume";
 }
 
 export type AbortReason = "idle_timeout" | "pipeline_timeout" | "cancelled" | "superseded" | "error" | "circuit_breaker" | "zombie_timeout";
@@ -1424,7 +1431,12 @@ export class AgentExecutor extends EventEmitter {
       log.verbose(() => `Tool "${tc.name}" starting id=${tc.id} inputKeys=${Object.keys(tc.input).join(",") || "none"} runId=${ctx.runId}`);
       let toolResult: { result: string; error?: boolean; sideEffectOnly?: boolean };
       try {
-        toolResult = await options.toolExecutor!(tc.name, tc.input);
+        if (toolTransfersExecutionToChild(tc.name, tc.input)) {
+          const { admissionController } = await import("./run-admission");
+          toolResult = await admissionController.withSuspendedSlot(ctx.runId, () => options.toolExecutor!(tc.name, tc.input));
+        } else {
+          toolResult = await options.toolExecutor!(tc.name, tc.input);
+        }
       } catch (err: unknown) {
         toolResult = { result: `Tool execution error: ${err instanceof Error ? err.message : String(err)}`, error: true };
       } finally {
@@ -2035,7 +2047,10 @@ export class AgentExecutor extends EventEmitter {
 
       const boundedToolExecutor = options.toolExecutor
         ? async (name: string, args: Record<string, unknown>) => {
-            const result = await options.toolExecutor!(name, args);
+            const execute = () => options.toolExecutor!(name, args);
+            const result = toolTransfersExecutionToChild(name, args)
+              ? await (await import("./run-admission")).admissionController.withSuspendedSlot(ctx.runId, execute)
+              : await execute();
             return {
               ...result,
               result: await maybeOffloadToolOutput({
@@ -2399,6 +2414,7 @@ export class AgentExecutor extends EventEmitter {
       await admissionController.requestSlot(tier, runId, {
         sessionId: options.sessionId,
         activity: options.activity,
+        lineageId: options.lineageId ?? options.sessionId,
         signal: options.signal,
       });
       admissionGranted = true;

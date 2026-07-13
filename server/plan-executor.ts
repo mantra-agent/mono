@@ -498,6 +498,8 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
         preContext: brief,
         waitForCompletion: false,
         titleOverride: `Step ${stepIndex + 1}: ${step.title}`,
+        admissionTier: "realtime",
+        lineageId: originSessionId,
       });
 
       const { sessionId: childSessionId } = await spawnResult;
