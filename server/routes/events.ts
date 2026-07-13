@@ -75,18 +75,17 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
             activeSession: typeof msg.activeSession === "string" ? msg.activeSession : null,
           };
           const alreadySubscribed = subscribedSessionIds.has(subSessionId);
-          if (alreadySubscribed) {
-            // Don't early-return — client may have missed deltas during iOS background suspension.
-            // Fall through to re-send the current snapshot so the client recovers.
-            eventsLog.debug("WS:SESSION:SUBSCRIBE_DUPLICATE", { sessionId: subSessionId, subscriptions: subscribedSessionIds.size, ...identity });
-          } else {
-            subscribedSessionIds.add(subSessionId);
-            eventsLog.debug("WS:SESSION:SUBSCRIBE", { sessionId: subSessionId, subscriptions: subscribedSessionIds.size, ...identity });
-          }
+          if (!alreadySubscribed) subscribedSessionIds.add(subSessionId);
+          eventsLog.debug(alreadySubscribed ? "WS:SESSION:RESUBSCRIBE" : "WS:SESSION:SUBSCRIBE", { sessionId: subSessionId, subscriptions: subscribedSessionIds.size, ...identity });
           import("../session-manager").then(({ sessionManager }) => {
-            const snapshot = alreadySubscribed
-              ? sessionManager.getSnapshot(subSessionId)
-              : sessionManager.subscribe(subSessionId, ws, identity);
+            // SessionManager is the single source of truth for subscription state and
+            // subscribe() is idempotent (Set.add + pending queue for unregistered
+            // sessions). Always attach through it: the live session entry may have been
+            // finalized, cleaned up, and re-registered since this connection last
+            // subscribed, so connection-local bookkeeping must never suppress
+            // re-attachment — that orphans the tab from all stream deltas until a
+            // hard refresh. The local set exists only for disconnect cleanup and logs.
+            const snapshot = sessionManager.subscribe(subSessionId, ws, identity);
             if (ws.readyState === WebSocket.OPEN) {
               try {
                 // Always respond — even when the session is not live in memory (cleaned up
