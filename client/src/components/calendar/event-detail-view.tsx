@@ -406,7 +406,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/calendar/events"] });
-      queryClient.invalidateQueries({ queryKey: metadataQueryKey });
+      queryClient.invalidateQueries({ queryKey: ["/api/calendar/metadata"] });
       toast({ title: isCreate ? "Event created" : "Event updated" });
       if (isCreate) {
         navigate("/schedule");
@@ -450,7 +450,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
         capacityType: eventType === "focus_block" ? capacityType ?? metadata?.capacityType ?? null : null,
       });
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: metadataQueryKey }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/calendar/metadata"] }),
     onError: (err: any) => toast({ title: "Failed to update event type", description: err.message, variant: "destructive" }),
   });
 
@@ -458,7 +458,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
     mutationFn: async (linkId: number) => {
       await apiRequest("DELETE", `/api/calendar/metadata/tasks/${linkId}`);
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: metadataQueryKey }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/calendar/metadata"] }),
     onError: (err: any) => toast({ title: "Failed to unlink task", description: err.message, variant: "destructive" }),
   });
 
@@ -468,7 +468,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
       await apiRequest("POST", `/api/calendar/metadata/${metadata.id}/tasks`, { taskId });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: metadataQueryKey });
+      queryClient.invalidateQueries({ queryKey: ["/api/calendar/metadata"] });
       setShowTaskSearch(false);
       setTaskSearchQuery("");
     },

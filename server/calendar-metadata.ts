@@ -50,6 +50,38 @@ export function makeMetaKey(googleEventId: string, accountId: string, calendarId
   return `${googleEventId}::${accountId}::${calendarId}`;
 }
 
+/**
+ * Recurring-event instances carry per-occurrence Google IDs of the form
+ * `${seriesMasterId}_${basetime}` (e.g. `abc123_20260714T110000Z`, all-day
+ * `abc123_20260714`, or modified-series `abc123_R20260714T110000`).
+ * Metadata is series-level: writes normalize to the master ID and reads fall
+ * back to the master when no instance-specific row exists.
+ * Returns null when the ID is not a recurring instance.
+ */
+export function resolveSeriesMasterId(googleEventId: string): string | null {
+  const match = googleEventId.match(/^(.+)_(?:R\d{8}T\d{6}Z?|\d{8}(?:T\d{6}Z?)?)$/);
+  return match ? match[1] : null;
+}
+
+async function fetchMetadataRow(
+  googleEventId: string,
+  accountId: string,
+  calendarId: string
+): Promise<CalendarEventMetadata | null> {
+  const rows = await db
+    .select()
+    .from(calendarEventMetadata)
+    .where(
+      combineWithSensitiveVisible(calendarMetadataOwnerColumns, and(
+        eq(calendarEventMetadata.googleEventId, googleEventId),
+        eq(calendarEventMetadata.accountId, accountId),
+        eq(calendarEventMetadata.calendarId, calendarId)
+      ))
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 // ─── classifyEventByTitle ───
 
 export function classifyEventByTitle(title: string): EventType | null {
@@ -67,18 +99,11 @@ export async function getMetadata(
   calendarId: string
 ): Promise<CalendarEventMetadata | null> {
   return _calendarCache.getOrFetch(`meta:${principalCacheKey()}:${googleEventId}:${accountId}:${calendarId}`, async () => {
-    const rows = await db
-      .select()
-      .from(calendarEventMetadata)
-      .where(
-        combineWithSensitiveVisible(calendarMetadataOwnerColumns, and(
-          eq(calendarEventMetadata.googleEventId, googleEventId),
-          eq(calendarEventMetadata.accountId, accountId),
-          eq(calendarEventMetadata.calendarId, calendarId)
-        ))
-      )
-      .limit(1);
-    return rows[0] ?? null;
+    const exact = await fetchMetadataRow(googleEventId, accountId, calendarId);
+    if (exact) return exact;
+    const masterId = resolveSeriesMasterId(googleEventId);
+    if (!masterId) return null;
+    return fetchMetadataRow(masterId, accountId, calendarId);
   });
 }
 
@@ -101,16 +126,42 @@ export async function listMetadataByEvents(
 
   const key = `byEvents:${principalCacheKey()}:${events.map(e => `${e.googleEventId}:${e.accountId}:${e.calendarId}`).sort().join("|")}`;
   return _calendarCache.getOrFetch(key, async () => {
-    const conditions = events.map(e =>
-      and(
-        eq(calendarEventMetadata.googleEventId, e.googleEventId),
-        eq(calendarEventMetadata.accountId, e.accountId),
-        eq(calendarEventMetadata.calendarId, e.calendarId)
-      )
-    );
+    // Query both instance IDs and their recurring-series master IDs so
+    // series-level metadata resolves for every occurrence.
+    const identityConditions = new Map<string, ReturnType<typeof and>>();
+    for (const e of events) {
+      const ids = [e.googleEventId];
+      const masterId = resolveSeriesMasterId(e.googleEventId);
+      if (masterId) ids.push(masterId);
+      for (const id of ids) {
+        identityConditions.set(makeMetaKey(id, e.accountId, e.calendarId), and(
+          eq(calendarEventMetadata.googleEventId, id),
+          eq(calendarEventMetadata.accountId, e.accountId),
+          eq(calendarEventMetadata.calendarId, e.calendarId)
+        ));
+      }
+    }
 
+    const conditions = Array.from(identityConditions.values());
     const combined = conditions.length === 1 ? conditions[0]! : or(...conditions.map(c => c!));
-    return db.select().from(calendarEventMetadata).where(combineWithSensitiveVisible(calendarMetadataOwnerColumns, combined));
+    const rows = await db.select().from(calendarEventMetadata).where(combineWithSensitiveVisible(calendarMetadataOwnerColumns, combined));
+    const rowsByKey = new Map(rows.map(r => [makeMetaKey(r.googleEventId, r.accountId, r.calendarId), r]));
+
+    // Resolve per requested event (instance row wins over master row) and
+    // rekey master rows to the requested instance ID so callers can join by
+    // the event identity they asked about.
+    const resolved: CalendarEventMetadata[] = [];
+    for (const e of events) {
+      const exact = rowsByKey.get(makeMetaKey(e.googleEventId, e.accountId, e.calendarId));
+      if (exact) {
+        resolved.push(exact);
+        continue;
+      }
+      const masterId = resolveSeriesMasterId(e.googleEventId);
+      const master = masterId ? rowsByKey.get(makeMetaKey(masterId, e.accountId, e.calendarId)) : undefined;
+      if (master) resolved.push({ ...master, googleEventId: e.googleEventId });
+    }
+    return resolved;
   });
 }
 
@@ -126,6 +177,9 @@ export async function setMetadata(
   capacityType?: CapacityType | null,
   agenda?: string
 ): Promise<CalendarEventMetadata> {
+  // Event type/notes/agenda are series-level: normalize recurring instance
+  // IDs to the series master so metadata applies to every occurrence.
+  googleEventId = resolveSeriesMasterId(googleEventId) ?? googleEventId;
   log.log(`setMetadata event=${googleEventId} type=${eventType}`);
   const existing = await getMetadata(googleEventId, accountId, calendarId);
   const hasNotesPatch = notes !== undefined;
@@ -165,6 +219,28 @@ export async function setMetadata(
     .returning();
 
   const meta = rows[0];
+
+  // Propagate series-level fields to any existing instance-keyed rows for
+  // this series (e.g. rows created before write normalization, or by
+  // setAgentJoin) so they cannot shadow the master with stale values.
+  // Google event IDs never contain underscores, so an escaped-underscore
+  // prefix match addresses exactly this series' occurrence rows.
+  await db
+    .update(calendarEventMetadata)
+    .set({
+      eventType,
+      capacityType: storedCapacityType,
+      ...(hasNotesPatch ? { notes: storedNotes } : {}),
+      ...(hasAgendaPatch ? { agenda: storedAgenda } : {}),
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .where(
+      combineWithSensitiveWritable(calendarMetadataOwnerColumns, and(
+        sql`${calendarEventMetadata.googleEventId} LIKE ${`${googleEventId}\\_%`} ESCAPE '\\'`,
+        eq(calendarEventMetadata.accountId, accountId),
+        eq(calendarEventMetadata.calendarId, calendarId)
+      ))
+    );
 
   if (attendeeEmails && attendeeEmails.length > 0) {
     await autoLinkPeople(meta.id, attendeeEmails);
