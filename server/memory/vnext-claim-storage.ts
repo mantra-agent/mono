@@ -301,6 +301,14 @@ function validateVnextEmbedding(embedding: number[] | undefined, context: string
   return embedding;
 }
 
+function parseVnextEmbedding(value: unknown, context: string): number[] {
+  const parsed = typeof value === "string" ? JSON.parse(value) : value;
+  if (!Array.isArray(parsed) || !parsed.every((dimension) => typeof dimension === "number" && Number.isFinite(dimension))) {
+    throw new Error(`Invalid vNext embedding in ${context}: expected a numeric vector`);
+  }
+  return validateVnextEmbedding(parsed, context)!;
+}
+
 function vectorLiteral(embedding: number[]): string {
   validateVnextEmbedding(embedding, "semantic_search");
   return `[${embedding.join(",")}]`;
@@ -881,7 +889,10 @@ export class MemoryVnextClaimStorage {
       LIMIT ${boundedLimit}
     `);
     return (rows.rows as unknown as Array<MemoryVnextClaim & { source_keys?: string[]; entity_keys?: string[] }>).map((row) => ({
-      claim: row,
+      claim: {
+        ...row,
+        embedding: parseVnextEmbedding(row.embedding, `bridge_candidate:${row.id}`),
+      },
       sourceKeys: row.source_keys ?? [],
       entityKeys: row.entity_keys ?? [],
     }));
