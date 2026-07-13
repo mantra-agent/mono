@@ -4,17 +4,11 @@ import { createLogger } from "../../log";
 import { chatCompletion } from "../../model-client";
 import { ACTIVITY_WORK } from "../../job-profiles";
 import { environmentPromotionReleases } from "@shared/models/platforms";
-import {
-  getRepositoryFile,
-  updateRepositoryFile,
-  type PublishCommit,
-  type RepoRef,
-} from "../github-pr";
+import { type PublishCommit } from "../github-pr";
 
 const log = createLogger("ReleaseVersioning");
 
 export const RELEASE_ENVIRONMENT_ID = 12;
-export const VERSION_FILE_PATH = "VERSION.md";
 
 export type VersionIncrement = "minor" | "major" | "flagship";
 
@@ -30,7 +24,6 @@ export interface ReleaseDraft {
   nextVersion: string;
   notes: ReleaseNotes;
   markdown: string;
-  fileUrl: string;
 }
 
 function parseVersion(version: string): { flagship: number; major: number; minor: number } {
@@ -121,7 +114,6 @@ async function latestRelease() {
 }
 
 export async function buildReleaseDraft(
-  repo: RepoRef,
   commits: PublishCommit[],
   increment: VersionIncrement,
   runId: string,
@@ -133,32 +125,14 @@ export async function buildReleaseDraft(
   const notes = await generateNotes(commits, runId);
   const promotedAt = new Date().toISOString();
   const releaseEntry = renderRelease(nextVersion, promotedAt, targetCommitSha, notes);
-  const existing = await getRepositoryFile(repo, VERSION_FILE_PATH, "live");
-  const history = existing?.content.trim();
-  const markdown = history ? `${releaseEntry}\n\n---\n\n${history}\n` : `${releaseEntry}\n`;
+  const markdown = `${releaseEntry}\n`;
   return {
     increment,
     currentVersion,
     nextVersion,
     notes,
     markdown,
-    fileUrl: `https://github.com/${repo.owner}/${repo.repo}/blob/live/${VERSION_FILE_PATH}`,
   };
-}
-
-export async function publishVersionFile(
-  repo: RepoRef,
-  draft: ReleaseDraft,
-  liveCommitSha: string,
-): Promise<{ commitSha: string; fileUrl: string }> {
-  const result = await updateRepositoryFile(repo, {
-    path: VERSION_FILE_PATH,
-    branch: "live",
-    content: draft.markdown,
-    message: `docs: publish ${draft.nextVersion} release notes`,
-    expectedBranchSha: liveCommitSha,
-  });
-  return { commitSha: result.commitSha, fileUrl: draft.fileUrl };
 }
 
 export async function recordSuccessfulRelease(input: {
@@ -166,7 +140,6 @@ export async function recordSuccessfulRelease(input: {
   actorUserId: string;
   draft: ReleaseDraft;
   promotedCommitSha: string;
-  versionFileCommitSha: string;
   deploymentId: string | null;
 }): Promise<void> {
   await db.insert(environmentPromotionReleases).values({
@@ -175,9 +148,6 @@ export async function recordSuccessfulRelease(input: {
     version: input.draft.nextVersion,
     incrementKind: input.draft.increment,
     promotedCommitSha: input.promotedCommitSha,
-    versionFileCommitSha: input.versionFileCommitSha,
-    versionFilePath: VERSION_FILE_PATH,
-    versionFileUrl: input.draft.fileUrl,
     releaseNotes: input.draft.notes,
     deploymentId: input.deploymentId,
     promotedByUserId: input.actorUserId,
@@ -189,7 +159,7 @@ export async function recordSuccessfulRelease(input: {
   });
 }
 
-export async function getReleaseVersionSummary(repo: RepoRef | null) {
+export async function getReleaseVersionSummary() {
   const latest = await latestRelease();
   return {
     currentVersion: latest?.version ?? "0.00",
@@ -199,9 +169,7 @@ export async function getReleaseVersionSummary(repo: RepoRef | null) {
           increment: latest.incrementKind as VersionIncrement,
           promotedCommitSha: latest.promotedCommitSha,
           promotedAt: latest.promotedAt.toISOString(),
-          versionFileUrl: latest.versionFileUrl,
         }
       : null,
-    versionFileUrl: latest?.versionFileUrl ?? (repo ? `https://github.com/${repo.owner}/${repo.repo}/blob/live/${VERSION_FILE_PATH}` : null),
   };
 }

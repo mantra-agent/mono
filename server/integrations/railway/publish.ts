@@ -31,7 +31,6 @@ import {
 } from "../github-pr";
 import {
   buildReleaseDraft,
-  publishVersionFile,
   recordSuccessfulRelease,
   type ReleaseDraft,
   type VersionIncrement,
@@ -161,8 +160,7 @@ export interface PublishRun {
     increment: VersionIncrement;
     previousVersion: string;
     version: string;
-    versionFileUrl: string;
-    versionFileCommitSha: string | null;
+    recordedAt: string | null;
     notes: ReleaseDraft["notes"];
     markdown: string;
   } | null;
@@ -651,13 +649,26 @@ export async function startRun(
     const runId = newRunId();
     const targetCommitSha = summary.devCommit?.sha;
     if (!targetCommitSha) throw new Error(`Couldn't resolve HEAD of '${devBranch}' for release notes.`);
-    const releaseDraft = await buildReleaseDraft(
-      repo,
-      summary.commits,
-      increment,
-      runId,
-      targetCommitSha,
-    );
+    let releaseDraft: ReleaseDraft;
+    try {
+      releaseDraft = await buildReleaseDraft(
+        summary.commits,
+        increment,
+        runId,
+        targetCommitSha,
+      );
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      log.warn("Release notes generation failed; continuing publish with commit summaries", {
+        runId,
+        reason,
+      });
+      releaseDraft = await buildReleaseDraftFromCommits(
+        summary.commits,
+        increment,
+        targetCommitSha,
+      );
+    }
 
     const run: PublishRun = {
       id: runId,
@@ -678,8 +689,7 @@ export async function startRun(
         increment: releaseDraft.increment,
         previousVersion: releaseDraft.currentVersion,
         version: releaseDraft.nextVersion,
-        versionFileUrl: releaseDraft.fileUrl,
-        versionFileCommitSha: null,
+        recordedAt: null,
         notes: releaseDraft.notes,
         markdown: releaseDraft.markdown,
       },
@@ -1411,7 +1421,7 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
 
     // ─── Stage 7: ready ─────────────────────────────────────────────────────
     startStage(run, "ready");
-    if (run.release?.versionFileCommitSha) {
+    if (run.release?.recordedAt) {
       finishStage(run, "ready", {
         status: "succeeded",
         message: `${run.release.version} release metadata already recorded.`,
@@ -1428,23 +1438,32 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
       nextVersion: run.release.version,
       notes: run.release.notes,
       markdown: run.release.markdown,
-      fileUrl: run.release.versionFileUrl,
     };
-    const versionFile = await publishVersionFile(repo, releaseDraft, run.newProdCommitSha);
-    run.release.versionFileCommitSha = versionFile.commitSha;
-    await recordSuccessfulRelease({
-      publishRunId: run.id,
-      actorUserId: run.startedBy,
-      draft: releaseDraft,
-      promotedCommitSha: run.newProdCommitSha,
-      versionFileCommitSha: versionFile.commitSha,
-      deploymentId: run.deploymentId,
-    });
+    let releaseMetadataRecorded = false;
+    try {
+      await recordSuccessfulRelease({
+        publishRunId: run.id,
+        actorUserId: run.startedBy,
+        draft: releaseDraft,
+        promotedCommitSha: run.newProdCommitSha,
+        deploymentId: run.deploymentId,
+      });
+      run.release.recordedAt = new Date().toISOString();
+      releaseMetadataRecorded = true;
+    } catch (err) {
+      log.warn("Production is healthy but release metadata could not be recorded", {
+        runId: run.id,
+        version: run.release.version,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
     const totalMs = Date.now() - Date.parse(run.startedAt);
     const totalLabel = totalMs < 60_000 ? `${Math.round(totalMs / 1000)}s` : `${Math.floor(totalMs / 60_000)}m ${Math.round((totalMs % 60_000) / 1000)}s`;
     finishStage(run, "ready", {
       status: "succeeded",
-      message: `${run.release.version} live at ${prodCfg.prodUrl} — ${run.newProdCommitSha?.slice(0, 7) ?? "—"} (took ${totalLabel}).`,
+      message: releaseMetadataRecorded
+        ? `${run.release.version} live at ${prodCfg.prodUrl} — ${run.newProdCommitSha?.slice(0, 7) ?? "—"} (took ${totalLabel}).`
+        : `Live at ${prodCfg.prodUrl} — ${run.newProdCommitSha?.slice(0, 7) ?? "—"}; release metadata was not recorded (took ${totalLabel}).`,
     });
     finalize("succeeded");
   } catch (err) {
