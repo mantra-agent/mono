@@ -1,6 +1,7 @@
 import type { IncomingMessage } from "http";
 import type { Socket } from "net";
 import { WebSocketServer, WebSocket } from "ws";
+import crypto from "crypto";
 import { createLogger } from "../log";
 import { chatStorage } from "../integrations/chat/storage";
 import {
@@ -13,8 +14,29 @@ import type { MeetingIngestFn } from "../routes/recall";
 
 const log = createLogger("MeetingSTT");
 const MAX_PARTICIPANT_STREAMS = 16;
-const ENABLE_CANONICAL_MEETING_STT = process.env.ENABLE_CANONICAL_MEETING_STT === "true";
-const RECALL_AUDIO_TOKEN = process.env.RECALL_AUDIO_TOKEN?.trim() || null;
+const AUDIO_TOKEN_BYTES = 32;
+const audioTokensBySession = new Map<string, string>();
+
+/**
+ * Issue a short-lived capability token for one meeting session's Recall audio
+ * endpoint. This is transport state, not deployment configuration: provider
+ * readiness comes from the existing ElevenLabs integration in secrets-store.
+ */
+export function issueMeetingSTTAudioToken(sessionId: string): string {
+  const token = crypto.randomBytes(AUDIO_TOKEN_BYTES).toString("base64url");
+  audioTokensBySession.set(sessionId, token);
+  return token;
+}
+
+function consumeMeetingSTTAudioToken(sessionId: string, suppliedToken: string | null): boolean {
+  const expectedToken = audioTokensBySession.get(sessionId);
+  if (!expectedToken || !suppliedToken) return false;
+  const expected = Buffer.from(expectedToken);
+  const supplied = Buffer.from(suppliedToken);
+  const authorized = expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
+  if (authorized) audioTokensBySession.delete(sessionId);
+  return authorized;
+}
 
 interface RecallAudioPayload {
   event?: string;
@@ -182,10 +204,11 @@ export function registerMeetingSTTAudioTransport(
   });
 
   return (request, socket, head) => {
-    const suppliedToken = new URL(request.url || "", "http://localhost").searchParams.get("token");
-    const authorized = Boolean(RECALL_AUDIO_TOKEN && suppliedToken === RECALL_AUDIO_TOKEN);
-    if (!ENABLE_CANONICAL_MEETING_STT || !provider.isConfigured() || !authorized) {
-      log.warn(`Recall audio upgrade rejected enabled=${ENABLE_CANONICAL_MEETING_STT} configured=${provider.isConfigured()} authorized=${authorized} fallback=recall_transcript_webhook policy=${HIGH_QUALITY_SCRIBE_POLICY.model}`);
+    const query = new URL(request.url || "", "http://localhost").searchParams;
+    const sessionId = query.get("sessionId");
+    const authorized = Boolean(sessionId && consumeMeetingSTTAudioToken(sessionId, query.get("token")));
+    if (!provider.isConfigured() || !authorized) {
+      log.warn(`Recall audio upgrade rejected configured=${provider.isConfigured()} authorized=${authorized} fallback=recall_transcript_webhook policy=${HIGH_QUALITY_SCRIBE_POLICY.model}`);
       socket.destroy();
       return;
     }
@@ -194,9 +217,5 @@ export function registerMeetingSTTAudioTransport(
 }
 
 export function canonicalMeetingSTTEnabled(): boolean {
-  return ENABLE_CANONICAL_MEETING_STT && Boolean(RECALL_AUDIO_TOKEN);
-}
-
-export function meetingSTTAudioToken(): string | null {
-  return RECALL_AUDIO_TOKEN;
+  return new ScribeRealtimeSTTProvider().isConfigured();
 }

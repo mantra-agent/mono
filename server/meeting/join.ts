@@ -110,10 +110,9 @@ export async function joinMeetingByUrl(opts: {
 
   const { outputMediaPageUrl } = await import("./output-media");
   const outputMediaUrl = outputMediaPageUrl(publicUrl, session.id);
-  const { canonicalMeetingSTTEnabled, meetingSTTAudioToken } = await import("./stt");
-  const audioToken = meetingSTTAudioToken();
-  const participantAudioUrl = canonicalMeetingSTTEnabled() && audioToken
-    ? `${publicUrl.replace(/^http/, "ws")}/ws/recall-participant-audio?token=${encodeURIComponent(audioToken)}`
+  const { canonicalMeetingSTTEnabled, issueMeetingSTTAudioToken } = await import("./stt");
+  const participantAudioUrl = canonicalMeetingSTTEnabled()
+    ? `${publicUrl.replace(/^http/, "ws")}/ws/recall-participant-audio/?sessionId=${encodeURIComponent(session.id)}&token=${encodeURIComponent(issueMeetingSTTAudioToken(session.id))}`
     : undefined;
   let botId: string;
   try {
@@ -143,7 +142,7 @@ export async function joinMeetingByUrl(opts: {
     sttStatus: participantAudioUrl ? "inactive" : "fallback",
     sttStatusDetail: participantAudioUrl
       ? "Waiting for Recall participant audio"
-      : "Canonical meeting STT disabled; Recall transcript webhook fallback active",
+      : "ElevenLabs integration unavailable; Recall transcript webhook fallback active",
   });
   log.log(`Bot ${botId} dispatched to ${platform} meeting "${title}" (session ${session.id})`);
 

@@ -65,7 +65,7 @@ export async function registerRoutes(
       const handler = app.locals.twilioMediaUpgrade as ((request: IncomingMessage, socket: typeof socket, head: Buffer) => void) | undefined;
       if (!handler) { wsLog.warn("Twilio media upgrade handler unavailable"); socket.destroy(); }
       else handler(request, socket, head);
-    } else if (pathname === "/ws/recall-participant-audio") {
+    } else if (pathname === "/ws/recall-participant-audio" || pathname === "/ws/recall-participant-audio/") {
       const handler = app.locals.recallMeetingAudioUpgrade as ((request: IncomingMessage, socket: typeof socket, head: Buffer) => void) | undefined;
       if (!handler) { wsLog.warn("Recall participant audio upgrade handler unavailable"); socket.destroy(); }
       else handler(request, socket, head);
