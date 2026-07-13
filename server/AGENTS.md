@@ -497,6 +497,7 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 ## Platform environment publishing
 
 Production publishing is addressed as an explicit `sourcePlatformEnvironmentId -> targetPlatformEnvironmentId` promotion. `server/integrations/railway/publish.ts` resolves source and target GitHub bindings, Railway hosting bindings/connectors, and enabled lifecycle configuration before any branch or deployment mutation. The target lifecycle must be `manual_promote`, bind the exact source and target branches, use `platform_binding` auth, and require human approval. Publish runs persist both environment IDs so retries cannot silently switch targets. Railway API calls receive the target connector credential explicitly. The live branch remains human-promoted, and Railway deployment rollback remains the provider rollback path.
+Legacy host-level Railway setup is not an application configuration surface. Cross-environment operations must resolve a canonical Platform Environment and its hosting binding/connector. Current-runtime self-inspection may use runtime identity only to resolve that same canonical environment. Do not reintroduce dev/prod secret bundles, `/api/railway/dev|prod/*` routes, or an Integrations Railway setup page.
 
 ## Cloudflare Pages provider boundary
 
