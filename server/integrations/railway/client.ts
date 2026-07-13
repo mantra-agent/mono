@@ -1,6 +1,5 @@
 import { eq } from "drizzle-orm";
 import { db } from "../../db";
-import { getSecret } from "../../secrets-store";
 import { getProviderCredential } from "../../provider-credential-store";
 import { providerConnections } from "@shared/models/platforms";
 import { createLogger } from "../../log";
@@ -9,10 +8,7 @@ const log = createLogger("RailwayClient");
 
 const RAILWAY_GRAPHQL_ENDPOINT = "https://backboard.railway.app/graphql/v2";
 
-/**
- * @deprecated Migration boundary for db-sync only. Active Railway operations
- * must resolve credentials through resolvePlatformEnvironment().
- */
+/** Resolve the credential attached to a canonical Railway provider connection. */
 export async function getRailwayTokenForConnection(connectionId: number): Promise<string> {
   const [conn] = await db
     .select({ provider: providerConnections.provider, credentialRef: providerConnections.credentialRef })
@@ -698,81 +694,6 @@ export async function fetchDeploymentsForEnvironment(
     serviceId: node.serviceId,
     meta: node.meta,
   }));
-}
-
-export interface RailwayDevConfig {
-  projectId: string | undefined;
-  environmentId: string | undefined;
-  serviceId: string | undefined;
-  devUrl: string | undefined;
-  hasToken: boolean;
-}
-
-/** @deprecated Migration boundary for db-sync, publish, and timeline callers only. */
-export async function getDevConfig(): Promise<RailwayDevConfig> {
-  // All five settings come from the secrets store, which transparently falls
-  // back to process.env so existing host-level env vars keep working.
-  const [token, projectId, environmentId, serviceId, devUrl] = await Promise.all([
-    getSecret("RAILWAY_API_TOKEN"),
-    getSecret("RAILWAY_PROJECT_ID"),
-    getSecret("RAILWAY_DEV_ENVIRONMENT_ID"),
-    getSecret("RAILWAY_DEV_SERVICE_ID"),
-    getSecret("RAILWAY_DEV_URL"),
-  ]);
-  return {
-    projectId,
-    environmentId,
-    serviceId,
-    devUrl,
-    hasToken: !!token,
-  };
-}
-
-export function isDevConfigComplete(cfg: RailwayDevConfig): boolean {
-  // RAILWAY_DEV_URL is required: without it the iframe preview cannot render,
-  // which is the core feature of the Dev page. Treat missing URL as "not
-  // configured" so the UI surfaces the zero state and guides setup.
-  return !!(cfg.hasToken && cfg.projectId && cfg.environmentId && cfg.serviceId && cfg.devUrl);
-}
-
-export interface RailwayProdConfig {
-  projectId: string | undefined;
-  environmentId: string | undefined;
-  serviceId: string | undefined;
-  prodUrl: string | undefined;
-  liveBranch: string;
-  hasToken: boolean;
-}
-
-/**
- * Read the prod-environment Railway settings used by the Publish flow. Falls
- * back to the dev project id and dev service id when the prod-only overrides
- * aren't set, since the typical layout is one project + one app service with
- * separate environments.
- */
-/** @deprecated Migration boundary for db-sync, publish, and timeline callers only. */
-export async function getProdConfig(): Promise<RailwayProdConfig> {
-  const [token, projectId, devServiceId, prodEnv, prodService, prodUrl, liveBranch] = await Promise.all([
-    getSecret("RAILWAY_API_TOKEN"),
-    getSecret("RAILWAY_PROJECT_ID"),
-    getSecret("RAILWAY_DEV_SERVICE_ID"),
-    getSecret("RAILWAY_PROD_ENVIRONMENT_ID"),
-    getSecret("RAILWAY_PROD_SERVICE_ID"),
-    getSecret("RAILWAY_PROD_URL"),
-    getSecret("RAILWAY_LIVE_BRANCH"),
-  ]);
-  return {
-    projectId,
-    environmentId: prodEnv,
-    serviceId: prodService || devServiceId,
-    prodUrl,
-    liveBranch: liveBranch || "live",
-    hasToken: !!token,
-  };
-}
-
-export function isProdConfigComplete(cfg: RailwayProdConfig): boolean {
-  return !!(cfg.hasToken && cfg.projectId && cfg.environmentId && cfg.serviceId && cfg.prodUrl);
 }
 
 // ── Shared deployment status query ──

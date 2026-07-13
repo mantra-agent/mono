@@ -36,7 +36,6 @@ import {
   RefreshCw,
   Rocket,
   RotateCcw,
-  Settings as SettingsIcon,
   Smartphone,
   Target,
   Square,
@@ -113,9 +112,6 @@ import { cn } from "@/lib/utils";
 import { formatBytes } from "@/lib/format-utils";
 import { formatDiagnosticValue } from "@/lib/diagnostic-error";
 import { createLogger } from "@/lib/logger";
-import { useLocation } from "wouter";
-// RailwaySetupTab moved to Integrations page
-
 import { DatabaseDataBrowser } from "@/pages/dev/database-data-browser";
 import InternalPromptsTab from "@/pages/internal-prompts";
 import VersionTimeline from "./version-timeline";
@@ -159,19 +155,7 @@ interface DevStatusOk {
   fetchedAt: string;
 }
 
-interface DevStatusMissing {
-  configured: false;
-  hasToken: boolean;
-  missing: {
-    projectId: boolean;
-    environmentId: boolean;
-    serviceId: boolean;
-    devUrl: boolean;
-  };
-  devUrl: string | null;
-}
-
-type DevStatus = DevStatusOk | DevStatusMissing;
+type DevStatus = DevStatusOk;
 
 interface StageAutomationLoginUrl {
   url: string;
@@ -1661,8 +1645,8 @@ function DevPreviewIframe({ status }: { status: DevStatusOk }) {
   if (!rawUrl) {
     return (
       <OfflinePanel
-        title="Dev URL not configured"
-        body="Set RAILWAY_DEV_URL to the public URL of your dev Railway service."
+        title="Environment URL unavailable"
+        body="Add the public URL to this environment’s canonical hosting binding in Platforms."
       />
     );
   }
@@ -2430,63 +2414,6 @@ function DevConfigView({ status }: { status: DevStatusOk }) {
         </div>
       )}
     </section>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Zero state
-// ─────────────────────────────────────────────────────────────────────────────
-
-function DevZeroState({ status }: { status: DevStatusMissing }) {
-  const [, setLocation] = useLocation();
-  const missing = status.missing;
-  const tokenMissing = !status.hasToken;
-  const requiredMissing =
-    tokenMissing || missing.projectId || missing.environmentId;
-
-  return (
-    <div
-      className="flex-1 flex items-center justify-center p-6"
-      data-testid="dev-zero-state"
-    >
-      <div className="text-center max-w-md space-y-4">
-        <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-muted">
-          <Container className="h-6 w-6 text-muted-foreground" />
-        </div>
-        <div>
-          <h3 className="text-base font-medium">
-            No development environment connected
-          </h3>
-          <p className="text-sm text-muted-foreground mt-2">
-            Configure your Railway connection in{" "}
-            <button
-              className="text-cta underline transition-colors hover:text-active"
-              onClick={() => setLocation("/integrations/railway")}
-            >
-              Integrations → Railway
-            </button>{" "}
-            to enable deployment management.
-          </p>
-        </div>
-        {requiredMissing && (
-          <div className="text-left text-xs font-mono text-muted-foreground bg-muted/40 rounded-md p-3 space-y-1">
-            <div className="font-semibold text-xs uppercase tracking-wider mb-1">
-              Missing
-            </div>
-            {tokenMissing && <div>RAILWAY_API_TOKEN</div>}
-            {missing.projectId && <div>RAILWAY_PROJECT_ID</div>}
-            {missing.environmentId && <div>RAILWAY_DEV_ENVIRONMENT_ID</div>}
-          </div>
-        )}
-        <Button
-          onClick={() => setLocation("/integrations/railway")}
-          data-testid="button-open-setup"
-        >
-          <SettingsIcon className="h-4 w-4 mr-2" />
-          Configure Railway
-        </Button>
-      </div>
-    </div>
   );
 }
 
@@ -5301,7 +5228,7 @@ export default function DevPage() {
     error,
     refetch,
   } = useDevStatus();
-  // Top-level tabs. Railway setup moved to Integrations page; database tooling lives at /database.
+  // Top-level tabs. Environment deployment controls live on canonical Platform Environment pages; database tooling lives at /database.
   const tabs = useMemo(
     () => [
       {
@@ -5367,16 +5294,13 @@ export default function DevPage() {
     );
   }
 
-  // Total fetch failure with no cached data: keep the page usable.
-  const isConfigured =
-    !!status && "configured" in status && status.configured === true;
-
+  // Runtime identity and hosting credentials resolve through the canonical Platform Environment binding.
   if (!status) {
     return (
-      <div className="flex flex-col h-full" data-testid="dev-error">
-        <div className="flex items-center gap-2 px-4 py-2 bg-warning/10 text-warning dark:text-warning text-sm border-b border-warning/20">
+      <div className="flex h-full flex-col" data-testid="dev-error">
+        <div className="flex items-center gap-2 border-b border-warning/20 bg-warning/10 px-4 py-2 text-sm text-warning">
           <span className="flex-1">
-            Couldn't reach Mantra's Railway proxy:{" "}
+            Couldn't resolve this runtime's Platform Environment: {" "}
             {(error as Error)?.message ?? "unknown error"}
           </span>
           <Button
@@ -5387,35 +5311,17 @@ export default function DevPage() {
             disabled={isFetching}
             data-testid="button-retry-page"
           >
-            {isFetching ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              "Retry"
-            )}
+            {isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Retry"}
           </Button>
         </div>
-        <DevZeroState
-          status={{
-            configured: false,
-            hasToken: false,
-            missing: {
-              projectId: true,
-              environmentId: true,
-              serviceId: true,
-              devUrl: true,
-            },
-            devUrl: null,
-          }}
-        />
+        <p className="px-4 py-3 text-sm text-muted-foreground">
+          Configure or repair the environment's hosting binding in Platforms.
+        </p>
       </div>
     );
   }
 
-  if (!isConfigured) {
-    return <DevZeroState status={status as DevStatusMissing} />;
-  }
-
-  const okStatus = status as DevStatusOk;
+  const okStatus = status;
   return (
     <div className="flex flex-col h-full min-h-0" data-testid="dev-page">
       <div className="flex-1 min-h-0 flex flex-col">

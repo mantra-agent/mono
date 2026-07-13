@@ -8,7 +8,7 @@ A conversational AI + life management + autonomous agent platform. Multi-user, o
 - **Client:** React 18 / Vite / TailwindCSS / shadcn/ui
 - **Database:** PostgreSQL (Drizzle ORM) + pgvector for embeddings
 - **Object Storage:** S3-compatible (Cloudflare R2 via GCS proxy)
-- **Hosting:** Railway (dev + prod)
+- **Hosting:** Provider-backed Platform Environment bindings (Railway for current Web stage/live)
 - **LLM:** Claude (primary), OpenAI (embeddings, adversarial), multi-model via activity routing
 - **Voice:** ElevenLabs Conversational AI SDK
 
@@ -293,7 +293,7 @@ Layer 1: Infrastructure  — Express server, WebSocket, event bus, DB pool, auth
 
 **Route registration** (`server/routes.ts`): `registerRoutes()` delegates to:
 
-`registerDomainRoutes()` — 26 domain routers: setup, gateway, workspace, system, identity, inference, events, integrations, voice, brain, work, ooda, plaid, finance, spec, health, info, captures, email, session-display, content, hooks, session-reminder, cognition, secrets, railway
+`registerDomainRoutes()` — 26 domain routers: setup, gateway, workspace, system, identity, inference, events, integrations, voice, brain, work, ooda, plaid, finance, spec, health, info, captures, email, session-display, content, hooks, session-reminder, cognition, secrets, provider-backed environment operations
 
 Plus: `registerChatRoutes`, `registerPeopleRoutes`, `registerGoalRoutes`, `registerTagRoutes`, `registerCalendarRoutes`, `registerTimerRoutes`, `registerMemoryRoutes`, `registerMigrationRoutes`, `registerContextRoutes`, `registerThoughtRoutes`, `registerStrategyRoutes`, `registerObjectStorageRoutes`, `registerSkillRoutes`
 

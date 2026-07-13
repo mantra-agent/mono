@@ -114,24 +114,6 @@ export function registerRailwayRoutes(app: Express) {
     }
   };
 
-  app.get("/api/railway/status", requireAuth, async (_req: Request, res: Response) => {
-    try {
-      const control = await resolveRailwayEnvironmentControl(undefined, { allowCurrentRuntime: true });
-      const capability = await verifyRailwayEnvironmentCapability(control);
-      res.json({
-        configured: capability.authenticated && capability.projectVisible,
-        platformEnvironmentId: control.environment.platformEnvironmentId,
-        bindingResolved: true,
-        authenticated: capability.authenticated,
-        projectVisible: capability.projectVisible,
-      });
-    } catch (error) {
-      res.json({ configured: false, platformEnvironmentId: null, bindingResolved: false, authenticated: false, projectVisible: false,
-        error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-
   app.get("/api/railway/runtime/status", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const control = await resolveRailwayEnvironmentControl(undefined, { allowCurrentRuntime: true });
@@ -303,22 +285,6 @@ export function registerRailwayRoutes(app: Express) {
       handleError(res, error, "environment restart failed");
     }
   });
-
-  const legacyPaths = [
-    "/api/railway/test", "/api/railway/projects", "/api/railway/auto-resolve", "/api/railway/ensure-dev-domain",
-    "/api/railway/deployments", "/api/railway/deployments/:deploymentId/logs", "/api/railway/redeploy",
-    "/api/railway/dev/status", "/api/railway/dev/deployments", "/api/railway/dev/logs", "/api/railway/dev/build-logs",
-    "/api/railway/dev/redeploy", "/api/railway/dev/restart", "/api/railway/dev/stop", "/api/railway/dev/rollback",
-    "/api/railway/dev/variables", "/api/railway/prod/status", "/api/railway/prod/logs", "/api/railway/prod/build-logs",
-    "/api/railway/prod/redeploy", "/api/railway/prod/restart",
-  ];
-  const legacyGone = (_req: Request, res: Response) => res.status(410).json({
-    error: "Legacy Railway routing was removed. Use /api/railway/environments/:platformEnvironmentId/... with a canonical Platform Environment ID.",
-  });
-  for (const path of legacyPaths) {
-    app.get(path, requireAuth, requireAdmin, legacyGone);
-    app.post(path, requireAuth, requireAdmin, legacyGone);
-  }
 
   // ── Publish (dev → live) ────────────────────────────────────────────────
   // Returns the static publish-tab summary: prereqs, dev/prod commits, the

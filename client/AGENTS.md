@@ -189,6 +189,10 @@ Do not reintroduce a second embedded session input under the transcript panel. I
 - **Error boundaries**: Wrap page-level components. Show friendly error with retry.
 - **Responsive**: Mobile-first, but desktop is the primary target. Minimum viable mobile support.
 
+## Infrastructure Configuration
+
+Hosting credentials and environment configuration belong to Platform Environment binding flows. Do not add standalone provider setup pages under Integrations or host-level dev/prod variable forms. Provider-specific status and controls render within the bound Platform Environment.
+
 ## When Working Here
 
 - **Check the Design page first for visual decisions**. Treat `DESIGN.md` as the aligned implementation doctrine, not an independent source of truth. If the Design page and `DESIGN.md` diverge, prefer the Design page and update `DESIGN.md` in the same change.
