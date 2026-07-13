@@ -2699,6 +2699,7 @@ interface RecallStatus {
   runtimeEnvironment?: string;
   servingHost?: string | null;
   publicUrl?: string | null;
+  envPublicUrl?: string | null;
   publicUrlMismatch?: boolean;
   error?: string;
 }
@@ -2811,12 +2812,12 @@ function RecallDetail() {
         >
           <div className="flex items-center gap-2 font-medium text-warning">
             <AlertTriangle className="h-4 w-4 shrink-0" />
-            PUBLIC_URL mismatch
+            Stale PUBLIC_URL variable
           </div>
           <p className="mt-1 text-muted-foreground">
-            This deployment serves <code>{recallStatus.servingHost}</code> but its{" "}
-            <code>PUBLIC_URL</code> Railway variable is <code>{recallStatus.publicUrl ?? "unset"}</code>.
-            Webhook URLs below use the serving host, but fix the Railway variable for environment{" "}
+            The <code>PUBLIC_URL</code> Railway variable is <code>{recallStatus.envPublicUrl ?? "unset"}</code>{" "}
+            but this deployment's canonical public URL is <code>{recallStatus.publicUrl ?? "unresolved"}</code>.
+            The variable is ignored — remove or correct it on the Railway service for environment{" "}
             <code>{recallStatus.runtimeEnvironment}</code> to clear this warning.
           </p>
         </div>
@@ -2933,6 +2934,7 @@ interface TwilioStatus {
   mediaStreamUrl?: string;
   servingHost?: string | null;
   publicUrl?: string | null;
+  envPublicUrl?: string | null;
   publicUrlMismatch?: boolean;
   error?: string;
 }
@@ -2980,7 +2982,7 @@ function TwilioDetail() {
   const credentialsReady = Boolean(status?.hasAccountSid && status?.hasAuthToken && status?.hasPhoneNumber);
   return (
     <div className="min-w-0 space-y-2">
-      {status?.publicUrlMismatch && <div className="mx-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm"><div className="flex items-center gap-2 font-medium text-warning"><AlertTriangle className="h-4 w-4" />PUBLIC_URL mismatch</div><p className="mt-1 text-muted-foreground">Callbacks use the serving host <code>{status.servingHost}</code>, not <code>{status.publicUrl}</code>.</p></div>}
+      {status?.publicUrlMismatch && <div className="mx-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm"><div className="flex items-center gap-2 font-medium text-warning"><AlertTriangle className="h-4 w-4" />Stale PUBLIC_URL variable</div><p className="mt-1 text-muted-foreground">Callbacks use the canonical URL <code>{status.publicUrl}</code>; the ignored <code>PUBLIC_URL</code> variable is <code>{status.envPublicUrl}</code>.</p></div>}
       <IntegrationTreeSection label="Connection" initialOpen={!status?.connected}>
         <ProviderConnectionRow provider="twilio" connected={Boolean(status?.connected)} error={status?.error} pending={test.isPending} onTest={() => test.mutate()} />
         <ProfileTreeRow label="Account" icon={<Phone className="h-3.5 w-3.5" />} hasValue showEmpty>{isLoading ? <Skeleton className="h-4 w-24" /> : <span className="text-muted-foreground">{status?.accountName || status?.accountStatus || "Not verified"}</span>}</ProfileTreeRow>

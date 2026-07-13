@@ -149,14 +149,15 @@ export function getPlaidConfigDiagnostics(): PlaidConfigDiagnostics {
   };
 }
 
-function getWebhookUrl(): string {
-  const base = process.env.PUBLIC_URL?.replace(/\/$/, "") || "";
+async function getWebhookUrl(): Promise<string> {
+  const { getRuntimePublicBaseUrl } = await import("./runtime-identity");
+  const base = (await getRuntimePublicBaseUrl()) || "";
   return `${base}/api/plaid/webhook`;
 }
 
 export async function createLinkToken(): Promise<{ linkToken: string }> {
   const client = getClient();
-  const webhookUrl = getWebhookUrl();
+  const webhookUrl = await getWebhookUrl();
 
   const response = await client.linkTokenCreate({
     user: { client_user_id: "xyz-user-1" },

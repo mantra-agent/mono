@@ -495,13 +495,13 @@ async function resolveRuntimeIdentitySection(): Promise<string> {
       `Environment: ${id.environmentName}${id.serviceName ? ` (service: ${id.serviceName})` : ""}`,
       id.platformEnvironmentId ? `Platform Environment: ${id.platformEnvironmentName} (#${id.platformEnvironmentId})` : null,
       id.servingHost ? `Serving host: ${id.servingHost}` : null,
-      id.publicUrl ? `PUBLIC_URL: ${id.publicUrl}` : "PUBLIC_URL: not set",
+      id.publicUrl ? `Public URL: ${id.publicUrl}${id.publicUrlSource ? ` (${id.publicUrlSource})` : ""}` : "Public URL: unresolved",
       id.gitCommit ? `Commit: ${id.gitCommit.slice(0, 12)}` : null,
       id.dbHost ? `Database host: ${id.dbHost}` : null,
     ].filter(Boolean) as string[];
     if (id.publicUrlMismatch) {
       lines.push(
-        `⚠ PUBLIC_URL MISMATCH: PUBLIC_URL points at a different deployment than the serving host. External callbacks derived from PUBLIC_URL are misrouted until the Railway variable is corrected. The server prefers the serving host for new callback registrations.`,
+        `⚠ STALE PUBLIC_URL ENV VARIABLE: the PUBLIC_URL Railway variable (${id.envPublicUrl}) disagrees with the canonical public URL and is ignored. Remove or correct the variable on this Railway service.`,
       );
     }
     return lines.join("\n");

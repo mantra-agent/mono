@@ -70,16 +70,16 @@ export function getPublicBaseUrl(): string {
     warnIfNonPublicUrl(process.env.VOICE_LLM_BASE_URL, "VOICE_LLM_BASE_URL");
     return process.env.VOICE_LLM_BASE_URL.replace(/\/+$/, "");
   }
-  if (process.env.PUBLIC_URL) {
-    warnIfNonPublicUrl(process.env.PUBLIC_URL, "PUBLIC_URL");
-    log.log(`getPublicBaseUrl resolved from PUBLIC_URL: ${process.env.PUBLIC_URL}`);
-    return process.env.PUBLIC_URL.replace(/\/+$/, "");
-  }
-  if (process.env.RAILWAY_PUBLIC_DOMAIN) {
-    const url = `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
-    warnIfNonPublicUrl(url, "RAILWAY_PUBLIC_DOMAIN");
-    log.log(`getPublicBaseUrl resolved from RAILWAY_PUBLIC_DOMAIN: ${url}`);
-    return url;
+  try {
+    const { getRuntimePublicBaseUrlSync } = require("../runtime-identity");
+    const runtimeUrl = getRuntimePublicBaseUrlSync();
+    if (runtimeUrl) {
+      warnIfNonPublicUrl(runtimeUrl, "runtime-identity");
+      log.log(`getPublicBaseUrl resolved from runtime identity: ${runtimeUrl}`);
+      return runtimeUrl;
+    }
+  } catch {
+    // Module not yet loaded — fall through to localhost fallback.
   }
   const localhostUrl = `http://localhost:${process.env.PORT || 5000}`;
   log.warn(`getPublicBaseUrl falling back to localhost (${localhostUrl}) — no deployment env vars found`);
