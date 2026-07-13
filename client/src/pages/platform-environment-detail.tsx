@@ -92,6 +92,10 @@ interface ContextArtifact {
   updatedAt: string;
 }
 
+interface PlatformTreeEnvironment { id: number; name: string }
+interface PlatformTreeProduct { id: number; environments: PlatformTreeEnvironment[] }
+interface PlatformTree { id: number; products: PlatformTreeProduct[] }
+
 interface EnvironmentDetails {
   platform: { id: number; name: string };
   product: { id: number; name: string };
@@ -303,14 +307,16 @@ function DevelopmentPipelineCard({ platformEnvironmentId }: { platformEnvironmen
   />;
 }
 
-function EnvironmentPipelineCard({ details, environmentId }: { details: EnvironmentDetails; environmentId: number }) {
+function EnvironmentPipelineCard({ details, environmentId, sourceEnvironmentId }: { details: EnvironmentDetails; environmentId: number; sourceEnvironmentId: number | null }) {
   const platformName = details.platform.name.toLowerCase();
   const productName = details.product.name.toLowerCase();
   const environmentName = details.environment.name.toLowerCase();
 
   if (platformName !== "mantra") return null;
   if (productName === "web" && environmentName === "stage") return <DevelopmentPipelineCard platformEnvironmentId={environmentId} />;
-  if (productName === "web" && environmentName === "live") return <DevPublishTab platformEnvironmentId={environmentId} />;
+  if (productName === "web" && environmentName === "live" && sourceEnvironmentId) {
+    return <DevPublishTab sourcePlatformEnvironmentId={sourceEnvironmentId} targetPlatformEnvironmentId={environmentId} />;
+  }
   if (productName === "mobile" && environmentName === "dev") return <MobileBuildCard />;
   return null;
 }
@@ -2031,6 +2037,14 @@ export default function PlatformEnvironmentDetailPage() {
     enabled: Number.isFinite(environmentId),
   });
 
+  const { data: platformTree = [] } = useQuery<PlatformTree[]>({ queryKey: ["/api/platforms"] });
+  const sourceEnvironmentId = data
+    ? platformTree
+        .flatMap((platform) => platform.products)
+        .find((product) => product.id === data.product.id)
+        ?.environments.find((environment) => environment.name.trim().toLowerCase() === "stage")?.id ?? null
+    : null;
+
   usePageHeader({
     title: data ? `Platforms / ${data.product.name} / ${data.environment.name}` : "Environment",
     customContent: data ? (
@@ -2073,7 +2087,7 @@ export default function PlatformEnvironmentDetailPage() {
   return (
     <div className="space-y-4 p-4">
       <div className="grid gap-4">
-        <EnvironmentPipelineCard details={data} environmentId={environmentId} />
+        <EnvironmentPipelineCard details={data} environmentId={environmentId} sourceEnvironmentId={sourceEnvironmentId} />
         {data.hosting.provider === "cloudflare" ? <CloudflarePagesCard environmentId={environmentId} /> : null}
         <EnvironmentDetailsConfigureCard details={data} environmentId={environmentId} />
       </div>

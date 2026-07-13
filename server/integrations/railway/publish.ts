@@ -4,15 +4,13 @@ import {
   fetchDeploymentsForEnvironment,
   redeployServiceInstance,
   extractDeploymentMeta,
-  getDevConfig,
-  getProdConfig,
-  isDevConfigComplete,
-  isProdConfigComplete,
-  type RailwayDevConfig,
-  type RailwayProdConfig,
 } from "./client";
+import { resolvePlatformEnvironment, type ResolvedPlatformEnvironment } from "../../platform-environment-resolver";
+import { getEnvironmentBuildLifecycleConfig } from "../../platforms/build-lifecycle-service";
+import { environmentSourceBindings } from "@shared/models/platforms";
+import { db } from "../../db";
+import { eq } from "drizzle-orm";
 import {
-  parseRepoSlug,
   compareRefs,
   findOpenPR,
   getPR,
@@ -150,6 +148,8 @@ export interface PublishRun {
   deploymentId: string | null;
   /** Deep link to the deployment in Railway's web console (when known). */
   deploymentUrl: string | null;
+  sourcePlatformEnvironmentId: number;
+  targetPlatformEnvironmentId: number;
   /**
    * Railway deployment id captured at run-start (before merge), used to detect
    * a fresh deployment without racing Railway's auto-deploy. Internal only.
@@ -306,10 +306,10 @@ function newRunId(): string {
  * https://railway.com/project/<projectId>/service/<serviceId>?environmentId=<envId>&id=<deploymentId>
  */
 function buildRailwayDeploymentUrl(
-  cfg: RailwayProdConfig,
+  target: ResolvedPlatformEnvironment,
   deploymentId: string
 ): string | null {
-  if (!cfg.projectId || !cfg.serviceId || !cfg.environmentId) return null;
+  const cfg = target.providerConfiguration;
   const params = new URLSearchParams({
     environmentId: cfg.environmentId,
     id: deploymentId,
@@ -443,79 +443,148 @@ export async function getDisplayRun(): Promise<PublishRun | null> {
 export interface PublishPrereqs {
   ready: boolean;
   reason: string | null;
-  devCfg: RailwayDevConfig;
-  prodCfg: RailwayProdConfig;
+  sourcePlatformEnvironmentId: number;
+  targetPlatformEnvironmentId: number;
+  sourceEnvironment: ResolvedPlatformEnvironment | null;
+  targetEnvironment: ResolvedPlatformEnvironment | null;
   hasGitHub: boolean;
   repo: RepoRef | null;
   devBranch: string | null;
+  prodBranch: string;
+  prodUrl: string | null;
 }
 
-/**
- * Check everything the publish flow needs: dev config, prod config, GitHub
- * connector, and a recent dev deployment so we know the dev branch + repo.
- */
-export async function checkPrereqs(): Promise<PublishPrereqs> {
-  const [devCfg, prodCfg] = await Promise.all([getDevConfig(), getProdConfig()]);
+interface CanonicalSourceBinding {
+  provider: string;
+  owner: string;
+  repo: string;
+  branch: string;
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+async function getSourceBinding(environmentId: number): Promise<CanonicalSourceBinding | null> {
+  const [binding] = await db
+    .select({
+      provider: environmentSourceBindings.provider,
+      owner: environmentSourceBindings.owner,
+      repo: environmentSourceBindings.repo,
+      branch: environmentSourceBindings.branch,
+    })
+    .from(environmentSourceBindings)
+    .where(eq(environmentSourceBindings.environmentId, environmentId))
+    .limit(1);
+  return binding ?? null;
+}
+
+/** Resolve the complete promotion contract from canonical Platform state. */
+export async function checkPrereqs(
+  sourcePlatformEnvironmentId: number,
+  targetPlatformEnvironmentId: number,
+): Promise<PublishPrereqs> {
   const result: PublishPrereqs = {
     ready: false,
     reason: null,
-    devCfg,
-    prodCfg,
+    sourcePlatformEnvironmentId,
+    targetPlatformEnvironmentId,
+    sourceEnvironment: null,
+    targetEnvironment: null,
     hasGitHub: false,
     repo: null,
     devBranch: null,
+    prodBranch: "",
+    prodUrl: null,
   };
 
-  if (!devCfg.hasToken) {
-    result.reason = "Railway API token is not configured.";
-    return result;
-  }
-  if (!isDevConfigComplete(devCfg)) {
-    result.reason = "Dev environment is not configured. Open the Setup tab first.";
-    return result;
-  }
-  if (!isProdConfigComplete(prodCfg)) {
-    result.reason = "Prod environment is not configured. Set RAILWAY_PROD_ENVIRONMENT_ID, RAILWAY_PROD_SERVICE_ID, and RAILWAY_PROD_URL.";
+  if (sourcePlatformEnvironmentId === targetPlatformEnvironmentId) {
+    result.reason = "Source and target Platform Environments must be different.";
     return result;
   }
 
-  // Probe GitHub auth — getGitHubAccessToken throws if no PAT is configured.
   try {
-    const { getGitHubAccessToken } = await import("../../github-auth");
-    await getGitHubAccessToken();
-    result.hasGitHub = true;
-  } catch (err) {
-    result.reason = `GitHub auth unavailable: ${err instanceof Error ? err.message : String(err)}`;
-    return result;
-  }
+    const [sourceEnvironment, targetEnvironment, sourceLifecycle, targetLifecycle, sourceBinding, targetBinding] = await Promise.all([
+      resolvePlatformEnvironment(sourcePlatformEnvironmentId),
+      resolvePlatformEnvironment(targetPlatformEnvironmentId),
+      getEnvironmentBuildLifecycleConfig(sourcePlatformEnvironmentId),
+      getEnvironmentBuildLifecycleConfig(targetPlatformEnvironmentId),
+      getSourceBinding(sourcePlatformEnvironmentId),
+      getSourceBinding(targetPlatformEnvironmentId),
+    ]);
+    result.sourceEnvironment = sourceEnvironment;
+    result.targetEnvironment = targetEnvironment;
+    result.prodUrl = targetEnvironment.providerConfiguration.publicUrl;
 
-  // Resolve repo + dev branch from the latest dev deployment so we know what
-  // to compare against `live`.
-  try {
-    const deps = await fetchDeploymentsForEnvironment(
-      devCfg.projectId!,
-      devCfg.serviceId!,
-      devCfg.environmentId!,
-      1
-    );
-    const meta = extractDeploymentMeta(deps[0]?.meta);
-    result.repo = parseRepoSlug(meta.repo ?? null);
-    result.devBranch = meta.branch ?? null;
-    if (!result.repo) {
-      result.reason = "Couldn't determine GitHub repo from the latest dev deployment.";
+    if (sourceEnvironment.productId !== targetEnvironment.productId) {
+      result.reason = "Source and target Platform Environments must belong to the same product.";
       return result;
     }
-    if (!result.devBranch) {
-      result.reason = "Couldn't determine dev branch from the latest dev deployment.";
+    if (!sourceBinding || sourceBinding.provider !== "github" || !sourceBinding.owner || !sourceBinding.repo || !sourceBinding.branch) {
+      result.reason = `Source Platform Environment ${sourcePlatformEnvironmentId} needs a complete GitHub source binding.`;
       return result;
     }
+    if (!targetBinding || targetBinding.provider !== "github" || !targetBinding.owner || !targetBinding.repo || !targetBinding.branch) {
+      result.reason = `Target Platform Environment ${targetPlatformEnvironmentId} needs a complete GitHub source binding.`;
+      return result;
+    }
+    if (sourceBinding.owner !== targetBinding.owner || sourceBinding.repo !== targetBinding.repo) {
+      result.reason = "Source and target Platform Environments must reference the same GitHub repository.";
+      return result;
+    }
+    if (!sourceLifecycle?.config?.enabled) {
+      result.reason = `Source Platform Environment ${sourcePlatformEnvironmentId} has no enabled build lifecycle.`;
+      return result;
+    }
+    if (!targetLifecycle?.config?.enabled) {
+      result.reason = `Target Platform Environment ${targetPlatformEnvironmentId} has no enabled build lifecycle.`;
+      return result;
+    }
+    if (sourceLifecycle.config.providerKind !== "railway" || targetLifecycle.config.providerKind !== "railway") {
+      result.reason = "Production publishing currently requires Railway lifecycle providers for both environments.";
+      return result;
+    }
+    const targetDeployPolicy = objectRecord(targetLifecycle.config.deployPolicy);
+    const targetGatePolicy = objectRecord(targetLifecycle.config.gatePolicy);
+    if (
+      targetDeployPolicy.mode !== "manual_promote" ||
+      targetDeployPolicy.requireApproval !== true ||
+      targetDeployPolicy.sourceBranch !== sourceBinding.branch ||
+      targetDeployPolicy.targetBranch !== targetBinding.branch ||
+      targetLifecycle.config.authMode !== "platform_binding" ||
+      targetGatePolicy.requireHumanApproval !== true
+    ) {
+      result.reason =
+        `Target Platform Environment ${targetPlatformEnvironmentId} lifecycle must use manual_promote from ` +
+        `'${sourceBinding.branch}' to '${targetBinding.branch}', require approval, use platform_binding auth, ` +
+        `and require human approval.`;
+      return result;
+    }
+    if (!result.prodUrl) {
+      result.reason = `Target Platform Environment ${targetPlatformEnvironmentId} has no public URL in its hosting binding.`;
+      return result;
+    }
+
+    try {
+      const { getGitHubAccessToken } = await import("../../github-auth");
+      await getGitHubAccessToken();
+      result.hasGitHub = true;
+    } catch (err) {
+      result.reason = `GitHub auth unavailable: ${err instanceof Error ? err.message : String(err)}`;
+      return result;
+    }
+
+    result.repo = { owner: sourceBinding.owner, repo: sourceBinding.repo };
+    result.devBranch = sourceBinding.branch;
+    result.prodBranch = targetBinding.branch;
+    result.ready = true;
+    return result;
   } catch (err) {
-    result.reason = `Couldn't read dev deployment metadata: ${err instanceof Error ? err.message : String(err)}`;
+    result.reason = `Couldn't resolve canonical Platform publishing context: ${err instanceof Error ? err.message : String(err)}`;
     return result;
   }
-
-  result.ready = true;
-  return result;
 }
 
 // ─── Public commands ───────────────────────────────────────────────────────────
@@ -601,11 +670,13 @@ function acquireStartSlot(): void {
 export async function startRun(
   actor: { id: string; name: string | null },
   increment: VersionIncrement,
+  sourcePlatformEnvironmentId: number,
+  targetPlatformEnvironmentId: number,
 ): Promise<PublishRun> {
   await ensurePublishRunLoaded();
   acquireStartSlot();
   try {
-    const prereqs = await checkPrereqs();
+    const prereqs = await checkPrereqs(sourcePlatformEnvironmentId, targetPlatformEnvironmentId);
     if (!prereqs.ready) {
       throw new PublishNotReadyError(prereqs.reason ?? "Publish prerequisites not met.");
     }
@@ -613,7 +684,7 @@ export async function startRun(
     // Look up dev/live HEADs and compare to know which stages will run.
     const repo = prereqs.repo!;
     const devBranch = prereqs.devBranch!;
-    const liveBranch = prereqs.prodCfg.liveBranch;
+    const liveBranch = prereqs.prodBranch;
 
     const compare = await compareRefs(repo, liveBranch, devBranch);
     if (compare.aheadBy === 0) {
@@ -683,6 +754,8 @@ export async function startRun(
       prNumber: null,
       deploymentId: null,
       deploymentUrl: null,
+      sourcePlatformEnvironmentId,
+      targetPlatformEnvironmentId,
       baselineDeploymentId: null,
       newProdCommitSha: null,
       release: {
@@ -693,7 +766,7 @@ export async function startRun(
         notes: releaseDraft.notes,
         markdown: releaseDraft.markdown,
       },
-      prodUrl: prereqs.prodCfg.prodUrl ?? null,
+      prodUrl: prereqs.prodUrl,
       resumeFromStage: null,
     };
 
@@ -701,13 +774,16 @@ export async function startRun(
     // sometimes pick up a merge in well under a second, and a baseline taken
     // mid-pipeline could end up equal to the freshly-created deployment, which
     // would force us into the unnecessary fallback-redeploy path.
-    if (prereqs.prodCfg.projectId && prereqs.prodCfg.serviceId && prereqs.prodCfg.environmentId) {
+    if (prereqs.targetEnvironment) {
       try {
+        const target = prereqs.targetEnvironment;
+        const cfg = target.providerConfiguration;
         const baseline = await fetchDeploymentsForEnvironment(
-          prereqs.prodCfg.projectId,
-          prereqs.prodCfg.serviceId,
-          prereqs.prodCfg.environmentId,
-          1
+          cfg.projectId,
+          cfg.serviceId,
+          cfg.environmentId,
+          1,
+          target.credential,
         );
         run.baselineDeploymentId = baseline[0]?.id ?? null;
       } catch (err) {
@@ -765,12 +841,22 @@ function planRetry(failedStage: PublishStage): {
   return { resumeFrom: stageName, clearDeploymentId: false };
 }
 
-export async function retryRun(actor: { id: string; name: string | null }): Promise<PublishRun> {
+export async function retryRun(
+  actor: { id: string; name: string | null },
+  sourcePlatformEnvironmentId: number,
+  targetPlatformEnvironmentId: number,
+): Promise<PublishRun> {
   await ensurePublishRunLoaded();
   acquireStartSlot();
   try {
     if (!lastRun || lastRun.status !== "failed") {
       throw new Error("No failed run to retry.");
+    }
+    if (
+      lastRun.sourcePlatformEnvironmentId !== sourcePlatformEnvironmentId ||
+      lastRun.targetPlatformEnvironmentId !== targetPlatformEnvironmentId
+    ) {
+      throw new Error("The failed run belongs to a different source/target Platform Environment pair.");
     }
     const failedStage = lastRun.stages.find((s) => s.status === "failed");
     if (!failedStage) throw new Error("Last run has no failed stage to resume from.");
@@ -844,14 +930,17 @@ export interface ReconcileResult {
   mergeSha: string | null;
 }
 
-export async function reconcileLiveIntoDev(): Promise<ReconcileResult> {
-  const prereqs = await checkPrereqs();
+export async function reconcileLiveIntoDev(
+  sourcePlatformEnvironmentId: number,
+  targetPlatformEnvironmentId: number,
+): Promise<ReconcileResult> {
+  const prereqs = await checkPrereqs(sourcePlatformEnvironmentId, targetPlatformEnvironmentId);
   if (!prereqs.ready || !prereqs.repo || !prereqs.devBranch) {
     throw new PublishNotReadyError(prereqs.reason ?? "Publish prerequisites not met.");
   }
   const repo = prereqs.repo;
   const devBranch = prereqs.devBranch;
-  const liveBranch = prereqs.prodCfg.liveBranch;
+  const liveBranch = prereqs.prodBranch;
 
   // Confirm there's actually drift to merge (live ahead of dev). If not,
   // refuse rather than open an empty PR — the user's real problem is
@@ -1017,14 +1106,19 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
   };
 
   try {
-    const prereqs = await checkPrereqs();
-    if (!prereqs.ready || !prereqs.repo) {
+    const prereqs = await checkPrereqs(
+      run.sourcePlatformEnvironmentId,
+      run.targetPlatformEnvironmentId,
+    );
+    if (!prereqs.ready || !prereqs.repo || !prereqs.targetEnvironment) {
       throw new Error(prereqs.reason ?? "Prerequisites not met.");
     }
     const repo = prereqs.repo;
     const devBranch = prereqs.devBranch!;
-    const prodCfg = prereqs.prodCfg;
-    const liveBranch = prodCfg.liveBranch;
+    const targetEnvironment = prereqs.targetEnvironment;
+    const prodCfg = targetEnvironment.providerConfiguration;
+    const liveBranch = prereqs.prodBranch;
+    const railwayToken = targetEnvironment.credential;
 
     const shouldRunStage = (name: PublishStageName) => {
       if (!run.resumeFromStage) return true;
@@ -1150,8 +1244,9 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
           const latest = await fetchDeploymentsForEnvironment(
             prodCfg.projectId!,
             prodCfg.serviceId!,
-            prodCfg.environmentId!,
-            3
+            prodCfg.environmentId,
+            3,
+            railwayToken,
           );
           for (const d of latest) {
             // Skip the pre-merge baseline AND any deployment id this run was
@@ -1177,7 +1272,7 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
         }
         if (newDeploymentId) {
           run.deploymentId = newDeploymentId;
-          run.deploymentUrl = buildRailwayDeploymentUrl(prodCfg, newDeploymentId);
+          run.deploymentUrl = buildRailwayDeploymentUrl(targetEnvironment, newDeploymentId);
           // Surface the live build-state transitions (QUEUED → BUILDING →
           // DEPLOYING …) on this stage so users see the deploy moving even
           // before we hand off to wait_for_success. Bounded by ~30s so we
@@ -1195,8 +1290,9 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
             const latest = await fetchDeploymentsForEnvironment(
               prodCfg.projectId!,
               prodCfg.serviceId!,
-              prodCfg.environmentId!,
-              5
+              prodCfg.environmentId,
+              5,
+              railwayToken,
             );
             const dep = latest.find((d) => d.id === newDeploymentId);
             if (!dep) break;
@@ -1254,8 +1350,9 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
             const pre = await fetchDeploymentsForEnvironment(
               prodCfg.projectId!,
               prodCfg.serviceId!,
-              prodCfg.environmentId!,
-              10
+              prodCfg.environmentId,
+              10,
+              railwayToken,
             );
             for (const d of pre) knownIds.add(d.id);
           } catch (err) {
@@ -1266,7 +1363,7 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
           // any deployment whose `createdAt` is older than this cannot be
           // the one we're about to trigger.
           const triggerAt = Date.now();
-          await redeployServiceInstance(prodCfg.serviceId!, prodCfg.environmentId!);
+          await redeployServiceInstance(prodCfg.serviceId, prodCfg.environmentId, railwayToken);
           appendLog(
             run,
             "trigger_redeploy_fallback",
@@ -1286,8 +1383,9 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
             const latest = await fetchDeploymentsForEnvironment(
               prodCfg.projectId!,
               prodCfg.serviceId!,
-              prodCfg.environmentId!,
-              5
+              prodCfg.environmentId,
+              5,
+              railwayToken,
             );
             const found = latest.find((d) => {
               if (knownIds.has(d.id)) return false;
@@ -1300,7 +1398,7 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
             if (found) {
               newDeploymentId = found.id;
               run.deploymentId = newDeploymentId;
-              run.deploymentUrl = buildRailwayDeploymentUrl(prodCfg, newDeploymentId);
+              run.deploymentUrl = buildRailwayDeploymentUrl(targetEnvironment, newDeploymentId);
               appendLog(
                 run,
                 "trigger_redeploy_fallback",
@@ -1346,8 +1444,9 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
           const latest = await fetchDeploymentsForEnvironment(
             prodCfg.projectId!,
             prodCfg.serviceId!,
-            prodCfg.environmentId!,
-            5
+            prodCfg.environmentId,
+            5,
+            railwayToken,
           );
           const dep = latest.find((d) => d.id === newDeploymentId);
           if (dep) {
@@ -1397,16 +1496,16 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
     if (shouldRunStage("health_check")) {
       startStage(run, "health_check");
       try {
-        const ok = await healthCheck(prodCfg.prodUrl!, signal, (line) => appendLog(run, "health_check", line));
+        const ok = await healthCheck(prereqs.prodUrl!, signal, (line) => appendLog(run, "health_check", line));
         if (!ok) {
-          const msg = `Health check never returned 2xx for ${prodCfg.prodUrl}.`;
+          const msg = `Health check never returned 2xx for ${prereqs.prodUrl}.`;
           finishStage(run, "health_check", { status: "failed", error: msg, message: msg });
           finalize("failed");
           return;
         }
         finishStage(run, "health_check", {
           status: "succeeded",
-          message: `2xx from ${prodCfg.prodUrl}`,
+          message: `2xx from ${prereqs.prodUrl}`,
         });
       } catch (err) {
         if (isCancelled(err)) throw err;
@@ -1462,8 +1561,8 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
     finishStage(run, "ready", {
       status: "succeeded",
       message: releaseMetadataRecorded
-        ? `${run.release.version} live at ${prodCfg.prodUrl} — ${run.newProdCommitSha?.slice(0, 7) ?? "—"} (took ${totalLabel}).`
-        : `Live at ${prodCfg.prodUrl} — ${run.newProdCommitSha?.slice(0, 7) ?? "—"}; release metadata was not recorded (took ${totalLabel}).`,
+        ? `${run.release.version} live at ${prereqs.prodUrl} — ${run.newProdCommitSha?.slice(0, 7) ?? "—"} (took ${totalLabel}).`
+        : `Live at ${prereqs.prodUrl} — ${run.newProdCommitSha?.slice(0, 7) ?? "—"}; release metadata was not recorded (took ${totalLabel}).`,
     });
     finalize("succeeded");
   } catch (err) {
