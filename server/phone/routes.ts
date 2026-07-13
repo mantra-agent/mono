@@ -42,7 +42,7 @@ export function registerPhoneRoutes(app: Express, deps: { ingestPhoneTurn: Phone
     const outbound = getOutboundCall(callSid, sessionId);
     if (!callSid || !outbound) return res.status(404).type("text/xml").send("<Response><Hangup/></Response>");
     pendingCalls.set(callSid, { sessionId: outbound.sessionId, caller: outbound.phoneNumber, principal: outbound.principal, callerName: outbound.personName });
-    const base = getRuntimePublicBaseUrl().replace(/^http/, "ws");
+    const base = (await getRuntimePublicBaseUrl())!.replace(/^http/, "ws");
     const streamUrl = `${base}/ws/twilio-media?callSid=${encodeURIComponent(callSid)}`;
     log.info(`outbound media accepted callSid=${callSid} sessionId=${outbound.sessionId}`);
     res.type("text/xml").send(`<Response><Connect><Stream url="${xmlEscape(streamUrl)}" /></Connect></Response>`);
@@ -75,7 +75,7 @@ export function registerPhoneRoutes(app: Express, deps: { ingestPhoneTurn: Phone
         botId: callSid, statusDetail: `Inbound call from ${caller}`,
       }, `phone:${callSid}`);
       pendingCalls.set(callSid, { sessionId: session.id, caller, principal, callerName: identity.name });
-      const base = getRuntimePublicBaseUrl().replace(/^http/, "ws");
+      const base = (await getRuntimePublicBaseUrl())!.replace(/^http/, "ws");
       const streamUrl = `${base}/ws/twilio-media?callSid=${encodeURIComponent(callSid)}`;
       log.info(`inbound call accepted callSid=${callSid} sessionId=${session.id} caller=${caller}`);
       res.type("text/xml").send(`<Response><Connect><Stream url="${xmlEscape(streamUrl)}" /></Connect></Response>`);

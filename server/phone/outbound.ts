@@ -82,7 +82,7 @@ export async function confirmOutboundCall(token: string): Promise<{ callSid: str
     title, platform: "phone", participants: [{ label: pending.personName, personId: pending.personId }],
     botStatus: "dialing", statusDetail: `Calling ${pending.phoneNumber}`,
   });
-  const base = getRuntimePublicBaseUrl();
+  const base = await getRuntimePublicBaseUrl();
   try {
     const call = await createTwilioCall({
       to: pending.phoneNumber,

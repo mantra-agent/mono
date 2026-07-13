@@ -1,42 +1,30 @@
 /**
  * Runtime Identity — single source of truth for "which deployment am I?"
  *
- * Resolved exactly once at boot from Railway-provided environment variables
- * plus PUBLIC_URL, then cached for the process lifetime. Every consumer that
- * needs the environment name, serving host, public base URL, git commit, or
- * DB host reads from here instead of scattering process.env lookups.
- *
- * Mismatch detection: PUBLIC_URL is a manually-set Railway variable and can
- * silently drift from the actual serving domain (RAILWAY_PUBLIC_DOMAIN),
- * which routes external callbacks (e.g. Recall.ai webhooks) to the wrong
- * deployment. When both are known and disagree, the identity flags the
- * mismatch, logs an error at boot, and getRuntimePublicBaseUrl() prefers the
- * verifiable serving domain over the configured PUBLIC_URL.
+ * Railway injects the provider coordinates for the running deployment. The
+ * Platforms registry owns their canonical Platform Environment meaning.
+ * Resolution is asynchronous so boot can enrich identity from PostgreSQL,
+ * while local development still receives a useful environment-only identity.
  */
 import { createLogger } from "./log";
 
 const log = createLogger("runtime-identity");
 
 export interface RuntimeIdentity {
-  /** Railway environment name, e.g. "production", "stage". "local" when not on Railway. */
   environmentName: string;
-  /** Railway service name, e.g. "mono". */
   serviceName: string | null;
-  /** Actual serving domain provided by Railway, e.g. "mono-prod-8d22.up.railway.app". */
   servingHost: string | null;
-  /** Normalized PUBLIC_URL env var (no trailing slash), or null when unset. */
   publicUrl: string | null;
-  /** True when PUBLIC_URL host and servingHost are both known and disagree. */
   publicUrlMismatch: boolean;
-  /** Git commit SHA of the running build, when Railway provides it. */
   gitCommit: string | null;
-  /** Hostname of the connected database (never credentials). */
   dbHost: string | null;
-  /** ISO timestamp of when this identity was resolved. */
+  platformEnvironmentId: number | null;
+  platformEnvironmentName: string | null;
   resolvedAt: string;
 }
 
 let cached: RuntimeIdentity | null = null;
+let inFlight: Promise<RuntimeIdentity> | null = null;
 
 function normalizeUrl(value: string | undefined): string | null {
   const trimmed = value?.trim().replace(/\/+$/, "");
@@ -53,18 +41,8 @@ function hostOf(url: string | null): string | null {
   }
 }
 
-/**
- * Resolve the runtime identity from the environment. Called once at boot;
- * subsequent calls return the cached identity. Safe to call lazily from any
- * consumer — resolution is synchronous and idempotent.
- */
-export function resolveRuntimeIdentity(): RuntimeIdentity {
-  if (cached) return cached;
-
-  const environmentName =
-    process.env.RAILWAY_ENVIRONMENT_NAME?.trim() ||
-    process.env.RAILWAY_ENVIRONMENT?.trim() ||
-    "local";
+function readBaseIdentity(): RuntimeIdentity {
+  const environmentName = process.env.RAILWAY_ENVIRONMENT_NAME?.trim() || "local";
   const serviceName = process.env.RAILWAY_SERVICE_NAME?.trim() || null;
   const servingHost = process.env.RAILWAY_PUBLIC_DOMAIN?.trim() || null;
   const publicUrl = normalizeUrl(process.env.PUBLIC_URL);
@@ -78,52 +56,69 @@ export function resolveRuntimeIdentity(): RuntimeIdentity {
   }
 
   const publicUrlHost = hostOf(publicUrl);
-  const publicUrlMismatch = Boolean(
-    publicUrlHost && servingHost && publicUrlHost !== servingHost,
-  );
-
-  cached = {
+  return {
     environmentName,
     serviceName,
     servingHost,
     publicUrl,
-    publicUrlMismatch,
+    publicUrlMismatch: Boolean(publicUrlHost && servingHost && publicUrlHost !== servingHost),
     gitCommit,
     dbHost,
+    platformEnvironmentId: null,
+    platformEnvironmentName: null,
     resolvedAt: new Date().toISOString(),
   };
-
-  if (publicUrlMismatch) {
-    log.error(
-      `PUBLIC_URL mismatch: PUBLIC_URL=${publicUrl} but this deployment serves ${servingHost}. ` +
-        `External callbacks derived from PUBLIC_URL would route to the wrong deployment. ` +
-        `getRuntimePublicBaseUrl() will prefer https://${servingHost}. ` +
-        `Fix the PUBLIC_URL Railway variable for environment "${environmentName}".`,
-    );
-  } else {
-    log.info(describeRuntimeIdentity(cached));
-  }
-
-  return cached;
 }
 
-/** The cached runtime identity, resolving on first use. */
-export function getRuntimeIdentity(): RuntimeIdentity {
+export async function resolveRuntimeIdentity(): Promise<RuntimeIdentity> {
+  if (cached) return cached;
+  if (inFlight) return inFlight;
+
+  inFlight = (async () => {
+    const identity = readBaseIdentity();
+    try {
+      const { resolveRunningPlatformEnvironment } = await import("./platform-environment-resolver");
+      const environment = await resolveRunningPlatformEnvironment();
+      if (environment) {
+        identity.platformEnvironmentId = environment.platformEnvironmentId;
+        identity.platformEnvironmentName = environment.platformEnvironmentName;
+      } else if (process.env.RAILWAY_PROJECT_ID || process.env.RAILWAY_ENVIRONMENT_ID || process.env.RAILWAY_SERVICE_ID) {
+        log.warn("Running Railway deployment has no matching Platform Environment hosting binding");
+      }
+    } catch (error) {
+      log.warn(
+        `Platform Environment identity resolution failed; continuing with provider identity: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    cached = identity;
+    if (identity.publicUrlMismatch) {
+      log.error(
+        `PUBLIC_URL mismatch: PUBLIC_URL=${identity.publicUrl} but this deployment serves ${identity.servingHost}. ` +
+          `External callbacks derived from PUBLIC_URL would route to the wrong deployment. ` +
+          `getRuntimePublicBaseUrl() will prefer https://${identity.servingHost}. ` +
+          `Fix the PUBLIC_URL Railway variable for environment "${identity.environmentName}".`,
+      );
+    } else {
+      log.info(describeRuntimeIdentity(identity));
+    }
+    return identity;
+  })().finally(() => {
+    inFlight = null;
+  });
+
+  return inFlight;
+}
+
+export async function getRuntimeIdentity(): Promise<RuntimeIdentity> {
   return cached ?? resolveRuntimeIdentity();
 }
 
-/**
- * The trustworthy public base URL for this deployment (no trailing slash).
- * Prefers the Railway-verified serving domain when PUBLIC_URL disagrees with
- * it, so externally-registered callbacks always point at THIS deployment.
- * Returns null when neither source is available (bare local dev).
- */
-export function getRuntimePublicBaseUrl(): string | null {
-  const id = getRuntimeIdentity();
+export async function getRuntimePublicBaseUrl(): Promise<string | null> {
+  const id = await getRuntimeIdentity();
   if (id.publicUrlMismatch && id.servingHost) {
-    log.warn(
-      `using serving host https://${id.servingHost} instead of mismatched PUBLIC_URL=${id.publicUrl}`,
-    );
+    log.warn(`using serving host https://${id.servingHost} instead of mismatched PUBLIC_URL=${id.publicUrl}`);
     return `https://${id.servingHost}`;
   }
   if (id.publicUrl) return id.publicUrl;
@@ -131,10 +126,10 @@ export function getRuntimePublicBaseUrl(): string | null {
   return null;
 }
 
-/** One-line human-readable identity summary for logs and agent context. */
-export function describeRuntimeIdentity(id: RuntimeIdentity = getRuntimeIdentity()): string {
+export function describeRuntimeIdentity(id: RuntimeIdentity): string {
   const parts = [
     `env=${id.environmentName}`,
+    id.platformEnvironmentId ? `platformEnvironment=${id.platformEnvironmentName}#${id.platformEnvironmentId}` : null,
     id.serviceName ? `service=${id.serviceName}` : null,
     id.servingHost ? `host=${id.servingHost}` : null,
     id.gitCommit ? `commit=${id.gitCommit.slice(0, 8)}` : null,

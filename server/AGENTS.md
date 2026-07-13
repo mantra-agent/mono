@@ -4,7 +4,7 @@ Root `AGENTS.md` is mandatory and authoritative for Engineering Principles, arch
 
 # Runtime Identity
 
-`runtime-identity.ts` is the single source of truth for deployment identity: environment name, service, serving host (`RAILWAY_PUBLIC_DOMAIN`), normalized `PUBLIC_URL`, git commit, and DB host. It resolves once at boot, flags `PUBLIC_URL` vs serving-host mismatches loudly, and is injected into agent context via the `world_model.runtime` spine section. New code that needs the public base URL for external callbacks must use `getRuntimePublicBaseUrl()` (which prefers the verifiable serving host on mismatch) instead of reading `process.env.PUBLIC_URL` directly.
+`runtime-identity.ts` is the single source of truth for deployment identity: canonical Platform Environment, Railway environment/service, serving host (`RAILWAY_PUBLIC_DOMAIN`), normalized `PUBLIC_URL`, git commit, and DB host. `platform-environment-resolver.ts` is the canonical server boundary for mapping Railway's injected project/environment/service IDs or an explicit Platform Environment ID through the hosting binding, provider connection, encrypted credential, and provider configuration. Runtime identity resolves once at boot, flags unresolved bindings and `PUBLIC_URL` vs serving-host mismatches loudly, and is injected into agent context via the `world_model.runtime` spine section. New code that needs the public base URL for external callbacks must await `getRuntimePublicBaseUrl()` (which prefers the verifiable serving host on mismatch) instead of reading `process.env.PUBLIC_URL` directly.
 
 # Server Architecture
 
