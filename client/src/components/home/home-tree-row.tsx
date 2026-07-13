@@ -303,7 +303,7 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
         }}
       >
         {/* Time column */}
-        <span className="w-14 shrink-0 text-right pr-1.5 text-[11px] leading-tight tabular-nums text-muted-foreground">
+        <span className="w-14 shrink-0 whitespace-pre-line text-right pr-1.5 text-[11px] leading-tight tabular-nums text-muted-foreground">
           {item.time ?? ""}
         </span>
 
