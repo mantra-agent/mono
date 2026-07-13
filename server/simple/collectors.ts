@@ -1402,18 +1402,22 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
 
   // Tasks
   try {
-    const [tasks, completedTasks] = await Promise.all([
-      fileTaskStorage.getTodoTasks(),
+    const [readyTasks, activeTasks, completedTasks] = await Promise.all([
+      fileTaskStorage.getTasks({ status: "ready" }),
+      fileTaskStorage.getTasks({ status: "active" }),
       fileTaskStorage.getTasks({ status: "done" }),
     ]);
-    tasks
+    [...readyTasks, ...activeTasks]
       .filter(task => {
+        const milestone = task.milestoneId && task.projectId != null
+          ? milestoneMap.get(`${task.projectId}-${task.milestoneId}`)
+          : undefined;
+        // User-owned tasks remain first-class Simple items. Agent-owned tasks only
+        // surface when their active project milestone gives them structural context.
+        if (task.owner !== "me" && !milestone) return false;
         // Skip tasks belonging to completed milestones — the milestone is done,
-        // these orphan tasks would otherwise surface as overdue in NOW
-        if (task.milestoneId && task.projectId != null) {
-          const milestone = milestoneMap.get(`${task.projectId}-${task.milestoneId}`);
-          if (milestone?.status === "completed") return false;
-        }
+        // these orphan tasks would otherwise surface as overdue in NOW.
+        if (milestone?.status === "completed") return false;
         return true;
       })
       .forEach((task, index) => items.push(itemFromTask(task, today, tomorrow, weekEnd, monthEnd, quarterEnd, yearEnd, index, milestoneMap)));
