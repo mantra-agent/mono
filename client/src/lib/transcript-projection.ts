@@ -241,10 +241,12 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
   const currentTurnStreaming = streamIsFreshForPendingTurn ? streaming : initialStreamingContent;
   const serverStreaming = isSessionActive && streamIsFreshForPendingTurn;
   const hasLiveStreamingState = serverStreaming && currentTurnStreaming.source !== null;
-  const serverHasVisibleAssistantStream = hasLiveStreamingState && currentTurnStreaming.segments.length > 0;
-
   // --- Render pending turn ---
-  const renderPendingTurn = serverHasVisibleAssistantStream || serverStreaming
+  // Session activity alone is not an assistant presentation state. During
+  // supersession the old run can publish a fresh terminal/idle snapshot before
+  // the replacement publishes its source. Keep the optimistic Thinking turn
+  // visible through that gap; only a concrete live assistant stream may adopt it.
+  const renderPendingTurn = hasLiveStreamingState
     ? null
     : visiblePendingTurn;
 
