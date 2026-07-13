@@ -17,7 +17,8 @@ import { getEvent, listAllEvents, type CalendarEvent } from "../google-calendar"
 import { runWithPrincipal } from "../principal-context";
 import { createUserPrincipalFromUser, ensureUserIdentityFoundation } from "../principal";
 import { storage } from "../storage";
-import { extractMeetingUrl, joinMeetingByUrl, MeetingJoinError } from "./join";
+import { joinMeetingByUrl, MeetingJoinError } from "./join";
+import { meetingUrlForEvent } from "./identity";
 import { getMeetingJoinPolicy, shouldJoinMeeting } from "./join-policy";
 
 const log = createLogger("meeting-auto-join");
@@ -30,16 +31,6 @@ export const TICK_INTERVAL_MS = 60_000;
 const RESCHEDULE_THRESHOLD_MS = 60_000;
 
 let tickInFlight = false;
-
-function eventMeetingUrl(event: CalendarEvent): string | null {
-  return extractMeetingUrl(
-    event.location,
-    event.description,
-    event.summary,
-    event.hangoutLink,
-    event.conferenceEntryPoints?.join("\n"),
-  );
-}
 
 function startAt(event: CalendarEvent): Date | null {
   if (!event.start.dateTime) return null;
@@ -83,7 +74,7 @@ async function discoverUserSchedules(user: Awaited<ReturnType<typeof storage.get
       const enabled = shouldJoinMeeting(event, policy, override);
       const eventStart = startAt(event);
       if (!eventStart) continue;
-      const meetingUrl = eventMeetingUrl(event);
+      const meetingUrl = meetingUrlForEvent(event);
       const scheduleUnchanged =
         existing?.agentJoinEnabled === enabled &&
         existing?.agentJoinOverride === override &&
@@ -228,7 +219,7 @@ async function processDueJoin(row: DueJoinRow): Promise<void> {
       }
     }
 
-    const meetingUrl = event ? eventMeetingUrl(event) : null;
+    const meetingUrl = event ? meetingUrlForEvent(event) : null;
     if (!meetingUrl) {
       await updateAgentJoinOutcome(row.id, {
         status: "no_link",
@@ -246,6 +237,15 @@ async function processDueJoin(row: DueJoinRow): Promise<void> {
         meetingUrl,
         title: event?.summary || "Meeting",
         agenda: row.agenda ?? undefined,
+        explicitEvent: {
+          accountId: event.accountId,
+          calendarId: event.calendarId,
+          providerEventId: event.id,
+          eventStart: event.start.dateTime || event.start.date || undefined,
+          eventEnd: event.end.dateTime || event.end.date || undefined,
+          title: event.summary || undefined,
+          agenda: row.agenda ?? undefined,
+        },
       });
       await updateAgentJoinOutcome(row.id, {
         status: "joined",

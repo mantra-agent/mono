@@ -551,6 +551,11 @@ export interface MeetingParticipant {
  * Meeting metadata on a chat session. A meeting IS a session — this is the
  * only extra state, stored on the session document (single source of truth).
  */
+export type MeetingResolutionSource =
+  | "calendar_auto_join"
+  | "manual_url_match"
+  | "unresolved_url";
+
 export interface MeetingSessionMeta {
   title?: string;
   platform?: string;
@@ -562,6 +567,13 @@ export interface MeetingSessionMeta {
   botId?: string;
   /** Original meeting join URL (Zoom/Meet). */
   meetingUrl?: string;
+  /** Durable identity of the exact calendar event when confidently resolved. */
+  calendarAccountId?: string;
+  calendarId?: string;
+  providerEventId?: string;
+  eventStart?: string;
+  eventEnd?: string;
+  resolutionSource?: MeetingResolutionSource;
   /** Private agenda copied from user-scoped calendar metadata at join time. */
   agenda?: string;
   /** Human-readable detail for denied/failed states (e.g. sub_code). */
