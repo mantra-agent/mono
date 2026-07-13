@@ -597,7 +597,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   gmail: {
-    description: "Read, search, and draft emails via Gmail. Supports multiple accounts. Actions: status, search, read, batch_read, draft, update_draft, recent, download_attachment, triage_log, email_cache. When creating an email intended for Ray to review or send, use draft or update_draft so the persisted draft renders as an inline widget; plain chat email text is only for brainstorming or explicit copy-only requests. For update_draft, provide exactly one populated body operation and omit the other two. Empty placeholder objects are ignored. The human sends via the widget's Send button. There is no tool-level send action.",
+    description: "Read, search, and draft emails via Gmail. Supports multiple accounts. Actions: status, search, read, batch_read, draft, reply, update_draft, recent, download_attachment, triage_log, email_cache. When the user asks to draft a reply, use reply with the canonical @email_thread or @email_message ref; reply resolves the recipient and subject and persists native Gmail thread metadata. Use draft only for new standalone emails. Use draft, reply, or update_draft so persisted drafts render as inline widgets; plain chat email text is only for brainstorming or explicit copy-only requests. For update_draft, provide exactly one populated body operation and omit the other two. Empty placeholder objects are ignored. The human sends via the widget's Send button. There is no tool-level send action.",
     category: "communication",
     parameters: {
       type: "object",
@@ -613,7 +613,8 @@ export const TOOLS: Record<string, ToolMeta> = {
         update_cc: { type: "array", items: { type: "string" }, description: "Non-empty CC recipients (for update_draft)" },
         update_bcc: { type: "array", items: { type: "string" }, description: "Non-empty BCC recipients (for update_draft)" },
         subject: { type: "string", description: "Email subject" },
-        body: { type: "string", description: "Email body (for draft creation only)" },
+        body: { type: "string", description: "Email body (for draft or reply creation only)" },
+        ref: { type: "string", description: "Canonical @email_thread or @email_message reference (required for reply; also used by email_cache resolve)" },
         findReplace: { type: "object", properties: { find: { type: "string", description: "Exact text to find" }, replace: { type: "string", description: "Replacement text; may be empty to delete the match" }, replaceAll: { type: "boolean", description: "Replace every exact match; defaults false and rejects ambiguous matches" } }, required: ["find", "replace"], description: "Optional exact body edit for update_draft. Mutually exclusive with rangePatch and replaceBody; omit when unused." },
         rangePatch: { type: "object", properties: { start: { type: "number", description: "Zero-based inclusive character offset" }, end: { type: "number", description: "Zero-based exclusive character offset" }, replacement: { type: "string", description: "Replacement text; may be empty to delete the range" }, expectedBodyHash: { type: "string", description: "SHA-256 hash of the current draft body; stale hashes are rejected" } }, required: ["start", "end", "replacement", "expectedBodyHash"], description: "Optional guarded body range edit for update_draft. Mutually exclusive with findReplace and replaceBody; omit when unused." },
         replaceBody: { type: "object", properties: { body: { type: "string", description: "Complete replacement body; may be empty only when intentionally clearing the body" } }, required: ["body"], description: "Optional explicit whole-body replacement for update_draft. Mutually exclusive with findReplace and rangePatch; omit when unused." },
@@ -627,7 +628,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         cache_action: { type: "string", description: "Sub-action for email_cache: 'get_untriaged' (fetch untriaged cached emails), 'mark_triaged' (mark cached emails as triaged), 'get_unenriched' (fetch triaged emails that haven't been enriched yet), 'store_enrichment' (store enrichment data for a thread), 'search' (search cached emails by query), 'resolve' or 'get_thread' (resolve @email_thread/@email_message refs to cached thread/messages), 'sync_status' (check sync health), 'pipeline_counts' (raw pipeline counts from DB), 'get_message' (raw email_messages row by message_id with enrichment status), 'diagnose' (compare pipeline counts vs unenriched query for divergence), 'run_downstream' (manually run triage + enrichment pipeline)" },
         limit: { type: "number", description: "Max results for email_cache get_untriaged (default 200, max 500) or search (default 20, max 100)" },
         thread_id: { type: "string", description: "Provider thread ID (for store_enrichment or email_cache get_thread/resolve)" },
-        ref: { type: "string", description: "Canonical email reference, e.g. @email_thread:accountId:providerThreadId or @email_message:9769 (for email_cache resolve)" },
+
         account_id: { type: "string", description: "Account ID (for store_enrichment)" },
         message_id: { type: "number", description: "Cached message ID (for store_enrichment)" },
         summary: { type: "string", description: "Enrichment summary of the thread (for store_enrichment)" },
