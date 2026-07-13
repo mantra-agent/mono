@@ -56,6 +56,7 @@ async function resolveEmailAccountOwner(accountId: string): Promise<EmailAccount
     ownerUserId: connectedAccounts.ownerUserId,
     principalAccountId: connectedAccounts.principalAccountId,
     provider: connectedAccounts.provider,
+    vaultId: connectedAccounts.vaultId,
   })
     .from(connectedAccounts)
     .where(and(eq(connectedAccounts.accountId, accountId), eq(connectedAccounts.provider, 'google')))
@@ -63,6 +64,9 @@ async function resolveEmailAccountOwner(accountId: string): Promise<EmailAccount
 
   if (!account) {
     throw new Error(`No connected Google account found for accountId=${accountId}`);
+  }
+  if (!account.vaultId) {
+    throw new Error(`Connected Google account accountId=${accountId} requires a Vault assignment`);
   }
   if (!account.ownerUserId || !account.principalAccountId) {
     const repaired = await repairConnectedAccountOwnership(accountId);
@@ -83,6 +87,8 @@ async function resolveEmailAccountOwner(accountId: string): Promise<EmailAccount
       role: 'owner',
       scopes: ['user:read', 'user:write'],
       permissions: [],
+      visibleVaultIds: [account.vaultId],
+      activeVaultId: account.vaultId,
       isAdmin: false,
       impersonation: {
         impersonatedByActorType: 'system',
@@ -94,7 +100,7 @@ async function resolveEmailAccountOwner(accountId: string): Promise<EmailAccount
 }
 
 async function backfillEmailOwnership(accountId: string, owner: EmailAccountOwner): Promise<void> {
-  const ownership = { ownerUserId: owner.ownerUserId, principalAccountId: owner.principalAccountId };
+  const ownership = sensitiveOwnershipValues(owner.principal);
   const missingOwnership = or(isNull(emailMessages.ownerUserId), isNull(emailMessages.principalAccountId));
   const [messageRows, cursorRows, syncLogRows, enrichmentRows, dismissalRows, draftRows] = await Promise.all([
     db.update(emailMessages)

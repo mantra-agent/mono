@@ -593,6 +593,8 @@ export const connectedAccounts = pgTable("connected_accounts", {
   accountId: text("account_id").notNull().unique(),
   ownerUserId: text("owner_user_id"),
   principalAccountId: text("principal_account_id"),
+  vaultId: text("vault_id"),
+  providerAccountId: text("provider_account_id"),
   provider: text("provider").notNull(),
   email: text("email"),
   label: text("label").notNull().default("Personal"),
@@ -605,7 +607,22 @@ export const connectedAccounts = pgTable("connected_accounts", {
   missingScopes: jsonb("missing_scopes").$type<string[]>(),
   addedAt: timestamp("added_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-});
+}, (table) => [
+  index("idx_connected_accounts_vault").on(table.vaultId),
+]);
+
+export const googleOAuthTransactions = pgTable("google_oauth_transactions", {
+  tokenHash: text("token_hash").primaryKey(),
+  ownerUserId: text("owner_user_id").notNull(),
+  principalAccountId: text("principal_account_id").notNull(),
+  vaultId: text("vault_id").notNull(),
+  provider: text("provider").notNull().default("google"),
+  label: text("label"),
+  redirectOrigin: text("redirect_origin"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [index("idx_google_oauth_transactions_expires").on(table.expiresAt)]);
 
 export const insertConnectedAccountSchema = createInsertSchema(connectedAccounts).omit({
   id: true,
@@ -647,6 +664,7 @@ export const emailTriageLog = pgTable("email_triage_log", {
   accountId: text("account_id").notNull(),
   ownerUserId: text("owner_user_id"),
   principalAccountId: text("principal_account_id"),
+  vaultId: text("vault_id"),
   cachedMessageId: integer("cached_message_id"),
   tier: text("tier").notNull(),
   senderEmail: text("sender_email"),
@@ -656,6 +674,7 @@ export const emailTriageLog = pgTable("email_triage_log", {
   unique("email_triage_log_message_account_unique").on(table.gmailMessageId, table.accountId),
   index("idx_email_triage_log_owner").on(table.ownerUserId),
   index("idx_email_triage_log_principal_account").on(table.principalAccountId),
+  index("idx_email_triage_log_vault").on(table.vaultId),
 ]);
 
 export const insertEmailTriageLogSchema = createInsertSchema(emailTriageLog).omit({
@@ -672,6 +691,7 @@ export const emailMessages = pgTable("email_messages", {
   accountId: text("account_id").notNull(),
   ownerUserId: text("owner_user_id"),
   principalAccountId: text("principal_account_id"),
+  vaultId: text("vault_id"),
   providerMessageId: text("provider_message_id").notNull(),
   providerThreadId: text("provider_thread_id"),
   historyId: text("history_id"),
@@ -701,6 +721,7 @@ export const emailMessages = pgTable("email_messages", {
   unique("email_messages_provider_account_message_unique").on(table.provider, table.accountId, table.providerMessageId),
   index("idx_email_messages_owner").on(table.ownerUserId),
   index("idx_email_messages_principal_account").on(table.principalAccountId),
+  index("idx_email_messages_vault").on(table.vaultId),
 ]);
 
 export const insertEmailMessageSchema = createInsertSchema(emailMessages).omit({
@@ -796,6 +817,7 @@ export const emailSyncCursors = pgTable("email_sync_cursors", {
   accountId: text("account_id").notNull(),
   ownerUserId: text("owner_user_id"),
   principalAccountId: text("principal_account_id"),
+  vaultId: text("vault_id"),
   historyId: text("history_id"),
   lastFullSyncAt: timestamp("last_full_sync_at", { withTimezone: true }),
   lastIncrementalSyncAt: timestamp("last_incremental_sync_at", { withTimezone: true }),
@@ -807,6 +829,7 @@ export const emailSyncCursors = pgTable("email_sync_cursors", {
   unique("email_sync_cursors_provider_account_unique").on(table.provider, table.accountId),
   index("idx_email_sync_cursors_owner").on(table.ownerUserId),
   index("idx_email_sync_cursors_principal_account").on(table.principalAccountId),
+  index("idx_email_sync_cursors_vault").on(table.vaultId),
 ]);
 
 export const insertEmailSyncCursorSchema = createInsertSchema(emailSyncCursors).omit({
@@ -826,6 +849,7 @@ export const emailDrafts = pgTable("email_drafts", {
   accountId: text("account_id"),
   scope: text("scope").notNull().default("user"),
   createdByUserId: text("created_by_user_id"),
+  vaultId: text("vault_id"),
   sessionId: text("session_id"),
   gmailAccountId: text("gmail_account_id"),
   to: text("to").array().notNull().default(sql`'{}'::text[]`),
@@ -844,6 +868,7 @@ export const emailDrafts = pgTable("email_drafts", {
   index("idx_email_drafts_owner").on(table.ownerUserId),
   index("idx_email_drafts_account").on(table.accountId),
   index("idx_email_drafts_session").on(table.sessionId),
+  index("idx_email_drafts_vault").on(table.vaultId),
 ]);
 
 export const insertEmailDraftSchema = createInsertSchema(emailDrafts).omit({
@@ -976,6 +1001,7 @@ export const emailSyncLog = pgTable("email_sync_log", {
   accountId: text("account_id").notNull(),
   ownerUserId: text("owner_user_id"),
   principalAccountId: text("principal_account_id"),
+  vaultId: text("vault_id"),
   syncStartedAt: timestamp("sync_started_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   syncCompletedAt: timestamp("sync_completed_at", { withTimezone: true }),
   messagesSynced: integer("messages_synced").default(0).notNull(),
@@ -987,6 +1013,7 @@ export const emailSyncLog = pgTable("email_sync_log", {
 }, (table) => [
   index("idx_email_sync_log_owner").on(table.ownerUserId),
   index("idx_email_sync_log_principal_account").on(table.principalAccountId),
+  index("idx_email_sync_log_vault").on(table.vaultId),
 ]);
 
 export const insertEmailSyncLogSchema = createInsertSchema(emailSyncLog).omit({
@@ -1003,6 +1030,7 @@ export const emailEnrichments = pgTable("email_enrichments", {
   accountId: text("account_id").notNull(),
   ownerUserId: text("owner_user_id"),
   principalAccountId: text("principal_account_id"),
+  vaultId: text("vault_id"),
   messageId: integer("message_id").references(() => emailMessages.id),
   summary: text("summary").notNull().default(""),
   decisions: jsonb("decisions").$type<string[]>(),
@@ -1018,6 +1046,7 @@ export const emailEnrichments = pgTable("email_enrichments", {
   unique("email_enrichments_thread_account_unique").on(table.providerThreadId, table.accountId),
   index("idx_email_enrichments_owner").on(table.ownerUserId),
   index("idx_email_enrichments_principal_account").on(table.principalAccountId),
+  index("idx_email_enrichments_vault").on(table.vaultId),
 ]);
 
 export const insertEmailEnrichmentSchema = createInsertSchema(emailEnrichments).omit({
@@ -1036,6 +1065,7 @@ export const emailDismissals = pgTable("email_dismissals", {
   accountId: text("account_id").notNull(),
   ownerUserId: text("owner_user_id"),
   principalAccountId: text("principal_account_id"),
+  vaultId: text("vault_id"),
   tier: text("tier").notNull(),
   sender: text("sender"),
   subject: text("subject"),
@@ -1045,6 +1075,7 @@ export const emailDismissals = pgTable("email_dismissals", {
 }, (table) => [
   index("idx_email_dismissals_owner").on(table.ownerUserId),
   index("idx_email_dismissals_principal_account").on(table.principalAccountId),
+  index("idx_email_dismissals_vault").on(table.vaultId),
 ]);
 
 export const insertEmailDismissalSchema = createInsertSchema(emailDismissals).omit({
