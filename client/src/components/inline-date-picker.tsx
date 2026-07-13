@@ -20,6 +20,7 @@ export function InlineDatePicker({
   children,
   className,
   testId,
+  expandHitArea = true,
 }: {
   /** Current date as YYYY-MM-DD, or empty/null when unset */
   value: string | null | undefined;
@@ -29,6 +30,12 @@ export function InlineDatePicker({
   children: ReactNode;
   className?: string;
   testId?: string;
+  /**
+   * Expand the invisible input 8px beyond the trigger for tiny targets like
+   * icon buttons (default). Disable for full-width rows (e.g. menu items)
+   * where the overflow would steal taps from adjacent elements.
+   */
+  expandHitArea?: boolean;
 }) {
   const openPicker = (e: MouseEvent<HTMLInputElement>) => {
     e.stopPropagation();
@@ -57,7 +64,10 @@ export function InlineDatePicker({
         value={value || ""}
         onChange={(e) => onCommit(e.target.value || null)}
         onClick={openPicker}
-        className="absolute -inset-2 cursor-pointer opacity-0 touch-manipulation [-webkit-user-select:text]"
+        className={cn(
+          "absolute cursor-pointer opacity-0 touch-manipulation [-webkit-user-select:text]",
+          expandHitArea ? "-inset-2" : "inset-0",
+        )}
         style={{ WebkitUserSelect: "text", userSelect: "text" }}
         aria-label="Edit date"
       />

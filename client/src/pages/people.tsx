@@ -971,18 +971,17 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
           ))}
         </DropdownMenuSubContent>
       </DropdownMenuSub>
-      <DropdownMenuSub>
-        <DropdownMenuSubTrigger>Date: {interaction.date ? new Date(interaction.date).toLocaleDateString() : "Not set"}</DropdownMenuSubTrigger>
-        <DropdownMenuSubContent className="p-2" onCloseAutoFocus={(e) => e.preventDefault()}>
-          <input
-            type="date"
-            value={interaction.date?.slice(0, 10) || ""}
-            onChange={(e) => interactionPatch(interaction, { date: e.target.value })}
-            className="h-7 w-full rounded border border-border bg-background px-2 text-xs text-foreground"
-            data-testid={`input-log-date-${interaction.id}`}
-          />
-        </DropdownMenuSubContent>
-      </DropdownMenuSub>
+      <DropdownMenuItem onSelect={(e) => e.preventDefault()} className="p-0">
+        <InlineDatePicker
+          value={interaction.date?.slice(0, 10) || ""}
+          onCommit={(v) => { if (v) interactionPatch(interaction, { date: v }); }}
+          className="w-full px-2 py-1.5"
+          expandHitArea={false}
+          testId={`input-log-date-${interaction.id}`}
+        >
+          <span>Date: {interaction.date ? new Date(interaction.date).toLocaleDateString() : "Not set"}</span>
+        </InlineDatePicker>
+      </DropdownMenuItem>
       <DropdownMenuItem onClick={() => {
         const next = !interaction.responseOwed;
         interactionPatch(interaction, { responseOwed: next, responseDueBy: next ? ensureFollowUpDueDate(interaction.responseDueBy) : null });
@@ -990,18 +989,17 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
         {interaction.responseOwed ? "\u2713 Follow-up" : "Follow-up"}
       </DropdownMenuItem>
       {interaction.responseOwed && (
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>Due: {interaction.responseDueBy ? new Date(interaction.responseDueBy).toLocaleDateString() : "Not set"}</DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="p-2" onCloseAutoFocus={(e) => e.preventDefault()}>
-            <input
-              type="date"
-              value={interaction.responseDueBy?.slice(0, 10) || ""}
-              onChange={(e) => interactionPatch(interaction, { responseDueBy: e.target.value })}
-              className="h-7 w-full rounded border border-border bg-background px-2 text-xs text-foreground"
-              data-testid={`input-log-follow-up-date-${interaction.id}`}
-            />
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
+        <DropdownMenuItem onSelect={(e) => e.preventDefault()} className="p-0">
+          <InlineDatePicker
+            value={interaction.responseDueBy?.slice(0, 10) || ""}
+            onCommit={(v) => { if (v) interactionPatch(interaction, { responseDueBy: v }); }}
+            className="w-full px-2 py-1.5"
+            expandHitArea={false}
+            testId={`input-log-follow-up-date-${interaction.id}`}
+          >
+            <span>Due: {interaction.responseDueBy ? new Date(interaction.responseDueBy).toLocaleDateString() : "Not set"}</span>
+          </InlineDatePicker>
+        </DropdownMenuItem>
       )}
       <DropdownMenuSeparator />
       <DropdownMenuItem
@@ -1117,18 +1115,17 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                     ))}
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>Date: {newDate ? new Date(newDate + "T12:00").toLocaleDateString() : "Today"}</DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="p-2" onCloseAutoFocus={(e) => e.preventDefault()}>
-                    <input
-                      type="date"
-                      value={newDate}
-                      onChange={(e) => setNewDate(e.target.value)}
-                      className="h-7 w-full rounded border border-border bg-background px-2 text-xs text-foreground"
-                      data-testid="input-interaction-date"
-                    />
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
+                <DropdownMenuItem onSelect={(e) => e.preventDefault()} className="p-0">
+                  <InlineDatePicker
+                    value={newDate}
+                    onCommit={(v) => { if (v) setNewDate(v); }}
+                    className="w-full px-2 py-1.5"
+                    expandHitArea={false}
+                    testId="input-interaction-date"
+                  >
+                    <span>Date: {newDate ? new Date(newDate + "T12:00").toLocaleDateString() : "Today"}</span>
+                  </InlineDatePicker>
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => {
                   const next = !newResponseOwed;
                   setNewResponseOwed(next);
@@ -1141,18 +1138,17 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                   {newResponseOwed ? "\u2713 Follow-up" : "Follow-up"}
                 </DropdownMenuItem>
                 {newResponseOwed && (
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger>Due: {newResponseDueBy ? new Date(newResponseDueBy + "T12:00").toLocaleDateString() : "Not set"}</DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent className="p-2" onCloseAutoFocus={(e) => e.preventDefault()}>
-                      <input
-                        type="date"
-                        value={newResponseDueBy}
-                        onChange={(e) => setNewResponseDueBy(e.target.value)}
-                        className="h-7 w-full rounded border border-border bg-background px-2 text-xs text-foreground"
-                        data-testid="input-response-due-by"
-                      />
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
+                  <DropdownMenuItem onSelect={(e) => e.preventDefault()} className="p-0">
+                    <InlineDatePicker
+                      value={newResponseDueBy}
+                      onCommit={(v) => { if (v) setNewResponseDueBy(v); }}
+                      className="w-full px-2 py-1.5"
+                      expandHitArea={false}
+                      testId="input-response-due-by"
+                    >
+                      <span>Due: {newResponseDueBy ? new Date(newResponseDueBy + "T12:00").toLocaleDateString() : "Not set"}</span>
+                    </InlineDatePicker>
+                  </DropdownMenuItem>
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
