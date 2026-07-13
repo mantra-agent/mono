@@ -11,6 +11,7 @@ import { agentExecutor, formatAbortDetails, type ExecutorRunResult } from "./age
 import { generateToolCallId } from "./file-storage/utils";
 import { createInactivityTimer, raceAbort } from "./timeout";
 import { ACTIVITY_THINKING, ACTIVITY_WORK, ACTIVITY_STRATEGY, ACTIVITY_MEMORY, ACTIVITY_FRAMING, BUILTIN_ACTIVITY_IDS, resolveActivityId, type ActivityId } from "./job-profiles";
+import type { AdmissionTier } from "./run-admission";
 
 import { getSideEffectTier, type SideEffectTier } from "./autonomy-tiers";
 import { isAgentType } from "@shared/instance-config";
@@ -313,6 +314,7 @@ export interface SkillRunConfig {
   temperature: number;
   timeoutMs: number;
   sessionType?: "autonomous" | "agent";
+  admissionTier?: AdmissionTier;
   postRunVerify?: (sessionId: string, toolCalls: Array<{ name: string; action?: string; error?: boolean; result?: string }>) => Promise<void>;
 }
 
@@ -386,6 +388,9 @@ const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
     temperature: 0.3,
     timeoutMs: 8 * 60 * 1000,
     sessionType: "autonomous",
+    // Email enrichment is part of the user-facing inbound communications
+    // pipeline. It must not be deferred merely because the user is active.
+    admissionTier: "realtime",
   },
   "brief-daily": {
     skillId: "brief-daily",
@@ -628,7 +633,7 @@ export async function executeAutonomousSkillRun(
   // creating a session, assembling context, and queueing for admission
   // only to be killed by the inactivity timer. The next scheduled trigger
   // will retry with a fresh start.
-  if (!options.parentSessionId && !isSkillless) {
+  if (!options.parentSessionId && !isSkillless && (config.admissionTier ?? "background") === "background") {
     try {
       const { admissionController } = await import("./run-admission");
       const activity = config.activity;
@@ -1111,7 +1116,7 @@ async function runSkillPipeline(
         signal: abortController.signal,
         onEvent: onEvent as any,
         querySubsystem: "autonomous",
-        tier: options.parentSessionId ? "request" : "background",
+        tier: options.parentSessionId ? "request" : (config.admissionTier ?? "background"),
       }),
       abortController.signal,
       15_000,

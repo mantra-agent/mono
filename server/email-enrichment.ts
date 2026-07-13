@@ -50,21 +50,29 @@ export async function runDeterministicDismissal(): Promise<{ dismissed: number; 
   return { dismissed, dismissedThreadIds };
 }
 
-export async function fireEnrichmentSkillRun(): Promise<boolean> {
+export type EnrichmentRunStatus = "completed" | "deferred" | "failed";
+
+export async function fireEnrichmentSkillRun(): Promise<EnrichmentRunStatus> {
   try {
     const { executeAutonomousSkillRun } = await import("./autonomous-skill-runner");
-    executeAutonomousSkillRun("enrich-email").catch(err => {
-      log.error(`Enrichment skill run failed: ${err.message}`);
-    });
-    return true;
+    const result = await executeAutonomousSkillRun("enrich-email");
+    if (!result) {
+      log.warn("Enrichment skill run deferred or already active");
+      return "deferred";
+    }
+    if (result.status !== "succeeded") {
+      log.error(`Enrichment skill run ${result.status}: ${result.error || result.summary || "unknown"}`);
+      return "failed";
+    }
+    return "completed";
   } catch (err: any) {
-    log.error(`Failed to start enrichment skill run: ${err.message}`);
-    return false;
+    log.error(`Enrichment skill run failed: ${err.message}`);
+    return "failed";
   }
 }
 
-export async function runEnrichment(): Promise<{ dismissed: number; skillRunStarted: boolean }> {
+export async function runEnrichment(): Promise<{ dismissed: number; runStatus: EnrichmentRunStatus }> {
   const { dismissed } = await runDeterministicDismissal();
-  const skillRunStarted = await fireEnrichmentSkillRun();
-  return { dismissed, skillRunStarted };
+  const runStatus = await fireEnrichmentSkillRun();
+  return { dismissed, runStatus };
 }
