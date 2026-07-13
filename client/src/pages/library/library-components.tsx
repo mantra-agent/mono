@@ -125,6 +125,7 @@ export function LibraryPageEditor({
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [bodyFocused, setBodyFocused] = useState(false);
+  const [isTitleEditing, setIsTitleEditing] = useState(false);
   const [headerTarget, setHeaderTarget] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -202,10 +203,17 @@ export function LibraryPageEditor({
   const isNewUntitledPage = !selectedPage.title && !selectedPage.plainTextContent?.trim();
 
   useEffect(() => {
-    if (!isNewUntitledPage) return;
-    const frame = window.requestAnimationFrame(() => titleInputRef.current?.focus());
-    return () => window.cancelAnimationFrame(frame);
+    setIsTitleEditing(isNewUntitledPage);
   }, [isNewUntitledPage, selectedId]);
+
+  useEffect(() => {
+    if (!isTitleEditing) return;
+    const frame = window.requestAnimationFrame(() => {
+      titleInputRef.current?.focus();
+      titleInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isTitleEditing, selectedId]);
 
   return (
     <>
@@ -226,7 +234,38 @@ export function LibraryPageEditor({
             )}
           </PopoverContent>
         </Popover>
-        <Input ref={titleInputRef} value={editTitle} onChange={(e) => handleTitleChange(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); editorRef.current?.focus(); } }} placeholder="New page" className="min-w-0 flex-1 h-7 border-none bg-transparent p-0 text-sm font-medium shadow-none placeholder:text-muted-foreground focus-visible:ring-0" data-testid="input-library-title" />
+        {isTitleEditing ? (
+          <Input
+            ref={titleInputRef}
+            value={editTitle}
+            onChange={(e) => handleTitleChange(e.target.value)}
+            onBlur={() => setIsTitleEditing(false)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                setIsTitleEditing(false);
+                editorRef.current?.focus();
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setIsTitleEditing(false);
+              }
+            }}
+            placeholder="New page"
+            className="min-w-0 flex-1 h-7 border-none bg-transparent p-0 text-sm font-medium shadow-none placeholder:text-muted-foreground focus-visible:ring-0"
+            data-testid="input-library-title"
+          />
+        ) : (
+          <button
+            type="button"
+            className="min-w-0 flex-1 truncate text-left text-sm font-medium text-foreground hover:text-cta"
+            onClick={() => setIsTitleEditing(true)}
+            title={editTitle || "Untitled"}
+            data-testid="button-edit-library-title"
+          >
+            {editTitle || "Untitled"}
+          </button>
+        )}
         <div className={cn("ml-auto flex shrink-0 items-center gap-1", bodyFocused && "invisible pointer-events-none")}>
           {saveMutation.isPending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
           <DropdownMenu modal={false}>

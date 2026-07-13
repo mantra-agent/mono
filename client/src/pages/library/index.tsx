@@ -6,7 +6,6 @@ import { useFocusContext } from "@/hooks/use-focus-context";
 import { LibraryTab } from "./library-tab";
 import { VISIBLE_INFO_TABS, VALID_TABS, type InfoTab, type LibraryPage } from "./types";
 import { useLibraryUnread } from "@/components/library-activity-indicator";
-import { cn } from "@/lib/utils";
 
 
 // Old hashes — `#data` and `#db` — used to land on the in-page Data sub-tab
@@ -65,38 +64,19 @@ function buildPageTrail(pages: LibraryPage[], pageSlug?: string): LibraryPage[] 
   return trail;
 }
 
-function LibraryTopbarBreadcrumbs({ trail, onSelectLibrary, onSelectPage }: {
+function LibraryTopbarBreadcrumbs({ trail, onSelectLibrary }: {
   trail: LibraryPage[];
   onSelectLibrary: () => void;
-  onSelectPage: (page: LibraryPage) => void;
 }) {
-  const visibleTrail = trail.length > 3 ? trail.slice(-3) : trail;
-  const collapsed = trail.length > visibleTrail.length;
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1 text-sm font-medium text-foreground">
-      <div className="flex min-w-0 shrink items-center gap-1 truncate">
-        <button type="button" className="shrink-0 hover:text-cta" onClick={onSelectLibrary} data-testid="topbar-library-root">Library</button>
-      {collapsed && (
+      <button type="button" className="shrink-0 hover:text-cta" onClick={onSelectLibrary} data-testid="topbar-library-root">Library</button>
+      {trail.length > 0 && (
         <>
-          <span className="text-muted-foreground">/</span>
-          <span className="shrink-0 text-muted-foreground">...</span>
+          <span className="shrink-0 text-muted-foreground">/</span>
+          <span className="shrink-0 text-muted-foreground" aria-label="Nested page">...</span>
         </>
       )}
-      {visibleTrail.map((page) => (
-        <span key={page.id} className="flex min-w-0 items-center gap-1">
-          <span className="shrink-0 text-muted-foreground">/</span>
-          <button
-            type="button"
-            className={cn("min-w-0 truncate hover:text-cta", page === visibleTrail[visibleTrail.length - 1] && "text-foreground")}
-            onClick={() => onSelectPage(page)}
-            data-testid={`topbar-library-crumb-${page.id}`}
-            title={page.title || "Untitled"}
-          >
-            {page.title || "Untitled"}
-          </button>
-        </span>
-      ))}
-      </div>
       <span className="shrink-0 text-muted-foreground">/</span>
       <div id="library-page-header-slot" className="flex min-w-0 flex-1 items-center" />
     </div>
@@ -139,7 +119,6 @@ export default function InfoPage() {
     <LibraryTopbarBreadcrumbs
       trail={libraryTrail}
       onSelectLibrary={() => setTab("library")}
-      onSelectPage={(page) => { window.location.hash = `library?page=${page.slug}`; }}
     />
   ) : undefined;
 
