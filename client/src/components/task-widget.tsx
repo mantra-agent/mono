@@ -340,7 +340,10 @@ export function TaskWidget({ taskId, defaultExpanded = false, showHeader = true,
 
   const project = task.projectId ? projectMap.get(task.projectId) : undefined;
   const milestone = project?.milestones?.find(m => m.id === task.milestoneId);
-  const statusCfg = STATUS_CONFIG[task.status];
+  const statusCfg = STATUS_CONFIG[task.status] ?? {
+    label: task.status || "Unknown",
+    className: "bg-muted text-muted-foreground",
+  };
 
   return (
     <div className="w-full" data-testid={`task-widget-${taskId}`}>
