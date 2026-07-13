@@ -2044,7 +2044,7 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
   };
 
   return (
-    <IntegrationTreeSection label="Accounts" initialOpen={needsAttention} testIdPrefix="google">
+    <IntegrationTreeSection label="Accounts" initialOpen testIdPrefix="google">
       {!oauthConfigured ? (
         <p className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-google-oauth-required">
           Add the Google client ID and client secret under Credentials before connecting an account.
@@ -2077,7 +2077,7 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
               : isHealthy
                 ? <CheckCircle2 className="h-3.5 w-3.5 text-active" />
                 : <Mail className="h-3.5 w-3.5" />}
-            hasValue
+            value={permAccount?.vault ? `Vault: ${permAccount.vault.name}` : status}
             showEmpty
             testId={`google-account-${account.id}`}
             defaultOpen={showReauth || vaultRequired}
@@ -2169,26 +2169,34 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
                 ) : null}
               </>
             }
-          >
-            <span className={cn(showReauth ? "text-destructive" : isHealthy ? "text-active" : "text-muted-foreground")}>
-              {status}
-            </span>
-          </ProfileTreeRow>
+          />
         );
       })}
 
       {oauthConfigured ? (
         showAddForm ? (
-          <ProfileTreeRow label="New account" icon={<Plus className="h-3.5 w-3.5" />} hasValue showEmpty testId="row-new-google-account">
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <Select value={selectedVaultId} onValueChange={setSelectedVaultId}>
-                <SelectTrigger data-testid="select-google-account-vault" className="w-48"><SelectValue placeholder="Select Vault" /></SelectTrigger>
-                <SelectContent>{vaults.map((vault) => <SelectItem key={vault.id} value={vault.id}>{vault.name}</SelectItem>)}</SelectContent>
-              </Select>
-              <Button disabled={!selectedVaultId} onClick={() => startOAuth(selectedVaultId)} data-testid="button-connect-google-account">Connect</Button>
-              <Button variant="ghost" size="sm" onClick={() => setShowAddForm(false)}>Cancel</Button>
-            </div>
-          </ProfileTreeRow>
+          <ProfileTreeRow
+            label="New Google account"
+            icon={<Plus className="h-3.5 w-3.5" />}
+            value={selectedVaultId ? `Vault: ${vaults.find((vault) => vault.id === selectedVaultId)?.name || "Selected"}` : "Choose Vault"}
+            showEmpty
+            testId="row-new-google-account"
+            defaultOpen
+            expandedContentClassName="min-w-0 space-y-3"
+            expandedContent={
+              <>
+                <p className="text-sm text-foreground">Connect this Google account and its Gmail and Calendar data to a Vault.</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Select value={selectedVaultId} onValueChange={setSelectedVaultId}>
+                    <SelectTrigger data-testid="select-google-account-vault" className="w-48" aria-label="Select account Vault"><SelectValue placeholder="Select Vault" /></SelectTrigger>
+                    <SelectContent>{vaults.map((vault) => <SelectItem key={vault.id} value={vault.id}>{vault.name}</SelectItem>)}</SelectContent>
+                  </Select>
+                  <Button disabled={!selectedVaultId} onClick={() => startOAuth(selectedVaultId)} data-testid="button-connect-google-account">Connect to Vault</Button>
+                  <Button variant="ghost" size="sm" onClick={() => setShowAddForm(false)}>Cancel</Button>
+                </div>
+              </>
+            }
+          />
         ) : (
           <div className="px-2 py-1">
             <Button variant="ghost" size="sm" onClick={() => setShowAddForm(true)} data-testid="button-add-google-account">
