@@ -13,6 +13,7 @@ import {
   MailOpen,
   MessageSquare,
   MessagesSquare,
+  MessageCircle,
   PenLine,
   Radio,
   Rss,
@@ -56,6 +57,18 @@ const registry: Record<string, RegistryEntry> = {
     Icon: User,
     fallbackLabel: ref => metadataString(ref, "label") || ref.id,
     href: ref => metadataString(ref, "href") || `/people/${encodeURIComponent(ref.id)}`,
+  },
+  interaction: {
+    Icon: MessageCircle,
+    fallbackLabel: ref => metadataString(ref, "label") || `Interaction ${ref.id.split("~").pop() || ref.id}`,
+    href: ref => {
+      const explicit = metadataString(ref, "href");
+      if (explicit) return explicit;
+      const [personId, interactionId] = ref.id.split("~").map(decodeURIComponent);
+      return personId && interactionId
+        ? `/people/${encodeURIComponent(personId)}?interaction=${encodeURIComponent(interactionId)}`
+        : undefined;
+    },
   },
   goal: {
     Icon: Target,

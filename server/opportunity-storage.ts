@@ -4,6 +4,7 @@ import {
   opportunities,
   opportunityArtifacts,
   opportunitySkills,
+  opportunityInteractions,
   execSkills,
   computeEV,
   type OpportunityRow,
@@ -11,10 +12,28 @@ import {
   type OpportunityWithSkills,
   type OpportunityArtifactRow,
   type ArtifactKind,
+  type CreateOpportunityInteractionInput,
+  type UpdateOpportunityInteractionInput,
+  type OpportunityInteractionActivity,
 } from "@shared/schema";
 import { createLogger } from "./log";
+import type { Principal } from "./principal";
+import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
+import type { Interaction } from "./people-storage";
 
 const log = createLogger("OpportunityStorage");
+const opportunityScopeColumns = { scope: opportunities.scope, ownerUserId: opportunities.ownerUserId, accountId: opportunities.accountId };
+const interactionLinkScopeColumns = { scope: opportunityInteractions.scope, ownerUserId: opportunityInteractions.ownerUserId, accountId: opportunityInteractions.accountId };
+
+function opportunityUserId(principal: Principal): string {
+  if (!principal.userId) throw Object.assign(new Error("User principal required"), { status: 401 });
+  return principal.userId;
+}
+
+function interactionReference(personId: string, interactionId: string): string {
+  return `@interaction:${encodeURIComponent(personId)}~${encodeURIComponent(interactionId)}`;
+}
+
 
 let schemaMigrated = false;
 
@@ -183,10 +202,32 @@ export async function migrateOpportunitySchema(): Promise<void> {
       ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS champion_person_id TEXT;
       ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS follow_up_by TEXT;
       ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS follow_up_note TEXT;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'user';
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS owner_user_id TEXT;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS account_id TEXT;
+      UPDATE opportunities SET owner_user_id = user_id WHERE owner_user_id IS NULL;
 
       CREATE INDEX IF NOT EXISTS idx_opportunities_status ON opportunities(status);
       CREATE INDEX IF NOT EXISTS idx_opportunities_type ON opportunities(type);
       CREATE INDEX IF NOT EXISTS idx_opportunities_user ON opportunities(user_id);
+      CREATE INDEX IF NOT EXISTS idx_opportunities_scope_owner ON opportunities(scope, owner_user_id);
+      CREATE INDEX IF NOT EXISTS idx_opportunities_account ON opportunities(account_id);
+
+      CREATE TABLE IF NOT EXISTS opportunity_interactions (
+        id SERIAL PRIMARY KEY,
+        opportunity_id INTEGER NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+        person_id TEXT NOT NULL,
+        interaction_id TEXT NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'user',
+        owner_user_id TEXT,
+        account_id TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uq_opportunity_interaction UNIQUE(opportunity_id, person_id, interaction_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_opportunity_interactions_opportunity ON opportunity_interactions(opportunity_id);
+      CREATE INDEX IF NOT EXISTS idx_opportunity_interactions_interaction ON opportunity_interactions(person_id, interaction_id);
+      CREATE INDEX IF NOT EXISTS idx_opportunity_interactions_scope_owner ON opportunity_interactions(scope, owner_user_id);
+      CREATE INDEX IF NOT EXISTS idx_opportunity_interactions_account ON opportunity_interactions(account_id);
 
       CREATE TABLE IF NOT EXISTS opportunity_artifacts (
         id SERIAL PRIMARY KEY,
@@ -217,109 +258,164 @@ export async function migrateOpportunitySchema(): Promise<void> {
 
 // ── Storage Class ──────────────────────────────────────────────────
 class OpportunityStorage {
-  async list(userId: string, filters?: { status?: string; type?: string }): Promise<OpportunityRow[]> {
+  async list(principal: Principal, filters?: { status?: string; type?: string }): Promise<OpportunityRow[]> {
     return autoHeal(async () => {
-      const conditions = [eq(opportunities.userId, userId)];
+      const conditions = [];
       if (filters?.status) conditions.push(eq(opportunities.status, filters.status));
       if (filters?.type) conditions.push(eq(opportunities.type, filters.type));
-      const rows = await db.select().from(opportunities)
-        .where(and(...conditions))
+      return db.select().from(opportunities)
+        .where(combineWithVisibleScope(principal, opportunityScopeColumns, conditions.length ? and(...conditions) : undefined))
         .orderBy(desc(opportunities.updatedAt));
-      return rows;
     });
   }
 
-  async get(id: number, userId?: string): Promise<OpportunityRow | undefined> {
+  async get(id: number, principal: Principal): Promise<OpportunityRow | undefined> {
     return autoHeal(async () => {
-      const conditions = userId
-        ? and(eq(opportunities.id, id), eq(opportunities.userId, userId))
-        : eq(opportunities.id, id);
-      const [row] = await db.select().from(opportunities).where(conditions);
+      const [row] = await db.select().from(opportunities).where(
+        combineWithVisibleScope(principal, opportunityScopeColumns, eq(opportunities.id, id)),
+      );
       return row;
     });
   }
 
-  async create(userId: string, data: InsertOpportunity): Promise<OpportunityRow> {
+  async create(principal: Principal, data: InsertOpportunity): Promise<OpportunityRow> {
     return autoHeal(async () => {
       const ev = computeEV(data.type, (data.evInputs || {}) as Record<string, any>, data.probability ?? 0.05, data.hoursPerWeek);
       const [row] = await db.insert(opportunities).values({
         ...data,
-        userId,
+        userId: opportunityUserId(principal),
+        ...ownedInsertValues(principal, opportunityScopeColumns),
         evInputs: data.evInputs || {},
         computedEv: ev,
       }).returning();
       log.debug(`create opportunity id=${row.id} title="${row.title}" ev=${ev.toFixed(0)}`);
-
-      // Sync follow-up to people interactions (fire-and-forget)
       syncOpportunityFollowUp({
-        opportunityId: row.id,
-        title: row.title,
-        followUpBy: row.followUpBy,
-        followUpNote: row.followUpNote,
-        championPersonId: row.championPersonId,
-        contactPersonId: row.contactPersonId,
+        opportunityId: row.id, title: row.title, followUpBy: row.followUpBy, followUpNote: row.followUpNote,
+        championPersonId: row.championPersonId, contactPersonId: row.contactPersonId,
       }).catch(err => log.warn(`follow-up sync failed for new opp=${row.id}: ${err}`));
-
       return row;
     });
   }
 
-  async update(id: number, updates: Partial<InsertOpportunity>, userId?: string): Promise<OpportunityRow | undefined> {
+  async update(id: number, updates: Partial<InsertOpportunity>, principal: Principal): Promise<OpportunityRow | undefined> {
     return autoHeal(async () => {
-      // If EV-affecting fields changed, we need to recompute
-      const existing = await this.get(id, userId);
+      const existing = await this.get(id, principal);
       if (!existing) return undefined;
-
       const merged = { ...existing, ...updates };
       const needsRecompute = updates.type !== undefined || updates.evInputs !== undefined || updates.probability !== undefined || updates.hoursPerWeek !== undefined;
       const patch: Record<string, unknown> = { ...updates, updatedAt: new Date() };
-
-      if (needsRecompute) {
-        patch.computedEv = computeEV(
-          merged.type,
-          (merged.evInputs || {}) as Record<string, any>,
-          merged.probability ?? 0.05,
-          merged.hoursPerWeek,
-        );
-      }
-
-      const updateConditions = userId
-        ? and(eq(opportunities.id, id), eq(opportunities.userId, userId))
-        : eq(opportunities.id, id);
-      const [row] = await db.update(opportunities).set(patch).where(updateConditions).returning();
-      log.debug(`update opportunity id=${id} found=${!!row}`);
-
-      // Sync follow-up to people interactions when relevant fields changed
-      if (row && (updates.followUpBy !== undefined || updates.championPersonId !== undefined
-        || updates.contactPersonId !== undefined || updates.followUpNote !== undefined || updates.title !== undefined)) {
+      if (needsRecompute) patch.computedEv = computeEV(merged.type, (merged.evInputs || {}) as Record<string, any>, merged.probability ?? 0.05, merged.hoursPerWeek);
+      const [row] = await db.update(opportunities).set(patch).where(
+        combineWithWritableScope(principal, opportunityScopeColumns, eq(opportunities.id, id)),
+      ).returning();
+      if (row && (updates.followUpBy !== undefined || updates.championPersonId !== undefined || updates.contactPersonId !== undefined || updates.followUpNote !== undefined || updates.title !== undefined)) {
         syncOpportunityFollowUp({
-          opportunityId: row.id,
-          title: row.title,
-          followUpBy: row.followUpBy,
-          followUpNote: row.followUpNote,
-          championPersonId: row.championPersonId,
-          contactPersonId: row.contactPersonId,
-          previous: {
-            followUpBy: existing.followUpBy,
-            championPersonId: existing.championPersonId,
-            contactPersonId: existing.contactPersonId,
-          },
+          opportunityId: row.id, title: row.title, followUpBy: row.followUpBy, followUpNote: row.followUpNote,
+          championPersonId: row.championPersonId, contactPersonId: row.contactPersonId,
+          previous: { followUpBy: existing.followUpBy, championPersonId: existing.championPersonId, contactPersonId: existing.contactPersonId },
         }).catch(err => log.warn(`follow-up sync failed for opp=${id}: ${err}`));
       }
-
       return row;
     });
   }
 
-  async delete(id: number, userId?: string): Promise<boolean> {
+  async delete(id: number, principal: Principal): Promise<boolean> {
     return autoHeal(async () => {
-      const deleteConditions = userId
-        ? and(eq(opportunities.id, id), eq(opportunities.userId, userId))
-        : eq(opportunities.id, id);
-      const [row] = await db.delete(opportunities).where(deleteConditions).returning();
-      log.debug(`delete opportunity id=${id} found=${!!row}`);
+      const [row] = await db.delete(opportunities).where(
+        combineWithWritableScope(principal, opportunityScopeColumns, eq(opportunities.id, id)),
+      ).returning();
       return !!row;
     });
+  }
+
+  // ── Activity associations ─────────────────────────────────────
+
+  async listActivities(opportunityId: number, principal: Principal): Promise<OpportunityInteractionActivity[]> {
+    const opportunity = await this.get(opportunityId, principal);
+    if (!opportunity) throw Object.assign(new Error("Opportunity not found"), { status: 404 });
+    const links = await autoHeal(() => db.select().from(opportunityInteractions).where(
+      combineWithVisibleScope(principal, interactionLinkScopeColumns, eq(opportunityInteractions.opportunityId, opportunityId)),
+    ).orderBy(desc(opportunityInteractions.createdAt)));
+    const { peopleStorage } = await import("./people-storage");
+    const people = await peopleStorage.getPeopleByIds([...new Set(links.map(link => link.personId))]);
+    const byPerson = new Map(people.map(person => [person.id, person]));
+    const seen = new Set<string>();
+    const result: OpportunityInteractionActivity[] = [];
+    for (const link of links) {
+      const key = `${link.personId}:${link.interactionId}`;
+      if (seen.has(key)) continue;
+      const person = byPerson.get(link.personId);
+      const interaction = person?.interactions.find(item => item.id === link.interactionId);
+      if (!person || !interaction) continue;
+      seen.add(key);
+      result.push({
+        associationId: link.id, opportunityId, personId: person.id, personName: person.name,
+        interaction, reference: interactionReference(person.id, interaction.id), createdAt: link.createdAt,
+      });
+    }
+    return result.sort((a, b) => new Date(b.interaction.date).getTime() - new Date(a.interaction.date).getTime());
+  }
+
+  async createOrLinkActivity(opportunityId: number, input: CreateOpportunityInteractionInput, principal: Principal): Promise<OpportunityInteractionActivity> {
+    const opportunity = await this.get(opportunityId, principal);
+    if (!opportunity) throw Object.assign(new Error("Opportunity not found"), { status: 404 });
+    const { peopleStorage } = await import("./people-storage");
+    const person = await peopleStorage.getPerson(input.personId);
+    if (!person) throw Object.assign(new Error("Person not found"), { status: 404 });
+    let interaction: Interaction | null = null;
+    if (input.interactionId) {
+      interaction = person.interactions.find(item => item.id === input.interactionId) ?? null;
+      if (!interaction) throw Object.assign(new Error("Interaction not found"), { status: 404 });
+    } else {
+      const updated = await peopleStorage.addInteraction(input.personId, {
+        date: input.date ?? new Date().toISOString().slice(0, 10),
+        type: input.type ?? "note",
+        summary: input.summary!,
+        ...(input.context !== undefined ? { context: input.context } : {}),
+        ...(input.direction !== undefined ? { direction: input.direction } : {}),
+        ...(input.meaningfulness !== undefined ? { meaningfulness: input.meaningfulness } : {}),
+        ...(input.responseOwed !== undefined ? { responseOwed: input.responseOwed } : {}),
+        ...(input.responseDueBy ? { responseDueBy: input.responseDueBy } : {}),
+        ...(input.capitalImpact !== undefined ? { capitalImpact: input.capitalImpact } : {}),
+        ...(input.tags !== undefined ? { tags: input.tags } : {}),
+      });
+      interaction = updated.interactions.at(-1) ?? null;
+      if (!interaction) throw new Error("Interaction creation failed");
+    }
+    const [link] = await autoHeal(() => db.insert(opportunityInteractions).values({
+      opportunityId, personId: input.personId, interactionId: interaction!.id,
+      ...ownedInsertValues(principal, interactionLinkScopeColumns),
+    }).onConflictDoUpdate({
+      target: [opportunityInteractions.opportunityId, opportunityInteractions.personId, opportunityInteractions.interactionId],
+      set: { personId: input.personId },
+    }).returning());
+    return {
+      associationId: link.id, opportunityId, personId: person.id, personName: person.name,
+      interaction, reference: interactionReference(person.id, interaction.id), createdAt: link.createdAt,
+    };
+  }
+
+  async updateActivity(opportunityId: number, associationId: number, updates: UpdateOpportunityInteractionInput, principal: Principal): Promise<OpportunityInteractionActivity | undefined> {
+    const opportunity = await this.get(opportunityId, principal);
+    if (!opportunity) return undefined;
+    const [link] = await db.select().from(opportunityInteractions).where(
+      combineWithWritableScope(principal, interactionLinkScopeColumns, and(eq(opportunityInteractions.id, associationId), eq(opportunityInteractions.opportunityId, opportunityId))),
+    );
+    if (!link) return undefined;
+    const { peopleStorage } = await import("./people-storage");
+    const person = await peopleStorage.updateInteraction(link.personId, link.interactionId, updates as Partial<Interaction>);
+    const interaction = person.interactions.find(item => item.id === link.interactionId);
+    if (!interaction) return undefined;
+    return { associationId: link.id, opportunityId, personId: person.id, personName: person.name, interaction, reference: interactionReference(person.id, interaction.id), createdAt: link.createdAt };
+  }
+
+  async unlinkActivity(opportunityId: number, associationId: number, principal: Principal): Promise<boolean> {
+    const opportunity = await this.get(opportunityId, principal);
+    if (!opportunity) return false;
+    const [link] = await db.delete(opportunityInteractions).where(
+      combineWithWritableScope(principal, interactionLinkScopeColumns, and(eq(opportunityInteractions.id, associationId), eq(opportunityInteractions.opportunityId, opportunityId))),
+    ).returning();
+    return !!link;
   }
 
   // ── Artifact Slots ─────────────────────────────────────────────
@@ -457,9 +553,9 @@ class OpportunityStorage {
   }
 
   /** List with linked skills eagerly loaded */
-  async listWithSkills(userId: string, filters?: { status?: string; type?: string }): Promise<OpportunityWithSkills[]> {
+  async listWithSkills(principal: Principal, filters?: { status?: string; type?: string }): Promise<OpportunityWithSkills[]> {
     return autoHeal(async () => {
-      const opps = await this.list(userId, filters);
+      const opps = await this.list(principal, filters);
       if (opps.length === 0) return [];
 
       // Batch-load all linked skills for these opportunities
@@ -500,9 +596,9 @@ class OpportunityStorage {
   }
 
   /** Get single opportunity with linked skills */
-  async getWithSkills(id: number, userId?: string): Promise<OpportunityWithSkills | undefined> {
+  async getWithSkills(id: number, principal: Principal): Promise<OpportunityWithSkills | undefined> {
     return autoHeal(async () => {
-      const opp = await this.get(id, userId);
+      const opp = await this.get(id, principal);
       if (!opp) return undefined;
       const linkedSkills = await this.getSkillsForOpportunity(id);
       return { ...opp, linkedSkills };

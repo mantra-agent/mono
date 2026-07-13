@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef, Fragment, type ReactNode } from "react";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { ExpandableInteractionRow, type PersonInteraction } from "@/components/people/expandable-interaction-row";
 import { InlineDatePicker } from "@/components/inline-date-picker";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, useLocation, Link } from "wouter";
@@ -151,19 +152,7 @@ interface Note {
   updatedAt: string;
 }
 
-interface Interaction {
-  id: string;
-  date: string;
-  type: string;
-  summary: string;
-  context?: string;
-  direction?: "inbound" | "outbound" | "mutual";
-  meaningfulness?: "low" | "medium" | "high";
-  responseOwed?: boolean;
-  responseDueBy?: string;
-  capitalImpact?: "deposit" | "withdrawal" | "neutral";
-  tags?: string[];
-}
+type Interaction = PersonInteraction;
 
 interface RelationshipState {
   temperature?: "hot" | "warm" | "cool" | "cold";
@@ -1186,6 +1175,16 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
             const relationshipMemoryTitle = relationshipMemory?.title || relationshipMemory?.content || "Relationship memory";
             const noteTitle = note?.title && note.title !== "Untitled" ? note.title : null;
             const preview = isNote ? (noteTitle || note?.content || "Note") : isMemory ? memoryTitle : isRelationshipMemory ? relationshipMemoryTitle : (interaction?.summary || "");
+            if (interaction) {
+              return (
+                <ExpandableInteractionRow
+                  key={`interaction-${item.id}`}
+                  interaction={interaction}
+                  menuContent={renderInteractionOptions(interaction)}
+                  testId={`interaction-${item.id}`}
+                />
+              );
+            }
             return (
               <Fragment key={`${item.kind}-${item.id}`}>
                 <ProfileTreeRow

@@ -1010,10 +1010,11 @@ export class PeopleStorage {
       interaction = { ...interaction, responseOwed: false };
     }
 
-    person.interactions.push({
+    const createdInteraction: Interaction = {
       id: generateId(),
       ...interaction,
-    });
+    };
+    person.interactions.push(createdInteraction);
     person.relationshipProfile = recomputeRelationshipProfile(person);
     if (!person.networkProfile) person.networkProfile = {};
     person.networkProfile.mobilization = computeMobilization(person);
@@ -1022,12 +1023,19 @@ export class PeopleStorage {
     return person;
   }
 
+  async getInteraction(personId: string, interactionId: string): Promise<Interaction | null> {
+    const person = await this.getPerson(personId);
+    if (!person) return null;
+    return person.interactions.find((interaction) => interaction.id === interactionId) ?? null;
+  }
+
   async updateInteraction(personId: string, interactionId: string, updates: Partial<Interaction>): Promise<Person> {
     log.debug(`updateInteraction personId=${personId} interactionId=${interactionId}`);
     const person = await this.getPerson(personId);
     if (!person) throw new Error(`Person ${personId} not found`);
     const interaction = person.interactions.find((i) => i.id === interactionId);
     if (!interaction) throw new Error(`Interaction ${interactionId} not found on person ${personId}`);
+    if (updates.date !== undefined) interaction.date = updates.date;
     if (updates.summary !== undefined) interaction.summary = updates.summary;
     if (updates.context !== undefined) interaction.context = updates.context;
     if (updates.type !== undefined) interaction.type = updates.type;
