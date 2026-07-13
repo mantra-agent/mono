@@ -90,11 +90,11 @@ export function isProdDeploying(status: ProdStatus | undefined): boolean {
   return PROD_DEPLOYING_STATUSES.has(s);
 }
 
-export function useProdStatus() {
+export function useProdStatus(platformEnvironmentId: number) {
   return useQuery<ProdStatus>({
-    queryKey: ["/api/railway/prod/status"],
+    queryKey: ["/api/railway/environments", platformEnvironmentId, "status"],
     queryFn: async () => {
-      const res = await fetch("/api/railway/prod/status", {
+      const res = await fetch(`/api/railway/environments/${platformEnvironmentId}/status`, {
         credentials: "include",
       });
       if (res.status === 503) return (await res.json()) as ProdStatus;
@@ -304,12 +304,12 @@ function RunStatusBadge({ status }: { status: PublishRun["status"] }) {
 
 // ─── Inline build log (replaces standalone BuildStatusPanel for publish) ──────
 
-function InlineBuildLog({ isActive }: { isActive: boolean }) {
+function InlineBuildLog({ isActive, platformEnvironmentId }: { isActive: boolean; platformEnvironmentId: number }) {
   const preRef = useRef<HTMLPreElement>(null);
   const { data, isLoading } = useQuery<string>({
-    queryKey: ["/api/railway/prod/build-logs", "inline"],
+    queryKey: ["/api/railway/environments", platformEnvironmentId, "build-logs", "inline"],
     queryFn: async () => {
-      const res = await fetch("/api/railway/prod/build-logs", {
+      const res = await fetch(`/api/railway/environments/${platformEnvironmentId}/build-logs`, {
         credentials: "include",
       });
       if (!res.ok) throw new Error(`${res.status}`);
@@ -528,6 +528,7 @@ interface StagesTimelineProps {
   prodDeploying?: boolean;
   onReconcile?: () => void;
   reconcilePending?: boolean;
+  platformEnvironmentId: number;
 }
 
 function StagesTimeline({
@@ -535,6 +536,7 @@ function StagesTimeline({
   prodDeploying = false,
   onReconcile,
   reconcilePending = false,
+  platformEnvironmentId,
 }: StagesTimelineProps) {
   return (
     <ol
@@ -594,7 +596,7 @@ function StagesTimeline({
                   {stage.message}
                 </p>
               )}
-              {showBuildLog && <InlineBuildLog isActive />}
+              {showBuildLog && <InlineBuildLog isActive platformEnvironmentId={platformEnvironmentId} />}
               {stage.log.length > 0 && !showBuildLog && (
                 <details className="mt-1.5">
                   <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
@@ -835,6 +837,7 @@ interface FeedProps {
   prodDeploying: boolean;
   onReconcile: () => void;
   reconcilePending: boolean;
+  platformEnvironmentId: number;
 }
 
 function PublishFeed({
@@ -843,6 +846,7 @@ function PublishFeed({
   prodDeploying,
   onReconcile,
   reconcilePending,
+  platformEnvironmentId,
 }: FeedProps) {
   const startedRel = useMemo(
     () =>
@@ -867,6 +871,7 @@ function PublishFeed({
           prodDeploying={prodDeploying}
           onReconcile={onReconcile}
           reconcilePending={reconcilePending}
+          platformEnvironmentId={platformEnvironmentId}
         />
       </div>
     );
@@ -903,6 +908,7 @@ function PublishFeed({
               stages={run.stages}
               onReconcile={onReconcile}
               reconcilePending={reconcilePending}
+              platformEnvironmentId={platformEnvironmentId}
             />
           </div>
         </details>
@@ -962,9 +968,9 @@ function RunHeader({
 
 // ─── Main tab ──────────────────────────────────────────────────────────────────
 
-export function DevPublishTab() {
+export function DevPublishTab({ platformEnvironmentId }: { platformEnvironmentId: number }) {
   const { data, isLoading, error, refetch, isFetching } = usePublishSummary();
-  const { data: prodStatus } = useProdStatus();
+  const { data: prodStatus } = useProdStatus(platformEnvironmentId);
   const { toast } = useToast();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [versionIncrement, setVersionIncrement] = useState<VersionIncrement>("minor");
@@ -1080,11 +1086,11 @@ export function DevPublishTab() {
 
   const redeployMut = useMutation<unknown, Error, void>({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/railway/prod/redeploy", {});
+      const res = await apiRequest("POST", `/api/railway/environments/${platformEnvironmentId}/redeploy`, {});
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/railway/prod/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/railway/environments", platformEnvironmentId, "status"] });
       queryClient.invalidateQueries({
         queryKey: ["/api/railway/publish/summary"],
       });
@@ -1245,7 +1251,7 @@ export function DevPublishTab() {
             <>
               {stage.name === "compare" && changePreview}
               {(stage.name === "railway_build" || stage.name === "health_check") && productionDetails}
-              {showBuildLog && <InlineBuildLog isActive />}
+              {showBuildLog && <InlineBuildLog isActive platformEnvironmentId={platformEnvironmentId} />}
               {stage.log.length > 0 && !showBuildLog && (
                 <details className="mt-1.5">
                   <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">

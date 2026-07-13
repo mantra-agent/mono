@@ -82,12 +82,7 @@ function readTabSeen(): Record<string, string> {
 /** Returns the highest-priority NavDotLevel across Build tabs. */
 export function useEnvActivity(): NavDotLevel | null {
   const { data: devStatus } = useQuery<RailwayStatus>({
-    queryKey: ["/api/railway/dev/status"],
-    refetchInterval: 15_000,
-    retry: false,
-  });
-  const { data: prodStatus } = useQuery<RailwayStatus>({
-    queryKey: ["/api/railway/prod/status"],
+    queryKey: ["/api/railway/runtime/status"],
     refetchInterval: 15_000,
     retry: false,
   });
@@ -104,16 +99,13 @@ export function useEnvActivity(): NavDotLevel | null {
   const { data: publishSummary } = usePublishSummary();
 
   const devLevel = devStatus?.configured ? deploymentLevel(devStatus.deployment?.status) : null;
-  const prodBaseLevel = prodStatus?.configured ? deploymentLevel(prodStatus.deployment?.status) : null;
-  const prodLevel = publishSummary?.run?.status === "running" ? "active" as const : prodBaseLevel;
+  const prodLevel = publishSummary?.run?.status === "running" ? "active" as const : null;
 
   const devId = devStatus?.configured ? devStatus.deployment?.id : undefined;
-  const prodId = prodStatus?.configured ? prodStatus.deployment?.id : undefined;
   const devFamily = statusFamily(devStatus?.deployment?.status);
-  const prodFamily = statusFamily(prodStatus?.deployment?.status);
   const isPublishing = publishSummary?.run?.status === "running";
   const devKey = `dev-${devFamily}-${devId ?? "none"}`;
-  const prodKey = `prod-${prodFamily}-${isPublishing ? "publishing" : prodId ?? "none"}`;
+  const prodKey = `prod-${isPublishing ? "publishing" : "idle"}`;
 
   // Use the same per-tab seen state as the Build header tabs. This keeps the
   // sidebar Build indicator aligned with Stage/Publish/Mobile instead of

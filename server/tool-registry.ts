@@ -1,7 +1,6 @@
 import { getToolStats } from "./file-storage";
 import { createLogger } from "./log";
 import { bridgeHandlers } from "./bridge-tools";
-import { getSecretSync } from "./secrets-store";
 import { db } from "./db";
 import { memoryEntries } from "@shared/schema";
 import { sql, and as andOp, eq as eqOp, gte as gteOp } from "drizzle-orm";
@@ -178,15 +177,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   railway: {
-    description: "Inspect and manage Railway-hosted instances. Use this whenever a 'production is broken' (or dev-broken) report comes in — pull real Railway status, deployments, runtime logs, and build logs before guessing. The `environment` parameter is REQUIRED on every call ('dev' or 'prod'). Actions: status (current deployment + URL), deployments (recent deployments with commit info), logs (runtime logs for latest or a given deploymentId), build_logs (build + deploy log stream for the latest in-flight or most recent deployment), list_variables (variable NAMES only, never values), redeploy (redeploy latest or a given deploymentId — non-destructive), restart (restart latest or a given deployment — non-destructive). Destructive/permanent actions (rollback, stop, secret value reveal, variable writes) are intentionally NOT exposed here and must be performed by a human via the Dev page. Currently reachable: dev, prod. Multi-account routing: pass `connectionId` (provider connection ID) or `platformEnvironmentId` (platform environment ID) to route through a specific provider connection and its hosting binding instead of the hardcoded dev/prod config. When using these, `environment` is not required.",
+    description: "Inspect and manage a Railway-hosted Platform Environment. Cross-environment operations require `platformEnvironmentId`, which resolves the hosting binding and authenticated connector through the canonical Platform Environment resolver. Omit it only for current-runtime self-inspection with status, logs, or build_logs. Actions: status, deployments, logs, build_logs, list_variables (names only), redeploy, restart. Destructive actions and secret values are intentionally not exposed.",
     category: "system",
     parameters: {
       type: "object",
       properties: {
         action: { type: "string", enum: ["status", "deployments", "logs", "build_logs", "list_variables", "redeploy", "restart"], description: "Action to perform" },
-        environment: { type: "string", enum: ["dev", "prod"], description: "Which Railway environment to target. REQUIRED when connectionId/platformEnvironmentId are not provided." },
-        connectionId: { type: "number", description: "Provider connection ID — routes through that connection's token and hosting binding instead of hardcoded dev/prod config." },
-        platformEnvironmentId: { type: "number", description: "Platform environment ID (platform_product_environments.id) — looks up the hosting binding and routes through the bound connection automatically." },
+        platformEnvironmentId: { type: "number", description: "Platform Environment ID. Required except for current-runtime status, logs, and build_logs self-inspection." },
         deploymentId: { type: "string", description: "Specific deployment ID (optional — defaults to latest deployment for logs/build_logs/restart/redeploy)" },
         limit: { type: "number", description: "Max results (for deployments default 10, for logs default 200, max 500)" },
       },
@@ -1592,44 +1589,12 @@ function normalizeCategory(cat: string): string {
 let cachedRegistry: { tools: ToolDefinition[]; timestamp: number } | null = null;
 const CACHE_TTL = 15000;
 
-function describeRailwayReachableEnvironments(): string {
-  const hasToken = !!getSecretSync("RAILWAY_API_TOKEN");
-  const hasProject = !!getSecretSync("RAILWAY_PROJECT_ID");
-  const reachable: string[] = [];
-  const missing: string[] = [];
-  if (hasToken && hasProject) {
-    if (getSecretSync("RAILWAY_DEV_ENVIRONMENT_ID") && getSecretSync("RAILWAY_DEV_SERVICE_ID") && getSecretSync("RAILWAY_DEV_URL")) {
-      reachable.push("dev");
-    } else {
-      missing.push("dev");
-    }
-    if (
-      getSecretSync("RAILWAY_PROD_ENVIRONMENT_ID") &&
-      (getSecretSync("RAILWAY_PROD_SERVICE_ID") || getSecretSync("RAILWAY_DEV_SERVICE_ID")) &&
-      getSecretSync("RAILWAY_PROD_URL")
-    ) {
-      reachable.push("prod");
-    } else {
-      missing.push("prod");
-    }
-  } else {
-    missing.push("dev", "prod");
-  }
-  const parts: string[] = [];
-  parts.push(reachable.length > 0 ? `Currently reachable: ${reachable.join(", ")}.` : "Currently reachable: (none).");
-  if (missing.length > 0) parts.push(`Not configured: ${missing.join(", ")}.`);
-  return parts.join(" ");
-}
-
 function toolMetaToSchema(name: string, meta: ToolMeta): ToolSchema {
   const baseParams: Record<string, any> = meta.parameters || { type: "object" as const, properties: {} };
   const properties = { ...(baseParams.properties || {}), reasoning: { type: "string", description: "One sentence explaining why you are using this tool right now." } };
   const required = Array.from(new Set([...(Array.isArray(baseParams.required) ? baseParams.required : []), "reasoning"]));
   const parameters = { ...baseParams, properties, required };
-  let description = meta.description;
-  if (name === "railway") {
-    description = `${meta.description} ${describeRailwayReachableEnvironments()}`;
-  }
+  const description = meta.description;
   return {
     name,
     description,

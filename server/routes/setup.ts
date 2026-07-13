@@ -46,7 +46,7 @@ export async function registerSetupRoutes(app: Express) {
   });
 
   app.get("/api/setup/secrets-status", async (_req, res) => {
-    const [elevenlabsConnected, gmailReadAccess, gmailHealthResult, openaiSubscriptionConnected] = await Promise.all([
+    const [elevenlabsConnected, gmailReadAccess, gmailHealthResult, openaiSubscriptionConnected, railwayCapability] = await Promise.all([
       !!getSecretSync("ELEVENLABS_API_KEY"),
       (async () => {
         try {
@@ -83,6 +83,14 @@ export async function registerSetupRoutes(app: Express) {
           return !!acct;
         } catch { return false; }
       })(),
+      (async () => {
+        try {
+          const { resolveRailwayEnvironmentControl, verifyRailwayEnvironmentCapability } = await import("../integrations/railway/environment-control");
+          const control = await resolveRailwayEnvironmentControl(undefined, { allowCurrentRuntime: true });
+          const capability = await verifyRailwayEnvironmentCapability(control);
+          return capability.authenticated && capability.projectVisible;
+        } catch { return false; }
+      })(),
     ]);
 
     res.json({
@@ -109,7 +117,7 @@ export async function registerSetupRoutes(app: Express) {
       })(),
       openaiSubscription: openaiSubscriptionConnected,
       claudeCli: !!getSecretSync("CLAUDE_CODE_OAUTH_TOKEN"),
-      railway: !!getSecretSync("RAILWAY_API_TOKEN"),
+      railway: railwayCapability,
       expo: !!await getSecret("EXPO_ACCESS_TOKEN"),
       recall: !!(await getSecret("RECALL_API_KEY") && await getSecret("RECALL_REGION")),
       twilio: !!(await getSecret("TWILIO_ACCOUNT_SID") && await getSecret("TWILIO_AUTH_TOKEN") && await getSecret("TWILIO_PHONE_NUMBER")),
