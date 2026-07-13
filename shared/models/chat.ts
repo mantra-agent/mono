@@ -575,7 +575,6 @@ export interface MeetingSessionMeta {
   speechStatus?: "speaking" | "spoken" | "failed";
   speechStatusDetail?: string;
   /** Whether finalized utterances that call Mantra by name may trigger a spoken answer. */
-  addressedResponsesEnabled?: boolean;
   /** Durable replay guard: complete assembled turn id most recently claimed for an addressed response. */
   lastAddressedTurnId?: string;
 }
@@ -652,6 +651,15 @@ export interface ChatSession {
   triggerName?: string;
   rootSessionId?: string;
   depth?: number;
+}
+
+
+/** Durable activity shown in Session Menu; live execution remains SessionManager-owned. */
+export function isDurablyActiveSession(session: Pick<ChatSession, "status" | "type" | "meeting" | "hasActiveDescendant" | "hasActivePlan">): boolean {
+  return session.status === "streaming" ||
+    !!session.hasActiveDescendant ||
+    !!session.hasActivePlan ||
+    (session.type === "meeting" && session.meeting?.botStatus === "live");
 }
 
 export type ToolCallStatus = "running" | "done" | "error";

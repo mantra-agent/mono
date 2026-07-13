@@ -901,27 +901,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }
   });
 
-  app.patch("/api/sessions/:id/meeting-addressed-responses", async (req: Request, res: Response) => {
-    try {
-      const id = req.params.id as string;
-      const { enabled } = req.body || {};
-      if (typeof enabled !== "boolean") {
-        return res.status(400).json({ error: "enabled (boolean) is required" });
-      }
-      const session = await chatStorage.getSession(id);
-      if (!session) return res.status(404).json({ error: "Session not found" });
-      if (session.type !== "meeting" || !session.meeting) {
-        return res.status(400).json({ error: "Session is not a meeting" });
-      }
-      const updated = await chatStorage.updateMeetingMeta(id, { addressedResponsesEnabled: enabled });
-      chatLog.log(`meeting addressed responses sessionId=${id} enabled=${enabled}`);
-      res.json({ ok: true, session: updated });
-    } catch (error) {
-      chatLog.error("Error updating meeting addressed responses:", error);
-      res.status(500).json({ error: "Failed to update meeting addressed responses" });
-    }
-  });
-
   app.patch("/api/sessions/:id", async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
@@ -2286,13 +2265,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           content,
           isGreeting,
           pageContext: incomingPageContext,
-          sayAloud = false,
         } = req.body;
         chatLog.log(
           `message start sessionId=${sessionId} contentLen=${content?.length || 0} isGreeting=${!!isGreeting}`,
         );
 
-        if (typeof sayAloud !== "boolean") return res.status(400).json({ error: "sayAloud must be a boolean" });
         if (!content || typeof content !== "string") {
           return res.status(400).json({ error: "Message content is required" });
         }
@@ -2508,7 +2485,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           chatModel,
           autoTier,
           modelSelectionMs,
-          sayAloud && session.type === "meeting",
+          session.type === "meeting" && session.meeting?.botStatus === "live",
           undefined,
           runGeneration,
         ).catch((err) => {
@@ -2656,6 +2633,15 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       return { ok: true, sessionId, sessionKey, queued: false };
     }
 
+    // Output audio re-enters Recall as the bot participant's transcript. It is
+    // already represented by the canonical assistant message, so ingesting it
+    // again would create a duplicate user-side echo and can recursively address
+    // the agent. Drop it at the producer boundary.
+    if (event.speakerLabel?.trim().toLowerCase() === "mantra agent") {
+      chatLog.debug(`meeting ingest: ignored bot echo sessionId=${sessionId}`);
+      return { ok: true, sessionId, sessionKey, queued: false };
+    }
+
     // Speaker attribution against the session's participant roster
     const resolution = await resolveSpeaker(
       event.speakerLabel,
@@ -2696,17 +2682,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       `meeting address decision sessionId=${sessionId} turnId=${turnId} messageId=${persistedMessage?.id || "none"} decision=${addressDecision.decision} reason=${addressDecision.reason} confidence=${addressDecision.confidence}`,
     );
 
-    const addressedEnabled = meeting.addressedResponsesEnabled !== false;
     const shouldTriggerAddressed =
-      addressedEnabled &&
       addressDecision.decision === "addressed" &&
       !!persistedMessage;
-
-    if (!addressedEnabled && addressDecision.decision === "addressed") {
-      chatLog.log(
-        `meeting address decision sessionId=${sessionId} messageId=${persistedMessage?.id || "none"} decision=disabled`,
-      );
-    }
 
     // Non-addressed transcript is passive context only. Addressed turns are
     // the sole path that may start an agent run without composer interaction.

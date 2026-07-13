@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { createLogger } from "@/lib/logger";
-import { Mic, MicOff, ArrowUp, Square, Paperclip, MoreHorizontal, Eye, X, FileText, Bug, Volume2 } from "lucide-react";
+import { Mic, MicOff, ArrowUp, Square, Paperclip, MoreHorizontal, Eye, X, FileText, Bug } from "lucide-react";
 import { useMentionAutocomplete } from "@/hooks/use-mention-autocomplete";
 import { MentionPopover } from "@/components/mention-popover";
 import { EditableReferenceInput, type EditableReferenceInputHandle } from "@/components/references/editable-reference-input";
@@ -52,7 +52,6 @@ import { StatusLine } from "./status-line";
 import { PreviewChip } from "./preview-chip";
 import { ExpandedDialogue } from "./expanded-dialogue";
 import type { ExecutionStep, StreamingContent } from "@shared/streaming-types";
-import { Switch } from "@/components/ui/switch";
 
 const log = createLogger("BottomBar");
 
@@ -420,29 +419,8 @@ export function BottomBar({
   const cursorRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const prevStatusRef = useRef<SessionStatus>("idle");
-  const [sayAloud, setSayAloud] = useState(false);
   const { data: sessions = [] } = useQuery<Session[]>({ queryKey: ["/api/sessions"], enabled: !!focusedSessionId });
   const focusedSession = focusedSessionId ? sessions.find((session) => session.id === focusedSessionId) : undefined;
-  const liveMeeting = focusedSession?.type === "meeting" && focusedSession.meeting?.botStatus === "live";
-  const addressedResponsesEnabled = focusedSession?.meeting?.addressedResponsesEnabled !== false;
-  const addressedResponsesMutation = useMutation({
-    mutationFn: async (enabled: boolean) => {
-      if (!focusedSessionId) throw new Error("No meeting session selected");
-      const response = await apiRequest("PATCH", `/api/sessions/${focusedSessionId}/meeting-addressed-responses`, { enabled });
-      return response.json() as Promise<{ session?: Session }>;
-    },
-    onSuccess: ({ session }) => {
-      if (session) {
-        queryClient.setQueryData<Session[]>(["/api/sessions"], (current = []) =>
-          current.map((item) => item.id === session.id ? session : item),
-        );
-      }
-    },
-    onError: (error) => {
-      log.error("Failed to update meeting addressed responses", error);
-      toast({ title: "Could not update meeting listening", variant: "destructive" });
-    },
-  });
 
   const chatSend = useChatSend({
     toast,
@@ -455,7 +433,6 @@ export function BottomBar({
     setAttachedFiles,
     createSessionPayload,
     getMessagePageContext,
-    getSayAloud: () => liveMeeting && sayAloud,
     externalPendingTurn: [contextPendingTurn, setContextPendingTurn],
   });
 
@@ -464,7 +441,6 @@ export function BottomBar({
     setBarState("idle");
     setShowPreview(false);
     prevStatusRef.current = "idle";
-    setSayAloud(false);
   }, [focusedSessionId]);
 
   // Derive bar state from the server runtime projection. Stop is tied to
@@ -711,23 +687,6 @@ export function BottomBar({
               {attachedFiles.map((file, i) => (
                 <AttachedFileThumbnail key={`${file.name}-${file.size}-${i}`} file={file} index={i} onRemove={removeFile} />
               ))}
-            </div>
-          )}
-
-          {focusedSession?.type === "meeting" && (
-            <div className="flex items-center justify-end gap-2 px-3 pt-2 md:mx-auto md:max-w-2xl" data-testid="meeting-say-aloud-control">
-              <Volume2 className="h-3.5 w-3.5 text-muted-foreground" />
-              <label htmlFor="meeting-addressed-responses" className="text-xs text-muted-foreground">Answer when called</label>
-              <Switch
-                id="meeting-addressed-responses"
-                checked={addressedResponsesEnabled}
-                onCheckedChange={(enabled) => addressedResponsesMutation.mutate(enabled)}
-                disabled={!liveMeeting || voiceActive || addressedResponsesMutation.isPending}
-                data-testid="switch-meeting-addressed-responses"
-              />
-              <label htmlFor="meeting-say-aloud" className="text-xs text-muted-foreground">Say aloud</label>
-              <Switch id="meeting-say-aloud" checked={sayAloud} onCheckedChange={setSayAloud} disabled={!liveMeeting || voiceActive} data-testid="switch-meeting-say-aloud" />
-              {!liveMeeting && <span className="text-xs text-muted-foreground">Bot must be live</span>}
             </div>
           )}
 
