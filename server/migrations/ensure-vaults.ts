@@ -126,6 +126,15 @@ export async function ensureVaults(): Promise<void> {
       "transaction_amortizations",
       // Phase 2: Object storage ACLs (written by setObjectAclPolicy)
       "object_acls",
+      // Google source ownership + derived email closure
+      "connected_accounts",
+      "email_messages",
+      "email_triage_log",
+      "email_sync_cursors",
+      "email_sync_log",
+      "email_enrichments",
+      "email_dismissals",
+      "email_drafts",
     ];
 
     for (const table of vaultIdTables) {
@@ -150,6 +159,14 @@ export async function ensureVaults(): Promise<void> {
       // Phase 2 indexes
       { table: "calendar_event_metadata", idx: "idx_cal_meta_vault" },
       { table: "persons", idx: "idx_persons_vault" },
+      { table: "connected_accounts", idx: "idx_connected_accounts_vault" },
+      { table: "email_messages", idx: "idx_email_messages_vault" },
+      { table: "email_triage_log", idx: "idx_email_triage_log_vault" },
+      { table: "email_sync_cursors", idx: "idx_email_sync_cursors_vault" },
+      { table: "email_sync_log", idx: "idx_email_sync_log_vault" },
+      { table: "email_enrichments", idx: "idx_email_enrichments_vault" },
+      { table: "email_dismissals", idx: "idx_email_dismissals_vault" },
+      { table: "email_drafts", idx: "idx_email_drafts_vault" },
     ];
     for (const { table, idx } of indexedTables) {
       await pool.query(`
@@ -196,6 +213,9 @@ export async function ensureVaults(): Promise<void> {
       { table: "theses", accountCol: "account_id" },
       { table: "signal_sources", accountCol: "account_id" },
       { table: "signal_items", accountCol: "account_id" },
+      // Google source accounts belong to the principal account. Derived email rows
+      // are backfilled separately from their provider-account lineage below.
+      { table: "connected_accounts", accountCol: "principal_account_id" },
       // Phase 2: Calendar (use account_id)
       { table: "calendar_event_metadata", accountCol: "account_id" },
       { table: "calendar_event_tasks", accountCol: "principal_account_id" },
@@ -245,6 +265,37 @@ export async function ensureVaults(): Promise<void> {
       `);
       if (rowCount && rowCount > 0) {
         log.log(`Backfilled ${rowCount} rows in ${table}`);
+      }
+    }
+
+    // Derived Google data inherits the Vault from its connected source account.
+    // Unresolvable rows remain NULL and therefore fail closed.
+    const derivedGoogleTables = [
+      { table: "email_messages", accountCol: "account_id" },
+      { table: "email_triage_log", accountCol: "account_id" },
+      { table: "email_sync_cursors", accountCol: "account_id" },
+      { table: "email_sync_log", accountCol: "account_id" },
+      { table: "email_enrichments", accountCol: "account_id" },
+      { table: "email_dismissals", accountCol: "account_id" },
+      { table: "email_drafts", accountCol: "gmail_account_id" },
+    ];
+    for (const { table, accountCol } of derivedGoogleTables) {
+      const { rows: tableExists } = await pool.query(
+        `SELECT to_regclass('public.${table}') AS t`,
+      );
+      if (!tableExists[0]?.t) continue;
+
+      const { rowCount } = await pool.query(`
+        UPDATE "${table}" derived
+        SET vault_id = source.vault_id
+        FROM connected_accounts source
+        WHERE source.provider = 'google'
+          AND source.account_id = derived.${accountCol}
+          AND source.vault_id IS NOT NULL
+          AND derived.vault_id IS NULL
+      `);
+      if (rowCount && rowCount > 0) {
+        log.log(`Backfilled ${rowCount} Google-derived rows in ${table}`);
       }
     }
 
