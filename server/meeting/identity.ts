@@ -1,5 +1,5 @@
 import type { MeetingResolutionSource } from "@shared/models/chat";
-import { getMetadata } from "../calendar-metadata";
+import { getMetadata, resolveMeetingAgenda } from "../calendar-metadata";
 import { listAllEvents, type CalendarEvent } from "../google-calendar";
 import { createLogger } from "../log";
 
@@ -75,10 +75,11 @@ async function fromEvent(
   const metadata = fallbackAgenda
     ? null
     : await getMetadata(event.id, event.accountId, event.calendarId);
+  const resolvedAgenda = fallbackAgenda || (metadata ? await resolveMeetingAgenda(metadata) : undefined);
   return {
     meetingUrl,
     title: event.summary?.trim() || fallbackTitle,
-    agenda: fallbackAgenda || metadata?.agenda?.trim() || undefined,
+    agenda: resolvedAgenda,
     calendarAccountId: event.accountId,
     calendarId: event.calendarId,
     providerEventId: event.id,
@@ -94,10 +95,18 @@ export async function resolveMeetingIdentity(input: ResolveMeetingIdentityInput)
   const agenda = input.agenda?.trim() || undefined;
 
   if (input.explicitEvent) {
+    const explicitAgenda = input.explicitEvent.agenda?.trim() || agenda;
+    const metadata = explicitAgenda
+      ? null
+      : await getMetadata(
+          input.explicitEvent.providerEventId,
+          input.explicitEvent.accountId,
+          input.explicitEvent.calendarId,
+        );
     return {
       meetingUrl,
       title: input.explicitEvent.title?.trim() || title,
-      agenda: input.explicitEvent.agenda?.trim() || agenda,
+      agenda: explicitAgenda || (metadata ? await resolveMeetingAgenda(metadata) : undefined),
       calendarAccountId: input.explicitEvent.accountId,
       calendarId: input.explicitEvent.calendarId,
       providerEventId: input.explicitEvent.providerEventId,

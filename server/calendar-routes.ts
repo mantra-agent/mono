@@ -452,7 +452,7 @@ export function registerCalendarRoutes(app: Express): void {
     eventType: z.enum(EVENT_TYPES as [EventType, ...EventType[]]),
     capacityType: z.enum(CAPACITY_TYPES as [CapacityType, ...CapacityType[]]).nullable().optional(),
     notes: z.string().optional(),
-    agenda: z.string().min(1).optional(),
+    agenda: z.string().max(20000).optional(),
     attendeeEmails: z.array(z.string()).optional(),
   });
 

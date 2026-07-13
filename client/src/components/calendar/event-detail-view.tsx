@@ -114,6 +114,7 @@ interface CalendarMetadata {
   eventType: EventTypeValue | null;
   capacityType: CapacityTypeValue | null;
   notes: string | null;
+  agenda: string | null;
   linkedTasks: Array<{
     id: number;
     taskId: number | null;
@@ -295,6 +296,8 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   const [showRecurringScopeDialog, setShowRecurringScopeDialog] = useState(false);
   const [showTaskSearch, setShowTaskSearch] = useState(false);
   const [taskSearchQuery, setTaskSearchQuery] = useState("");
+  const [agenda, setAgenda] = useState("");
+  const [agendaInitialized, setAgendaInitialized] = useState(false);
   const [initialized, setInitialized] = useState(isCreate);
 
   // Populate form from fetched event data
@@ -311,6 +314,13 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
       setInitialized(true);
     }
   }, [eventData, isCreate, initialized]);
+
+  useEffect(() => {
+    if (!isCreate && !metaLoading && !agendaInitialized) {
+      setAgenda(metadata?.agenda || "");
+      setAgendaInitialized(true);
+    }
+  }, [agendaInitialized, isCreate, metaLoading, metadata?.agenda]);
 
   // Set default calendar when calendars load for create mode
   useEffect(() => {
@@ -383,22 +393,36 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
           event: eventPayload,
         });
         return res;
-      } else {
-        // For recurring events, "all" scope patches the base event
-        const targetEventId = scope === "all" && eventData?.recurringEventId
-          ? eventData.recurringEventId
-          : eventId;
-
-        await apiRequest("PATCH", `/api/calendar/events/${targetEventId}`, {
-          calendarId: calendarId || selectedCalendarId,
-          accountId: accountId || selectedAccountId,
-          event: eventPayload,
-        });
-        return null;
       }
+
+      // For recurring events, "all" scope patches the base event. Private
+      // metadata remains attached to this concrete meeting occurrence.
+      const targetEventId = scope === "all" && eventData?.recurringEventId
+        ? eventData.recurringEventId
+        : eventId;
+
+      await apiRequest("PATCH", `/api/calendar/events/${targetEventId}`, {
+        calendarId: calendarId || selectedCalendarId,
+        accountId: accountId || selectedAccountId,
+        event: eventPayload,
+      });
+
+      const trimmedAgenda = agenda.trim();
+      const existingAgenda = metadata?.agenda?.trim() || "";
+      if (trimmedAgenda !== existingAgenda) {
+        await apiRequest("POST", "/api/calendar/metadata", {
+          googleEventId: eventId,
+          accountId: accountId || selectedAccountId,
+          calendarId: calendarId || selectedCalendarId,
+          eventType: metadata?.eventType || "meeting",
+          agenda: trimmedAgenda,
+        });
+      }
+      return null;
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/calendar/events"] });
+      queryClient.invalidateQueries({ queryKey: metadataQueryKey });
       toast({ title: isCreate ? "Event created" : "Event updated" });
       if (isCreate) {
         navigate("/schedule");
@@ -894,6 +918,30 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
 
           {/* Divider before metadata */}
           {!isCreate && <div className="border-t" />}
+
+          {!isCreate && (
+            <div className="space-y-2" data-testid="private-agenda-section">
+              <div>
+                <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Private Agenda</h4>
+                <p className="text-xs text-muted-foreground">Visible only in Mantra. The meeting agent receives it when joining.</p>
+              </div>
+              {isReadOnly ? (
+                <div className="text-sm whitespace-pre-wrap" data-testid="private-agenda-readonly">
+                  {agenda || "No agenda yet"}
+                </div>
+              ) : (
+                <Textarea
+                  value={agenda}
+                  onChange={event => setAgenda(event.target.value)}
+                  placeholder="Add discussion points, decisions, and desired outcomes"
+                  rows={5}
+                  className="resize-y text-sm"
+                  disabled={metaLoading}
+                  data-testid="input-private-agenda"
+                />
+              )}
+            </div>
+          )}
 
           {/* Event Details metadata (edit mode only) */}
           {!isCreate && (
