@@ -2071,7 +2071,7 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
         return (
           <ProfileTreeRow
             key={account.id}
-            label={account.email}
+            label={<span className="block truncate whitespace-nowrap" title={account.email}>{account.email}</span>}
             icon={showReauth
               ? <XCircle className="h-3.5 w-3.5 text-destructive" />
               : isHealthy
@@ -2125,8 +2125,6 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
                       }}>Assign Vault</Button>
                     </div>
                   </div>
-                ) : permAccount?.vaultId ? (
-                  <p className="text-xs text-muted-foreground">Moving this account is unavailable until its derived email data can migrate durably.</p>
                 ) : null}
                 {missingScopes.length > 0 ? (
                   <p className="text-destructive" data-testid={`text-missing-scopes-${account.id}`}>
@@ -2147,10 +2145,7 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
                             className="flex min-h-11 items-center justify-between gap-3"
                             data-testid={`perm-row-${permAccount.accountId}-${permission.key}`}
                           >
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium">{permission.label}</p>
-                              <p className="text-xs text-muted-foreground">{permission.description}</p>
-                            </div>
+                            <p className="min-w-0 text-sm font-medium">{permission.label}</p>
                             <Switch
                               checked={permAccount.permissions[permission.key]}
                               onCheckedChange={() => handlePermToggle(
