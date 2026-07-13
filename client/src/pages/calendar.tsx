@@ -893,16 +893,16 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
         type="button"
         onClick={() => onEventClick(event)}
         className={cn(
-          "z-20 my-0.5 ml-0.5 mr-0 flex min-h-0 min-w-0 items-start gap-1.5 overflow-hidden bg-background/80 py-1 pl-5 pr-1.5 text-left text-xs font-medium text-foreground hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          "z-20 my-0.5 ml-0.5 mr-0 flex min-h-0 min-w-0 items-start gap-1.5 overflow-hidden border-y border-r border-border bg-card py-1 pl-6 pr-1.5 text-left text-xs font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
           optional && "opacity-60",
         )}
         style={{ gridColumn: 3, gridRow: `${rowStart} / span ${rowSpan}`, position: "relative" }}
         data-testid={`event-row-${event.id}`}
       >
-        <span className="pointer-events-none absolute inset-y-0 left-1 w-3" aria-hidden="true">
-          <span className="absolute inset-y-0 left-0 border-l-2 border-foreground/45" />
-          <span className="absolute left-0 top-0 w-3 border-t-2 border-foreground/45" />
-          <span className="absolute bottom-0 left-0 w-3 border-b-2 border-foreground/45" />
+        <span className="pointer-events-none absolute inset-y-0 left-0 w-4" aria-hidden="true">
+          <span className="absolute inset-y-0 left-0 border-l-2 border-foreground/60" />
+          <span className="absolute left-0 top-0 w-4 border-t-2 border-foreground/60" />
+          <span className="absolute bottom-0 left-0 w-4 border-b-2 border-foreground/60" />
         </span>
         <EventTypeIcon event={event} eventType="focus_block" className="mt-px h-3.5 w-3.5 shrink-0 text-foreground/75" />
         <span className="truncate">{event.summary}</span>
