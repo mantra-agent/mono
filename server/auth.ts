@@ -18,6 +18,7 @@ import { z } from "zod";
 import {
   attachUserPrincipal,
   createServicePrincipal,
+  ensureUserIdentityFoundation,
   getPrincipal,
   recordPrivilegedAccess,
   requirePrincipal,
@@ -28,6 +29,7 @@ import { PERMISSIONS, getUserEffectivePermissions, listUserPermissionOverrides, 
 import { runWithPrincipal } from "./principal-context";
 import { MEETING_JOIN_POLICIES, getMeetingJoinPolicy, setMeetingJoinPolicy } from "./meeting/join-policy";
 import { recordPrincipalDiagnosticEvent } from "./principal-diagnostics";
+import { getClientPresenceSnapshot } from "./client-presence";
 
 const setupSchema = z.object({
   email: z.string().email(),
@@ -804,15 +806,19 @@ export function setupAuth(app: Express) {
     async (_req: Request, res: Response) => {
       try {
         const allUsers = await storage.getUsers();
-        const rows = await Promise.all(allUsers.map(async (u) => ({
-          id: u.id,
-          email: u.email,
-          role: u.role,
-          createdAt: u.createdAt,
-          hasPendingInvite: !!u.inviteToken,
-          permissionOverrides: await listUserPermissionOverrides(u.id),
-          permissions: await getUserEffectivePermissions(u.id),
-        })));
+        const rows = await Promise.all(allUsers.map(async (u) => {
+          const identity = await ensureUserIdentityFoundation(u);
+          return {
+            id: u.id,
+            email: u.email,
+            role: u.role,
+            createdAt: u.createdAt,
+            hasPendingInvite: !!u.inviteToken,
+            permissionOverrides: await listUserPermissionOverrides(u.id),
+            permissions: await getUserEffectivePermissions(u.id),
+            presence: getClientPresenceSnapshot(identity.accountId).clients,
+          };
+        }));
         res.json({ users: rows, availablePermissions: PERMISSIONS });
       } catch {
         res.status(500).json({ error: "Failed to fetch users" });
