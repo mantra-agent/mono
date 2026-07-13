@@ -1111,8 +1111,8 @@ export async function registerIntegrationsRoutes(app: Express) {
       }
       const test = await testRecallConnection();
       const { getRuntimePublicBaseUrl, getRuntimeIdentity } = await import("../runtime-identity");
-      const runtime = getRuntimeIdentity();
-      const webhookBase = getRuntimePublicBaseUrl() || `${req.protocol}://${req.get("host")}`;
+      const runtime = await getRuntimeIdentity();
+      const webhookBase = await getRuntimePublicBaseUrl() || `${req.protocol}://${req.get("host")}`;
       res.json({
         connected: test.connected,
         hasKey: cfg.hasKey,
@@ -1140,8 +1140,8 @@ export async function registerIntegrationsRoutes(app: Express) {
       const cfg = await getRecallConfig();
       const test = await testRecallConnection();
       const { getRuntimePublicBaseUrl, getRuntimeIdentity } = await import("../runtime-identity");
-      const runtime = getRuntimeIdentity();
-      const webhookBase = getRuntimePublicBaseUrl() || `${req.protocol}://${req.get("host")}`;
+      const runtime = await getRuntimeIdentity();
+      const webhookBase = await getRuntimePublicBaseUrl() || `${req.protocol}://${req.get("host")}`;
       res.json({
         connected: test.connected,
         hasKey: cfg.hasKey,
@@ -1172,8 +1172,8 @@ export async function registerIntegrationsRoutes(app: Express) {
     const test = config.hasAccountSid && config.hasAuthToken
       ? await testTwilioConnection()
       : { connected: false, ownedNumbers: [], configuredNumberOwned: false };
-    const runtime = getRuntimeIdentity();
-    const callbackBase = getRuntimePublicBaseUrl() || `${req.protocol}://${req.get("host")}`;
+    const runtime = await getRuntimeIdentity();
+    const callbackBase = await getRuntimePublicBaseUrl() || `${req.protocol}://${req.get("host")}`;
     return {
       ...test,
       hasAccountSid: config.hasAccountSid,

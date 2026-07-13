@@ -490,9 +490,10 @@ async function resolveChatInstructions(request: ContextRequest): Promise<string>
 async function resolveRuntimeIdentitySection(): Promise<string> {
   try {
     const { getRuntimeIdentity } = await import("./runtime-identity");
-    const id = getRuntimeIdentity();
+    const id = await getRuntimeIdentity();
     const lines = [
       `Environment: ${id.environmentName}${id.serviceName ? ` (service: ${id.serviceName})` : ""}`,
+      id.platformEnvironmentId ? `Platform Environment: ${id.platformEnvironmentName} (#${id.platformEnvironmentId})` : null,
       id.servingHost ? `Serving host: ${id.servingHost}` : null,
       id.publicUrl ? `PUBLIC_URL: ${id.publicUrl}` : "PUBLIC_URL: not set",
       id.gitCommit ? `Commit: ${id.gitCommit.slice(0, 12)}` : null,

@@ -95,13 +95,13 @@ export async function joinMeetingByUrl(opts: {
     );
   }
   const { getRuntimePublicBaseUrl, getRuntimeIdentity } = await import("../runtime-identity");
-  const publicUrl = getRuntimePublicBaseUrl();
+  const publicUrl = await getRuntimePublicBaseUrl();
   if (!publicUrl) {
     return failSession(
       "No public base URL available. Configure PUBLIC_URL or deploy behind a Railway public domain, then retry.",
     );
   }
-  const runtime = getRuntimeIdentity();
+  const runtime = await getRuntimeIdentity();
   if (runtime.publicUrlMismatch) {
     log.warn(
       `PUBLIC_URL mismatch detected; registering Recall transcript webhook against serving host ${publicUrl} for env ${runtime.environmentName}`,
