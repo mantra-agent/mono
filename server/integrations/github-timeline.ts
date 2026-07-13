@@ -1,11 +1,12 @@
 import { gh, parseRepoSlug, GitHubError, type RepoRef } from "./github-pr";
 import {
-  fetchDeploymentsForEnvironment,
   extractDeploymentMeta,
-  getProdConfig,
-  isProdConfigComplete,
   type RailwayDeployment,
 } from "./railway/client";
+import {
+  fetchEnvironmentDeployments,
+  resolveRailwayEnvironmentControl,
+} from "./railway/environment-control";
 import { createLogger } from "../log";
 
 const log = createLogger("VersionTimeline");
@@ -137,17 +138,8 @@ async function fetchMergedPRs(ref: RepoRef, limit = 100): Promise<TimelinePR[]> 
 
 async function fetchRailwayDeploys(): Promise<RailwayDeployment[]> {
   try {
-    const cfg = await getProdConfig();
-    if (!isProdConfigComplete(cfg)) {
-      log.debug("Railway prod config incomplete, skipping deploy fetch");
-      return [];
-    }
-    return await fetchDeploymentsForEnvironment(
-      cfg.projectId!,
-      cfg.serviceId!,
-      cfg.environmentId!,
-      50
-    );
+    const control = await resolveRailwayEnvironmentControl(undefined, { allowCurrentRuntime: true });
+    return await fetchEnvironmentDeployments(control, 50);
   } catch (err: any) {
     log.warn(`Railway deploy fetch failed: ${err?.message || err}`);
     return [];
