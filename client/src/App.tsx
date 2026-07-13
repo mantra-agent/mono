@@ -315,6 +315,16 @@ function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (location === "/waitlist") {
+    const query = window.location.search;
+    window.history.replaceState(null, "", `/start${query}`);
+    return (
+      <Suspense fallback={<PageFallback />}>
+        <WaitlistPage />
+      </Suspense>
+    );
+  }
+
+  if (location === "/start") {
     return (
       <Suspense fallback={<PageFallback />}>
         <WaitlistPage />
