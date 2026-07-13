@@ -185,6 +185,7 @@ AgentExecutor stream → publishJournalToUI() → SessionManager.applyEvent()
 
 ### When Working Here
 - `SessionManager` is a singleton — one instance per server process
+- Chat response ownership begins when a message is accepted, before model selection or context assembly. `server/integrations/chat/run-lifecycle.ts` is the sole generation authority across preparation, execution, persistence, and finalization. User messages always persist; only the newest generation may produce or settle an assistant response. Supersession and explicit cancellation are distinct terminal reasons.
 - State is in-memory only — lost on restart. Clients resubscribe and get a fresh snapshot on reconnect
 - Reducers are pure functions — all side effects (broadcast, status tracking) live in SessionManager
 

@@ -43,6 +43,7 @@ import { generateToolCallId } from "../../file-storage/utils";
 import { formatMessageTimestamp, nowMessageTimestamp } from "../../timezone";
 import { abortTrace } from "../../abort-trace";
 import { deferStatusSaved } from "./abort-defer";
+import { chatRunLifecycle, ChatRunInvalidatedError, type ChatRunLease } from "./run-lifecycle";
 import { timerStorage } from "../../file-storage";
 import { timerScheduler } from "../../timer-scheduler";
 import { SESSION_REMINDER_PREFIX } from "../../routes/session-reminder";
@@ -102,36 +103,19 @@ async function getSessionReminderMap(): Promise<Map<string, SessionReminderState
   return reminders;
 }
 
-interface InFlightChatSession {
-  startedAt: number;
-  sessionKey?: string;
-  runId?: string;
-}
-const inFlightSessions = new Map<string, InFlightChatSession>();
-
-// Exported for the wedge watchdog so it can name wedged chat sessions with
-// real per-session ages, sessionKey, and (when known) the executor runId.
+// The lifecycle lease is the single authority for preparation, execution,
+// persistence, and finalization. A newer accepted message replaces the lease.
 export function getInFlightChatSessions(): Array<{
   sessionId: string;
   startedAt: number;
   sessionKey?: string;
   runId?: string;
 }> {
-  return Array.from(inFlightSessions.entries()).map(([sessionId, info]) => ({
-    sessionId,
-    startedAt: info.startedAt,
-    sessionKey: info.sessionKey,
-    runId: info.runId,
-  }));
+  return chatRunLifecycle.list();
 }
 
-/** Internal: mark an executor runId on an already-tracked in-flight session. */
-export function _annotateChatStreamRunId(
-  sessionId: string,
-  runId: string,
-): void {
-  const info = inFlightSessions.get(sessionId);
-  if (info) info.runId = runId;
+export function _annotateChatStreamRunId(sessionId: string, runId: string): void {
+  chatRunLifecycle.annotateRunId(sessionId, runId);
 }
 
 // Throttle the orphan-warning log so it doesn't spam every 5-second poll.
@@ -1652,9 +1636,34 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     sayAloud = false,
     onResponse?: (content: string) => Promise<void> | void,
     registeredRunGeneration?: number,
+    acceptedLease?: ChatRunLease,
   ) {
-    const chatModel = resolvedModel || getModelForActivity(ACTIVITY_CHAT);
-    inFlightSessions.set(sessionId, { startedAt: Date.now(), sessionKey });
+    const lease = acceptedLease ?? chatRunLifecycle.begin(sessionId, sessionKey);
+    let chatModel = resolvedModel;
+    let selectedAutoTier = autoTier;
+    let selectionElapsedMs = modelSelectionMs;
+
+    if (!chatModel && isAutoRouting(ACTIVITY_CHAT)) {
+      publishChatStreamEvent(sessionKey, sessionId, {
+        type: "system_step",
+        step: "model_selection",
+        status: "started",
+      });
+      const selectionStartedAt = Date.now();
+      const classification = await classifyComplexity(content);
+      chatRunLifecycle.assertCurrent(lease);
+      chatModel = classification.model;
+      selectedAutoTier = classification.tier;
+      selectionElapsedMs = Date.now() - selectionStartedAt;
+      publishChatStreamEvent(sessionKey, sessionId, {
+        type: "system_step",
+        step: "model_selection",
+        status: "done",
+        elapsedMs: selectionElapsedMs,
+        detail: selectedAutoTier || chatModel,
+      });
+    }
+    chatModel ||= getModelForActivity(ACTIVITY_CHAT);
 
     // Every execution enters through this boundary, including interrupt re-triggers.
     // HTTP/meeting callers may pre-register so pre-executor events are visible;
@@ -1681,12 +1690,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }> = [];
     const preChronology: SegmentChronologyEntry[] = [];
 
-    if (modelSelectionMs !== undefined) {
+    if (selectionElapsedMs !== undefined) {
       preSteps.push({
         name: "model_selection",
         status: "done",
-        elapsedMs: modelSelectionMs,
-        detail: autoTier || chatModel,
+        elapsedMs: selectionElapsedMs,
+        detail: selectedAutoTier || chatModel,
       });
       preChronology.push({ s: "system", i: 0 });
     }
@@ -1713,19 +1722,21 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     let assistantDraftCheckpointPending: NodeJS.Timeout | null = null;
 
     try {
+      chatRunLifecycle.assertCurrent(lease);
       chatLog.log(
-        `start sessionId=${sessionId} session=${sessionKey} model=${chatModel}`,
+        `start sessionId=${sessionId} session=${sessionKey} model=${chatModel} generation=${lease.generation}`,
       );
 
       if (resolvedModel)
         journal("model_info", {
           model: resolvedModel,
-          autoTier: autoTier || undefined,
+          autoTier: selectedAutoTier || undefined,
         });
 
       assistantDraft = await chatStorage.createAssistantDraft(sessionId, {
         model: chatModel,
       });
+      chatRunLifecycle.assertCurrent(lease);
       let assistantDraftLastCheckpoint = 0;
 
       const checkpointAssistantDraft = (force = false) => {
@@ -1760,6 +1771,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         status: "started" | "done",
         elapsedMs?: number,
       ) => {
+        if (!chatRunLifecycle.isCurrent(lease)) return;
         publishChatStreamEvent(sessionKey, sessionId, {
           type: "system_step",
           step,
@@ -1779,6 +1791,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         resolvedModel,
         onCtxProgress,
       );
+      chatRunLifecycle.assertCurrent(lease);
 
       chatLog.log(
         `executor START sessionId=${sessionId} messageCount=${messages.length} toolCount=${toolDefs.length}`,
@@ -1819,6 +1832,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       chatLog.log(
         `executor DONE sessionId=${sessionId} contentLen=${result.content?.length || 0} terminationReason=${result.terminationReason || "unknown"} abortReason=${result.abortReason || "none"} durationMs=${result.durationMs ?? "?"} iterations=${result.iterations}`,
       );
+      chatRunLifecycle.assertCurrent(lease);
 
       const durationStr =
         result.durationMs != null
@@ -2112,6 +2126,18 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       });
       } // end if (!isSuperseded)
     } catch (error: unknown) {
+      if (error instanceof ChatRunInvalidatedError) {
+        chatLog.log(
+          `${error.reason} before settlement sessionId=${sessionId} generation=${lease.generation}`,
+        );
+        if (assistantDraftCheckpointPending) clearTimeout(assistantDraftCheckpointPending);
+        if (assistantDraft) {
+          await chatStorage.deleteMessage(sessionId, assistantDraft.id).catch((deleteErr) =>
+            chatLog.warn(`superseded draft delete failed sessionId=${sessionId}: ${deleteErr instanceof Error ? deleteErr.message : String(deleteErr)}`),
+          );
+        }
+        return;
+      }
       chatLog.error(
         `executor error sessionId=${sessionId}: ${(error instanceof Error ? error.message : String(error)) || error}`,
       );
@@ -2196,62 +2222,19 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           ),
         );
     } finally {
-      chatLog.log(`stream cleanup sessionId=${sessionId}`);
-      inFlightSessions.delete(sessionId);
-
-      // Finalize server-authoritative SessionManager (migration: both paths active)
-      try {
-        const { sessionManager } = await import("../../session-manager");
-        sessionManager.finalizeSession(sessionId, runGeneration);
-      } catch (finErr) {
-        chatLog.debug(
-          `sessionManager.finalizeSession skipped: ${finErr instanceof Error ? finErr.message : String(finErr)}`,
-        );
-      }
-
-      // Lifecycle finalization is represented solely by session.status.
-
-      // Check for unprocessed user messages that arrived while we were busy (409'd)
-      try {
-        const allMessages = await chatStorage.getMessagesBySession(sessionId);
-        const lastAssistantIdx = allMessages.reduce(
-          (acc, m, i) => (m.role === "assistant" ? i : acc),
-          -1,
-        );
-        const pendingUserMessages = allMessages
-          .slice(lastAssistantIdx + 1)
-          .filter((m) => m.role === "user");
-        if (pendingUserMessages.length > 0) {
-          chatLog.log(
-            `found ${pendingUserMessages.length} unprocessed user message(s) after run, re-triggering sessionId=${sessionId}`,
+      const settledCurrent = chatRunLifecycle.finish(lease);
+      chatLog.log(
+        `stream cleanup sessionId=${sessionId} generation=${lease.generation} current=${settledCurrent}`,
+      );
+      if (settledCurrent) {
+        try {
+          const { sessionManager } = await import("../../session-manager");
+          sessionManager.finalizeSession(sessionId, runGeneration);
+        } catch (finErr) {
+          chatLog.debug(
+            `sessionManager.finalizeSession skipped: ${finErr instanceof Error ? finErr.message : String(finErr)}`,
           );
-
-          // A pending user message proves any "user_stopped" notice from this run
-          // is stale — the user intended to interrupt, not stop. Clear the error
-          // severity so the session doesn't show an error badge during the new run.
-          await chatStorage.setErrorSeverity(sessionId, null).catch((err) =>
-            chatLog.warn(`clear error severity on re-trigger failed: ${err instanceof Error ? err.message : String(err)}`),
-          );
-
-          const latest = pendingUserMessages[pendingUserMessages.length - 1];
-          const session = await chatStorage.getSession(sessionId);
-          const retriggerKey = session?.sessionKey || `dashboard:${sessionId}`;
-          setImmediate(() => {
-            processChatStream(
-              retriggerKey,
-              sessionId,
-              latest.content || "",
-            ).catch((err) => {
-              chatLog.error(
-                `re-trigger processChatStream failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            });
-          });
         }
-      } catch (pendErr: unknown) {
-        chatLog.warn(
-          `pending message check failed sessionId=${sessionId}: ${pendErr instanceof Error ? pendErr.message : String(pendErr)}`,
-        );
       }
     }
   }
@@ -2260,6 +2243,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     "/api/sessions/:id/messages",
     async (req: Request, res: Response) => {
       const sessionId = req.params.id as string;
+      let acceptedLease: ChatRunLease | undefined;
       try {
         const {
           content,
@@ -2274,28 +2258,19 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           return res.status(400).json({ error: "Message content is required" });
         }
 
+        const wasInFlight =
+          chatRunLifecycle.current(sessionId) !== undefined ||
+          agentExecutor.hasActiveRunForSession(sessionId);
+        acceptedLease = chatRunLifecycle.begin(sessionId, `dashboard:${sessionId}`);
+        const abortCount = wasInFlight
+          ? agentExecutor.abortByChatSessionId(sessionId, "superseded")
+          : 0;
+
         const session = await chatStorage.getSession(sessionId);
         if (!session) {
+          chatRunLifecycle.finish(acceptedLease);
           chatLog.log(`session not found sessionId=${sessionId}`);
           return res.status(404).json({ error: "Session not found" });
-        }
-
-        // Sessions with page context: refresh stored pageContext from the
-        // send-time snapshot BEFORE the run starts, so the context builder sees
-        // the page/tab the user was actually on. Same normalize-and-replace
-        // semantics as PATCH /api/sessions/:id/context.
-        if (incomingPageContext) {
-          const freshPageContext = normalizePageContext(incomingPageContext);
-          if (freshPageContext) {
-            await chatStorage
-              .updatePageContext(sessionId, freshPageContext)
-              .catch((err) =>
-                chatLog.warn(
-                  `pageContext refresh failed sessionId=${sessionId}`,
-                  err,
-                ),
-              );
-          }
         }
 
         // Detect voice→text transition for observability
@@ -2315,65 +2290,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           }
         }
 
-        // Interrupt flow: if a run is active, persist the new message and abort
-        // the current run. The post-run re-trigger in the finally block will
-        // pick up the persisted message and start a new run automatically.
-        const isInFlight =
-          inFlightSessions.has(sessionId) ||
-          agentExecutor.hasActiveRunForSession(sessionId);
+        const sessionKey = session.sessionKey || `dashboard:${sessionId}`;
+        chatRunLifecycle.setSessionKey(acceptedLease, sessionKey);
 
-        if (isInFlight && !isGreeting) {
-          chatLog.log(
-            `interrupt: new message while in-flight sessionId=${sessionId}`,
-          );
-
-          // Persist the user message so post-run re-trigger finds it
-          const msgPageContext = incomingPageContext
-            ? (normalizePageContext(incomingPageContext) ?? undefined)
-            : undefined;
-          await chatStorage.createMessage(
-            sessionId,
-            "user",
-            content,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            msgPageContext,
-          );
-          const principal = getPrincipal(req);
-          if (principal?.actorType === "user" && principal.userId && principal.accountId) {
-            await completeFtueSayHello(principal as typeof principal & { userId: string; accountId: string });
-          }
-
-          // Publish so client shows the message immediately
-          publishChatStreamEvent(
-            session.sessionKey || `dashboard:${sessionId}`,
-            sessionId,
-            {
-              type: "user_message",
-              content,
-              sessionId,
-              title: session.title || undefined,
-            },
-          );
-
-          // Abort the running executor — finally block re-triggers with this message
-          const abortCount = agentExecutor.abortByChatSessionId(
-            sessionId,
-            "superseded",
-          );
-          chatLog.log(
-            `interrupt: aborted ${abortCount} run(s) sessionId=${sessionId}`,
-          );
-
-          return res.status(202).json({ queued: true, interrupted: abortCount });
-        }
-
+        // User messages are durable facts even when a newer send supersedes their
+        // response generation. Persist first; generation ownership gates only
+        // preparation and response work.
         if (!isGreeting) {
           const msgPageContext = incomingPageContext
             ? (normalizePageContext(incomingPageContext) ?? undefined)
@@ -2396,23 +2318,28 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           if (principal?.actorType === "user" && principal.userId && principal.accountId) {
             await completeFtueSayHello(principal as typeof principal & { userId: string; accountId: string });
           }
-
-          publishChatStreamEvent(
-            session.sessionKey || `dashboard:${sessionId}`,
+          publishChatStreamEvent(sessionKey, sessionId, {
+            type: "user_message",
+            content,
             sessionId,
-            {
-              type: "user_message",
-              content,
-              sessionId,
-              title: session.title || undefined,
-            },
-          );
+            title: session.title || undefined,
+          });
         }
-        const sessionKey = session.sessionKey || `dashboard:${sessionId}`;
-        inFlightSessions.set(sessionId, { startedAt: Date.now(), sessionKey });
 
-        // Pre-register so model-selection events emitted before execution are live.
-        // The returned generation follows this run through terminal settlement.
+        chatRunLifecycle.assertCurrent(acceptedLease);
+
+        // Only the newest generation may update session-level page context. The
+        // message itself already carries its send-time context for history.
+        if (incomingPageContext) {
+          const freshPageContext = normalizePageContext(incomingPageContext);
+          if (freshPageContext) {
+            await chatStorage.updatePageContext(sessionId, freshPageContext).catch((err) =>
+              chatLog.warn(`pageContext refresh failed sessionId=${sessionId}`, err),
+            );
+            chatRunLifecycle.assertCurrent(acceptedLease);
+          }
+        }
+
         let runGeneration: number | undefined;
         try {
           const { sessionManager } = await import("../../session-manager");
@@ -2422,59 +2349,23 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             `sessionManager.registerSession failed: ${regErr instanceof Error ? regErr.message : String(regErr)}`,
           );
         }
-        chatLog.log(
-          `sessionKey resolved sessionId=${sessionId} sessionKey=${sessionKey} stored=${session.sessionKey}`,
+
+        await chatStorage.updateSessionStatus(sessionId, "streaming").catch((err) =>
+          chatLog.warn(`status update to streaming failed sessionId=${sessionId}`, err),
         );
-
-        let chatModel: string;
-        let autoTier: string | null = null;
-
-        const isAuto = isAutoRouting(ACTIVITY_CHAT);
-        let modelSelectionMs: number | undefined;
-        if (isAuto) {
-          publishChatStreamEvent(sessionKey, sessionId, {
-            type: "system_step",
-            step: "model_selection",
-            status: "started",
-          });
-          const msStart = Date.now();
-          const classification = await classifyComplexity(content);
-          chatModel = classification.model;
-          autoTier = classification.tier;
-          modelSelectionMs = Date.now() - msStart;
-          publishChatStreamEvent(sessionKey, sessionId, {
-            type: "system_step",
-            step: "model_selection",
-            status: "done",
-            elapsedMs: modelSelectionMs,
-            detail: classification.tier || chatModel,
-          });
-        } else {
-          chatModel = getModelForActivity(ACTIVITY_CHAT);
+        if (wasInFlight) {
+          await chatStorage.setErrorSeverity(sessionId, null).catch((err) =>
+            chatLog.warn(`clear error severity on supersession failed: ${err instanceof Error ? err.message : String(err)}`),
+          );
         }
 
-        chatLog.log(
-          `response streaming sessionId=${sessionId} sessionKey=${sessionKey} model=${chatModel} autoTier=${autoTier}`,
-        );
-        await chatStorage
-          .updateSessionStatus(sessionId, "streaming")
-          .catch((err) =>
-            chatLog.warn(
-              `status update to streaming failed sessionId=${sessionId}`,
-              err,
-            ),
-          );
-        // streamStartedAt anchors the client's WS subscribe replay window.
-        // Captured BEFORE we kick off processChatStream so any event published
-        // by the streaming pipeline (run_start onwards) is guaranteed to have
-        // a timestamp >= streamStartedAt and thus be in the replay window.
         const streamStartedAt = Date.now();
-        res.json({
+        res.status(wasInFlight ? 202 : 200).json({
           sessionKey,
           sessionId,
           status: "streaming",
-          model: chatModel,
-          autoTier,
+          queued: wasInFlight,
+          interrupted: abortCount,
           streamStartedAt,
         });
 
@@ -2482,18 +2373,28 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           sessionKey,
           sessionId,
           content,
-          chatModel,
-          autoTier,
-          modelSelectionMs,
+          undefined,
+          undefined,
+          undefined,
           session.type === "meeting" && session.meeting?.botStatus === "live",
           undefined,
           runGeneration,
+          acceptedLease,
         ).catch((err) => {
+          if (err instanceof ChatRunInvalidatedError) {
+            chatLog.log(`processChatStream ${err.reason} sessionId=${sessionId} generation=${err.generation}`);
+            return;
+          }
           chatLog.error("processChatStream error:", err);
         });
       } catch (error) {
+        if (acceptedLease) chatRunLifecycle.finish(acceptedLease);
+        if (error instanceof ChatRunInvalidatedError) {
+          chatLog.log(`message acceptance ${error.reason} sessionId=${sessionId} generation=${error.generation}`);
+          if (!res.headersSent) res.status(202).json({ queued: true, superseded: true });
+          return;
+        }
         chatLog.error("Error sending message:", error);
-        inFlightSessions.delete(sessionId);
         if (!res.headersSent) {
           res.status(500).json({ error: "Failed to send message" });
         }
@@ -2701,7 +2602,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     // If a run is already active, the transcript line is persisted and
     // visible; the agent finishes its current turn (no abort in meetings).
     const isInFlight =
-      inFlightSessions.has(sessionId) ||
+      chatRunLifecycle.current(sessionId) !== undefined ||
       agentExecutor.hasActiveRunForSession(sessionId);
     if (isInFlight) {
       chatLog.log(
@@ -2863,8 +2764,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     const sessionId = req.params.id as string;
     abortTrace("route_enter", { sessionId, routeStartAt });
     try {
+      const cancelledLease = chatRunLifecycle.cancel(sessionId);
       const count = agentExecutor.abortByChatSessionId(sessionId, "cancelled");
-      const aborted = count > 0;
+      const aborted = count > 0 || cancelledLease !== undefined;
       abortTrace("runs_signalled", { sessionId, count, routeStartAt });
 
       // Respond before any DB write; awaiting persistence here wedged the
@@ -2873,7 +2775,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       abortTrace("route_exit", { sessionId, count, aborted, routeStartAt });
 
       if (aborted) {
-        setImmediate(() => deferStatusSaved(sessionId, routeStartAt));
+        setImmediate(() => {
+          void import("../../session-manager")
+            .then(({ sessionManager }) => sessionManager.finalizeSession(sessionId))
+            .catch((err) => chatLog.warn(`abort finalization failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`));
+          deferStatusSaved(sessionId, routeStartAt);
+        });
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -2914,7 +2821,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       let source = "memory";
 
       const hasExecutorRun = agentExecutor.hasActiveRunForSession(sessionId);
-      const isInFlight = inFlightSessions.has(sessionId);
+      const isInFlight = chatRunLifecycle.current(sessionId) !== undefined;
 
       if (entries.length === 0 && (hasExecutorRun || isInFlight)) {
         try {
