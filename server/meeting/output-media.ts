@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
-import { meetingTTSProvider } from "./tts/provider";
+import { synthesizeVoiceAudio } from "../voice/synthesis";
 
 const log = createLogger("MeetingOutputMedia");
 const TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
@@ -28,7 +28,7 @@ export async function speakMeetingResponse(sessionId: string, text: string): Pro
     const session = await chatStorage.getSession(sessionId);
     if (!session?.meeting || session.meeting.botStatus !== "live") throw new Error("Meeting bot is not live");
     await chatStorage.updateMeetingMeta(sessionId, { speechStatus: "speaking" });
-    try { const audio = await meetingTTSProvider.synthesize({ text }); enqueue(sessionId, audio.bytes); await chatStorage.updateMeetingMeta(sessionId, { speechStatus: "spoken", speechStatusDetail: `Spoken via ${audio.provider}` }); log.log(`queued speech sessionId=${sessionId} provider=${audio.provider} bytes=${audio.bytes.length}`); }
+    try { const audio = await synthesizeVoiceAudio(text); enqueue(sessionId, audio.bytes); await chatStorage.updateMeetingMeta(sessionId, { speechStatus: "spoken", speechStatusDetail: `Spoken via ${audio.provider}` }); log.log(`queued speech sessionId=${sessionId} provider=${audio.provider} bytes=${audio.bytes.length}`); }
     catch (error) { const detail=error instanceof Error ? error.message : String(error); await chatStorage.updateMeetingMeta(sessionId, { speechStatus: "failed", speechStatusDetail: detail }); log.error(`speech failed sessionId=${sessionId}: ${detail}`); throw error; }
   });
   speechLocks.set(sessionId,current); try { await current; } finally { if(speechLocks.get(sessionId)===current) speechLocks.delete(sessionId); }

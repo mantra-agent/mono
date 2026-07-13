@@ -2,7 +2,7 @@ import ffmpeg from "fluent-ffmpeg";
 import ffmpegPath from "ffmpeg-static";
 import { PassThrough } from "stream";
 import type WebSocket from "ws";
-import { meetingTTSProvider } from "../meeting/tts/provider";
+import { synthesizeVoiceAudio } from "../voice/synthesis";
 import { createLogger } from "../log";
 
 const log = createLogger("PhoneAudio");
@@ -22,7 +22,7 @@ async function toMulaw8k(input: Buffer): Promise<Buffer> {
 }
 
 export async function sendPhoneSpeech(socket: WebSocket, streamSid: string, text: string, markName: string): Promise<void> {
-  const audio = await meetingTTSProvider.synthesize({ text });
+  const audio = await synthesizeVoiceAudio(text);
   const mulaw = await toMulaw8k(audio.bytes);
   socket.send(JSON.stringify({ event: "media", streamSid, media: { payload: mulaw.toString("base64") } }));
   socket.send(JSON.stringify({ event: "mark", streamSid, mark: { name: markName } }));
