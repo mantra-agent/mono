@@ -10,23 +10,16 @@
 
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
-import { eq, type SQL } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { stat, unlink } from "fs/promises";
 import { createReadStream } from "fs";
 import { requireAuth, requireAdmin } from "../auth";
 import { db } from "../db";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
-import { combineWithVisibleScope } from "../scoped-storage";
 import { createLogger } from "../log";
 import { createDbSyncImportAuthHeader } from "../lib/db-sync-import-auth";
 import { getSetting, setSetting, deleteSetting } from "../system-settings";
-import {
-  fetchServiceVariables,
-  getDevConfig,
-  getProdConfig,
-  getRailwayTokenForConnection,
-} from "../integrations/railway/client";
+import { fetchServiceVariables } from "../integrations/railway/client";
+import { resolvePlatformEnvironment, resolveRunningPlatformEnvironment } from "../platform-environment-resolver";
 import {
   PROD_DESTINATION_CONFIRMATION,
   fingerprintDbUrl,
@@ -40,14 +33,6 @@ import {
   INSERT_ORDER,
   type ExportMode,
 } from "./brain";
-import {
-  environmentHostingBindings,
-  platformProductEnvironments,
-  platformProducts,
-  platforms,
-  providerConnections,
-} from "@shared/models/platforms";
-
 const log = createLogger("DbSyncRoutes");
 
 const SYNC_STATE_KEY = "system.db_sync_state";
@@ -65,19 +50,10 @@ const REAPER_PHASE_GRACE_MS = 60_000;
 const RESTART_WAIT_MS = 90 * 1000;
 const MAINTENANCE_TTL_MS = 20 * 60 * 1000;
 
-const platformScopeColumns = { scope: platforms.scope, ownerUserId: platforms.ownerUserId, accountId: platforms.accountId };
-
-function visiblePlatform(predicate?: SQL): SQL {
-  return combineWithVisibleScope(getCurrentPrincipalOrSystem(), platformScopeColumns, predicate);
-}
-
-export type DbSyncDestination = "dev" | "prod" | `env:${number}`;
-
-type LegacyDbSyncDestination = "dev" | "prod";
+export type DbSyncDestination = `env:${number}`;
 
 interface DbSyncDestinationRef {
-  legacy?: LegacyDbSyncDestination;
-  platformEnvironmentId?: number;
+  platformEnvironmentId: number;
 }
 
 interface ResolvedDbSyncDestination {
@@ -199,12 +175,11 @@ function destinationKeyForEnvironment(environmentId: number): DbSyncDestination 
 }
 
 function parseDestinationRef(input: unknown): DbSyncDestinationRef | { error: string } {
-  if (input === "dev" || input === "prod") return { legacy: input };
   if (typeof input === "string" && input.startsWith("env:")) {
     const id = Number.parseInt(input.slice(4), 10);
-    if (Number.isFinite(id) && id > 0) return { platformEnvironmentId: id };
+    if (Number.isInteger(id) && id > 0) return { platformEnvironmentId: id };
   }
-  return { error: "destination must be 'dev', 'prod', or env:<environmentId>" };
+  return { error: "destinationEnvironmentId is required and must identify a canonical Platform Environment" };
 }
 
 function coerceDestinationKey(destination: string | undefined, destinationEnvironmentId: unknown): DbSyncDestinationRef | { error: string } {
@@ -218,8 +193,8 @@ function coerceDestinationKey(destination: string | undefined, destinationEnviro
   return parseDestinationRef(destination);
 }
 
-function isProductionDestination(dest: Pick<ResolvedDbSyncDestination, "environmentKind" | "key">): boolean {
-  return dest.environmentKind === "production" || dest.key === "prod";
+function isProductionDestination(dest: Pick<ResolvedDbSyncDestination, "environmentKind">): boolean {
+  return dest.environmentKind === "production";
 }
 
 async function reapStaleSync(state: DbSyncState): Promise<DbSyncState> {
@@ -793,140 +768,54 @@ function normalizeTargetBaseUrl(raw: string | undefined): string | undefined {
   return s.replace(/\/+$/, "");
 }
 
-// Resolve the Railway destination instance URL + service variables. Legacy dev/prod
-// support remains for compatibility; new UI calls pass destinationEnvironmentId
-// and resolve through Platforms → Environment → hosting binding → Railway.
-async function getLegacyDestinationConfig(destination: LegacyDbSyncDestination): Promise<ResolvedDbSyncDestination> {
-  if (destination === "dev") {
-    const cfg = await getDevConfig();
-    const url = normalizeTargetBaseUrl(cfg.devUrl);
-    const blockers: string[] = [];
-    if (!cfg.hasToken) blockers.push("RAILWAY_API_TOKEN secret is not set");
-    if (!cfg.projectId) blockers.push("RAILWAY_PROJECT_ID secret is not set");
-    if (!cfg.environmentId) blockers.push("RAILWAY_DEV_ENVIRONMENT_ID secret is not set");
-    if (!cfg.serviceId) blockers.push("RAILWAY_DEV_SERVICE_ID secret is not set");
-    if (!url) blockers.push("RAILWAY_DEV_URL secret is not set");
+// Resolve every destination through the canonical Platform Environment boundary.
+// Database publish is cross-environment and therefore never infers dev/prod aliases.
+async function getPlatformDestinationConfig(environmentId: number): Promise<ResolvedDbSyncDestination> {
+  const key = destinationKeyForEnvironment(environmentId);
+  try {
+    const environment = await resolvePlatformEnvironment(environmentId);
+    if (!environment) {
+      return {
+        key,
+        label: `Environment ${environmentId}`,
+        environmentKind: "custom",
+        cfg: {},
+        complete: false,
+        blockers: [`Platform Environment ${environmentId} was not found or is not visible`],
+      };
+    }
+
+    const label = `${environment.platformName} / ${environment.productName} / ${environment.platformEnvironmentName}`;
+    const url = normalizeTargetBaseUrl(environment.providerConfiguration.publicUrl || undefined);
+    const blockers = url ? [] : [`${label} Railway hosting binding is missing publicUrl`];
     return {
-      key: "dev",
-      label: "Railway dev",
-      environmentKind: "development",
+      key,
+      label,
+      environmentKind: environmentKindFromName(environment.platformEnvironmentName),
+      url,
       cfg: {
-        projectId: cfg.projectId,
-        environmentId: cfg.environmentId,
-        serviceId: cfg.serviceId,
+        projectId: environment.providerConfiguration.projectId,
+        environmentId: environment.providerConfiguration.environmentId,
+        serviceId: environment.providerConfiguration.serviceId,
+        token: environment.credential,
       },
       complete: blockers.length === 0,
-      url,
       blockers,
     };
-  }
-  const cfg = await getProdConfig();
-  const url = normalizeTargetBaseUrl(cfg.prodUrl);
-  const blockers: string[] = [];
-  if (!cfg.hasToken) blockers.push("RAILWAY_API_TOKEN secret is not set");
-  if (!cfg.projectId) blockers.push("RAILWAY_PROJECT_ID secret is not set");
-  if (!cfg.environmentId) blockers.push("RAILWAY_PROD_ENVIRONMENT_ID secret is not set");
-  if (!cfg.serviceId) blockers.push("RAILWAY_PROD_SERVICE_ID secret is not set");
-  if (!url) blockers.push("RAILWAY_PROD_URL secret is not set");
-  return {
-    key: "prod",
-    label: "Railway prod",
-    environmentKind: "production",
-    cfg: {
-      projectId: cfg.projectId,
-      environmentId: cfg.environmentId,
-      serviceId: cfg.serviceId,
-    },
-    complete: blockers.length === 0,
-    url,
-    blockers,
-  };
-}
-
-async function getPlatformDestinationConfig(environmentId: number): Promise<ResolvedDbSyncDestination> {
-  const [row] = await db
-    .select({
-      environmentId: platformProductEnvironments.id,
-      environmentName: platformProductEnvironments.name,
-      productName: platformProducts.name,
-      platformName: platforms.name,
-      projectId: environmentHostingBindings.projectId,
-      providerEnvironmentId: environmentHostingBindings.providerEnvironmentId,
-      serviceId: environmentHostingBindings.serviceId,
-      publicUrl: environmentHostingBindings.publicUrl,
-      staticUrl: environmentHostingBindings.staticUrl,
-      provider: environmentHostingBindings.provider,
-      connectionId: environmentHostingBindings.connectionId,
-      connectionProvider: providerConnections.provider,
-    })
-    .from(platformProductEnvironments)
-    .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
-    .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
-    .leftJoin(environmentHostingBindings, eq(environmentHostingBindings.environmentId, platformProductEnvironments.id))
-    .leftJoin(providerConnections, eq(providerConnections.id, environmentHostingBindings.connectionId))
-    .where(visiblePlatform(eq(platformProductEnvironments.id, environmentId)))
-    .limit(1);
-
-  if (!row) {
+  } catch (err) {
     return {
-      key: destinationKeyForEnvironment(environmentId),
+      key,
       label: `Environment ${environmentId}`,
       environmentKind: "custom",
       cfg: {},
       complete: false,
-      blockers: [`Platform environment ${environmentId} was not found`],
+      blockers: [`Platform Environment ${environmentId} could not be resolved: ${err instanceof Error ? err.message : String(err)}`],
     };
   }
-
-  const label = `${row.platformName} / ${row.productName} / ${row.environmentName}`;
-  const blockers: string[] = [];
-  if (!row.provider) blockers.push(`${label} has no hosting binding`);
-  if (row.provider && row.provider !== "railway") blockers.push(`${label} hosting provider must be railway for database publish`);
-  if (row.connectionId && row.connectionProvider && row.connectionProvider !== "railway") {
-    blockers.push(`${label} hosting connection is ${row.connectionProvider}, not railway`);
-  }
-  if (!row.projectId) blockers.push(`${label} hosting binding is missing Railway projectId`);
-  if (!row.providerEnvironmentId) blockers.push(`${label} hosting binding is missing Railway environmentId`);
-  if (!row.serviceId) blockers.push(`${label} hosting binding is missing Railway serviceId`);
-  const url = normalizeTargetBaseUrl(row.publicUrl || row.staticUrl || undefined);
-  if (!url) blockers.push(`${label} hosting binding is missing publicUrl`);
-
-  let token: string | undefined;
-  if (row.connectionId) {
-    try {
-      token = await getRailwayTokenForConnection(row.connectionId);
-    } catch (err) {
-      blockers.push(`${label} Railway connection unavailable: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  return {
-    key: destinationKeyForEnvironment(environmentId),
-    label,
-    environmentKind: environmentKindFromName(row.environmentName),
-    url,
-    cfg: {
-      projectId: row.projectId || undefined,
-      environmentId: row.providerEnvironmentId || undefined,
-      serviceId: row.serviceId || undefined,
-      token,
-    },
-    complete: blockers.length === 0,
-    blockers,
-  };
 }
 
 async function getDestinationConfig(ref: DbSyncDestinationRef): Promise<ResolvedDbSyncDestination> {
-  if (ref.platformEnvironmentId) return getPlatformDestinationConfig(ref.platformEnvironmentId);
-  if (ref.legacy) return getLegacyDestinationConfig(ref.legacy);
-  return {
-    key: "env:0" as DbSyncDestination,
-    label: "Unknown destination",
-    environmentKind: "custom",
-    cfg: {},
-    complete: false,
-    blockers: ["Destination was not provided"],
-  };
+  return getPlatformDestinationConfig(ref.platformEnvironmentId);
 }
 
 async function resolveTargetImportAuthSecret(
@@ -1016,7 +905,7 @@ interface LocalIdentityResult {
   redactedUrl: string;
 }
 
-// Compute the local DB identity by comparing the local pool URL against known Railway dev/prod fingerprints.
+// Compute local identity against the current runtime's canonical Platform Environment.
 async function computeLocalIdentity(): Promise<LocalIdentityResult | { error: string }> {
   const url = process.env.DATABASE_URL;
   if (!url) return { error: "DATABASE_URL not set" };
@@ -1029,29 +918,21 @@ async function computeLocalIdentity(): Promise<LocalIdentityResult | { error: st
 
   let kind: LocalIdentityKind = "unknown";
   try {
-    const [devCfg, prodCfg] = await Promise.all([getDevConfig(), getProdConfig()]);
-    const probes: Array<Promise<{ env: "dev" | "prod"; fp: DbFingerprint } | null>> = [];
-    if (devCfg.hasToken && devCfg.projectId && devCfg.environmentId && devCfg.serviceId) {
-      probes.push(
-        fingerprintDestinationDb(devCfg.projectId, devCfg.environmentId, devCfg.serviceId)
-          .then((r) => (r.ok ? { env: "dev" as const, fp: r.fingerprint } : null))
-          .catch(() => null),
-      );
+    const environment = await resolveRunningPlatformEnvironment();
+    if (!environment) {
+      throw new Error("current runtime has no canonical Platform Environment hosting binding");
     }
-    if (prodCfg.hasToken && prodCfg.projectId && prodCfg.environmentId && prodCfg.serviceId) {
-      probes.push(
-        fingerprintDestinationDb(prodCfg.projectId, prodCfg.environmentId, prodCfg.serviceId)
-          .then((r) => (r.ok ? { env: "prod" as const, fp: r.fingerprint } : null))
-          .catch(() => null),
-      );
-    }
-    const results = await Promise.all(probes);
-    for (const result of results) {
-      if (!result) continue;
-      if (sameDbFingerprint(fp, result.fp)) {
-        kind = result.env === "dev" ? "railway-dev" : "railway-prod";
-        break;
-      }
+    const cfg = environment.providerConfiguration;
+    const result = await fingerprintDestinationDb(
+      cfg.projectId,
+      cfg.environmentId,
+      cfg.serviceId,
+      environment.credential,
+    );
+    if (!result.ok) throw new Error(result.error);
+    if (sameDbFingerprint(fp, result.fingerprint)) {
+      const environmentKind = environmentKindFromName(environment.platformEnvironmentName);
+      kind = environmentKind === "production" ? "railway-prod" : "railway-dev";
     }
   } catch (err) {
     log.warn(`local-identity probe failed: ${err instanceof Error ? err.message : String(err)}`);
