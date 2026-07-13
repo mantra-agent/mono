@@ -2,7 +2,7 @@
 import { createLogger } from "@/lib/logger";
 import { cn } from "@/lib/utils";
 import { formatDiagnosticError, formatDiagnosticValue } from "@/lib/diagnostic-error";
-import { useState, useEffect, useCallback, useRef, useLayoutEffect, memo } from "react";
+import { useState, useEffect, useCallback, useRef, useLayoutEffect, useMemo, memo, createContext, useContext } from "react";
 import { Link } from "wouter";
 import { formatCost, formatTokens } from "@/lib/format-utils";
 import {
@@ -1023,6 +1023,39 @@ export function stepsFromSavedMessage(message: ChatMessage): ExecutionStep[] {
   return steps;
 }
 
+/**
+ * Extracts email draft reference IDs from message segments — both from assistant
+ * prose content and from persisted gmail draft/update_draft tool results.
+ * Shared by ChatTurn (rendering) and the message list (cross-message dedup).
+ */
+export function emailDraftIdsFromSegments(segments: MessageSegment[]): { fromContent: string[]; fromToolResults: string[] } {
+  const fromContent = segments.flatMap((segment) =>
+    segment.type === "content"
+      ? parseReferenceText(segment.content)
+          .filter((part) => part.kind === "reference" && part.ref.type === "email_draft")
+          .map((part) => part.ref.id)
+      : [],
+  );
+  const fromToolResults = [...new Set(segments.flatMap((segment) => {
+    if (segment.type !== "timeline") return [];
+    return segment.steps.flatMap((tool) => {
+      const action = typeof tool.arguments?.action === "string" ? tool.arguments.action : null;
+      if (tool.type !== "tool_call" || tool.toolName !== "gmail" || (action !== "draft" && action !== "update_draft")) return [];
+      if (typeof tool.result !== "string") return [];
+      return parseReferenceText(tool.result)
+        .filter((part) => part.kind === "reference" && part.ref.type === "email_draft")
+        .map((part) => part.ref.id);
+    });
+  }))];
+  return { fromContent, fromToolResults };
+}
+
+/**
+ * Draft IDs whose inline widgets are superseded by a later occurrence in the
+ * same chat. Latest occurrence wins; earlier inline widgets are hidden.
+ */
+export const SuppressedEmailDraftsContext = createContext<ReadonlySet<string>>(new Set());
+
 export function segmentsFromSavedMessage(message: ChatMessage): MessageSegment[] {
   if (message.segmentChronology && message.segmentChronology.length > 0) {
     return segmentsFromChronology(message);
@@ -1208,6 +1241,7 @@ export function MarkdownContent({ content, stripTags = false, compact = false, r
   const { tags, remaining } = stripTags ? { tags: [], remaining: strippedContent } : parseLeadingExpressionTags(strippedContent);
 
   // Extract email_draft references for block-level widget rendering
+  const suppressedDrafts = useContext(SuppressedEmailDraftsContext);
   const parts = parseReferenceText(remaining);
   const draftIds: string[] = [];
   const textWithoutDrafts = parts
@@ -1241,7 +1275,7 @@ export function MarkdownContent({ content, stripTags = false, compact = false, r
           <ReferenceText content={textWithoutDrafts} markdownComponents={markdownComponents} referenceSurface={referenceSurface} />
         </div>
       )}
-      {draftIds.map((id) => (
+      {draftIds.filter((id) => !suppressedDrafts.has(id)).map((id) => (
         <EmailDraftWidget key={id} draftId={id} />
       ))}
     </>
@@ -1369,7 +1403,7 @@ function CompactionBoundary({ message, stripTags }: { message: ChatMessage; stri
   );
 }
 
-export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, sessionKey, compactReferences = false }: { message: ChatMessage; isLast: boolean; streaming?: StreamingContent; sessionKey?: string | null; compactReferences?: boolean }) {
+export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, sessionKey, compactReferences = false, suppressedEmailDraftIds }: { message: ChatMessage; isLast: boolean; streaming?: StreamingContent; sessionKey?: string | null; compactReferences?: boolean; suppressedEmailDraftIds?: string }) {
   const isUser = message.role === "user";
   const isSystemPrompt = message.role === "system_prompt";
   const isVoiceMessage = message.voice?.source === "elevenlabs-voice";
@@ -1423,26 +1457,13 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
   }
 
   const hasContent = segments.some(s => s.type === "content" && s.content);
-  const draftIdsFromContent = segments.flatMap((segment) =>
-    segment.type === "content"
-      ? parseReferenceText(segment.content)
-          .filter((part) => part.kind === "reference" && part.ref.type === "email_draft")
-          .map((part) => part.ref.id)
-      : [],
-  );
-  const draftIdsFromToolResults = [...new Set(segments.flatMap((segment) => {
-    if (segment.type !== "timeline") return [];
-    return segment.steps.flatMap((tool) => {
-      const action = typeof tool.arguments?.action === "string" ? tool.arguments.action : null;
-      if (tool.type !== "tool_call" || tool.toolName !== "gmail" || (action !== "draft" && action !== "update_draft")) return [];
-      if (typeof tool.result !== "string") return [];
-      return parseReferenceText(tool.result)
-        .filter((part) => part.kind === "reference" && part.ref.type === "email_draft")
-        .map((part) => part.ref.id);
-    });
-  }))];
+  const { fromContent: draftIdsFromContent, fromToolResults: draftIdsFromToolResults } = emailDraftIdsFromSegments(segments);
   const visibleEmailDraftIds = [...new Set([...draftIdsFromContent, ...draftIdsFromToolResults])];
-  const unpromotedDraftIds = draftIdsFromToolResults.filter((id) => !draftIdsFromContent.includes(id));
+  const suppressedDraftIds = useMemo(
+    () => new Set<string>(suppressedEmailDraftIds ? suppressedEmailDraftIds.split("|") : []),
+    [suppressedEmailDraftIds],
+  );
+  const unpromotedDraftIds = draftIdsFromToolResults.filter((id) => !draftIdsFromContent.includes(id) && !suppressedDraftIds.has(id));
   const hasUnpromotedDraftWidget = unpromotedDraftIds.length > 0;
 
   useEffect(() => {
@@ -1453,9 +1474,10 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
       contentDraftCount: draftIdsFromContent.length,
       toolResultDraftCount: draftIdsFromToolResults.length,
       promotedFromToolResult: hasUnpromotedDraftWidget,
+      suppressedDraftCount: suppressedDraftIds.size,
       isStreaming: isActiveStreaming,
     });
-  }, [message.id, visibleEmailDraftIds.join("|"), draftIdsFromContent.length, draftIdsFromToolResults.length, hasUnpromotedDraftWidget, isActiveStreaming]);
+  }, [message.id, visibleEmailDraftIds.join("|"), draftIdsFromContent.length, draftIdsFromToolResults.length, hasUnpromotedDraftWidget, suppressedDraftIds.size, isActiveStreaming]);
 
   const handleCopy = useCallback(() => {
     const allContent = segments
@@ -1620,24 +1642,26 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
           </div>
         )}
         <div className="space-y-2">
-          {(segments.length > 0 || isActiveStreaming) ? (
-            <SegmentStream
-              segments={segments}
-              isStreaming={isActiveStreaming}
-              layer={layer}
-              stripTags={shouldStripTags}
-              contentCompact
-            />
-          ) : (
-            message.content && (
-              <div className={cn(isErrorMessage && "rounded-2xl rounded-bl-sm border border-destructive/30 bg-destructive/5 px-4 py-2.5")}>
-                <MarkdownContent content={message.content} stripTags={shouldStripTags} compact />
-              </div>
-            )
-          )}
-          {unpromotedDraftIds.map((id) => (
-            <EmailDraftWidget key={`tool-draft-${id}`} draftId={id} />
-          ))}
+          <SuppressedEmailDraftsContext.Provider value={suppressedDraftIds}>
+            {(segments.length > 0 || isActiveStreaming) ? (
+              <SegmentStream
+                segments={segments}
+                isStreaming={isActiveStreaming}
+                layer={layer}
+                stripTags={shouldStripTags}
+                contentCompact
+              />
+            ) : (
+              message.content && (
+                <div className={cn(isErrorMessage && "rounded-2xl rounded-bl-sm border border-destructive/30 bg-destructive/5 px-4 py-2.5")}>
+                  <MarkdownContent content={message.content} stripTags={shouldStripTags} compact />
+                </div>
+              )
+            )}
+            {unpromotedDraftIds.map((id) => (
+              <EmailDraftWidget key={`tool-draft-${id}`} draftId={id} />
+            ))}
+          </SuppressedEmailDraftsContext.Provider>
         </div>
         <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground/50 text-left" data-testid={`text-message-time-${message.id}`}>
           {layer >= 3 && (isActiveStreaming ? <StreamingTierBadge model={streaming?.model} autoTier={streaming?.autoTier} /> : message.model && <ModelTierBadge model={message.model} />)}
