@@ -137,7 +137,11 @@ interface CodexResponsesChunk {
   output?: Array<{ type: string; id?: string; content?: Array<{ type: string; text?: string }> }>;
   item?: { type?: string; id?: string; name?: string; call_id?: string; arguments?: string };
   usage?: { input_tokens: number; output_tokens: number; total_tokens: number; input_tokens_details?: { cached_tokens?: number }; output_tokens_details?: { reasoning_tokens?: number } };
-  response?: { usage?: { input_tokens: number; output_tokens: number; total_tokens: number; input_tokens_details?: { cached_tokens?: number }; output_tokens_details?: { reasoning_tokens?: number } } };
+  response?: {
+    usage?: { input_tokens: number; output_tokens: number; total_tokens: number; input_tokens_details?: { cached_tokens?: number }; output_tokens_details?: { reasoning_tokens?: number } };
+    error?: { code?: string; message?: string; type?: string };
+  };
+  error?: { code?: string; message?: string; type?: string };
 }
 
 interface ToolResultBlock {
@@ -599,23 +603,41 @@ class CodexUnavailableError extends Error {
   }
 }
 
+type CodexFailureKind =
+  | "transport"
+  | "http_retryable"
+  | "http_permanent"
+  | "rate_limited"
+  | "time_to_first_event"
+  | "stream_interrupted"
+  | "provider_failed"
+  | "protocol_invalid";
+
+type CodexFailurePhase = "fetch" | "first_event" | "stream" | "protocol";
+
 class CodexAttemptError extends Error {
+  kind: CodexFailureKind;
+  retryable: boolean;
   status: number;
   bodySnippet: string;
   clientRequestId: string;
   providerRequestId?: string;
-  phase: "fetch" | "first_event" | "protocol";
+  phase: CodexFailurePhase;
 
   constructor(params: {
+    kind: CodexFailureKind;
+    retryable: boolean;
     message: string;
     status?: number;
     bodySnippet?: string;
     clientRequestId: string;
     providerRequestId?: string;
-    phase: "fetch" | "first_event" | "protocol";
+    phase: CodexFailurePhase;
   }) {
     super(params.message);
     this.name = "CodexAttemptError";
+    this.kind = params.kind;
+    this.retryable = params.retryable;
     this.status = params.status ?? 0;
     this.bodySnippet = params.bodySnippet ?? params.message;
     this.clientRequestId = params.clientRequestId;
@@ -707,6 +729,8 @@ async function fetchCodexAttempt(
   } catch (err: any) {
     if (scope.timedOut()) {
       throw new CodexAttemptError({
+        kind: "time_to_first_event",
+        retryable: true,
         message: `time_to_first_event_timeout:${CODEX_TIME_TO_FIRST_EVENT_MS}ms`,
         bodySnippet: err?.message || "request timed out before response headers",
         clientRequestId: scope.clientRequestId,
@@ -715,6 +739,8 @@ async function fetchCodexAttempt(
     }
     if (err.name === "AbortError" || err.code === "ERR_CANCELED" || scope.signal.aborted) throw err;
     throw new CodexAttemptError({
+      kind: "transport",
+      retryable: true,
       message: err?.message || String(err),
       clientRequestId: scope.clientRequestId,
       phase: "fetch",
@@ -728,19 +754,41 @@ async function fetchCodexAttempt(
     `clientRequestId=${scope.clientRequestId} providerRequestId=${providerRequestId ?? "none"}`,
   );
 
-  if (response.status >= 500 && response.status < 600) {
-    const bodySnippet = await response.text().catch(() => "unknown error");
-    throw new CodexAttemptError({
-      message: `HTTP ${response.status}`,
-      status: response.status,
-      bodySnippet,
-      clientRequestId: scope.clientRequestId,
-      providerRequestId,
-      phase: "fetch",
-    });
-  }
-
   return response;
+}
+
+function isRetryableCodexStatus(status: number): boolean {
+  return status === 408 || status === 409 || status === 429 || (status >= 500 && status < 600);
+}
+
+function codexHttpAttemptError(response: Response, bodySnippet: string, scope: CodexAttemptScope): CodexAttemptError {
+  const retryable = isRetryableCodexStatus(response.status);
+  return new CodexAttemptError({
+    kind: response.status === 429 ? "rate_limited" : retryable ? "http_retryable" : "http_permanent",
+    retryable,
+    message: `HTTP ${response.status}`,
+    status: response.status,
+    bodySnippet,
+    clientRequestId: scope.clientRequestId,
+    providerRequestId: response.headers.get("x-request-id") || undefined,
+    phase: "fetch",
+  });
+}
+
+function codexProviderFailure(chunk: CodexResponsesChunk, scope: CodexAttemptScope, response: Response): CodexAttemptError {
+  const detail = chunk.response?.error || chunk.error;
+  const providerCode = detail?.code || detail?.type;
+  const message = detail?.message || "response.failed";
+  const permanentCodes = new Set(["invalid_request_error", "authentication_error", "permission_error", "context_length_exceeded", "model_not_found"]);
+  return new CodexAttemptError({
+    kind: "provider_failed",
+    retryable: !providerCode || !permanentCodes.has(providerCode),
+    message,
+    bodySnippet: providerCode ? `${providerCode}: ${message}` : message,
+    clientRequestId: scope.clientRequestId,
+    providerRequestId: response.headers.get("x-request-id") || undefined,
+    phase: "protocol",
+  });
 }
 
 function codexUnavailableFromAttempt(err: CodexAttemptError, attempts: number): CodexUnavailableError {
@@ -785,12 +833,9 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
     const scope = createCodexAttemptScope(parentSignal);
     try {
       const response = await fetchCodexAttempt(fetchOptions, scope, codexModel, "completion", attempt, CODEX_COMPLETION_MAX_ATTEMPTS);
-      if (response.status === 429) {
-        throw new Error("OpenAI subscription rate limit reached. Your ChatGPT subscription limit has been hit. Please wait and try again.");
-      }
       if (!response.ok || !response.body) {
         const text = await response.text().catch(() => "unknown error");
-        throw new Error(`Codex responses error ${response.status}: ${text.slice(0, 200)}`);
+        throw codexHttpAttemptError(response, text.slice(0, 200), scope);
       }
 
       let content = "";
@@ -799,7 +844,8 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
       const decoder = new TextDecoder();
       let buffer = "";
       let firstEventSeen = false;
-      let protocolFailed = false;
+      let protocolFailure: CodexAttemptError | undefined;
+      let terminalEventSeen = false;
 
       while (true) {
         let read: ReadableStreamReadResult<Uint8Array>;
@@ -808,6 +854,8 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
         } catch (err: any) {
           if (parentSignal?.aborted) throw new CodexAbortedError();
           throw new CodexAttemptError({
+            kind: scope.timedOut() ? "time_to_first_event" : "stream_interrupted",
+            retryable: true,
             message: scope.timedOut()
               ? `time_to_first_event_timeout:${CODEX_TIME_TO_FIRST_EVENT_MS}ms`
               : (err?.message || "response body read failed"),
@@ -820,6 +868,8 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
         if (read.done) {
           if (!firstEventSeen) {
             throw new CodexAttemptError({
+              kind: "stream_interrupted",
+              retryable: true,
               message: "eof_before_first_event",
               clientRequestId: scope.clientRequestId,
               providerRequestId: response.headers.get("x-request-id") || undefined,
@@ -838,7 +888,19 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
           const data = trimmed.slice(5).trim();
           if (data === "[DONE]") break;
           let chunk: CodexResponsesChunk;
-          try { chunk = JSON.parse(data); } catch { continue; }
+          try {
+            chunk = JSON.parse(data);
+          } catch {
+            throw new CodexAttemptError({
+              kind: "protocol_invalid",
+              retryable: true,
+              message: "malformed_sse_json",
+              bodySnippet: data.slice(0, 200),
+              clientRequestId: scope.clientRequestId,
+              providerRequestId: response.headers.get("x-request-id") || undefined,
+              phase: "protocol",
+            });
+          }
 
           if (!firstEventSeen) {
             firstEventSeen = true;
@@ -861,17 +923,21 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
             };
           }
           if (chunk.type === "response.output_text.delta" && typeof chunk.delta === "string") content += chunk.delta;
-          else if (chunk.type === "response.failed") protocolFailed = true;
+          else if (chunk.type === "response.failed") protocolFailure = codexProviderFailure(chunk, scope, response);
+          else if (chunk.type === "response.completed" || chunk.type === "response.incomplete") terminalEventSeen = true;
         }
-        if (protocolFailed) break;
+        if (protocolFailure) break;
       }
 
-      if (protocolFailed) {
+      if (protocolFailure) throw protocolFailure;
+      if (!terminalEventSeen) {
         throw new CodexAttemptError({
-          message: "response.failed",
+          kind: "stream_interrupted",
+          retryable: true,
+          message: firstEventSeen ? "eof_before_terminal_event" : "eof_before_first_event",
           clientRequestId: scope.clientRequestId,
           providerRequestId: response.headers.get("x-request-id") || undefined,
-          phase: "protocol",
+          phase: firstEventSeen ? "stream" : "first_event",
         });
       }
       if (!content) log.warn(`openai-subscription completion: empty content for model=${codexModel}`);
@@ -898,7 +964,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
         `phase=${err.phase} status=${err.status || 0} elapsedMs=${Date.now() - scope.startedAt} ` +
         `clientRequestId=${err.clientRequestId} providerRequestId=${err.providerRequestId ?? "none"} error=${err.message}`,
       );
-      if (attempt === CODEX_COMPLETION_MAX_ATTEMPTS - 1) {
+      if (!err.retryable || attempt === CODEX_COMPLETION_MAX_ATTEMPTS - 1) {
         throw codexUnavailableFromAttempt(err, attempt + 1);
       }
     } finally {
@@ -1325,31 +1391,24 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
       let response: Response;
       try {
         response = await fetchCodexAttempt(fetchOptions, scope, codexModel, "stream", attempt, CODEX_STREAM_MAX_ATTEMPTS);
+        if (!response.ok || !response.body) {
+          const text = await response.text().catch(() => "unknown error");
+          throw codexHttpAttemptError(response, text.slice(0, 200), scope);
+        }
       } catch (err: any) {
-        scope.cleanup();
         if (signal?.aborted || (isAbortError(err, scope.signal) && !scope.timedOut())) {
           throw new CodexAbortedError();
         }
         if (!(err instanceof CodexAttemptError)) throw err;
-        lastEarlyReason = `${err.phase}:${err.message}`;
+        lastEarlyReason = `${err.kind}:${err.message}`;
         log.warn(
           `codex stream attempt failed attempt=${attempt + 1}/${CODEX_STREAM_MAX_ATTEMPTS} model=${codexModel} ` +
-          `phase=${err.phase} status=${err.status || 0} elapsedMs=${Date.now() - scope.startedAt} ` +
-          `clientRequestId=${err.clientRequestId} providerRequestId=${err.providerRequestId ?? "none"} error=${err.message}`,
+          `kind=${err.kind} retryable=${err.retryable} phase=${err.phase} status=${err.status || 0} ` +
+          `elapsedMs=${Date.now() - scope.startedAt} clientRequestId=${err.clientRequestId} ` +
+          `providerRequestId=${err.providerRequestId ?? "none"} error=${err.message}`,
         );
-        if (attempt < CODEX_STREAM_MAX_ATTEMPTS - 1) continue streamRetryLoop;
+        if (err.retryable && attempt < CODEX_STREAM_MAX_ATTEMPTS - 1) continue streamRetryLoop;
         yield { type: "error", error: codexUnavailableFromAttempt(err, attempt + 1).message };
-        return;
-      }
-      if (response.status === 429) {
-        scope.cleanup();
-        yield { type: "error", error: "OpenAI subscription rate limit reached. Your ChatGPT subscription limit has been hit. Please wait and try again." };
-        return;
-      }
-      if (!response.ok || !response.body) {
-        const text = await response.text().catch(() => "unknown error");
-        scope.cleanup();
-        yield { type: "error", error: `Codex responses error ${response.status}: ${text.slice(0, 200)}` };
         return;
       }
 
@@ -1363,8 +1422,9 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let earlyFailure = false;
+      let attemptFailure: CodexAttemptError | undefined;
       let firstProviderEventSeen = false;
+      let terminalEventSeen = false;
 
       sseLoop: while (true) {
         let read: ReadableStreamReadResult<Uint8Array>;
@@ -1372,25 +1432,30 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
           read = await reader.read();
         } catch (err: any) {
           if (signal?.aborted && !scope.timedOut()) throw new CodexAbortedError();
-          if (!firstProviderEventSeen) {
-            earlyFailure = true;
-            lastEarlyReason = scope.timedOut()
-              ? `first_event:time_to_first_event_timeout:${CODEX_TIME_TO_FIRST_EVENT_MS}ms`
-              : `first_event:${err?.message || "response body read failed"}`;
-            log.warn(
-              `codex stream pre-event failure attempt=${attempt + 1}/${CODEX_STREAM_MAX_ATTEMPTS} model=${codexModel} ` +
-              `elapsedMs=${Date.now() - scope.startedAt} clientRequestId=${scope.clientRequestId} ` +
-              `providerRequestId=${response.headers.get("x-request-id") || "none"} reason=${lastEarlyReason}`,
-            );
-            break;
-          }
-          throw err;
+          attemptFailure = new CodexAttemptError({
+            kind: scope.timedOut() ? "time_to_first_event" : "stream_interrupted",
+            retryable: !yieldedRealEvent,
+            message: scope.timedOut()
+              ? `time_to_first_event_timeout:${CODEX_TIME_TO_FIRST_EVENT_MS}ms`
+              : (err?.message || "response body read failed"),
+            bodySnippet: err?.message,
+            clientRequestId: scope.clientRequestId,
+            providerRequestId: response.headers.get("x-request-id") || undefined,
+            phase: firstProviderEventSeen ? "stream" : "first_event",
+          });
+          break;
         }
         const { done, value } = read;
         if (done) {
-          if (!firstProviderEventSeen) {
-            earlyFailure = true;
-            lastEarlyReason = "first_event:eof_before_first_event";
+          if (!terminalEventSeen) {
+            attemptFailure = new CodexAttemptError({
+              kind: "stream_interrupted",
+              retryable: !yieldedRealEvent,
+              message: firstProviderEventSeen ? "eof_before_terminal_event" : "eof_before_first_event",
+              clientRequestId: scope.clientRequestId,
+              providerRequestId: response.headers.get("x-request-id") || undefined,
+              phase: firstProviderEventSeen ? "stream" : "first_event",
+            });
           }
           break;
         }
@@ -1406,7 +1471,20 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
           if (data === "[DONE]") break;
 
           let chunk: CodexResponsesChunk;
-          try { chunk = JSON.parse(data); } catch { continue; }
+          try {
+            chunk = JSON.parse(data);
+          } catch {
+            attemptFailure = new CodexAttemptError({
+              kind: "protocol_invalid",
+              retryable: !yieldedRealEvent,
+              message: "malformed_sse_json",
+              bodySnippet: data.slice(0, 200),
+              clientRequestId: scope.clientRequestId,
+              providerRequestId: response.headers.get("x-request-id") || undefined,
+              phase: "protocol",
+            });
+            break sseLoop;
+          }
 
           scope.markFirstEvent();
           if (!firstProviderEventSeen) {
@@ -1430,13 +1508,9 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
           // Handle `response.failed` BEFORE any consumer yields so an early
           // protocol failure can be retried invisibly.
           if (chunk.type === "response.failed") {
-            if (!yieldedRealEvent) {
-              earlyFailure = true;
-              lastEarlyReason = "response.failed";
-              break sseLoop;
-            }
-            yield { type: "error", error: "Codex response failed" };
-            return;
+            attemptFailure = codexProviderFailure(chunk, scope, response);
+            attemptFailure.retryable = attemptFailure.retryable && !yieldedRealEvent;
+            break sseLoop;
           }
 
           const usageData = chunk.usage || chunk.response?.usage;
@@ -1502,25 +1576,31 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
               }
             }
           } else if (chunk.type === "response.completed") {
+            terminalEventSeen = true;
             stopReason = pendingToolCalls.size > 0 ? "tool_use" : "end_turn";
           } else if (chunk.type === "response.incomplete") {
+            terminalEventSeen = true;
             stopReason = "max_tokens";
           }
         }
       }
 
-      if (earlyFailure) {
+      if (attemptFailure) {
+        lastEarlyReason = `${attemptFailure.kind}:${attemptFailure.message}`;
         await reader.cancel(lastEarlyReason).catch(() => undefined);
-        scope.cleanup();
-        if (attempt < CODEX_STREAM_MAX_ATTEMPTS - 1) continue streamRetryLoop;
-        log.error(
-          `codex stream give up after ${CODEX_STREAM_MAX_ATTEMPTS} attempts model=${codexModel} ` +
-          `reason=${lastEarlyReason}`,
+        log.warn(
+          `codex stream attempt failed attempt=${attempt + 1}/${CODEX_STREAM_MAX_ATTEMPTS} model=${codexModel} ` +
+          `kind=${attemptFailure.kind} retryable=${attemptFailure.retryable} phase=${attemptFailure.phase} ` +
+          `status=${attemptFailure.status || 0} elapsedMs=${Date.now() - scope.startedAt} ` +
+          `clientRequestId=${attemptFailure.clientRequestId} providerRequestId=${attemptFailure.providerRequestId ?? "none"} ` +
+          `error=${attemptFailure.message}`,
         );
-        yield {
-          type: "error",
-          error: `Codex temporarily unavailable after ${CODEX_STREAM_MAX_ATTEMPTS} attempts — last error: ${lastEarlyReason}`,
-        };
+        if (attemptFailure.retryable && attempt < CODEX_STREAM_MAX_ATTEMPTS - 1) continue streamRetryLoop;
+        log.error(
+          `codex stream exhausted attempts=${attempt + 1}/${CODEX_STREAM_MAX_ATTEMPTS} model=${codexModel} ` +
+          `kind=${attemptFailure.kind} phase=${attemptFailure.phase} reason=${attemptFailure.message}`,
+        );
+        yield { type: "error", error: codexUnavailableFromAttempt(attemptFailure, attempt + 1).message };
         return;
       }
 
