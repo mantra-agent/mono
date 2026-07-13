@@ -15,6 +15,7 @@ import { storage } from "./storage";
 import { getSetting, setSetting } from "./system-settings";
 import { loginSchema, registerSchema, type User } from "@shared/schema";
 import { z } from "zod";
+import { sql } from "drizzle-orm";
 import {
   attachUserPrincipal,
   createServicePrincipal,
@@ -35,6 +36,68 @@ const setupSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
 });
+
+const deleteUserSchema = z.object({
+  confirmation: z.string(),
+});
+
+interface WaitlistApplicationRow {
+  id: string;
+  email: string;
+  position: number;
+  status: string;
+  createdAt: string;
+}
+
+async function getAdminUserActivity(): Promise<Map<string, string>> {
+  const { db } = await import("./db");
+  const result = await db.execute<{ user_id: string; last_active_at: Date | string }>(sql`
+    SELECT user_id, MAX(activity_at) AS last_active_at
+    FROM (
+      SELECT owner_user_id AS user_id, updated_at AS activity_at
+      FROM sessions
+      WHERE owner_user_id IS NOT NULL
+      UNION ALL
+      SELECT owner_user_id AS user_id, created_at AS activity_at
+      FROM messages
+      WHERE owner_user_id IS NOT NULL
+      UNION ALL
+      SELECT actor_user_id AS user_id, created_at AS activity_at
+      FROM privileged_access_audit
+      WHERE actor_user_id IS NOT NULL
+    ) user_activity
+    GROUP BY user_id
+  `);
+  return new Map(result.rows.map((row) => [row.user_id, new Date(row.last_active_at).toISOString()]));
+}
+
+async function getWaitlistApplications(): Promise<WaitlistApplicationRow[]> {
+  const { db } = await import("./db");
+  try {
+    const result = await db.execute<{
+      id: string;
+      email: string;
+      position: number;
+      status: string;
+      created_at: Date | string;
+    }>(sql`
+      SELECT id, email, position, status, created_at
+      FROM waitlist_applications
+      ORDER BY position ASC
+      LIMIT 500
+    `);
+    return result.rows.map((row) => ({
+      id: row.id,
+      email: row.email,
+      position: row.position,
+      status: row.status,
+      createdAt: new Date(row.created_at).toISOString(),
+    }));
+  } catch (error) {
+    if ((error as { code?: string }).code === "42P01") return [];
+    throw error;
+  }
+}
 
 declare module "express-session" {
   interface SessionData {
@@ -806,6 +869,10 @@ export function setupAuth(app: Express) {
     async (_req: Request, res: Response) => {
       try {
         const allUsers = await storage.getUsers();
+        const [lastActiveByUser, waitlist] = await Promise.all([
+          getAdminUserActivity(),
+          getWaitlistApplications(),
+        ]);
         const rows = await Promise.all(allUsers.map(async (u) => {
           const identity = await ensureUserIdentityFoundation(u);
           return {
@@ -813,13 +880,14 @@ export function setupAuth(app: Express) {
             email: u.email,
             role: u.role,
             createdAt: u.createdAt,
+            lastActiveAt: lastActiveByUser.get(u.id) ?? null,
             hasPendingInvite: !!u.inviteToken,
             permissionOverrides: await listUserPermissionOverrides(u.id),
             permissions: await getUserEffectivePermissions(u.id),
             presence: getClientPresenceSnapshot(identity.accountId).clients,
           };
         }));
-        res.json({ users: rows, availablePermissions: PERMISSIONS });
+        res.json({ users: rows, waitlist, availablePermissions: PERMISSIONS });
       } catch {
         res.status(500).json({ error: "Failed to fetch users" });
       }
@@ -861,6 +929,11 @@ export function setupAuth(app: Express) {
         }
         const user = await storage.getUser(targetId);
         if (!user) return res.status(404).json({ error: "User not found" });
+        const parsed = deleteUserSchema.safeParse(req.body);
+        const expectedConfirmation = `DELETE ${user.email}`;
+        if (!parsed.success || parsed.data.confirmation !== expectedConfirmation) {
+          return res.status(400).json({ error: `Type ${expectedConfirmation} to confirm deletion` });
+        }
 
         const { db } = await import("./db");
         const { users: usersTable } = await import("@shared/schema");
