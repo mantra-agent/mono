@@ -278,8 +278,8 @@ export async function runExecutorPhase(
             logPipelineStage(ctx, session, "first_llm_delta", pipelineStart, `llmTtft=${llmTtft}ms`);
           }
           thinkingFilter.filteredSendChunk(event.content);
-          // Publish delta to SessionManager so clients see streaming content
-          writeVoiceJournal(session, "delta", { content: event.content });
+          // AgentExecutor already journals every emitted delta through its canonical
+          // publish path. Republish here and SessionManager appends each token twice.
         }
         if (event.type === "tool_call") {
           const toolName = event.toolName || "?";
