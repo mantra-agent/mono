@@ -969,7 +969,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
           expandHitArea={false}
           testId={`input-log-date-${interaction.id}`}
         >
-          <span>Date: {interaction.date ? new Date(interaction.date).toLocaleDateString() : "Not set"}</span>
+          <span>Date: {interaction.date ? new Date(`${interaction.date.slice(0, 10)}T12:00:00`).toLocaleDateString() : "Not set"}</span>
         </InlineDatePicker>
       </DropdownMenuItem>
       <DropdownMenuItem onClick={() => {
@@ -987,7 +987,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
             expandHitArea={false}
             testId={`input-log-follow-up-date-${interaction.id}`}
           >
-            <span>Due: {interaction.responseDueBy ? new Date(interaction.responseDueBy).toLocaleDateString() : "Not set"}</span>
+            <span>Due: {interaction.responseDueBy ? new Date(`${interaction.responseDueBy.slice(0, 10)}T12:00:00`).toLocaleDateString() : "Not set"}</span>
           </InlineDatePicker>
         </DropdownMenuItem>
       )}
