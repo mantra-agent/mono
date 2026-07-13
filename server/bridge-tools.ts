@@ -15313,10 +15313,13 @@ const DISPATCH_MAP: Record<string, ToolHandler> = {
 
 
 function isEmptyToolArgumentValue(value: unknown): boolean {
-  if (value === undefined) return true;
+  if (value === undefined || value === null) return true;
   if (typeof value === "string") return value.trim() === "";
   if (Array.isArray(value)) return value.length === 0;
-  if (value !== null && typeof value === "object") return Object.keys(value as Record<string, unknown>).length === 0;
+  if (typeof value === "object") {
+    const values = Object.values(value as Record<string, unknown>);
+    return values.length === 0 || values.every(isEmptyToolArgumentValue);
+  }
   return false;
 }
 
