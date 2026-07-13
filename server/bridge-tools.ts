@@ -1464,13 +1464,30 @@ type ParsedDraftBodyMutation =
   | { mutation?: import("./email-draft-storage").EmailDraftBodyMutation }
   | { error: string };
 
+function isSubstantiveDraftBodyOperation(key: string, value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value !== "object" || Array.isArray(value)) return true;
+
+  const operation = value as Record<string, unknown>;
+  if (key === "findReplace") {
+    return operation.find !== "" || operation.replace !== "" || operation.replaceAll === true;
+  }
+  if (key === "rangePatch") {
+    return operation.start !== 0
+      || operation.end !== 0
+      || operation.replacement !== ""
+      || operation.expectedBodyHash !== "";
+  }
+  if (key === "replaceBody") {
+    return operation.body !== "" || operation.clear === true;
+  }
+  return Object.keys(operation).length > 0;
+}
+
 function parseDraftBodyMutation(args: Record<string, any>): ParsedDraftBodyMutation {
-  const supplied = ["findReplace", "rangePatch", "replaceBody"].filter((key) => {
-    const value = args[key];
-    return value !== undefined
-      && value !== null
-      && (typeof value !== "object" || Array.isArray(value) || Object.keys(value).length > 0);
-  });
+  const supplied = ["findReplace", "rangePatch", "replaceBody"].filter((key) =>
+    isSubstantiveDraftBodyOperation(key, args[key]),
+  );
   if (optionalDraftText(args.body)) {
     return { error: "update_draft body changes require findReplace, rangePatch, or replaceBody; body is for draft creation only" };
   }
@@ -1523,8 +1540,14 @@ function parseDraftBodyMutation(args: Record<string, any>): ParsedDraftBodyMutat
     };
   }
 
+  if (value.clear !== undefined && typeof value.clear !== "boolean") {
+    return { error: "replaceBody.clear must be a boolean" };
+  }
   if (typeof value.body !== "string") {
     return { error: "replaceBody requires a body string" };
+  }
+  if (value.body.length === 0 && value.clear !== true) {
+    return { error: "Clearing a draft body requires replaceBody.clear=true" };
   }
   return { mutation: { type: "replace_body", body: value.body } };
 }
