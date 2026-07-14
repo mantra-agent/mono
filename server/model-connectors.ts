@@ -38,10 +38,14 @@ export interface ModelConnector {
 }
 
 function validateMapping(provider: ModelConnectorProvider, mapping: ModelTierMappings): ModelTierMappings {
-  for (const modelId of Object.values(mapping)) {
-    const model = getModel(modelId);
-    if (!model) throw new Error(`Unknown model '${modelId}'`);
-    if (model.provider !== provider) throw new Error(`Model '${modelId}' does not belong to provider '${provider}'`);
+  for (const modelString of Object.values(mapping)) {
+    const parsed = splitModel(modelString);
+    if (!parsed || parsed.provider !== provider) {
+      throw new Error(`Model '${modelString}' does not belong to provider '${provider}'`);
+    }
+    const model = getModel(parsed.modelId.slice(parsed.modelId.indexOf("/") + 1));
+    if (!model) throw new Error(`Unknown model '${modelString}'`);
+    if (model.provider !== provider) throw new Error(`Model '${modelString}' does not belong to provider '${provider}'`);
   }
   return mapping;
 }
@@ -123,10 +127,6 @@ function splitModel(value: string): { provider: ModelConnectorProvider; modelId:
 }
 
 export async function migrateLegacyModelProfiles(): Promise<void> {
-  const existing = await db.select({ id: providerConnections.id }).from(providerConnections)
-    .where(eq(providerConnections.connectorKind, "model")).limit(1);
-  if (existing.length > 0) return;
-
   const legacy = await getSetting<LegacyProfiles>(LEGACY_PROFILE_KEY);
   if (!legacy?.tiers) return;
   const grouped = new Map<ModelConnectorProvider, Partial<ModelTierMappings>>();
@@ -138,35 +138,36 @@ export async function migrateLegacyModelProfiles(): Promise<void> {
     grouped.set(parsed.provider, current);
   }
 
-  const connectorValues = Array.from(grouped).flatMap(([provider, partial], sortOrder) => {
-    const fallback = partial.balanced ?? partial.high ?? partial.max ?? partial.fast;
-    if (!fallback) return [];
-    const tierMappings = validateMapping(provider, modelTierMappingsSchema.parse({
-      max: partial.max ?? fallback,
-      high: partial.high ?? fallback,
-      balanced: partial.balanced ?? fallback,
-      fast: partial.fast ?? fallback,
-    }));
-    return [{
-      provider,
-      label: `${provider} Models`,
-      accountType: "legacy",
-      status: "active",
-      connectorKind: "model",
-      connectorConfig: { kind: "model" as const, tierMappings, migratedFrom: "model_profiles" as const },
-      sortOrder,
-      scope: "global",
-    }];
-  });
-  if (connectorValues.length === 0) return;
-
-  const inserted = await db.transaction(async (tx) => {
+  const insertedProviders = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('model-connectors:legacy-migration'))`);
-    const existingAfterLock = await tx.select({ id: providerConnections.id }).from(providerConnections)
-      .where(eq(providerConnections.connectorKind, "model")).limit(1);
-    if (existingAfterLock.length > 0) return false;
+    const existingRows = await tx.select({ provider: providerConnections.provider }).from(providerConnections)
+      .where(eq(providerConnections.connectorKind, "model"));
+    const existingProviders = new Set(existingRows.map((row) => row.provider));
+    const nextSortOrder = existingRows.length;
+    const connectorValues = Array.from(grouped).flatMap(([provider, partial], offset) => {
+      if (existingProviders.has(provider)) return [];
+      const fallback = partial.balanced ?? partial.high ?? partial.max ?? partial.fast;
+      if (!fallback) return [];
+      const tierMappings = validateMapping(provider, modelTierMappingsSchema.parse({
+        max: partial.max ?? fallback,
+        high: partial.high ?? fallback,
+        balanced: partial.balanced ?? fallback,
+        fast: partial.fast ?? fallback,
+      }));
+      return [{
+        provider,
+        label: provider === "openai-subscription" ? "OpenAI Subscription" : `${provider} Models`,
+        accountType: "legacy",
+        status: "active",
+        connectorKind: "model",
+        connectorConfig: { kind: "model" as const, tierMappings, migratedFrom: "model_profiles" as const },
+        sortOrder: nextSortOrder + offset,
+        scope: "global",
+      }];
+    });
+    if (connectorValues.length === 0) return [] as string[];
     await tx.insert(providerConnections).values(connectorValues);
-    return true;
+    return connectorValues.map((value) => value.provider);
   });
-  if (inserted) log.log(`migrated legacy model profiles connectors=${connectorValues.length}`);
+  if (insertedProviders.length > 0) log.info(`migrated missing legacy model connectors providers=${insertedProviders.join(",")}`);
 }

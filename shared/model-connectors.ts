@@ -4,7 +4,7 @@ export const semanticTierSchema = z.enum(["max", "high", "balanced", "fast"]);
 export type SemanticTier = z.infer<typeof semanticTierSchema>;
 export const SEMANTIC_TIERS: readonly SemanticTier[] = semanticTierSchema.options;
 
-export const modelConnectorProviderSchema = z.enum(["anthropic", "openai", "claude-cli"]);
+export const modelConnectorProviderSchema = z.enum(["anthropic", "openai", "openai-subscription", "claude-cli"]);
 export type ModelConnectorProvider = z.infer<typeof modelConnectorProviderSchema>;
 
 export const modelTierMappingsSchema = z.object({

@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 
 interface ModelConnector {
   id: number;
-  provider: "anthropic" | "openai" | "claude-cli";
+  provider: "anthropic" | "openai" | "openai-subscription" | "claude-cli";
   label: string;
   status: string;
   sortOrder: number;

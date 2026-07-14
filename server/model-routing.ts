@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import { getSecretSync } from "./secrets-store";
 import { personaStorage } from "./file-storage/persona-storage";
 import { getProviderCredential } from "./provider-credential-store";
+import { getAccount } from "./connected-accounts";
+import { createNamedSystemPrincipal } from "./principal";
+import { runWithPrincipal } from "./principal-context";
 import { listModelConnectors, type ModelConnector } from "./model-connectors";
 import { semanticTierSchema, type SemanticTier } from "@shared/model-connectors";
 import type { ActivityId } from "./job-profiles";
@@ -62,9 +65,11 @@ function legacyCredential(provider: string): string | null {
 }
 
 async function connectorCredential(connector: ModelConnector): Promise<string | null> {
-  return connector.credentialRef
-    ? await getProviderCredential(connector.credentialRef)
-    : legacyCredential(connector.provider);
+  if (connector.credentialRef) return getProviderCredential(connector.credentialRef);
+  if (connector.provider === "openai-subscription") {
+    return (await runWithPrincipal(createNamedSystemPrincipal("openai-subscription-check"), () => getAccount("openai-subscription-primary"))) ? "connected-account" : null;
+  }
+  return legacyCredential(connector.provider);
 }
 
 export async function resolveSemanticTier(): Promise<{ tier: SemanticTier; source: "persona" | "default-balanced"; personaId?: number }> {
