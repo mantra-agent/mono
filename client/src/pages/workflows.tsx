@@ -473,8 +473,6 @@ function WorkflowRunTreeRow({ run }: { run: WorkflowRun }) {
       <span className="hidden min-w-0 max-w-40 truncate text-xs text-muted-foreground sm:block">
         {humanize(run.currentStageKey)}
       </span>
-      <span className="hidden shrink-0 text-xs text-muted-foreground lg:block">{fmtDate(run.updatedAt)}</span>
-      <StatusBadge status={run.status} />
       <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5" />
     </Link>
   );
