@@ -22,6 +22,13 @@ interface DashboardActivity {
   series: DashboardSeries[];
 }
 
+const SECTION_PRESENTATION: Record<DashboardSeries["key"], { title: string; order: number }> = {
+  wellness_completions: { title: "WELLNESS", order: 0 },
+  opportunity_interactions: { title: "INTERACTIONS", order: 1 },
+  completed_tasks: { title: "TASKS", order: 2 },
+  shipped_prs: { title: "SHIPPED", order: 3 },
+};
+
 function localDateToday(): string {
   const now = new Date();
   const offset = now.getTimezoneOffset() * 60_000;
@@ -46,20 +53,23 @@ export default function DashboardPage() {
         )}
 
         {!query.isLoading && !query.isError && query.data && (
-          <div className="space-y-0 bg-background">
-            {query.data.series.map((series) => (
-              <ProfileDetailSection
-                key={series.key}
-                title={series.label}
-                defaultOpen
-                testId={`section-dashboard-${series.key}`}
-              >
-                <ActivityHeatmap
-                  days={series.days}
-                  valueLabel={series.label.toLowerCase()}
-                />
-              </ProfileDetailSection>
-            ))}
+          <div className="bg-background">
+            {[...query.data.series]
+              .sort((left, right) => SECTION_PRESENTATION[left.key].order - SECTION_PRESENTATION[right.key].order)
+              .map((series, index) => (
+                <div key={series.key} className={index === 0 ? "" : "pt-6"}>
+                  <ProfileDetailSection
+                    title={SECTION_PRESENTATION[series.key].title}
+                    defaultOpen
+                    testId={`section-dashboard-${series.key}`}
+                  >
+                    <ActivityHeatmap
+                      days={series.days}
+                      valueLabel={SECTION_PRESENTATION[series.key].title.toLowerCase()}
+                    />
+                  </ProfileDetailSection>
+                </div>
+              ))}
           </div>
         )}
       </div>

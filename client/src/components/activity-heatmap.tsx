@@ -52,7 +52,7 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
   };
 
   return (
-    <div ref={containerRef} className="w-full overflow-hidden pt-3" data-testid="activity-heatmap">
+    <div ref={containerRef} className="w-full overflow-hidden" data-testid="activity-heatmap">
       <div className="flex w-max gap-0.5">
         {weeks.map((week, weekIndex) => (
           <div key={`week-${weekIndex}`} className="flex w-5 shrink-0 flex-col gap-0.5">
