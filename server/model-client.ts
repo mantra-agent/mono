@@ -559,7 +559,7 @@ function applyOpenAIConnectorConfig(params: Record<string, any>, config: OpenAIT
     params.text = { ...(params.text || {}), verbosity: config.verbosity };
   }
   if (surface === "codex") {
-    if (config?.fastMode || config?.serviceTier === "fast") params.service_tier = "fast";
+    if (config?.serviceTier === "fast") params.service_tier = "fast";
   } else if (config?.serviceTier && config.serviceTier !== "auto" && config.serviceTier !== "fast") {
     params.service_tier = config.serviceTier;
   }
