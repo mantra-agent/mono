@@ -5482,7 +5482,7 @@ interface ModelConnectorDetail {
 }
 interface ModelProviderDetail { id: string; models: Array<{ id: string; name: string }> }
 
-function ModelConnectorSection({ provider }: { provider: "anthropic" | "openai" | "claude-cli" }) {
+function ModelConnectorSection({ provider, title = "Model mapping" }: { provider: "anthropic" | "openai" | "openai-subscription" | "claude-cli"; title?: string }) {
   const { toast } = useToast();
   const { data } = useQuery<{ connectors: ModelConnectorDetail[] }>({ queryKey: ["/api/models/connectors"] });
   const { data: modelsData } = useQuery<{ providers: ModelProviderDetail[] }>({ queryKey: ["/api/models/available"] });
@@ -5493,9 +5493,12 @@ function ModelConnectorSection({ provider }: { provider: "anthropic" | "openai" 
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/models/connectors"] }),
     onError: (error: Error) => toast({ title: "Model mapping failed", description: error.message, variant: "destructive" }),
   });
-  if (!connector) return null;
+  if (!connector) return <Card className="overflow-hidden min-w-0">
+    <CardHeader><CardTitle className="text-base font-semibold">{title}</CardTitle></CardHeader>
+    <CardContent><p className="text-sm text-muted-foreground">No connector is configured for this provider.</p></CardContent>
+  </Card>;
   return <Card className="overflow-hidden min-w-0">
-    <CardHeader><CardTitle className="text-base font-semibold">Model mapping</CardTitle></CardHeader>
+    <CardHeader><CardTitle className="text-base font-semibold">{title}</CardTitle></CardHeader>
     <CardContent className="space-y-3">
       {(["max", "high", "balanced", "fast"] as const).map((tier) => <div key={tier} className="grid gap-2 @sm:grid-cols-[96px_1fr] @sm:items-center">
         <Label className="capitalize">{tier}</Label>
@@ -5582,7 +5585,9 @@ function IntegrationDetail({ provider }: { provider: string }) {
       {provider === "openai" && (
         <div className="space-y-4">
           <OpenAISubscriptionSection />
-          <ModelConnectorSection provider="openai" />
+          <ModelConnectorSection provider="openai-subscription" title="Subscription model mapping" />
+          <Card className="overflow-hidden min-w-0"><CardHeader><CardTitle className="text-base font-semibold">OpenAI API</CardTitle></CardHeader><CardContent><SecretsForSection section="openai" /></CardContent></Card>
+          <ModelConnectorSection provider="openai" title="API model mapping" />
         </div>
       )}
 
