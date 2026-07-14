@@ -3876,8 +3876,29 @@ export default function PeoplePage() {
     { value: "contacts", label: "Contacts", testId: "tab-contacts", icon: <ContactRound className="h-3.5 w-3.5" /> },
   ], []);
 
+  const profileHeaderContent = useMemo(() => {
+    if (!selectedPersonId) return undefined;
+
+    return (
+      <div className="flex min-w-0 items-center gap-1 text-sm font-medium text-foreground">
+        <button
+          type="button"
+          className="shrink-0 text-muted-foreground transition-colors hover:text-cta focus-visible:outline-none focus-visible:text-cta"
+          onClick={() => setSelectedPersonId(null)}
+          aria-label="Back to People"
+          data-testid="button-people-breadcrumb"
+        >
+          People
+        </button>
+        <span className="shrink-0 text-muted-foreground/60">/</span>
+        <span className="truncate">{selectedPersonName ?? "Person"}</span>
+      </div>
+    );
+  }, [selectedPersonId, selectedPersonName, setSelectedPersonId]);
+
   usePageHeader({
-    title: selectedPersonId ? selectedPersonName ?? "People" : "People",
+    title: selectedPersonId ? `People / ${selectedPersonName ?? "Person"}` : "People",
+    customContent: profileHeaderContent,
     tabs: selectedPersonId ? undefined : peopleTabs,
     activeTab: selectedPersonId ? undefined : activeTab,
     onTabChange: selectedPersonId ? undefined : setActiveTab,
