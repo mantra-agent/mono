@@ -25,8 +25,9 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
     const element = containerRef.current;
     if (!element) return;
     const compute = () => {
-      const available = Math.max(0, element.clientWidth - 34);
-      setWeeksToShow(Math.min(12, Math.max(6, Math.floor(available / 22) - 3)));
+      const labelWidth = 30;
+      const available = Math.max(0, element.clientWidth - labelWidth);
+      setWeeksToShow(Math.max(6, Math.floor(available / 22)));
     };
     compute();
     const observer = new ResizeObserver(compute);

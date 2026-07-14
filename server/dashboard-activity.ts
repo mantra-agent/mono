@@ -111,7 +111,7 @@ async function queryTaskSeries(start: Date, end: Date, principal: Principal): Pr
 }
 
 export async function queryActivityDashboard(date: string, principal: Principal): Promise<ActivityDashboardResult> {
-  const dates = recentDates(date, 84);
+  const dates = recentDates(date, 364);
   const rangeStart = userDayBounds(dates[0]).start;
   const selectedEnd = userDayBounds(date).end;
   const rangeEnd = new Date(selectedEnd.getTime() + 1);
