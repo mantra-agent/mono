@@ -734,9 +734,10 @@ export async function startRun(
         runId,
         reason,
       });
-      releaseDraft = await buildReleaseDraftFromCommits(
+      releaseDraft = await buildReleaseDraft(
         summary.commits,
         increment,
+        runId,
         targetCommitSha,
       );
     }
