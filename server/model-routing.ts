@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createLogger } from "./log";
 import { getSecretSync } from "./secrets-store";
 import { personaStorage } from "./file-storage/persona-storage";
 import { getProviderCredential } from "./provider-credential-store";
@@ -8,6 +9,11 @@ import { runWithPrincipal } from "./principal-context";
 import { listModelConnectors, type ModelConnector } from "./model-connectors";
 import { getConnectorTierModelConfig, type OpenAITierModelConfig, semanticTierSchema, type SemanticTier } from "@shared/model-connectors";
 import type { ActivityId } from "./job-profiles";
+
+const log = createLogger("ModelRouting");
+
+/** Tier used when no active persona (or an invalid persona tier) can supply routing intent. */
+export const DEFAULT_SEMANTIC_TIER: SemanticTier = "fast";
 
 export interface ConnectorAttempt {
   connectorId: number;
@@ -33,7 +39,7 @@ export interface ModelRoutingDecision {
   explicitOverride: boolean;
   overrideReason?: string;
   providerEnabled: boolean;
-  source: "persona" | "explicit-override" | "semantic-tier-override";
+  source: "persona" | "explicit-override" | "semantic-tier-override" | "default-fallback";
   personaId?: number;
   connectorId?: number;
   connectorLabel?: string;
@@ -74,11 +80,17 @@ async function connectorCredential(connector: ModelConnector): Promise<string | 
   return legacyCredential(connector.provider);
 }
 
-export async function resolveSemanticTier(): Promise<{ tier: SemanticTier; source: "persona"; personaId: number }> {
+export async function resolveSemanticTier(): Promise<{ tier: SemanticTier; source: "persona" | "default-fallback"; personaId?: number }> {
   const persona = await personaStorage.getActiveOrNull();
-  if (!persona) throw new ModelRoutingError("No active persona is available for model routing; persona semantic tier is required");
+  if (!persona) {
+    log.warn(`No active persona for model routing; falling back to default tier "${DEFAULT_SEMANTIC_TIER}"`);
+    return { tier: DEFAULT_SEMANTIC_TIER, source: "default-fallback" };
+  }
   const parsed = semanticTierSchema.safeParse(persona.semanticTier);
-  if (!parsed.success) throw new ModelRoutingError(`Active persona ${persona.id} has no valid semantic tier`);
+  if (!parsed.success) {
+    log.warn(`Active persona ${persona.id} has invalid semantic tier "${String(persona.semanticTier)}"; falling back to default tier "${DEFAULT_SEMANTIC_TIER}"`);
+    return { tier: DEFAULT_SEMANTIC_TIER, source: "default-fallback", personaId: persona.id };
+  }
   return { tier: parsed.data, source: "persona", personaId: persona.id };
 }
 
