@@ -437,10 +437,20 @@ export async function registerVoiceSessionRoutes(app: Express) {
       if (!assembledResult) return;
       try {
         const { preWarmVoiceCli } = await import("../cli-sdk-adapter");
-        const { resolveModelForActivity, ACTIVITY_VOICE } = await import("../job-profiles");
+        const { ACTIVITY_VOICE } = await import("../job-profiles");
+        const { resolveModelCandidates } = await import("../model-routing");
+        const { normalizeSessionModelTierOverride } = await import("../session-model-tier-override");
         const { resolveThinkingConfig } = await import("../thinking-config");
         const { getToolSchemas: getToolDefs } = await import("../tool-registry");
-        const voiceRouting = resolveModelForActivity(ACTIVITY_VOICE);
+        const { chatFileStorage } = await import("../chat-file-storage");
+        const chatSession = chatSessionId ? await chatFileStorage.getSession(chatSessionId) : null;
+        const sessionTierOverride = normalizeSessionModelTierOverride(chatSession?.modelTier);
+        const voiceRouting = (await resolveModelCandidates(
+          ACTIVITY_VOICE,
+          sessionTierOverride
+            ? { semanticTierOverride: sessionTierOverride, overrideReason: "session model tier override" }
+            : undefined,
+        ))[0];
         if (voiceRouting.provider !== "claude-cli") {
           voiceLog.debug(`CLI pre-warm skipped for sessionId=${sessionId}: voice provider=${voiceRouting.provider}`);
           return;
@@ -454,7 +464,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
           toolDefs: fullToolDefs,
           thinking: voiceThinking,
         });
-        voiceLog.log(`CLI pre-warm ready for sessionId=${sessionId} model=${voiceRouting.model}`);
+        voiceLog.log(`CLI pre-warm ready for sessionId=${sessionId} model=${voiceRouting.model} tier=${voiceRouting.tier}`);
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
         voiceLog.warn(`CLI pre-warm failed (non-fatal, will cold-spawn): ${errMsg}`);

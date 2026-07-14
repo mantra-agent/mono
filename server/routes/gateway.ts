@@ -610,8 +610,8 @@ export async function registerGatewayRoutes(app: Express) {
     try {
       const sessionKey = req.params.key;
       const { tier } = req.body;
-      const validTiers = ["max", "high", "balanced", "fast"];
-      if (!tier || !validTiers.includes(tier)) {
+      const validTiers = ["auto", "max", "high", "balanced", "fast"];
+      if (tier === undefined || tier === null || !validTiers.includes(String(tier))) {
         return res.status(400).json({ error: "Invalid tier. Must be one of: " + validTiers.join(", ") });
       }
       const { chatFileStorage } = await import("../chat-file-storage");
@@ -619,7 +619,7 @@ export async function registerGatewayRoutes(app: Express) {
       if (!updated) {
         return res.status(404).json({ error: "Session not found" });
       }
-      res.json({ message: "Tier updated", tier });
+      res.json({ message: "Tier updated", tier: tier === "auto" ? null : tier });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

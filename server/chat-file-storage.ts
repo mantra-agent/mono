@@ -9,6 +9,7 @@ import { markSessionDeleted } from "./chat-journal";
 import { eventBus } from "./event-bus";
 import { TTLCache } from "./utils/ttl-cache";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { normalizeSessionModelTierOverride } from "./session-model-tier-override";
 import type {
   ChildSessionBlockMeta,
   CompactionMeta,
@@ -469,7 +470,7 @@ async function writeConv(data: SessionData): Promise<void> {
     status: data.status,
     summary: data.summary || null,
     sessionKey: data.sessionKey,
-    modelTier: data.modelTier || null,
+    modelTier: normalizeSessionModelTierOverride(data.modelTier),
     messageCount: data.messages.length,
     lastMessageRole: getLastMessageRole(data.messages),
     type: data.type || "text",
@@ -773,7 +774,7 @@ function convToMeta(data: SessionData): FileSession {
     status: data.status,
     summary: data.summary || null,
     sessionKey: data.sessionKey,
-    modelTier: data.modelTier || null,
+    modelTier: normalizeSessionModelTierOverride(data.modelTier),
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
     type: data.type,
@@ -927,7 +928,7 @@ function docMetadataToSession(doc: {
     status: metadataString(meta, "status") || "saved",
     summary: metadataString(meta, "summary") || null,
     sessionKey: metadataString(meta, "sessionKey") || null,
-    modelTier: metadataString(meta, "modelTier") || null,
+    modelTier: normalizeSessionModelTierOverride(metadataString(meta, "modelTier")),
     createdAt,
     updatedAt,
     type: metadataString(meta, "type") as "text" | "voice" | undefined,
@@ -1231,7 +1232,7 @@ export const chatFileStorage: IChatFileStorage = {
       title,
       status: "saved",
       sessionKey: sessionKey || null,
-      modelTier: modelTier || null,
+      modelTier: normalizeSessionModelTierOverride(modelTier),
       createdAt: now,
       updatedAt: now,
       messages: [],
@@ -1453,7 +1454,7 @@ export const chatFileStorage: IChatFileStorage = {
     if (!match) return false;
     const data = await readConv(match.docId);
     if (!data) return false;
-    data.modelTier = tier;
+    data.modelTier = normalizeSessionModelTierOverride(tier);
     data.updatedAt = new Date().toISOString();
     await writeConv(data);
     invalidateSessionsCache();
@@ -2067,7 +2068,7 @@ export const chatFileStorage: IChatFileStorage = {
       title,
       status: "saved",
       sessionKey: sessionKey || null,
-      modelTier: modelTier || null,
+      modelTier: normalizeSessionModelTierOverride(modelTier),
       createdAt: now,
       updatedAt: now,
       messages: [],

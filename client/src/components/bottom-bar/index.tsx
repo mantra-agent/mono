@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { createLogger } from "@/lib/logger";
-import { Mic, MicOff, ArrowUp, Square, Paperclip, MoreHorizontal, Eye, X, FileText, Bug } from "lucide-react";
+import { Mic, MicOff, ArrowUp, Square, Paperclip, MoreHorizontal, Eye, X, FileText, Bug, Gauge } from "lucide-react";
 import { useMentionAutocomplete } from "@/hooks/use-mention-autocomplete";
 import { MentionPopover } from "@/components/mention-popover";
 import { EditableReferenceInput, type EditableReferenceInputHandle } from "@/components/references/editable-reference-input";
@@ -47,7 +47,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { SessionActionsMenuItems } from "@/components/session-actions-menu";
 import { SessionDetailsModal } from "@/components/session-details-modal";
-import type { ChatSession as Session, PageContext } from "@shared/models/chat";
+import type { ChatSession as Session, PageContext, SessionModelTierOverride } from "@shared/models/chat";
 import { StatusLine } from "./status-line";
 import { PreviewChip } from "./preview-chip";
 import { ExpandedDialogue } from "./expanded-dialogue";
@@ -58,6 +58,18 @@ const log = createLogger("BottomBar");
 type BarState = "idle" | "working" | "complete";
 
 const HIDDEN_ROUTES = new Set(["/login", "/register", "/voice", "/glasses"]);
+const MODEL_TIER_OPTIONS: Array<{ value: "auto" | SessionModelTierOverride; label: string }> = [
+  { value: "auto", label: "Auto" },
+  { value: "fast", label: "Fast" },
+  { value: "balanced", label: "Balanced" },
+  { value: "high", label: "High" },
+  { value: "max", label: "Max" },
+];
+
+function normalizeModelTier(value: unknown): "auto" | SessionModelTierOverride {
+  return value === "fast" || value === "balanced" || value === "high" || value === "max" ? value : "auto";
+}
+
 
 function getLatestStep(content: StreamingContent | null): ExecutionStep | null {
   if (!content || !content.steps || content.steps.length === 0) return null;
@@ -151,6 +163,8 @@ function BottomBarMenu({
   onClearFocus,
   onSelectSession,
   onReminderSet,
+  draftModelTier,
+  onDraftModelTierChange,
 }: {
   onAttach: () => void;
   disabled: boolean;
@@ -158,6 +172,8 @@ function BottomBarMenu({
   onClearFocus: () => void;
   onSelectSession: (id: string) => void;
   onReminderSet?: (id: string) => void;
+  draftModelTier: "auto" | SessionModelTierOverride;
+  onDraftModelTierChange: (tier: "auto" | SessionModelTierOverride) => void;
 }) {
   const { layer, setLayer } = useVisibilityLayer();
   const { toast } = useToast();
@@ -221,6 +237,40 @@ function BottomBarMenu({
     },
   });
 
+  const modelTierMutation = useMutation({
+    mutationFn: async ({ session, tier }: { session: Session; tier: "auto" | SessionModelTierOverride }) => {
+      const key = session.sessionKey || `dashboard:${session.id}`;
+      await apiRequest("PATCH", `/api/gateway/sessions/${encodeURIComponent(key)}/tier`, { tier });
+      return { id: session.id, tier };
+    },
+    onMutate: async ({ session, tier }) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/sessions"] });
+      const prev = queryClient.getQueryData<Session[]>(["/api/sessions"]);
+      const modelTier = tier === "auto" ? null : tier;
+      queryClient.setQueryData<Session[]>(["/api/sessions"], (old) =>
+        old?.map((item) => item.id === session.id ? { ...item, modelTier } : item),
+      );
+      queryClient.setQueryData<Session>(["/api/sessions", session.id], (old) =>
+        old ? { ...old, modelTier } : old,
+      );
+      return { prev };
+    },
+    onError: (err, _variables, context) => {
+      if (context?.prev) queryClient.setQueryData(["/api/sessions"], context.prev);
+      toast({ title: "Failed to update model tier", description: String(err), variant: "destructive" });
+    },
+    onSuccess: ({ id }) => {
+      emitSessionChanged(id, "bottom-bar-model-tier");
+      emitSessionListChanged("bottom-bar-model-tier");
+    },
+  });
+
+  const currentModelTier = focusedSession ? normalizeModelTier(focusedSession.modelTier) : draftModelTier;
+  const setModelTier = (tier: "auto" | SessionModelTierOverride) => {
+    if (focusedSession) modelTierMutation.mutate({ session: focusedSession, tier });
+    else onDraftModelTierChange(tier);
+  };
+
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteSessionTree(id),
     onSuccess: (result) => {
@@ -263,6 +313,21 @@ function BottomBarMenu({
                 {([1, 2, 3, 4] as VisibilityLayer[]).map((v) => (
                   <DropdownMenuRadioItem key={v} value={String(v)}>
                     {LAYER_LABELS[v]}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <Gauge className="h-3.5 w-3.5 mr-2" />
+              Model tier
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuRadioGroup value={currentModelTier} onValueChange={(value) => setModelTier(normalizeModelTier(value))}>
+                {MODEL_TIER_OPTIONS.map((option) => (
+                  <DropdownMenuRadioItem key={option.value} value={option.value}>
+                    {option.label}
                   </DropdownMenuRadioItem>
                 ))}
               </DropdownMenuRadioGroup>
@@ -414,6 +479,7 @@ export function BottomBar({
   const [showExpanded, setShowExpanded] = useState(false);
   const [composing, setComposing] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [draftModelTier, setDraftModelTier] = useState<"auto" | SessionModelTierOverride>("auto");
   const inputRef = useRef<EditableReferenceInputHandle>(null);
   const inputAnchorRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef(0);
@@ -431,7 +497,10 @@ export function BottomBar({
     setComposing,
     attachedFiles,
     setAttachedFiles,
-    createSessionPayload,
+    createSessionPayload: useCallback(() => ({
+      ...(createSessionPayload ? createSessionPayload() : {}),
+      ...(draftModelTier !== "auto" ? { modelTier: draftModelTier } : {}),
+    }), [createSessionPayload, draftModelTier]),
     getMessagePageContext,
     externalPendingTurn: [contextPendingTurn, setContextPendingTurn],
   });
@@ -554,7 +623,10 @@ export function BottomBar({
     let convId = focusedSessionId;
     if (!convId) {
       try {
-        const res = await apiRequest("POST", "/api/sessions", { title: "New Session" });
+        const res = await apiRequest("POST", "/api/sessions", {
+          title: "New Session",
+          ...(draftModelTier !== "auto" ? { modelTier: draftModelTier } : {}),
+        });
         const newConv: Session = await res.json();
         convId = newConv.id;
         setFocusedSessionId(convId);
@@ -565,7 +637,7 @@ export function BottomBar({
     }
     voiceSession.setActiveConversationId(convId);
     voiceSession.startSession();
-  }, [voiceSession, focusedSessionId, setFocusedSessionId]);
+  }, [voiceSession, focusedSessionId, setFocusedSessionId, draftModelTier]);
 
   const handleVoiceEnd = useCallback(async () => {
     if (!voiceSession) return;
@@ -716,6 +788,8 @@ export function BottomBar({
                 setFocusedSessionId(null);
                 showMobileSessionMenu();
               }}
+              draftModelTier={draftModelTier}
+              onDraftModelTierChange={setDraftModelTier}
             />
 
             {/* Text input — grows upward, never scrolls */}
