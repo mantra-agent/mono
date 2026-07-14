@@ -1731,10 +1731,15 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     // Pre-executor system steps (model selection, context building) happen before
     // the executor runs. We collect them here and prepend to the executor's result.
     const preSteps: Array<{
+      id?: string;
       name: string;
       status: "done" | "error";
       elapsedMs?: number;
       detail?: string;
+      parentId?: string;
+      startedAt?: number;
+      endedAt?: number;
+      selfTimeMs?: number;
     }> = [];
     const preChronology: SegmentChronologyEntry[] = [];
 
@@ -1814,23 +1819,53 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           );
       };
 
+      const contextRootId = `system-context_assembly-${lease.generation}`;
+      const contextStartedAt = Date.now();
+      const contextSpans = new Map<string, { id: string; startedAt: number; parentId?: string }>();
+      const contextParentFor = (step: string): string | undefined => {
+        if (step === "context_assembly") return undefined;
+        if (step.startsWith("ctx_history_") && step !== "ctx_history") {
+          return contextSpans.get("ctx_history")?.id;
+        }
+        return contextRootId;
+      };
+      publishChatStreamEvent(sessionKey, sessionId, {
+        type: "system_step",
+        step: "context_assembly",
+        stepId: contextRootId,
+        status: "started",
+        startedAt: contextStartedAt,
+      });
+
       const onCtxProgress = (
         step: string,
         status: "started" | "done",
         elapsedMs?: number,
       ) => {
         if (!chatRunLifecycle.isCurrent(lease)) return;
-        publishChatStreamEvent(sessionKey, sessionId, {
-          type: "system_step",
-          step,
-          status,
-          elapsedMs,
-        });
-        if (status === "done") {
-          const idx = preSteps.length;
-          preSteps.push({ name: step, status: "done", elapsedMs });
-          preChronology.push({ s: "system", i: idx });
+        if (status === "started") {
+          const startedAt = Date.now();
+          const id = `system-${step}-${lease.generation}-${startedAt}`;
+          const parentId = contextParentFor(step);
+          contextSpans.set(step, { id, startedAt, parentId });
+          publishChatStreamEvent(sessionKey, sessionId, {
+            type: "system_step", step, stepId: id, status, parentId, startedAt,
+          });
+          return;
         }
+        const endedAt = Date.now();
+        const span = contextSpans.get(step);
+        if (span) contextSpans.delete(step);
+        const id = span?.id || `system-${step}-${lease.generation}-${endedAt}`;
+        const startedAt = span?.startedAt ?? endedAt - (elapsedMs || 0);
+        const parentId = span?.parentId ?? contextParentFor(step);
+        publishChatStreamEvent(sessionKey, sessionId, {
+          type: "system_step", step, stepId: id, status, elapsedMs,
+          parentId, startedAt, endedAt,
+        });
+        const idx = preSteps.length;
+        preSteps.push({ id, name: step, status: "done", elapsedMs, parentId, startedAt, endedAt });
+        preChronology.push({ s: "system", i: idx });
       };
 
       const { messages, toolDefs, contextPressure } = await buildChatHistory(
@@ -1840,6 +1875,27 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         onCtxProgress,
       );
       chatRunLifecycle.assertCurrent(lease);
+      const contextEndedAt = Date.now();
+      const contextElapsedMs = contextEndedAt - contextStartedAt;
+      publishChatStreamEvent(sessionKey, sessionId, {
+        type: "system_step",
+        step: "context_assembly",
+        stepId: contextRootId,
+        status: "done",
+        elapsedMs: contextElapsedMs,
+        startedAt: contextStartedAt,
+        endedAt: contextEndedAt,
+      });
+      const contextStepIndex = preSteps.length;
+      preSteps.push({
+        id: contextRootId,
+        name: "context_assembly",
+        status: "done",
+        elapsedMs: contextElapsedMs,
+        startedAt: contextStartedAt,
+        endedAt: contextEndedAt,
+      });
+      preChronology.push({ s: "system", i: contextStepIndex });
 
       chatLog.log(
         `executor START sessionId=${sessionId} messageCount=${messages.length} toolCount=${toolDefs.length}`,

@@ -1043,7 +1043,7 @@ export function stepsFromSavedMessage(message: ChatMessage): ExecutionStep[] {
       const isError = !!tool.error || tool.status === "error";
       const errorStr = getToolErrorText(tool);
       steps.push({
-        id: `tool-${message.id}-${i}`,
+        id: tool.toolCallId ? `tool-${tool.toolCallId}` : `tool-${message.id}-${i}`,
         type: "tool_call",
         timestamp: Date.now(),
         toolName: tool.toolName,
@@ -1137,13 +1137,17 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
         const step = message.systemSteps?.[entry.i];
         if (step && !SUPPRESSED_TIMELINE_STEPS.has(step.name)) {
           currentTimelineSteps.push({
-            id: `system-${step.name}-${message.id}-${entry.i}`,
+            id: step.id || `system-${step.name}-${message.id}-${entry.i}`,
             type: "system",
-            timestamp: Date.now(),
+            timestamp: step.startedAt || Date.now(),
             systemStepName: step.name,
             systemStepDetail: step.detail,
             systemStepMetadata: step.metadata,
             elapsedMs: step.elapsedMs,
+            parentId: step.parentId || (step.metadata?.parentId as string | undefined),
+            selfTimeMs: step.selfTimeMs || (typeof step.metadata?.selfTimeMs === "number" ? step.metadata.selfTimeMs : undefined),
+            startedAt: step.startedAt,
+            endedAt: step.endedAt,
             status: step.status === "error" ? "error" : "done",
           });
         }
@@ -1169,7 +1173,7 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
           const isError = !!tool.error || tool.status === "error";
           const errorStr = getToolErrorText(tool);
           currentTimelineSteps.push({
-            id: `tool-${message.id}-${entry.i}`,
+            id: tool.toolCallId ? `tool-${tool.toolCallId}` : `tool-${message.id}-${entry.i}`,
             type: "tool_call",
             timestamp: Date.now(),
             toolName: tool.toolName,
