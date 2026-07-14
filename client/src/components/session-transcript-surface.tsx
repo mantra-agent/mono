@@ -88,7 +88,7 @@ export function SessionTranscriptSurface({
 
   return (
     <div className={cn("flex flex-col flex-1 min-h-0 overflow-hidden", className)} data-testid="session-transcript-surface">
-      {meeting && <MeetingHeaderBar meeting={meeting} sessionTitle={sessionTitle} />}
+      {meeting && <MeetingHeaderBar meeting={meeting} sessionId={activeSession} sessionTitle={sessionTitle} />}
       {!wsConnected && sessionStatus === "streaming" && !voiceActive && (
         <div
           className="flex items-center gap-2 px-4 py-2 bg-warning/5 dark:bg-warning/5 border-b border-warning/20 text-warning-foreground text-xs"
