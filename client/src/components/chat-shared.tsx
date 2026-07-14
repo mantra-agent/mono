@@ -163,6 +163,8 @@ export interface SystemStepRecord {
   name: string;
   status: "done" | "error";
   elapsedMs?: number;
+  parentId?: string;
+  selfTimeMs?: number;
   detail?: string;
   metadata?: Record<string, unknown>;
 }
@@ -779,7 +781,21 @@ const SYSTEM_STEP_ICONS: Record<string, typeof Brain> = {
   voice_prefix_continuation: RefreshCw,
 };
 
-function SystemStepRow({ step, layer = 4 }: { step: ExecutionStep; layer?: 1 | 2 | 3 | 4 }) {
+function SystemStepTree({ step, allSteps, layer, depth = 0 }: { step: ExecutionStep; allSteps: ExecutionStep[]; layer: 1 | 2 | 3 | 4; depth?: number }) {
+  const children = allSteps.filter(candidate => candidate.type === "system" && candidate.parentId === step.id);
+  return <>
+    <SystemStepRow step={step} layer={layer} children={children} depth={depth} />
+    {children.map(child => <SystemStepTree key={child.id} step={child} allSteps={allSteps} layer={layer} depth={depth + 1} />)}
+  </>;
+}
+
+function getStepSelfTime(step: ExecutionStep, children: ExecutionStep[]): number | undefined {
+  if (step.selfTimeMs != null) return step.selfTimeMs;
+  if (step.elapsedMs == null || children.length === 0) return step.elapsedMs;
+  return Math.max(0, step.elapsedMs - children.reduce((sum, child) => sum + (child.elapsedMs || 0), 0));
+}
+
+function SystemStepRow({ step, layer = 4, children = [], depth = 0 }: { step: ExecutionStep; layer?: 1 | 2 | 3 | 4; children?: ExecutionStep[]; depth?: number }) {
   const name = step.systemStepName || "unknown";
   const meta = SYSTEM_STEP_META[name];
   const Icon = SYSTEM_STEP_ICONS[name] || Cog;
@@ -809,7 +825,7 @@ function SystemStepRow({ step, layer = 4 }: { step: ExecutionStep; layer?: 1 | 2
 
   return (
     <div
-      className="animate-in fade-in slide-in-from-bottom-1 duration-200 flex items-center gap-2 px-1.5 py-1"
+      className="animate-in fade-in slide-in-from-bottom-1 duration-200 flex items-center gap-2 py-1" style={{ paddingLeft: `${6 + depth * 20}px` }}
       data-testid={`system-step-${name}`}
     >
       <div className={`relative flex h-5 w-5 items-center justify-center rounded-full shrink-0 ${bgColor}`}>
@@ -838,8 +854,8 @@ function SystemStepRow({ step, layer = 4 }: { step: ExecutionStep; layer?: 1 | 2
       )}
       {isActive && <SystemStepTimer startTime={step.timestamp} />}
       {(isDone || isError) && step.elapsedMs != null && !isWorkingCompression && (
-        <span className="text-xs tabular-nums font-mono text-muted-foreground/40" data-testid={`text-step-time-${name}`}>
-          {formatStepElapsed(step.elapsedMs)}
+        <span className="text-xs tabular-nums font-mono text-muted-foreground/50 whitespace-nowrap" data-testid={`text-step-time-${name}`}>
+          {formatStepElapsed(step.elapsedMs)} total · {formatStepElapsed(getStepSelfTime(step, children) ?? step.elapsedMs)} self
         </span>
       )}
     </div>
@@ -936,7 +952,9 @@ export function ExecutionTimeline({ steps, isStreaming, layer = 4 }: { steps: Ex
     <div className="mb-3 space-y-0.5" data-testid="execution-timeline">
       {filteredSteps.map((step) => {
         if (step.type === "system") {
-          return <SystemStepRow key={step.id} step={step} layer={layer} />;
+          if (step.parentId && filteredSteps.some(candidate => candidate.id === step.parentId)) return null;
+          const children = filteredSteps.filter(candidate => candidate.type === "system" && candidate.parentId === step.id);
+          return <SystemStepTree key={step.id} step={step} allSteps={filteredSteps} layer={layer} />;
         }
         if (step.type === "thinking") {
           return <ThinkingBubble key={step.id} step={step} showTimer={layer >= 3} />;
@@ -987,6 +1005,8 @@ export function stepsFromSavedMessage(message: ChatMessage): ExecutionStep[] {
         systemStepDetail: step.detail,
         systemStepMetadata: step.metadata,
         elapsedMs: step.elapsedMs,
+        parentId: step.parentId || (step.metadata?.parentId as string | undefined),
+        selfTimeMs: step.selfTimeMs || (typeof step.metadata?.selfTimeMs === "number" ? step.metadata.selfTimeMs : undefined),
         status: step.status === "error" ? "error" : "done",
       });
     });
