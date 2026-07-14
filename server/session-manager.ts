@@ -123,10 +123,12 @@ function nextEventSeq(prior: number): number {
 
 class SessionManager {
   private sessions = new Map<string, LiveSession>();
-  /** WS clients that subscribed before the session was registered. Drained on registerSession. */
-  private pendingSubscribers = new Map<string, Set<WebSocket>>();
-  private subscriberIdentities = new WeakMap<WebSocket, SessionSubscriberIdentity>();
-  private sessionSubscriberIdentities = new WeakMap<WebSocket, Map<string, SessionSubscriberIdentity>>();
+  /**
+   * Stable delivery interest, independent of disposable LiveSession entries.
+   * A shared socket may have several UI owners interested in the same session;
+   * removing one owner must not detach the others.
+   */
+  private subscriptionOwners = new Map<string, Map<WebSocket, Map<string, SessionSubscriberIdentity>>>();
   private sweepTimer: ReturnType<typeof setInterval>;
 
   constructor() {
@@ -145,15 +147,10 @@ class SessionManager {
       if (existing.cleanupTimer) clearTimeout(existing.cleanupTimer);
     }
 
-    // Merge existing subscribers + any pending subscribers that arrived before registration
-    const mergedSubscribers = existing?.subscribers ?? new Set<WebSocket>();
-    const pending = this.pendingSubscribers.get(sessionId);
-    if (pending) {
-      for (const ws of pending) {
-        mergedSubscribers.add(ws);
-      }
-      this.pendingSubscribers.delete(sessionId);
-    }
+    // Runtime delivery is derived from stable connection interest. Finalization
+    // may replace/delete LiveSession without erasing what open clients requested.
+    const interestedSockets = this.subscriptionOwners.get(sessionId);
+    const mergedSubscribers = new Set<WebSocket>(interestedSockets?.keys() ?? []);
 
     const session: LiveSession = {
       sessionId,
@@ -169,8 +166,10 @@ class SessionManager {
     };
     this.sessions.set(sessionId, session);
 
-    // Broadcast initial snapshot to any pending subscribers that were queued
-    if (pending && pending.size > 0) {
+    // A new run generation is authoritative immediately. Push its initial
+    // snapshot to every interested socket, including clients that stayed
+    // subscribed while the prior finalized runtime entry was cleaned up.
+    if (session.subscribers.size > 0) {
       const snapshot = JSON.stringify({
         type: "session.snapshot",
         sessionId: session.sessionId,
@@ -181,19 +180,15 @@ class SessionManager {
         subscriberCount: session.subscribers.size,
         ...runtimeProjection(session),
       });
-      for (const ws of pending) {
+      for (const ws of session.subscribers) {
         try {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(snapshot);
-          }
+          if (ws.readyState === WebSocket.OPEN) ws.send(snapshot);
         } catch (err) {
-          log.warn(`registerSession pending snapshot send failed: ${err instanceof Error ? err.message : String(err)}`);
+          log.warn(`registerSession snapshot send failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
-      log.log(`registerSession sessionId=${sessionId} source=${source} subscribers=${session.subscribers.size} (${pending.size} were pending)`);
-    } else {
-      log.log(`registerSession sessionId=${sessionId} source=${source} subscribers=${session.subscribers.size}`);
     }
+    log.log(`registerSession sessionId=${sessionId} source=${source} subscribers=${session.subscribers.size}`);
     return session.runGeneration;
   }
 
@@ -398,33 +393,28 @@ class SessionManager {
   // ── Subscription ──────────────────────────────────────────────────
 
   subscribe(sessionId: string, ws: WebSocket, identity: SessionSubscriberIdentity = {}): SessionSnapshot | null {
-    const priorIdentity = this.subscriberIdentities.get(ws) ?? {};
-    const nextIdentity = { ...priorIdentity, ...identity };
-    this.subscriberIdentities.set(ws, nextIdentity);
-    let perSessionIdentities = this.sessionSubscriberIdentities.get(ws);
-    if (!perSessionIdentities) {
-      perSessionIdentities = new Map();
-      this.sessionSubscriberIdentities.set(ws, perSessionIdentities);
+    const ownerId = identity.handlerId || "connection";
+    let sockets = this.subscriptionOwners.get(sessionId);
+    if (!sockets) {
+      sockets = new Map();
+      this.subscriptionOwners.set(sessionId, sockets);
     }
-    perSessionIdentities.set(sessionId, nextIdentity);
+    let owners = sockets.get(ws);
+    if (!owners) {
+      owners = new Map();
+      sockets.set(ws, owners);
+    }
+    const alreadySubscribed = owners.has(ownerId);
+    owners.set(ownerId, identity);
+
     const session = this.sessions.get(sessionId);
     if (!session) {
-      // Queue as pending subscriber — will be drained when registerSession fires
-      let pending = this.pendingSubscribers.get(sessionId);
-      if (!pending) {
-        pending = new Set();
-        this.pendingSubscribers.set(sessionId, pending);
-      }
-      const before = pending.size;
-      pending.add(ws);
-      log.verbose(() => `SESSION:SUBSCRIBE:PENDING session=${sessionId} pending=${pending.size}`);
+      log.verbose(() => `SESSION:SUBSCRIBE:PENDING session=${sessionId} sockets=${sockets.size} owners=${owners.size}`);
       return null;
     }
 
-    const before = session.subscribers.size;
     session.subscribers.add(ws);
-    const alreadySubscribed = before === session.subscribers.size;
-    log.verbose(() => `SESSION:SUBSCRIBE session=${sessionId} subs=${session.subscribers.size} alreadySub=${alreadySubscribed}`);
+    log.verbose(() => `SESSION:SUBSCRIBE session=${sessionId} subs=${session.subscribers.size} owners=${owners.size} alreadySub=${alreadySubscribed}`);
 
     return {
       sessionId: session.sessionId,
@@ -437,39 +427,33 @@ class SessionManager {
     };
   }
 
-  unsubscribe(sessionId: string, ws: WebSocket): void {
+  unsubscribe(sessionId: string, ws: WebSocket, identity: SessionSubscriberIdentity = {}): boolean {
+    const ownerId = identity.handlerId || "connection";
+    const sockets = this.subscriptionOwners.get(sessionId);
+    const owners = sockets?.get(ws);
+    owners?.delete(ownerId);
+
+    if (owners && owners.size > 0) {
+      log.verbose(() => `SESSION:UNSUBSCRIBE_OWNER session=${sessionId} owners=${owners.size}`);
+      return true;
+    }
+
+    sockets?.delete(ws);
+    if (sockets?.size === 0) this.subscriptionOwners.delete(sessionId);
     const session = this.sessions.get(sessionId);
-    if (session) {
-      const identity = this.sessionSubscriberIdentities.get(ws)?.get(sessionId) ?? this.subscriberIdentities.get(ws);
-      const before = session.subscribers.size;
-      session.subscribers.delete(ws);
-      log.verbose(() => `SESSION:UNSUBSCRIBE session=${sessionId} subs=${session.subscribers.size}`);
-    }
-    // Also clean up pending subscribers
-    const pending = this.pendingSubscribers.get(sessionId);
-    if (pending) {
-      pending.delete(ws);
-      if (pending.size === 0) this.pendingSubscribers.delete(sessionId);
-    }
-    this.sessionSubscriberIdentities.get(ws)?.delete(sessionId);
+    if (session) session.subscribers.delete(ws);
+    log.verbose(() => `SESSION:UNSUBSCRIBE session=${sessionId} subs=${session?.subscribers.size ?? 0}`);
+    return false;
   }
 
   unsubscribeAll(ws: WebSocket): void {
-    const identity = this.subscriberIdentities.get(ws);
     let removed = 0;
-    for (const session of this.sessions.values()) {
-      const before = session.subscribers.size;
-      session.subscribers.delete(ws);
-      if (before !== session.subscribers.size) removed++;
+    for (const [sessionId, sockets] of this.subscriptionOwners) {
+      if (sockets.delete(ws)) removed++;
+      if (sockets.size === 0) this.subscriptionOwners.delete(sessionId);
     }
-    // Also clean up from all pending sets
-    for (const [sessionId, pending] of this.pendingSubscribers) {
-      pending.delete(ws);
-      if (pending.size === 0) this.pendingSubscribers.delete(sessionId);
-    }
+    for (const session of this.sessions.values()) session.subscribers.delete(ws);
     log.verbose(() => `SESSION:UNSUBSCRIBE_ALL removed=${removed}`);
-    this.subscriberIdentities.delete(ws);
-    this.sessionSubscriberIdentities.delete(ws);
   }
 
   // ── Finalization ──────────────────────────────────────────────────
@@ -514,11 +498,9 @@ class SessionManager {
 
     log.log(`finalizeSession sessionId=${sessionId} subscribers=${session.subscribers.size}`);
 
-    // Finalized state is already durable and terminal subscribers received the
-    // authoritative delta above. Remove the runtime entry after the recovery
-    // window even when clients remain subscribed; a later subscribe pending-queues
-    // (and receives an idle snapshot) until a new run registers a fresh entry,
-    // which drains the pending queue and re-attaches those sockets.
+    // Finalized state is durable. Remove only the runtime projection after the
+    // recovery window. Stable connection interest lives in subscriptionOwners
+    // and will attach automatically when the next run generation registers.
     session.cleanupTimer = setTimeout(() => {
       const current = this.sessions.get(sessionId);
       if (current !== session || current.status === "streaming") return;
@@ -578,6 +560,10 @@ class SessionManager {
 
     for (const ws of dead) {
       session.subscribers.delete(ws);
+      for (const [sessionId, sockets] of this.subscriptionOwners) {
+        sockets.delete(ws);
+        if (sockets.size === 0) this.subscriptionOwners.delete(sessionId);
+      }
     }
   }
 

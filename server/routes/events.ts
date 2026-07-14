@@ -115,10 +115,11 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
             owner: typeof msg.owner === "string" ? msg.owner : undefined,
             activeSession: typeof msg.activeSession === "string" ? msg.activeSession : null,
           };
-          const hadSubscription = subscribedSessionIds.delete(unsubSessionId);
+          const hadSubscription = subscribedSessionIds.has(unsubSessionId);
           eventsLog.debug("WS:SESSION:UNSUBSCRIBE", { sessionId: unsubSessionId, subscriptions: subscribedSessionIds.size, hadSubscription, ...identity });
           import("../session-manager").then(({ sessionManager }) => {
-            sessionManager.unsubscribe(unsubSessionId, ws);
+            const remainsSubscribed = sessionManager.unsubscribe(unsubSessionId, ws, identity);
+            if (!remainsSubscribed) subscribedSessionIds.delete(unsubSessionId);
           }).catch((err) => {
             eventsLog.debug(`session.unsubscribe sessionManager error: ${err instanceof Error ? err.message : String(err)}`);
           });
