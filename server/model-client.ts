@@ -124,8 +124,6 @@ interface CodexResponsesRequest {
   reasoning?: { effort?: OpenAIReasoningEffort; summary?: "detailed" | "concise" | "auto"; mode?: "standard" | "pro" };
   text?: { verbosity?: "low" | "medium" | "high"; format?: Record<string, unknown> };
   service_tier?: "auto" | "default" | "flex" | "priority" | "fast";
-  model_reasoning_summary?: "detailed" | "concise" | "auto";
-  model_verbosity?: "low" | "medium" | "high";
   tools?: Array<
     | { type: "function"; name: string; description: string; parameters: Record<string, unknown> }
     | { type: "image_generation"; quality?: string; size?: string; background?: string; output_format?: string }
@@ -557,12 +555,10 @@ function applyOpenAIConnectorConfig(params: Record<string, any>, config: OpenAIT
   if (surface === "responses" && maxOutput !== undefined) params.max_output_tokens = maxOutput;
   const reasoning = buildOpenAIReasoningConfig(config, model, options.thinking, surface);
   if (reasoning) params.reasoning = reasoning;
-  if (config?.verbosity) {
-    if (surface === "codex") params.model_verbosity = config.verbosity;
-    else params.text = { ...(params.text || {}), verbosity: config.verbosity };
+  if (surface === "responses" && config?.verbosity) {
+    params.text = { ...(params.text || {}), verbosity: config.verbosity };
   }
   if (surface === "codex") {
-    if (config?.reasoningSummary && config.reasoningSummary !== "none") params.model_reasoning_summary = config.reasoningSummary;
     if (config?.fastMode || config?.serviceTier === "fast") params.service_tier = "fast";
   } else if (config?.serviceTier && config.serviceTier !== "auto" && config.serviceTier !== "fast") {
     params.service_tier = config.serviceTier;
