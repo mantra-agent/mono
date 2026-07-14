@@ -731,6 +731,8 @@ function SystemStepTimer({ startTime }: { startTime: number }) {
 }
 
 const SYSTEM_STEP_ICONS: Record<string, typeof Brain> = {
+  orientation: Compass,
+  orientation_llm_call: Send,
   model_selection: Gauge,
   context_assembly: Brain,
   ctx_history: History,
