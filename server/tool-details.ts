@@ -208,8 +208,8 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
   },
   router: {
     description: "Call and inspect the production model routing layer. Actions: eval, list_inference_calls, get_inference_call.",
-    whenToUse: "When Agent needs to test prompt compositions through the real model tier/profile system or inspect audited inference calls.",
-    example: '{ "action": "eval", "profile": "memory", "systemPrompt": "Return JSON", "userPrompt": "Sample text", "jsonMode": true }',
+    whenToUse: "When Agent needs to test prompt compositions through the real persona/connector routing system or inspect audited inference calls.",
+    example: '{ "action": "eval", "profile": "balanced", "systemPrompt": "Return JSON", "userPrompt": "Sample text", "jsonMode": true }',
   },
   skills: {
     description: "Manage Agent's skill library — reusable instruction sets. Actions: list, get, create, update, delete, search.",

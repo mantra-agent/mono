@@ -69,7 +69,7 @@ Key files:
 
 ## Model Routing & Inference Tracking
 
-Single boundary: all text LLM calls must go through `model-client.ts`. Callers pass intent (activity, source, run/session/skill/tool/plan metadata); `model-client.ts` resolves routing through `job-profiles.ts`, executes the provider adapter, and records inference through `cost-tracker.ts`. Direct provider/client calls for text LLM work are architectural violations.
+Single boundary: all text LLM calls must go through `model-client.ts`. Callers pass intent (activity, source, run/session/skill/tool/plan metadata); `model-client.ts` resolves routing through `model-routing.ts` and `model-connectors.ts`, executes the provider adapter, and records inference through `cost-tracker.ts`. Direct provider/client calls for text LLM work are architectural violations.
 
 Routing policy lives in `model-routing.ts` and `model-connectors.ts`. The active persona selects one semantic tier; no persona-level default is applied when no active persona is available. Enabled model connectors are attempted in one global priority order, and each connector translates that unchanged tier to its provider model. Activity is audit metadata only. Connector failures are recorded in the boundary audit and may fall through only before visible stream output.
 
@@ -77,7 +77,7 @@ Direct model overrides are exceptional and must include `overrideReason`. They a
 
 Inference tracking is boundary-owned. `chatCompletion` and `chatCompletionStream` record success, error, abort, and partial stream outcomes with provider/model/activity/source/status/usage/routing metadata. `trackChatCompletion` is deprecated compatibility only and skips results already marked `trackedAtBoundary`.
 
-Reasoning effort is capability-gated, not name-matched. The canonical thinking setting is `model_profiles.tiers[*].thinking`; `thinking-config.ts` resolves it and `resolveOpenAIReasoningEffort` maps it to OpenAI effort values. The no-thinking floor is `none`; do not emit legacy `minimal` for GPT-5.6/Codex Responses requests. Models opt in via `thinking.selectableEffort` in `model-registry.ts` (`supportsSelectableEffort`). Effort-capable direct OpenAI models route through the Responses API adapters in `model-client.ts` (reusing the Codex input/tool converters); subscription/Codex requests carry `reasoning.effort`. Do not add a second effort setting or hard-code model IDs.
+Reasoning effort is capability-gated, not name-matched. OpenAI connector tier mappings are the canonical configured source when present; legacy `model_profiles.tiers[*].thinking` remains compatibility fallback for callers that do not carry connector model config. `thinking-config.ts` resolves fallback thinking and `resolveOpenAIReasoningEffort` maps it to OpenAI effort values. The no-thinking floor is `none`; do not emit legacy `minimal` for GPT-5.6/Codex Responses requests. Models opt in via `thinking.selectableEffort` in `model-registry.ts` (`supportsSelectableEffort`). Effort-capable direct OpenAI models route through the Responses API adapters in `model-client.ts` (reusing the Codex input/tool converters); subscription/Codex requests carry `reasoning.effort`. Do not add a second effort setting or hard-code model IDs.
 
 ## Context Assembly & Retrieval
 

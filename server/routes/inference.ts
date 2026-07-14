@@ -923,7 +923,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
         status: z.enum(["active", "inactive"]).optional(),
         tierMappings: z.union([modelTierMappingsSchema, openAITierMappingsSchema]).optional(),
       }).parse(req.body);
-      const connector = await runWithPrincipal(createNamedSystemPrincipal("model-connector-admin"), () => updateModelConnector(id, body));
+      const connector = await updateModelConnector(id, body);
       if (!connector) return res.status(404).json({ error: "Model connector not found" });
       res.json({ connector });
     } catch (error: any) {
@@ -934,7 +934,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
   app.put("/api/models/connectors/order", requirePermission("system:write"), async (req, res) => {
     try {
       const { ids } = z.object({ ids: z.array(z.number().int().positive()).min(1) }).parse(req.body);
-      const connectors = await runWithPrincipal(createNamedSystemPrincipal("model-connector-admin"), () => reorderModelConnectors(ids));
+      const connectors = await reorderModelConnectors(ids);
       res.json({ connectors });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
