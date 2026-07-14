@@ -1126,10 +1126,9 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
     }
   }
 
-  let contentBlockIndex = 0;
   let thinkingBlockIndex = 0;
   const contentEntries = chronology.filter(e => e.s === "content") as Array<{ s: "content"; c: string }>;
-  const totalContentEntries = contentEntries.length;
+  const finalizedContent = contentEntries.map(entry => entry.c || "").join("");
 
   for (const entry of chronology) {
     switch (entry.s) {
@@ -1182,21 +1181,14 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
             result: tool.result,
             error: errorStr,
             status: isError ? "error" : "done",
+            parentId: tool.parentId,
           });
         }
         break;
       }
       case "content": {
-        flushTimeline();
-        let text = entry.c || "";
-        const isLastContent = contentBlockIndex === totalContentEntries - 1;
-        if (isLastContent && message.content && message.content.length > chronologyContentLength) {
-          text += message.content.slice(chronologyContentLength);
-        }
-        if (text) {
-          segments.push({ type: "content", content: text });
-        }
-        contentBlockIndex++;
+        // Keep the finalized Diagnostic trace in one timeline. Splitting at content
+        // boundaries strands response parents and children in different arrays.
         break;
       }
     }
@@ -1204,10 +1196,12 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
 
   flushTimeline();
 
-  const hasContentSegment = segments.some(s => s.type === "content");
-  if (!hasContentSegment && message.content) {
-    segments.push({ type: "content", content: message.content });
+  let content = finalizedContent;
+  if (message.content && message.content.length > chronologyContentLength) {
+    content += message.content.slice(chronologyContentLength);
   }
+  if (!content) content = message.content || "";
+  if (content) segments.push({ type: "content", content });
 
   return segments;
 }
