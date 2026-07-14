@@ -19,6 +19,7 @@ export function heatmapFillColor(percent: number): string {
 
 export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeatmapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const labelColumnRef = useRef<HTMLDivElement | null>(null);
   const [weeksToShow, setWeeksToShow] = useState(12);
 
   useEffect(() => {
@@ -27,15 +28,16 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
     const compute = () => {
       const weekWidth = 20;
       const columnGap = 2;
-      const labelColumnWidth = 28;
-      const labelColumnPadding = 4;
-      const labelGutter = labelColumnWidth + labelColumnPadding + columnGap;
+      // Measure the rendered weekday-label column instead of assuming its width,
+      // so the week count always fits the space that actually remains for cells.
+      const labelGutter = (labelColumnRef.current?.offsetWidth ?? 32) + columnGap;
       const available = Math.max(0, element.clientWidth - labelGutter);
       setWeeksToShow(Math.max(6, Math.floor((available + columnGap) / (weekWidth + columnGap))));
     };
     compute();
     const observer = new ResizeObserver(compute);
     observer.observe(element);
+    if (labelColumnRef.current) observer.observe(labelColumnRef.current);
     return () => observer.disconnect();
   }, []);
 
@@ -74,8 +76,9 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
   };
 
   return (
-    <div ref={containerRef} className="w-full overflow-hidden" data-testid="activity-heatmap">
-      <div className="flex w-max gap-0.5">
+    <div ref={containerRef} className="flex w-full gap-0.5" data-testid="activity-heatmap">
+      <div className="min-w-0 overflow-hidden">
+        <div className="flex w-max gap-0.5">
         {weeks.map((week, weekIndex) => (
           <div key={`week-${weekIndex}`} className="flex w-5 shrink-0 flex-col gap-0.5">
             <div className="relative h-7 overflow-visible">
@@ -100,10 +103,11 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
             })}
           </div>
         ))}
-        <div className="flex w-7 shrink-0 flex-col gap-0.5 pl-1 pr-1">
-          <div className="h-7" />
-          {dayLabels.map((label) => <div key={label} className="flex h-5 items-center justify-start"><span className="text-[10px] leading-none text-muted-foreground">{label}</span></div>)}
         </div>
+      </div>
+      <div ref={labelColumnRef} className="flex shrink-0 flex-col gap-0.5 pl-1">
+        <div className="h-7" />
+        {dayLabels.map((label) => <div key={label} className="flex h-5 items-center justify-start"><span className="whitespace-nowrap text-[10px] leading-none text-muted-foreground">{label}</span></div>)}
       </div>
     </div>
   );
