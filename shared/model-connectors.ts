@@ -29,7 +29,13 @@ export type OpenAIVerbosity = z.infer<typeof openAIVerbositySchema>;
 export const openAIServiceTierSchema = z.enum(["auto", "default", "flex", "priority", "fast"]);
 export type OpenAIServiceTier = z.infer<typeof openAIServiceTierSchema>;
 
-export const openAITierModelConfigSchema = z.object({
+function stripLegacyFastMode(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const { fastMode: _legacyFastMode, ...rest } = value as Record<string, unknown>;
+  return rest;
+}
+
+export const openAITierModelConfigSchema = z.preprocess(stripLegacyFastMode, z.object({
   model: z.string().trim().min(1),
   reasoningEffort: openAIReasoningEffortSchema.optional(),
   reasoningMode: openAIReasoningModeSchema.optional(),
@@ -37,7 +43,7 @@ export const openAITierModelConfigSchema = z.object({
   verbosity: openAIVerbositySchema.optional(),
   serviceTier: openAIServiceTierSchema.optional(),
   maxOutputTokens: z.number().int().positive().optional(),
-}).strict();
+}).strict());
 export type OpenAITierModelConfig = z.infer<typeof openAITierModelConfigSchema>;
 
 export const openAITierMappingsSchema = z.object({
