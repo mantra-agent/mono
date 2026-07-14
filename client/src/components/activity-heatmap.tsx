@@ -25,9 +25,13 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
     const element = containerRef.current;
     if (!element) return;
     const compute = () => {
-      const labelWidth = 30;
-      const available = Math.max(0, element.clientWidth - labelWidth);
-      setWeeksToShow(Math.max(6, Math.floor(available / 22)));
+      const weekWidth = 20;
+      const columnGap = 2;
+      const labelColumnWidth = 28;
+      const labelColumnPadding = 4;
+      const labelGutter = labelColumnWidth + labelColumnPadding + columnGap;
+      const available = Math.max(0, element.clientWidth - labelGutter);
+      setWeeksToShow(Math.max(6, Math.floor((available + columnGap) / (weekWidth + columnGap))));
     };
     compute();
     const observer = new ResizeObserver(compute);
@@ -96,7 +100,7 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
             })}
           </div>
         ))}
-        <div className="flex w-7 shrink-0 flex-col gap-0.5 pl-1">
+        <div className="flex w-7 shrink-0 flex-col gap-0.5 pl-1 pr-1">
           <div className="h-7" />
           {dayLabels.map((label) => <div key={label} className="flex h-5 items-center justify-start"><span className="text-[10px] leading-none text-muted-foreground">{label}</span></div>)}
         </div>
