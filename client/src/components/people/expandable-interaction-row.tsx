@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { cn } from "@/lib/utils";
+import { fromCivilDate } from "@shared/civil-date";
 
 export interface PersonInteraction {
   id: string;
@@ -55,15 +56,15 @@ const icons: Record<string, LucideIcon> = {
 };
 
 function formatDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString("en-US", { month: "numeric", day: "2-digit" });
+  const localDate = fromCivilDate(value);
+  if (Number.isNaN(localDate.getTime())) return value;
+  return localDate.toLocaleDateString("en-US", { month: "numeric", day: "2-digit" });
 }
 
 function formatShortDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const localDate = fromCivilDate(value);
+  if (Number.isNaN(localDate.getTime())) return value;
+  return localDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 export function ExpandableInteractionRow({ interaction, personName, leadingContent, menuContent, testId }: ExpandableInteractionRowProps) {

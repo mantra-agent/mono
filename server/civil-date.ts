@@ -1,4 +1,5 @@
 import { toZonedTime, format } from 'date-fns-tz';
+import { fromCivilDate } from '../shared/civil-date';
 
 /**
  * Converts a Date to YYYY-MM-DD in the user's specified timezone.
@@ -15,22 +16,5 @@ export function toCivilDate(timestamp: Date, timezone: string): string {
   return format(zonedDate, 'yyyy-MM-dd', { timeZone: timezone });
 }
 
-/**
- * Parses a YYYY-MM-DD string as midnight in the local/browser timezone.
- * 
- * This is used for round-tripping: a civil date stored as YYYY-MM-DD is read back
- * as a Date that represents midnight at the start of that civil day.
- * 
- * The browser/runtime will interpret this Date in its own local context, so the
- * exact interpretation depends on where this is called. For server work, callers
- * should ensure they have the user's timezone available and not rely on the
- * runtime timezone.
- * 
- * @param dateString - Date string in YYYY-MM-DD format
- * @returns Date object representing midnight at the start of that civil day
- */
-export function fromCivilDate(dateString: string): Date {
-  // Parse YYYY-MM-DD as midnight in local time, without Z suffix.
-  // This allows the browser/runtime to interpret it in its own timezone context.
-  return new Date(`${dateString}T00:00:00`);
-}
+// Re-export fromCivilDate from shared for backwards compatibility
+export { fromCivilDate };
