@@ -9559,7 +9559,13 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           return { result: JSON.stringify(result, null, 2) };
         }
         if (action === "start_build_workflow") {
-          const result = await lifecycle.startEnvironmentBuildWorkflow(envId, { title: typeof args.title === "string" ? args.title : undefined, objective: typeof args.objective === "string" ? args.objective : undefined, start: typeof args.start === "boolean" ? args.start : undefined });
+          const sessionId = typeof args._sessionId === "string" ? args._sessionId.trim() : "";
+          const result = await lifecycle.startEnvironmentBuildWorkflow(envId, {
+            title: typeof args.title === "string" ? args.title : undefined,
+            objective: typeof args.objective === "string" ? args.objective : undefined,
+            start: typeof args.start === "boolean" ? args.start : undefined,
+            ...(sessionId ? { parentSessionId: sessionId, createdBySessionId: sessionId } : {}),
+          });
           return { result: JSON.stringify(result, null, 2) };
         }
         if (action === "list_environment_workflows") {

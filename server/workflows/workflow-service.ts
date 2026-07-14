@@ -215,7 +215,10 @@ function truncateText(text: string, maxLen = 700): string {
 function failedAttempts(attempts: WorkflowStageAttempt[]): WorkflowStageAttempt[] {
   return attempts
     .filter((attempt) => ["failed", "blocked"].includes(attempt.status) || ["failed", "blocked"].includes(String(attempt.result || "")))
-    .sort((a, b) => b.attemptNumber - a.attemptNumber);
+    .sort((a, b) => {
+      const completedDelta = (b.completedAt?.getTime() || b.updatedAt?.getTime() || 0) - (a.completedAt?.getTime() || a.updatedAt?.getTime() || 0);
+      return completedDelta || b.id - a.id;
+    });
 }
 
 function buildPreviousFailurePacket(attempts: WorkflowStageAttempt[]): unknown | undefined {
@@ -347,10 +350,12 @@ async function resolveGoverningArtifacts(environmentId: number | null, stageKey:
 
 
 async function buildStageInputContext(detail: WorkflowRunDetail, stageKey: string, stageDef: WorkflowStageDefinition, attemptNumber: number, extraContext?: unknown): Promise<WorkflowStageInputContext & { extraContext?: unknown; environmentTruth?: WorkflowEnvironmentTruth | null; lifecycleSnapshot?: unknown }> {
-  const priorAttempts = detail.stages.find((stage) => stage.key === stageKey)?.attempts || [];
+  const stageAttempts = detail.stages.find((stage) => stage.key === stageKey)?.attempts || [];
+  const allAttempts = detail.stages.flatMap((stage) => stage.attempts);
   const retryCount = Math.max(0, attemptNumber - 1);
-  const previousFailurePacket = buildPreviousFailurePacket(priorAttempts);
-  const retryContext = retryCount > 0 ? buildRetryContext(detail, stageKey, stageDef.title, priorAttempts) : undefined;
+  const retrySourceAttempts = failedAttempts(stageAttempts).length > 0 ? stageAttempts : allAttempts;
+  const previousFailurePacket = buildPreviousFailurePacket(retrySourceAttempts);
+  const retryContext = retryCount > 0 ? buildRetryContext(detail, stageKey, stageDef.title, retrySourceAttempts) : undefined;
   const governingArtifacts = detail.template.id === BUILD_WORKFLOW_TEMPLATE_ID
     ? await resolveGoverningArtifacts(detail.run.linkedEnvironmentId, stageKey)
     : [];
@@ -421,9 +426,13 @@ function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: u
   }
 
   if (context.retryCount > 0) {
+    const retryAssignment = context.retryContext || context.previousFailurePacket;
+    if (!retryAssignment) {
+      throw new Error(`Workflow ${context.workflowRunId} cannot start ${context.stageTitle} retry ${context.attemptNumber} without a failure packet.`);
+    }
     lines.push("", "## Retry Assignment");
     lines.push("Address the prior failure directly with a materially different approach. Do not repeat unrelated discovery.");
-    lines.push("```json", JSON.stringify(context.retryContext || context.previousFailurePacket || null, null, 2), "```");
+    lines.push("```json", JSON.stringify(retryAssignment, null, 2), "```");
   }
 
   if (context.entryCriteria?.length) {
