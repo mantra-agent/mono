@@ -599,7 +599,7 @@ export default function Performance({ embedded }: { embedded?: boolean }) {
     for (const b of byModelByHour) keySet.add(b.model);
     return Array.from(keySet).sort((a, b) => {
       if (chartGroupBy === "tier") {
-        const tierOrder = ["max", "high", "balanced", "fast", "advocate", "advisary", "embed", "unknown"];
+        const tierOrder = ["max", "high", "balanced", "fast", "embed", "unknown"];
         return tierOrder.indexOf(a) - tierOrder.indexOf(b);
       }
       const valA = byModelByDay.filter(x => x.model === a).reduce((s, x) => s + (x[chartMetric] || 0), 0)
@@ -896,7 +896,7 @@ export default function Performance({ embedded }: { embedded?: boolean }) {
             const sortedKeys = Object.entries(aggregated)
               .sort((a, b) => {
                 if (groupBy === "tier") {
-                  const tierOrder = ["max", "high", "balanced", "fast", "advocate", "advisary", "embed", "unknown"];
+                  const tierOrder = ["max", "high", "balanced", "fast", "embed", "unknown"];
                   return tierOrder.indexOf(a[0]) - tierOrder.indexOf(b[0]);
                 }
                 return b[1].cost - a[1].cost;

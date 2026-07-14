@@ -291,6 +291,8 @@ export interface ChatMessage {
 export interface ChatCompletionOptions {
   activity?: ActivityId;
   model?: string;
+  /** Diagnostic/system-only semantic tier override. Normal routing derives the tier from the active persona. */
+  semanticTierOverride?: import("@shared/model-connectors").SemanticTier;
   /**
    * Pre-resolved routing decision. Use this when a caller has already routed by
    * activity/tier and is merely handing the resolved model to the provider
@@ -380,9 +382,14 @@ function serializeModelError(err: unknown): Record<string, unknown> {
   };
 }
 
-function auditRouting(routing: ModelRoutingDecision): Omit<ModelRoutingDecision, "credential" | "fallbackCandidates"> {
+function auditRouting(routing: ModelRoutingDecision): Omit<ModelRoutingDecision, "credential" | "fallbackCandidates"> & { requestedTier: string; resolvedModel: string; connectorProvider: string } {
   const { credential: _credential, fallbackCandidates: _fallbackCandidates, ...safe } = routing;
-  return safe;
+  return {
+    ...safe,
+    requestedTier: routing.tier,
+    resolvedModel: routing.modelString,
+    connectorProvider: routing.provider,
+  };
 }
 
 async function recordInference(params: {
@@ -428,6 +435,12 @@ async function recordInference(params: {
         workloadSource: (meta as Record<string, unknown> | undefined)?.workloadSource || meta?.source || params.routing.activity || "unknown",
         routingSource: params.routing.source,
         tier: params.routing.tier,
+        resolvedTier: params.routing.tier,
+        resolvedModel: params.routing.modelString,
+        resolvedProvider: params.routing.provider,
+        connectorId: params.routing.connectorId,
+        connectorLabel: params.routing.connectorLabel,
+        connectorOrder: params.routing.connectorOrder,
         status: params.status,
         routing: auditRouting(params.routing),
         error: params.error,
@@ -455,7 +468,7 @@ export async function chatCompletion(options: ChatCompletionOptions): Promise<Ch
   const activity = options.activity || options.metadata?.activity || ACTIVITY_FRAMING;
   const candidates = options.routingDecision
     ? [options.routingDecision, ...(options.routingDecision.fallbackCandidates || [])]
-    : await resolveModelCandidates(activity, { model: options.model, overrideReason: options.overrideReason });
+    : await resolveModelCandidates(activity, { model: options.model, overrideReason: options.overrideReason, semanticTierOverride: options.semanticTierOverride });
   let failures = candidates[0]?.attempts ?? [];
   let lastError: unknown;
   for (let index = 0; index < candidates.length; index++) {
@@ -1180,6 +1193,8 @@ export interface StreamMessage {
 export interface ChatCompletionStreamOptions {
   activity?: ActivityId;
   model?: string;
+  /** Diagnostic/system-only semantic tier override. Normal routing derives the tier from the active persona. */
+  semanticTierOverride?: import("@shared/model-connectors").SemanticTier;
   /**
    * Pre-resolved routing decision. Use this when a caller has already routed by
    * activity/tier and is merely handing the resolved model to the provider
@@ -1248,7 +1263,7 @@ export async function* chatCompletionStream(options: ChatCompletionStreamOptions
   const activity = options.activity || options.metadata?.activity || ACTIVITY_CHAT;
   const candidates = options.routingDecision
     ? [options.routingDecision, ...(options.routingDecision.fallbackCandidates || [])]
-    : await resolveModelCandidates(activity, { model: options.model, overrideReason: options.overrideReason });
+    : await resolveModelCandidates(activity, { model: options.model, overrideReason: options.overrideReason, semanticTierOverride: options.semanticTierOverride });
   let failures = candidates[0]?.attempts ?? [];
   let lastError: unknown;
   for (let index = 0; index < candidates.length; index++) {

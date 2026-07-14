@@ -16,7 +16,8 @@ import { isSimilarText } from "./utils/text-similarity";
 import { safeStringify } from "./utils/safe-stringify";
 import { eventBus } from "./event-bus";
 import type { Interaction, Mobilization, RelationshipProfile, NetworkProfile, ScoredAgendaItem, Person, PersonIndexEntry } from "./people-storage";
-import { ACTIVITY_CHAT, ACTIVITY_FRAMING, ACTIVITY_MEMORY, ACTIVITY_THINKING, ACTIVITY_WORK, type ActivityId } from "./job-profiles";
+import { ACTIVITY_CHAT, ACTIVITY_FRAMING, type ActivityId } from "./job-profiles";
+import { semanticTierSchema, type SemanticTier } from "@shared/model-connectors";
 import { formatTaskForBridge } from "./lib/task-format";
 import { WORKSPACE_DIR } from "./paths";
 import { pathExists, resolveWorkspacePath } from "./fs-utils";
@@ -7281,24 +7282,10 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
   async router(args) {
     const action = args.action || "list_inference_calls";
 
-    const resolveRouterActivity = (profile: string | undefined): ActivityId => {
-      switch ((profile || "chat").toLowerCase()) {
-        case "memory":
-        case "myelination":
-          return ACTIVITY_MEMORY;
-        case "reasoning":
-        case "thinking":
-          return ACTIVITY_THINKING;
-        case "work":
-          return ACTIVITY_WORK;
-        case "cheap":
-        case "fast":
-        case "framing":
-          return ACTIVITY_FRAMING;
-        case "chat":
-        default:
-          return ACTIVITY_CHAT;
-      }
+    const resolveDiagnosticTier = (profile: string | undefined): SemanticTier | undefined => {
+      if (!profile) return undefined;
+      const parsed = semanticTierSchema.safeParse(String(profile).toLowerCase());
+      return parsed.success ? parsed.data : undefined;
     };
 
     try {
@@ -7362,8 +7349,12 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const maxTokens = Math.max(1, Math.min(parseInt(args.maxTokens) || 1200, 4000));
           const temperatureRaw = typeof args.temperature === "number" ? args.temperature : parseFloat(args.temperature);
           const temperature = Number.isFinite(temperatureRaw) ? Math.max(0, Math.min(temperatureRaw, 1)) : 0.2;
-          const requestedProfile = String(args.profile || "chat");
-          const activity = args.activityId ? String(args.activityId) as ActivityId : resolveRouterActivity(requestedProfile);
+          const requestedProfile = args.profile ? String(args.profile) : undefined;
+          const diagnosticTier = resolveDiagnosticTier(requestedProfile);
+          if (requestedProfile && !diagnosticTier) {
+            return { result: "router.eval profile is now a diagnostic semantic-tier override. Use max, high, balanced, or fast.", error: true };
+          }
+          const activity = args.activityId ? String(args.activityId) as ActivityId : ACTIVITY_CHAT;
           const sessionKey = `router_eval:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
 
           const { chatCompletion } = await import("./model-client");
@@ -7376,6 +7367,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             jsonMode: !!args.jsonMode,
             maxTokens,
             temperature,
+            semanticTierOverride: diagnosticTier,
+            overrideReason: diagnosticTier ? "router.eval diagnostic semantic-tier override" : undefined,
             metadata: {
               source: "router.eval",
               activity,
@@ -7402,8 +7395,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             result: JSON.stringify({
               provider: result.provider,
               model: result.model,
-              requestedProfile,
-              resolvedProfile: result.metadata?.routing?.tier ?? audit?.profile ?? null,
+              requestedProfile: requestedProfile ?? null,
+              requestedSemanticTier: diagnosticTier ?? null,
+              resolvedTier: result.metadata?.routing?.tier ?? audit?.metadata?.routing?.tier ?? audit?.profile ?? null,
               auditProfile: audit?.profile ?? null,
               activity,
               inputTokens: result.usage?.promptTokens ?? null,
