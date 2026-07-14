@@ -2,7 +2,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import { createLogger } from "./log";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
-import { combineWithVisibleScope } from "./scoped-storage";
+import { combineWithVisibleScope, combineWithWritableScope } from "./scoped-storage";
 import { getSetting } from "./system-settings";
 import { providerConnections } from "@shared/models/platforms";
 import {
@@ -33,6 +33,7 @@ export interface ModelConnector {
   status: string;
   sortOrder: number;
   credentialRef: string | null;
+  lastVerifiedAt: string | null;
   config: ModelConnectorConfig;
 }
 
@@ -63,8 +64,54 @@ export async function listModelConnectors(): Promise<ModelConnector[]> {
     status: row.status,
     sortOrder: row.sortOrder,
     credentialRef: row.credentialRef,
+    lastVerifiedAt: row.lastVerifiedAt instanceof Date ? row.lastVerifiedAt.toISOString() : row.lastVerifiedAt ? String(row.lastVerifiedAt) : null,
     config: parseModelConnectorConfig(row.provider, row.connectorConfig),
   }));
+}
+
+export async function updateModelConnector(
+  id: number,
+  input: { status?: "active" | "inactive"; tierMappings?: ModelTierMappings },
+): Promise<ModelConnector | null> {
+  const principal = getCurrentPrincipalOrSystem();
+  const [existing] = await db.select().from(providerConnections).where(
+    combineWithWritableScope(principal, scopeColumns, and(
+      eq(providerConnections.id, id),
+      eq(providerConnections.connectorKind, "model"),
+    )),
+  ).limit(1);
+  if (!existing) return null;
+
+  const updates: Record<string, unknown> = { updatedAt: sql`CURRENT_TIMESTAMP` };
+  if (input.status !== undefined) updates.status = input.status;
+  if (input.tierMappings !== undefined) {
+    const tierMappings = validateMapping(modelConnectorProviderSchema.parse(existing.provider), input.tierMappings);
+    updates.connectorConfig = { ...parseModelConnectorConfig(existing.provider, existing.connectorConfig), tierMappings };
+  }
+  await db.update(providerConnections).set(updates).where(
+    combineWithWritableScope(principal, scopeColumns, eq(providerConnections.id, id)),
+  );
+  return (await listModelConnectors()).find((connector) => connector.id === id) ?? null;
+}
+
+export async function reorderModelConnectors(ids: number[]): Promise<ModelConnector[]> {
+  const principal = getCurrentPrincipalOrSystem();
+  const connectors = await listModelConnectors();
+  const visibleIds = new Set(connectors.map((connector) => connector.id));
+  if (ids.length !== visibleIds.size || ids.some((id) => !visibleIds.has(id))) {
+    throw new Error("Connector order must include every visible model connector exactly once");
+  }
+  await db.transaction(async (tx) => {
+    for (const [sortOrder, id] of ids.entries()) {
+      await tx.update(providerConnections).set({ sortOrder, updatedAt: sql`CURRENT_TIMESTAMP` }).where(
+        combineWithWritableScope(principal, scopeColumns, and(
+          eq(providerConnections.id, id),
+          eq(providerConnections.connectorKind, "model"),
+        )),
+      );
+    }
+  });
+  return listModelConnectors();
 }
 
 function splitModel(value: string): { provider: ModelConnectorProvider; modelId: string } | null {
