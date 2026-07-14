@@ -1735,11 +1735,51 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     let assistantDraftThinking = "";
     let assistantDraftCheckpointPending: NodeJS.Timeout | null = null;
 
+    const diagnosticRunId = `pre-run-${lease.generation}-${randomUUID().slice(0, 8)}`;
+    const diagnosticTurnId = `system-turn-${diagnosticRunId}`;
+    const turnStartedAt = Date.now();
+    let diagnosticTurnSettled = false;
+    const settleDiagnosticTurn = (status: "done" | "error", detail?: string) => {
+      if (diagnosticTurnSettled) return;
+      diagnosticTurnSettled = true;
+      const turnEndedAt = Date.now();
+      const turnElapsedMs = turnEndedAt - turnStartedAt;
+      publishChatStreamEvent(sessionKey, sessionId, {
+        type: "system_step",
+        step: "turn",
+        stepId: diagnosticTurnId,
+        status,
+        elapsedMs: turnElapsedMs,
+        detail,
+        startedAt: turnStartedAt,
+        endedAt: turnEndedAt,
+      });
+      const turnStepIndex = preSteps.length;
+      preSteps.push({
+        id: diagnosticTurnId,
+        name: "turn",
+        status,
+        elapsedMs: turnElapsedMs,
+        detail,
+        startedAt: turnStartedAt,
+        endedAt: turnEndedAt,
+      });
+      preChronology.unshift({ s: "system", i: turnStepIndex });
+    };
+
     try {
       chatRunLifecycle.assertCurrent(lease);
 
-      const diagnosticRunId = `pre-run-${lease.generation}-${randomUUID().slice(0, 8)}`;
-      const diagnosticTurnId = `system-turn-${diagnosticRunId}`;
+      // The diagnostic turn is the root of every stage, including bootstrap
+      // orientation. Emit it before any child so the live tree is never orphaned.
+      publishChatStreamEvent(sessionKey, sessionId, { type: "run_start", runId: diagnosticRunId });
+      publishChatStreamEvent(sessionKey, sessionId, {
+        type: "system_step",
+        step: "turn",
+        stepId: diagnosticTurnId,
+        status: "started",
+        startedAt: turnStartedAt,
+      });
 
       // Orientation bootstrap: unoriented sessions get a fixed-template
       // fast-tier routing call BEFORE model selection, so persona (and
@@ -1848,40 +1888,57 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         );
       }
 
+      let modelSelectionStepId: string | undefined;
+      let selectionStartedAt: number | undefined;
+      let selectionEndedAt: number | undefined;
       if (resolvedModel) {
         chatRoutingDecision = (await resolveModelCandidates(ACTIVITY_CHAT, {
           model: resolvedModel,
           overrideReason: "chat caller requested explicit model override",
         }))[0];
       } else {
+        selectionStartedAt = Date.now();
+        modelSelectionStepId = `system-model_selection-${lease.generation}-${selectionStartedAt}`;
         publishChatStreamEvent(sessionKey, sessionId, {
           type: "system_step",
           step: "model_selection",
+          stepId: modelSelectionStepId,
+          parentId: diagnosticTurnId,
           status: "started",
+          startedAt: selectionStartedAt,
         });
-        const selectionStartedAt = Date.now();
         chatRoutingDecision = (await resolveModelCandidates(ACTIVITY_CHAT))[0];
         chatRunLifecycle.assertCurrent(lease);
         selectedAutoTier = chatRoutingDecision.tier;
-        selectionElapsedMs = Date.now() - selectionStartedAt;
+        selectionEndedAt = Date.now();
+        selectionElapsedMs = selectionEndedAt - selectionStartedAt;
         publishChatStreamEvent(sessionKey, sessionId, {
           type: "system_step",
           step: "model_selection",
+          stepId: modelSelectionStepId,
+          parentId: diagnosticTurnId,
           status: "done",
           elapsedMs: selectionElapsedMs,
           detail: `${chatRoutingDecision.tier} · ${chatRoutingDecision.connectorLabel || chatRoutingDecision.provider}`,
+          startedAt: selectionStartedAt,
+          endedAt: selectionEndedAt,
         });
       }
       chatModel = chatRoutingDecision.modelString;
       chatRoutingTier = chatRoutingDecision.tier;
       if (selectionElapsedMs !== undefined) {
+        const modelSelectionStepIndex = preSteps.length;
         preSteps.push({
+          id: modelSelectionStepId,
           name: "model_selection",
           status: "done",
           elapsedMs: selectionElapsedMs,
           detail: selectedAutoTier || chatModel,
+          parentId: diagnosticTurnId,
+          startedAt: selectionStartedAt,
+          endedAt: selectionEndedAt,
         });
-        preChronology.push({ s: "system", i: 0 });
+        preChronology.push({ s: "system", i: modelSelectionStepIndex });
       }
       chatLog.log(
         `start sessionId=${sessionId} session=${sessionKey} model=${chatModel} generation=${lease.generation}`,
@@ -1892,13 +1949,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           model: resolvedModel,
           autoTier: selectedAutoTier || undefined,
         });
-
-      const turnStartedAt = Date.now();
-      publishChatStreamEvent(sessionKey, sessionId, { type: "run_start", runId: diagnosticRunId });
-      publishChatStreamEvent(sessionKey, sessionId, {
-        type: "system_step", step: "turn", stepId: diagnosticTurnId,
-        status: "started", startedAt: turnStartedAt,
-      });
 
       assistantDraft = await chatStorage.createAssistantDraft(sessionId, {
         model: chatModel,
@@ -2060,19 +2110,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         `executor DONE sessionId=${sessionId} contentLen=${result.content?.length || 0} terminationReason=${result.terminationReason || "unknown"} abortReason=${result.abortReason || "none"} durationMs=${result.durationMs ?? "?"} iterations=${result.iterations}`,
       );
       chatRunLifecycle.assertCurrent(lease);
-      const turnEndedAt = Date.now();
-      const turnElapsedMs = turnEndedAt - turnStartedAt;
-      publishChatStreamEvent(sessionKey, sessionId, {
-        type: "system_step", step: "turn", stepId: diagnosticTurnId,
-        status: "done", elapsedMs: turnElapsedMs,
-        startedAt: turnStartedAt, endedAt: turnEndedAt,
-      });
-      const turnStepIndex = preSteps.length;
-      preSteps.push({
-        id: diagnosticTurnId, name: "turn", status: "done",
-        elapsedMs: turnElapsedMs, startedAt: turnStartedAt, endedAt: turnEndedAt,
-      });
-      preChronology.unshift({ s: "system", i: turnStepIndex });
+      settleDiagnosticTurn("done");
 
       const durationStr =
         result.durationMs != null
@@ -2369,6 +2407,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       } // end if (!isSuperseded)
     } catch (error: unknown) {
       if (error instanceof ChatRunInvalidatedError) {
+        settleDiagnosticTurn("error", error.reason);
         chatLog.log(
           `${error.reason} before settlement sessionId=${sessionId} generation=${lease.generation}`,
         );
@@ -2380,6 +2419,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         }
         return;
       }
+      settleDiagnosticTurn("error", "processing error");
       chatLog.error(
         `executor error sessionId=${sessionId}: ${(error instanceof Error ? error.message : String(error)) || error}`,
       );
