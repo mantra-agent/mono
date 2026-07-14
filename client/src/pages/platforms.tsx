@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ComponentType, type KeyboardEvent, type ReactNode } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { Button } from "@/components/ui/button";
@@ -21,10 +21,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ActiveStatusSpinner } from "@/components/nav-dot";
-import { statusFamily } from "@/components/build-status-panel";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
-import { Boxes, ChevronRight, MoreHorizontal, Package, Plus, Server, Trash2 } from "lucide-react";
+import { latestLiveDeploymentId, useEnvironmentBuildSeenState, type EnvironmentBuildSnapshot } from "@/lib/environment-build-seen";
+import { ChevronRight, MoreHorizontal, Package, Plus, Server, Trash2 } from "lucide-react";
 
 interface PlatformProductEnvironment {
   id: number;
@@ -55,9 +55,7 @@ interface Platform {
   products: PlatformProduct[];
 }
 
-type BuildLifecycleStatus = {
-  activity?: { state: "building" | "idle" };
-};
+type BuildLifecycleStatus = EnvironmentBuildSnapshot;
 
 type PendingDelete =
   | { type: "platform"; platform: Platform }
@@ -140,6 +138,8 @@ function PlatformTreeRow({
   onRenameCommit,
   onRenameCancel,
   isBuilding,
+  unread,
+  sectionHeader,
   testId,
 }: {
   depth: number;
@@ -158,6 +158,8 @@ function PlatformTreeRow({
   onRenameCommit?: () => void;
   onRenameCancel?: () => void;
   isBuilding?: boolean;
+  unread?: boolean;
+  sectionHeader?: boolean;
   testId?: string;
 }) {
   return (
@@ -171,8 +173,9 @@ function PlatformTreeRow({
             "group relative flex items-center gap-2 rounded-md px-2 py-1.5 text-sm w-full text-left select-none transition-colors overflow-hidden",
             onSelect && !isRenaming && "cursor-pointer",
             active ? "bg-accent" : "hover:bg-accent/70",
-            muted ? "text-muted-foreground" : "text-foreground",
-            isBuilding && "text-active animate-pulse",
+            sectionHeader ? "text-xs font-bold text-muted-foreground uppercase tracking-wider" : unread ? "text-foreground font-medium" : "text-muted-foreground",
+            muted && "text-muted-foreground",
+            isBuilding && "text-active font-medium animate-pulse",
           )}
           title={isRenaming ? undefined : title}
           onClick={() => !isRenaming && onSelect?.()}
@@ -185,9 +188,11 @@ function PlatformTreeRow({
           }}
           data-testid={testId}
         >
-          <span className="flex items-center justify-center shrink-0">
-            {isBuilding ? <ActiveStatusSpinner className="h-3.5 w-3.5" /> : Icon ? <Icon className="h-3.5 w-3.5 shrink-0" /> : null}
-          </span>
+          {(isBuilding || Icon) ? (
+            <span className="flex items-center justify-center shrink-0">
+              {isBuilding ? <ActiveStatusSpinner className="h-3.5 w-3.5" /> : Icon ? <Icon className="h-3.5 w-3.5 shrink-0" /> : null}
+            </span>
+          ) : null}
           {isRenaming && onRenameValueChange && onRenameCommit && onRenameCancel ? (
             <RenameInput
               value={renameValue ?? ""}
@@ -265,19 +270,18 @@ function EmptyTreeRow({ depth, title }: { depth: number; title: string }) {
 
 function EnvironmentRow({
   environment,
+  buildStatus,
+  unread,
   onOpen,
   onDelete,
 }: {
   environment: PlatformProductEnvironment;
+  buildStatus: BuildLifecycleStatus | undefined;
+  unread: boolean;
   onOpen: () => void;
   onDelete: () => void;
 }) {
-  const { data } = useQuery<BuildLifecycleStatus>({
-    queryKey: ["/api/platforms/environments", environment.id, "build-status"],
-    refetchInterval: (query) => query.state.data?.activity?.state === "building" ? 8000 : false,
-    staleTime: 30_000,
-  });
-  const isBuilding = data?.activity?.state === "building";
+  const isBuilding = buildStatus?.activity?.state === "building";
 
   return (
     <PlatformTreeRow
@@ -286,6 +290,7 @@ function EnvironmentRow({
       title={environment.name}
       onSelect={onOpen}
       isBuilding={isBuilding}
+      unread={unread}
       testId={`platform-environment-${environment.id}`}
       menu={
         <RowMenu label={`Open ${environment.name} actions`}>
@@ -321,6 +326,23 @@ export default function PlatformsPage() {
   const { data: platforms = [], isLoading } = useQuery<Platform[]>({
     queryKey: ["/api/platforms"],
   });
+
+  const environmentIds = platforms.flatMap((platform) =>
+    platform.products.flatMap((product) => product.environments.map((environment) => environment.id)),
+  );
+  const buildStatusQueries = useQueries({
+    queries: environmentIds.map((environmentId) => ({
+      queryKey: ["/api/platforms/environments", environmentId, "build-status"],
+      refetchInterval: (query: { state: { data?: BuildLifecycleStatus } }) => query.state.data?.activity?.state === "building" ? 8000 : 30_000,
+      staleTime: 30_000,
+    })),
+  });
+  const buildStatusByEnvironment = new Map(environmentIds.map((environmentId, index) => [environmentId, buildStatusQueries[index]?.data]));
+  const seenBuilds = useEnvironmentBuildSeenState();
+  const environmentHasUnreadBuild = (environmentId: number) => {
+    const deploymentId = latestLiveDeploymentId(buildStatusByEnvironment.get(environmentId));
+    return Boolean(deploymentId && seenBuilds[String(environmentId)] !== deploymentId);
+  };
 
   const createPlatformMutation = useMutation({
     mutationFn: async (name: string) => {
@@ -544,8 +566,8 @@ export default function PlatformsPage() {
               <div key={platform.id} className="space-y-0 mt-0">
                 <PlatformTreeRow
                   depth={0}
-                  icon={Boxes}
                   title={platform.name}
+                  sectionHeader
                   onSelect={() => togglePlatform(platform.id)}
                   onRename={() => startRenamePlatform(platform)}
                   isRenaming={platformRenaming}
@@ -588,12 +610,14 @@ export default function PlatformsPage() {
                     ) : platform.products.map(product => {
                       const productOpen = !closedProducts.has(product.id);
                       const productRenaming = renameTarget?.type === "product" && renameTarget.id === product.id;
+                      const productUnread = product.environments.some((environment) => environmentHasUnreadBuild(environment.id));
                       return (
                         <div key={product.id} className="space-y-0 mt-0">
                           <PlatformTreeRow
                             depth={1}
                             icon={Package}
                             title={product.name}
+                            unread={productUnread}
                             onSelect={() => toggleProduct(product.id)}
                             onRename={() => startRenameProduct(platform, product)}
                             isRenaming={productRenaming}
@@ -636,6 +660,8 @@ export default function PlatformsPage() {
                                 <EnvironmentRow
                                   key={environment.id}
                                   environment={environment}
+                                  buildStatus={buildStatusByEnvironment.get(environment.id)}
+                                  unread={environmentHasUnreadBuild(environment.id)}
                                   onOpen={() => setLocation(`/platforms/environments/${environment.id}`)}
                                   onDelete={() => setPendingDelete({ type: "environment", platform, product, environment })}
                                 />
