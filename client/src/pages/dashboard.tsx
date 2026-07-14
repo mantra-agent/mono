@@ -81,24 +81,22 @@ export default function DashboardPage() {
         )}
 
         {!query.isLoading && !query.isError && query.data && (
-          <Card className="min-w-0 overflow-hidden bg-card p-2">
+          <div className="space-y-0 bg-background">
             {query.data.series.map((series) => (
               <ProfileDetailSection
                 key={series.key}
                 title={series.label}
-                count={series.days.reduce((total, day) => total + day.value, 0)}
                 defaultOpen
                 testId={`section-dashboard-${series.key}`}
               >
                 <ActivityHeatmap
                   days={series.days}
-                  selectedDate={date}
                   onSelectDate={setDate}
                   valueLabel={series.label.toLowerCase()}
                 />
               </ProfileDetailSection>
             ))}
-          </Card>
+          </div>
         )}
       </div>
     </div>
