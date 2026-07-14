@@ -5,6 +5,8 @@ import type { EmailMessage } from "@shared/schema";
 import { db } from "./db";
 import { emailMessages } from "@shared/schema";
 import { and, eq, gt } from "drizzle-orm";
+import { toCivilDate } from "./civil-date";
+import { getTimezone } from "./timezone";
 
 const log = createLogger("EmailPeopleSignals");
 
@@ -191,7 +193,7 @@ async function logKnownContactInteraction(personId: string, message: EmailSignal
   const shouldSetResponseOwed = isDirectInbound && !isDismissed && !hasOutboundReply && !hasRecentOutbound(person, safeDate);
 
   await peopleStorage.addInteraction(personId, {
-    date: safeDate.toISOString().split("T")[0],
+    date: toCivilDate(safeDate, getTimezone()),
     type: "email",
     summary: `${verb}: ${subject}${triageSuffix}`,
     context: `${key} participant=${participant.email} role=${participant.role}`,
