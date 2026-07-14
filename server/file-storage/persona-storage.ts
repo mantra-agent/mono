@@ -73,7 +73,7 @@ const PERSONA_SEMANTIC_TIERS: Record<string, SemanticTier> = {
   Creative: "high",
   Coach: "high",
   Companion: "balanced",
-  Default: "balanced",
+  Default: "fast", // fast = pre-orientation default; persona routing swaps tier after orient fires
 };
 
 function semanticTierForPersona(name: string): SemanticTier {
@@ -639,7 +639,8 @@ class PersonaStorageClass {
         (!existing.promptOverlay ||
           existing.promptOverlay !== seed.promptOverlay);
       const needsIconUpdate = existing.icon !== seed.icon;
-      const needsTierUpdate = existing.semanticTier === null;
+      const expectedTier = semanticTierForPersona(seed.name);
+      const needsTierUpdate = existing.semanticTier === null || (seed.name === "Default" && existing.semanticTier !== expectedTier);
       const needsRoutingUpdate =
         existing.routingExamples.length === 0 &&
         routingExamplesForPersona(seed.name).length > 0;
