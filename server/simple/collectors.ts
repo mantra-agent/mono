@@ -457,7 +457,7 @@ function itemFromAgendaPerson(item: TieredAgendaItem, index: number): SimpleFeed
   };
 }
 
-const PEOPLE_SURFACE_LIMIT = 3;
+const DAILY_INTERACTION_TARGET = 3;
 
 const NEWS_INBOX_LIMIT = 3;
 
@@ -847,7 +847,7 @@ function compareAgendaSurface(a: TieredAgendaItem, b: TieredAgendaItem): number 
   return a.simpleSurfaceTier === "follow_up" ? compareFollowUps(a, b) : compareMaintenance(a, b);
 }
 
-async function collectAgendaPeople(): Promise<TieredAgendaItem[]> {
+async function collectAgendaPeople(today: string): Promise<TieredAgendaItem[]> {
   const people = await peopleStorage.listPeople();
   const cabinetConfig = await peopleStorage.getCabinetConfig();
   const cabinetWeights: Record<string, number> = {};
@@ -856,6 +856,11 @@ async function collectAgendaPeople(): Promise<TieredAgendaItem[]> {
   const candidateEntries = people.filter(entry => !["self", "agent", "user"].includes(entry.cabinetLevel));
   const fullPeople = await peopleStorage.getPeopleByIds(candidateEntries.map(entry => entry.id));
   const peopleById = new Map(fullPeople.map(person => [person.id, person]));
+  const completedInteractionsToday = fullPeople.reduce(
+    (count, person) => count + (person.interactions ?? []).filter(interaction => isTodayInTimezone(interaction.date)).length,
+    0,
+  );
+  const reconnectAllowance = Math.max(0, DAILY_INTERACTION_TARGET - completedInteractionsToday);
   const agenda: TieredAgendaItem[] = [];
   const now = Date.now();
   for (const entry of candidateEntries) {
@@ -898,11 +903,10 @@ async function collectAgendaPeople(): Promise<TieredAgendaItem[]> {
   const followUps = visible
     .filter(item => item.simpleSurfaceTier === "follow_up")
     .sort(compareFollowUps);
-  const remainingSlots = Math.max(0, PEOPLE_SURFACE_LIMIT - followUps.length);
   const maintenance = visible
     .filter(item => item.simpleSurfaceTier === "maintenance")
     .sort(compareMaintenance)
-    .slice(0, remainingSlots);
+    .slice(0, reconnectAllowance);
 
   return [...followUps, ...maintenance, ...snoozed.sort(compareAgendaSurface)];
 }
@@ -1475,7 +1479,7 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
 
   // People (relationship follow-ups are visible but not immediate needs)
   try {
-    const agendaPeople = await collectAgendaPeople();
+    const agendaPeople = await collectAgendaPeople(today);
     agendaPeople.forEach((person, index) => items.push(itemFromAgendaPerson(person, index)));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
