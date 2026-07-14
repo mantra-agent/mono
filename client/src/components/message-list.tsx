@@ -548,6 +548,7 @@ export function MessageList({
         toolCalls: null,
         systemSteps: null,
         model: null,
+        persona: effectiveStreaming.persona || null,
         createdAt: draftCreatedAt,
         // Thread canonical turnId from server projection when available.
         ...(effectiveStreaming.turnId ? { turnId: effectiveStreaming.turnId } : {}),

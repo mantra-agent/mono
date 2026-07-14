@@ -448,8 +448,8 @@ export async function registerVoiceSessionRoutes(app: Express) {
         const voiceRouting = (await resolveModelCandidates(
           ACTIVITY_VOICE,
           sessionTierOverride
-            ? { semanticTierOverride: sessionTierOverride, overrideReason: "session model tier override" }
-            : undefined,
+            ? { semanticTierOverride: sessionTierOverride, overrideReason: "session model tier override", sessionId: chatSessionId || undefined }
+            : { sessionId: chatSessionId || undefined },
         ))[0];
         if (voiceRouting.provider !== "claude-cli") {
           voiceLog.debug(`CLI pre-warm skipped for sessionId=${sessionId}: voice provider=${voiceRouting.provider}`);
@@ -478,6 +478,22 @@ export async function registerVoiceSessionRoutes(app: Express) {
     return { assembled, contextElapsed, prefetchedSignedUrl };
   }
 
+
+  async function ensureVoiceSessionPersona(chatSessionId: string | null): Promise<void> {
+    if (!chatSessionId) return;
+    const { chatFileStorage } = await import("../chat-file-storage");
+    const session = await chatFileStorage.getSession(chatSessionId);
+    if (!session || session.personaId) return;
+    const { personaStorage } = await import("../file-storage/persona-storage");
+    const companion = await personaStorage.getByName("Companion");
+    if (!companion) {
+      voiceLog.warn(`[VoiceSession] Companion persona not found chatSessionId=${chatSessionId}`);
+      return;
+    }
+    const { setSessionPersona } = await import("../session-persona");
+    await setSessionPersona(chatSessionId, companion.id);
+    voiceLog.info(`[VoiceSession] defaulted session persona to Companion chatSessionId=${chatSessionId}`);
+  }
 
   async function preOrientFtueVoiceSession(chatSessionId: string | null): Promise<boolean> {
     if (!chatSessionId) return false;
@@ -518,11 +534,12 @@ export async function registerVoiceSessionRoutes(app: Express) {
       const { personaStorage } = await import("../file-storage/persona-storage");
       const companion = await personaStorage.getByName("Companion");
       if (companion) {
-        await personaStorage.activate(companion.id);
+        const { setSessionPersona } = await import("../session-persona");
+        await setSessionPersona(chatSessionId, companion.id);
         eventBus.publish({
           category: "agent",
           event: "cognition.persona.switched",
-          payload: { personaId: companion.id, personaName: companion.name },
+          payload: { sessionId: chatSessionId, personaId: companion.id, personaName: companion.name },
         });
       } else {
         voiceLog.warn(`[VoiceSession] ftue_preorient persona Companion not found chatSessionId=${chatSessionId}`);
@@ -791,6 +808,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
 
       let prefetchedSignedUrl: string | null = null;
 
+      if (!usedFastReconnect) await ensureVoiceSessionPersona(chatSessionId);
       const ftuePreOriented = !usedFastReconnect ? await preOrientFtueVoiceSession(chatSessionId) : false;
       if (ftuePreOriented) {
         accumulatedSystemSteps.push({ name: "ftue_preorient", status: "done" as const });
@@ -926,7 +944,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
           const msgs = await chatFileStorage.getMessagesBySession(chatSessionId);
           serverTranscript = msgs
             .filter(m => m.role === "user" || m.role === "assistant")
-            .map(m => ({ role: m.role, content: m.content || "", timestamp: typeof m.createdAt === "string" ? m.createdAt : (m.createdAt as unknown) instanceof Date ? (m.createdAt as unknown as Date).toISOString() : new Date().toISOString() }));
+            .map(m => ({ role: m.role, content: m.content || "", timestamp: typeof m.createdAt === "string" ? m.createdAt : (m.createdAt as unknown) instanceof Date ? (m.createdAt as unknown as Date).toISOString() : new Date().toISOString(), persona: m.persona }));
           voiceLog.log(`reconnect transcript loaded msgCount=${serverTranscript.length} chatSessionId=${chatSessionId}`);
         } catch (err: unknown) {
           voiceLog.warn(`failed to load reconnect transcript: ${err instanceof Error ? err.message : String(err)}`);
@@ -978,6 +996,9 @@ export async function registerVoiceSessionRoutes(app: Express) {
         }
       }
 
+      const sessionPersona = chatSessionId
+        ? await (await import("../session-persona")).resolveSessionPersonaSnapshot(chatSessionId)
+        : undefined;
       const payload = {
         signedUrl,
         agentId: elAgentId,
@@ -986,6 +1007,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
         chatSessionId: chatSessionId || session.chatSessionId,
         chatSessionKey: chatSessionKey || undefined,
         timings: { ...timings, total: totalElapsed },
+        ...(sessionPersona ? { persona: sessionPersona } : {}),
         ...(serverTranscript ? { serverTranscript } : {}),
         ...(firstMessage ? { firstMessage } : {}),
       };

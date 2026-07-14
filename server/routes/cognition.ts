@@ -1,6 +1,7 @@
 // Use createLogger for logging ONLY
 import type { Express } from "express";
 import { z } from "zod";
+import { semanticTierSchema } from "@shared/model-connectors";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
 
@@ -50,6 +51,7 @@ export async function registerCognitionRoutes(app: Express) {
     promptOverlay: z.string().max(5000).optional(),
     expressionTags: z.array(z.string()).max(20).optional(),
     cognitiveOverrides: z.record(z.unknown()).optional(),
+    semanticTier: semanticTierSchema.nullable().optional(),
   });
 
   app.post("/api/personas", async (req, res) => {
@@ -77,6 +79,7 @@ export async function registerCognitionRoutes(app: Express) {
     promptOverlay: z.string().max(5000).optional(),
     expressionTags: z.array(z.string()).max(20).optional(),
     cognitiveOverrides: z.record(z.unknown()).optional(),
+    semanticTier: semanticTierSchema.nullable().optional(),
   });
 
   app.put("/api/personas/:id", async (req, res) => {
@@ -92,7 +95,7 @@ export async function registerCognitionRoutes(app: Express) {
           .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
       const updated = await personaStorage.update(id, parsed.data);
-      if (!updated) return res.status(404).json({ error: "Persona not found" });
+      if (!updated) return res.status(403).json({ error: "Persona is read-only or not found" });
       res.json(updated);
     } catch (error: any) {
       log.error("PUT /api/personas/:id error:", error?.message);

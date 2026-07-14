@@ -152,6 +152,7 @@ export async function persistAssistantMessage(
       undefined,
       undefined,
       effectiveTurnId,
+      turnCtx?.persona,
     );
 
     log.log(`turn ${currentTurn} SINGLE_WRITE assistant persisted msgId=${msg?.id || "null"} turnId=${effectiveTurnId || "none"} toolCalls=${turnToolCalls.length} systemSteps=${systemSteps?.length || 0} convId=${session.chatSessionId}`);
@@ -174,7 +175,7 @@ export async function persistVoiceErrorMessage(
     const systemSteps = turnCtx?.systemSteps && turnCtx.systemSteps.length > 0 ? [...turnCtx.systemSteps] : undefined;
     const segmentChronology = turnCtx?.segmentChronology && turnCtx.segmentChronology.length > 0 ? [...turnCtx.segmentChronology] : undefined;
     const effectiveTurnId = turnCtx?.turnId;
-    await chatFileStorage.createMessage(session.chatSessionId, "assistant", errorText, undefined, undefined, undefined, systemSteps, undefined, undefined, segmentChronology, undefined, undefined, undefined, undefined, effectiveTurnId);
+    await chatFileStorage.createMessage(session.chatSessionId, "assistant", errorText, undefined, undefined, undefined, systemSteps, undefined, undefined, segmentChronology, undefined, undefined, undefined, undefined, effectiveTurnId, turnCtx?.persona);
     log.log(`persisted voice error message to chat session=${session.chatSessionId} turnId=${effectiveTurnId || "none"} error="${errorText.slice(0, 80)}" systemSteps=${systemSteps?.length || 0}`);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

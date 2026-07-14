@@ -50,6 +50,7 @@ export interface JournalEntry {
   toolCalls?: unknown[];
   model?: string;
   autoTier?: string;
+  persona?: { id: number; name: string; icon: string };
   status?: string;
   stepId?: string;
   step?: string;
@@ -400,6 +401,7 @@ export function publishJournalToUI(entry: JournalEntry, category: EventCategory 
     case "model_info":
       payload.model = entry.model;
       payload.autoTier = entry.autoTier;
+      payload.persona = entry.persona;
       break;
     case "done":
       payload.messageId = entry.messageId;

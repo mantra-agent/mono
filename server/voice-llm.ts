@@ -572,6 +572,11 @@ async function executeVoiceTurn(
         releaseLock();
       }
 
+      if (session.chatSessionId) {
+        const { resolveSessionPersonaSnapshot } = await import("./session-persona");
+        ctx!.persona = await resolveSessionPersonaSnapshot(session.chatSessionId);
+        writeVoiceJournal(session, "model_info", { persona: ctx!.persona });
+      }
       await executeVoiceTurnBody(req, res, session, messages, conversationMessages, currentTurn, turnAbort!, resolveDone, pipelineStart, ctx!);
     }
   }, `turn-${currentTurn}`);

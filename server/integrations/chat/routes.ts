@@ -1894,8 +1894,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         chatRoutingDecision = (await resolveModelCandidates(
           ACTIVITY_CHAT,
           sessionTierOverride
-            ? { semanticTierOverride: sessionTierOverride, overrideReason: "session model tier override" }
-            : undefined,
+            ? { semanticTierOverride: sessionTierOverride, overrideReason: "session model tier override", sessionId }
+            : { sessionId },
         ))[0];
         chatRunLifecycle.assertCurrent(lease);
         selectedAutoTier = chatRoutingDecision.tier;
@@ -1923,15 +1923,14 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         `start sessionId=${sessionId} session=${sessionKey} model=${chatModel} generation=${lease.generation}`,
       );
 
-      if (resolvedModel)
-        journal("model_info", {
-          model: resolvedModel,
-          autoTier: selectedAutoTier || undefined,
-        });
-
       assistantDraft = await chatStorage.createAssistantDraft(sessionId, {
         model: chatModel,
         runId: diagnosticRunId,
+      });
+      journal("model_info", {
+        model: chatModel,
+        autoTier: selectedAutoTier || undefined,
+        persona: assistantDraft?.persona,
       });
       chatRunLifecycle.assertCurrent(lease);
       let assistantDraftLastCheckpoint = 0;

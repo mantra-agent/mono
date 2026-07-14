@@ -76,6 +76,7 @@ export interface VoiceTranscriptEntry {
    * turn without waiting for `persistV3Turn` at end-of-turn.
    */
   isToolCall?: boolean;
+  persona?: { id: number; name: string; icon: string };
 }
 
 export type ConnectionPhaseStatus = "pending" | "active" | "done" | "error";
@@ -95,7 +96,8 @@ interface VoiceStartResponse {
   agentId?: string;
   timings?: Record<string, number>;
   type?: string;
-  serverTranscript?: Array<{ role: string; content: string; timestamp?: string }>;
+  serverTranscript?: Array<{ role: string; content: string; timestamp?: string; persona?: { id: number; name: string; icon: string } }>;
+  persona?: { id: number; name: string; icon: string };
   firstMessage?: string;
 }
 
@@ -238,6 +240,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chatConversationIdRef = useRef<string | null>(null);
   const voiceSessionIdRef = useRef<string | null>(null);
+  const sessionPersonaRef = useRef<{ id: number; name: string; icon: string } | null>(null);
   const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1173,6 +1176,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       log.debug("VOICE:START_RESPONSE", { elapsedMs: fetchElapsed });
       phoneDiag("start_response", { elapsed: fetchElapsed });
       const { signedUrl } = startData;
+      sessionPersonaRef.current = startData.persona || sessionPersonaRef.current;
       if (startData.chatSessionKey) {
         setChatSessionKey(startData.chatSessionKey);
         log.debug("VOICE:START_RESPONSE:CHAT_SESSION_KEY", { hasChatSessionKey: true });
@@ -1191,6 +1195,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             source: (m.role === "user" ? "user" : "ai") as "user" | "ai",
             message: m.content,
             timestamp: m.timestamp || new Date().toISOString(),
+            persona: m.persona || (m.role === "assistant" ? sessionPersonaRef.current || undefined : undefined),
           }));
         if (mapped.length > 0) {
           setTranscript(mapped);

@@ -51,6 +51,7 @@ import {
   Phone,
 } from "lucide-react";
 import { resolveToolIcon } from "@/lib/tool-icons";
+import { resolvePersonaIcon } from "@/lib/persona-icons";
 import { Button } from "@/components/ui/button";
 import { apiRequest } from "@/lib/queryClient";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -212,6 +213,8 @@ export interface ChatMessage {
   compaction?: CompactionMeta | null;
   pageContext?: PageContext | null;
   voice?: VoiceMessageMeta | null;
+  /** Persona that produced this assistant turn. */
+  persona?: { id: number; name: string; icon: string } | null;
   /** Speaker attribution for meeting transcript messages. */
   speaker?: { label: string; personId?: string } | null;
   /** Canonical per-turn correlation ID for voice turns. */
@@ -1665,11 +1668,13 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
   }
 
   const isErrorMessage = !isUser && !isSystemPrompt && !!message.isError;
+  const PersonaIcon = resolvePersonaIcon(message.persona?.icon);
+  const personaLabel = message.persona?.name || "Legacy persona unknown";
 
   return (
     <div ref={turnRootRef} className="flex gap-3 items-start" data-testid={`message-assistant-${message.id}`}>
       <div className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-full mt-0.5", isErrorMessage ? "bg-destructive/15" : "bg-primary/10")}>
-        {isErrorMessage ? <AlertCircle className="h-4 w-4 text-destructive" /> : <Bot className="h-4 w-4 text-primary" />}
+        {isErrorMessage ? <AlertCircle className="h-4 w-4 text-destructive" /> : <PersonaIcon className="h-4 w-4 text-primary" />}
       </div>
       <div className="min-w-0 flex-1 group">
         {isErrorMessage && (
@@ -1705,10 +1710,10 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
             <Tooltip>
               <TooltipTrigger asChild>
                 <span className="inline-flex items-center" data-testid={`badge-agent-persona-${message.id}`}>
-                  <Bot className="h-2.5 w-2.5" />
+                  <PersonaIcon className="h-2.5 w-2.5" />
                 </span>
               </TooltipTrigger>
-              <TooltipContent side="top" className="text-xs">Agent</TooltipContent>
+              <TooltipContent side="top" className="text-xs">{personaLabel}</TooltipContent>
             </Tooltip>
           )}
           {formatLocalTime(message.updatedAt ?? message.createdAt)}

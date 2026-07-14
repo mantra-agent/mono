@@ -272,8 +272,9 @@ export type ChatStreamEvent =
   | (ChatStreamEventBase & { type: "error"; error: string })
   | (ChatStreamEventBase & {
       type: "model_info";
-      model: string;
+      model?: string;
       autoTier?: string;
+      persona?: PersonaSnapshot;
     })
   | (ChatStreamEventBase & { type: "title_updated"; title: string })
   | (ChatStreamEventBase & {
@@ -634,6 +635,13 @@ export interface MessageSpeakerMeta {
   personId?: string;
 }
 
+/** Persona identity frozen when an assistant turn begins. */
+export interface PersonaSnapshot {
+  id: number;
+  name: string;
+  icon: string;
+}
+
 export type SessionModelTierOverride = "fast" | "balanced" | "high" | "max";
 
 export interface ChatSession {
@@ -645,6 +653,8 @@ export interface ChatSession {
   sessionKey: string | null;
   /** null means Auto: use persona/activity routing without a session override. */
   modelTier: SessionModelTierOverride | null;
+  /** Current persona for this session. Conversational authority is session-scoped. */
+  personaId?: number | null;
   createdAt: string;
   updatedAt: string;
   type?: "text" | "voice" | "meeting";
