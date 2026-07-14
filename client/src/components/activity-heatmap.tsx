@@ -26,7 +26,7 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
     if (!element) return;
     const compute = () => {
       const available = Math.max(0, element.clientWidth - 34);
-      setWeeksToShow(Math.max(6, Math.floor(available / 22) - 3));
+      setWeeksToShow(Math.min(12, Math.max(6, Math.floor(available / 22) - 3)));
     };
     compute();
     const observer = new ResizeObserver(compute);
@@ -34,16 +34,33 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
     return () => observer.disconnect();
   }, []);
 
-  const { weeks, maximum } = useMemo(() => {
-    const visible = days.slice(-weeksToShow * 7);
-    const padded = [...visible];
-    while (padded.length % 7 !== 0) padded.unshift({ date: "", value: 0 });
-    const grouped: ActivityHeatmapDay[][] = [];
-    for (let index = 0; index < padded.length; index += 7) grouped.push(padded.slice(index, index + 7));
-    return { weeks: grouped, maximum: Math.max(0, ...visible.map((day) => day.value)) };
-  }, [days, weeksToShow]);
+  const { weeks, maximum, latestDate } = useMemo(() => {
+    const latest = days.at(-1)?.date;
+    if (!latest) return { weeks: [], maximum: 0, latestDate: "" };
 
-  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+    const valuesByDate = new Map(days.map((day) => [day.date, day.value]));
+    const latestDay = new Date(`${latest}T12:00:00Z`);
+    const mondayOffset = (latestDay.getUTCDay() + 6) % 7;
+    const firstDay = new Date(latestDay);
+    firstDay.setUTCDate(latestDay.getUTCDate() - ((weeksToShow - 1) * 7 + mondayOffset));
+
+    const alignedDays: ActivityHeatmapDay[] = [];
+    for (let index = 0; index < weeksToShow * 7; index += 1) {
+      const date = new Date(firstDay);
+      date.setUTCDate(firstDay.getUTCDate() + index);
+      const dateString = date.toISOString().slice(0, 10);
+      alignedDays.push({ date: dateString, value: valuesByDate.get(dateString) ?? 0 });
+    }
+
+    const grouped: ActivityHeatmapDay[][] = [];
+    for (let index = 0; index < alignedDays.length; index += 7) grouped.push(alignedDays.slice(index, index + 7));
+    const visibleValues = alignedDays.filter((day) => day.date <= latest);
+    return {
+      weeks: grouped,
+      maximum: Math.max(0, ...visibleValues.map((day) => day.value)),
+      latestDate: latest,
+    };
+  }, [days, weeksToShow]);
   const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const monthDay = (date: string) => {
     if (!date) return "";
@@ -61,8 +78,8 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
                 {monthDay(week.find((day) => day.date)?.date ?? "")}
               </span>
             </div>
-            {week.map((day, dayIndex) => {
-              if (!day.date) return <div key={`blank-${dayIndex}`} className="h-5 w-5 shrink-0" />;
+            {week.map((day) => {
+              if (day.date > latestDate) return <div key={day.date} className="h-5 w-5 shrink-0" />;
               const percent = maximum === 0 ? 0 : Math.round((day.value / maximum) * 100);
               return (
                 <button
@@ -71,7 +88,7 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
                   title={`${day.date}: ${day.value} ${valueLabel}`}
                   onClick={() => onSelectDate?.(day.date)}
                   style={{ backgroundColor: heatmapFillColor(percent) }}
-                  className={`relative block h-5 w-5 shrink-0 appearance-none rounded-[3px] border-0 p-0 transition-shadow hover:ring-1 hover:ring-foreground/60 ${day.date === today ? "ring-1 ring-foreground/60" : ""}`}
+                  className={`relative block h-5 w-5 shrink-0 appearance-none rounded-[3px] border-0 p-0 transition-shadow hover:ring-1 hover:ring-foreground/60 ${day.date === latestDate ? "ring-1 ring-foreground/60" : ""}`}
                   data-testid={`heatmap-cell-${day.date}`}
                 />
               );
