@@ -6,6 +6,7 @@ import { createLogger } from "./log";
 import {
   getCandidateByEmail,
   getPendingCandidatesFromDb,
+  getQueueSummaryFromDb,
   isSyntheticContactEmail,
   searchCandidatesFromDb,
   updateCandidateDecision,
@@ -44,6 +45,20 @@ export interface PeopleImportDecisionResult {
   warnings: string[];
 }
 export interface ImportCandidateRecord { candidateId: string; candidate: StoredImportCandidate; }
+export interface ImportQueueListMetadata {
+  totalPending: number;
+  totalCandidates: number;
+  decided: { added: number; merged: number; skipped: number };
+  offset: number;
+  limit: number;
+  returned: number;
+  remainingAfterOffset: number;
+  progressPercent: number;
+}
+export interface ImportCandidateListResult {
+  candidates: ImportCandidateRecord[];
+  queue: ImportQueueListMetadata;
+}
 export interface ImportMatch {
   personId: string;
   name: string;
@@ -200,10 +215,28 @@ async function idempotent(action: PeopleImportAction, input: ImportDecisionInput
   return existing.result as unknown as PeopleImportDecisionResult;
 }
 
-export async function listImportCandidates(options: { limit?: number; offset?: number } = {}): Promise<ImportCandidateRecord[]> {
+export async function listImportCandidates(options: { limit?: number; offset?: number } = {}): Promise<ImportCandidateListResult> {
   const limit = Math.max(1, Math.min(options.limit || 50, MAX_LIST_LIMIT));
   const offset = Math.max(0, options.offset || 0);
-  return (await getPendingCandidatesFromDb()).slice(offset, offset + limit).map(candidate => ({ candidateId: candidateIdFor(candidate), candidate }));
+  const [pending, summary] = await Promise.all([getPendingCandidatesFromDb(), getQueueSummaryFromDb()]);
+  const candidates = pending.slice(offset, offset + limit).map(candidate => ({ candidateId: candidateIdFor(candidate), candidate }));
+  const totalPending = pending.length;
+  const decided = { added: summary.added, merged: summary.merged, skipped: summary.skipped };
+  const totalCandidates = totalPending + decided.added + decided.merged + decided.skipped;
+  const decidedCount = totalCandidates - totalPending;
+  return {
+    candidates,
+    queue: {
+      totalPending,
+      totalCandidates,
+      decided,
+      offset,
+      limit,
+      returned: candidates.length,
+      remainingAfterOffset: Math.max(0, totalPending - offset - candidates.length),
+      progressPercent: totalCandidates > 0 ? Math.round((decidedCount / totalCandidates) * 1000) / 10 : 100,
+    },
+  };
 }
 
 export async function getImportCandidate(candidateId: string): Promise<ImportCandidateRecord | null> {
