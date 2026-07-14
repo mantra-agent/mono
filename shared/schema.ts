@@ -1511,3 +1511,41 @@ export type WorkflowSession = typeof workflowSessions.$inferSelect;
 
 export const insertWorkflowTemplateSchema = createInsertSchema(workflowTemplates).omit({ createdAt: true, updatedAt: true });
 export const insertWorkflowRunSchema = createInsertSchema(workflowRuns).omit({ createdAt: true, updatedAt: true });
+
+// ─── Meeting Recap Distributions ───
+
+export const meetingRecapDistributionStatuses = [
+  "pending",
+  "draft_created",
+  "sent",
+  "failed",
+] as const;
+export type MeetingRecapDistributionStatus = typeof meetingRecapDistributionStatuses[number];
+
+export const meetingRecapDistributions = pgTable("meeting_recap_distributions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sessionId: text("session_id").notNull(),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+  scope: text("scope").notNull().default("user"),
+  attendeeEmail: text("attendee_email").notNull(),
+  attendeeName: text("attendee_name"),
+  isMantraUser: boolean("is_mantra_user").notNull().default(false),
+  draftId: uuid("draft_id"),
+  sendMethod: text("send_method").notNull().default("gmail_draft"),
+  status: text("status", { enum: meetingRecapDistributionStatuses }).notNull().default("pending"),
+  error: text("error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_mrd_session").on(table.sessionId),
+  index("idx_mrd_owner").on(table.ownerUserId),
+  index("idx_mrd_account").on(table.accountId),
+]);
+
+export type MeetingRecapDistribution = typeof meetingRecapDistributions.$inferSelect;
+export const insertMeetingRecapDistributionSchema = createInsertSchema(meetingRecapDistributions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
