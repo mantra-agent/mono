@@ -30,6 +30,7 @@ export interface PersonaEntry {
   semanticTier: SemanticTier | null;
   routingExamples: string[];
   isDefault: boolean;
+  isSystem: boolean;
   isActive: boolean;
   sortOrder: number;
   source: "seed" | "user";
@@ -51,6 +52,7 @@ function rowToEntry(row: typeof personas.$inferSelect): PersonaEntry {
     semanticTier: row.semanticTier ? semanticTierSchema.parse(row.semanticTier) : null,
     routingExamples: (row.routingExamples as string[]) || [],
     isDefault: row.isDefault,
+    isSystem: row.isSystem ?? false,
     isActive: row.isActive,
     sortOrder: row.sortOrder,
     source: (row.source || "user") as "seed" | "user",
@@ -73,7 +75,8 @@ const PERSONA_SEMANTIC_TIERS: Record<string, SemanticTier> = {
   Creative: "high",
   Coach: "high",
   Companion: "balanced",
-  Default: "fast", // fast = pre-orientation default; persona routing swaps tier after orient fires
+  Default: "balanced",
+  Router: "fast",
 };
 
 function semanticTierForPersona(name: string): SemanticTier {
@@ -89,6 +92,7 @@ const PERSONA_ROUTING_EXAMPLES: Record<string, string[]> = {
   Creative: ["Brainstorm names for this product", "Write a playful post about today's launch"],
   Coach: ["I keep procrastinating on the demo, hold me accountable", "Help me reflect on this week"],
   Companion: ["Rough day. Just need to talk", "Feeling anxious about tomorrow's call"],
+  Router: [], // system persona — never routed to by the bootstrap
 };
 
 function routingExamplesForPersona(name: string): string[] {
@@ -120,6 +124,25 @@ const SEED_PERSONAS = [
     isActive: true,
     sortOrder: 0,
     source: "seed" as const,
+  },
+  {
+    name: "Router",
+    description:
+      "System-internal session router — rapid classification only. Not a user-facing persona.",
+    icon: "Zap",
+    promptOverlay: [
+      "You are the session router. You do not answer the user.",
+      "Your only job is to call the orient tool with title, topics, and the correct persona name.",
+      "Pick the persona that best fits the opening message. Default when ambiguous.",
+      "Do this immediately, in your first response. No commentary.",
+    ].join("\n"),
+    expressionTags: [] as string[],
+    cognitiveOverrides: {},
+    isDefault: false,
+    isActive: false,
+    sortOrder: -1, // sorts before user-visible personas
+    source: "seed" as const,
+    isSystem: true, // system-internal, hidden from user persona switcher
   },
   {
     name: "Strategist",
@@ -618,6 +641,7 @@ class PersonaStorageClass {
           semanticTier: semanticTierForPersona(seed.name),
           routingExamples: routingExamplesForPersona(seed.name),
           isDefault: seed.isDefault,
+          isSystem: (seed as any).isSystem ?? false,
           isActive: seed.isActive,
           sortOrder: seed.sortOrder,
           source: seed.source,
@@ -639,8 +663,7 @@ class PersonaStorageClass {
         (!existing.promptOverlay ||
           existing.promptOverlay !== seed.promptOverlay);
       const needsIconUpdate = existing.icon !== seed.icon;
-      const expectedTier = semanticTierForPersona(seed.name);
-      const needsTierUpdate = existing.semanticTier === null || (seed.name === "Default" && existing.semanticTier !== expectedTier);
+      const needsTierUpdate = existing.semanticTier === null;
       const needsRoutingUpdate =
         existing.routingExamples.length === 0 &&
         routingExamplesForPersona(seed.name).length > 0;

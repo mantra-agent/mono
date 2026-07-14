@@ -76,6 +76,7 @@ export const personas = pgTable(
     routingExamples: jsonb("routing_examples").default([]), // string[] — example openings that should route to this persona during orientation bootstrap
     isDefault: boolean("is_default").notNull().default(false),
     isActive: boolean("is_active").notNull().default(false),
+    isSystem: boolean("is_system").notNull().default(false), // true = system-internal persona, hidden from user-facing switcher
     sortOrder: integer("sort_order").notNull().default(0),
     source: text("source").notNull().default("user"), // seed | user
     scope: text("scope").notNull().default("user"),

@@ -626,6 +626,7 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_provider_connections_kind_order ON provider_connections(connector_kind, sort_order)`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS semantic_tier TEXT`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS routing_examples JSONB DEFAULT '[]'::jsonb`);
+    await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT FALSE`);
     await pool.query(`DO $$ BEGIN ALTER TABLE personas ADD CONSTRAINT personas_semantic_tier_check CHECK (semantic_tier IS NULL OR semantic_tier IN ('max', 'high', 'balanced', 'fast')); EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
     await pool.query(`
       UPDATE personas SET semantic_tier = CASE name

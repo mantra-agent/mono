@@ -51,6 +51,7 @@ interface BootstrapClassification {
 
 function buildBootstrapPrompt(personas: PersonaEntry[]): string {
   const table = personas
+    .filter((p) => !p.isSystem) // exclude system-internal personas (e.g. Router) from the routing table
     .map((p) => {
       const examples = p.routingExamples.length
         ? ` Examples: ${p.routingExamples.map((e) => `"${e}"`).join(" · ")}`
@@ -73,9 +74,11 @@ function buildBootstrapPrompt(personas: PersonaEntry[]): string {
 }
 
 function parseClassification(raw: string, personas: PersonaEntry[]): BootstrapClassification | null {
+  // Strip markdown code fences if the model wrapped the JSON in ```json ... ``` or ``` ... ```
+  const stripped = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(stripped);
   } catch {
     return null;
   }
@@ -128,10 +131,22 @@ export async function ensureSessionOriented(options: {
     }
 
     const personas = await personaStorage.list();
+
+    // Activate the Router persona so model routing resolves to fast naturally.
+    // Router is system-internal and holds the slot only until orient replaces it.
+    const routerPersona = personas.find((p) => p.name === "Router");
+    if (routerPersona) {
+      const active = await personaStorage.getActiveOrNull();
+      if (!active || active.id !== routerPersona.id) {
+        await personaStorage.activate(routerPersona.id);
+        log.debug(`bootstrap activated Router persona id=${routerPersona.id} sessionId=${sessionId}`);
+      }
+    }
+
     const completion = await chatCompletion({
       activity: ACTIVITY_CHAT,
       semanticTierOverride: "fast",
-      overrideReason: "orientation-bootstrap: fixed-template session routing runs on the fast tier by design",
+      overrideReason: "orientation-bootstrap: Router persona is fast-tier; override is belt-and-suspenders",
       jsonMode: true,
       maxTokens: BOOTSTRAP_MAX_TOKENS,
       temperature: 0,
