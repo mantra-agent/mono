@@ -86,6 +86,8 @@ export const VoiceEvents = {
 } as const;
 
 export const SYSTEM_STEP_META: Record<string, { label: string }> = {
+  orientation: { label: "Orientation" },
+  orientation_llm_call: { label: "Orientation LLM" },
   model_selection: { label: "Model Selection" },
   context_assembly: { label: "Context Assembly" },
   ctx_history: { label: "Loading History" },

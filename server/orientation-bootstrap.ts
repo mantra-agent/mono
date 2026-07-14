@@ -41,6 +41,21 @@ export interface OrientationBootstrapResult {
   personaName?: string;
   fallback?: boolean;
   elapsedMs: number;
+  llm?: {
+    model: string;
+    provider: string;
+    tier?: string;
+    connectorLabel?: string;
+    usage?: {
+      promptTokens?: number;
+      completionTokens?: number;
+      totalTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      reasoningTokens?: number;
+      visibleOutputTokens?: number;
+    };
+  };
 }
 
 interface BootstrapClassification {
@@ -152,6 +167,15 @@ export async function ensureSessionOriented(options: {
       metadata: { source: "orientation-bootstrap", sessionId, sessionKey },
     });
 
+    const routing = (completion.metadata?.routing || {}) as Record<string, unknown>;
+    const llm = {
+      model: typeof routing.resolvedModel === "string" ? routing.resolvedModel : completion.model,
+      provider: typeof routing.connectorProvider === "string" ? routing.connectorProvider : completion.provider,
+      tier: typeof routing.requestedTier === "string" ? routing.requestedTier : undefined,
+      connectorLabel: typeof routing.connectorLabel === "string" ? routing.connectorLabel : undefined,
+      usage: completion.usage,
+    };
+
     const classification = parseClassification(completion.content || "", personas);
     if (!classification) {
       log.warn(`bootstrap classification unparseable sessionId=${sessionId} raw=${(completion.content || "").slice(0, 200)}`);
@@ -176,6 +200,7 @@ export async function ensureSessionOriented(options: {
       topics: classification.topics,
       personaName: classification.persona,
       elapsedMs: Date.now() - startedAt,
+      llm,
     };
   } catch (err) {
     log.warn(`bootstrap failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`);

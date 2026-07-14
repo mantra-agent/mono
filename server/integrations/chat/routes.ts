@@ -1710,6 +1710,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       startedAt?: number;
       endedAt?: number;
       selfTimeMs?: number;
+      metadata?: Record<string, unknown>;
     }> = [];
     const preChronology: SegmentChronologyEntry[] = [];
 
@@ -1737,6 +1738,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     try {
       chatRunLifecycle.assertCurrent(lease);
 
+      const diagnosticRunId = `pre-run-${lease.generation}-${randomUUID().slice(0, 8)}`;
+      const diagnosticTurnId = `system-turn-${diagnosticRunId}`;
+
       // Orientation bootstrap: unoriented sessions get a fixed-template
       // fast-tier routing call BEFORE model selection, so persona (and
       // therefore tier) is correct for the main turn. No-op when the
@@ -1744,13 +1748,18 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       try {
         const { ensureSessionOriented } = await import("../../orientation-bootstrap");
         const orientStartedAt = Date.now();
+        const orientationStepId = `system-orientation-${lease.generation}-${orientStartedAt}`;
         publishChatStreamEvent(sessionKey, sessionId, {
           type: "system_step",
           step: "orientation",
+          stepId: orientationStepId,
+          parentId: diagnosticTurnId,
           status: "started",
+          startedAt: orientStartedAt,
         });
         const orientation = await ensureSessionOriented({ sessionId, sessionKey, userMessage: content });
-        const orientElapsedMs = Date.now() - orientStartedAt;
+        const orientEndedAt = Date.now();
+        const orientElapsedMs = orientEndedAt - orientStartedAt;
         const orientDetail = orientation.applied
           ? `${orientation.title} · ${orientation.personaName}`
           : orientation.skipped === "already-oriented"
@@ -1761,13 +1770,56 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         publishChatStreamEvent(sessionKey, sessionId, {
           type: "system_step",
           step: "orientation",
+          stepId: orientationStepId,
+          parentId: diagnosticTurnId,
           status: "done",
           elapsedMs: orientElapsedMs,
           detail: orientDetail,
+          startedAt: orientStartedAt,
+          endedAt: orientEndedAt,
         });
         if (orientation.skipped !== "already-oriented") {
-          preSteps.push({ name: "orientation", status: "done", elapsedMs: orientElapsedMs, detail: orientDetail });
-          preChronology.push({ s: "system", i: preSteps.length - 1 });
+          const orientationStepIndex = preSteps.length;
+          preSteps.push({
+            id: orientationStepId,
+            name: "orientation",
+            status: "done",
+            elapsedMs: orientElapsedMs,
+            detail: orientDetail,
+            parentId: diagnosticTurnId,
+            startedAt: orientStartedAt,
+            endedAt: orientEndedAt,
+          });
+          preChronology.push({ s: "system", i: orientationStepIndex });
+          if (orientation.llm) {
+            const llmStepId = `system-orientation_llm_call-${lease.generation}-${orientEndedAt}`;
+            const llmDetail = `${orientation.llm.model} · ${orientation.llm.provider}${orientation.llm.tier ? ` · tier=${orientation.llm.tier}` : ""}`;
+            publishChatStreamEvent(sessionKey, sessionId, {
+              type: "system_step",
+              step: "orientation_llm_call",
+              stepId: llmStepId,
+              parentId: orientationStepId,
+              status: "done",
+              elapsedMs: orientElapsedMs,
+              detail: llmDetail,
+              startedAt: orientStartedAt,
+              endedAt: orientEndedAt,
+              metadata: { llm: orientation.llm },
+            });
+            const llmStepIndex = preSteps.length;
+            preSteps.push({
+              id: llmStepId,
+              name: "orientation_llm_call",
+              status: "done",
+              elapsedMs: orientElapsedMs,
+              detail: llmDetail,
+              parentId: orientationStepId,
+              startedAt: orientStartedAt,
+              endedAt: orientEndedAt,
+              metadata: { llm: orientation.llm },
+            });
+            preChronology.push({ s: "system", i: llmStepIndex });
+          }
         }
         chatRunLifecycle.assertCurrent(lease);
       } catch (orientErr) {
@@ -1822,8 +1874,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           autoTier: selectedAutoTier || undefined,
         });
 
-      const diagnosticRunId = `pre-run-${lease.generation}-${randomUUID().slice(0, 8)}`;
-      const diagnosticTurnId = `system-turn-${diagnosticRunId}`;
       const turnStartedAt = Date.now();
       publishChatStreamEvent(sessionKey, sessionId, { type: "run_start", runId: diagnosticRunId });
       publishChatStreamEvent(sessionKey, sessionId, {
