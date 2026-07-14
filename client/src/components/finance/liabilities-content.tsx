@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { FreshnessBadge } from "./freshness-badge";
 import { SummaryMetricCard, SummaryMetricCardSkeleton } from "./summary-metric-card";
+import { fromCivilDate } from "@shared/civil-date";
 
 interface ManualLiability {
   id: number;
@@ -403,7 +404,7 @@ function LiabilityCard({
               {liability.payments.slice(0, 10).map(p => (
                 <div key={`${p.source || "manual"}-${p.id}`} className="flex items-center justify-between py-1 group text-xs" data-testid={`payment-${p.source || "manual"}-${p.id}`}>
                   <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground tabular-nums">{new Date(p.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })}</span>
+                    <span className="text-muted-foreground tabular-nums">{fromCivilDate(p.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })}</span>
                     {p.source === "auto" ? (
                       <span className="text-xs px-1 py-0.5 rounded bg-info/10 text-info-foreground font-medium" data-testid={`badge-auto-${p.id}`}>Auto-detected</span>
                     ) : (

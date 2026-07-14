@@ -27,6 +27,7 @@ import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { ExpandableInteractionRow } from "@/components/people/expandable-interaction-row";
 import type { OpportunityInteractionActivity } from "@shared/models/opportunities";
+import { parseDateString } from "@shared/civil-date";
 
 // ── Types ──────────────────────────────────────────────────────────
 interface LinkedSkill {
@@ -717,7 +718,7 @@ function OpportunityDetail({
   });
 
   const sortedActivities = useMemo(
-    () => [...activities].sort((a, b) => new Date(b.interaction.date).getTime() - new Date(a.interaction.date).getTime()),
+    () => [...activities].sort((a, b) => parseDateString(b.interaction.date).getTime() - parseDateString(a.interaction.date).getTime()),
     [activities],
   );
 

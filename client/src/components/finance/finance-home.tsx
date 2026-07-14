@@ -11,6 +11,7 @@ import { TrajectorySection, type TrajectoryData } from "./trajectory-section";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { formatRelativeDate } from "@/lib/local-date";
 import { useToast } from "@/hooks/use-toast";
+import { fromCivilDate, parseDateString } from "@shared/civil-date";
 
 // Categories considered "recurring" — large spend in these is expected and shouldn't
 // be flagged as amortization candidates (rent, debt payments, regular income/transfers).
@@ -301,7 +302,7 @@ export function FinanceHomeContent({ onTabChange }: FinanceHomeContentProps) {
     let curSpend = 0, priorSpend = 0, curIncome = 0, priorIncome = 0;
 
     for (const txn of transactions) {
-      const txnDate = new Date(txn.date);
+      const txnDate = fromCivilDate(txn.date);
       if (txnDate >= thirtyDaysAgo) {
         if (txn.amount > 0) {
           const cat = txn.categoryPrimary || "UNCATEGORIZED";
@@ -372,7 +373,7 @@ export function FinanceHomeContent({ onTabChange }: FinanceHomeContentProps) {
         if (dismissedSuggestions.has(t.transactionId)) return false;
         const cat = t.categoryPrimary || "UNCATEGORIZED";
         if (RECURRING_CATEGORIES.has(cat)) return false;
-        const txnDate = new Date(t.date);
+        const txnDate = fromCivilDate(t.date);
         return txnDate >= thirtyDaysAgo;
       })
       .sort((a, b) => b.amount - a.amount)
@@ -454,7 +455,7 @@ export function FinanceHomeContent({ onTabChange }: FinanceHomeContentProps) {
       const months = monthsBetweenInclusive(a.startMonth, a.spreadMonths);
       // Subtract the lump if the original txn fell within the 30-day window
       if (a.txnMonth) {
-        const txnDate = new Date(`${a.txnMonth}-15T00:00:00`);
+        const txnDate = fromCivilDate(`${a.txnMonth}-15`);
         if (txnDate >= thirtyDaysAgo) {
           adjusted[a.category] = (adjusted[a.category] || 0) - a.originalAmount;
           totalAdjustment -= a.originalAmount;
@@ -847,7 +848,7 @@ function buildChangeFeed(
   const now = new Date();
   const sevenDaysAgo = new Date(now.getTime() - 7 * 86400000);
 
-  const recentTxns = transactions.filter(t => new Date(t.date) >= sevenDaysAgo);
+  const recentTxns = transactions.filter(t => fromCivilDate(t.date) >= sevenDaysAgo);
   const largeInflows = recentTxns.filter(t => t.amount < -200);
   const largeOutflows = recentTxns.filter(t => t.amount > 200);
 
@@ -932,13 +933,13 @@ function buildAttentionItems(
   const now = new Date();
   const upcomingManual = manualLiabilities.filter(l => {
     if (!l.nextPaymentDueDate) return false;
-    const due = new Date(l.nextPaymentDueDate);
+    const due = parseDateString(l.nextPaymentDueDate);
     const diff = due.getTime() - now.getTime();
     return diff > 0 && diff < 7 * 86400000;
   });
   const upcomingPlaid = plaidLiabs.filter(l => {
     if (!l.nextPaymentDueDate) return false;
-    const due = new Date(l.nextPaymentDueDate);
+    const due = parseDateString(l.nextPaymentDueDate);
     const diff = due.getTime() - now.getTime();
     return diff > 0 && diff < 7 * 86400000;
   });
@@ -961,7 +962,7 @@ function buildAttentionItems(
 
   const recentLarge = transactions.filter(t => {
     if (t.amount <= 500 || t.pending) return false;
-    const txnDate = new Date(t.date);
+    const txnDate = fromCivilDate(t.date);
     const now = new Date();
     return (now.getTime() - txnDate.getTime()) < 3 * 86400000;
   });

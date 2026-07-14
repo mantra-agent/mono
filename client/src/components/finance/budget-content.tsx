@@ -9,6 +9,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { SummaryMetricCard, SummaryMetricCardSkeleton } from "./summary-metric-card";
 import { useCategoryLabels, humanCategory } from "./category-labels";
 import { AmortizationManager } from "./amortization-manager";
+import { fromCivilDate } from "@shared/civil-date";
 
 interface BudgetEntry {
   id: number;
@@ -97,7 +98,7 @@ function shiftMonth(month: string, delta: number): string {
 }
 
 function formatDate(date: string): string {
-  return new Date(date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return fromCivilDate(date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 export function BudgetContent() {
