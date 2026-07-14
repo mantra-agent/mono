@@ -51,6 +51,7 @@ interface BootstrapClassification {
 
 function buildBootstrapPrompt(personas: PersonaEntry[]): string {
   const table = personas
+    .filter((p) => !p.isSystem)
     .map((p) => {
       const examples = p.routingExamples.length
         ? ` Examples: ${p.routingExamples.map((e) => `"${e}"`).join(" · ")}`
@@ -128,10 +129,19 @@ export async function ensureSessionOriented(options: {
     }
 
     const personas = await personaStorage.list();
+    const routerPersona = personas.find((p) => p.name === "Router");
+    if (routerPersona) {
+      const active = await personaStorage.getActiveOrNull();
+      if (!active || active.id !== routerPersona.id) {
+        await personaStorage.activate(routerPersona.id);
+        log.debug(`bootstrap activated Router persona id=${routerPersona.id} sessionId=${sessionId}`);
+      }
+    }
+
     const completion = await chatCompletion({
       activity: ACTIVITY_CHAT,
       semanticTierOverride: "fast",
-      overrideReason: "orientation-bootstrap: fixed-template session routing runs on the fast tier by design",
+      overrideReason: "orientation-bootstrap: Router persona is fast-tier; override is belt-and-suspenders",
       jsonMode: true,
       maxTokens: BOOTSTRAP_MAX_TOKENS,
       temperature: 0,
