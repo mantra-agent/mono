@@ -107,6 +107,7 @@ import { SiInstagram, SiX, SiLinkedin } from "react-icons/si";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { SimpleFeed, SimpleFeedItem } from "@shared/models/simple";
+import { fromCivilDate, parseDateString } from "@shared/civil-date";
 
 type NativeWebViewWindow = Window & {
   ReactNativeWebView?: {
@@ -325,7 +326,7 @@ const PROFESSIONAL_RELATION_OPTIONS = [
 
 function daysAgo(dateStr?: string): string {
   if (!dateStr) return "Never";
-  const d = dateStr.length === 10 ? new Date(dateStr + "T00:00:00") : new Date(dateStr);
+  const d = parseDateString(dateStr);
   const diff = Math.floor((Date.now() - d.getTime()) / 86400000);
   if (diff === 0) return "Today";
   if (diff === 1) return "Yesterday";
@@ -336,7 +337,7 @@ function daysAgo(dateStr?: string): string {
 }
 
 function formatShortDate(dateStr: string): string {
-  const d = dateStr.length === 10 ? new Date(dateStr + "T00:00:00") : new Date(dateStr);
+  const d = parseDateString(dateStr);
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
@@ -992,7 +993,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
             expandHitArea={false}
             testId={`input-log-follow-up-date-${interaction.id}`}
           >
-            <span>Due: {interaction.responseDueBy ? new Date(`${interaction.responseDueBy.slice(0, 10)}T12:00:00`).toLocaleDateString() : "Not set"}</span>
+            <span>Due: {interaction.responseDueBy ? fromCivilDate(interaction.responseDueBy.slice(0, 10)).toLocaleDateString() : "Not set"}</span>
           </InlineDatePicker>
         </DropdownMenuItem>
       )}
@@ -1045,7 +1046,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
     const noteItems = person.notes.map((note) => ({ kind: "note" as const, id: note.id, date: note.createdAt, note }));
     const memoryItems = linkedMemories.map((memory) => ({ kind: "memory" as const, id: String(memory.id), date: memory.createdAt || new Date(0).toISOString(), memory }));
     const relationshipMemoryItems = relationshipMemories.map((relationshipMemory) => ({ kind: "relationshipMemory" as const, id: relationshipMemory.id, date: relationshipMemory.createdAt || new Date(0).toISOString(), relationshipMemory }));
-    return [...interactionItems, ...noteItems, ...memoryItems, ...relationshipMemoryItems].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return [...interactionItems, ...noteItems, ...memoryItems, ...relationshipMemoryItems].sort((a, b) => parseDateString(b.date).getTime() - parseDateString(a.date).getTime());
   }, [person.interactions, person.notes, linkedMemories, relationshipMemories]);
 
   const monthGroups = useMemo(() => {
@@ -1056,7 +1057,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
     const previousMonthKey = `${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, "0")}`;
 
     sorted.forEach((item) => {
-      const d = new Date(item.date);
+      const d = parseDateString(item.date);
       const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       let group = groups.find((entry) => entry.monthKey === monthKey);
       if (!group) {
@@ -1174,7 +1175,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
             const memory = isMemory ? item.memory : null;
             const relationshipMemory = isRelationshipMemory ? item.relationshipMemory : null;
             const Icon = isNote ? FileText : (isMemory || isRelationshipMemory) ? Brain : INTERACTION_ICONS[interaction?.type || ""] || MessageSquare;
-            const d = new Date(item.date);
+            const d = parseDateString(item.date);
             const DirectionIcon = interaction?.direction === "inbound" ? ArrowDownLeft : interaction?.direction === "outbound" ? ArrowUpRight : null;
             const title = d.toLocaleDateString("en-US", { month: "numeric", day: "2-digit" });
             const memoryTitle = memory?.title || memory?.summary || memory?.content || "Memory";
@@ -1376,8 +1377,8 @@ function DatesTab({ person, onUpdate }: { person: Person; onUpdate: () => void }
   const sortedDates = useMemo(() => {
     const now = new Date();
     return [...person.importantDates].sort((a, b) => {
-      const aDate = new Date(a.date);
-      const bDate = new Date(b.date);
+      const aDate = parseDateString(a.date);
+      const bDate = parseDateString(b.date);
       if (a.recurrence === "annual") {
         aDate.setFullYear(now.getFullYear());
         if (aDate < now) aDate.setFullYear(now.getFullYear() + 1);
@@ -1449,7 +1450,7 @@ function DatesTab({ person, onUpdate }: { person: Person; onUpdate: () => void }
       ) : (
         <div className="space-y-1.5">
           {sortedDates.map((d) => {
-            const dateObj = new Date(d.date + "T00:00:00");
+            const dateObj = fromCivilDate(d.date);
             const now = new Date();
             let nextOccurrence = dateObj;
             if (d.recurrence === "annual") {
@@ -1633,9 +1634,9 @@ function AnalysisTab({ person }: { person: Person }) {
 
   const avgFrequency = useMemo(() => {
     if (person.interactions.length < 2) return null;
-    const sorted = [...person.interactions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    const first = new Date(sorted[0].date).getTime();
-    const last = new Date(sorted[sorted.length - 1].date).getTime();
+    const sorted = [...person.interactions].sort((a, b) => parseDateString(a.date).getTime() - parseDateString(b.date).getTime());
+    const first = parseDateString(sorted[0].date).getTime();
+    const last = parseDateString(sorted[sorted.length - 1].date).getTime();
     const days = (last - first) / 86400000;
     if (days === 0) return null;
     return Math.round(days / (sorted.length - 1));
@@ -2548,7 +2549,7 @@ function formatImportedAddress(address: Record<string, unknown>): string | null 
 function ExpandableInteractions({ interactions }: { interactions: GmailInteraction[] }) {
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   const sorted = [...(interactions || [])]
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .sort((a, b) => parseDateString(b.date).getTime() - parseDateString(a.date).getTime())
     .slice(0, 15);
 
   return (
@@ -2686,7 +2687,7 @@ function ImportCandidateDetail({
   }, [candidate.name, existingPeople]);
 
   const sorted = useMemo(() =>
-    [...(candidate.interactions || [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+    [...(candidate.interactions || [])].sort((a, b) => parseDateString(b.date).getTime() - parseDateString(a.date).getTime()),
     [candidate.interactions]
   );
 

@@ -141,6 +141,7 @@ import { useEventStream } from "@/hooks/use-event-stream";
 import { useTimezone } from "@/hooks/use-timezone";
 import { useMyelination } from "@/hooks/use-myelination";
 import { cn } from "@/lib/utils";
+import { fromCivilDate } from "@shared/civil-date";
 
 const log = createLogger("MemoryPage");
 
@@ -1157,8 +1158,8 @@ function RetentionPurgeDialog() {
   const [confirmation, setConfirmation] = useState("");
 
   const payload = useMemo(() => ({
-    startDate: startDate ? new Date(`${startDate}T00:00:00`).toISOString() : undefined,
-    endDate: endDate ? new Date(`${endDate}T00:00:00`).toISOString() : undefined,
+    startDate: startDate ? fromCivilDate(startDate).toISOString() : undefined,
+    endDate: endDate ? fromCivilDate(endDate).toISOString() : undefined,
     layers: layers.length ? layers : undefined,
     protectionMode,
   }), [startDate, endDate, layers, protectionMode]);

@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
+import { fromCivilDate } from "@shared/civil-date";
 
 interface CalendarInfo {
   id: string;
@@ -462,7 +463,7 @@ function makeScheduleSections(mode: ScheduleMode, now = new Date()): ScheduleSec
 
 function getEventStartDate(event: CalendarEvent): Date | null {
   if (event.start.dateTime) return new Date(event.start.dateTime);
-  if (event.start.date) return new Date(`${event.start.date}T00:00:00`);
+  if (event.start.date) return fromCivilDate(event.start.date);
   return null;
 }
 
@@ -972,7 +973,7 @@ function ScheduleEventRow({ event, mode, timezone, isExternal, isPersonal, onCli
     : event.start.dateTime
       ? new Date(event.start.dateTime).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", timeZone: timezone })
       : event.start.date
-        ? new Date(`${event.start.date}T00:00:00`).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })
+        ? fromCivilDate(event.start.date).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })
         : "";
 
   return (

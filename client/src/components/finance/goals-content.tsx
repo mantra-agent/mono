@@ -11,6 +11,7 @@ import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { fromCivilDate } from "@shared/civil-date";
 
 interface FinancialGoal {
   id: number;
@@ -322,7 +323,7 @@ export function GoalsContent() {
               <div className="flex items-center gap-2 mt-1.5 text-xs text-muted-foreground flex-wrap">
                 <span>{isLoading ? "..." : `${progress.toFixed(0)}%`} complete</span>
                 {goal.targetDate && (
-                  <><span className="text-border">·</span><span>Target: {new Date(goal.targetDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })}</span></>
+                  <><span className="text-border">·</span><span>Target: {fromCivilDate(goal.targetDate).toLocaleDateString("en-US", { month: "short", year: "numeric" })}</span></>
                 )}
                 {linkedNames.length > 0 && (
                   <><span className="text-border">·</span><span>Linked: {linkedNames.join(", ")}</span></>

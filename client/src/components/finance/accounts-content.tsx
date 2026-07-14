@@ -15,6 +15,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { FreshnessBadge } from "./freshness-badge";
 import { SummaryMetricCard, SummaryMetricCardSkeleton } from "./summary-metric-card";
+import { fromCivilDate } from "@shared/civil-date";
 
 interface PlaidAccountItem {
   accountId: string;
@@ -471,7 +472,7 @@ export function AccountsContent() {
                       {itemSync.oldestTransaction && (
                         <>
                           <span>·</span>
-                          <span>Data: {new Date(itemSync.oldestTransaction + "T00:00:00").toLocaleDateString()} — {itemSync.newestTransaction ? new Date(itemSync.newestTransaction + "T00:00:00").toLocaleDateString() : "now"}</span>
+                          <span>Data: {fromCivilDate(itemSync.oldestTransaction).toLocaleDateString()} — {itemSync.newestTransaction ? fromCivilDate(itemSync.newestTransaction).toLocaleDateString() : "now"}</span>
                         </>
                       )}
                       {itemSync.lastSynced && (

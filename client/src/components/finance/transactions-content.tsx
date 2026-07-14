@@ -8,6 +8,7 @@ import { CSVImportDialog } from "./csv-import-dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useFocusContext } from "@/hooks/use-focus-context";
+import { fromCivilDate } from "@shared/civil-date";
 
 // Category-aware default spread length. Most lump expenses smooth nicely over a
 // year; a couple of categories deserve a different default (medical bills are
@@ -72,7 +73,7 @@ function formatCurrency(value: number): string {
 }
 
 function formatDate(date: string): string {
-  return new Date(date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return fromCivilDate(date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 const DATE_RANGES = [

@@ -19,3 +19,38 @@ export function fromCivilDate(dateString: string): Date {
   // This allows the browser/runtime to interpret it in its own timezone context.
   return new Date(`${dateString}T00:00:00`);
 }
+
+/**
+ * A date-only string in strict YYYY-MM-DD form (a "civil date").
+ *
+ * Branded so APIs can require a validated civil date instead of an arbitrary
+ * string. Produce values via `isCivilDate` narrowing.
+ *
+ * Never pass a civil date string directly to `new Date(...)`: the ECMAScript
+ * spec parses bare YYYY-MM-DD as UTC midnight, which renders as the previous
+ * day in any timezone west of UTC. Use `fromCivilDate` (known-civil input) or
+ * `parseDateString` (mixed input) instead.
+ */
+export type CivilDateString = string & { readonly __brand: "CivilDateString" };
+
+const CIVIL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Type guard: true when the value is a strict YYYY-MM-DD civil date string.
+ */
+export function isCivilDate(value: string): value is CivilDateString {
+  return CIVIL_DATE_PATTERN.test(value);
+}
+
+/**
+ * Parses a date string that may be either a civil date (YYYY-MM-DD) or a full
+ * timestamp (ISO 8601 or other Date-parseable form).
+ *
+ * Civil dates are parsed as local midnight via `fromCivilDate`; everything
+ * else falls through to native Date parsing. Use this at boundaries where the
+ * stored format is mixed (e.g. legacy records with timestamps alongside new
+ * civil-date records).
+ */
+export function parseDateString(value: string): Date {
+  return isCivilDate(value) ? fromCivilDate(value) : new Date(value);
+}
