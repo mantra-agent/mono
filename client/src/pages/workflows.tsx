@@ -5,6 +5,7 @@ import {
   Archive,
   Camera,
   CheckCircle2,
+  ChevronRight,
   Circle,
   ExternalLink,
   FileCode2,
@@ -17,8 +18,10 @@ import {
   Play,
   RefreshCcw,
   RotateCcw,
+  Search,
   ShieldCheck,
   Waypoints,
+  X,
   XCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -459,28 +462,65 @@ function TemplateList({ templates }: { templates: WorkflowTemplate[] }) {
   );
 }
 
-function RunRow({ run }: { run: WorkflowRun }) {
+function WorkflowRunTreeRow({ run }: { run: WorkflowRun }) {
   return (
-    <Link href={`/workflows/${run.id}`}>
-      <Card className={cn("overflow-hidden p-4 transition-colors hover:bg-card/80 cursor-pointer", run.status === "active" && "border-info/25", ["blocked", "failed"].includes(run.status) && "border-destructive/25", run.status === "needs_review" && "border-warning/25")}>
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0 space-y-1">
-            <div className="flex items-center gap-2"><Waypoints className="h-4 w-4 text-muted-foreground" /><h3 className="truncate text-sm font-medium">{run.title}</h3></div>
-            <p className="line-clamp-2 text-xs text-muted-foreground">{run.objective}</p>
-            <div className="flex flex-wrap gap-3 text-xs text-muted-foreground/70">
-              <span>Stage: {humanize(run.currentStageKey)}</span>
-              <span>Updated {fmtDate(run.updatedAt)}</span>
-            </div>
-          </div>
-          <StatusBadge status={run.status} />
-        </div>
-      </Card>
+    <Link
+      href={`/workflows/${run.id}`}
+      className="group flex w-full min-w-0 items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+    >
+      <Waypoints className="h-3.5 w-3.5 shrink-0" />
+      <span className="min-w-0 flex-1 truncate text-foreground">{run.title}</span>
+      <span className="hidden min-w-0 max-w-40 truncate text-xs text-muted-foreground sm:block">
+        {humanize(run.currentStageKey)}
+      </span>
+      <span className="hidden shrink-0 text-xs text-muted-foreground lg:block">{fmtDate(run.updatedAt)}</span>
+      <StatusBadge status={run.status} />
+      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5" />
     </Link>
+  );
+}
+
+function WorkflowTreeSection({
+  title,
+  runs,
+  emptyLabel,
+  defaultOpen = true,
+}: {
+  title: string;
+  runs: WorkflowRun[];
+  emptyLabel: string;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <section>
+      <button
+        type="button"
+        className="flex w-full min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+      >
+        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
+        <span className="truncate">{title}</span>
+        <span className="ml-auto font-normal tabular-nums">{runs.length}</span>
+      </button>
+      {open ? (
+        runs.length ? (
+          <div className="ml-3 border-l border-border pl-2">
+            {runs.map((run) => <WorkflowRunTreeRow key={run.id} run={run} />)}
+          </div>
+        ) : (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">{emptyLabel}</div>
+        )
+      ) : null}
+    </section>
   );
 }
 
 function WorkflowListPage() {
   const [tab, setTab] = useState("runs");
+  const [search, setSearch] = useState("");
   usePageHeader({ title: "Workflows", tabs: [
     { value: "runs", label: "Runs", icon: <Waypoints className="h-3.5 w-3.5" /> },
     { value: "templates", label: "Templates", icon: <FileCode2 className="h-3.5 w-3.5" /> },
@@ -488,7 +528,8 @@ function WorkflowListPage() {
 
   const templates = useQuery<WorkflowTemplate[]>({ queryKey: ["/api/workflows/templates"] });
   const runs = useQuery<WorkflowRun[]>({ queryKey: ["/api/workflows/runs"], refetchInterval: (q) => (q.state.data || []).some((r) => ["active", "needs_review"].includes(r.status)) ? 8000 : false });
-  const runList = runs.data || [];
+  const query = search.trim().toLowerCase();
+  const runList = (runs.data || []).filter((run) => !query || [run.title, run.objective, run.currentStageKey, run.status].some((value) => value?.toLowerCase().includes(query)));
   const active = runList.filter((r) => ["draft", "active", "paused"].includes(r.status));
   const blocked = runList.filter((r) => ["blocked", "needs_review", "failed"].includes(r.status));
   const completed = runList.filter((r) => ["completed", "canceled"].includes(r.status));
@@ -496,20 +537,37 @@ function WorkflowListPage() {
   if (templates.isLoading || runs.isLoading) return <WorkflowSkeleton />;
 
   return (
-    <div className="w-full p-4 space-y-4">
+    <div className="w-full min-w-0 p-4">
       {tab === "templates" ? <TemplateList templates={templates.data || []} /> : (
-        <div className="space-y-6">
-          <section className="space-y-3"><SectionHeader title="Active" count={active.length} />{active.length ? active.map((run) => <RunRow key={run.id} run={run} />) : <EmptyState icon={Waypoints} title="No active workflow runs" />}</section>
-          <section className="space-y-3"><SectionHeader title="Blocked / Review" count={blocked.length} />{blocked.length ? blocked.map((run) => <RunRow key={run.id} run={run} />) : <EmptyState icon={ShieldCheck} title="No blocked runs" body="Hard review gates and failed runs will appear here." />}</section>
-          <section className="space-y-3"><SectionHeader title="Completed" count={completed.length} />{completed.length ? completed.map((run) => <RunRow key={run.id} run={run} />) : <EmptyState icon={Archive} title="No completed runs yet" />}</section>
+        <div className="w-full min-w-0 max-w-full overflow-hidden rounded-md bg-background p-2">
+          <div className="relative mb-1 min-w-0">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search workflow runs"
+              className="h-7 w-full rounded-md border border-input bg-background pl-7 pr-7 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              aria-label="Search workflow runs"
+            />
+            {search ? (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+                aria-label="Clear workflow search"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            ) : null}
+          </div>
+          <WorkflowTreeSection title="Active" runs={active} emptyLabel={query ? "No active runs match." : "No active workflow runs."} />
+          <WorkflowTreeSection title="Blocked / Review" runs={blocked} emptyLabel={query ? "No blocked runs match." : "No blocked runs."} />
+          <WorkflowTreeSection title="Completed" runs={completed} emptyLabel={query ? "No completed runs match." : "No completed runs yet."} defaultOpen={!active.length && !blocked.length} />
         </div>
       )}
     </div>
   );
-}
-
-function SectionHeader({ title, count }: { title: string; count: number }) {
-  return <div className="flex items-center gap-2"><h2 className="text-lg font-medium">{title}</h2><Badge variant="secondary" className="text-xs">{count}</Badge></div>;
 }
 
 function WorkflowSkeleton() {
