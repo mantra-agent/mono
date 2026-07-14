@@ -1714,6 +1714,17 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }> = [];
     const preChronology: SegmentChronologyEntry[] = [];
 
+    // Initialize turn step at index 0 so it's the root of the tree.
+    // It will be updated to "done" status when execution settles.
+    const turnStepInitial = {
+      id: "", // Will be set after diagnosticTurnId is generated
+      name: "turn",
+      status: "started" as const,
+      startedAt: 0, // Will be set to turnStartedAt
+    };
+    preSteps.push(turnStepInitial);
+    preChronology.push({ s: "system", i: 0 });
+
     const journal = (
       type: JournalEntry["type"],
       extra: Partial<JournalEntry> = {},
@@ -1738,65 +1749,62 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     const diagnosticRunId = `pre-run-${lease.generation}-${randomUUID().slice(0, 8)}`;
     const diagnosticTurnId = `system-turn-${diagnosticRunId}`;
     const turnStartedAt = Date.now();
+    // Update the pre-initialized turn step with actual IDs and timing
+    turnStepInitial.id = diagnosticTurnId;
+    turnStepInitial.startedAt = turnStartedAt;
     let diagnosticTurnSettled = false;
+    let turnStepIndex: number | undefined;
     const settleDiagnosticTurn = (status: "done" | "error", detail?: string) => {
       if (diagnosticTurnSettled) return;
       diagnosticTurnSettled = true;
       const turnEndedAt = Date.now();
       const turnElapsedMs = turnEndedAt - turnStartedAt;
+      // The turn step starts at preSteps[0] after pre-executor batch is emitted.
+      // On settlement, emit a delta updating the turn to done status.
       publishChatStreamEvent(sessionKey, sessionId, {
-        type: "system_step",
-        step: "turn",
+        type: "system_step_update",
         stepId: diagnosticTurnId,
         status,
         elapsedMs: turnElapsedMs,
         detail,
-        startedAt: turnStartedAt,
         endedAt: turnEndedAt,
       });
-      const turnStepIndex = preSteps.length;
-      preSteps.push({
-        id: diagnosticTurnId,
-        name: "turn",
-        status,
-        elapsedMs: turnElapsedMs,
-        detail,
-        startedAt: turnStartedAt,
-        endedAt: turnEndedAt,
-      });
-      preChronology.unshift({ s: "system", i: turnStepIndex });
+      // Also update the turn step in preSteps in case it's referenced later
+      if (preSteps[0]?.id === diagnosticTurnId) {
+        preSteps[0].status = status;
+        preSteps[0].elapsedMs = turnElapsedMs;
+        preSteps[0].endedAt = turnEndedAt;
+        if (detail) preSteps[0].detail = detail;
+      }
     };
 
     try {
       chatRunLifecycle.assertCurrent(lease);
 
       // The diagnostic turn is the root of every stage, including bootstrap
-      // orientation. Emit it before any child so the live tree is never orphaned.
-      publishChatStreamEvent(sessionKey, sessionId, { type: "run_start", runId: diagnosticRunId });
-      publishChatStreamEvent(sessionKey, sessionId, {
-        type: "system_step",
-        step: "turn",
-        stepId: diagnosticTurnId,
-        status: "started",
-        startedAt: turnStartedAt,
-      });
+      // orientation. DO NOT emit live during pre-executor phase; emit atomically
+      // after context assembly completes. This ensures the entire tree arrives
+      // in one event, so parent-child relationships are always resolvable.
+      // publishChatStreamEvent(sessionKey, sessionId, { type: "run_start", runId: diagnosticRunId });
+      // publishChatStreamEvent(sessionKey, sessionId, {
+      //   type: "system_step",
+      //   step: "turn",
+      //   stepId: diagnosticTurnId,
+      //   status: "started",
+      //   startedAt: turnStartedAt,
+      // });
 
       // Orientation bootstrap: unoriented sessions get a fixed-template
       // fast-tier routing call BEFORE model selection, so persona (and
       // therefore tier) is correct for the main turn. No-op when the
       // session already has a real title.
+      // NOTE: Do not publishChatStreamEvent here. Steps are accumulated in
+      // preSteps and emitted atomically after context assembly.
       try {
         const { ensureSessionOriented } = await import("../../orientation-bootstrap");
         const orientStartedAt = Date.now();
         const orientationStepId = `system-orientation-${lease.generation}-${orientStartedAt}`;
-        publishChatStreamEvent(sessionKey, sessionId, {
-          type: "system_step",
-          step: "orientation",
-          stepId: orientationStepId,
-          parentId: diagnosticTurnId,
-          status: "started",
-          startedAt: orientStartedAt,
-        });
+        // NOT emitting start: publishChatStreamEvent(sessionKey, sessionId, {...})
         const llmStepId = `system-orientation_llm_call-${lease.generation}-${orientStartedAt}`;
         let orientationLlmStartedAt: number | null = null;
         const orientation = await ensureSessionOriented({
@@ -1805,16 +1813,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           userMessage: content,
           onLlmStart: () => {
             orientationLlmStartedAt = Date.now();
-            publishChatStreamEvent(sessionKey, sessionId, {
-              type: "system_step",
-              step: "orientation_llm_call",
-              stepId: llmStepId,
-              parentId: orientationStepId,
-              status: "started",
-              detail: "Router · tier=fast",
-              startedAt: orientationLlmStartedAt,
-              metadata: { llm: { tier: "fast", source: "Router" } },
-            });
+            // NOT emitting LLM start: publishChatStreamEvent(sessionKey, sessionId, {...})
           },
         });
         const orientEndedAt = Date.now();
@@ -1826,17 +1825,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             : orientation.fallback
               ? `fallback · ${orientation.personaName || "Default"}`
               : "skipped";
-        publishChatStreamEvent(sessionKey, sessionId, {
-          type: "system_step",
-          step: "orientation",
-          stepId: orientationStepId,
-          parentId: diagnosticTurnId,
-          status: "done",
-          elapsedMs: orientElapsedMs,
-          detail: orientDetail,
-          startedAt: orientStartedAt,
-          endedAt: orientEndedAt,
-        });
+        // NOT emitting end: publishChatStreamEvent(sessionKey, sessionId, {...})
         if (orientation.skipped !== "already-oriented") {
           const orientationStepIndex = preSteps.length;
           preSteps.push({
@@ -1899,30 +1888,13 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       } else {
         selectionStartedAt = Date.now();
         modelSelectionStepId = `system-model_selection-${lease.generation}-${selectionStartedAt}`;
-        publishChatStreamEvent(sessionKey, sessionId, {
-          type: "system_step",
-          step: "model_selection",
-          stepId: modelSelectionStepId,
-          parentId: diagnosticTurnId,
-          status: "started",
-          startedAt: selectionStartedAt,
-        });
+        // NOT emitting start: publishChatStreamEvent(sessionKey, sessionId, {...})
         chatRoutingDecision = (await resolveModelCandidates(ACTIVITY_CHAT))[0];
         chatRunLifecycle.assertCurrent(lease);
         selectedAutoTier = chatRoutingDecision.tier;
         selectionEndedAt = Date.now();
         selectionElapsedMs = selectionEndedAt - selectionStartedAt;
-        publishChatStreamEvent(sessionKey, sessionId, {
-          type: "system_step",
-          step: "model_selection",
-          stepId: modelSelectionStepId,
-          parentId: diagnosticTurnId,
-          status: "done",
-          elapsedMs: selectionElapsedMs,
-          detail: `${chatRoutingDecision.tier} · ${chatRoutingDecision.connectorLabel || chatRoutingDecision.provider}`,
-          startedAt: selectionStartedAt,
-          endedAt: selectionEndedAt,
-        });
+        // NOT emitting end: publishChatStreamEvent(sessionKey, sessionId, {...})
       }
       chatModel = chatRoutingDecision.modelString;
       chatRoutingTier = chatRoutingDecision.tier;
@@ -1994,14 +1966,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         }
         return contextRootId;
       };
-      publishChatStreamEvent(sessionKey, sessionId, {
-        type: "system_step",
-        step: "context_assembly",
-        stepId: contextRootId,
-        status: "started",
-        parentId: diagnosticTurnId,
-        startedAt: contextStartedAt,
-      });
+      // NOT emitting context start: publishChatStreamEvent(sessionKey, sessionId, {...})
 
       const onCtxProgress = (
         step: string,
@@ -2014,9 +1979,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           const id = `system-${step}-${lease.generation}-${startedAt}`;
           const parentId = contextParentFor(step);
           contextSpans.set(step, { id, startedAt, parentId });
-          publishChatStreamEvent(sessionKey, sessionId, {
-            type: "system_step", step, stepId: id, status, parentId, startedAt,
-          });
+          // NOT emitting progress start: publishChatStreamEvent(sessionKey, sessionId, {...})
           return;
         }
         const endedAt = Date.now();
@@ -2025,10 +1988,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         const id = span?.id || `system-${step}-${lease.generation}-${endedAt}`;
         const startedAt = span?.startedAt ?? endedAt - (elapsedMs || 0);
         const parentId = span?.parentId ?? contextParentFor(step);
-        publishChatStreamEvent(sessionKey, sessionId, {
-          type: "system_step", step, stepId: id, status, elapsedMs,
-          parentId, startedAt, endedAt,
-        });
+        // NOT emitting progress end: publishChatStreamEvent(sessionKey, sessionId, {...})
         const idx = preSteps.length;
         preSteps.push({ id, name: step, status: "done", elapsedMs, parentId, startedAt, endedAt });
         preChronology.push({ s: "system", i: idx });
@@ -2043,15 +2003,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       chatRunLifecycle.assertCurrent(lease);
       const contextEndedAt = Date.now();
       const contextElapsedMs = contextEndedAt - contextStartedAt;
-      publishChatStreamEvent(sessionKey, sessionId, {
-        type: "system_step",
-        step: "context_assembly",
-        stepId: contextRootId,
-        status: "done",
-        elapsedMs: contextElapsedMs,
-        startedAt: contextStartedAt,
-        endedAt: contextEndedAt,
-      });
+      // NOT emitting end: publishChatStreamEvent(sessionKey, sessionId, {...})
       const contextStepIndex = preSteps.length;
       preSteps.push({
         id: contextRootId,
@@ -2063,6 +2015,20 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         endedAt: contextEndedAt,
       });
       preChronology.push({ s: "system", i: contextStepIndex });
+
+      // ===== ATOMIC BATCH EMIT OF PRE-EXECUTOR STEPS =====
+      // After context assembly completes, emit all pre-executor steps
+      // (turn, orientation, model_selection, context_assembly + children)
+      // as one atomic batch. This ensures the tree is complete and coherent
+      // from the first client snapshot, with no out-of-order parent-child issues.
+      publishChatStreamEvent(sessionKey, sessionId, {
+        type: "pre_executor_batch",
+        diagnosticRunId,
+        diagnosticTurnId,
+        turnStartedAt,
+        preSteps,
+        preChronology,
+      });
 
       chatLog.log(
         `executor START sessionId=${sessionId} messageCount=${messages.length} toolCount=${toolDefs.length}`,
