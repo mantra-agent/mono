@@ -5078,6 +5078,20 @@ export async function runSchemaBootstrap(
       WHERE spawn_status IN ('pending', 'running')`);
   });
 
+  await heal("companies domain", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS companies (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, website TEXT, industry TEXT, location TEXT, notes TEXT,
+        tags JSONB NOT NULL DEFAULT '[]'::jsonb, scope TEXT NOT NULL DEFAULT 'user', owner_user_id TEXT, account_id TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_companies_scope_owner ON companies(scope, owner_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_companies_name ON companies(name)`);
+    await pool.query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS company_id TEXT`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_persons_company_id ON persons(company_id)`);
+  });
+
   await heal("persons last_viewed_at column", async () => {
     await pool.query(
       `ALTER TABLE persons ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMPTZ`,

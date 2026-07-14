@@ -136,6 +136,7 @@ export interface Person {
   photo?: string;
   birthday?: string;
   company?: string;
+  companyId?: string;
   role?: string;
   professionalRelations?: string[];
   relation?: string;
@@ -167,6 +168,7 @@ export interface PersonIndexEntry {
   nicknames: string[];
   cabinetLevel: string;
   company?: string;
+  companyId?: string;
   role?: string;
   tags: string[];
   lastInteractionDate?: string;
@@ -591,6 +593,7 @@ function rowToPerson(row: Record<string, any>): Person {
     photo: row.photo || undefined,
     birthday: row.birthday || undefined,
     company: row.company || undefined,
+    companyId: row.companyId || row.company_id || undefined,
     role: row.role || undefined,
     professionalRelations: Array.isArray(row.professionalRelations || row.professional_relations) ? (row.professionalRelations || row.professional_relations) : [],
     relation: row.relation || undefined,
@@ -699,6 +702,7 @@ export class PeopleStorage {
         photo: person.photo || null,
         birthday: person.birthday || null,
         company: person.company || null,
+        companyId: person.companyId || null,
         role: person.role || null,
         professionalRelations: person.professionalRelations || [],
         relation: person.relation || null,
@@ -731,6 +735,7 @@ export class PeopleStorage {
           photo: person.photo || null,
           birthday: person.birthday || null,
           company: person.company || null,
+          companyId: person.companyId || null,
           role: person.role || null,
           professionalRelations: person.professionalRelations || [],
           relation: person.relation || null,
@@ -852,6 +857,7 @@ export class PeopleStorage {
       photo: data.photo,
       birthday: data.birthday,
       company: data.company,
+      companyId: data.companyId,
       role: data.role,
       professionalRelations: data.professionalRelations || [],
       relation: data.relation,
@@ -1209,6 +1215,7 @@ export class PeopleStorage {
       nicknames: person.nicknames || [],
       cabinetLevel: person.cabinetLevel,
       company: person.company,
+      companyId: person.companyId,
       role: person.role,
       tags: person.tags || [],
       lastInteractionDate: sorted[0]?.date,

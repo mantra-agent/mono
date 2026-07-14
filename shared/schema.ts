@@ -522,6 +522,28 @@ export const principles = pgTable("principles", {
 
 export type PrincipleRow = typeof principles.$inferSelect;
 
+// ── Companies ─────────────────────────────────────────────────────
+export const companies = pgTable("companies", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  website: text("website"),
+  industry: text("industry"),
+  location: text("location"),
+  notes: text("notes"),
+  tags: jsonb("tags").notNull().default([]),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  index("idx_companies_scope_owner").on(table.scope, table.ownerUserId),
+  index("idx_companies_name").on(table.name),
+]);
+
+export type CompanyRow = typeof companies.$inferSelect;
+
 // ── Persons ───────────────────────────────────────────────────────
 export const persons = pgTable("persons", {
   id: text("id").primaryKey(),
@@ -531,6 +553,7 @@ export const persons = pgTable("persons", {
   photo: text("photo"),
   birthday: text("birthday"),
   company: text("company"),
+  companyId: text("company_id"),
   role: text("role"),
   professionalRelations: jsonb("professional_relations").notNull().default([]),
   relation: text("relation"),
@@ -560,6 +583,7 @@ export const persons = pgTable("persons", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_persons_cabinet_level").on(table.cabinetLevel),
+  index("idx_persons_company_id").on(table.companyId),
   index("idx_persons_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_persons_vault").on(table.vaultId),
 ]);

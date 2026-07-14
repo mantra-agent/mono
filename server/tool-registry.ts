@@ -411,6 +411,27 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: ["action"],
     },
   },
+  companies: {
+    description: "Manage companies and company membership. Actions: list, get, create, update, delete, add_person, remove_person. Use canonical @company:id references.",
+    category: "communication",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "get", "create", "update", "delete", "add_person", "remove_person"] },
+        id: { type: "string", description: "Company ID or exact name" },
+        query: { type: "string", description: "Company search query" },
+        name: { type: "string", description: "Company name" },
+        description: { type: "string", description: "Company description" },
+        website: { type: "string", description: "Company website" },
+        industry: { type: "string", description: "Company industry" },
+        location: { type: "string", description: "Company location" },
+        notes: { type: "string", description: "Company notes" },
+        tags: { type: "array", items: { type: "string" }, description: "Company tags" },
+        personId: { type: "string", description: "Person ID for add_person/remove_person" },
+      },
+      required: ["action"],
+    },
+  },
   library: {
     description: "Manage Library wiki pages and Notes scratchpad. Actions: list_library_pages, get_library_page, resolve_parent, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate. Any page can have child pages, optional tags, and an optional status. Use 'browse_tree' or 'tree' to see the full page hierarchy as an indented outline. Use canonical @page:slug syntax in messages to link to library pages. Legacy [page:slug] syntax is accepted during migration. Prefer edit_library_page over update_library_page for targeted changes to existing page content — it avoids re-transmitting the entire document.",
     category: "knowledge",

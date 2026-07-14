@@ -4663,6 +4663,45 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
   },
 
+  async companies(args) {
+    try {
+      const { companyStorage } = await import("./company-storage");
+      const action = String(args.action || "list");
+      if (action === "list") return { result: JSON.stringify(await companyStorage.list(args.query), null, 2) };
+      const company = args.id ? await companyStorage.resolve(String(args.id)) : null;
+      if (action === "get") {
+        if (!company) return { result: "Company not found", error: true };
+        return { result: JSON.stringify({ ...company, people: await companyStorage.listPeople(company.id) }, null, 2) };
+      }
+      if (action === "create") {
+        if (!args.name) return { result: "Missing company name", error: true };
+        const created = await companyStorage.create(args);
+        return { result: `Company created: ${created.name} @company:${created.id}` };
+      }
+      if (!company) return { result: "Company not found. Provide id or exact name.", error: true };
+      if (action === "update") {
+        const updated = await companyStorage.update(company.id, args);
+        return { result: `Company updated: ${updated.name} @company:${updated.id}` };
+      }
+      if (action === "delete") {
+        await companyStorage.delete(company.id);
+        return { result: `Company deleted: ${company.name}` };
+      }
+      if (!args.personId) return { result: "Missing personId", error: true };
+      if (action === "add_person") {
+        await companyStorage.addPerson(company.id, String(args.personId));
+        return { result: `Added @person:${args.personId} to @company:${company.id}` };
+      }
+      if (action === "remove_person") {
+        await companyStorage.removePerson(company.id, String(args.personId));
+        return { result: `Removed @person:${args.personId} from @company:${company.id}` };
+      }
+      return { result: `Unknown companies action: ${action}`, error: true };
+    } catch (err: any) {
+      return { result: `Companies tool error: ${err.message}`, error: true };
+    }
+  },
+
   async people(args) {
     const action = args.action || "list";
     const handler = peopleSubHandlers[action];
@@ -15318,6 +15357,7 @@ function validateToolArgs(
 
 const SIDE_EFFECT_ONLY_ACTIONS: Record<string, Set<string>> = {
   session: new Set(["set_status", "end", "send_message"]),
+  companies: new Set(["create", "update", "delete", "add_person", "remove_person"]),
   people: new Set(["create", "add_note", "update_note", "delete_note", "log_interaction", "update_interaction", "delete_interaction", "set_daily_contact"]),
   calendar: new Set(["create", "update", "delete"]),
   memory: new Set(["write"]),
