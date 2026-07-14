@@ -795,3 +795,62 @@ export async function autoMergeInteractions(
     });
   }
 }
+
+export interface SearchImportCandidatesOptions {
+  query?: string;      // partial match on email or name
+  candidateId?: string; // exact email / candidateId
+  decision?: CandidateDecision; // defaults to "pending" if omitted
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Search import candidates by name (partial) or email (partial), or resolve a
+ * specific candidateId exactly. Always scoped to the current principal.
+ * Read-only — does not mutate any candidate.
+ */
+export async function searchCandidatesFromDb(options: SearchImportCandidatesOptions = {}): Promise<StoredImportCandidate[]> {
+  await ensureLegacyFileMigratedIfNeeded();
+
+  const limit = Math.max(1, Math.min(options.limit ?? 25, 100));
+  const offset = Math.max(0, options.offset ?? 0);
+
+  // Build WHERE clause:  ownership predicate + optional filters
+  const ownedPredicate = visibleCandidatePredicate();
+  let wherePredicate: ReturnType<typeof visibleCandidatePredicate>;
+
+  if (options.candidateId) {
+    // Exact match on email column (candidateId IS the normalized email)
+    const id = normalizeEmail(options.candidateId);
+    wherePredicate = sql`${ownedPredicate} AND ${peopleImportCandidates.email} = ${id}`;
+  } else if (options.query?.trim()) {
+    const pattern = `%${options.query.trim().toLowerCase()}%`;
+    // Match on email column OR name field inside JSONB
+    wherePredicate = sql`${ownedPredicate} AND (
+      ${peopleImportCandidates.email} ILIKE ${pattern}
+      OR lower(${peopleImportCandidates.candidate}->>'name') LIKE ${pattern}
+      OR lower(${peopleImportCandidates.candidate}->>'displayName') LIKE ${pattern}
+      OR lower(${peopleImportCandidates.candidate}->>'givenName') LIKE ${pattern}
+      OR lower(${peopleImportCandidates.candidate}->>'familyName') LIKE ${pattern}
+    )`;
+  } else {
+    wherePredicate = ownedPredicate;
+  }
+
+  // Apply decision filter (default to "pending" so the result set is actionable)
+  const decision = options.decision ?? "pending";
+  const finalPredicate = sql`${wherePredicate} AND ${peopleImportCandidates.decision} = ${decision}`;
+
+  const rows = await db
+    .select()
+    .from(peopleImportCandidates)
+    .where(finalPredicate)
+    .orderBy(
+      sql`(${peopleImportCandidates.candidate}->>'sentCount')::int + (${peopleImportCandidates.candidate}->>'receivedCount')::int DESC NULLS LAST`,
+      sql`${peopleImportCandidates.lastInteractionAt} DESC NULLS LAST`,
+    )
+    .limit(limit)
+    .offset(offset);
+
+  return rows.map(rowToCandidate);
+}

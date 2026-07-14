@@ -363,13 +363,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   people: {
-    description: "Manage personal contacts — query, search, get details, check outreach agenda, add notes, log interactions, update or delete interactions. Actions: list, query, get_many, get, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, create, update (quickSummary, cabinetLevel, company, role, relation, familiarity, trust, tags), scan_imports, scan_ignored, list/get/find import candidates, add/merge/skip/undo decisions, and preview/apply/get batches. Use canonical @person:id syntax in messages to link to people. Legacy [person:id] syntax is accepted during migration.",
+    description: "Manage personal contacts — query, search, get details, check outreach agenda, add notes, log interactions, update or delete interactions. Actions: list, query, get_many, get, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, create, update, scan_imports, scan_ignored, list/get/find import candidates, search_import_candidates (search pending import candidates by name, exact or partial email, and candidate ID without loading the entire queue — returns exact candidate IDs, summaries, and supports pagination; use query param for name/email partial match, candidateId for exact lookup, decision to filter by status, limit/offset for pagination), add/merge/skip/undo decisions, and preview/apply/get batches. Use canonical @person:id syntax in messages to link to people. Legacy [person:id] syntax is accepted during migration.",
     category: "communication",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list", "query", "get_many", "get", "search", "agenda", "add_note", "update_note", "delete_note", "log_interaction", "get_interactions", "update_interaction", "delete_interaction", "create", "update", "scan_imports", "scan_ignored", "list_import_candidates", "get_import_candidate", "find_import_matches", "add_import_candidate", "merge_import_candidate", "skip_import_candidate", "undo_import_decision", "preview_import_batch", "apply_import_batch", "get_import_batch"], description: "The action to perform" },
+        action: { type: "string", enum: ["list", "query", "get_many", "get", "search", "agenda", "add_note", "update_note", "delete_note", "log_interaction", "get_interactions", "update_interaction", "delete_interaction", "create", "update", "scan_imports", "scan_ignored", "search_import_candidates", "list_import_candidates", "get_import_candidate", "find_import_matches", "add_import_candidate", "merge_import_candidate", "skip_import_candidate", "undo_import_decision", "preview_import_batch", "apply_import_batch", "get_import_batch"], description: "The action to perform" },
         id: { type: "string", description: "Person ID or name (resolved automatically)" },
         query: { type: "string", description: "Person name or search term" },
         ids: { type: "array", items: { type: "string" }, description: "Person IDs for get_many (max 100)" },

@@ -7,7 +7,9 @@ import {
   getCandidateByEmail,
   getPendingCandidatesFromDb,
   isSyntheticContactEmail,
+  searchCandidatesFromDb,
   updateCandidateDecision,
+  type CandidateDecision,
   type ImportContactInfo,
   type StoredImportCandidate,
 } from "./import-queue";
@@ -427,4 +429,27 @@ export async function applyImportBatch(batchId: string, token: string, idempoten
 export async function getImportBatch(batchId: string) {
   const principal = getCurrentPrincipal();
   return (await db.select().from(peopleImportBatches).where(combineWithVisibleScope(principal, batchScope, eq(peopleImportBatches.id, batchId))).limit(1))[0] || null;
+}
+
+export interface SearchImportCandidatesOptions {
+  query?: string;
+  candidateId?: string;
+  decision?: CandidateDecision;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Search import candidates by name or email without loading the full queue.
+ * Read-only. Preserves user scoping via visibleCandidatePredicate.
+ */
+export async function searchImportCandidates(options: SearchImportCandidatesOptions = {}): Promise<ImportCandidateRecord[]> {
+  const candidates = await searchCandidatesFromDb({
+    query: options.query,
+    candidateId: options.candidateId,
+    decision: options.decision,
+    limit: options.limit,
+    offset: options.offset,
+  });
+  return candidates.map(candidate => ({ candidateId: candidateIdFor(candidate), candidate }));
 }
