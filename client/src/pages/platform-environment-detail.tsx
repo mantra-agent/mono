@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useLocation, useParams } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Loader2, Check, X, RefreshCw, Globe, AlertCircle, Rocket, KeyRound, Waypoints, Settings2, ChevronRight, ExternalLink, Play, History, ShieldCheck, Trash2, FileText, Search, Cable, Link2, User, FolderGit2, GitBranch, GitMerge, Zap, Code2, Server, Hash, Layers, Cpu, PenTool, ClipboardList, PackageOpen, type LucideIcon } from "lucide-react";
@@ -38,6 +38,7 @@ import {
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { markEnvironmentBuildSeen } from "@/lib/environment-build-seen";
 import { BuildStatusPanel, detailedStatusLabel, familyClasses, relativeTime, statusFamily, type DevDeploymentSummary } from "@/components/build-status-panel";
 import { DevPublishTab } from "@/components/dev-publish-tab";
 import { MobileBuildCard } from "@/components/mobile-build-card";
@@ -2036,6 +2037,17 @@ export default function PlatformEnvironmentDetailPage() {
     queryKey: ["/api/platforms/environments", environmentId, "details"],
     enabled: Number.isFinite(environmentId),
   });
+
+  const { data: buildStatus } = useQuery<BuildLifecycleStatus>({
+    queryKey: ["/api/platforms/environments", environmentId, "build-status"],
+    enabled: Number.isFinite(environmentId),
+    refetchInterval: (query) => query.state.data?.activity.state === "building" ? 8000 : false,
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    markEnvironmentBuildSeen(environmentId, buildStatus);
+  }, [environmentId, buildStatus]);
 
   const { data: platformTree = [] } = useQuery<PlatformTree[]>({ queryKey: ["/api/platforms"] });
   const sourceEnvironmentId = data
