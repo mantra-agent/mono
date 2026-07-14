@@ -2049,6 +2049,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             result?: unknown;
             error?: string;
             status: string;
+            parentId?: string;
           }>
         | undefined;
       if (result.toolCalls && result.toolCalls.length > 0) {
@@ -2062,6 +2063,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
               ? String(tc.error)
               : undefined,
           status: tc.error ? "error" : "done",
+          parentId: tc.parentId,
         }));
         for (const tc of persistedToolCalls) {
           chatLog.log(

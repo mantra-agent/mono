@@ -123,7 +123,7 @@ export interface ExecutorRunResult {
   status: "succeeded" | "failed" | "yielded";
   content: string;
   thinking: string;
-  toolCalls: Array<{ id?: string; name: string; args: Record<string, unknown>; result: string; error?: boolean; durationMs: number }>;
+  toolCalls: Array<{ id?: string; name: string; args: Record<string, unknown>; result: string; error?: boolean; durationMs: number; parentId?: string }>;
   model: string;
   provider: string;
   usage: { inputTokens: number; outputTokens: number; totalTokens: number };
@@ -1310,7 +1310,7 @@ export class AgentExecutor extends EventEmitter {
         const cachedArgs = ctx.toolCallArgsCache.get(toolCallId || "");
         if (toolCallId) ctx.toolCallArgsCache.delete(toolCallId);
         const toolIdx = ctx.resolvedToolCalls.length;
-        ctx.resolvedToolCalls.push({ id: toolCallId, name: normalizedName || event.toolName, args: matchingCall?.input || cachedArgs || {}, result: event.result, error: event.error, durationMs: 0 });
+        ctx.resolvedToolCalls.push({ id: toolCallId, name: normalizedName || event.toolName, args: matchingCall?.input || cachedArgs || {}, result: event.result, error: event.error, durationMs: 0, parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
         // Chronology: record tool entry pointing to resolvedToolCalls index
         ctx.segmentChronology.push({ s: "tool", i: toolIdx });
         ctx.publish("tool_result", { toolCallId, toolName: normalizedName, result: event.result, error: event.error ? event.result : undefined });
@@ -1508,7 +1508,7 @@ export class AgentExecutor extends EventEmitter {
       });
       const boundedToolResult = { ...toolResult, result: boundedResult };
       const toolIdx = ctx.resolvedToolCalls.length;
-      ctx.resolvedToolCalls.push({ id: tc.id, name: tc.name, args: tc.input, result: boundedToolResult.result, error: boundedToolResult.error, durationMs });
+      ctx.resolvedToolCalls.push({ id: tc.id, name: tc.name, args: tc.input, result: boundedToolResult.result, error: boundedToolResult.error, durationMs, parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
       // Chronology: record tool entry pointing to resolvedToolCalls index
       ctx.segmentChronology.push({ s: "tool", i: toolIdx });
       sideEffectFlags.push(!!toolResult.sideEffectOnly);

@@ -698,4 +698,5 @@ export interface ToolCallInfo {
   toolCallId?: string;
   result?: unknown;
   error?: string | Record<string, unknown>;
+  parentId?: string;
 }
