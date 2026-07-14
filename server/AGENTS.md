@@ -71,7 +71,7 @@ Key files:
 
 Single boundary: all text LLM calls must go through `model-client.ts`. Callers pass intent (activity, source, run/session/skill/tool/plan metadata); `model-client.ts` resolves routing through `job-profiles.ts`, executes the provider adapter, and records inference through `cost-tracker.ts`. Direct provider/client calls for text LLM work are architectural violations.
 
-Routing policy lives in `model_profiles` via `job-profiles.ts`. Provider secrets are capability, not policy. Stored profiles must not silently fall back to Claude or any other provider because credentials exist. Missing/malformed activity routing fails loudly unless an explicit configured fallback is present. Profile write routes must call `invalidateModelProfilesCache(reason)` and return the active config hash/version.
+Routing policy lives in `model-routing.ts` and `model-connectors.ts`. The active persona selects one semantic tier, defaulting to Balanced when no persona is active. Enabled model connectors are attempted in one global priority order, and each connector translates that unchanged tier to its provider model. Activity is audit metadata only. Connector failures are recorded in the boundary audit and may fall through only before visible stream output.
 
 Direct model overrides are exceptional and must include `overrideReason`. They are tracked as explicit overrides with routing metadata. Build verification guards that the model boundary remains compilable.
 

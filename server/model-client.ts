@@ -1,7 +1,8 @@
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { randomUUID } from "node:crypto";
-import { resolveModelForActivity, ACTIVITY_FRAMING, ACTIVITY_CHAT, type ActivityId, type ModelRoutingDecision } from "./job-profiles";
+import { ACTIVITY_FRAMING, ACTIVITY_CHAT, type ActivityId } from "./job-profiles";
+import { resolveModelCandidates, appendFailedAttempt, type ModelRoutingDecision } from "./model-routing";
 import { getMaxOutputTokens, getModel, supportsSelectableEffort } from "./model-registry";
 import { resolveOpenAIReasoningEffort, type OpenAIReasoningEffort } from "./thinking-config";
 import { withTimeout, STREAM_FINAL_MESSAGE_TIMEOUT_MS } from "./timeout";
@@ -23,7 +24,8 @@ onSecretChange((name) => {
   }
 });
 
-function getOpenAIClient(): OpenAI {
+function getOpenAIClient(apiKeyOverride?: string): OpenAI {
+  if (apiKeyOverride) return new OpenAI({ apiKey: apiKeyOverride });
   if (!_openaiClient) {
     const apiKey = getSecretSync("OPENAI_API_KEY");
     if (!apiKey) {
@@ -257,7 +259,8 @@ function buildCodexInput(messages: Array<{ role: string; content: unknown; toolC
   return { instructions, input };
 }
 
-function getAnthropicClient(): Anthropic {
+function getAnthropicClient(apiKeyOverride?: string): Anthropic {
+  if (apiKeyOverride) return new Anthropic({ apiKey: apiKeyOverride });
   if (!_anthropicClient) {
     _anthropicClient = new Anthropic({
       apiKey: getSecretSync("ANTHROPIC_API_KEY"),
@@ -371,6 +374,11 @@ function serializeModelError(err: unknown): Record<string, unknown> {
   };
 }
 
+function auditRouting(routing: ModelRoutingDecision): Omit<ModelRoutingDecision, "credential" | "fallbackCandidates"> {
+  const { credential: _credential, fallbackCandidates: _fallbackCandidates, ...safe } = routing;
+  return safe;
+}
+
 async function recordInference(params: {
   startTime: number;
   routing: ModelRoutingDecision;
@@ -415,7 +423,7 @@ async function recordInference(params: {
         routingSource: params.routing.source,
         tier: params.routing.tier,
         status: params.status,
-        routing: params.routing,
+        routing: auditRouting(params.routing),
         error: params.error,
         trackedAtBoundary: true,
       },
@@ -439,7 +447,28 @@ function enrichModelError(err: unknown, routing: ModelRoutingDecision, metadata?
 
 export async function chatCompletion(options: ChatCompletionOptions): Promise<ChatCompletionResult> {
   const activity = options.activity || options.metadata?.activity || ACTIVITY_FRAMING;
-  const routing = options.routingDecision ?? resolveModelForActivity(activity, { model: options.model, overrideReason: options.overrideReason });
+  const candidates = options.routingDecision
+    ? [options.routingDecision, ...(options.routingDecision.fallbackCandidates || [])]
+    : await resolveModelCandidates(activity, { model: options.model, overrideReason: options.overrideReason });
+  let failures = candidates[0]?.attempts ?? [];
+  let lastError: unknown;
+  for (let index = 0; index < candidates.length; index++) {
+    const routing = { ...candidates[index], attempts: failures.length ? failures : candidates[index].attempts };
+    try {
+      return await executeChatCompletion({ ...options, routingDecision: routing }, routing);
+    } catch (error) {
+      lastError = error;
+      if (isAbortError(error, options.signal)) throw error;
+      failures = appendFailedAttempt(routing, error);
+      const next = candidates[index + 1];
+      if (next) log.warn(`model connector fallback connector=${routing.connectorId} tier=${routing.tier} model=${routing.model} nextConnector=${next.connectorId} nextModel=${next.model} failure=${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  throw lastError;
+}
+
+async function executeChatCompletion(options: ChatCompletionOptions, routing: ModelRoutingDecision): Promise<ChatCompletionResult> {
+  const activity = options.activity || options.metadata?.activity || ACTIVITY_FRAMING;
   const { provider, model } = routing;
   const msgCount = options.messages.length;
   const start = Date.now();
@@ -451,14 +480,14 @@ export async function chatCompletion(options: ChatCompletionOptions): Promise<Ch
 
   try {
     result = provider === "anthropic"
-      ? await anthropicCompletion(model, options)
+      ? await anthropicCompletion(model, { ...options, routingDecision: routing })
       : provider === "claude-cli"
-        ? await claudeCliCompletion(model, options)
+        ? await claudeCliCompletion(model, { ...options, routingDecision: routing })
         : provider === "openai-subscription"
           ? await openaiSubscriptionCompletion(model, options)
-          : await openaiCompletion(model, options);
+          : await openaiCompletion(model, { ...options, routingDecision: routing });
 
-    result = { ...result, metadata: { ...(result.metadata || {}), routing, trackedAtBoundary: true } };
+    result = { ...result, metadata: { ...(result.metadata || {}), routing: auditRouting(routing), trackedAtBoundary: true } };
     const elapsed = Date.now() - start;
     const usage = result.usage;
     log.debug(`chatCompletion done in ${elapsed}ms provider=${provider} model=${model} activity=${routing.activity} tier=${routing.tier} configHash=${routing.configHash} prompt=${usage?.promptTokens ?? "?"} completion=${usage?.completionTokens ?? "?"} total=${usage?.totalTokens ?? "?"}`);
@@ -467,6 +496,7 @@ export async function chatCompletion(options: ChatCompletionOptions): Promise<Ch
   } catch (err: any) {
     const elapsed = Date.now() - start;
     const status: InferenceStatus = isAbortError(err, options.signal) ? "aborted" : "error";
+    routing.attempts = appendFailedAttempt(routing, err);
     const errorMetadata = serializeModelError(err);
     log.error(`chatCompletion ${status.toUpperCase()} in ${elapsed}ms provider=${provider} model=${model} activity=${routing.activity} tier=${routing.tier} configHash=${routing.configHash}: ${err.message}`);
     await recordInference({ startTime: start, routing, metadata: options.metadata, status, usage: result?.usage, requestContent, responseContent: result?.content, error: errorMetadata, signal: options.signal });
@@ -485,7 +515,7 @@ async function openaiCompletion(model: string, options: ChatCompletionOptions): 
     return openaiResponsesCompletion(model, options);
   }
 
-  const client = getOpenAIClient();
+  const client = getOpenAIClient(options.routingDecision?.credential);
 
   const params: any = {
     model,
@@ -529,7 +559,7 @@ async function openaiCompletion(model: string, options: ChatCompletionOptions): 
  * message and tool converters shared with the Codex subscription path.
  */
 async function openaiResponsesCompletion(model: string, options: ChatCompletionOptions): Promise<ChatCompletionResult> {
-  const client = getOpenAIClient();
+  const client = getOpenAIClient(options.routingDecision?.credential);
   const { instructions, input } = buildCodexInput(options.messages);
 
   const params: Record<string, any> = {
@@ -981,7 +1011,7 @@ async function claudeCliCompletion(model: string, options: ChatCompletionOptions
 }
 
 async function anthropicCompletion(model: string, options: ChatCompletionOptions): Promise<ChatCompletionResult> {
-  const client = getAnthropicClient();
+  const client = getAnthropicClient(options.routingDecision?.credential);
 
   let systemPrompt: string | undefined;
   const messages: Array<{ role: "user" | "assistant"; content: string | Array<any> }> = [];
@@ -1084,8 +1114,8 @@ async function anthropicCompletion(model: string, options: ChatCompletionOptions
   };
 }
 
-export function getModelInfo(activity: ActivityId = ACTIVITY_FRAMING): { provider: string; model: string; full: string } {
-  const full = resolveModelForActivity(activity).modelString;
+export async function getModelInfo(activity: ActivityId = ACTIVITY_FRAMING): Promise<{ provider: string; model: string; full: string }> {
+  const full = (await resolveModelCandidates(activity))[0].modelString;
   const { provider, model } = parseModelString(full);
   log.debug(`getModelInfo activity=${activity} provider=${provider} model=${model}`);
   return { provider, model, full };
@@ -1169,7 +1199,33 @@ export type StreamEvent =
 
 export async function* chatCompletionStream(options: ChatCompletionStreamOptions): AsyncGenerator<StreamEvent> {
   const activity = options.activity || options.metadata?.activity || ACTIVITY_CHAT;
-  const routing = options.routingDecision ?? resolveModelForActivity(activity, { model: options.model, overrideReason: options.overrideReason });
+  const candidates = options.routingDecision
+    ? [options.routingDecision, ...(options.routingDecision.fallbackCandidates || [])]
+    : await resolveModelCandidates(activity, { model: options.model, overrideReason: options.overrideReason });
+  let failures = candidates[0]?.attempts ?? [];
+  let lastError: unknown;
+  for (let index = 0; index < candidates.length; index++) {
+    const routing = { ...candidates[index], attempts: failures.length ? failures : candidates[index].attempts };
+    let emittedContent = false;
+    try {
+      for await (const event of executeChatCompletionStream({ ...options, routingDecision: routing }, routing)) {
+        if (event.type === "text_delta" || event.type === "thinking_delta" || event.type === "tool_use" || event.type === "tool_use_start") emittedContent = true;
+        yield event;
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+      if (isAbortError(error, options.signal) || emittedContent) throw error;
+      failures = appendFailedAttempt(routing, error);
+      const next = candidates[index + 1];
+      if (next) log.warn(`model stream connector fallback connector=${routing.connectorId} tier=${routing.tier} model=${routing.model} nextConnector=${next.connectorId} nextModel=${next.model} failure=${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  throw lastError;
+}
+
+async function* executeChatCompletionStream(options: ChatCompletionStreamOptions, routing: ModelRoutingDecision): AsyncGenerator<StreamEvent> {
+  const activity = options.activity || options.metadata?.activity || ACTIVITY_CHAT;
   const { provider, model } = routing;
   const toolCount = options.tools?.length ?? 0;
   const msgCount = options.messages.length;
@@ -1261,7 +1317,7 @@ export async function* chatCompletionStream(options: ChatCompletionStreamOptions
         ...event,
         metadata: {
           ...(event.metadata || {}),
-          routing,
+          routing: auditRouting(routing),
           routingSource: routing.source,
           tier: routing.tier,
           trackedAtBoundary: true,
@@ -1287,6 +1343,7 @@ export async function* chatCompletionStream(options: ChatCompletionStreamOptions
   await recordInference({ startTime: t0, routing, metadata: options.metadata, status: "success", usage: streamUsage, requestContent, responseContent, signal: options.signal });
   } catch (err: unknown) {
     const status: InferenceStatus = isAbortError(err, options.signal) ? "aborted" : (responseContent ? "partial" : "error");
+    routing.attempts = appendFailedAttempt(routing, err);
     await recordInference({ startTime: t0, routing, metadata: options.metadata, status, usage: streamUsage, requestContent, responseContent, error: serializeModelError(err), signal: options.signal });
     throw enrichModelError(err, routing, options.metadata);
   }
@@ -1651,7 +1708,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
 
 
 async function* anthropicStream(model: string, options: ChatCompletionStreamOptions): AsyncGenerator<StreamEvent> {
-  const client = getAnthropicClient();
+  const client = getAnthropicClient(options.routingDecision?.credential);
   const buildStart = Date.now();
 
   let systemPrompt: string | undefined;
@@ -1910,7 +1967,7 @@ async function* openaiResponsesStream(model: string, options: ChatCompletionStre
   let eventCount = 0;
 
   try {
-    const client = getOpenAIClient();
+    const client = getOpenAIClient(options.routingDecision?.credential);
     const { instructions, input } = buildCodexInput(options.messages);
 
     const params: Record<string, any> = {
@@ -2037,7 +2094,7 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
     return;
   }
 
-  const client = getOpenAIClient();
+  const client = getOpenAIClient(options.routingDecision?.credential);
   const buildStart = Date.now();
 
   const messages: Array<any> = options.messages.flatMap(m => {
@@ -2228,7 +2285,7 @@ export async function generateImageViaSubscription(
   }
 ): Promise<{ buffer: Buffer; format: string }> {
   const accessToken = await getOpenAISubscriptionAccessToken();
-  const modelString = resolveModelForActivity(ACTIVITY_FRAMING).modelString;
+  const modelString = (await resolveModelCandidates(ACTIVITY_FRAMING))[0].modelString;
   const { model: rawModel } = parseModelString(modelString);
   const modelInfo = getModel(rawModel);
   const codexModel = modelInfo?.codexModelId ?? "gpt-5.5";
@@ -2361,7 +2418,7 @@ export async function editImageViaSubscription(
   options?: { size?: string; quality?: string; outputFormat?: string; signal?: AbortSignal }
 ): Promise<{ buffer: Buffer; format: string }> {
   const accessToken = await getOpenAISubscriptionAccessToken();
-  const modelString = resolveModelForActivity(ACTIVITY_FRAMING).modelString;
+  const modelString = (await resolveModelCandidates(ACTIVITY_FRAMING))[0].modelString;
   const { model: rawModel } = parseModelString(modelString);
   const modelInfo = getModel(rawModel);
   const codexModel = modelInfo?.codexModelId ?? "gpt-5.5";

@@ -8,7 +8,8 @@ import { safeStringify } from "./utils/safe-stringify";
 
 const log = createLogger("Executor");
 import { writeJournal, publishJournalToUI, type JournalEntry } from "./chat-journal";
-import { getThinkingForActivity, ACTIVITY_CHAT, ACTIVITY_FRAMING, resolveModelForActivity, type ActivityId, type ModelRoutingDecision } from "./job-profiles";
+import { ACTIVITY_CHAT, ACTIVITY_FRAMING, type ActivityId } from "./job-profiles";
+import { resolveModelCandidates, type ModelRoutingDecision } from "./model-routing";
 import { resolveThinkingConfig, thinkingBudgetToTier, type ResolvedThinking, type ThinkingTierConfig } from "./thinking-config";
 import { getThinkingInfo, getModelName } from "./model-registry";
 // logApiCall import removed — inference recording is handled at the model-client
@@ -1745,15 +1746,15 @@ export class AgentExecutor extends EventEmitter {
     this.activeRuns.set(runId, { abort: abortController, startedAt: startTime, lastActivityAt: startTime, sessionId: options.sessionId, model: undefined, activity: options.activity || ACTIVITY_CHAT, sessionKey: options.sessionKey, requestContent });
 
     const activityForRouting = options.activity || ACTIVITY_CHAT;
-    const routingDecision = resolveModelForActivity(activityForRouting, options.model
+    const routingDecision = (await resolveModelCandidates(activityForRouting, options.model
       ? { model: options.model, overrideReason: "executor caller requested explicit model override" }
-      : undefined);
+      : undefined))[0];
     const modelString = routingDecision.modelString;
     const tierThinking: ThinkingTierConfig = options.thinking
       ? options.thinking
       : options.thinkingBudget !== undefined
       ? thinkingBudgetToTier(options.thinkingBudget)
-      : getThinkingForActivity(activityForRouting);
+      : { type: "disabled" };
     const parsedModelForResolve = modelString.includes("/") ? modelString.split("/").slice(1).join("/") : modelString;
     const thinking = resolveThinkingConfig(parsedModelForResolve, tierThinking);
     const routingTier = options.routingTier || routingDecision.tier;

@@ -1,0 +1,141 @@
+import { createHash } from "node:crypto";
+import { getSecretSync } from "./secrets-store";
+import { personaStorage } from "./file-storage/persona-storage";
+import { getProviderCredential } from "./provider-credential-store";
+import { listModelConnectors, type ModelConnector } from "./model-connectors";
+import { semanticTierSchema, type SemanticTier } from "@shared/model-connectors";
+import type { ActivityId } from "./job-profiles";
+
+export interface ConnectorAttempt {
+  connectorId: number;
+  connectorLabel: string;
+  connectorOrder: number;
+  provider: string;
+  tier: SemanticTier;
+  model: string;
+  outcome: "selected" | "skipped" | "failed";
+  reason?: string;
+}
+
+export interface ModelRoutingDecision {
+  activity: ActivityId;
+  tier: SemanticTier | "explicit-override";
+  model: string;
+  provider: string;
+  modelString: string;
+  configVersion: string;
+  configHash: string;
+  explicitOverride: boolean;
+  overrideReason?: string;
+  providerEnabled: boolean;
+  source: "persona" | "default-balanced" | "explicit-override";
+  personaId?: number;
+  connectorId?: number;
+  connectorLabel?: string;
+  connectorOrder?: number;
+  attemptIndex: number;
+  attempts: ConnectorAttempt[];
+  credential?: string;
+  fallbackCandidates?: ModelRoutingDecision[];
+}
+
+export class ModelRoutingError extends Error {
+  code = "MODEL_ROUTING_ERROR";
+  constructor(message: string, public routing?: Partial<ModelRoutingDecision>) {
+    super(message);
+    this.name = "ModelRoutingError";
+  }
+}
+
+function splitModel(modelString: string): { provider: string; model: string } {
+  const slash = modelString.indexOf("/");
+  return slash < 0
+    ? { provider: "openai", model: modelString }
+    : { provider: modelString.slice(0, slash), model: modelString.slice(slash + 1) };
+}
+
+function legacyCredential(provider: string): string | null {
+  if (provider === "anthropic") return getSecretSync("ANTHROPIC_API_KEY") || null;
+  if (provider === "openai") return getSecretSync("OPENAI_API_KEY") || null;
+  if (provider === "claude-cli") return getSecretSync("CLAUDE_CODE_OAUTH_TOKEN") || null;
+  return null;
+}
+
+async function connectorCredential(connector: ModelConnector): Promise<string | null> {
+  return connector.credentialRef
+    ? await getProviderCredential(connector.credentialRef)
+    : legacyCredential(connector.provider);
+}
+
+export async function resolveSemanticTier(): Promise<{ tier: SemanticTier; source: "persona" | "default-balanced"; personaId?: number }> {
+  const persona = await personaStorage.getActiveOrNull();
+  if (!persona) return { tier: "balanced", source: "default-balanced" };
+  const parsed = semanticTierSchema.safeParse(persona.semanticTier);
+  return {
+    tier: parsed.success ? parsed.data : "balanced",
+    source: "persona",
+    personaId: persona.id,
+  };
+}
+
+export async function resolveModelCandidates(
+  activity: ActivityId,
+  options: { model?: string; overrideReason?: string } = {},
+): Promise<ModelRoutingDecision[]> {
+  if (options.model) {
+    if (!options.overrideReason) throw new ModelRoutingError("Explicit model override requires overrideReason");
+    const parsed = splitModel(options.model);
+    return [{
+      activity, tier: "explicit-override", model: parsed.model, provider: parsed.provider,
+      modelString: options.model, configVersion: "explicit-override", configHash: "explicit-override",
+      explicitOverride: true, overrideReason: options.overrideReason, providerEnabled: true,
+      source: "explicit-override", attemptIndex: 0, attempts: [],
+      credential: legacyCredential(parsed.provider) || undefined,
+    }];
+  }
+
+  const intent = await resolveSemanticTier();
+  const connectors = (await listModelConnectors()).filter((connector) => connector.status === "active");
+  const configHash = createHash("sha256").update(JSON.stringify(connectors.map((connector) => ({
+    id: connector.id, order: connector.sortOrder, provider: connector.provider,
+    mappings: connector.config.tierMappings,
+  })))).digest("hex").slice(0, 12);
+  const attempts: ConnectorAttempt[] = [];
+  const decisions: ModelRoutingDecision[] = [];
+
+  for (const connector of connectors) {
+    const modelString = connector.config.tierMappings[intent.tier];
+    const parsed = splitModel(modelString);
+    const credential = await connectorCredential(connector);
+    if (!credential) {
+      attempts.push({ connectorId: connector.id, connectorLabel: connector.label, connectorOrder: connector.sortOrder,
+        provider: connector.provider, tier: intent.tier, model: parsed.model, outcome: "skipped", reason: "credential-unavailable" });
+      continue;
+    }
+    const attemptIndex = attempts.length;
+    attempts.push({ connectorId: connector.id, connectorLabel: connector.label, connectorOrder: connector.sortOrder,
+      provider: connector.provider, tier: intent.tier, model: parsed.model, outcome: "selected" });
+    decisions.push({
+      activity, tier: intent.tier, model: parsed.model, provider: connector.provider, modelString,
+      configVersion: configHash, configHash, explicitOverride: false, providerEnabled: true,
+      source: intent.source, personaId: intent.personaId, connectorId: connector.id,
+      connectorLabel: connector.label, connectorOrder: connector.sortOrder, attemptIndex,
+      attempts: attempts.map((entry) => ({ ...entry })), credential,
+    });
+  }
+  if (decisions.length > 1) decisions[0].fallbackCandidates = decisions.slice(1);
+  if (!decisions.length) throw new ModelRoutingError(`No enabled model connector can serve tier ${intent.tier}`, {
+    activity, tier: intent.tier, source: intent.source, personaId: intent.personaId, configHash, attempts,
+  });
+  return decisions;
+}
+
+export function appendFailedAttempt(
+  routing: ModelRoutingDecision,
+  error: unknown,
+): ConnectorAttempt[] {
+  const reason = error instanceof Error ? error.message : String(error);
+  return routing.attempts.map((attempt, index) => index === routing.attemptIndex
+    ? { ...attempt, outcome: "failed" as const, reason }
+    : attempt);
+}
