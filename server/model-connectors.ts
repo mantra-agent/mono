@@ -98,7 +98,7 @@ export async function reorderModelConnectors(ids: number[]): Promise<ModelConnec
   const principal = getCurrentPrincipalOrSystem();
   const connectors = await listModelConnectors();
   const visibleIds = new Set(connectors.map((connector) => connector.id));
-  if (ids.length !== visibleIds.size || ids.some((id) => !visibleIds.has(id))) {
+  if (ids.length !== visibleIds.size || new Set(ids).size !== ids.length || ids.some((id) => !visibleIds.has(id))) {
     throw new Error("Connector order must include every visible model connector exactly once");
   }
   await db.transaction(async (tx) => {
@@ -138,27 +138,35 @@ export async function migrateLegacyModelProfiles(): Promise<void> {
     grouped.set(parsed.provider, current);
   }
 
-  let sortOrder = 0;
-  for (const [provider, partial] of grouped) {
+  const connectorValues = Array.from(grouped).flatMap(([provider, partial], sortOrder) => {
     const fallback = partial.balanced ?? partial.high ?? partial.max ?? partial.fast;
-    if (!fallback) continue;
-    const mappings = modelTierMappingsSchema.parse({
+    if (!fallback) return [];
+    const tierMappings = validateMapping(provider, modelTierMappingsSchema.parse({
       max: partial.max ?? fallback,
       high: partial.high ?? fallback,
       balanced: partial.balanced ?? fallback,
       fast: partial.fast ?? fallback,
-    });
-    validateMapping(provider, mappings);
-    await db.insert(providerConnections).values({
+    }));
+    return [{
       provider,
       label: `${provider} Models`,
       accountType: "legacy",
       status: "active",
       connectorKind: "model",
-      connectorConfig: { kind: "model", tierMappings: mappings, migratedFrom: "model_profiles" },
-      sortOrder: sortOrder++,
+      connectorConfig: { kind: "model" as const, tierMappings, migratedFrom: "model_profiles" as const },
+      sortOrder,
       scope: "global",
-    });
-  }
-  if (grouped.size > 0) log.log(`migrated legacy model profiles connectors=${grouped.size}`);
+    }];
+  });
+  if (connectorValues.length === 0) return;
+
+  const inserted = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('model-connectors:legacy-migration'))`);
+    const existingAfterLock = await tx.select({ id: providerConnections.id }).from(providerConnections)
+      .where(eq(providerConnections.connectorKind, "model")).limit(1);
+    if (existingAfterLock.length > 0) return false;
+    await tx.insert(providerConnections).values(connectorValues);
+    return true;
+  });
+  if (inserted) log.log(`migrated legacy model profiles connectors=${connectorValues.length}`);
 }
