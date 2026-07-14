@@ -34,7 +34,13 @@ export async function handleWorkflows(args: Record<string, any>): Promise<ToolHa
       case "get_template": return json(await getWorkflowTemplate(String(args.templateId || args.id || "")));
       case "list_runs": return json(await listWorkflowRuns({ status: args.status, templateId: args.templateId, projectId: args.projectId, platformId: args.platformId, productId: args.productId, environmentId: args.environmentId, limit: args.limit }));
       case "get_run": return json(await getWorkflowRun(String(args.runId || args.id || "")));
-      case "create_run": return json(await createWorkflowRun(args));
+      case "create_run": {
+        const sessionId = typeof args._sessionId === "string" ? args._sessionId.trim() : "";
+        return json(await createWorkflowRun({
+          ...args,
+          ...(sessionId ? { parentSessionId: sessionId, createdBySessionId: sessionId } : {}),
+        }));
+      }
       case "start_run": return json(await startWorkflowRun(String(args.runId || args.id || "")));
       case "pause_run": return json(await pauseWorkflowRun(String(args.runId || args.id || ""), args.reason));
       case "resume_run": return json(await resumeWorkflowRun(String(args.runId || args.id || "")));
