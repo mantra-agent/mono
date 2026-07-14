@@ -7,6 +7,7 @@ import type { SegmentChronologyEntry } from "../../chat-file-storage";
 import { WORKSPACE_DIR } from "../../paths";
 import { ACTIVITY_CHAT } from "../../job-profiles";
 import { resolveModelCandidates, type ModelRoutingDecision } from "../../model-routing";
+import { normalizeSessionModelTierOverride } from "../../session-model-tier-override";
 import { agentExecutor } from "../../agent-executor";
 import { assembleContext } from "../../agent-context";
 import { getToolSchemas as getToolDefinitions } from "../../tool-registry";
@@ -784,8 +785,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       } = req.body;
       const sessionKey =
         customSessionKey || `dashboard:${randomUUID().slice(0, 8)}`;
-      const { DEFAULT_ACTIVITY_ROUTING } = await import("../../job-profiles");
-      const defaultTier = DEFAULT_ACTIVITY_ROUTING.chat || "high";
+      const modelTier = normalizeSessionModelTierOverride(req.body?.modelTier);
       const allowedTypes = new Set(["user", "agent", "autonomous", "focus"]);
       const safeSessionType =
         typeof sessionType === "string" && allowedTypes.has(sessionType)
@@ -795,7 +795,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       const session = await chatStorage.createSession(
         title || "New Session",
         sessionKey,
-        defaultTier,
+        modelTier || undefined,
         {
           sessionType: safeSessionType,
           pageContext: safePageContext,
@@ -1889,7 +1889,14 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         selectionStartedAt = Date.now();
         modelSelectionStepId = `system-model_selection-${lease.generation}-${selectionStartedAt}`;
         // NOT emitting start: publishChatStreamEvent(sessionKey, sessionId, {...})
-        chatRoutingDecision = (await resolveModelCandidates(ACTIVITY_CHAT))[0];
+        const sessionForRouting = await chatStorage.getSession(sessionId);
+        const sessionTierOverride = normalizeSessionModelTierOverride(sessionForRouting?.modelTier);
+        chatRoutingDecision = (await resolveModelCandidates(
+          ACTIVITY_CHAT,
+          sessionTierOverride
+            ? { semanticTierOverride: sessionTierOverride, overrideReason: "session model tier override" }
+            : undefined,
+        ))[0];
         chatRunLifecycle.assertCurrent(lease);
         selectedAutoTier = chatRoutingDecision.tier;
         selectionEndedAt = Date.now();

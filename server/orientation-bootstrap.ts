@@ -20,6 +20,7 @@
 // session stays untitled so the next turn retries.
 import { createLogger } from "./log";
 import { chatCompletion } from "./model-client";
+import { normalizeSessionModelTierOverride } from "./session-model-tier-override";
 import { ACTIVITY_CHAT } from "./job-profiles";
 import { personaStorage, type PersonaEntry } from "./file-storage/persona-storage";
 
@@ -145,13 +146,16 @@ export async function ensureSessionOriented(options: {
     }
 
     const personas = await personaStorage.list();
+    const sessionTierOverride = normalizeSessionModelTierOverride(session.modelTier);
 
     await onLlmStart?.();
 
     const completion = await chatCompletion({
       activity: ACTIVITY_CHAT,
-      semanticTierOverride: "fast",
-      overrideReason: "orientation-bootstrap: fixed-template classification runs on the fast tier by design",
+      semanticTierOverride: sessionTierOverride || "fast",
+      overrideReason: sessionTierOverride
+        ? "orientation-bootstrap: session model tier override"
+        : "orientation-bootstrap: fixed-template classification runs on the fast tier by design",
       jsonMode: true,
       maxTokens: BOOTSTRAP_MAX_TOKENS,
       temperature: 0,

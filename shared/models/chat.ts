@@ -634,6 +634,8 @@ export interface MessageSpeakerMeta {
   personId?: string;
 }
 
+export type SessionModelTierOverride = "fast" | "balanced" | "high" | "max";
+
 export interface ChatSession {
   id: string;
   title: string;
@@ -641,6 +643,8 @@ export interface ChatSession {
   status: string;
   summary?: string | null;
   sessionKey: string | null;
+  /** null means Auto: use persona/activity routing without a session override. */
+  modelTier: SessionModelTierOverride | null;
   createdAt: string;
   updatedAt: string;
   type?: "text" | "voice" | "meeting";

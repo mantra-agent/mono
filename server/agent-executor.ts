@@ -10,6 +10,7 @@ const log = createLogger("Executor");
 import { writeJournal, publishJournalToUI, type JournalEntry } from "./chat-journal";
 import { ACTIVITY_CHAT, ACTIVITY_FRAMING, type ActivityId } from "./job-profiles";
 import { resolveModelCandidates, type ModelRoutingDecision } from "./model-routing";
+import { resolveSessionModelTierOverride } from "./session-model-tier-override";
 import { resolveThinkingConfig, thinkingBudgetToTier, type ResolvedThinking, type ThinkingTierConfig } from "./thinking-config";
 import { getThinkingInfo, getModelName } from "./model-registry";
 // logApiCall import removed — inference recording is handled at the model-client
@@ -1753,9 +1754,19 @@ export class AgentExecutor extends EventEmitter {
     if (options.model && options.routingDecision) {
       throw new Error("AgentExecutor accepts either model or routingDecision, not both");
     }
+    const sessionTierOverride = !options.model && !options.routingDecision
+      ? await resolveSessionModelTierOverride({
+          source: "agent-executor",
+          sessionId: options.sessionId,
+          sessionKey: options.sessionKey,
+          activity: activityForRouting,
+        })
+      : null;
     const routingDecision = options.routingDecision ?? (await resolveModelCandidates(activityForRouting, options.model
       ? { model: options.model, overrideReason: "executor caller requested explicit model override" }
-      : undefined))[0];
+      : sessionTierOverride
+        ? { semanticTierOverride: sessionTierOverride, overrideReason: "session model tier override" }
+        : undefined))[0];
     const modelString = routingDecision.modelString;
     const tierThinking: ThinkingTierConfig = options.thinking
       ? options.thinking

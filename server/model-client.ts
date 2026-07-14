@@ -463,9 +463,16 @@ function enrichModelError(err: unknown, routing: ModelRoutingDecision, metadata?
 
 export async function chatCompletion(options: ChatCompletionOptions): Promise<ChatCompletionResult> {
   const activity = options.activity || options.metadata?.activity || ACTIVITY_FRAMING;
+  const sessionTierOverride = !options.model && !options.routingDecision && !options.semanticTierOverride
+    ? await resolveSessionModelTierOverride(options.metadata)
+    : null;
   const candidates = options.routingDecision
     ? [options.routingDecision, ...(options.routingDecision.fallbackCandidates || [])]
-    : await resolveModelCandidates(activity, { model: options.model, overrideReason: options.overrideReason, semanticTierOverride: options.semanticTierOverride });
+    : await resolveModelCandidates(activity, {
+        model: options.model,
+        overrideReason: options.overrideReason || (sessionTierOverride ? "session model tier override" : undefined),
+        semanticTierOverride: options.semanticTierOverride || sessionTierOverride || undefined,
+      });
   let failures = candidates[0]?.attempts ?? [];
   let lastError: unknown;
   for (let index = 0; index < candidates.length; index++) {
@@ -1256,9 +1263,16 @@ export type StreamEvent =
 
 export async function* chatCompletionStream(options: ChatCompletionStreamOptions): AsyncGenerator<StreamEvent> {
   const activity = options.activity || options.metadata?.activity || ACTIVITY_CHAT;
+  const sessionTierOverride = !options.model && !options.routingDecision && !options.semanticTierOverride
+    ? await resolveSessionModelTierOverride(options.metadata)
+    : null;
   const candidates = options.routingDecision
     ? [options.routingDecision, ...(options.routingDecision.fallbackCandidates || [])]
-    : await resolveModelCandidates(activity, { model: options.model, overrideReason: options.overrideReason, semanticTierOverride: options.semanticTierOverride });
+    : await resolveModelCandidates(activity, {
+        model: options.model,
+        overrideReason: options.overrideReason || (sessionTierOverride ? "session model tier override" : undefined),
+        semanticTierOverride: options.semanticTierOverride || sessionTierOverride || undefined,
+      });
   let failures = candidates[0]?.attempts ?? [];
   let lastError: unknown;
   for (let index = 0; index < candidates.length; index++) {
