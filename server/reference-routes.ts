@@ -3,6 +3,7 @@ import { requireAuth } from "./auth";
 import { createLogger } from "./log";
 import { goalsService } from "./goals-service";
 import { peopleStorage } from "./people-storage";
+import { companyStorage } from "./company-storage";
 import { fileTaskStorage } from "./file-storage/tasks";
 import { fileProjectStorage } from "./file-storage/projects";
 import { db } from "./db";
@@ -91,6 +92,11 @@ export function registerReferenceRoutes(app: Express) {
             case "session": {
               const session = await chatFileStorage.getSession(id);
               if (session) results[key] = session.title || "Untitled session";
+              break;
+            }
+            case "company": {
+              const company = await companyStorage.get(id);
+              if (company) results[key] = company.name;
               break;
             }
             case "person": {

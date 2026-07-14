@@ -88,11 +88,18 @@ const navSections: NavSection[] = [
       { title: "News", url: "/news", icon: Newspaper },
       { title: "Email", url: "/email", icon: Mail },
       { title: "Library", url: "/library", icon: BookOpen },
-      { title: "People", url: "/people", icon: Users },
       { title: "Schedule", url: "/schedule", icon: Calendar },
       { title: "Projects", url: "/projects", icon: Briefcase },
-      { title: "Pipelines", url: "/pipelines", icon: Target },
       { title: "Wellness", url: "/wellness", icon: Activity },
+    ],
+  },
+  {
+    label: "Network",
+    defaultOpen: true,
+    items: [
+      { title: "People", url: "/people", icon: Users },
+      { title: "Companies", url: "/companies", icon: Briefcase },
+      { title: "Pipelines", url: "/pipelines", icon: Target },
     ],
   },
   {

@@ -1,4 +1,5 @@
 import {
+  Building2,
   CalendarDays,
   ListTodo,
   Diamond,
@@ -52,6 +53,11 @@ const registry: Record<string, RegistryEntry> = {
     Icon: FileText,
     fallbackLabel: ref => metadataString(ref, "label") || ref.id,
     href: ref => metadataString(ref, "href") || `/info#library?page=${encodeURIComponent(ref.id)}`,
+  },
+  company: {
+    Icon: Building2,
+    fallbackLabel: ref => metadataString(ref, "label") || ref.id,
+    href: ref => metadataString(ref, "href") || `/companies/${encodeURIComponent(ref.id)}`,
   },
   person: {
     Icon: User,

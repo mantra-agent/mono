@@ -15,6 +15,7 @@ const DETAIL_ROUTE_TITLES: Array<[string, string]> = [
   ["/strategy/", "Strategy"],
   ["/projects/", "Projects"],
   ["/people/", "People"],
+  ["/companies/", "Companies"],
   ["/integrations/", "Integrations"],
   ["/issues/", "Build"],
   ["/brain/timers", "Brain"],

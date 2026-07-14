@@ -17,6 +17,7 @@ import { useFocusContext } from "@/hooks/use-focus-context";
 import { useToast } from "@/hooks/use-toast";
 import { SurfacedPersonRow, surfacedDateLabel } from "@/components/people/surfaced-person-row";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import { CompanyReferenceField } from "@/components/people/company-reference-field";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
@@ -137,6 +138,9 @@ interface PersonIndex {
   updatedAt?: string;
   lastViewedAt?: string;
   private: boolean;
+  company?: string;
+  companyId?: string;
+  role?: string;
 }
 
 interface ContactInfo {
@@ -254,6 +258,7 @@ interface Person {
   photo?: string;
   birthday?: string;
   company?: string;
+  companyId?: string;
   role?: string;
   professionalRelations?: string[];
   relation?: string;
@@ -2039,9 +2044,6 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
   const [showIntroducedBySearch, setShowIntroducedBySearch] = useState(false);
   const [relationSearch, setRelationSearch] = useState("");
   const [showRelationSearch, setShowRelationSearch] = useState(false);
-  const [companyInputValue, setCompanyInputValue] = useState("");
-  const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
-  const [editingCompany, setEditingCompany] = useState(false);
   const [editingRole, setEditingRole] = useState(false);
   const [editingInstagram, setEditingInstagram] = useState(false);
   const [editingX, setEditingX] = useState(false);
@@ -2068,14 +2070,6 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
   const { data: allPeopleData } = useQuery<{ people: PersonIndex[] }>({
     queryKey: ["/api/people"],
   });
-
-  const { data: companiesData } = useQuery<{ companies: string[] }>({
-    queryKey: ["/api/people/companies"],
-  });
-
-  useEffect(() => {
-    if (person) setCompanyInputValue(person.company || "");
-  }, [person?.company]);
 
   useEffect(() => {
     if (person) setEditName(person.name || "");
@@ -2105,7 +2099,7 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/people", personId] });
       queryClient.invalidateQueries({ queryKey: ["/api/people"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/people/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
       setEditingName(false);
     },
     onError: (err: Error) => {
@@ -2314,13 +2308,11 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
             ) : <Button variant="ghost" size="icon" onClick={() => setEditingMet(true)} data-testid="button-add-met"><Plus className="h-3 w-3" /></Button>}
           </ProfileTreeRow>
 
-          <ProfileTreeRow label={<span data-testid="label-company">Company</span>} icon={<Building2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.company)} showEmpty={showEmptyProfileRows || editingCompany} testId="row-profile-company">
-            <div className="relative flex justify-end">
-              {person.company || editingCompany ? (<>
-                <Input value={companyInputValue} onChange={(e) => { setCompanyInputValue(e.target.value); setShowCompanyDropdown(true); }} onFocus={() => setShowCompanyDropdown(true)} onBlur={() => { setTimeout(() => { setShowCompanyDropdown(false); if (companyInputValue.trim() !== (person.company || "")) updateMutation.mutate({ company: companyInputValue.trim() || undefined }); setEditingCompany(false); }, 200); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setEditingCompany(false); setCompanyInputValue(person.company || ""); } }} placeholder="Company name" className="w-48" autoFocus={editingCompany} data-testid="input-edit-company" />
-                {showCompanyDropdown && companyInputValue.trim() && (() => { const matches = (companiesData?.companies || []).filter(c => c.toLowerCase().includes(companyInputValue.toLowerCase())); const exactMatch = matches.some(c => c.toLowerCase() === companyInputValue.toLowerCase().trim()); return <div className="absolute right-0 z-50 mt-9 w-48 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md" data-testid="dropdown-company">{matches.map((c) => <button key={c} className="w-full px-3 py-1.5 text-left text-sm hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { setCompanyInputValue(c); setShowCompanyDropdown(false); updateMutation.mutate({ company: c }); setEditingCompany(false); }} data-testid={`option-company-${c}`}>{c}</button>)}{!exactMatch && <button className="w-full px-3 py-1.5 text-left text-sm text-muted-foreground hover-elevate" onMouseDown={(e) => e.preventDefault()} onClick={() => { setShowCompanyDropdown(false); updateMutation.mutate({ company: companyInputValue.trim() }); setEditingCompany(false); }} data-testid="option-company-add-new">+ Add "{companyInputValue.trim()}"</button>}</div>; })()}
-              </>) : <Button variant="ghost" size="icon" onClick={() => { setCompanyInputValue(""); setEditingCompany(true); }} data-testid="button-add-company"><Plus className="h-3 w-3" /></Button>}
-            </div>
+          <ProfileTreeRow label={<span data-testid="label-company">Company</span>} icon={<Building2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.company)} showEmpty={showEmptyProfileRows} testId="row-profile-company">
+            <CompanyReferenceField value={person.companyId ? `@company:${person.companyId}` : person.company || ""} onCommit={(value) => {
+              const match = value.match(/^@company:([^\s]+)$/);
+              updateMutation.mutate(match ? { companyId: match[1] } : { company: value, companyId: "" });
+            }} />
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-role">Role</span>} icon={<ContactRound className="h-3.5 w-3.5" />} hasValue={Boolean(person.role)} showEmpty={showEmptyProfileRows || editingRole} testId="row-profile-role">

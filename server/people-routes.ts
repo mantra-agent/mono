@@ -241,6 +241,7 @@ export function registerPeopleRoutes(app: Express, peopleStorage: PeopleStorage)
         photo: req.body.photo,
         birthday: req.body.birthday,
         company: req.body.company,
+        companyId: req.body.companyId,
         role: req.body.role,
         professionalRelations: req.body.professionalRelations || [],
         relation: req.body.relation,
@@ -291,6 +292,23 @@ export function registerPeopleRoutes(app: Express, peopleStorage: PeopleStorage)
   app.patch("/api/people/:id", async (req, res) => {
     log.log(`PATCH /api/people/${req.params.id} fields=${Object.keys(req.body).join(",")}`);
     try {
+      if (typeof req.body.companyId === "string" && req.body.companyId.trim()) {
+        const { companyStorage } = await import("./company-storage");
+        await companyStorage.addPerson(req.body.companyId.trim(), req.params.id);
+        const person = await peopleStorage.getPerson(req.params.id);
+        return res.json(person);
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, "companyId") && !req.body.companyId) {
+        const current = await peopleStorage.getPerson(req.params.id);
+        if (current?.companyId) {
+          const { companyStorage } = await import("./company-storage");
+          await companyStorage.removePerson(current.companyId, req.params.id);
+        }
+        if (!req.body.company) {
+          const person = await peopleStorage.getPerson(req.params.id);
+          return res.json(person);
+        }
+      }
       if (Array.isArray(req.body.tags)) {
         for (const tag of req.body.tags) {
           await tagRegistry.ensureTag(tag);

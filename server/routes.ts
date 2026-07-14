@@ -11,6 +11,7 @@ import { createLogger, registerLogSink } from "./log";
 // Use createLogger for logging ONLY
 import { setWsConnectionCount } from "./performance-monitor";
 import { registerPeopleRoutes } from "./people-routes";
+import { registerCompanyRoutes } from "./company-routes";
 import { peopleStorage } from "./people-storage";
 import { registerGoalRoutes } from "./goal-routes";
 import { registerTagRoutes } from "./tag-routes";
@@ -139,6 +140,7 @@ export async function registerRoutes(
   app.use(["/api/people", "/api/life-goals", "/api/calendar", "/api/context", "/api/email-sync", "/api/gmail", "/api/twitter"], requireAuth);
 
   registerPeopleRoutes(app, peopleStorage);
+  registerCompanyRoutes(app);
   registerGoalRoutes(app);
   registerReferenceRoutes(app);
   registerTagRoutes(app);

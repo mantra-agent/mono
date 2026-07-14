@@ -25,6 +25,7 @@ export type ReferenceTrigger = {
 export const REFERENCE_TYPE_LABELS: Record<string, string> = {
   page: "Page",
   person: "Person",
+  company: "Company",
   goal: "Goal",
   task: "Task",
   project: "Project",
@@ -61,6 +62,13 @@ interface PersonResult {
   role?: string;
   company?: string;
   relation?: string;
+}
+
+interface CompanyResult {
+  id: string;
+  name?: string;
+  industry?: string;
+  location?: string;
 }
 
 interface GoalResult {
@@ -160,7 +168,8 @@ function sortByTrigger(
     // People first
     return [
       ...suggestions.filter((s) => s.type === "person"),
-      ...suggestions.filter((s) => s.type !== "person"),
+      ...suggestions.filter((s) => s.type === "company"),
+      ...suggestions.filter((s) => s.type !== "person" && s.type !== "company"),
     ];
   }
   // # — work items first
@@ -178,7 +187,7 @@ async function loadReferenceSuggestions(
 
   logger.debug("trigger", { query });
 
-  const [library, people, goals, tasks, projects, wellnessActivities] =
+  const [library, people, companies, goals, tasks, projects, wellnessActivities] =
     await Promise.all([
       query
         ? fetchJson<LibraryPageResult[]>(`/api/info/library?search=${encoded}`, signal)
@@ -186,6 +195,7 @@ async function loadReferenceSuggestions(
       query
         ? fetchJson<{ people?: PersonResult[] }>(`/api/people/search?q=${encoded}`, signal)
         : Promise.resolve(null),
+      fetchJson<{ companies?: CompanyResult[] }>(`/api/companies${query ? `?q=${encoded}` : ""}`, signal),
       fetchJson<{ goals?: GoalResult[] }>(
         `/api/life-goals${query ? `?search=${encoded}` : ""}`,
         signal,
@@ -215,6 +225,15 @@ async function loadReferenceSuggestions(
       label: String(person.name || person.id),
       description:
         [person.role, person.company].filter(Boolean).join(" at ") || person.relation || "Person",
+    });
+  }
+
+  for (const company of companies?.companies || []) {
+    suggestions.push({
+      type: "company",
+      id: String(company.id),
+      label: String(company.name || company.id),
+      description: [company.industry, company.location].filter(Boolean).join(" · ") || "Company",
     });
   }
 
@@ -270,6 +289,8 @@ export interface MentionAutocompleteOptions {
   cursorPosition: number;
   /** Callback to update text and cursor */
   onChange: (newValue: string, newCursorPosition: number) => void;
+  /** Restrict suggestions to specific reference types. */
+  allowedTypes?: ReferenceType[];
 }
 
 export interface MentionAutocompleteResult {
@@ -296,7 +317,8 @@ export interface MentionAutocompleteResult {
 export function useMentionAutocomplete(
   options: MentionAutocompleteOptions,
 ): MentionAutocompleteResult {
-  const { value, onChange } = options;
+  const { value, onChange, allowedTypes } = options;
+  const allowedKey = allowedTypes?.join(",") || "";
   const queryClient = useQueryClient();
 
   const [trigger, setTrigger] = useState<ReferenceTrigger | null>(null);
@@ -330,7 +352,8 @@ export function useMentionAutocomplete(
       loadReferenceSuggestions(trigger.query, controller.signal)
         .then((results) => {
           if (!controller.signal.aborted) {
-            setSuggestions(sortByTrigger(results, trigger.triggerChar));
+            const filtered = allowedTypes?.length ? results.filter(item => allowedTypes.includes(item.type)) : results;
+            setSuggestions(sortByTrigger(filtered, trigger.triggerChar));
           }
         })
         .catch((error) => {
@@ -347,7 +370,7 @@ export function useMentionAutocomplete(
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [trigger]);
+  }, [trigger, allowedKey]);
 
   const insertSuggestion = useCallback(
     (suggestion: ReferenceSuggestion) => {
