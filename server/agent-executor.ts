@@ -78,7 +78,9 @@ export interface ExecutorRunOptions {
   toolExecutor?: ToolExecutor;
   activity?: ActivityId;
   model?: string;
-  /** Actual routing tier when the caller pre-resolved the model (e.g. chat auto-routing); without it an explicit model override reports tier=explicit-override. */
+  /** Canonical router decision when a caller must resolve before context assembly. Mutually exclusive with model. */
+  routingDecision?: ModelRoutingDecision;
+  /** Diagnostic tier override for specialized callers. Prefer routingDecision for pre-resolved routing. */
   routingTier?: string;
   temperature?: number;
   thinkingBudget?: number;
@@ -1748,7 +1750,10 @@ export class AgentExecutor extends EventEmitter {
     this.activeRuns.set(runId, { abort: abortController, startedAt: startTime, lastActivityAt: startTime, sessionId: options.sessionId, model: undefined, activity: options.activity || ACTIVITY_CHAT, sessionKey: options.sessionKey, requestContent });
 
     const activityForRouting = options.activity || ACTIVITY_CHAT;
-    const routingDecision = (await resolveModelCandidates(activityForRouting, options.model
+    if (options.model && options.routingDecision) {
+      throw new Error("AgentExecutor accepts either model or routingDecision, not both");
+    }
+    const routingDecision = options.routingDecision ?? (await resolveModelCandidates(activityForRouting, options.model
       ? { model: options.model, overrideReason: "executor caller requested explicit model override" }
       : undefined))[0];
     const modelString = routingDecision.modelString;

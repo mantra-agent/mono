@@ -5,12 +5,8 @@ import { chatStorage } from "./storage";
 import { storage } from "../../storage";
 import type { SegmentChronologyEntry } from "../../chat-file-storage";
 import { WORKSPACE_DIR } from "../../paths";
-import {
-  isAutoRouting,
-  resolveModelForActivity,
-  classifyComplexity,
-  ACTIVITY_CHAT,
-} from "../../job-profiles";
+import { ACTIVITY_CHAT } from "../../job-profiles";
+import { resolveModelCandidates, type ModelRoutingDecision } from "../../model-routing";
 import { agentExecutor } from "../../agent-executor";
 import { assembleContext } from "../../agent-context";
 import { getToolSchemas as getToolDefinitions } from "../../tool-registry";
@@ -1629,7 +1625,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     sessionId: string,
     messages: ExecutorMessage[],
     toolDefs: ToolDefinition[],
-    chatModel: string,
+    routingDecision: ModelRoutingDecision,
     contextPressure?: {
       preRunTokens: number;
       threshold: number;
@@ -1660,7 +1656,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       tools: toolDefs,
       toolExecutor,
       activity: ACTIVITY_CHAT,
-      model: chatModel,
+      routingDecision,
       routingTier,
       contextPressure,
       onEvent,
@@ -1681,39 +1677,36 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     acceptedLease?: ChatRunLease,
   ) {
     const lease = acceptedLease ?? chatRunLifecycle.begin(sessionId, sessionKey);
-    let chatModel = resolvedModel;
     let selectedAutoTier = autoTier;
     let selectionElapsedMs = modelSelectionMs;
+    let chatRoutingDecision: ModelRoutingDecision;
 
-    if (!chatModel && isAutoRouting(ACTIVITY_CHAT)) {
+    if (resolvedModel) {
+      chatRoutingDecision = (await resolveModelCandidates(ACTIVITY_CHAT, {
+        model: resolvedModel,
+        overrideReason: "chat caller requested explicit model override",
+      }))[0];
+    } else {
       publishChatStreamEvent(sessionKey, sessionId, {
         type: "system_step",
         step: "model_selection",
         status: "started",
       });
       const selectionStartedAt = Date.now();
-      const classification = await classifyComplexity(content);
+      chatRoutingDecision = (await resolveModelCandidates(ACTIVITY_CHAT))[0];
       chatRunLifecycle.assertCurrent(lease);
-      chatModel = classification.model;
-      selectedAutoTier = classification.tier;
+      selectedAutoTier = chatRoutingDecision.tier;
       selectionElapsedMs = Date.now() - selectionStartedAt;
       publishChatStreamEvent(sessionKey, sessionId, {
         type: "system_step",
         step: "model_selection",
         status: "done",
         elapsedMs: selectionElapsedMs,
-        detail: selectedAutoTier || chatModel,
+        detail: `${chatRoutingDecision.tier} · ${chatRoutingDecision.connectorLabel || chatRoutingDecision.provider}`,
       });
     }
-    // Track the real routing tier so the executor's Connected diagnostic can show
-    // it instead of "explicit-override" (the executor receives our pre-resolved model
-    // as an override and would otherwise lose the tier).
-    let chatRoutingTier = selectedAutoTier || undefined;
-    if (!chatModel) {
-      const chatRoutingDecision = resolveModelForActivity(ACTIVITY_CHAT);
-      chatModel = chatRoutingDecision.modelString;
-      chatRoutingTier ||= chatRoutingDecision.tier;
-    }
+    const chatModel = chatRoutingDecision.modelString;
+    const chatRoutingTier = chatRoutingDecision.tier;
 
     // Every execution enters through this boundary, including interrupt re-triggers.
     // HTTP/meeting callers may pre-register so pre-executor events are visible;
@@ -1919,7 +1912,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         sessionId,
         messages,
         toolDefs,
-        chatModel,
+        chatRoutingDecision,
         contextPressure,
         (event) => {
           if (event.type === "delta") {
