@@ -856,6 +856,37 @@ async function handlePeopleDeleteInteraction(args: Record<string, any>): Promise
   return { result: `Interaction ${interactionId} deleted from ${resolved.name} [person:${resolved.id}]` };
 }
 
+async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandlerResult> {
+  const { peopleStorage } = await import("./people-storage");
+  const resolved = await resolvePersonId(args);
+  if (!resolved) return { result: `Person not found: ${args.id || args.name}`, error: true };
+
+  const updates: Record<string, any> = {};
+  if (typeof args.quickSummary === "string") updates.quickSummary = args.quickSummary || undefined;
+  if (typeof args.cabinetLevel === "string") updates.cabinetLevel = args.cabinetLevel;
+  if (typeof args.company === "string") updates.company = args.company || undefined;
+  if (typeof args.role === "string") updates.role = args.role || undefined;
+  if (typeof args.relation === "string") updates.relation = args.relation || undefined;
+  if (typeof args.familiarity === "string") updates.familiarity = args.familiarity;
+  if (typeof args.trust === "string") updates.trust = args.trust;
+  if (Array.isArray(args.tags)) updates.tags = args.tags;
+
+  if (Object.keys(updates).length === 0) {
+    return { result: "No updatable fields provided. Supported: quickSummary, cabinetLevel, company, role, relation, familiarity, trust, tags.", error: true };
+  }
+
+  const person = await peopleStorage.updatePerson(resolved.id, updates);
+  const { eventBus } = await import("./event-bus");
+  eventBus.publish({
+    category: "agent",
+    event: "data:people_changed",
+    payload: { source: "people_tool", action: "update", personId: person.id, personName: person.name },
+  });
+
+  const changed = Object.keys(updates).join(", ");
+  return { result: `Updated ${person.name} [person:${person.id}]: ${changed}` };
+}
+
 async function handlePeopleCreate(args: Record<string, any>): Promise<ToolHandlerResult> {
   const { peopleStorage } = await import("./people-storage");
   const name = args.name;
@@ -982,6 +1013,7 @@ const peopleSubHandlers: Record<string, (args: Record<string, any>) => Promise<T
   add_relationship_memory: handleAddRelationshipMemory,
   get_relationship_memories: handleGetRelationshipMemories,
   enrichment_prompt: handleEnrichmentPrompt,
+  update: handlePeopleUpdate,
   create: handlePeopleCreate,
   set_daily_contact: handlePeopleSetDailyContact,
   scan_imports: handlePeopleScanImports,
@@ -4705,7 +4737,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
   async people(args) {
     const action = args.action || "list";
     const handler = peopleSubHandlers[action];
-    if (!handler) return { result: `Unknown people action: ${action}. Available: list, get, get_many, query, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, update_relationship_profile, update_network_profile, update_capital, add_commitment, update_commitment, ask_route, add_relationship_memory, get_relationship_memories, enrichment_prompt, create, set_daily_contact, scan_imports, scan_ignored, list_import_candidates, get_import_candidate, find_import_matches, add_import_candidate, merge_import_candidate, skip_import_candidate, undo_import_decision, preview_import_batch, apply_import_batch, get_import_batch`, error: true };
+    if (!handler) return { result: `Unknown people action: ${action}. Available: list, get, get_many, query, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, update_relationship_profile, update_network_profile, update_capital, add_commitment, update_commitment, ask_route, add_relationship_memory, get_relationship_memories, enrichment_prompt, create, update, set_daily_contact, scan_imports, scan_ignored, list_import_candidates, get_import_candidate, find_import_matches, add_import_candidate, merge_import_candidate, skip_import_candidate, undo_import_decision, preview_import_batch, apply_import_batch, get_import_batch`, error: true };
     try {
       return await handler(args);
     } catch (err: any) {
@@ -15358,7 +15390,7 @@ function validateToolArgs(
 const SIDE_EFFECT_ONLY_ACTIONS: Record<string, Set<string>> = {
   session: new Set(["set_status", "end", "send_message"]),
   companies: new Set(["create", "update", "delete", "add_person", "remove_person"]),
-  people: new Set(["create", "add_note", "update_note", "delete_note", "log_interaction", "update_interaction", "delete_interaction", "set_daily_contact"]),
+  people: new Set(["create", "update", "add_note", "update_note", "delete_note", "log_interaction", "update_interaction", "delete_interaction", "set_daily_contact"]),
   calendar: new Set(["create", "update", "delete"]),
   memory: new Set(["write"]),
   priorities: new Set([]),
