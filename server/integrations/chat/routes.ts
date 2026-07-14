@@ -1679,34 +1679,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     const lease = acceptedLease ?? chatRunLifecycle.begin(sessionId, sessionKey);
     let selectedAutoTier = autoTier;
     let selectionElapsedMs = modelSelectionMs;
-    let chatRoutingDecision: ModelRoutingDecision;
-
-    if (resolvedModel) {
-      chatRoutingDecision = (await resolveModelCandidates(ACTIVITY_CHAT, {
-        model: resolvedModel,
-        overrideReason: "chat caller requested explicit model override",
-      }))[0];
-    } else {
-      publishChatStreamEvent(sessionKey, sessionId, {
-        type: "system_step",
-        step: "model_selection",
-        status: "started",
-      });
-      const selectionStartedAt = Date.now();
-      chatRoutingDecision = (await resolveModelCandidates(ACTIVITY_CHAT))[0];
-      chatRunLifecycle.assertCurrent(lease);
-      selectedAutoTier = chatRoutingDecision.tier;
-      selectionElapsedMs = Date.now() - selectionStartedAt;
-      publishChatStreamEvent(sessionKey, sessionId, {
-        type: "system_step",
-        step: "model_selection",
-        status: "done",
-        elapsedMs: selectionElapsedMs,
-        detail: `${chatRoutingDecision.tier} · ${chatRoutingDecision.connectorLabel || chatRoutingDecision.provider}`,
-      });
-    }
-    const chatModel = chatRoutingDecision.modelString;
-    const chatRoutingTier = chatRoutingDecision.tier;
+    let chatRoutingDecision: ModelRoutingDecision | undefined;
+    let chatModel = resolvedModel || "unresolved";
+    let chatRoutingTier: ModelRoutingDecision["tier"] | undefined;
 
     // Every execution enters through this boundary, including interrupt re-triggers.
     // HTTP/meeting callers may pre-register so pre-executor events are visible;
@@ -1738,16 +1713,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }> = [];
     const preChronology: SegmentChronologyEntry[] = [];
 
-    if (selectionElapsedMs !== undefined) {
-      preSteps.push({
-        name: "model_selection",
-        status: "done",
-        elapsedMs: selectionElapsedMs,
-        detail: selectedAutoTier || chatModel,
-      });
-      preChronology.push({ s: "system", i: 0 });
-    }
-
     const journal = (
       type: JournalEntry["type"],
       extra: Partial<JournalEntry> = {},
@@ -1771,6 +1736,41 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
     try {
       chatRunLifecycle.assertCurrent(lease);
+      if (resolvedModel) {
+        chatRoutingDecision = (await resolveModelCandidates(ACTIVITY_CHAT, {
+          model: resolvedModel,
+          overrideReason: "chat caller requested explicit model override",
+        }))[0];
+      } else {
+        publishChatStreamEvent(sessionKey, sessionId, {
+          type: "system_step",
+          step: "model_selection",
+          status: "started",
+        });
+        const selectionStartedAt = Date.now();
+        chatRoutingDecision = (await resolveModelCandidates(ACTIVITY_CHAT))[0];
+        chatRunLifecycle.assertCurrent(lease);
+        selectedAutoTier = chatRoutingDecision.tier;
+        selectionElapsedMs = Date.now() - selectionStartedAt;
+        publishChatStreamEvent(sessionKey, sessionId, {
+          type: "system_step",
+          step: "model_selection",
+          status: "done",
+          elapsedMs: selectionElapsedMs,
+          detail: `${chatRoutingDecision.tier} · ${chatRoutingDecision.connectorLabel || chatRoutingDecision.provider}`,
+        });
+      }
+      chatModel = chatRoutingDecision.modelString;
+      chatRoutingTier = chatRoutingDecision.tier;
+      if (selectionElapsedMs !== undefined) {
+        preSteps.push({
+          name: "model_selection",
+          status: "done",
+          elapsedMs: selectionElapsedMs,
+          detail: selectedAutoTier || chatModel,
+        });
+        preChronology.push({ s: "system", i: 0 });
+      }
       chatLog.log(
         `start sessionId=${sessionId} session=${sessionKey} model=${chatModel} generation=${lease.generation}`,
       );
@@ -1907,12 +1907,16 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       chatLog.log(
         `executor START sessionId=${sessionId} messageCount=${messages.length} toolCount=${toolDefs.length}`,
       );
+      const resolvedRoutingDecision = chatRoutingDecision;
+      if (!resolvedRoutingDecision) {
+        throw new Error("Chat routing decision was not resolved");
+      }
       const result = await executeChatAgent(
         sessionKey,
         sessionId,
         messages,
         toolDefs,
-        chatRoutingDecision,
+        resolvedRoutingDecision,
         contextPressure,
         (event) => {
           if (event.type === "delta") {
