@@ -8,17 +8,26 @@ const log = createLogger("CognitionRoutes");
 
 export async function registerCognitionRoutes(app: Express) {
   app.use(["/api/personas", "/api/emotion", "/api/cognition"], requireAuth);
-  const { personaStorage } = await import("../file-storage/persona-storage");
+  const { personaStorage, PersonaReservedNameError } = await import("../file-storage/persona-storage");
 
   // === Persona Routes ===
 
   app.get("/api/personas", async (_req, res) => {
     log.debug("GET /api/personas");
     try {
-      const all = await personaStorage.list();
-      res.json(all.filter((p) => !p.isSystem));
+      res.json(await personaStorage.list());
     } catch (error: any) {
       log.error("GET /api/personas error:", error?.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/personas/management", async (_req, res) => {
+    log.debug("GET /api/personas/management");
+    try {
+      res.json(await personaStorage.listForManagement());
+    } catch (error: any) {
+      log.error("GET /api/personas/management error:", error?.message);
       res.status(500).json({ error: error.message });
     }
   });
@@ -56,7 +65,8 @@ export async function registerCognitionRoutes(app: Express) {
       res.status(201).json(persona);
     } catch (error: any) {
       log.error("POST /api/personas error:", error?.message);
-      res.status(500).json({ error: error.message });
+      const status = error instanceof PersonaReservedNameError ? error.statusCode : 500;
+      res.status(status).json({ error: error.message });
     }
   });
 

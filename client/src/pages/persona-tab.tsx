@@ -24,6 +24,7 @@ interface Persona {
   semanticTier: "max" | "high" | "balanced" | "fast" | null;
   isDefault: boolean;
   isActive: boolean;
+  isSystem: boolean;
   sortOrder: number;
   source: "seed" | "user";
   createdAt: string;
@@ -165,7 +166,10 @@ function PersonaCard({
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-card text-muted-foreground">
             <PersonaIconDisplay iconName={persona.icon} className="h-3.5 w-3.5" />
           </span>
-          <span className="min-w-0 truncate text-sm font-medium text-foreground">{persona.name}</span>
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="min-w-0 truncate text-sm font-medium text-foreground">{persona.name}</span>
+            {persona.isSystem && <Badge variant="outline" className="shrink-0 text-xs">System</Badge>}
+          </span>
         </span>
         {isExpanded ? <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />}
       </button>
@@ -276,24 +280,28 @@ function PersonaCard({
                 Updated {timeAgo(persona.updatedAt)}
               </p>
 
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" className="gap-1" onClick={() => setEditing(true)}>
-                  <Pencil className="h-3 w-3" />
-                  Edit
-                </Button>
-                {!persona.isActive && (
-                  <Button size="sm" variant="default" className="gap-1 bg-cta text-cta-foreground hover:bg-cta/90" onClick={onActivate} disabled={activating}>
-                    {activating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                    Activate
+              {persona.isSystem ? (
+                <p className="text-xs text-muted-foreground">Managed by Mantra. Read only.</p>
+              ) : (
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" className="gap-1" onClick={() => setEditing(true)}>
+                    <Pencil className="h-3 w-3" />
+                    Edit
                   </Button>
-                )}
-                {persona.source !== "seed" && (
-                  <Button size="sm" variant="destructive" className="gap-1" onClick={onDelete}>
-                    <Trash2 className="h-3 w-3" />
-                    Delete
-                  </Button>
-                )}
-              </div>
+                  {!persona.isActive && (
+                    <Button size="sm" variant="default" className="gap-1 bg-cta text-cta-foreground hover:bg-cta/90" onClick={onActivate} disabled={activating}>
+                      {activating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                      Activate
+                    </Button>
+                  )}
+                  {persona.source !== "seed" && (
+                    <Button size="sm" variant="destructive" className="gap-1" onClick={onDelete}>
+                      <Trash2 className="h-3 w-3" />
+                      Delete
+                    </Button>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -426,7 +434,7 @@ export default function PersonaTab() {
   const [activatingId, setActivatingId] = useState<number | null>(null);
 
   const { data: allPersonas, isLoading } = useQuery<Persona[]>({
-    queryKey: ["/api/personas"],
+    queryKey: ["/api/personas/management"],
     refetchInterval: 30000,
   });
 
@@ -436,7 +444,7 @@ export default function PersonaTab() {
       await apiRequest("POST", `/api/personas/${id}/activate`, {});
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/personas"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/personas/management"] });
       toast({ title: "Persona activated" });
       setActivatingId(null);
     },
@@ -451,7 +459,7 @@ export default function PersonaTab() {
       await apiRequest("DELETE", `/api/personas/${id}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/personas"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/personas/management"] });
       toast({ title: "Persona deleted" });
     },
     onError: (err: Error) => {
@@ -464,7 +472,7 @@ export default function PersonaTab() {
       await apiRequest("PUT", `/api/personas/${id}`, data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/personas"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/personas/management"] });
       toast({ title: "Persona updated" });
     },
     onError: (err: Error) => {
@@ -473,7 +481,7 @@ export default function PersonaTab() {
   });
 
   const refresh = () => {
-    queryClient.invalidateQueries({ queryKey: ["/api/personas"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/personas/management"] });
   };
 
   if (isLoading) {

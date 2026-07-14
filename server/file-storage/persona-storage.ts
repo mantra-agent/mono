@@ -19,6 +19,15 @@ const personaScopeColumns = {
   vaultId: personas.vaultId,
 };
 
+export class PersonaReservedNameError extends Error {
+  readonly statusCode = 409;
+
+  constructor(name: string) {
+    super(`"${name}" is reserved for a system persona`);
+    this.name = "PersonaReservedNameError";
+  }
+}
+
 export interface PersonaEntry {
   id: number;
   name: string;
@@ -314,21 +323,49 @@ class PersonaStorageClass {
       .orderBy(personas.sortOrder);
     const entries = rows.map(rowToEntry);
 
-    // Dedup: when a user-scoped copy exists for a seed persona (linked via
-    // templatePersonaId), exclude the seed original so consumers see exactly
-    // one logical persona per template.
-    const shadowedSeedIds = new Set(
+    // User copies shadow ordinary seed templates. System templates are never
+    // shadowed or selectable; legacy copies derived from them are suppressed.
+    const systemSeedIds = new Set(
       entries
-        .filter((e) => e.templatePersonaId !== null)
-        .map((e) => e.templatePersonaId!),
+        .filter((entry) => entry.source === "seed" && entry.isSystem)
+        .map((entry) => entry.id),
     );
-    if (shadowedSeedIds.size === 0) return entries;
-    return entries.filter(
-      (e) => !(e.source === "seed" && shadowedSeedIds.has(e.id)),
+    const systemNames = new Set(
+      entries
+        .filter((entry) => entry.isSystem)
+        .map((entry) => entry.name.toLowerCase()),
+    );
+    const withoutSystemCopies = entries.filter(
+      (entry) =>
+        entry.isSystem ||
+        (entry.templatePersonaId === null &&
+          !systemNames.has(entry.name.toLowerCase())) ||
+        (entry.templatePersonaId !== null &&
+          !systemSeedIds.has(entry.templatePersonaId) &&
+          !systemNames.has(entry.name.toLowerCase())),
+    );
+    const shadowedSeedIds = new Set(
+      withoutSystemCopies
+        .filter((entry) => entry.templatePersonaId !== null)
+        .map((entry) => entry.templatePersonaId!),
+    );
+    return withoutSystemCopies.filter(
+      (entry) =>
+        !(
+          entry.source === "seed" &&
+          !entry.isSystem &&
+          shadowedSeedIds.has(entry.id)
+        ),
     );
   }
 
+  /** Personas available to normal activation, orientation, and context flows. */
   async list(): Promise<PersonaEntry[]> {
+    return (await this.listForManagement()).filter((persona) => !persona.isSystem);
+  }
+
+  /** Complete visible inventory for the Brain management surface. */
+  async listForManagement(): Promise<PersonaEntry[]> {
     const principal = getCurrentPrincipalOrSystem();
     const cacheKey = `all:${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}`;
     return this._cache.getOrFetch(cacheKey, () => this.fetchAll());
@@ -372,6 +409,13 @@ class PersonaStorageClass {
     cognitiveOverrides?: Record<string, unknown>;
     semanticTier?: SemanticTier | null;
   }): Promise<PersonaEntry> {
+    const systemNameConflict = (await this.listForManagement()).some(
+      (persona) =>
+        persona.isSystem &&
+        persona.name.toLowerCase() === input.name.trim().toLowerCase(),
+    );
+    if (systemNameConflict) throw new PersonaReservedNameError(input.name);
+
     const maxSort = (await this.list()).reduce(
       (max, p) => Math.max(max, p.sortOrder),
       0,
