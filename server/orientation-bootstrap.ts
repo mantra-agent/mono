@@ -130,9 +130,10 @@ export async function ensureSessionOriented(options: {
   sessionId: string;
   sessionKey?: string;
   userMessage: string;
+  onLlmStart?: () => void | Promise<void>;
 }): Promise<OrientationBootstrapResult> {
   const startedAt = Date.now();
-  const { sessionId, sessionKey, userMessage } = options;
+  const { sessionId, sessionKey, userMessage, onLlmStart } = options;
   try {
     const { chatFileStorage } = await import("./chat-file-storage");
     const session = await chatFileStorage.getSession(sessionId);
@@ -152,6 +153,8 @@ export async function ensureSessionOriented(options: {
         log.debug(`bootstrap activated Router persona id=${routerPersona.id} sessionId=${sessionId}`);
       }
     }
+
+    await onLlmStart?.();
 
     const completion = await chatCompletion({
       activity: ACTIVITY_CHAT,
