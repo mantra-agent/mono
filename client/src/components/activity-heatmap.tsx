@@ -32,7 +32,7 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
       // so the week count always fits the space that actually remains for cells.
       const labelGutter = (labelColumnRef.current?.offsetWidth ?? 32) + columnGap;
       const available = Math.max(0, element.clientWidth - labelGutter);
-      setWeeksToShow(Math.max(6, Math.floor((available + columnGap) / (weekWidth + columnGap))));
+      setWeeksToShow(Math.max(1, Math.floor((available + columnGap) / (weekWidth + columnGap))));
     };
     compute();
     const observer = new ResizeObserver(compute);
@@ -76,9 +76,8 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
   };
 
   return (
-    <div ref={containerRef} className="flex w-full gap-0.5" data-testid="activity-heatmap">
-      <div className="min-w-0 overflow-hidden">
-        <div className="flex w-max gap-0.5">
+    <div ref={containerRef} className="flex w-full justify-end gap-0.5" data-testid="activity-heatmap">
+      <div className="flex shrink-0 gap-0.5">
         {weeks.map((week, weekIndex) => (
           <div key={`week-${weekIndex}`} className="flex w-5 shrink-0 flex-col gap-0.5">
             <div className="relative h-7 overflow-visible">
@@ -103,7 +102,6 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
             })}
           </div>
         ))}
-        </div>
       </div>
       <div ref={labelColumnRef} className="flex shrink-0 flex-col gap-0.5 pl-1">
         <div className="h-7" />
