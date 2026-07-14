@@ -25,6 +25,10 @@ export interface ExecutionStep {
   systemStepDetail?: string;
   systemStepMetadata?: Record<string, unknown>;
   elapsedMs?: number;
+  /** Explicit trace parent. Children are rendered beneath this step in Diagnostic detail. */
+  parentId?: string;
+  /** Time spent in the step excluding child intervals. */
+  selfTimeMs?: number;
 }
 
 export type MessageSegment =
