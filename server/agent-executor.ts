@@ -91,6 +91,8 @@ export interface ExecutorRunOptions {
   lineageId?: string;
   /** Voice session ID for claiming pre-warmed CLI handles on the first turn. */
   voiceSessionId?: string;
+  /** Outer Diagnostic span created before context assembly. */
+  diagnosticTurnId?: string;
 }
 
 function toolTransfersExecutionToChild(name: string, args: Record<string, unknown>): boolean {
@@ -1172,7 +1174,7 @@ export class AgentExecutor extends EventEmitter {
         this.flushChronologyContent(ctx);
 
         log.verbose(() => `tool_use_start id=${toolCallId} name=${normalizedName} iteration=${ctx.iteration}`);
-        ctx.publish("tool_call", { toolName: normalizedName, toolCallId });
+        ctx.publish("tool_call", { toolName: normalizedName, toolCallId, parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
         ctx.activeToolUseSteps.set(toolCallId, Date.now());
         ctx.publish("system_step", { step: "tool_use", status: "started", detail: normalizedName, stepId: toolCallId, parentId: `tool-${toolCallId}` });
         break;
@@ -1183,7 +1185,7 @@ export class AgentExecutor extends EventEmitter {
         const narrative = event.narrative;
         const updateCallId = event.toolCallId;
         if (narrative && updateCallId) {
-          ctx.publish("tool_call", { toolCallId: updateCallId, narrative });
+          ctx.publish("tool_call", { toolCallId: updateCallId, narrative, parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
         }
         break;
       }
@@ -1286,7 +1288,7 @@ export class AgentExecutor extends EventEmitter {
         // Flush chronology buffers so thinking/content before this tool call gets its own segment
         this.flushChronologyThinking(ctx);
         this.flushChronologyContent(ctx);
-        ctx.publish("tool_call", { toolName: normalizedName, toolCallId, arguments: event.arguments });
+        ctx.publish("tool_call", { toolName: normalizedName, toolCallId, arguments: event.arguments, parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
         ctx.activeToolUseSteps.set(toolCallId, Date.now());
         ctx.publish("system_step", { step: "tool_use", status: "started", detail: normalizedName || "unknown", stepId: toolCallId, parentId: `tool-${toolCallId}` });
         eventBus.publish({
@@ -2114,7 +2116,7 @@ export class AgentExecutor extends EventEmitter {
     try {
       ctx.llmCallStartTime = Date.now();
       const modelSpanId = `model-${ctx.runId}-${ctx.iteration}`;
-      ctx.publish("system_step", { step: "llm_call", status: "started", stepId: modelSpanId });
+      ctx.publish("system_step", { step: "llm_call", status: "started", stepId: modelSpanId, parentId: options.diagnosticTurnId, detail: `Response ${ctx.iteration}` });
       ctx.llmConnectedEmitted = false;
       ctx.llmConnectedDoneEmitted = false;
       ctx.publish("system_step", { step: "llm_request_sent", status: "started", parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });

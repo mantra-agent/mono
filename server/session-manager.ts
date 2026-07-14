@@ -255,7 +255,7 @@ class SessionManager {
         break;
 
       case "tool_call":
-        prev = addToolCall(prev, event.toolName, event.toolCallId, event.arguments, event.narrative);
+        prev = addToolCall(prev, event.toolName, event.toolCallId, event.arguments, event.narrative, event.parentId);
         break;
 
       case "tool_result":

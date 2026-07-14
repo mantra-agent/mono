@@ -506,7 +506,7 @@ function ToolStepRow({ step, iconOverrides, summaryOnly, layer, children = [], d
             </>
           )}
         </div>
-        {(isDone || isError) && step.elapsedMs != null && <span className="text-xs tabular-nums font-mono text-muted-foreground/50 whitespace-nowrap">{formatStepElapsed(step.elapsedMs)} total · {formatStepElapsed(getStepSelfTime(step, children) ?? step.elapsedMs)} self</span>}
+        {(isDone || isError) && step.elapsedMs != null && <span className="text-xs tabular-nums font-mono text-muted-foreground/50 whitespace-nowrap">{formatStepElapsed(getStepSelfTime(step, children) ?? step.elapsedMs)} self · {formatStepElapsed(step.elapsedMs)} total</span>}
         {canExpand && (
           <ChevronRight className={`h-3 w-3 text-muted-foreground/40 shrink-0 transition-transform duration-150 ${expanded ? "rotate-90" : ""}`} />
         )}
@@ -868,7 +868,7 @@ function SystemStepRow({ step, layer = 4, children = [], depth = 0 }: { step: Ex
       {isActive && <SystemStepTimer startTime={step.timestamp} />}
       {(isDone || isError) && step.elapsedMs != null && !isWorkingCompression && (
         <span className="text-xs tabular-nums font-mono text-muted-foreground/50 whitespace-nowrap" data-testid={`text-step-time-${name}`}>
-          {formatStepElapsed(step.elapsedMs)} total · {formatStepElapsed(getStepSelfTime(step, children) ?? step.elapsedMs)} self
+          {formatStepElapsed(getStepSelfTime(step, children) ?? step.elapsedMs)} self · {formatStepElapsed(step.elapsedMs)} total
         </span>
       )}
     </div>

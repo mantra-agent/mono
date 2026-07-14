@@ -81,6 +81,7 @@ export function addToolCall(
   toolCallId?: string,
   args?: Record<string, unknown>,
   narrative?: string,
+  parentId?: string,
 ): StreamingContent {
   if (toolCallId) {
     const existingSegIdx = state.segments.findIndex(seg =>
@@ -121,6 +122,7 @@ export function addToolCall(
     arguments: args,
     status: "active",
     narrative: narrative || (args?.reasoning as string) || undefined,
+    parentId,
   };
 
   const lastSeg = segments[segments.length - 1];
