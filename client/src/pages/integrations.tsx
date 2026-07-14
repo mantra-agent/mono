@@ -5553,13 +5553,25 @@ function supportedOpenAISettings(model?: ModelProviderDetail["models"][number], 
   const isSubscription = provider === "openai-subscription";
   return {
     reasoningEffort: supportsReasoning,
-    reasoningMode: supportsReasoning && isGpt56,
+    reasoningMode: supportsReasoning && isGpt56 && provider === "openai",
     reasoningSummary: supportsReasoning,
     verbosity: Boolean(model?.id && /gpt-5|gpt-5\.|gpt-5-|codex/i.test(model.id)),
     serviceTier: provider === "openai" || isSubscription,
     serviceTierOptions: isSubscription ? SERVICE_TIERS_SUBSCRIPTION : SERVICE_TIERS,
     maxOutputTokens: true,
   };
+}
+
+function sanitizeOpenAITierConfig(provider: ModelConnectorDetail["provider"], config: Exclude<TierModelConfig, string>, model?: ModelProviderDetail["models"][number]): Exclude<TierModelConfig, string> {
+  const supported = supportedOpenAISettings(model, provider);
+  const sanitized: Exclude<TierModelConfig, string> = { model: config.model };
+  if (supported.reasoningEffort && config.reasoningEffort !== undefined) sanitized.reasoningEffort = config.reasoningEffort;
+  if (supported.reasoningMode && config.reasoningMode !== undefined) sanitized.reasoningMode = config.reasoningMode;
+  if (supported.reasoningSummary && config.reasoningSummary !== undefined) sanitized.reasoningSummary = config.reasoningSummary;
+  if (supported.verbosity && config.verbosity !== undefined) sanitized.verbosity = config.verbosity;
+  if (supported.serviceTier && config.serviceTier !== undefined && supported.serviceTierOptions.includes(config.serviceTier)) sanitized.serviceTier = config.serviceTier;
+  if (config.maxOutputTokens !== undefined) sanitized.maxOutputTokens = model?.maxTokens ? Math.min(config.maxOutputTokens, model.maxTokens) : config.maxOutputTokens;
+  return sanitized;
 }
 
 function OpenAISettingSelect<T extends string>({
@@ -5586,8 +5598,16 @@ function OpenAIConnectorTree({ connector, models, title }: { connector: ModelCon
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/models/connectors"] }),
     onError: (error: Error) => toast({ title: "Model mapping failed", description: error.message, variant: "destructive" }),
   });
-  const mappings = Object.fromEntries(MODEL_TIERS.map((tier) => [tier, normalizeTierConfig(connector.provider, connector.config.tierMappings[tier])])) as Record<SemanticTier, Exclude<TierModelConfig, string>>;
-  const updateTier = (tier: SemanticTier, patch: Partial<Exclude<TierModelConfig, string>>) => mutation.mutate({ ...mappings, [tier]: { ...mappings[tier], ...patch } });
+  const mappings = Object.fromEntries(MODEL_TIERS.map((tier) => {
+    const config = normalizeTierConfig(connector.provider, connector.config.tierMappings[tier]);
+    const model = models.find((item) => item.id === config.model || `${connector.provider}/${item.id}` === config.model);
+    return [tier, sanitizeOpenAITierConfig(connector.provider, config, model)];
+  })) as Record<SemanticTier, Exclude<TierModelConfig, string>>;
+  const updateTier = (tier: SemanticTier, patch: Partial<Exclude<TierModelConfig, string>>) => {
+    const nextConfig = { ...mappings[tier], ...patch };
+    const nextModel = models.find((item) => item.id === nextConfig.model || `${connector.provider}/${item.id}` === nextConfig.model);
+    mutation.mutate({ ...mappings, [tier]: sanitizeOpenAITierConfig(connector.provider, nextConfig, nextModel) });
+  };
   const surfaceLabel = connector.provider === "openai-subscription" ? "Subscription" : "API";
 
   return <Card className="overflow-hidden min-w-0">
@@ -5644,7 +5664,7 @@ function OpenAIConnectorTree({ connector, models, title }: { connector: ModelCon
                 </div>
               </div>
               {supported.reasoningEffort && <OpenAISettingSelect label="Reasoning effort" value={config.reasoningEffort ?? "medium"} options={REASONING_EFFORTS} description="Default: tier-derived. Higher effort can improve reasoning and increases latency." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningEffort: value })} />}
-              {supported.reasoningMode && <OpenAISettingSelect label="Reasoning mode" value={config.reasoningMode ?? "standard"} options={["standard", "pro"] as const} description="Default: standard. Pro is reserved for subscription reasoning paths that support it." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningMode: value })} />}
+              {supported.reasoningMode && <OpenAISettingSelect label="Reasoning mode" value={config.reasoningMode ?? "standard"} options={["standard", "pro"] as const} description="Default: standard. Pro is available only on API gpt-5.6 reasoning models." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningMode: value })} />}
               {supported.reasoningSummary && <OpenAISettingSelect label="Reasoning summary" value={config.reasoningSummary ?? "auto"} options={REASONING_SUMMARIES} description="Default: auto. Controls whether OpenAI returns summarized reasoning." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningSummary: value })} />}
               {supported.verbosity && <OpenAISettingSelect label="Verbosity" value={config.verbosity ?? "medium"} options={VERBOSITIES} description="Default: medium. Controls output detail for GPT-5-class text generation." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { verbosity: value })} />}
               {supported.serviceTier && <OpenAISettingSelect label="Service tier" value={config.serviceTier ?? "auto"} options={supported.serviceTierOptions} description="Default: auto. Controls API latency/cost class when the account supports it." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { serviceTier: value })} />}
