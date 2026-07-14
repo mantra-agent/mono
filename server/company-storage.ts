@@ -1,11 +1,12 @@
 import { randomBytes } from "crypto";
 import { and, eq, ilike } from "drizzle-orm";
-import { companies, persons } from "@shared/schema";
+import { companies, persons, opportunities } from "@shared/schema";
 import { db } from "./db";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 
 const companyScope = { scope: companies.scope, ownerUserId: companies.ownerUserId, accountId: companies.accountId };
+const opportunityScope = { scope: opportunities.scope, ownerUserId: opportunities.ownerUserId, accountId: opportunities.accountId };
 const personScope = { scope: persons.scope, ownerUserId: persons.ownerUserId, accountId: persons.accountId, vaultId: persons.vaultId };
 
 export interface Company {
@@ -18,6 +19,7 @@ export interface Company {
   notes?: string;
   tags: string[];
   peopleCount?: number;
+  opportunityCount?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -26,7 +28,7 @@ function companyId(): string {
   return randomBytes(4).toString("hex");
 }
 
-function mapCompany(row: typeof companies.$inferSelect, peopleCount?: number): Company {
+function mapCompany(row: typeof companies.$inferSelect, peopleCount?: number, opportunityCount?: number): Company {
   return {
     id: row.id,
     name: row.name,
@@ -37,6 +39,7 @@ function mapCompany(row: typeof companies.$inferSelect, peopleCount?: number): C
     notes: row.notes || undefined,
     tags: Array.isArray(row.tags) ? row.tags as string[] : [],
     peopleCount,
+    opportunityCount,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -52,14 +55,19 @@ export class CompanyStorage {
     for (const person of visiblePeople) {
       if (person.companyId) counts.set(person.companyId, (counts.get(person.companyId) || 0) + 1);
     }
-    return rows.map(row => mapCompany(row, counts.get(row.id) || 0)).sort((a, b) => a.name.localeCompare(b.name));
+    const visibleOpportunities = await db.select({ companyId: opportunities.companyId }).from(opportunities).where(combineWithVisibleScope(principal, opportunityScope));
+    const opportunityCounts = new Map<string, number>();
+    for (const opportunity of visibleOpportunities) {
+      if (opportunity.companyId) opportunityCounts.set(opportunity.companyId, (opportunityCounts.get(opportunity.companyId) || 0) + 1);
+    }
+    return rows.map(row => mapCompany(row, counts.get(row.id) || 0, opportunityCounts.get(row.id) || 0)).sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async get(id: string): Promise<Company | null> {
     const rows = await db.select().from(companies).where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), companyScope, eq(companies.id, id))).limit(1);
     if (!rows[0]) return null;
-    const members = await this.listPeople(id);
-    return mapCompany(rows[0], members.length);
+    const [members, linkedOpportunities] = await Promise.all([this.listPeople(id), this.listOpportunities(id)]);
+    return mapCompany(rows[0], members.length, linkedOpportunities.length);
   }
 
   async resolve(idOrName: string): Promise<Company | null> {
@@ -113,6 +121,7 @@ export class CompanyStorage {
     const principal = getCurrentPrincipalOrSystem();
     await db.transaction(async tx => {
       await tx.update(persons).set({ companyId: null, company: null, updatedAt: new Date() }).where(combineWithWritableScope(principal, personScope, eq(persons.companyId, id)));
+      await tx.update(opportunities).set({ companyId: null, company: null, updatedAt: new Date() }).where(combineWithWritableScope(principal, opportunityScope, eq(opportunities.companyId, id)));
       await tx.delete(companies).where(combineWithWritableScope(principal, companyScope, eq(companies.id, id)));
     });
   }
@@ -121,6 +130,26 @@ export class CompanyStorage {
     return db.select({ id: persons.id, name: persons.name, role: persons.role, company: persons.company })
       .from(persons)
       .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), personScope, eq(persons.companyId, id)));
+  }
+
+  async listOpportunities(id: string) {
+    const { opportunityStorage } = await import("./opportunity-storage");
+    return opportunityStorage.listForCompany(id, getCurrentPrincipalOrSystem());
+  }
+
+  async addOpportunity(companyIdValue: string, opportunityId: number): Promise<void> {
+    const company = await this.get(companyIdValue);
+    if (!company) throw new Error("Company not found");
+    const { opportunityStorage } = await import("./opportunity-storage");
+    const row = await opportunityStorage.setCompany(opportunityId, company.id, getCurrentPrincipalOrSystem());
+    if (!row) throw new Error("Opportunity not found or not writable");
+  }
+
+  async removeOpportunity(companyIdValue: string, opportunityId: number): Promise<void> {
+    const { opportunityStorage } = await import("./opportunity-storage");
+    const current = await opportunityStorage.get(opportunityId, getCurrentPrincipalOrSystem());
+    if (!current || current.companyId !== companyIdValue) throw new Error("Opportunity is not linked to this company");
+    await opportunityStorage.setCompany(opportunityId, null, getCurrentPrincipalOrSystem());
   }
 
   async addPerson(companyIdValue: string, personId: string): Promise<void> {

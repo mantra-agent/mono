@@ -52,6 +52,7 @@ interface Opportunity {
   evInputs: Record<string, any>;
   computedEv: number | null;
   company: string | null;
+  companyId: string | null;
   location: string | null;
   nextSteps: string | null;
   priority: string | null;
@@ -128,6 +129,36 @@ function matchesOpportunity(opportunity: Opportunity, query: string): boolean {
   ]
     .filter(Boolean)
     .some(value => String(value).toLowerCase().includes(q));
+}
+
+interface CompanyResult { id: string; name: string; industry?: string; }
+
+function CompanySearch({ value, onChange }: { value: string | null; onChange: (companyId: string | null) => void }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const { data: companies = [] } = useQuery<CompanyResult[]>({
+    queryKey: ["/api/companies", query],
+    queryFn: async () => {
+      const response = await fetch(`/api/companies${query ? `?q=${encodeURIComponent(query)}` : ""}`);
+      if (!response.ok) return [];
+      return (await response.json()).companies || [];
+    },
+  });
+  const current = companies.find(company => company.id === value);
+  useEffect(() => {
+    const close = (event: MouseEvent) => { if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+  if (value && current) return <div className="flex items-center gap-2">
+    <ReferenceChip resolved={resolveReference({ type: "company", id: value, canonical: `@company:${value}` })} />
+    <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => onChange(null)}>✕</button>
+  </div>;
+  return <div ref={wrapperRef} className="relative">
+    <div className="relative"><Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" /><Input value={query} onChange={event => { setQuery(event.target.value); setOpen(true); }} onFocus={() => setOpen(true)} placeholder="Search companies…" className="h-8 pl-8 text-sm" /></div>
+    {open && companies.length > 0 && <div className="absolute z-50 mt-1 max-h-40 w-full overflow-y-auto rounded-md border bg-popover shadow-md">{companies.map(company => <button type="button" key={company.id} className="w-full px-3 py-1.5 text-left text-sm hover:bg-accent" onClick={() => { onChange(company.id); setQuery(""); setOpen(false); }}>{company.name}</button>)}</div>}
+  </div>;
 }
 
 // ── People Search Dropdown ─────────────────────────────────────────
@@ -771,8 +802,8 @@ function OpportunityDetail({
             </ProfileTreeRow>
 
             {showCompany && (
-              <ProfileTreeRow label="Company" icon={<Building2 className="h-3.5 w-3.5" />} hasValue={Boolean(form.company)} showEmpty testId="row-opportunity-company">
-                <Input value={form.company || ""} onChange={event => patch("company", event.target.value || null)} placeholder="Company" />
+              <ProfileTreeRow label="Company" icon={<Building2 className="h-3.5 w-3.5" />} hasValue={Boolean(form.companyId)} showEmpty testId="row-opportunity-company">
+                <CompanySearch value={form.companyId} onChange={companyId => patch("companyId", companyId)} />
               </ProfileTreeRow>
             )}
 

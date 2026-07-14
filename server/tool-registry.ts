@@ -413,12 +413,12 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   companies: {
-    description: "Manage companies and company membership. Actions: list, get, create, update, delete, add_person, remove_person. Use canonical @company:id references.",
+    description: "Manage companies and company membership. Actions: list, get, create, update, delete, add_person, remove_person, add_opportunity, remove_opportunity. Use canonical @company:id references.",
     category: "communication",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list", "get", "create", "update", "delete", "add_person", "remove_person"] },
+        action: { type: "string", enum: ["list", "get", "create", "update", "delete", "add_person", "remove_person", "add_opportunity", "remove_opportunity"] },
         id: { type: "string", description: "Company ID or exact name" },
         query: { type: "string", description: "Company search query" },
         name: { type: "string", description: "Company name" },
@@ -429,6 +429,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         notes: { type: "string", description: "Company notes" },
         tags: { type: "array", items: { type: "string" }, description: "Company tags" },
         personId: { type: "string", description: "Person ID for add_person/remove_person" },
+        opportunityId: { type: "number", description: "Opportunity ID for add_opportunity/remove_opportunity" },
       },
       required: ["action"],
     },
@@ -879,7 +880,8 @@ export const TOOLS: Record<string, ToolMeta> = {
         timeCommitmentPeriod: { type: "string", enum: ["week", "month"], description: "Time commitment period" },
         timeHorizonMonths: { type: "number", description: "Months until income starts" },
         evInputs: { type: "object", description: "Type-specific EV inputs (e.g. {annualComp: 150000} for job, {rate: 200, hoursPerWeek: 20, durationMonths: 6} for consulting)" },
-        company: { type: "string", description: "Company name (for experience or job opportunities)" },
+        company: { type: "string", description: "Company name (for experience; legacy fallback for opportunities)" },
+        companyId: { type: "string", description: "Company ID for create/update_opportunity; use the canonical @company:id target" },
         location: { type: "string", description: "Location (e.g. 'Remote', city name)" },
         teamSizePeak: { type: "number", description: "Peak team size (for experience)" },
         directReports: { type: "number", description: "Number of direct reports (for experience)" },

@@ -4705,7 +4705,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const company = args.id ? await companyStorage.resolve(String(args.id)) : null;
       if (action === "get") {
         if (!company) return { result: "Company not found", error: true };
-        return { result: JSON.stringify({ ...company, people: await companyStorage.listPeople(company.id) }, null, 2) };
+        return { result: JSON.stringify({ ...company, people: await companyStorage.listPeople(company.id), opportunities: await companyStorage.listOpportunities(company.id) }, null, 2) };
       }
       if (action === "create") {
         if (!args.name) return { result: "Missing company name", error: true };
@@ -4720,6 +4720,15 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       if (action === "delete") {
         await companyStorage.delete(company.id);
         return { result: `Company deleted: ${company.name}` };
+      }
+      if (action === "add_opportunity" || action === "remove_opportunity") {
+        if (typeof args.opportunityId !== "number") return { result: "Missing opportunityId", error: true };
+        if (action === "add_opportunity") {
+          await companyStorage.addOpportunity(company.id, args.opportunityId);
+          return { result: `Added opportunity ${args.opportunityId} to @company:${company.id}` };
+        }
+        await companyStorage.removeOpportunity(company.id, args.opportunityId);
+        return { result: `Removed opportunity ${args.opportunityId} from @company:${company.id}` };
       }
       if (!args.personId) return { result: "Missing personId", error: true };
       if (action === "add_person") {
@@ -14475,7 +14484,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
             `[${o.id}] ${o.title}`,
             `  type=${o.type} status=${o.status} probability=${Math.round((o.probability ?? 0) * 100)}%`,
             `  EV=${ev}`,
-            o.company ? `  company: ${o.company}` : null,
+            o.companyId ? `  company: @company:${o.companyId}` : o.company ? `  company: ${o.company}` : null,
             o.location ? `  location: ${o.location}` : null,
             o.priority ? `  priority: ${o.priority}` : null,
             o.description ? `  description: ${o.description.slice(0, 200)}${o.description.length > 200 ? "…" : ""}` : null,
@@ -14507,6 +14516,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           if (a.timeHorizonMonths !== undefined) fields.timeHorizonMonths = a.timeHorizonMonths;
           if (a.evInputs !== undefined) fields.evInputs = a.evInputs;
           if (a.company !== undefined) fields.company = a.company;
+          if (a.companyId !== undefined) fields.companyId = a.companyId;
           if (a.location !== undefined) fields.location = a.location;
           if (a.nextSteps !== undefined) fields.nextSteps = a.nextSteps;
           if (a.priority !== undefined) fields.priority = a.priority;
@@ -14538,6 +14548,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           if (a.timeHorizonMonths !== undefined) updates.timeHorizonMonths = a.timeHorizonMonths;
           if (a.evInputs !== undefined) updates.evInputs = a.evInputs;
           if (a.company !== undefined) updates.company = a.company;
+          if (a.companyId !== undefined) updates.companyId = a.companyId;
           if (a.location !== undefined) updates.location = a.location;
           if (a.nextSteps !== undefined) updates.nextSteps = a.nextSteps;
           if (a.priority !== undefined) updates.priority = a.priority;
@@ -15391,7 +15402,7 @@ function validateToolArgs(
 
 const SIDE_EFFECT_ONLY_ACTIONS: Record<string, Set<string>> = {
   session: new Set(["set_status", "end", "send_message"]),
-  companies: new Set(["create", "update", "delete", "add_person", "remove_person"]),
+  companies: new Set(["create", "update", "delete", "add_person", "remove_person", "add_opportunity", "remove_opportunity"]),
   people: new Set(["create", "update", "add_note", "update_note", "delete_note", "log_interaction", "update_interaction", "delete_interaction", "set_daily_contact"]),
   calendar: new Set(["create", "update", "delete"]),
   memory: new Set(["write"]),
