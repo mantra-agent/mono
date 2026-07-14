@@ -36,7 +36,6 @@ export const openAITierModelConfigSchema = z.object({
   reasoningSummary: openAIReasoningSummarySchema.optional(),
   verbosity: openAIVerbositySchema.optional(),
   serviceTier: openAIServiceTierSchema.optional(),
-  fastMode: z.boolean().optional(),
   maxOutputTokens: z.number().int().positive().optional(),
 }).strict();
 export type OpenAITierModelConfig = z.infer<typeof openAITierModelConfigSchema>;

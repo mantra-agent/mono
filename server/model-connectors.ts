@@ -86,7 +86,6 @@ function defaultOpenAITierConfig(provider: ModelConnectorProvider, tier: keyof O
     config.serviceTier = "auto";
   } else if (provider === "openai-subscription") {
     config.serviceTier = "auto";
-    config.fastMode = false;
   }
   config.maxOutputTokens = Math.min(model.maxOutputTokens, tier === "fast" ? 16000 : tier === "balanced" ? 32000 : 64000);
   return config;
@@ -133,11 +132,6 @@ function validateOpenAITierConfig(provider: ModelConnectorProvider, surface: Ope
     if (surface === "api" && !["auto", "default", "flex", "priority"].includes(config.serviceTier)) throw new Error("OpenAI API service tier cannot use subscription fast mode");
     normalized.serviceTier = config.serviceTier;
   }
-  if (config.fastMode !== undefined) {
-    if (surface !== "subscription") throw new Error("Fast mode is only supported by OpenAI Subscription connectors");
-    normalized.fastMode = config.fastMode;
-  }
-  if (normalized.fastMode) normalized.serviceTier = "fast";
   if (config.maxOutputTokens !== undefined) {
     if (config.maxOutputTokens > model.maxOutputTokens) throw new Error(`maxOutputTokens for '${config.model}' cannot exceed ${model.maxOutputTokens}`);
     normalized.maxOutputTokens = config.maxOutputTokens;

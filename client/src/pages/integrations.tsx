@@ -5490,7 +5490,6 @@ type TierModelConfig = string | {
   reasoningSummary?: OpenAIReasoningSummary;
   verbosity?: OpenAIVerbosity;
   serviceTier?: OpenAIServiceTier;
-  fastMode?: boolean;
   maxOutputTokens?: number;
 };
 interface ModelConnectorDetail {
@@ -5521,6 +5520,7 @@ const REASONING_EFFORTS: readonly OpenAIReasoningEffort[] = ["none", "minimal", 
 const REASONING_SUMMARIES: readonly OpenAIReasoningSummary[] = ["auto", "concise", "detailed", "none"];
 const VERBOSITIES: readonly OpenAIVerbosity[] = ["low", "medium", "high"];
 const SERVICE_TIERS: readonly OpenAIServiceTier[] = ["auto", "default", "flex", "priority", "fast"];
+const SERVICE_TIERS_SUBSCRIPTION: readonly OpenAIServiceTier[] = ["auto", "fast"];
 
 function tierConfigModel(value: TierModelConfig): string {
   return typeof value === "string" ? value : value.model;
@@ -5549,12 +5549,15 @@ function isOpenAIProvider(provider: ModelConnectorDetail["provider"]): provider 
 
 function supportedOpenAISettings(model?: ModelProviderDetail["models"][number], provider?: ModelConnectorDetail["provider"]) {
   const supportsReasoning = Boolean(model?.reasoning || model?.supportsReasoningEffort);
+  const isGpt56 = Boolean(model?.id && /gpt-5\.6/i.test(model.id));
+  const isSubscription = provider === "openai-subscription";
   return {
     reasoningEffort: supportsReasoning,
-    reasoningMode: supportsReasoning && provider === "openai-subscription",
+    reasoningMode: supportsReasoning && isGpt56,
     reasoningSummary: supportsReasoning,
     verbosity: Boolean(model?.id && /gpt-5|gpt-5\.|gpt-5-|codex/i.test(model.id)),
-    serviceTier: provider === "openai",
+    serviceTier: provider === "openai" || isSubscription,
+    serviceTierOptions: isSubscription ? SERVICE_TIERS_SUBSCRIPTION : SERVICE_TIERS,
     maxOutputTokens: true,
   };
 }
@@ -5644,7 +5647,7 @@ function OpenAIConnectorTree({ connector, models, title }: { connector: ModelCon
               {supported.reasoningMode && <OpenAISettingSelect label="Reasoning mode" value={config.reasoningMode ?? "standard"} options={["standard", "pro"] as const} description="Default: standard. Pro is reserved for subscription reasoning paths that support it." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningMode: value })} />}
               {supported.reasoningSummary && <OpenAISettingSelect label="Reasoning summary" value={config.reasoningSummary ?? "auto"} options={REASONING_SUMMARIES} description="Default: auto. Controls whether OpenAI returns summarized reasoning." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningSummary: value })} />}
               {supported.verbosity && <OpenAISettingSelect label="Verbosity" value={config.verbosity ?? "medium"} options={VERBOSITIES} description="Default: medium. Controls output detail for GPT-5-class text generation." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { verbosity: value })} />}
-              {supported.serviceTier && <OpenAISettingSelect label="Service tier" value={config.serviceTier ?? "auto"} options={SERVICE_TIERS} description="Default: auto. Controls API latency/cost class when the account supports it." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { serviceTier: value })} />}
+              {supported.serviceTier && <OpenAISettingSelect label="Service tier" value={config.serviceTier ?? "auto"} options={supported.serviceTierOptions} description="Default: auto. Controls API latency/cost class when the account supports it." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { serviceTier: value })} />}
               {supported.maxOutputTokens && <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
                 <div className="min-w-0">
                   <Label className="text-xs text-muted-foreground">Max output</Label>
