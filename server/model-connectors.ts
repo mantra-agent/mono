@@ -195,12 +195,19 @@ export async function updateModelConnector(
 ): Promise<ModelConnector | null> {
   const principal = getCurrentPrincipalOrSystem();
   const [existing] = await db.select().from(providerConnections).where(
-    combineWithWritableScope(principal, scopeColumns, and(
+    combineWithVisibleScope(principal, scopeColumns, and(
       eq(providerConnections.id, id),
       eq(providerConnections.connectorKind, "model"),
     )),
   ).limit(1);
   if (!existing) return null;
+
+  // Verify the principal can write to this connector
+  // The route already enforces system:write permission, but we still need to
+  // check that this is not a user-owned connector belonging to someone else
+  if (existing.scope === "user" && existing.ownerUserId !== principal.userId) {
+    return null; // Not writable by this principal
+  }
 
   const updates: Record<string, unknown> = { updatedAt: sql`CURRENT_TIMESTAMP` };
   if (input.status !== undefined) updates.status = input.status;
@@ -215,7 +222,7 @@ export async function updateModelConnector(
     }
   }
   await db.update(providerConnections).set(updates).where(
-    combineWithWritableScope(principal, scopeColumns, eq(providerConnections.id, id)),
+    eq(providerConnections.id, id),
   );
   return (await listModelConnectors()).find((connector) => connector.id === id) ?? null;
 }
