@@ -1638,6 +1638,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     },
     onEvent?: Parameters<typeof agentExecutor.run>[0]["onEvent"],
     routingTier?: string,
+    diagnosticTurnId?: string,
   ): Promise<ExecutorRunResult> {
     const toolExecutor = async (name: string, args: Record<string, any>) => {
       const toolCallId = generateToolCallId();
@@ -1663,6 +1664,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       routingTier,
       contextPressure,
       onEvent,
+      diagnosticTurnId,
     });
   }
 
@@ -1786,8 +1788,18 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           autoTier: selectedAutoTier || undefined,
         });
 
+      const diagnosticRunId = `pre-run-${lease.generation}-${randomUUID().slice(0, 8)}`;
+      const diagnosticTurnId = `system-turn-${diagnosticRunId}`;
+      const turnStartedAt = Date.now();
+      publishChatStreamEvent(sessionKey, sessionId, { type: "run_start", runId: diagnosticRunId });
+      publishChatStreamEvent(sessionKey, sessionId, {
+        type: "system_step", step: "turn", stepId: diagnosticTurnId,
+        status: "started", startedAt: turnStartedAt,
+      });
+
       assistantDraft = await chatStorage.createAssistantDraft(sessionId, {
         model: chatModel,
+        runId: diagnosticRunId,
       });
       chatRunLifecycle.assertCurrent(lease);
       let assistantDraftLastCheckpoint = 0;
@@ -1834,6 +1846,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         step: "context_assembly",
         stepId: contextRootId,
         status: "started",
+        parentId: diagnosticTurnId,
         startedAt: contextStartedAt,
       });
 
@@ -1892,6 +1905,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         name: "context_assembly",
         status: "done",
         elapsedMs: contextElapsedMs,
+        parentId: diagnosticTurnId,
         startedAt: contextStartedAt,
         endedAt: contextEndedAt,
       });
@@ -1917,6 +1931,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           }
         },
         chatRoutingTier,
+        diagnosticTurnId,
       );
       if (assistantDraftCheckpointPending) {
         clearTimeout(assistantDraftCheckpointPending);
@@ -1938,6 +1953,19 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         `executor DONE sessionId=${sessionId} contentLen=${result.content?.length || 0} terminationReason=${result.terminationReason || "unknown"} abortReason=${result.abortReason || "none"} durationMs=${result.durationMs ?? "?"} iterations=${result.iterations}`,
       );
       chatRunLifecycle.assertCurrent(lease);
+      const turnEndedAt = Date.now();
+      const turnElapsedMs = turnEndedAt - turnStartedAt;
+      publishChatStreamEvent(sessionKey, sessionId, {
+        type: "system_step", step: "turn", stepId: diagnosticTurnId,
+        status: "done", elapsedMs: turnElapsedMs,
+        startedAt: turnStartedAt, endedAt: turnEndedAt,
+      });
+      const turnStepIndex = preSteps.length;
+      preSteps.push({
+        id: diagnosticTurnId, name: "turn", status: "done",
+        elapsedMs: turnElapsedMs, startedAt: turnStartedAt, endedAt: turnEndedAt,
+      });
+      preChronology.unshift({ s: "system", i: turnStepIndex });
 
       const durationStr =
         result.durationMs != null

@@ -251,6 +251,7 @@ export type ChatStreamEvent =
       toolCallId: string;
       arguments?: Record<string, unknown>;
       narrative?: string;
+      parentId?: string;
     })
   | (ChatStreamEventBase & {
       type: "tool_result";
