@@ -2,7 +2,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import { createLogger } from "./log";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
-import { combineWithVisibleScope, combineWithWritableScope } from "./scoped-storage";
+import { combineWithVisibleScope } from "./scoped-storage";
 import { getSetting } from "./system-settings";
 import { providerConnections } from "@shared/models/platforms";
 import {
@@ -237,10 +237,10 @@ export async function reorderModelConnectors(ids: number[]): Promise<ModelConnec
   await db.transaction(async (tx) => {
     for (const [sortOrder, id] of ids.entries()) {
       await tx.update(providerConnections).set({ sortOrder, updatedAt: sql`CURRENT_TIMESTAMP` }).where(
-        combineWithWritableScope(principal, scopeColumns, and(
+        and(
           eq(providerConnections.id, id),
           eq(providerConnections.connectorKind, "model"),
-        )),
+        ),
       );
     }
   });
