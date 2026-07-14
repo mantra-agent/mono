@@ -28,6 +28,7 @@ export interface PersonaEntry {
   expressionTags: string[];
   cognitiveOverrides: Record<string, unknown>;
   semanticTier: SemanticTier | null;
+  routingExamples: string[];
   isDefault: boolean;
   isActive: boolean;
   sortOrder: number;
@@ -48,6 +49,7 @@ function rowToEntry(row: typeof personas.$inferSelect): PersonaEntry {
     cognitiveOverrides:
       (row.cognitiveOverrides as Record<string, unknown>) || {},
     semanticTier: row.semanticTier ? semanticTierSchema.parse(row.semanticTier) : null,
+    routingExamples: (row.routingExamples as string[]) || [],
     isDefault: row.isDefault,
     isActive: row.isActive,
     sortOrder: row.sortOrder,
@@ -76,6 +78,21 @@ const PERSONA_SEMANTIC_TIERS: Record<string, SemanticTier> = {
 
 function semanticTierForPersona(name: string): SemanticTier {
   return PERSONA_SEMANTIC_TIERS[name] ?? "balanced";
+}
+
+/** Example session openings that should route to each seed persona during orientation bootstrap. */
+const PERSONA_ROUTING_EXAMPLES: Record<string, string[]> = {
+  Default: ["Hey, how's it going?", "Quick question about my calendar"],
+  Strategist: ["How should I position against this competitor?", "Walk through the game theory of this negotiation"],
+  Architect: ["Design the schema for this new system", "There's a structural bug in how sessions orient"],
+  Operator: ["Mark that task done and create a follow-up", "Log this interaction with Mike"],
+  Creative: ["Brainstorm names for this product", "Write a playful post about today's launch"],
+  Coach: ["I keep procrastinating on the demo, hold me accountable", "Help me reflect on this week"],
+  Companion: ["Rough day. Just need to talk", "Feeling anxious about tomorrow's call"],
+};
+
+function routingExamplesForPersona(name: string): string[] {
+  return PERSONA_ROUTING_EXAMPLES[name] ?? [];
 }
 
 const SEED_PERSONAS = [
@@ -599,6 +616,7 @@ class PersonaStorageClass {
           expressionTags: seed.expressionTags,
           cognitiveOverrides: seed.cognitiveOverrides,
           semanticTier: semanticTierForPersona(seed.name),
+          routingExamples: routingExamplesForPersona(seed.name),
           isDefault: seed.isDefault,
           isActive: seed.isActive,
           sortOrder: seed.sortOrder,
@@ -622,7 +640,10 @@ class PersonaStorageClass {
           existing.promptOverlay !== seed.promptOverlay);
       const needsIconUpdate = existing.icon !== seed.icon;
       const needsTierUpdate = existing.semanticTier === null;
-      if (needsOverlayUpdate || needsIconUpdate || needsTierUpdate) {
+      const needsRoutingUpdate =
+        existing.routingExamples.length === 0 &&
+        routingExamplesForPersona(seed.name).length > 0;
+      if (needsOverlayUpdate || needsIconUpdate || needsTierUpdate || needsRoutingUpdate) {
         const updates: Record<string, unknown> = { updatedAt: new Date() };
         if (needsOverlayUpdate) {
           updates.promptOverlay = seed.promptOverlay;
@@ -634,6 +655,7 @@ class PersonaStorageClass {
           updates.icon = seed.icon;
         }
         if (needsTierUpdate) updates.semanticTier = semanticTierForPersona(seed.name);
+        if (needsRoutingUpdate) updates.routingExamples = routingExamplesForPersona(seed.name);
         await db
           .update(personas)
           .set(updates)
