@@ -1069,7 +1069,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         persona: { type: ["string", "number"], description: "Persona name or numeric ID to activate" },
         contextFlags: {
           type: "object",
-          description: "Context section flags — map of section ID to boolean. true = include, false = exclude. Bootstrap sections cannot be excluded. Flags merge with any existing flags on the session.",
+          description: "Context section flags — map of section ID to boolean. true = include, false = exclude. Bootstrap sections cannot be excluded. Flags merge with existing flags; an empty object explicitly selects bootstrap/default sections only and completes context orientation.",
           additionalProperties: { type: "boolean" },
         },
         reasoning: { type: "string", description: "Brief explanation of why these orientation choices were made" },

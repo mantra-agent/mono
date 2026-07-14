@@ -4029,16 +4029,19 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         validatedFlags[key] = !!value;
       }
 
-      if (Object.keys(validatedFlags).length > 0) {
-        const existingFlags = await chatFileStorage.readSessionContextFlags(sessionId);
-        await chatFileStorage.updateSessionContextFlags(sessionId, { ...(existingFlags || {}), ...validatedFlags });
-        const included = Object.entries(validatedFlags).filter(([, v]) => v).map(([k]) => k);
-        const excluded = Object.entries(validatedFlags).filter(([, v]) => !v).map(([k]) => k);
-        const parts: string[] = [];
-        if (included.length > 0) parts.push(`included: ${included.join(", ")}`);
-        if (excluded.length > 0) parts.push(`excluded: ${excluded.join(", ")}`);
-        results.push(`Context flags set (${parts.join("; ")})`);
-      }
+      // An empty flag map is meaningful: orientation considered optional context
+      // and chose the bootstrap/default sections only. Persist it so null remains
+      // the single "orientation has not established context scope" state.
+      const existingFlags = await chatFileStorage.readSessionContextFlags(sessionId);
+      await chatFileStorage.updateSessionContextFlags(sessionId, { ...(existingFlags || {}), ...validatedFlags });
+      const included = Object.entries(validatedFlags).filter(([, v]) => v).map(([k]) => k);
+      const excluded = Object.entries(validatedFlags).filter(([, v]) => !v).map(([k]) => k);
+      const parts: string[] = [];
+      if (included.length > 0) parts.push(`included: ${included.join(", ")}`);
+      if (excluded.length > 0) parts.push(`excluded: ${excluded.join(", ")}`);
+      results.push(parts.length > 0
+        ? `Context flags set (${parts.join("; ")})`
+        : "Context flags set (bootstrap/default sections only)");
 
       if (warnings.length > 0) {
         results.push(`Context flag warnings: ${warnings.join("; ")}`);

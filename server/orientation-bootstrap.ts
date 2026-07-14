@@ -189,6 +189,10 @@ export async function ensureSessionOriented(options: {
       title: classification.title,
       topics: classification.topics,
       persona: classification.persona,
+      // The orient handler derives semantic recommendations from title/topics/persona.
+      // An explicit empty map means the bootstrap also establishes context scope in
+      // this one mutation, even when no optional sections are recommended.
+      contextFlags: {},
     });
     if (applied.error) {
       log.warn(`bootstrap orient apply failed sessionId=${sessionId}: ${applied.result}`);
