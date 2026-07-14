@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocation, useRoute } from "wouter";
-import { ArrowLeft, Building2, Globe, Loader2, MapPin, Plus, Search, Trash2, User, X } from "lucide-react";
+import { ArrowLeft, Briefcase, Building2, Globe, Loader2, MapPin, Plus, Search, Trash2, User, X } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,8 +12,8 @@ import { useFocusContext } from "@/hooks/use-focus-context";
 import { useToast } from "@/hooks/use-toast";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 
-interface CompanyIndex { id: string; name: string; industry?: string; location?: string; peopleCount?: number; }
-interface Company extends CompanyIndex { description?: string; website?: string; notes?: string; tags: string[]; people: Array<{ id: string; name: string; role?: string }>; }
+interface CompanyIndex { id: string; name: string; industry?: string; location?: string; peopleCount?: number; opportunityCount?: number; }
+interface Company extends CompanyIndex { description?: string; website?: string; notes?: string; tags: string[]; opportunities: Array<{ id: number; title: string; status: string; type: string }>; people: Array<{ id: string; name: string; role?: string }>; }
 interface PersonIndex { id: string; name: string; role?: string; companyId?: string; }
 
 function CompanyDetail({ id, onClose, onDelete }: { id: string; onClose: () => void; onDelete: () => void }) {
@@ -27,6 +27,7 @@ function CompanyDetail({ id, onClose, onDelete }: { id: string; onClose: () => v
     queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
     queryClient.invalidateQueries({ queryKey: ["/api/companies", id] });
     queryClient.invalidateQueries({ queryKey: ["/api/people"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/exec/opportunities"] });
   }, [id]);
 
   const update = useMutation({
@@ -75,6 +76,11 @@ function CompanyDetail({ id, onClose, onDelete }: { id: string; onClose: () => v
       </div>
       {company.people.length === 0 ? <p className="px-4 py-6 text-sm text-muted-foreground">No people linked yet.</p> : company.people.map(person => <div key={person.id} className="flex min-h-11 items-center gap-3 border-b border-border/10 px-4 py-2 last:border-b-0"><User className="h-3.5 w-3.5 text-muted-foreground" /><ReferenceRenderer refValue={{ type: "person", id: person.id, canonical: `@person:${person.id}` }} surface="chat-inline" className="min-w-0 flex-1" />{person.role && <span className="text-xs text-muted-foreground">{person.role}</span>}<Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => unlink.mutate(person.id)}><X className="h-3.5 w-3.5" /></Button></div>)}
     </section>
+
+    <section className="overflow-hidden rounded-md border border-border/20">
+      <div className="border-b border-border/20 px-4 py-3"><h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Opportunities ({company.opportunities.length})</h2></div>
+      {company.opportunities.length === 0 ? <p className="px-4 py-6 text-sm text-muted-foreground">No opportunities linked yet.</p> : company.opportunities.map(opportunity => <div key={opportunity.id} className="flex min-h-11 items-center gap-3 border-b border-border/10 px-4 py-2 last:border-b-0"><Briefcase className="h-3.5 w-3.5 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="truncate text-sm text-foreground">{opportunity.title}</div><div className="text-xs capitalize text-muted-foreground">{opportunity.status}</div></div><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => apiRequest("DELETE", `/api/companies/${id}/opportunities/${opportunity.id}`).then(invalidate)}><X className="h-3.5 w-3.5" /></Button></div>)}
+    </section>
   </div>;
 }
 
@@ -110,7 +116,7 @@ export default function CompaniesPage() {
         <button type="button" onClick={() => setShowQuickAdd(true)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80" data-testid="button-new-company-row">
           <Plus className="h-3.5 w-3.5 shrink-0" />
           <span>New Company</span>
-        </button>{isLoading ? <Loader2 className="mx-auto mt-8 h-4 w-4 animate-spin text-muted-foreground" /> : companies.map(company => <button key={company.id} onClick={() => select(company.id)} className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${selectedId === company.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70"}`}><Building2 className="h-3.5 w-3.5" /><span className="min-w-0 flex-1 truncate">{company.name}</span><span className="text-[10px]">{company.peopleCount || 0}</span></button>)}</div></ScrollArea>
+        </button>{isLoading ? <Loader2 className="mx-auto mt-8 h-4 w-4 animate-spin text-muted-foreground" /> : companies.map(company => <button key={company.id} onClick={() => select(company.id)} className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${selectedId === company.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70"}`}><Building2 className="h-3.5 w-3.5" /><span className="min-w-0 flex-1 truncate">{company.name}</span><span className="text-[10px]">{(company.peopleCount || 0) + (company.opportunityCount || 0)}</span></button>)}</div></ScrollArea>
     </div>
     <div className={`min-w-0 flex-1 overflow-y-auto ${selectedId ? "block" : "hidden @md:block"}`}>{selectedId ? <CompanyDetail id={selectedId} onClose={() => select(null)} onDelete={() => select(null)} /> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Select a company</div>}</div>
   </div>;

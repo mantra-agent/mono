@@ -29,7 +29,8 @@ export function registerCompanyRoutes(app: Express): void {
   app.get("/api/companies/:id", async (req, res) => {
     const company = await companyStorage.get(req.params.id);
     if (!company) return res.status(404).json({ error: "Company not found" });
-    res.json({ ...company, people: await companyStorage.listPeople(company.id) });
+    const [people, opportunities] = await Promise.all([companyStorage.listPeople(company.id), companyStorage.listOpportunities(company.id)]);
+    res.json({ ...company, people, opportunities });
   });
 
   app.patch("/api/companies/:id", async (req, res) => {
@@ -44,6 +45,24 @@ export function registerCompanyRoutes(app: Express): void {
     try {
       await companyStorage.delete(req.params.id);
       res.json({ deleted: true });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post("/api/companies/:id/opportunities/:opportunityId", async (req, res) => {
+    try {
+      await companyStorage.addOpportunity(req.params.id, Number(req.params.opportunityId));
+      res.json({ linked: true });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.delete("/api/companies/:id/opportunities/:opportunityId", async (req, res) => {
+    try {
+      await companyStorage.removeOpportunity(req.params.id, Number(req.params.opportunityId));
+      res.json({ linked: false });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }

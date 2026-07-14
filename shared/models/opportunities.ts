@@ -38,6 +38,7 @@ export const opportunities = pgTable("opportunities", {
   evInputs: jsonb("ev_inputs").notNull().default(sql`'{}'::jsonb`),
   computedEv: real("computed_ev"),
   company: text("company"),
+  companyId: text("company_id"),
   location: text("location"),
   nextSteps: text("next_steps"),
   priority: text("priority"),
@@ -55,6 +56,7 @@ export const opportunities = pgTable("opportunities", {
 }, (t) => [
   index("idx_opportunities_scope_owner").on(t.scope, t.ownerUserId),
   index("idx_opportunities_account").on(t.accountId),
+  index("idx_opportunities_company_id").on(t.companyId),
 ]);
 
 export const opportunitySkills = pgTable("opportunity_skills", {
@@ -235,6 +237,7 @@ export const insertOpportunitySchema = createInsertSchema(opportunities).omit({
   timeHorizonMonths: z.number().int().min(0).optional().nullable(),
   evInputs: z.record(z.any()).optional(),
   company: z.string().optional().nullable(),
+  companyId: z.string().optional().nullable(),
   location: z.string().optional().nullable(),
   nextSteps: z.string().optional().nullable(),
   priority: z.enum(opportunityPriorities).optional().nullable(),

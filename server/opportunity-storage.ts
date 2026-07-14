@@ -194,6 +194,7 @@ export async function migrateOpportunitySchema(): Promise<void> {
       ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS source_signal_id TEXT;
       ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS required_skills TEXT[] NOT NULL DEFAULT '{}'::text[];
       ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS company TEXT;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS company_id TEXT;
       ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS location TEXT;
       ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS next_steps TEXT;
       ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS priority TEXT;
@@ -212,6 +213,7 @@ export async function migrateOpportunitySchema(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_opportunities_user ON opportunities(user_id);
       CREATE INDEX IF NOT EXISTS idx_opportunities_scope_owner ON opportunities(scope, owner_user_id);
       CREATE INDEX IF NOT EXISTS idx_opportunities_account ON opportunities(account_id);
+      CREATE INDEX IF NOT EXISTS idx_opportunities_company_id ON opportunities(company_id);
 
       CREATE TABLE IF NOT EXISTS opportunity_interactions (
         id SERIAL PRIMARY KEY,
@@ -280,12 +282,13 @@ class OpportunityStorage {
 
   async create(principal: Principal, data: InsertOpportunity): Promise<OpportunityRow> {
     return autoHeal(async () => {
-      const ev = computeEV(data.type, (data.evInputs || {}) as Record<string, any>, data.probability ?? 0.05, data.hoursPerWeek);
+      const normalized = await this.normalizeCompany(data);
+      const ev = computeEV(normalized.type, (normalized.evInputs || {}) as Record<string, any>, normalized.probability ?? 0.05, normalized.hoursPerWeek);
       const [row] = await db.insert(opportunities).values({
-        ...data,
+        ...normalized,
         userId: opportunityUserId(principal),
         ...ownedInsertValues(principal, opportunityScopeColumns),
-        evInputs: data.evInputs || {},
+        evInputs: normalized.evInputs || {},
         computedEv: ev,
       }).returning();
       log.debug(`create opportunity id=${row.id} title="${row.title}" ev=${ev.toFixed(0)}`);
@@ -301,9 +304,10 @@ class OpportunityStorage {
     return autoHeal(async () => {
       const existing = await this.get(id, principal);
       if (!existing) return undefined;
-      const merged = { ...existing, ...updates };
-      const needsRecompute = updates.type !== undefined || updates.evInputs !== undefined || updates.probability !== undefined || updates.hoursPerWeek !== undefined;
-      const patch: Record<string, unknown> = { ...updates, updatedAt: new Date() };
+      const normalized = await this.normalizeCompany(updates);
+      const merged = { ...existing, ...normalized };
+      const needsRecompute = normalized.type !== undefined || normalized.evInputs !== undefined || normalized.probability !== undefined || normalized.hoursPerWeek !== undefined;
+      const patch: Record<string, unknown> = { ...normalized, updatedAt: new Date() };
       if (needsRecompute) patch.computedEv = computeEV(merged.type, (merged.evInputs || {}) as Record<string, any>, merged.probability ?? 0.05, merged.hoursPerWeek);
       const [row] = await db.update(opportunities).set(patch).where(
         combineWithWritableScope(principal, opportunityScopeColumns, eq(opportunities.id, id)),
@@ -317,6 +321,25 @@ class OpportunityStorage {
       }
       return row;
     });
+  }
+
+  private async normalizeCompany<T extends Partial<InsertOpportunity>>(data: T): Promise<T> {
+    if (data.companyId === undefined) return data;
+    if (!data.companyId) return { ...data, companyId: null, company: null };
+    const { companyStorage } = await import("./company-storage");
+    const company = await companyStorage.get(data.companyId);
+    if (!company) throw Object.assign(new Error("Company not found"), { status: 400 });
+    return { ...data, companyId: company.id, company: company.name };
+  }
+
+  async listForCompany(companyId: string, principal: Principal): Promise<OpportunityRow[]> {
+    return autoHeal(() => db.select().from(opportunities).where(
+      combineWithVisibleScope(principal, opportunityScopeColumns, eq(opportunities.companyId, companyId)),
+    ).orderBy(desc(opportunities.updatedAt)));
+  }
+
+  async setCompany(id: number, companyId: string | null, principal: Principal): Promise<OpportunityRow | undefined> {
+    return this.update(id, { companyId }, principal);
   }
 
   async delete(id: number, principal: Principal): Promise<boolean> {
