@@ -43,7 +43,7 @@ export default function DashboardPage() {
   });
 
   return (
-    <div className="h-full min-w-0 overflow-y-auto bg-background p-4 md:p-6">
+    <div className="h-full min-w-0 overflow-y-auto bg-background p-4 md:p-3">
       <div className="flex flex-col gap-6">
         {query.isError && (
           <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-destructive">
