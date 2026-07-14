@@ -1673,9 +1673,24 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
 
   return (
     <div ref={turnRootRef} className="flex gap-3 items-start" data-testid={`message-assistant-${message.id}`}>
-      <div className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-full mt-0.5", isErrorMessage ? "bg-destructive/15" : "bg-primary/10")}>
-        {isErrorMessage ? <AlertCircle className="h-4 w-4 text-destructive" /> : <PersonaIcon className="h-4 w-4 text-primary" />}
-      </div>
+      {isErrorMessage ? (
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-destructive/15">
+          <AlertCircle className="h-4 w-4 text-destructive" />
+        </div>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div
+              className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10"
+              aria-label={`Persona: ${personaLabel}`}
+              data-testid={`icon-agent-persona-${message.id}`}
+            >
+              <PersonaIcon className="h-4 w-4 text-primary" />
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="right" className="text-xs">{personaLabel}</TooltipContent>
+        </Tooltip>
+      )}
       <div className="min-w-0 flex-1 group">
         {isErrorMessage && (
           <div className="flex items-center gap-1.5 text-destructive text-xs font-medium mb-1">
