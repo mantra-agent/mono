@@ -3987,14 +3987,15 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
 
     if (resolvedPersona) {
-      const { personaStorage } = await import("./file-storage/persona-storage");
-      await personaStorage.activate(resolvedPersona.id);
+      const { setSessionPersona } = await import("./session-persona");
+      const activated = await setSessionPersona(sessionId, resolvedPersona.id);
+      if (!activated) return { result: `Persona with id ${resolvedPersona.id} not found`, error: true };
       eventBus.publish({
         category: "agent",
         event: "cognition.persona.switched",
-        payload: { personaId: resolvedPersona.id, personaName: resolvedPersona.name },
+        payload: { sessionId, personaId: activated.id, personaName: activated.name },
       });
-      results.push(`Persona activated: ${resolvedPersona.name} (id=${resolvedPersona.id})`);
+      results.push(`Persona activated for this session: ${activated.name} (id=${activated.id})`);
     }
 
     // --- Context flags ---
@@ -15207,8 +15208,9 @@ const cognitionTools: Record<string, ToolHandler> = {
       },
 
       get_persona: async () => {
-        const { personaStorage } = await import("./file-storage/persona-storage");
-        const active = await personaStorage.getActive();
+        const { resolveSessionPersona } = await import("./session-persona");
+        const active = await resolveSessionPersona(args._sessionId);
+        if (!active) return { result: "No persona available.", error: true };
         const parts = [
           `**${active.name}** (id=${active.id})`,
           active.description,
@@ -15225,8 +15227,10 @@ const cognitionTools: Record<string, ToolHandler> = {
         const { personaStorage } = await import("./file-storage/persona-storage");
         const all = (await personaStorage.list()).filter(p => !p.isSystem);
         if (all.length === 0) return { result: "No personas found." };
+        const { resolveSessionPersona } = await import("./session-persona");
+        const active = await resolveSessionPersona(args._sessionId);
         const lines = all.map(p =>
-          `- ${p.isActive ? "▶ " : ""}**${p.name}** (id=${p.id}, ${p.source})${p.isDefault ? " [default]" : ""} — ${p.description}`
+          `- ${p.id === active?.id ? "▶ " : ""}**${p.name}** (id=${p.id}, ${p.source})${p.isDefault ? " [default]" : ""} — ${p.description}`
         );
         return { result: `${all.length} personas:\n${lines.join("\n")}` };
       },

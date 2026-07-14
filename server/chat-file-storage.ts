@@ -15,6 +15,7 @@ import type {
   CompactionMeta,
   MeetingSessionMeta,
   MessageSpeakerMeta,
+  PersonaSnapshot,
 } from "@shared/models/chat";
 
 const log = createLogger("ChatStorage");
@@ -131,6 +132,7 @@ function provenanceFromSessionType(
 
 export interface FileSession extends ChatSession {
   modelTier: string | null;
+  personaId?: number | null;
 }
 
 export interface SystemStepRecord {
@@ -208,6 +210,8 @@ export interface FileMessage {
   assistantRunId?: string;
   assistantInterruptedAt?: string;
   voice?: VoiceMessageMeta;
+  /** Persona that produced this assistant turn. */
+  persona?: PersonaSnapshot;
   /** Speaker attribution for meeting transcript messages. */
   speaker?: MessageSpeakerMeta;
   /** Canonical per-turn correlation ID for voice turns. Present on both user and assistant messages. */
@@ -224,6 +228,7 @@ interface SessionData {
   summary?: string | null;
   sessionKey: string | null;
   modelTier?: string | null;
+  personaId?: number | null;
   createdAt: string;
   updatedAt: string;
   messages: FileMessage[];
@@ -471,6 +476,7 @@ async function writeConv(data: SessionData): Promise<void> {
     summary: data.summary || null,
     sessionKey: data.sessionKey,
     modelTier: normalizeSessionModelTierOverride(data.modelTier),
+    personaId: data.personaId ?? null,
     messageCount: data.messages.length,
     lastMessageRole: getLastMessageRole(data.messages),
     type: data.type || "text",
@@ -775,6 +781,7 @@ function convToMeta(data: SessionData): FileSession {
     summary: data.summary || null,
     sessionKey: data.sessionKey,
     modelTier: normalizeSessionModelTierOverride(data.modelTier),
+    personaId: data.personaId ?? null,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
     type: data.type,
@@ -929,6 +936,7 @@ function docMetadataToSession(doc: {
     summary: metadataString(meta, "summary") || null,
     sessionKey: metadataString(meta, "sessionKey") || null,
     modelTier: normalizeSessionModelTierOverride(metadataString(meta, "modelTier")),
+    personaId: metadataNumber(meta, "personaId") ?? null,
     createdAt,
     updatedAt,
     type: metadataString(meta, "type") as "text" | "voice" | undefined,
@@ -1002,6 +1010,7 @@ export interface IChatFileStorage {
   updateSessionTitle(id: string, title: string, options?: { source?: "manual" | "auto" | "orient"; respectManualTitle?: boolean }): Promise<void>;
   updateSessionSessionKey(id: string, sessionKey: string): Promise<void>;
   updateSessionTopics(id: string, topics: string[]): Promise<void>;
+  updateSessionPersona(id: string, personaId: number): Promise<void>;
   clearSession(sessionKey: string): Promise<boolean>;
   updateModelTier(sessionKey: string, tier: string): Promise<boolean>;
   updateSessionStatus(id: string, status: string, summary?: string): Promise<void>;
@@ -1022,6 +1031,7 @@ export interface IChatFileStorage {
     tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number },
     visibility?: MessageVisibility,
     turnId?: string,
+    persona?: PersonaSnapshot,
   ): Promise<FileMessage | null>;
   upsertVoiceUserMessage(
     sessionId: string,
@@ -1174,6 +1184,18 @@ export interface IChatFileStorage {
     childSessionId: string,
   ): Promise<boolean>;
   deleteMessage(sessionId: string, messageId: string): Promise<boolean>;
+}
+
+async function resolvePersonaSnapshot(personaId: number | null | undefined): Promise<PersonaSnapshot | undefined> {
+  if (!personaId) return undefined;
+  try {
+    const { personaStorage } = await import("./file-storage/persona-storage");
+    const persona = await personaStorage.get(personaId);
+    return persona ? { id: persona.id, name: persona.name, icon: persona.icon } : undefined;
+  } catch (err) {
+    log.warn(`resolvePersonaSnapshot failed personaId=${personaId}: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
 }
 
 export const chatFileStorage: IChatFileStorage = {
@@ -1405,6 +1427,18 @@ export const chatFileStorage: IChatFileStorage = {
     });
   },
 
+
+  async updateSessionPersona(id: string, personaId: number) {
+    return withConvLock(id, async () => {
+      const data = await readConv(id);
+      if (!data) return;
+      data.personaId = personaId;
+      data.updatedAt = new Date().toISOString();
+      await writeConv(data);
+      invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
+    });
+  },
+
   async updateSessionStatus(id: string, status: string, summary?: string) {
     return withConvLock(id, async () => {
       const data = await readConv(id);
@@ -1509,6 +1543,7 @@ export const chatFileStorage: IChatFileStorage = {
     },
     visibility?: MessageVisibility,
     turnId?: string,
+    frozenPersona?: PersonaSnapshot,
   ) {
     return withConvLock(sessionId, async () => {
       const data = await readConv(sessionId);
@@ -1535,6 +1570,9 @@ export const chatFileStorage: IChatFileStorage = {
         );
         return null;
       }
+      const persona = role === "assistant"
+        ? frozenPersona ?? await resolvePersonaSnapshot(data.personaId)
+        : undefined;
       const msg: FileMessage = {
         id: generateId(),
         sessionId,
@@ -1556,6 +1594,7 @@ export const chatFileStorage: IChatFileStorage = {
             ? segmentChronology
             : null,
       };
+      if (persona) msg.persona = persona;
       if (isError) msg.isError = true;
       if (visibility && visibility !== "chat") msg.visibility = visibility;
       if (pageContext && role === "user") msg.pageContext = pageContext;
@@ -1805,9 +1844,11 @@ export const chatFileStorage: IChatFileStorage = {
               m.assistantRunId === opts.runId),
         );
       const now = new Date().toISOString();
+      const persona = await resolvePersonaSnapshot(data.personaId);
       if (existing) {
         existing.model = opts?.model || existing.model || null;
         existing.assistantRunId = opts?.runId || existing.assistantRunId;
+        if (!existing.persona && persona) existing.persona = persona;
         if (opts?.systemSteps)
           existing.systemSteps =
             opts.systemSteps.length > 0 ? opts.systemSteps : null;
@@ -1839,6 +1880,7 @@ export const chatFileStorage: IChatFileStorage = {
             : null,
         assistantState: "streaming",
         assistantRunId: opts?.runId,
+        ...(persona ? { persona } : {}),
       };
       data.messages.push(msg);
       data.updatedAt = now;

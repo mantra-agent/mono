@@ -1765,8 +1765,8 @@ export class AgentExecutor extends EventEmitter {
     const routingDecision = options.routingDecision ?? (await resolveModelCandidates(activityForRouting, options.model
       ? { model: options.model, overrideReason: "executor caller requested explicit model override" }
       : sessionTierOverride
-        ? { semanticTierOverride: sessionTierOverride, overrideReason: "session model tier override" }
-        : undefined))[0];
+        ? { semanticTierOverride: sessionTierOverride, overrideReason: "session model tier override", sessionId: options.sessionId }
+        : { sessionId: options.sessionId }))[0];
     const modelString = routingDecision.modelString;
     const tierThinking: ThinkingTierConfig = options.thinking
       ? options.thinking

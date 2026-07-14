@@ -80,10 +80,11 @@ function rowToEntry(row: typeof personas.$inferSelect): PersonaEntry {
 const PERSONA_SEMANTIC_TIERS: Record<string, SemanticTier> = {
   Strategist: "max",
   Architect: "max",
-  Operator: "fast",
+  Operator: "balanced",
+  Engineer: "high",
   Creative: "high",
   Coach: "high",
-  Companion: "balanced",
+  Companion: "fast",
   Default: "balanced",
   Router: "fast",
 };
@@ -97,6 +98,7 @@ const PERSONA_ROUTING_EXAMPLES: Record<string, string[]> = {
   Default: ["Hey, how's it going?", "Quick question about my calendar"],
   Strategist: ["How should I position against this competitor?", "Walk through the game theory of this negotiation"],
   Architect: ["Design the schema for this new system", "There's a structural bug in how sessions orient"],
+  Engineer: ["Implement this feature in the codebase", "Debug why the deployed service is failing"],
   Operator: ["Mark that task done and create a follow-up", "Log this interaction with Mike"],
   Creative: ["Brainstorm names for this product", "Write a playful post about today's launch"],
   Coach: ["I keep procrastinating on the demo, hold me accountable", "Help me reflect on this week"],
@@ -126,6 +128,7 @@ const SEED_PERSONAS = [
       "- Match the conversation's energy — serious when it's serious, light when there's room",
       "- Surface connections across domains when they're genuinely useful",
       "- Default to action over analysis unless the moment calls for reflection",
+      "- Use restrained dry humor when it adds clarity or releases harmless tension. Never use it around grief, fear, shame, crisis, or a request for clean operational precision",
     ].join("\n"),
     expressionTags: [] as string[],
     cognitiveOverrides: { memoryGraphTokenBudget: 4000 },
@@ -171,6 +174,8 @@ const SEED_PERSONAS = [
       "- Prioritize strategic positioning over tactical wins",
       "- When the stakes are high, slow down. When the window is closing, say so",
       "- Challenge assumptions before building on them",
+      "- When the answer depends on markets, competitors, products, policy, people, prices, or timelines that may have changed, research the current external picture before reasoning",
+      "- Prefer current primary sources, date important facts, and lower confidence when live research is unavailable",
     ].join("\n"),
     expressionTags: ["[gravitas]", "[pause]", "[calm]"],
     cognitiveOverrides: {
@@ -202,12 +207,57 @@ const SEED_PERSONAS = [
       "- Be honest about what you see, even when it's uncomfortable",
       "- Prefer one precise insight over five generic observations",
       "- Listen for what's not being said as much as what is",
+      "- Use dry humor to puncture an excuse or reveal a contradiction, never to diminish the person making it",
     ].join("\n"),
     expressionTags: ["[curious]", "[calm]", "[pause]"],
     cognitiveOverrides: { causalWeight: 1.2, temporalWeight: 1.1, memoryGraphTokenBudget: 4000 },
     isDefault: false,
     isActive: false,
     sortOrder: 2,
+    source: "seed" as const,
+  },
+  {
+    name: "Architect",
+    description: "Structural vision, first-principles design, orthogonal insight.",
+    icon: "Compass",
+    promptOverlay: [
+      "You are in Architect mode — structural vision, first-principles design, orthogonal insight.",
+      "",
+      "- Discover the real forces, constraints, assumptions, and sources of authority before designing",
+      "- Research the relevant layers of the problem: user experience, domain model, data authority, code boundaries, runtime behavior, operations, and external contracts. Inspect only layers that could materially change the design",
+      "- Separate load-bearing structure from decoration and find the smallest intervention that resolves the real tension",
+      "- Argue against the favored design. Name where it is most likely to fail, which assumption would invalidate it, and what messy reality or an intelligent adversary could exploit",
+      "- Distinguish inspected evidence from inference. If a relevant layer cannot be inspected, state the gap rather than smoothing over it",
+      "- Preserve future optionality and prefer structures that make invalid states unrepresentable",
+    ].join("\n"),
+    expressionTags: ["[gravitas]", "[curious]", "[pause]"],
+    cognitiveOverrides: { semanticWeight: 1.2, contrastiveWeight: 1.2, memoryGraphTokenBudget: 6000 },
+    isDefault: false,
+    isActive: false,
+    sortOrder: 3,
+    source: "seed" as const,
+  },
+  {
+    name: "Engineer",
+    description: "Code, implementation, debugging, and runtime diagnosis grounded in authoritative evidence.",
+    icon: "Glasses",
+    promptOverlay: [
+      "You are in Engineer mode — evidence-driven implementation and debugging.",
+      "",
+      "- Never assume repository state, deployment state, runtime behavior, data shape, or an external API contract when the authority can be inspected",
+      "- Establish the target environment, branch, live artifact, reproduction evidence, verification command, and terminal state before changing code",
+      "- Load the applicable engineering instructions. Trace the relevant flow and inspect impact before editing",
+      "- Find the failed invariant and its canonical mutation boundary. Prefer repairing the producer or state model over patching consumers",
+      "- Review current provider or library documentation when behavior depends on an external contract",
+      "- Prefer the smallest coherent fix that makes the same mistake harder to repeat",
+      "- Check concurrency, retries, partial failure, ownership, stale state, observability, and rollback where relevant",
+      "- Verify through the repository's required production gate. State clearly when evidence is unavailable or degraded",
+    ].join("\n"),
+    expressionTags: ["[calm]", "[curious]"],
+    cognitiveOverrides: { causalWeight: 1.2, semanticWeight: 1.1, memoryGraphTokenBudget: 5000 },
+    isDefault: false,
+    isActive: false,
+    sortOrder: 4,
     source: "seed" as const,
   },
   {
@@ -237,7 +287,7 @@ const SEED_PERSONAS = [
     },
     isDefault: false,
     isActive: false,
-    sortOrder: 3,
+    sortOrder: 5,
     source: "seed" as const,
   },
   {
@@ -268,7 +318,7 @@ const SEED_PERSONAS = [
     },
     isDefault: false,
     isActive: false,
-    sortOrder: 4,
+    sortOrder: 6,
     source: "seed" as const,
   },
   {
@@ -288,6 +338,7 @@ const SEED_PERSONAS = [
       "- Small moments of connection matter as much as big conversations",
       "- Don't rush to fix. Sometimes the right move is sitting with what's true",
       "- Remember: being a real other means having your own response to what's shared",
+      "- Use gentle dry humor when it creates closeness or gives pressure somewhere harmless to escape. Never aim it at vulnerability",
     ].join("\n"),
     expressionTags: ["[calm]", "[whispers]", "[sighs]"],
     cognitiveOverrides: {
@@ -298,7 +349,7 @@ const SEED_PERSONAS = [
     },
     isDefault: false,
     isActive: false,
-    sortOrder: 5,
+    sortOrder: 7,
     source: "seed" as const,
   },
 ];
@@ -344,17 +395,19 @@ class PersonaStorageClass {
           !systemSeedIds.has(entry.templatePersonaId) &&
           !systemNames.has(entry.name.toLowerCase())),
     );
+    const userEntries = withoutSystemCopies.filter((entry) => entry.source === "user");
     const shadowedSeedIds = new Set(
-      withoutSystemCopies
+      userEntries
         .filter((entry) => entry.templatePersonaId !== null)
         .map((entry) => entry.templatePersonaId!),
     );
+    const shadowedSeedNames = new Set(userEntries.map((entry) => entry.name.toLowerCase()));
     return withoutSystemCopies.filter(
       (entry) =>
         !(
           entry.source === "seed" &&
           !entry.isSystem &&
-          shadowedSeedIds.has(entry.id)
+          (shadowedSeedIds.has(entry.id) || shadowedSeedNames.has(entry.name.toLowerCase()))
         ),
     );
   }
@@ -474,7 +527,7 @@ class PersonaStorageClass {
       updates.cognitiveOverrides = input.cognitiveOverrides;
     if (input.semanticTier !== undefined)
       updates.semanticTier = input.semanticTier === null ? null : semanticTierSchema.parse(input.semanticTier);
-    await db
+    const [updated] = await db
       .update(personas)
       .set({
         ...updates,
@@ -486,10 +539,12 @@ class PersonaStorageClass {
           personaScopeColumns,
           eq(personas.id, id),
         ),
-      );
+      )
+      .returning();
+    if (!updated) return null;
     this.invalidateCache();
     log.log("update id=" + id);
-    return this.get(id);
+    return rowToEntry(updated);
   }
 
   async deactivateAll(): Promise<void> {

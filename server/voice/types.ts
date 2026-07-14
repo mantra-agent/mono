@@ -1,4 +1,5 @@
 import type { Principal } from "../principal";
+import type { PersonaSnapshot } from "@shared/models/chat";
 
 /**
  * Shared types for the voice pipeline.
@@ -87,6 +88,7 @@ export interface TurnContext {
   turnId: string;
   assistantAttemptId: string;
   transcriptRevision: number;
+  persona?: PersonaSnapshot;
   aborted: boolean;
   turnAbort: AbortController;
   lastWrite: SSEWriteState;

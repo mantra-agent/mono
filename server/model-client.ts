@@ -472,6 +472,7 @@ export async function chatCompletion(options: ChatCompletionOptions): Promise<Ch
         model: options.model,
         overrideReason: options.overrideReason || (sessionTierOverride ? "session model tier override" : undefined),
         semanticTierOverride: options.semanticTierOverride || sessionTierOverride || undefined,
+        sessionId: options.metadata?.sessionId,
       });
   let failures = candidates[0]?.attempts ?? [];
   let lastError: unknown;
@@ -1272,6 +1273,7 @@ export async function* chatCompletionStream(options: ChatCompletionStreamOptions
         model: options.model,
         overrideReason: options.overrideReason || (sessionTierOverride ? "session model tier override" : undefined),
         semanticTierOverride: options.semanticTierOverride || sessionTierOverride || undefined,
+        sessionId: options.metadata?.sessionId,
       });
   let failures = candidates[0]?.attempts ?? [];
   let lastError: unknown;

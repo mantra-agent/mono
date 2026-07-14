@@ -62,6 +62,7 @@ interface TranscriptEntry {
   message: string;
   timestamp: string;
   toolCall?: ToolCallRecord;
+  persona?: { id: number; name: string; icon: string };
 }
 
 interface VoiceSessionDetail {
@@ -104,11 +105,7 @@ function getSessionLabel(templateName: string): string {
 export function VoiceTranscriptBubble({ entry, index }: { entry: VoiceTranscriptEntry; index: number }) {
   const isUser = entry.source === "user";
   const isSystem = entry.source === "system";
-  const { data: activePersona } = useQuery<{ icon?: string }>({
-    queryKey: ["/api/personas/active"],
-    staleTime: 30_000,
-  });
-  const PersonaIcon = resolvePersonaIcon(activePersona?.icon);
+  const PersonaIcon = resolvePersonaIcon(entry.persona?.icon);
 
   if (isSystem) {
     return (
@@ -169,27 +166,6 @@ export function VoiceTranscriptBubble({ entry, index }: { entry: VoiceTranscript
               <span className="text-xs text-muted-foreground/50" data-testid={`voice-timestamp-ai-${index}`}>{formattedTime}</span>
             </>
           )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export function VoiceThinkingBubble() {
-  const { data: activePersona } = useQuery<{ icon?: string }>({
-    queryKey: ["/api/personas/active"],
-    staleTime: 30_000,
-  });
-  const PersonaIcon = resolvePersonaIcon(activePersona?.icon);
-
-  return (
-    <div className="flex gap-3 items-start animate-in fade-in slide-in-from-bottom-1 duration-200" data-testid="voice-thinking-bubble">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 mt-0.5">
-        <PersonaIcon className="h-4 w-4 text-primary" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="inline-flex items-center rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-foreground/70">
-          <ActiveThinkingStatus startTime={Date.now()} showTimer={false} />
         </div>
       </div>
     </div>
@@ -409,11 +385,6 @@ export function VoiceSessionDetailView({ sessionId, onBack }: { sessionId: strin
   const { data: session, isLoading } = useQuery<VoiceSessionDetail>({
     queryKey: ["/api/sessions/voice/sessions", sessionId],
   });
-  const { data: activePersona } = useQuery<{ icon?: string }>({
-    queryKey: ["/api/personas/active"],
-    staleTime: 30_000,
-  });
-
   if (isLoading || !session) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -518,7 +489,7 @@ export function VoiceSessionDetailView({ sessionId, onBack }: { sessionId: strin
               <p className="text-xs text-muted-foreground text-center py-4">No transcript recorded</p>
             ) : (
               session.transcript.map((entry, i) => (
-                <TranscriptEntryRow key={i} entry={entry} toolCalls={session.toolCalls} index={i} personaIcon={activePersona?.icon} />
+                <TranscriptEntryRow key={i} entry={entry} toolCalls={session.toolCalls} index={i} personaIcon={entry.persona?.icon} />
               ))
             )}
           </div>

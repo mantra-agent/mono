@@ -665,7 +665,8 @@ async function resolveActivePersona(request: ContextRequest): Promise<string> {
 
   try {
     const allPersonas = await personaStorage.list();
-    const active = await personaStorage.getActiveOrNull();
+    const { resolveSessionPersona } = await import("./session-persona");
+    const active = await resolveSessionPersona(request.sessionId);
 
     if (!active && isInteractive) {
       const personaList = allPersonas
@@ -681,8 +682,8 @@ async function resolveActivePersona(request: ContextRequest): Promise<string> {
       ].join("\n");
     }
 
-    // Non-interactive (autonomous) or already activated: fall back to the default-aware getActive
-    const resolved = active || await personaStorage.getActive();
+    const resolved = active;
+    if (!resolved) throw new Error("No personas found — seed may not have run");
 
     const overlay = resolved.promptOverlay
       || "- Be concise but thorough when the topic warrants it\n- When asked to do something, do it\n- Think step by step for complex problems";
@@ -1643,9 +1644,10 @@ function allocateTiers(
 }
 
 /** Read memoryGraphTokenBudget from the active persona's cognitiveOverrides */
-async function getMemoryGraphTokenBudget(): Promise<number> {
+async function getMemoryGraphTokenBudget(sessionId?: string): Promise<number> {
   try {
-    const active = await personaStorage.getActiveOrNull();
+    const { resolveSessionPersona } = await import("./session-persona");
+    const active = await resolveSessionPersona(sessionId);
     if (active?.cognitiveOverrides && typeof active.cognitiveOverrides === "object") {
       const budget = (active.cognitiveOverrides as Record<string, unknown>).memoryGraphTokenBudget;
       if (typeof budget === "number" && budget > 0) return budget;
@@ -1727,7 +1729,7 @@ async function resolveGraphMemory(request: ContextRequest): Promise<string> {
   const focusText = focusParts.filter(Boolean).join("\n");
   if (!focusText) return "";
 
-  const tokenBudget = await getMemoryGraphTokenBudget();
+  const tokenBudget = await getMemoryGraphTokenBudget(request.sessionId);
   const queryHash = `${contextPrincipalKey()}::vnext::${getQueryHash(focusText)}::${tokenBudget}`;
   const cached = _graphMemoryCache.get(queryHash);
   if (cached !== undefined) return cached;

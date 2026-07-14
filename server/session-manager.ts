@@ -209,6 +209,7 @@ class SessionManager {
     error?: string;
     model?: string;
     autoTier?: string;
+    persona?: { id: number; name: string; icon: string };
     runId?: string;
     turnId?: string;
     assistantAttemptId?: string;
@@ -312,7 +313,12 @@ class SessionManager {
       }
 
       case "model_info":
-        prev = { ...prev, model: event.model || null, autoTier: event.autoTier || null };
+        prev = {
+          ...prev,
+          model: event.model || prev.model || null,
+          autoTier: event.autoTier || prev.autoTier || null,
+          persona: event.persona || prev.persona || null,
+        };
         break;
 
       case "run_start":

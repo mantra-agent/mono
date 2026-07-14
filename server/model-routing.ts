@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { createLogger } from "./log";
 import { getSecretSync } from "./secrets-store";
-import { personaStorage } from "./file-storage/persona-storage";
 import { getProviderCredential } from "./provider-credential-store";
 import { getAccount } from "./connected-accounts";
 import { createNamedSystemPrincipal } from "./principal";
@@ -80,8 +79,9 @@ async function connectorCredential(connector: ModelConnector): Promise<string | 
   return legacyCredential(connector.provider);
 }
 
-export async function resolveSemanticTier(): Promise<{ tier: SemanticTier; source: "persona" | "default-fallback"; personaId?: number }> {
-  const persona = await personaStorage.getActiveOrNull();
+export async function resolveSemanticTier(sessionId?: string): Promise<{ tier: SemanticTier; source: "persona" | "default-fallback"; personaId?: number }> {
+  const { resolveSessionPersona } = await import("./session-persona");
+  const persona = await resolveSessionPersona(sessionId);
   if (!persona) {
     log.warn(`No active persona for model routing; falling back to default tier "${DEFAULT_SEMANTIC_TIER}"`);
     return { tier: DEFAULT_SEMANTIC_TIER, source: "default-fallback" };
@@ -96,7 +96,7 @@ export async function resolveSemanticTier(): Promise<{ tier: SemanticTier; sourc
 
 export async function resolveModelCandidates(
   activity: ActivityId,
-  options: { model?: string; overrideReason?: string; semanticTierOverride?: SemanticTier } = {},
+  options: { model?: string; overrideReason?: string; semanticTierOverride?: SemanticTier; sessionId?: string } = {},
 ): Promise<ModelRoutingDecision[]> {
   if (options.model) {
     if (!options.overrideReason) throw new ModelRoutingError("Explicit model override requires overrideReason");
@@ -112,7 +112,7 @@ export async function resolveModelCandidates(
 
   const intent = options.semanticTierOverride
     ? { tier: options.semanticTierOverride, source: "semantic-tier-override" as const, personaId: undefined }
-    : await resolveSemanticTier();
+    : await resolveSemanticTier(options.sessionId);
   if (options.semanticTierOverride && !options.overrideReason) throw new ModelRoutingError("Semantic tier override requires overrideReason");
   const connectors = (await listModelConnectors()).filter((connector) => connector.status === "active");
   const configHash = createHash("sha256").update(JSON.stringify(connectors.map((connector) => ({

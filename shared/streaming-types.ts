@@ -45,6 +45,7 @@ export interface StreamingContent {
   source: StreamingSource;
   model?: string | null;
   autoTier?: string | null;
+  persona?: { id: number; name: string; icon: string } | null;
   runId?: string | null;
   /** Canonical logical voice-turn identity, stable across transcript revisions. */
   turnId?: string | null;
@@ -64,6 +65,7 @@ export const initialStreamingContent: StreamingContent = {
   source: null,
   model: null,
   autoTier: null,
+  persona: null,
   runId: null,
   turnId: null,
   assistantAttemptId: null,
