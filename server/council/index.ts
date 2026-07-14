@@ -53,7 +53,7 @@ async function productionSpawn(req: CouncilSpawnRequest): Promise<CouncilSpawnRe
   // verbatim via createAutonomousSession + saveSession.
   const title = `${req.role} — Round ${req.round}`;
   const result = await spawnChildSession(req.parentSessionId, {
-    model: "advocate",
+    model: "max",
     spawnReason: req.spawnReason,
     spawnerTool: "council",
     spawnerSkillRun: req.spawnerSkillRun,

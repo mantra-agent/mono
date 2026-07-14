@@ -610,7 +610,7 @@ export async function registerGatewayRoutes(app: Express) {
     try {
       const sessionKey = req.params.key;
       const { tier } = req.body;
-      const validTiers = ["max", "high", "balanced", "fast", "advocate", "advisary"];
+      const validTiers = ["max", "high", "balanced", "fast"];
       if (!tier || !validTiers.includes(tier)) {
         return res.status(400).json({ error: "Invalid tier. Must be one of: " + validTiers.join(", ") });
       }

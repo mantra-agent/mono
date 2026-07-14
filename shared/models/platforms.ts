@@ -122,6 +122,9 @@ export const providerConnections = pgTable(
     credentialEnvelope: jsonb("credential_envelope"),
     credentialLast4: text("credential_last4").notNull().default(""),
     status: text("status").notNull().default("active"),
+    connectorKind: text("connector_kind").notNull().default("integration"),
+    connectorConfig: jsonb("connector_config").notNull().default({}),
+    sortOrder: integer("sort_order").notNull().default(0),
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
@@ -131,6 +134,7 @@ export const providerConnections = pgTable(
   },
   (table) => [
     index("idx_provider_connections_provider").on(table.provider),
+    index("idx_provider_connections_kind_order").on(table.connectorKind, table.sortOrder),
     index("idx_provider_connections_scope_owner").on(table.scope, table.ownerUserId),
   ],
 );
@@ -289,6 +293,9 @@ export const insertProviderConnectionSchema = createInsertSchema(providerConnect
     accountType: z.string().trim().min(1).optional().default("legacy"),
     credentialRef: z.string().optional().nullable(),
     status: platformStatusEnum.optional().default("active"),
+    connectorKind: z.enum(["integration", "model"]).optional().default("integration"),
+    connectorConfig: z.record(z.unknown()).optional().default({}),
+    sortOrder: z.number().int().nonnegative().optional().default(0),
   });
 
 export type ProviderConnection = typeof providerConnections.$inferSelect;

@@ -12,6 +12,7 @@ import { describeServiceInstanceLimits, fetchServiceInstanceLimits, resolveServi
 import { resolveRailwayEnvironmentControl } from "./integrations/railway/environment-control";
 import { initTimezone, getTimezone } from "./timezone";
 import { initProfiles } from "./job-profiles";
+import { migrateLegacyModelProfiles } from "./model-connectors";
 import { spawn } from "child_process";
 import { resolve as resolvePath } from "path";
 import { createLogger } from "./log";
@@ -439,6 +440,7 @@ app.use((req, res, next) => {
   bootTracker.startPhase("routes_auth");
   const tProfiles0 = Date.now();
   await initProfiles();
+  await migrateLegacyModelProfiles();
   const profilesMs = Date.now() - tProfiles0;
   bootPhases.push({ name: "Model Profiles", durationMs: profilesMs });
   log(`[startup] model profiles loaded: ${profilesMs}ms`, "boot");

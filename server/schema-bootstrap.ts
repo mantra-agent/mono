@@ -620,6 +620,12 @@ export async function runSchemaBootstrap(
     // Add credential_envelope and credential_last4 columns to existing tables
     await pool.query(`ALTER TABLE provider_connections ADD COLUMN IF NOT EXISTS credential_envelope JSONB`);
     await pool.query(`ALTER TABLE provider_connections ADD COLUMN IF NOT EXISTS credential_last4 TEXT NOT NULL DEFAULT ''`);
+    await pool.query(`ALTER TABLE provider_connections ADD COLUMN IF NOT EXISTS connector_kind TEXT NOT NULL DEFAULT 'integration'`);
+    await pool.query(`ALTER TABLE provider_connections ADD COLUMN IF NOT EXISTS connector_config JSONB NOT NULL DEFAULT '{}'::jsonb`);
+    await pool.query(`ALTER TABLE provider_connections ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_provider_connections_kind_order ON provider_connections(connector_kind, sort_order)`);
+    await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS semantic_tier TEXT`);
+    await pool.query(`DO $$ BEGIN ALTER TABLE personas ADD CONSTRAINT personas_semantic_tier_check CHECK (semantic_tier IS NULL OR semantic_tier IN ('max', 'high', 'balanced', 'fast')); EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
 
     // One-time migration: copy any surviving app_secrets provider_connection:* rows to credential_envelope
     try {

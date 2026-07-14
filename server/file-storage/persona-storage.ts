@@ -1,5 +1,6 @@
 import { db } from "../db";
 import { personas } from "@shared/models/cognition";
+import { semanticTierSchema, type SemanticTier } from "@shared/model-connectors";
 import { eq, and } from "drizzle-orm";
 import { TTLCache } from "../utils/ttl-cache";
 import { createLogger } from "../log";
@@ -26,6 +27,7 @@ export interface PersonaEntry {
   promptOverlay: string | null;
   expressionTags: string[];
   cognitiveOverrides: Record<string, unknown>;
+  semanticTier: SemanticTier | null;
   isDefault: boolean;
   isActive: boolean;
   sortOrder: number;
@@ -45,6 +47,7 @@ function rowToEntry(row: typeof personas.$inferSelect): PersonaEntry {
     expressionTags: (row.expressionTags as string[]) || [],
     cognitiveOverrides:
       (row.cognitiveOverrides as Record<string, unknown>) || {},
+    semanticTier: row.semanticTier ? semanticTierSchema.parse(row.semanticTier) : null,
     isDefault: row.isDefault,
     isActive: row.isActive,
     sortOrder: row.sortOrder,
@@ -313,6 +316,7 @@ class PersonaStorageClass {
     promptOverlay?: string;
     expressionTags?: string[];
     cognitiveOverrides?: Record<string, unknown>;
+    semanticTier?: SemanticTier | null;
   }): Promise<PersonaEntry> {
     const maxSort = (await this.list()).reduce(
       (max, p) => Math.max(max, p.sortOrder),
@@ -327,6 +331,7 @@ class PersonaStorageClass {
         promptOverlay: input.promptOverlay || null,
         expressionTags: input.expressionTags || [],
         cognitiveOverrides: input.cognitiveOverrides || {},
+        semanticTier: input.semanticTier ?? "balanced",
         isDefault: false,
         isActive: false,
         sortOrder: maxSort + 1,
@@ -353,6 +358,7 @@ class PersonaStorageClass {
       promptOverlay?: string;
       expressionTags?: string[];
       cognitiveOverrides?: Record<string, unknown>;
+      semanticTier?: SemanticTier | null;
     },
   ): Promise<PersonaEntry | null> {
     const existing = await this.get(id);
@@ -368,6 +374,8 @@ class PersonaStorageClass {
       updates.expressionTags = input.expressionTags;
     if (input.cognitiveOverrides !== undefined)
       updates.cognitiveOverrides = input.cognitiveOverrides;
+    if (input.semanticTier !== undefined)
+      updates.semanticTier = input.semanticTier === null ? null : semanticTierSchema.parse(input.semanticTier);
     await db
       .update(personas)
       .set({
@@ -493,6 +501,7 @@ class PersonaStorageClass {
           promptOverlay: target.promptOverlay,
           expressionTags: target.expressionTags,
           cognitiveOverrides: target.cognitiveOverrides,
+          semanticTier: target.semanticTier,
           isDefault: false,
           isActive: true,
           sortOrder: maxSort + 1,
@@ -575,6 +584,7 @@ class PersonaStorageClass {
           promptOverlay: seed.promptOverlay,
           expressionTags: seed.expressionTags,
           cognitiveOverrides: seed.cognitiveOverrides,
+          semanticTier: "balanced",
           isDefault: seed.isDefault,
           isActive: seed.isActive,
           sortOrder: seed.sortOrder,
@@ -597,7 +607,8 @@ class PersonaStorageClass {
         (!existing.promptOverlay ||
           existing.promptOverlay !== seed.promptOverlay);
       const needsIconUpdate = existing.icon !== seed.icon;
-      if (needsOverlayUpdate || needsIconUpdate) {
+      const needsTierUpdate = existing.semanticTier === null;
+      if (needsOverlayUpdate || needsIconUpdate || needsTierUpdate) {
         const updates: Record<string, unknown> = { updatedAt: new Date() };
         if (needsOverlayUpdate) {
           updates.promptOverlay = seed.promptOverlay;
@@ -608,6 +619,7 @@ class PersonaStorageClass {
         if (needsIconUpdate) {
           updates.icon = seed.icon;
         }
+        if (needsTierUpdate) updates.semanticTier = "balanced";
         await db
           .update(personas)
           .set(updates)
