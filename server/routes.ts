@@ -33,6 +33,7 @@ import { registerExportRoutes } from "./export-routes";
 import { registerReferenceRoutes } from "./reference-routes";
 import { registerBackupRoutes } from "./routes/backup";
 import { registerAdminRoutes } from "./routes/admin";
+import { registerMeetingDistributionRoutes } from "./routes/meeting-distributions";
 import { requireAuth, requireAdmin } from "./auth";
 import { findOrphanedChildren, cleanupOrphanedChildren } from "./session-tree-cleanup";
 
@@ -160,6 +161,7 @@ export async function registerRoutes(
   registerExportRoutes(app);
   registerBackupRoutes(app);
   registerAdminRoutes(app);
+  registerMeetingDistributionRoutes(app);
   (async () => {
     try {
       const { documentStorage } = await import("./memory/document-storage");

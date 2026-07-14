@@ -5112,5 +5112,29 @@ export async function runSchemaBootstrap(
     log(`media backfill skipped: ${err.message}`, "warn");
   }
 
+  await heal("meeting_recap_distributions table", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS meeting_recap_distributions (
+        id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        session_id      TEXT NOT NULL,
+        owner_user_id   TEXT,
+        account_id      TEXT,
+        scope           TEXT NOT NULL DEFAULT 'user',
+        attendee_email  TEXT NOT NULL,
+        attendee_name   TEXT,
+        is_mantra_user  BOOLEAN NOT NULL DEFAULT false,
+        draft_id        UUID,
+        send_method     TEXT NOT NULL DEFAULT 'gmail_draft',
+        status          TEXT NOT NULL DEFAULT 'pending',
+        error           TEXT,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_mrd_session ON meeting_recap_distributions(session_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_mrd_owner   ON meeting_recap_distributions(owner_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_mrd_account ON meeting_recap_distributions(account_id)`);
+  });
+
   log(`schema bootstrap complete (reason=${reason})`, "migration");
 }

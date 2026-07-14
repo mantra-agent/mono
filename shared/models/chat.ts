@@ -609,6 +609,9 @@ export interface MeetingSessionMeta {
 export type MeetingRecapStatus = "generating" | "ready" | "failed";
 
 /** End-of-meeting recap state stored on the meeting session meta. */
+/** Discriminant for recap email distribution lifecycle. */
+export type MeetingRecapDistributionStatus = "pending" | "drafting" | "ready" | "failed";
+
 export interface MeetingRecapMeta {
   status: MeetingRecapStatus;
   pageId?: string;
@@ -616,6 +619,13 @@ export interface MeetingRecapMeta {
   pageTitle?: string;
   interactionsLogged?: number;
   error?: string;
+  /** Distribution lifecycle — set after recap status reaches "ready". */
+  distributionStatus?: MeetingRecapDistributionStatus;
+  /** email_drafts.id per attendee drafted via Gmail path. */
+  draftIds?: string[];
+  distributionError?: string;
+  /** true when distribution was skipped (no eligible attendees or no send method). */
+  distributionSkipped?: boolean;
 }
 
 /** Speaker attribution for inbound meeting transcript messages. */

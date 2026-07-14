@@ -119,18 +119,32 @@ async function generateRecap(sessionId: string, sessionTitle: string, meeting: M
 
   const interactionsLogged = await logParticipantInteractions(meeting.participants, recap, page.slug);
 
-  await chatStorage.updateMeetingMeta(sessionId, {
-    recap: {
-      status: "ready",
-      pageId: page.id,
-      pageSlug: page.slug,
-      pageTitle: page.title,
-      interactionsLogged,
-    },
-  });
+  const recapMeta = {
+    status: "ready" as const,
+    pageId: page.id,
+    pageSlug: page.slug,
+    pageTitle: page.title,
+    interactionsLogged,
+  };
+
+  await chatStorage.updateMeetingMeta(sessionId, { recap: recapMeta });
   log.info(
     `Meeting recap ready for session ${sessionId}: page=${page.slug}, interactions=${interactionsLogged}`,
   );
+
+  // Kick off distribution as a non-blocking side effect.
+  // The principal is already in AsyncLocalStorage (runWithPrincipal context).
+  // Import is deferred so distribution failures never affect recap finalization.
+  const currentPrincipal = (await import("../principal-context")).getCurrentPrincipalOrSystem();
+  setImmediate(() => {
+    import("./distribution")
+      .then(({ distributeRecap }) => distributeRecap(sessionId, meeting, recapMeta, currentPrincipal))
+      .catch((err) =>
+        log.error(
+          `Recap distribution kickoff failed for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+  });
 }
 
 async function buildTranscript(sessionId: string): Promise<string | null> {
