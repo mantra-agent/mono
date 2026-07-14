@@ -882,7 +882,7 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
         type="button"
         onClick={() => onEventClick(event)}
         className={cn(
-          "z-20 my-0.5 flex min-h-0 min-w-0 items-start gap-1.5 overflow-hidden rounded-lg border border-l-4 border-border border-l-foreground/50 bg-card py-1.5 pl-2.5 pr-1.5 text-left text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          "z-20 my-0.5 flex min-h-0 min-w-0 items-start gap-1.5 overflow-hidden rounded-lg border border-l-4 border-primary/20 border-l-foreground/50 bg-card/70 py-1.5 pl-2.5 pr-1.5 text-left text-sm font-normal text-muted-foreground hover:bg-card focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
           optional && "opacity-60",
         )}
         style={{ gridColumn: 2, gridRow: `${rowStart} / span ${rowSpan}`, position: "relative" }}
