@@ -88,6 +88,7 @@ import {
   Copy,
   Glasses,
   Radio,
+  Zap,
 } from "lucide-react";
 import { SiX } from "react-icons/si";
 import { SecretsForSection } from "@/components/SecretControl";
@@ -5476,11 +5477,203 @@ function SendGridDetail() {
   );
 }
 
+type SemanticTier = "max" | "high" | "balanced" | "fast";
+type OpenAIReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+type OpenAIReasoningMode = "standard" | "pro";
+type OpenAIReasoningSummary = "auto" | "concise" | "detailed" | "none";
+type OpenAIVerbosity = "low" | "medium" | "high";
+type OpenAIServiceTier = "auto" | "default" | "flex" | "priority" | "fast";
+type TierModelConfig = string | {
+  model: string;
+  reasoningEffort?: OpenAIReasoningEffort;
+  reasoningMode?: OpenAIReasoningMode;
+  reasoningSummary?: OpenAIReasoningSummary;
+  verbosity?: OpenAIVerbosity;
+  serviceTier?: OpenAIServiceTier;
+  fastMode?: boolean;
+  maxOutputTokens?: number;
+};
 interface ModelConnectorDetail {
-  id: number; provider: string; label: string; status: string;
-  config: { tierMappings: Record<"max" | "high" | "balanced" | "fast", string> };
+  id: number; provider: "anthropic" | "openai" | "openai-subscription" | "claude-cli"; label: string; status: string;
+  config: { kind?: "model" | "openai-models"; tierMappings: Record<SemanticTier, TierModelConfig> };
 }
-interface ModelProviderDetail { id: string; models: Array<{ id: string; name: string }> }
+interface ModelProviderDetail {
+  id: string;
+  models: Array<{
+    id: string; name: string;
+    cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+    contextWindow?: number;
+    maxTokens?: number;
+    reasoning?: boolean;
+    thinkingDescription?: string;
+    supportsReasoningEffort?: boolean;
+  }>;
+}
+
+const MODEL_TIERS: readonly SemanticTier[] = ["max", "high", "balanced", "fast"];
+const TIER_COPY: Record<SemanticTier, string> = {
+  max: "Best available model for frontier reasoning and judgment.",
+  high: "Strong reasoning with lower latency and cost than Max.",
+  balanced: "Default production path: quality, speed, and cost in balance.",
+  fast: "Lowest-latency path for lightweight or interactive work.",
+};
+const REASONING_EFFORTS: readonly OpenAIReasoningEffort[] = ["none", "minimal", "low", "medium", "high", "xhigh"];
+const REASONING_SUMMARIES: readonly OpenAIReasoningSummary[] = ["auto", "concise", "detailed", "none"];
+const VERBOSITIES: readonly OpenAIVerbosity[] = ["low", "medium", "high"];
+const SERVICE_TIERS: readonly OpenAIServiceTier[] = ["auto", "default", "flex", "priority", "fast"];
+
+function tierConfigModel(value: TierModelConfig): string {
+  return typeof value === "string" ? value : value.model;
+}
+
+function normalizeTierConfig(provider: ModelConnectorDetail["provider"], value: TierModelConfig): Exclude<TierModelConfig, string> {
+  const model = tierConfigModel(value);
+  return { ...(typeof value === "string" ? {} : value), model: model.includes("/") ? model.split("/").pop() || model : model.replace(`${provider}/`, "") };
+}
+
+function formatModelPrice(value?: number): string {
+  if (value == null || value === 0) return "included";
+  return `$${(value * 1_000_000).toFixed(value * 1_000_000 < 1 ? 2 : 0)}/1M`;
+}
+
+function formatTokenCount(value?: number): string {
+  if (!value) return "unknown";
+  if (value >= 1_000_000) return `${value / 1_000_000}M`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
+  return String(value);
+}
+
+function isOpenAIProvider(provider: ModelConnectorDetail["provider"]): provider is "openai" | "openai-subscription" {
+  return provider === "openai" || provider === "openai-subscription";
+}
+
+function supportedOpenAISettings(model?: ModelProviderDetail["models"][number], provider?: ModelConnectorDetail["provider"]) {
+  const supportsReasoning = Boolean(model?.reasoning || model?.supportsReasoningEffort);
+  return {
+    reasoningEffort: supportsReasoning,
+    reasoningMode: supportsReasoning && provider === "openai-subscription",
+    reasoningSummary: supportsReasoning,
+    verbosity: Boolean(model?.id && /gpt-5|gpt-5\.|gpt-5-|codex/i.test(model.id)),
+    serviceTier: provider === "openai",
+    maxOutputTokens: true,
+  };
+}
+
+function OpenAISettingSelect<T extends string>({
+  label, value, options, description, disabled, onChange,
+}: {
+  label: string; value: T | undefined; options: readonly T[]; description: string; disabled?: boolean; onChange: (value: T) => void;
+}) {
+  return <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
+    <div className="min-w-0">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <p className="text-xs text-muted-foreground/80">{description}</p>
+    </div>
+    <Select value={value} disabled={disabled} onValueChange={(next) => onChange(next as T)}>
+      <SelectTrigger className="h-8 font-mono text-xs"><SelectValue /></SelectTrigger>
+      <SelectContent>{options.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent>
+    </Select>
+  </div>;
+}
+
+function OpenAIConnectorTree({ connector, models, title }: { connector: ModelConnectorDetail; models: ModelProviderDetail["models"]; title: string }) {
+  const { toast } = useToast();
+  const mutation = useMutation({
+    mutationFn: async (tierMappings: Record<SemanticTier, Exclude<TierModelConfig, string>>) => (await apiRequest("PATCH", `/api/models/connectors/${connector.id}`, { tierMappings })).json(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/models/connectors"] }),
+    onError: (error: Error) => toast({ title: "Model mapping failed", description: error.message, variant: "destructive" }),
+  });
+  const mappings = Object.fromEntries(MODEL_TIERS.map((tier) => [tier, normalizeTierConfig(connector.provider, connector.config.tierMappings[tier])])) as Record<SemanticTier, Exclude<TierModelConfig, string>>;
+  const updateTier = (tier: SemanticTier, patch: Partial<Exclude<TierModelConfig, string>>) => mutation.mutate({ ...mappings, [tier]: { ...mappings[tier], ...patch } });
+  const surfaceLabel = connector.provider === "openai-subscription" ? "Subscription" : "API";
+
+  return <Card className="overflow-hidden min-w-0">
+    <CardHeader className="pb-2">
+      <CardTitle className="text-base font-semibold">{title}</CardTitle>
+      <p className="text-sm text-muted-foreground">{surfaceLabel} connector tiers. Settings follow OpenAI Responses API docs: effort controls reasoning depth, summaries expose reasoning output, verbosity controls response detail, service tier controls latency class, and max output tokens is capped by the selected model.</p>
+    </CardHeader>
+    <CardContent className="p-0">
+      <IntegrationTreeSection label={`${surfaceLabel} connector`} initialOpen testIdPrefix={`openai-${connector.provider}`}>
+        {MODEL_TIERS.map((tier) => {
+          const config = mappings[tier];
+          const model = models.find((item) => item.id === config.model || `${connector.provider}/${item.id}` === config.model);
+          const supported = supportedOpenAISettings(model, connector.provider);
+          const selectedLabel = model?.name ?? config.model;
+          return <ProfileTreeRow
+            key={tier}
+            label={<span className="capitalize">{tier}</span>}
+            icon={tier === "fast" ? <Zap className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            defaultOpen={tier === "balanced"}
+            testId={`openai-${connector.provider}-${tier}-tier`}
+            expandedContentClassName="space-y-3"
+            expandedContent={<div className="space-y-3">
+              <p className="text-xs text-muted-foreground">{TIER_COPY[tier]}</p>
+              <OpenAISettingSelect
+                label="Model"
+                value={config.model}
+                options={models.map((item) => item.id)}
+                description="Required. The model used when routing selects this semantic tier."
+                disabled={mutation.isPending || models.length === 0}
+                onChange={(modelId) => {
+                  const nextModel = models.find((item) => item.id === modelId);
+                  const nextSupported = supportedOpenAISettings(nextModel, connector.provider);
+                  updateTier(tier, {
+                    model: modelId,
+                    reasoningEffort: nextSupported.reasoningEffort ? (config.reasoningEffort ?? (tier === "max" ? "high" : tier === "fast" ? "minimal" : "medium")) : undefined,
+                    reasoningMode: nextSupported.reasoningMode ? (config.reasoningMode ?? "standard") : undefined,
+                    reasoningSummary: nextSupported.reasoningSummary ? (config.reasoningSummary ?? "auto") : undefined,
+                    verbosity: nextSupported.verbosity ? (config.verbosity ?? "medium") : undefined,
+                    serviceTier: nextSupported.serviceTier ? (config.serviceTier ?? "auto") : undefined,
+                    maxOutputTokens: Math.min(config.maxOutputTokens ?? nextModel?.maxTokens ?? 4096, nextModel?.maxTokens ?? Number.MAX_SAFE_INTEGER),
+                  });
+                }}
+              />
+              <div className="grid gap-2 @sm:grid-cols-2">
+                <div className="rounded-md border border-border/60 px-3 py-2">
+                  <div className="text-xs font-medium">Cost</div>
+                  <div className="mt-1 text-xs text-muted-foreground">Input {formatModelPrice(model?.cost?.input)} · output {formatModelPrice(model?.cost?.output)}</div>
+                </div>
+                <div className="rounded-md border border-border/60 px-3 py-2">
+                  <div className="text-xs font-medium">Speed / size</div>
+                  <div className="mt-1 text-xs text-muted-foreground">Context {formatTokenCount(model?.contextWindow)} · max output {formatTokenCount(model?.maxTokens)}</div>
+                </div>
+              </div>
+              {supported.reasoningEffort && <OpenAISettingSelect label="Reasoning effort" value={config.reasoningEffort ?? "medium"} options={REASONING_EFFORTS} description="Default: tier-derived. Higher effort can improve reasoning and increases latency." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningEffort: value })} />}
+              {supported.reasoningMode && <OpenAISettingSelect label="Reasoning mode" value={config.reasoningMode ?? "standard"} options={["standard", "pro"] as const} description="Default: standard. Pro is reserved for subscription reasoning paths that support it." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningMode: value })} />}
+              {supported.reasoningSummary && <OpenAISettingSelect label="Reasoning summary" value={config.reasoningSummary ?? "auto"} options={REASONING_SUMMARIES} description="Default: auto. Controls whether OpenAI returns summarized reasoning." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningSummary: value })} />}
+              {supported.verbosity && <OpenAISettingSelect label="Verbosity" value={config.verbosity ?? "medium"} options={VERBOSITIES} description="Default: medium. Controls output detail for GPT-5-class text generation." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { verbosity: value })} />}
+              {supported.serviceTier && <OpenAISettingSelect label="Service tier" value={config.serviceTier ?? "auto"} options={SERVICE_TIERS} description="Default: auto. Controls API latency/cost class when the account supports it." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { serviceTier: value })} />}
+              {supported.maxOutputTokens && <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
+                <div className="min-w-0">
+                  <Label className="text-xs text-muted-foreground">Max output</Label>
+                  <p className="text-xs text-muted-foreground/80">Positive integer. Must not exceed {formatTokenCount(model?.maxTokens)} for this model.</p>
+                </div>
+                <Input
+                  type="number"
+                  min={1}
+                  max={model?.maxTokens}
+                  value={config.maxOutputTokens ?? ""}
+                  disabled={mutation.isPending}
+                  onChange={(event) => {
+                    const value = Number.parseInt(event.target.value, 10);
+                    if (Number.isFinite(value) && value > 0) updateTier(tier, { maxOutputTokens: model?.maxTokens ? Math.min(value, model.maxTokens) : value });
+                  }}
+                  className="h-8 font-mono text-xs"
+                />
+              </div>}
+              {!supported.reasoningEffort && !supported.verbosity && !supported.serviceTier ? <p className="text-xs text-muted-foreground">This model exposes only model selection and max output in the current connector contract.</p> : null}
+            </div>}
+          >
+            <span className="truncate font-mono">{selectedLabel}</span>
+          </ProfileTreeRow>;
+        })}
+        {models.length === 0 && <p className="px-2 py-1.5 text-sm text-muted-foreground">No models are currently available for this connector.</p>}
+      </IntegrationTreeSection>
+    </CardContent>
+  </Card>;
+}
 
 function ModelConnectorSection({ provider, title = "Model mapping" }: { provider: "anthropic" | "openai" | "openai-subscription" | "claude-cli"; title?: string }) {
   const { toast } = useToast();
@@ -5489,7 +5682,7 @@ function ModelConnectorSection({ provider, title = "Model mapping" }: { provider
   const connector = data?.connectors.find((item) => item.provider === provider);
   const models = modelsData?.providers.find((item) => item.id === provider)?.models ?? [];
   const mutation = useMutation({
-    mutationFn: async (tierMappings: ModelConnectorDetail["config"]["tierMappings"]) => (await apiRequest("PATCH", `/api/models/connectors/${connector!.id}`, { tierMappings })).json(),
+    mutationFn: async (tierMappings: Record<SemanticTier, string>) => (await apiRequest("PATCH", `/api/models/connectors/${connector!.id}`, { tierMappings })).json(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/models/connectors"] }),
     onError: (error: Error) => toast({ title: "Model mapping failed", description: error.message, variant: "destructive" }),
   });
@@ -5497,12 +5690,13 @@ function ModelConnectorSection({ provider, title = "Model mapping" }: { provider
     <CardHeader><CardTitle className="text-base font-semibold">{title}</CardTitle></CardHeader>
     <CardContent><p className="text-sm text-muted-foreground">No connector is configured for this provider.</p></CardContent>
   </Card>;
+  if (isOpenAIProvider(provider)) return <OpenAIConnectorTree connector={connector} models={models} title={title} />;
   return <Card className="overflow-hidden min-w-0">
     <CardHeader><CardTitle className="text-base font-semibold">{title}</CardTitle></CardHeader>
     <CardContent className="space-y-3">
-      {(["max", "high", "balanced", "fast"] as const).map((tier) => <div key={tier} className="grid gap-2 @sm:grid-cols-[96px_1fr] @sm:items-center">
+      {MODEL_TIERS.map((tier) => <div key={tier} className="grid gap-2 @sm:grid-cols-[96px_1fr] @sm:items-center">
         <Label className="capitalize">{tier}</Label>
-        <Select value={connector.config.tierMappings[tier]} disabled={mutation.isPending} onValueChange={(model) => mutation.mutate({ ...connector.config.tierMappings, [tier]: model })}>
+        <Select value={tierConfigModel(connector.config.tierMappings[tier])} disabled={mutation.isPending} onValueChange={(model) => mutation.mutate({ ...Object.fromEntries(MODEL_TIERS.map((item) => [item, tierConfigModel(connector.config.tierMappings[item])])), [tier]: model } as Record<SemanticTier, string>)}>
           <SelectTrigger className="font-mono text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>{models.map((model) => <SelectItem key={model.id} value={`${provider}/${model.id}`}><span>{model.name}</span></SelectItem>)}</SelectContent>
         </Select>
