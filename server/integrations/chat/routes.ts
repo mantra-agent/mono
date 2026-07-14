@@ -1757,7 +1757,26 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           status: "started",
           startedAt: orientStartedAt,
         });
-        const orientation = await ensureSessionOriented({ sessionId, sessionKey, userMessage: content });
+        const llmStepId = `system-orientation_llm_call-${lease.generation}-${orientStartedAt}`;
+        let orientationLlmStartedAt: number | null = null;
+        const orientation = await ensureSessionOriented({
+          sessionId,
+          sessionKey,
+          userMessage: content,
+          onLlmStart: () => {
+            orientationLlmStartedAt = Date.now();
+            publishChatStreamEvent(sessionKey, sessionId, {
+              type: "system_step",
+              step: "orientation_llm_call",
+              stepId: llmStepId,
+              parentId: orientationStepId,
+              status: "started",
+              detail: "Router · tier=fast",
+              startedAt: orientationLlmStartedAt,
+              metadata: { llm: { tier: "fast", source: "Router" } },
+            });
+          },
+        });
         const orientEndedAt = Date.now();
         const orientElapsedMs = orientEndedAt - orientStartedAt;
         const orientDetail = orientation.applied
@@ -1792,17 +1811,17 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           });
           preChronology.push({ s: "system", i: orientationStepIndex });
           if (orientation.llm) {
-            const llmStepId = `system-orientation_llm_call-${lease.generation}-${orientEndedAt}`;
             const llmDetail = `${orientation.llm.model} · ${orientation.llm.provider}${orientation.llm.tier ? ` · tier=${orientation.llm.tier}` : ""}`;
+            const llmStartedAt = orientationLlmStartedAt ?? orientStartedAt;
             publishChatStreamEvent(sessionKey, sessionId, {
               type: "system_step",
               step: "orientation_llm_call",
               stepId: llmStepId,
               parentId: orientationStepId,
               status: "done",
-              elapsedMs: orientElapsedMs,
+              elapsedMs: orientEndedAt - llmStartedAt,
               detail: llmDetail,
-              startedAt: orientStartedAt,
+              startedAt: llmStartedAt,
               endedAt: orientEndedAt,
               metadata: { llm: orientation.llm },
             });
@@ -1811,10 +1830,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
               id: llmStepId,
               name: "orientation_llm_call",
               status: "done",
-              elapsedMs: orientElapsedMs,
+              elapsedMs: orientEndedAt - llmStartedAt,
               detail: llmDetail,
               parentId: orientationStepId,
-              startedAt: orientStartedAt,
+              startedAt: llmStartedAt,
               endedAt: orientEndedAt,
               metadata: { llm: orientation.llm },
             });
