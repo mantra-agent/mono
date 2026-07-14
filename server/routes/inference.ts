@@ -16,6 +16,7 @@ import { pool } from "../db";
 import { getSetting, setSetting } from "../system-settings";
 import { runWithPrincipal } from "../principal-context";
 import { createNamedSystemPrincipal } from "../principal";
+import { requirePermission } from "../permissions";
 import { listModelConnectors, reorderModelConnectors, updateModelConnector } from "../model-connectors";
 import { modelTierMappingsSchema } from "@shared/model-connectors";
 
@@ -937,7 +938,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
     }
   });
 
-  app.patch("/api/models/connectors/:id", async (req, res) => {
+  app.patch("/api/models/connectors/:id", requirePermission("system:write"), async (req, res) => {
     try {
       const id = Number.parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid connector id" });
@@ -945,7 +946,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
         status: z.enum(["active", "inactive"]).optional(),
         tierMappings: modelTierMappingsSchema.optional(),
       }).parse(req.body);
-      const connector = await updateModelConnector(id, body);
+      const connector = await runWithPrincipal(createNamedSystemPrincipal("model-connector-admin"), () => updateModelConnector(id, body));
       if (!connector) return res.status(404).json({ error: "Model connector not found" });
       res.json({ connector });
     } catch (error: any) {
@@ -953,10 +954,11 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
     }
   });
 
-  app.put("/api/models/connectors/order", async (req, res) => {
+  app.put("/api/models/connectors/order", requirePermission("system:write"), async (req, res) => {
     try {
       const { ids } = z.object({ ids: z.array(z.number().int().positive()).min(1) }).parse(req.body);
-      res.json({ connectors: await reorderModelConnectors(ids) });
+      const connectors = await runWithPrincipal(createNamedSystemPrincipal("model-connector-admin"), () => reorderModelConnectors(ids));
+      res.json({ connectors });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
