@@ -292,6 +292,10 @@ export type ChatStreamEvent =
       elapsedMs?: number;
       detail?: string;
       stepId?: string;
+      parentId?: string;
+      startedAt?: number;
+      endedAt?: number;
+      selfTimeMs?: number;
       metadata?: Record<string, unknown>;
     })
   | (ChatStreamEventBase & { type: "voice_reconnect"; reason: string })

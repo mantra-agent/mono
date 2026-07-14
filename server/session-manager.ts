@@ -275,6 +275,10 @@ class SessionManager {
             systemStepMetadata: event.metadata,
             status: "active",
             stepId: event.stepId,
+            parentId: event.parentId,
+            startedAt: event.startedAt,
+            endedAt: event.endedAt,
+            selfTimeMs: event.selfTimeMs,
           });
         } else {
           // Try to resolve first; if no active step exists, add as already-done
@@ -286,6 +290,10 @@ class SessionManager {
             event.detail,
             event.stepId,
             event.metadata,
+            event.parentId,
+            event.startedAt,
+            event.endedAt,
+            event.selfTimeMs,
           );
           // Check if resolution actually changed anything
           if (resolved === prev) {
@@ -296,6 +304,10 @@ class SessionManager {
               status: stepStatus,
               elapsedMs: event.elapsedMs,
               stepId: event.stepId,
+              parentId: event.parentId,
+              startedAt: event.startedAt,
+              endedAt: event.endedAt,
+              selfTimeMs: event.selfTimeMs,
             });
           } else {
             prev = resolved;
