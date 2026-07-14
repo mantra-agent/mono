@@ -7,7 +7,6 @@ export interface ActivityHeatmapDay {
 
 interface ActivityHeatmapProps {
   days: ActivityHeatmapDay[];
-  selectedDate?: string;
   onSelectDate?: (date: string) => void;
   valueLabel: string;
 }
@@ -18,7 +17,7 @@ export function heatmapFillColor(percent: number): string {
   return `hsl(var(--success) / ${opacity.toFixed(2)})`;
 }
 
-export function ActivityHeatmap({ days, selectedDate, onSelectDate, valueLabel }: ActivityHeatmapProps) {
+export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeatmapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [weeksToShow, setWeeksToShow] = useState(12);
 
@@ -44,6 +43,7 @@ export function ActivityHeatmap({ days, selectedDate, onSelectDate, valueLabel }
     return { weeks: grouped, maximum: Math.max(0, ...visible.map((day) => day.value)) };
   }, [days, weeksToShow]);
 
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
   const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const monthDay = (date: string) => {
     if (!date) return "";
@@ -71,7 +71,7 @@ export function ActivityHeatmap({ days, selectedDate, onSelectDate, valueLabel }
                   title={`${day.date}: ${day.value} ${valueLabel}`}
                   onClick={() => onSelectDate?.(day.date)}
                   style={{ backgroundColor: heatmapFillColor(percent) }}
-                  className={`relative block h-5 w-5 shrink-0 appearance-none rounded-[3px] border-0 p-0 transition-shadow hover:ring-1 hover:ring-foreground/60 ${day.date === selectedDate ? "ring-1 ring-foreground/60" : ""}`}
+                  className={`relative block h-5 w-5 shrink-0 appearance-none rounded-[3px] border-0 p-0 transition-shadow hover:ring-1 hover:ring-foreground/60 ${day.date === today ? "ring-1 ring-foreground/60" : ""}`}
                   data-testid={`heatmap-cell-${day.date}`}
                 />
               );
