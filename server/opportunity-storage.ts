@@ -17,6 +17,7 @@ import {
   type OpportunityInteractionActivity,
 } from "@shared/schema";
 import { createLogger } from "./log";
+import { getDateInTimezone } from "./timezone";
 import type { Principal } from "./principal";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import type { Interaction } from "./people-storage";
@@ -116,7 +117,7 @@ async function syncOpportunityFollowUp(input: FollowUpSyncInput): Promise<void> 
         } else {
           // Create new interaction
           await peopleStorage.addInteraction(personId, {
-            date: new Date().toISOString().split("T")[0],
+            date: getDateInTimezone(),
             type: "note",
             summary,
             responseOwed: true,
@@ -391,7 +392,7 @@ class OpportunityStorage {
       if (!interaction) throw Object.assign(new Error("Interaction not found"), { status: 404 });
     } else {
       const updated = await peopleStorage.addInteraction(input.personId, {
-        date: input.date ?? new Date().toISOString().slice(0, 10),
+        date: input.date ?? getDateInTimezone(),
         type: input.type ?? "note",
         summary: input.summary!,
         ...(input.context !== undefined ? { context: input.context } : {}),
