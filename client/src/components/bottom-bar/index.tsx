@@ -165,6 +165,7 @@ function BottomBarMenu({
   onReminderSet,
   draftModelTier,
   onDraftModelTierChange,
+  queueModelTierUpdate,
 }: {
   onAttach: () => void;
   disabled: boolean;
@@ -174,6 +175,7 @@ function BottomBarMenu({
   onReminderSet?: (id: string) => void;
   draftModelTier: "auto" | SessionModelTierOverride;
   onDraftModelTierChange: (tier: "auto" | SessionModelTierOverride) => void;
+  queueModelTierUpdate: (update: () => Promise<void>) => Promise<void>;
 }) {
   const { layer, setLayer } = useVisibilityLayer();
   const { toast } = useToast();
@@ -267,8 +269,15 @@ function BottomBarMenu({
 
   const currentModelTier = focusedSession ? normalizeModelTier(focusedSession.modelTier) : draftModelTier;
   const setModelTier = (tier: "auto" | SessionModelTierOverride) => {
-    if (focusedSession) modelTierMutation.mutate({ session: focusedSession, tier });
-    else onDraftModelTierChange(tier);
+    if (!focusedSession) {
+      onDraftModelTierChange(tier);
+      return;
+    }
+    void queueModelTierUpdate(async () => {
+      await modelTierMutation.mutateAsync({ session: focusedSession, tier });
+    }).catch(() => {
+      // The mutation owns the user-visible error and optimistic rollback.
+    });
   };
 
   const deleteMutation = useMutation({
@@ -485,8 +494,30 @@ export function BottomBar({
   const cursorRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const prevStatusRef = useRef<SessionStatus>("idle");
+  const pendingModelTierUpdateRef = useRef<Promise<void> | null>(null);
   const { data: sessions = [] } = useQuery<Session[]>({ queryKey: ["/api/sessions"], enabled: !!focusedSessionId });
   const focusedSession = focusedSessionId ? sessions.find((session) => session.id === focusedSessionId) : undefined;
+
+  const queueModelTierUpdate = useCallback((update: () => Promise<void>): Promise<void> => {
+    const previous = pendingModelTierUpdateRef.current;
+    const next = previous
+      ? previous.catch(() => undefined).then(update)
+      : update();
+    pendingModelTierUpdateRef.current = next;
+    void next.finally(() => {
+      if (pendingModelTierUpdateRef.current === next) {
+        pendingModelTierUpdateRef.current = null;
+      }
+    }).catch(() => {
+      // The menu mutation owns error reporting and optimistic rollback.
+    });
+    return next;
+  }, []);
+
+  const waitForModelTierUpdate = useCallback(async (): Promise<void> => {
+    const pending = pendingModelTierUpdateRef.current;
+    if (pending) await pending;
+  }, []);
 
   const chatSend = useChatSend({
     toast,
@@ -577,6 +608,11 @@ export function BottomBar({
   const handleSend = useCallback(async () => {
     const text = inputText.trim();
     if (!text && attachedFiles.length === 0) return;
+    try {
+      await waitForModelTierUpdate();
+    } catch {
+      return;
+    }
     setInputText("");
     mention.dismiss();
     setAttachedFiles([]);
@@ -590,7 +626,7 @@ export function BottomBar({
       // On mobile, auto-navigate to the session window after sending
       setWidgetOpen(true);
     }
-  }, [inputText, attachedFiles, chatSend, toast, isMobile, setWidgetOpen, mention]);
+  }, [inputText, attachedFiles, chatSend, toast, isMobile, setWidgetOpen, mention, waitForModelTierUpdate]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -620,6 +656,11 @@ export function BottomBar({
 
   const handleVoice = useCallback(async () => {
     if (!voiceSession || voiceSession.status !== "idle") return;
+    try {
+      await waitForModelTierUpdate();
+    } catch {
+      return;
+    }
     let convId = focusedSessionId;
     if (!convId) {
       try {
@@ -637,7 +678,7 @@ export function BottomBar({
     }
     voiceSession.setActiveConversationId(convId);
     voiceSession.startSession();
-  }, [voiceSession, focusedSessionId, setFocusedSessionId, draftModelTier]);
+  }, [voiceSession, focusedSessionId, setFocusedSessionId, draftModelTier, waitForModelTierUpdate]);
 
   const handleVoiceEnd = useCallback(async () => {
     if (!voiceSession) return;
@@ -790,6 +831,7 @@ export function BottomBar({
               }}
               draftModelTier={draftModelTier}
               onDraftModelTierChange={setDraftModelTier}
+              queueModelTierUpdate={queueModelTierUpdate}
             />
 
             {/* Text input — grows upward, never scrolls */}
