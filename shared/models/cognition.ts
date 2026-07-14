@@ -73,6 +73,7 @@ export const personas = pgTable(
     expressionTags: jsonb("expression_tags").default([]), // string[]
     cognitiveOverrides: jsonb("cognitive_overrides").default({}),
     semanticTier: text("semantic_tier"), // Record<string, unknown>
+    routingExamples: jsonb("routing_examples").default([]), // string[] — example openings that should route to this persona during orientation bootstrap
     isDefault: boolean("is_default").notNull().default(false),
     isActive: boolean("is_active").notNull().default(false),
     sortOrder: integer("sort_order").notNull().default(0),

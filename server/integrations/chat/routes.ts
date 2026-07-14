@@ -1736,6 +1736,47 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
     try {
       chatRunLifecycle.assertCurrent(lease);
+
+      // Orientation bootstrap: unoriented sessions get a fixed-template
+      // fast-tier routing call BEFORE model selection, so persona (and
+      // therefore tier) is correct for the main turn. No-op when the
+      // session already has a real title.
+      try {
+        const { ensureSessionOriented } = await import("../../orientation-bootstrap");
+        const orientStartedAt = Date.now();
+        publishChatStreamEvent(sessionKey, sessionId, {
+          type: "system_step",
+          step: "orientation",
+          status: "started",
+        });
+        const orientation = await ensureSessionOriented({ sessionId, sessionKey, userMessage: content });
+        const orientElapsedMs = Date.now() - orientStartedAt;
+        const orientDetail = orientation.applied
+          ? `${orientation.title} · ${orientation.personaName}`
+          : orientation.skipped === "already-oriented"
+            ? "already oriented"
+            : orientation.fallback
+              ? `fallback · ${orientation.personaName || "Default"}`
+              : "skipped";
+        publishChatStreamEvent(sessionKey, sessionId, {
+          type: "system_step",
+          step: "orientation",
+          status: "done",
+          elapsedMs: orientElapsedMs,
+          detail: orientDetail,
+        });
+        if (orientation.skipped !== "already-oriented") {
+          preSteps.push({ name: "orientation", status: "done", elapsedMs: orientElapsedMs, detail: orientDetail });
+          preChronology.push({ s: "system", i: preSteps.length - 1 });
+        }
+        chatRunLifecycle.assertCurrent(lease);
+      } catch (orientErr) {
+        if (!chatRunLifecycle.isCurrent(lease)) throw orientErr;
+        chatLog.warn(
+          `orientation bootstrap errored (non-fatal) sessionId=${sessionId}: ${orientErr instanceof Error ? orientErr.message : String(orientErr)}`,
+        );
+      }
+
       if (resolvedModel) {
         chatRoutingDecision = (await resolveModelCandidates(ACTIVITY_CHAT, {
           model: resolvedModel,
