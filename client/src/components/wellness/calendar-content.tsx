@@ -60,22 +60,13 @@ function useCalendarTimezone(): string | undefined {
 
 function GlobalCompletionCalendar({
   logs,
-  activities,
   onSelectDate,
-  todayDailyPercent,
 }: {
   logs: WellnessLogEntry[];
-  activities: ActivityWithStatus[];
   onSelectDate: (date: string) => void;
-  todayDailyPercent: number | null;
 }) {
   const tz = useCalendarTimezone();
   const today = formatLocalDate(new Date(), tz);
-  const dailyActivityIds = useMemo(
-    () => new Set(activities.filter((a) => a.category === "daily_practice").map((a) => a.id)),
-    [activities],
-  );
-  const dailyTotal = dailyActivityIds.size;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [weeksToShow, setWeeksToShow] = useState(12);
 
@@ -97,7 +88,7 @@ function GlobalCompletionCalendar({
     return () => ro.disconnect();
   }, []);
 
-  const { grid } = useMemo(() => {
+  const { grid, maximum } = useMemo(() => {
     const countMap: Record<string, number> = {};
     for (const l of logs) {
       const dateStr = formatLocalDate(new Date(l.completedAt), tz);
@@ -113,14 +104,7 @@ function GlobalCompletionCalendar({
     // Monday-first: Mon=0..Sun=6
     const todayDowMon = (todayDow + 6) % 7;
     const daysBack = (weeksToShow - 1) * 7 + todayDowMon;
-    const dailyDoneMap: Record<string, Set<number>> = {};
-    for (const l of logs) {
-      if (!dailyActivityIds.has(l.activityId)) continue;
-      const dateStr = formatLocalDate(new Date(l.completedAt), tz);
-      if (!dailyDoneMap[dateStr]) dailyDoneMap[dateStr] = new Set();
-      dailyDoneMap[dateStr].add(l.activityId);
-    }
-    const days: { date: string; count: number; dailyDone: number; future: boolean }[] = [];
+    const days: { date: string; count: number; future: boolean }[] = [];
     for (let i = daysBack; i >= 0; i--) {
       const d = new Date(now);
       d.setDate(d.getDate() - i);
@@ -128,7 +112,6 @@ function GlobalCompletionCalendar({
       days.push({
         date: dateStr,
         count: countMap[dateStr] || 0,
-        dailyDone: dailyDoneMap[dateStr]?.size ?? 0,
         future: false,
       });
     }
@@ -138,15 +121,16 @@ function GlobalCompletionCalendar({
       const d = new Date(now);
       d.setDate(d.getDate() + pad);
       const dateStr = formatLocalDate(d, tz);
-      days.push({ date: dateStr, count: 0, dailyDone: 0, future: true });
+      days.push({ date: dateStr, count: 0, future: true });
       pad += 1;
     }
     const weeks: typeof days[] = [];
     for (let i = 0; i < days.length; i += 7) {
       weeks.push(days.slice(i, i + 7));
     }
-    return { grid: weeks };
-  }, [logs, tz, weeksToShow, dailyActivityIds]);
+    const maximum = Math.max(0, ...days.filter((day) => !day.future).map((day) => day.count));
+    return { grid: weeks, maximum };
+  }, [logs, tz, weeksToShow]);
 
   const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const monthDay = (dateStr: string) => {
@@ -154,19 +138,9 @@ function GlobalCompletionCalendar({
     return `${parseInt(m, 10)}/${d}`;
   };
 
-  const cellInfo = (day: { date: string; dailyDone: number }): { className: string; style?: React.CSSProperties; pct: number | null } => {
-    const isToday = day.date === today;
-    let pct: number | null;
-    if (isToday && todayDailyPercent !== null) {
-      pct = todayDailyPercent;
-    } else if (dailyTotal === 0) {
-      pct = null;
-    } else {
-      pct = Math.round((day.dailyDone / dailyTotal) * 100);
-    }
-    if (pct === null || pct === 0) {
-      return { className: "bg-muted/30", pct };
-    }
+  const cellInfo = (day: { count: number }): { className: string; style?: React.CSSProperties; pct: number } => {
+    const pct = maximum === 0 ? 0 : Math.round((day.count / maximum) * 100);
+    if (pct === 0) return { className: "bg-muted/30", pct };
     return { className: "", style: { backgroundColor: pulseFillColor(pct) }, pct };
   };
 
@@ -196,13 +170,13 @@ function GlobalCompletionCalendar({
                 return <div key={`cell-${wi}-${di}`} className={cellClass} />;
               }
               const info = cellInfo(day);
-              const showStar = info.pct !== null && info.pct > 80;
+              const showStar = info.pct > 80;
               return (
                 <button
                   key={`cell-${wi}-${di}`}
                   type="button"
                   data-testid={`cal-cell-${day.date}`}
-                  title={`${day.date}: ${day.dailyDone}/${dailyTotal} daily${info.pct !== null ? ` (${info.pct}%)` : ""} • ${day.count} total`}
+                  title={`${day.date}: ${day.count} completed wellness activities${info.pct > 0 ? ` (${info.pct}% of maximum)` : ""}`}
                   onClick={() => onSelectDate(day.date)}
                   style={info.style}
                   className={`relative block ${cellClass} appearance-none rounded-[3px] border-0 p-0 ${info.className} ${day.date === today ? "ring-1 ring-foreground/60" : ""} hover:ring-1 hover:ring-foreground/60 transition-shadow`}
@@ -1274,9 +1248,7 @@ export function CalendarContent() {
           <div className="px-3 pt-4 @sm:px-4 @sm:pt-5 shrink-0">
             <GlobalCompletionCalendar
               logs={allLogs}
-              activities={activities ?? []}
               onSelectDate={setSelectedHeatmapDate}
-              todayDailyPercent={buckets?.daily_practice?.pulsePercent ?? null}
             />
           </div>
         )}
