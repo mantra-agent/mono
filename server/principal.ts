@@ -304,12 +304,8 @@ async function repairLegacyPersonalOwnership(userId: string, accountId: string):
       }
     }
 
-    // ── Personas: seed/default should be global ─────────────────────
-    await db.execute(sql.raw(`
-      UPDATE personas
-      SET scope = 'global', owner_user_id = NULL, account_id = NULL
-      WHERE source = 'seed' OR is_default = true
-    `));
+    // Persona templates are reconciled once at boot by personaStorage.seedDefaults().
+    // Per-user identity repair must never mutate global template scope.
 
     // ── Skills: system-defined skills should be global ──────────────
     await db.execute(sql.raw(`

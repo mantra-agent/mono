@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { personas } from "@shared/models/cognition";
 import { semanticTierSchema, type SemanticTier } from "@shared/model-connectors";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { TTLCache } from "../utils/ttl-cache";
 import { createLogger } from "../log";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
@@ -618,11 +618,6 @@ class PersonaStorageClass {
   }
 
   async seedDefaults(): Promise<void> {
-    const existing = await db
-      .select()
-      .from(personas)
-      .where(eq(personas.source, "seed"))
-      .limit(1);
     for (const seed of SEED_PERSONAS) {
       await db
         .insert(personas)
@@ -647,17 +642,69 @@ class PersonaStorageClass {
         })
         .onConflictDoNothing();
     }
+    const removedLegacyRows = await this.reconcileLegacySeedRows();
     this.invalidateCache();
     await this.updateSeedOverlays();
-    log.log("seedDefaults: ensured " + SEED_PERSONAS.length + " seed personas");
+    log.log(
+      `seedDefaults: ensured ${SEED_PERSONAS.length} seed personas; removed ${removedLegacyRows} legacy scoped seed rows`,
+    );
   }
 
-  /** Update existing seed personas with production overlays if they have null/placeholder content */
+  /** Remove malformed scoped seed rows after canonical global rows exist. */
+  private async reconcileLegacySeedRows(): Promise<number> {
+    let removed = 0;
+    for (const seed of SEED_PERSONAS) {
+      const canonical = await this.getGlobalSeedByName(seed.name);
+      if (!canonical) {
+        throw new Error(`Missing canonical global seed persona: ${seed.name}`);
+      }
+      const legacyRows = await db
+        .select({ id: personas.id })
+        .from(personas)
+        .where(
+          and(
+            eq(personas.source, "seed"),
+            sql`${personas.scope} <> 'global'`,
+            sql`LOWER(${personas.name}) = LOWER(${seed.name})`,
+          ),
+        );
+      const legacyIds = legacyRows.map((row) => row.id);
+      if (legacyIds.length === 0) continue;
+
+      await db.transaction(async (tx) => {
+        await tx
+          .update(personas)
+          .set({ templatePersonaId: canonical.id, updatedAt: new Date() })
+          .where(inArray(personas.templatePersonaId, legacyIds));
+        await tx.delete(personas).where(inArray(personas.id, legacyIds));
+      });
+      removed += legacyIds.length;
+    }
+    return removed;
+  }
+
+  /** Resolve the canonical global seed row without matching user-owned personas that share its name. */
+  private async getGlobalSeedByName(name: string): Promise<PersonaEntry | null> {
+    const [row] = await db
+      .select()
+      .from(personas)
+      .where(
+        and(
+          eq(personas.source, "seed"),
+          eq(personas.scope, "global"),
+          sql`LOWER(${personas.name}) = LOWER(${name})`,
+        ),
+      )
+      .limit(1);
+    return row ? rowToEntry(row) : null;
+  }
+
+  /** Update canonical global seed personas with the production definitions. */
   private async updateSeedOverlays(): Promise<void> {
     let updated = 0;
     for (const seed of SEED_PERSONAS) {
-      const existing = await this.getByName(seed.name);
-      if (!existing || existing.source !== "seed") continue;
+      const existing = await this.getGlobalSeedByName(seed.name);
+      if (!existing) continue;
       const needsOverlayUpdate =
         seed.promptOverlay &&
         (!existing.promptOverlay ||
