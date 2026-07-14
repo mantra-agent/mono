@@ -969,6 +969,7 @@ async function handlePeopleScanImports(args: Record<string, any>): Promise<ToolH
 async function handlePeopleImportApi(args: Record<string, any>): Promise<ToolHandlerResult> {
   const service = await import("./people-import-decision-service");
   const action = String(args.action || "");
+  if (action === "search_import_candidates") return { result: JSON.stringify(await service.searchImportCandidates({ query: args.query, candidateId: args.candidateId, decision: args.decision, limit: args.limit, offset: args.offset }), null, 2) };
   if (action === "list_import_candidates") return { result: JSON.stringify(await service.listImportCandidates({ limit: args.limit, offset: args.offset }), null, 2) };
   if (action === "get_import_candidate") return { result: JSON.stringify(await service.getImportCandidate(String(args.candidateId || "")), null, 2) };
   if (action === "find_import_matches") return { result: JSON.stringify(await service.findImportMatches(String(args.candidateId || ""), args.limit), null, 2) };
@@ -1017,6 +1018,7 @@ const peopleSubHandlers: Record<string, (args: Record<string, any>) => Promise<T
   create: handlePeopleCreate,
   set_daily_contact: handlePeopleSetDailyContact,
   scan_imports: handlePeopleScanImports,
+  search_import_candidates: handlePeopleImportApi,
   list_import_candidates: handlePeopleImportApi,
   get_import_candidate: handlePeopleImportApi,
   find_import_matches: handlePeopleImportApi,
@@ -4737,7 +4739,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
   async people(args) {
     const action = args.action || "list";
     const handler = peopleSubHandlers[action];
-    if (!handler) return { result: `Unknown people action: ${action}. Available: list, get, get_many, query, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, update_relationship_profile, update_network_profile, update_capital, add_commitment, update_commitment, ask_route, add_relationship_memory, get_relationship_memories, enrichment_prompt, create, update, set_daily_contact, scan_imports, scan_ignored, list_import_candidates, get_import_candidate, find_import_matches, add_import_candidate, merge_import_candidate, skip_import_candidate, undo_import_decision, preview_import_batch, apply_import_batch, get_import_batch`, error: true };
+    if (!handler) return { result: `Unknown people action: ${action}. Available: list, get, get_many, query, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, update_relationship_profile, update_network_profile, update_capital, add_commitment, update_commitment, ask_route, add_relationship_memory, get_relationship_memories, enrichment_prompt, create, update, set_daily_contact, scan_imports, scan_ignored, search_import_candidates, list_import_candidates, get_import_candidate, find_import_matches, add_import_candidate, merge_import_candidate, skip_import_candidate, undo_import_decision, preview_import_batch, apply_import_batch, get_import_batch`, error: true };
     try {
       return await handler(args);
     } catch (err: any) {
