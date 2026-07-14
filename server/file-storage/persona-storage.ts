@@ -64,6 +64,20 @@ function rowToEntry(row: typeof personas.$inferSelect): PersonaEntry {
   };
 }
 
+const PERSONA_SEMANTIC_TIERS: Record<string, SemanticTier> = {
+  Strategist: "max",
+  Architect: "max",
+  Operator: "fast",
+  Creative: "high",
+  Coach: "high",
+  Companion: "balanced",
+  Default: "balanced",
+};
+
+function semanticTierForPersona(name: string): SemanticTier {
+  return PERSONA_SEMANTIC_TIERS[name] ?? "balanced";
+}
+
 const SEED_PERSONAS = [
   {
     name: "Default",
@@ -584,7 +598,7 @@ class PersonaStorageClass {
           promptOverlay: seed.promptOverlay,
           expressionTags: seed.expressionTags,
           cognitiveOverrides: seed.cognitiveOverrides,
-          semanticTier: "balanced",
+          semanticTier: semanticTierForPersona(seed.name),
           isDefault: seed.isDefault,
           isActive: seed.isActive,
           sortOrder: seed.sortOrder,
@@ -619,7 +633,7 @@ class PersonaStorageClass {
         if (needsIconUpdate) {
           updates.icon = seed.icon;
         }
-        if (needsTierUpdate) updates.semanticTier = "balanced";
+        if (needsTierUpdate) updates.semanticTier = semanticTierForPersona(seed.name);
         await db
           .update(personas)
           .set(updates)

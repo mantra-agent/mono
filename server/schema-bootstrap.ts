@@ -626,6 +626,18 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_provider_connections_kind_order ON provider_connections(connector_kind, sort_order)`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS semantic_tier TEXT`);
     await pool.query(`DO $$ BEGIN ALTER TABLE personas ADD CONSTRAINT personas_semantic_tier_check CHECK (semantic_tier IS NULL OR semantic_tier IN ('max', 'high', 'balanced', 'fast')); EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
+    await pool.query(`
+      UPDATE personas SET semantic_tier = CASE name
+        WHEN 'Strategist' THEN 'max'
+        WHEN 'Architect' THEN 'max'
+        WHEN 'Operator' THEN 'fast'
+        WHEN 'Creative' THEN 'high'
+        WHEN 'Coach' THEN 'high'
+        WHEN 'Companion' THEN 'balanced'
+        ELSE 'balanced'
+      END
+      WHERE semantic_tier IS NULL
+    `);
 
     // One-time migration: copy any surviving app_secrets provider_connection:* rows to credential_envelope
     try {
