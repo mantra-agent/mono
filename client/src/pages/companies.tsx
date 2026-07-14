@@ -84,23 +84,33 @@ export default function CompaniesPage() {
   const [selectedId, setSelectedId] = useState<string | null>(params?.id || null);
   const [search, setSearch] = useState("");
   const [newName, setNewName] = useState("");
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
   const { toast } = useToast();
   const { data, isLoading } = useQuery<{ companies: CompanyIndex[] }>({ queryKey: ["/api/companies"] });
   const selectedName = data?.companies.find(company => company.id === selectedId)?.name;
   usePageHeader({ title: selectedName || "Companies" });
   useFocusContext(selectedId ? null : { subView: "companies" });
 
-  const create = useMutation({ mutationFn: async () => (await apiRequest("POST", "/api/companies", { name: newName.trim() })).json(), onSuccess: (company: Company) => { queryClient.invalidateQueries({ queryKey: ["/api/companies"] }); setNewName(""); setSelectedId(company.id); navigate(`/companies/${company.id}`); }, onError: (error: Error) => toast({ title: "Failed to add company", description: error.message, variant: "destructive" }) });
+  const create = useMutation({ mutationFn: async () => (await apiRequest("POST", "/api/companies", { name: newName.trim() })).json(), onSuccess: (company: Company) => { queryClient.invalidateQueries({ queryKey: ["/api/companies"] }); setNewName(""); setShowQuickAdd(false); setSelectedId(company.id); navigate(`/companies/${company.id}`); }, onError: (error: Error) => toast({ title: "Failed to add company", description: error.message, variant: "destructive" }) });
   const companies = useMemo(() => (data?.companies || []).filter(company => `${company.name} ${company.industry || ""}`.toLowerCase().includes(search.toLowerCase())), [data?.companies, search]);
   const select = (id: string | null) => { setSelectedId(id); navigate(id ? `/companies/${id}` : "/companies"); };
 
   return <div className="flex h-full bg-black" data-testid="companies-page">
     <div className={`w-full @md:w-64 shrink-0 flex flex-col bg-black ${selectedId ? "hidden @md:flex" : "flex"}`}>
-      <div className="space-y-2 p-2">
+      <div className="p-2">
         <div className="relative"><Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search companies…" className="h-7 pl-7 text-xs" /></div>
-        <div className="flex gap-1"><Input value={newName} onChange={event => setNewName(event.target.value)} placeholder="New company" className="h-8" onKeyDown={event => { if (event.key === "Enter" && newName.trim()) create.mutate(); }} /><Button size="icon" className="h-8 w-8" disabled={!newName.trim() || create.isPending} onClick={() => create.mutate()}><Plus className="h-4 w-4" /></Button></div>
       </div>
-      <ScrollArea className="flex-1"><div className="space-y-0.5 p-2">{isLoading ? <Loader2 className="mx-auto mt-8 h-4 w-4 animate-spin text-muted-foreground" /> : companies.map(company => <button key={company.id} onClick={() => select(company.id)} className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${selectedId === company.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70"}`}><Building2 className="h-3.5 w-3.5" /><span className="min-w-0 flex-1 truncate">{company.name}</span><span className="text-[10px]">{company.peopleCount || 0}</span></button>)}</div></ScrollArea>
+      <ScrollArea className="flex-1"><div className="space-y-0.5 p-2">
+        {showQuickAdd && <div className="mb-1 border-b p-2">
+          <div className="flex gap-1">
+            <Input autoFocus value={newName} onChange={event => setNewName(event.target.value)} placeholder="Company name" className="h-8" onKeyDown={event => { if (event.key === "Enter" && newName.trim()) create.mutate(); if (event.key === "Escape") { setNewName(""); setShowQuickAdd(false); } }} data-testid="input-new-company-name" />
+            <Button size="sm" className="h-8" disabled={!newName.trim() || create.isPending} onClick={() => create.mutate()} data-testid="button-confirm-add-company">{create.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Add"}</Button>
+          </div>
+        </div>}
+        <button type="button" onClick={() => setShowQuickAdd(true)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80" data-testid="button-new-company-row">
+          <Plus className="h-3.5 w-3.5 shrink-0" />
+          <span>New Company</span>
+        </button>{isLoading ? <Loader2 className="mx-auto mt-8 h-4 w-4 animate-spin text-muted-foreground" /> : companies.map(company => <button key={company.id} onClick={() => select(company.id)} className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${selectedId === company.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70"}`}><Building2 className="h-3.5 w-3.5" /><span className="min-w-0 flex-1 truncate">{company.name}</span><span className="text-[10px]">{company.peopleCount || 0}</span></button>)}</div></ScrollArea>
     </div>
     <div className={`min-w-0 flex-1 overflow-y-auto ${selectedId ? "block" : "hidden @md:block"}`}>{selectedId ? <CompanyDetail id={selectedId} onClose={() => select(null)} onDelete={() => select(null)} /> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Select a company</div>}</div>
   </div>;
