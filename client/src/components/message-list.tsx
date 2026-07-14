@@ -473,6 +473,20 @@ export function MessageList({
     hasRenderableStreamForTurn;
 
   const hiddenStreamingCheckpointIds: string[] = [];
+  const overlappingPersistedAssistant = persistedAssistantForStreamingTurn;
+  if (needsStreamingTarget && overlappingPersistedAssistant) {
+    // During finalization the frozen stream intentionally overlaps the first
+    // render containing its persisted replacement. Keep the existing live turn
+    // mounted for that commit and suppress the duplicate persisted message.
+    const persistedIndex = items.findIndex(
+      (item) => item.kind === "message" && item.msg.id === overlappingPersistedAssistant.id,
+    );
+    if (persistedIndex >= 0) {
+      hiddenStreamingCheckpointIds.push(overlappingPersistedAssistant.id);
+      items.splice(persistedIndex, 1);
+      if (persistedIndex < activeTurnUserItemIndex) activeTurnUserItemIndex -= 1;
+    }
+  }
   if (needsStreamingTarget && activeTurnUserItemIndex >= 0) {
     // Active streaming is scoped to the active user turn only. Suppress only
     // assistant checkpoint messages between that user and the next user, and

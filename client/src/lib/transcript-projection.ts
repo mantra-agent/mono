@@ -302,7 +302,15 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
     frozenAssistantNowPersisted
   );
 
-  const effectiveFrozenHandoff = shouldClearFrozenHandoff ? null : frozenStreamHandoff;
+  // Persisted replacement and frozen stream must overlap for one committed render.
+  // Clearing during projection removes the draft in the same render that mounts the
+  // persisted turn, which makes React tear down the visible content before the new
+  // tree is painted under load. Keep the frozen handoff for this render, then let
+  // the projection-driven effect clear it after paint. MessageList suppresses the
+  // persisted duplicate while this overlap is active.
+  const effectiveFrozenHandoff = frozenStreamHandoff?.sessionId === activeSession && !hasLiveStreamingState
+    ? frozenStreamHandoff
+    : null;
 
   // --- Display streaming (live takes precedence over frozen) ---
   const displayStreaming = hasLiveStreamingState
