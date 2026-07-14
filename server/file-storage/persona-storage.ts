@@ -640,6 +640,10 @@ class PersonaStorageClass {
           isSystem: (seed as { isSystem?: boolean }).isSystem ?? false,
           sortOrder: seed.sortOrder,
           source: seed.source,
+          scope: "global",
+          ownerUserId: null,
+          accountId: null,
+          vaultId: null,
         })
         .onConflictDoNothing();
     }
