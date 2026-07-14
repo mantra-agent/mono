@@ -81,7 +81,6 @@ async function queryInteractionSeries(startDate: string, endDate: string): Promi
   const counts = new Map<string, number>();
   for (const person of people) {
     for (const interaction of person.interactions) {
-      if (interaction.direction !== "outbound") continue;
       if (!OUTBOUND_INTERACTION_TYPES.has(interaction.type)) continue;
       if (interaction.date < startDate || interaction.date > endDate) continue;
       increment(counts, interaction.date);
