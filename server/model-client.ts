@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { ACTIVITY_FRAMING, ACTIVITY_CHAT, type ActivityId } from "./job-profiles";
 import { resolveModelCandidates, appendFailedAttempt, type ModelRoutingDecision } from "./model-routing";
 import { getMaxOutputTokens, getModel, supportsSelectableEffort } from "./model-registry";
+import type { OpenAITierModelConfig } from "@shared/model-connectors";
 import { resolveOpenAIReasoningEffort, type OpenAIReasoningEffort } from "./thinking-config";
 import { withTimeout, STREAM_FINAL_MESSAGE_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";
@@ -120,7 +121,12 @@ interface CodexResponsesRequest {
   input: Array<CodexInputItem>;
   store: boolean;
   temperature?: number;
-  reasoning?: { effort?: OpenAIReasoningEffort; summary?: "detailed" | "concise" | "auto" };
+  reasoning?: { effort?: OpenAIReasoningEffort; summary?: "detailed" | "concise" | "auto"; mode?: "standard" | "pro" };
+  text?: { verbosity?: "low" | "medium" | "high"; format?: Record<string, unknown> };
+  service_tier?: "auto" | "default" | "flex" | "priority" | "fast";
+  model_reasoning_summary?: "detailed" | "concise" | "auto";
+  model_verbosity?: "low" | "medium" | "high";
+  max_output_tokens?: number;
   tools?: Array<
     | { type: "function"; name: string; description: string; parameters: Record<string, unknown> }
     | { type: "image_generation"; quality?: string; size?: string; background?: string; output_format?: string }
@@ -508,10 +514,54 @@ function usesMaxCompletionTokens(model: string): boolean {
   return model.startsWith("o1") || model.startsWith("o3") || model.startsWith("o4") || model.startsWith("gpt-5");
 }
 
+
+function resolvedOpenAIConfig(options: Pick<ChatCompletionOptions, "routingDecision">): OpenAITierModelConfig | undefined {
+  return options.routingDecision?.provider === "openai" || options.routingDecision?.provider === "openai-subscription"
+    ? options.routingDecision.modelConfig
+    : undefined;
+}
+
+function connectorMaxOutputTokens(config: OpenAITierModelConfig | undefined, runtimeMaxTokens?: number): number | undefined {
+  if (runtimeMaxTokens !== undefined) return config?.maxOutputTokens !== undefined ? Math.min(runtimeMaxTokens, config.maxOutputTokens) : runtimeMaxTokens;
+  return config?.maxOutputTokens;
+}
+
+function connectorReasoningEffort(config: OpenAITierModelConfig | undefined, model: string, thinking: ChatCompletionOptions["thinking"], surface: "responses" | "codex"): OpenAIReasoningEffort | undefined {
+  if (config?.reasoningEffort) return config.reasoningEffort as OpenAIReasoningEffort;
+  return supportsSelectableEffort(model) ? resolveOpenAIReasoningEffort(thinking, surface) : undefined;
+}
+
+function buildOpenAIReasoningConfig(config: OpenAITierModelConfig | undefined, model: string, thinking: ChatCompletionOptions["thinking"], surface: "responses" | "codex"): Record<string, unknown> | undefined {
+  const reasoning: Record<string, unknown> = {};
+  const effort = connectorReasoningEffort(config, model, thinking, surface);
+  if (effort) reasoning.effort = effort;
+  if (surface === "responses" && config?.reasoningMode) reasoning.mode = config.reasoningMode;
+  if (config?.reasoningSummary && config.reasoningSummary !== "none") reasoning.summary = config.reasoningSummary;
+  return Object.keys(reasoning).length > 0 ? reasoning : undefined;
+}
+
+function applyOpenAIConnectorConfig(params: Record<string, any>, config: OpenAITierModelConfig | undefined, model: string, options: ChatCompletionOptions, surface: "responses" | "codex"): void {
+  const maxOutput = connectorMaxOutputTokens(config, options.maxTokens);
+  if (maxOutput !== undefined) params.max_output_tokens = maxOutput;
+  const reasoning = buildOpenAIReasoningConfig(config, model, options.thinking, surface);
+  if (reasoning) params.reasoning = reasoning;
+  if (config?.verbosity) {
+    if (surface === "codex") params.model_verbosity = config.verbosity;
+    else params.text = { ...(params.text || {}), verbosity: config.verbosity };
+  }
+  if (surface === "codex") {
+    if (config?.reasoningSummary && config.reasoningSummary !== "none") params.model_reasoning_summary = config.reasoningSummary;
+    if (config?.fastMode || config?.serviceTier === "fast") params.service_tier = "fast";
+  } else if (config?.serviceTier && config.serviceTier !== "auto" && config.serviceTier !== "fast") {
+    params.service_tier = config.serviceTier;
+  }
+}
+
 async function openaiCompletion(model: string, options: ChatCompletionOptions): Promise<ChatCompletionResult> {
   // Effort-capable models (GPT-5.6 family) use the Responses API so the tier
   // thinking config can map onto a reasoning effort.
-  if (supportsSelectableEffort(model)) {
+  const connectorConfig = resolvedOpenAIConfig(options);
+  if (supportsSelectableEffort(model) || connectorConfig?.reasoningMode || connectorConfig?.reasoningSummary || connectorConfig?.verbosity || connectorConfig?.serviceTier) {
     return openaiResponsesCompletion(model, options);
   }
 
@@ -525,11 +575,12 @@ async function openaiCompletion(model: string, options: ChatCompletionOptions): 
     })),
   };
 
-  if (options.maxTokens) {
+  const chatMaxTokens = connectorMaxOutputTokens(connectorConfig, options.maxTokens);
+  if (chatMaxTokens) {
     if (usesMaxCompletionTokens(model)) {
-      params.max_completion_tokens = options.maxTokens;
+      params.max_completion_tokens = chatMaxTokens;
     } else {
-      params.max_tokens = options.maxTokens;
+      params.max_tokens = chatMaxTokens;
     }
   }
   if (options.temperature !== undefined) params.temperature = options.temperature;
@@ -568,13 +619,12 @@ async function openaiResponsesCompletion(model: string, options: ChatCompletionO
     input,
     store: false,
   };
-  if (options.maxTokens) params.max_output_tokens = options.maxTokens;
-  if (options.jsonMode) params.text = { format: { type: "json_object" } };
+  const connectorConfig = resolvedOpenAIConfig(options);
+  applyOpenAIConnectorConfig(params, connectorConfig, model, options, "responses");
+  if (options.jsonMode) params.text = { ...(params.text || {}), format: { type: "json_object" } };
   if (options.tools && options.tools.length > 0) {
     params.tools = convertToolsToCodexResponses(options.tools);
   }
-  const effort = resolveOpenAIReasoningEffort(options.thinking, "responses");
-  if (effort) params.reasoning = { effort };
 
   const requestOptions: Record<string, any> = {};
   if (options.signal) requestOptions.signal = options.signal;
@@ -834,10 +884,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
   const codexModel = modelInfo?.codexModelId ?? model;
   const { instructions, input } = buildCodexInput(options.messages);
   const body: CodexResponsesRequest = { model: codexModel, instructions, input, store: false, stream: true };
-  if (options.thinking && supportsSelectableEffort(model)) {
-    const effort = resolveOpenAIReasoningEffort(options.thinking, "codex");
-    if (effort) body.reasoning = { effort };
-  }
+  applyOpenAIConnectorConfig(body as unknown as Record<string, any>, resolvedOpenAIConfig(options), model, options, "codex");
 
   const fetchOptions: RequestInit = {
     method: "POST",
@@ -1400,15 +1447,9 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
       input,
       store: false,
       stream: true,
-      // ChatGPT subscription reasoning summaries are rendered as visible
-      // thinking blocks in chat. Use auto as the middle ground: richer than
-      // concise, without forcing the oversized detailed internal-process cards.
-      reasoning: { summary: "auto" },
     };
-    if (supportsSelectableEffort(model)) {
-      const codexEffort = resolveOpenAIReasoningEffort(options.thinking, "codex");
-      if (codexEffort) body.reasoning = { effort: codexEffort, summary: "auto" };
-    }
+    applyOpenAIConnectorConfig(body as unknown as Record<string, any>, resolvedOpenAIConfig(options), model, options, "codex");
+    if (!body.reasoning) body.reasoning = { summary: "auto" };
 
     if (options.tools && options.tools.length > 0) {
       body.tools = convertToolsToCodexResponses(options.tools);
@@ -1977,12 +2018,10 @@ async function* openaiResponsesStream(model: string, options: ChatCompletionStre
       store: false,
       stream: true,
     };
-    if (options.maxTokens) params.max_output_tokens = options.maxTokens;
+    applyOpenAIConnectorConfig(params, resolvedOpenAIConfig(options), model, options, "responses");
     if (options.tools && options.tools.length > 0) {
       params.tools = convertToolsToCodexResponses(options.tools);
     }
-    const effort = resolveOpenAIReasoningEffort(options.thinking, "responses");
-    if (effort) params.reasoning = { effort };
 
     let stopReason: "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" = "end_turn";
     let streamUsage: { inputTokens: number; outputTokens: number; totalTokens: number; cacheReadTokens?: number; reasoningTokens?: number; visibleOutputTokens?: number } = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
@@ -2089,7 +2128,8 @@ async function* openaiResponsesStream(model: string, options: ChatCompletionStre
 async function* openaiStream(model: string, options: ChatCompletionStreamOptions): AsyncGenerator<StreamEvent> {
   // Effort-capable models (GPT-5.6 family) use the Responses API so the tier
   // thinking config can map onto a reasoning effort.
-  if (supportsSelectableEffort(model)) {
+  const connectorConfig = resolvedOpenAIConfig(options);
+  if (supportsSelectableEffort(model) || connectorConfig?.reasoningMode || connectorConfig?.reasoningSummary || connectorConfig?.verbosity || connectorConfig?.serviceTier) {
     yield* openaiResponsesStream(model, options);
     return;
   }
@@ -2138,11 +2178,12 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
     stream_options: { include_usage: true },
   };
 
-  if (options.maxTokens) {
+  const chatMaxTokens = connectorMaxOutputTokens(connectorConfig, options.maxTokens);
+  if (chatMaxTokens) {
     if (usesMaxCompletionTokens(model)) {
-      params.max_completion_tokens = options.maxTokens;
+      params.max_completion_tokens = chatMaxTokens;
     } else {
-      params.max_tokens = options.maxTokens;
+      params.max_tokens = chatMaxTokens;
     }
   }
   if (options.temperature !== undefined) params.temperature = options.temperature;
