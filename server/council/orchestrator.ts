@@ -10,7 +10,6 @@
  */
 
 import { createLogger } from "../log";
-import { getModelForTier } from "../job-profiles";
 import {
   type ConvergenceStrategy,
   type CouncilPosition,
@@ -23,18 +22,11 @@ const log = createLogger("Council");
 export const COUNCIL_HARD_ROUND_CAP = 5;
 
 /**
- * Resolve the default advocates from the configured tier system.
- * Advocate A uses the Advocate tier; Advocate B uses the Advisary tier.
- * These two tiers are designed to be configured to DIFFERENT providers in
- * Settings so the council is genuinely adversarial across model families.
- * Production callers should pass explicit advocates; this fallback exists
- * only for tests and ad-hoc invocations that omit the field.
+ * Production callers pass explicit advocate models. This fallback preserves the
+ * legitimate advocate roles without introducing advocate/adversary model tiers.
  */
 export function getDefaultAdvocates(): AdvocateConfig[] {
-  return [
-    { role: "Advocate A", model: getModelForTier("max") },
-    { role: "Advocate B", model: getModelForTier("max") },
-  ];
+  throw new Error("Council advocates require explicit model overrides");
 }
 
 export interface AdvocateConfig {
@@ -180,7 +172,7 @@ export async function runCouncil(
   if (distinctProviders < advocates.length) {
     log.warn(
       `[Council] advocates share a provider (${advocates.map((a) => providerOf(a.model)).join(", ")}). ` +
-      `For genuine adversarial deliberation configure the Advocate and Advisary tiers to DIFFERENT providers in Settings.`,
+      `For genuine adversarial deliberation pass explicit advocate model overrides from different providers.`,
     );
   }
 

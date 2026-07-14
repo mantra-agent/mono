@@ -6,7 +6,7 @@ import { createLogger } from "../log";
 import { getSecretSync } from "../secrets-store";
 
 const log = createLogger("InferenceRoutes");
-import { getConfig, initProfiles, setTierModel, setTierThinkingBudget, setTierThinking, setActivityRouting, TIER_META, ACTIVITY_META, BUILTIN_ACTIVITY_IDS, getAllActivities, addCustomActivity, updateActivityMeta, removeCustomActivity, getModelForActivity, getModelProfilesVersion, invalidateModelProfilesCache, ACTIVITY_CHAT, ACTIVITY_MEMORY, ACTIVITY_STRATEGY, type TierId, type ActivityId, type RoutingTier, type ThinkingTierConfig } from "../job-profiles";
+import { getConfig, initProfiles, setTierModel, setTierThinkingBudget, setTierThinking, TIER_META, ACTIVITY_META, BUILTIN_ACTIVITY_IDS, getAllActivities, addCustomActivity, updateActivityMeta, removeCustomActivity, getModelForTier, getModelProfilesVersion, invalidateModelProfilesCache, ACTIVITY_CHAT, ACTIVITY_MEMORY, ACTIVITY_STRATEGY, type ThinkingTierConfig } from "../job-profiles";
 import { thinkingBudgetToTier, tierToThinkingBudget } from "../thinking-config";
 import { join } from "path";
 import { z } from "zod";
@@ -91,11 +91,9 @@ function buildTierModelMap(config: ReturnType<typeof getConfig>): Map<string, st
 }
 
 /**
- * Resolve the tier for an inference call by checking the activity routing first
- * (profile → config.routing), then falling back to model-based lookup.
- *
- * Multiple tiers can share the same model (e.g. Max and Advocate both use opus),
- * so model→tier is ambiguous. The profile (activity UUID) is the authoritative signal.
+ * Resolve audit tier from boundary routing metadata. Persona semantic tier is the
+ * authority; legacy profile/activity routing is only a compatibility fallback for
+ * old rows that predate connector routing audit fields.
  */
 function metadataObject(metadata: unknown): Record<string, unknown> | undefined {
   return metadata && typeof metadata === "object" && !Array.isArray(metadata)
@@ -111,13 +109,6 @@ function metadataRouting(metadata: unknown): Record<string, unknown> | undefined
     : undefined;
 }
 
-function configuredTierForActivity(metadata: unknown, config: ReturnType<typeof getConfig>): string | undefined {
-  const meta = metadataObject(metadata);
-  const rawActivity = typeof meta?.activity === "string" ? meta.activity : undefined;
-  if (!rawActivity) return undefined;
-  const tier = config.routing[rawActivity];
-  return tier && tier !== "auto" ? tier : undefined;
-}
 
 function displayLabelForId(id: string): string {
   return id.replace(/[-_]/g, " ").replace(/\b\w/g, c => c.toUpperCase());
@@ -137,25 +128,11 @@ function resolveTier(
   const routingTier = typeof routing?.tier === "string" ? routing.tier : undefined;
   const explicitOverride = profile === "explicit-override" || metaTier === "explicit-override" || routingTier === "explicit-override";
 
-  if (explicitOverride) {
-    return configuredTierForActivity(metadata, config) || "explicit-override";
-  }
-
-  if (metaTier) return metaTier;
+  if (explicitOverride) return "explicit-override";
   if (routingTier) return routingTier;
+  if (metaTier) return metaTier;
 
-  if (profile) {
-    // Profile is typically an activity UUID — check routing directly
-    const routedTier = config.routing[profile];
-    if (routedTier && routedTier !== "auto") return routedTier;
-    // Skill profiles map through promptActivityMap to an activity UUID
-    const activityId = promptActivityMap.get(profile) || promptActivityMap.get(profile.split(":")[0]);
-    if (activityId) {
-      const actTier = config.routing[activityId];
-      if (actTier && actTier !== "auto") return actTier;
-    }
-  }
-  // Fallback to model-based lookup (ambiguous when tiers share models, but best effort)
+  // Legacy rows may lack routing metadata; model lookup is best-effort only.
   return tierModelMap.get(model) || (isEmbedModel(model) ? "embed" : "unknown");
 }
 
@@ -1152,7 +1129,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
         routingConfig: getModelProfilesVersion(),
         routing: allActivities.map(a => ({
           ...a,
-          tier: config.routing[a.id] || "balanced",
+          tier: config.routing[a.id] || null,
           isBuiltin: BUILTIN_ACTIVITY_IDS.includes(a.id),
         })),
       });
@@ -1193,7 +1170,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
       await initProfiles();
       const parsed = setTierSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res.status(400).json({ error: "Valid tierId (max, high, balanced, fast, advocate, advisary) and model are required" });
+        return res.status(400).json({ error: "Valid tierId (max, high, balanced, fast) and model are required" });
       }
       const thinkingArg: ThinkingTierConfig | number | undefined =
         parsed.data.thinking ?? parsed.data.thinkingBudget;
@@ -1234,34 +1211,8 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
     }
   });
 
-  const setRoutingSchema = z.object({
-    activityId: z.string().min(1),
-    tier: z.enum(["max", "high", "balanced", "fast", "auto"]),
-  });
-
-  app.post("/api/models/routing", async (req, res) => {
-    try {
-      await initProfiles();
-      const parsed = setRoutingSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: "Valid activityId and tier are required" });
-      }
-      await setActivityRouting(parsed.data.activityId as ActivityId, parsed.data.tier as RoutingTier);
-      invalidateModelProfilesCache("models-routing-update");
-      await initProfiles();
-      const config = getConfig();
-      const allActivities = getAllActivities();
-      res.json({
-        message: `${parsed.data.activityId} routing updated`,
-        routing: allActivities.map(a => ({
-          ...a,
-          tier: config.routing[a.id] || "balanced",
-          isBuiltin: BUILTIN_ACTIVITY_IDS.includes(a.id),
-        })),
-      });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
+  app.post("/api/models/routing", async (_req, res) => {
+    res.status(410).json({ error: "Activity routing is retired. Set persona semanticTier or connector tier mappings instead." });
   });
 
   app.get("/api/models/activities", async (_req, res) => {
@@ -1270,8 +1221,8 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
       const allActivities = getAllActivities();
       const config = getConfig();
       res.json(allActivities.map(a => {
-        const tier = config.routing[a.id] || "balanced";
-        const modelId = getModelForActivity(a.id as any);
+        const tier = null;
+        const modelId = getModelForTier("balanced");
         return {
           ...a,
           tier,

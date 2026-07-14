@@ -1278,7 +1278,7 @@ No long recap. No audit dump. No separate outcome/priority list.`
     whenToUse: "Use when the question is high-stakes, genuinely contested, or benefits from explicit adversarial reasoning across providers. Not for quick lookups, single-source synthesis, or questions with a known canonical answer.",
     outputSpec: "A single \"Council synthesis\" message in the parent session: recommendation, key agreements, genuine disagreements, confidence + remaining unknowns. Per-round status lines surface inline as system messages while deliberation runs.",
     checklist: [
-      { check: "Both advocates were spawned with distinct frontier-tier model overrides resolved from the Advocate and Advisary tiers (ideally different providers)", weight: 1 },
+      { check: "Both advocates were spawned with distinct frontier-tier model overrides resolved as explicit frontier model overrides for each advocate role (ideally different providers)", weight: 1 },
       { check: "Per-round status lines appeared in the parent session as deliberation progressed", weight: 1 },
       { check: "One-child-failure degraded gracefully (continued with survivor) rather than aborting the whole council", weight: 1 },
       { check: "Final synthesis message was labeled \"Council synthesis\" and named genuine disagreements, not just consensus", weight: 1 },
@@ -1290,7 +1290,7 @@ No long recap. No audit dump. No separate outcome/priority list.`
 
 The autonomous skill runner detects \`skillId === "council"\` and dispatches to the orchestrator in \`server/council/\` rather than running a normal agent loop. You do not call tools directly — the orchestrator does the work:
 
-1. Spawns two child sessions via \`spawnChildSession\` with \`spawnerTool: "council"\` and \`modelOverride\` pinning each child to its tier-resolved frontier model (Advocate A → Advocate tier, Advocate B → Advisary tier — configure these to two different providers in Settings for genuine adversarial deliberation). Each child is titled "{Role} — Round {N}" for sidebar legibility.
+1. Spawns two child sessions via \`spawnChildSession\` with \`spawnerTool: "council"\` and explicit \`modelOverride\` values for each advocate role. Configure the two advocate overrides to different frontier providers for genuine adversarial deliberation. Each child is titled "{Role} — Round {N}" for sidebar legibility.
 2. Runs round 1: each advocate produces an independent answer to the question.
 3. Runs round 2..N: each advocate critiques the other's prior position and revises its own. The convergence strategy decides whether to continue.
 4. Per-round status lines are written inline to the parent (this) session as system messages.

@@ -280,8 +280,6 @@ function buildDefaultConfig(): StoredConfig {
       high: { model: defaults.high, thinkingBudget: 0, thinking: { type: "disabled" } },
       balanced: { model: defaults.balanced, thinkingBudget: 0, thinking: { type: "disabled" } },
       fast: { model: defaults.fast, thinkingBudget: 0, thinking: { type: "disabled" } },
-      advocate: { model: defaults.advocate, thinkingBudget: 8192, thinking: { type: "enabled", budgetTokens: 8192 } },
-      advisary: { model: defaults.advisary, thinkingBudget: 8192, thinking: { type: "enabled", budgetTokens: 8192 } },
     },
     routing: { ...DEFAULT_ACTIVITY_ROUTING },
   };
@@ -328,7 +326,7 @@ function fillDefaults(stored: StoredConfig): { config: StoredConfig; corrected: 
       }
     }
   }
-  const DEFAULT_THINKING_BUDGETS: Partial<Record<TierId, number>> = { max: 8192, advocate: 8192, advisary: 8192 };
+  const DEFAULT_THINKING_BUDGETS: Partial<Record<TierId, number>> = { max: 8192 };
   for (const tid of ALL_TIER_IDS) {
     const tier = stored.tiers[tid];
     if (!tier) continue;
