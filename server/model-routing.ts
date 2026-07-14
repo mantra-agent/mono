@@ -6,7 +6,7 @@ import { getAccount } from "./connected-accounts";
 import { createNamedSystemPrincipal } from "./principal";
 import { runWithPrincipal } from "./principal-context";
 import { listModelConnectors, type ModelConnector } from "./model-connectors";
-import { semanticTierSchema, type SemanticTier } from "@shared/model-connectors";
+import { getConnectorTierModelConfig, type OpenAITierModelConfig, semanticTierSchema, type SemanticTier } from "@shared/model-connectors";
 import type { ActivityId } from "./job-profiles";
 
 export interface ConnectorAttempt {
@@ -16,6 +16,7 @@ export interface ConnectorAttempt {
   provider: string;
   tier: SemanticTier;
   model: string;
+  modelConfig?: OpenAITierModelConfig;
   outcome: "selected" | "skipped" | "failed";
   reason?: string;
 }
@@ -26,6 +27,7 @@ export interface ModelRoutingDecision {
   model: string;
   provider: string;
   modelString: string;
+  modelConfig?: OpenAITierModelConfig;
   configVersion: string;
   configHash: string;
   explicitOverride: boolean;
@@ -109,19 +111,20 @@ export async function resolveModelCandidates(
   const decisions: ModelRoutingDecision[] = [];
 
   for (const connector of connectors) {
-    const modelString = connector.config.tierMappings[intent.tier];
+    const tierConfig = getConnectorTierModelConfig(connector.config, intent.tier);
+    const modelString = tierConfig.model.includes("/") ? tierConfig.model : `${connector.provider}/${tierConfig.model}`;
     const parsed = splitModel(modelString);
     const credential = await connectorCredential(connector);
     if (!credential) {
       attempts.push({ connectorId: connector.id, connectorLabel: connector.label, connectorOrder: connector.sortOrder,
-        provider: connector.provider, tier: intent.tier, model: parsed.model, outcome: "skipped", reason: "credential-unavailable" });
+        provider: connector.provider, tier: intent.tier, model: parsed.model, modelConfig: tierConfig, outcome: "skipped", reason: "credential-unavailable" });
       continue;
     }
     const attemptIndex = attempts.length;
     attempts.push({ connectorId: connector.id, connectorLabel: connector.label, connectorOrder: connector.sortOrder,
-      provider: connector.provider, tier: intent.tier, model: parsed.model, outcome: "selected" });
+      provider: connector.provider, tier: intent.tier, model: parsed.model, modelConfig: tierConfig, outcome: "selected" });
     decisions.push({
-      activity, tier: intent.tier, model: parsed.model, provider: connector.provider, modelString,
+      activity, tier: intent.tier, model: parsed.model, provider: connector.provider, modelString, modelConfig: tierConfig,
       configVersion: configHash, configHash, explicitOverride: false, providerEnabled: true,
       source: intent.source, personaId: intent.personaId, connectorId: connector.id,
       connectorLabel: connector.label, connectorOrder: connector.sortOrder, attemptIndex,

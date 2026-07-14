@@ -9,6 +9,8 @@ import { Switch } from "@/components/ui/switch";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
+type SemanticTier = "max" | "high" | "balanced" | "fast";
+type TierModelConfig = string | { model: string; reasoningEffort?: string; reasoningMode?: string; reasoningSummary?: string; verbosity?: string; serviceTier?: string; fastMode?: boolean; maxOutputTokens?: number };
 interface ModelConnector {
   id: number;
   provider: "anthropic" | "openai" | "openai-subscription" | "claude-cli";
@@ -17,11 +19,15 @@ interface ModelConnector {
   sortOrder: number;
   credentialRef: string | null;
   lastVerifiedAt: string | null;
-  config: { kind: "model"; tierMappings: Record<"max" | "high" | "balanced" | "fast", string> };
+  config: { kind: "model" | "openai-models"; tierMappings: Record<SemanticTier, TierModelConfig> };
 }
 interface ConnectorsResponse { connectors: ModelConnector[] }
 interface InferenceCall { id: number; timestamp: string; model: string; status?: string; tier?: string; metadata?: { routing?: { connectorId?: number; connectorLabel?: string; connectorProvider?: string; requestedTier?: string; resolvedModel?: string; attempts?: unknown[] } } }
 interface CallsResponse { calls: InferenceCall[]; total: number }
+
+function tierModelLabel(value: TierModelConfig): string {
+  return typeof value === "string" ? value : value.model;
+}
 
 function timeAgo(value: string | null): string {
   if (!value) return "Never verified";
