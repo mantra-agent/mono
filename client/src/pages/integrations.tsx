@@ -125,6 +125,7 @@ const INTEGRATIONS: IntegrationDef[] = [
   { id: "cartesia", name: "Cartesia", icon: Volume2, statusFields: ["cartesia"], route: "cartesia" },
   { id: "twilio", name: "Twilio Phone", icon: Phone, statusFields: ["twilio"], route: "twilio" },
   { id: "deepgram", name: "Deepgram", icon: Mic, statusFields: ["deepgram"], route: "deepgram" },
+  { id: "anthropic", name: "Anthropic", icon: Bot, statusFields: ["anthropic"], route: "anthropic" },
   { id: "openai", name: "OpenAI", icon: Bot, statusFields: ["openai", "openaiSubscription"], route: "openai" },
   { id: "claude-cli", name: "Claude Code CLI", icon: Settings, statusFields: ["claudeCli"], route: "claude-cli" },
   { id: "twitter", name: "X (Twitter)", icon: () => <SiX className="h-5 w-5" />, statusFields: ["twitter"], route: "twitter" },
@@ -5475,6 +5476,39 @@ function SendGridDetail() {
   );
 }
 
+interface ModelConnectorDetail {
+  id: number; provider: string; label: string; status: string;
+  config: { tierMappings: Record<"max" | "high" | "balanced" | "fast", string> };
+}
+interface ModelProviderDetail { id: string; models: Array<{ id: string; name: string }> }
+
+function ModelConnectorSection({ provider }: { provider: "anthropic" | "openai" | "claude-cli" }) {
+  const { toast } = useToast();
+  const { data } = useQuery<{ connectors: ModelConnectorDetail[] }>({ queryKey: ["/api/models/connectors"] });
+  const { data: modelsData } = useQuery<{ providers: ModelProviderDetail[] }>({ queryKey: ["/api/models/available"] });
+  const connector = data?.connectors.find((item) => item.provider === provider);
+  const models = modelsData?.providers.find((item) => item.id === provider)?.models ?? [];
+  const mutation = useMutation({
+    mutationFn: async (tierMappings: ModelConnectorDetail["config"]["tierMappings"]) => (await apiRequest("PATCH", `/api/models/connectors/${connector!.id}`, { tierMappings })).json(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/models/connectors"] }),
+    onError: (error: Error) => toast({ title: "Model mapping failed", description: error.message, variant: "destructive" }),
+  });
+  if (!connector) return null;
+  return <Card className="overflow-hidden min-w-0">
+    <CardHeader><CardTitle className="text-base font-semibold">Model mapping</CardTitle></CardHeader>
+    <CardContent className="space-y-3">
+      {(["max", "high", "balanced", "fast"] as const).map((tier) => <div key={tier} className="grid gap-2 @sm:grid-cols-[96px_1fr] @sm:items-center">
+        <Label className="capitalize">{tier}</Label>
+        <Select value={connector.config.tierMappings[tier]} disabled={mutation.isPending} onValueChange={(model) => mutation.mutate({ ...connector.config.tierMappings, [tier]: model })}>
+          <SelectTrigger className="font-mono text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>{models.map((model) => <SelectItem key={model.id} value={`${provider}/${model.id}`}><span>{model.name}</span></SelectItem>)}</SelectContent>
+        </Select>
+      </div>)}
+      {models.length === 0 && <p className="text-sm text-muted-foreground">No models are currently available for this connector.</p>}
+    </CardContent>
+  </Card>;
+}
+
 function IntegrationDetail({ provider }: { provider: string }) {
   const [, setLocation] = useLocation();
 
@@ -5541,9 +5575,14 @@ function IntegrationDetail({ provider }: { provider: string }) {
         </Card>
       )}
 
+      {provider === "anthropic" && (
+        <div className="space-y-4"><Card className="overflow-hidden min-w-0"><CardHeader><CardTitle className="text-base font-semibold">Anthropic API</CardTitle></CardHeader><CardContent><SecretsForSection section="anthropic" /></CardContent></Card><ModelConnectorSection provider="anthropic" /></div>
+      )}
+
       {provider === "openai" && (
         <div className="space-y-4">
           <OpenAISubscriptionSection />
+          <ModelConnectorSection provider="openai" />
         </div>
       )}
 
@@ -5558,6 +5597,7 @@ function IntegrationDetail({ provider }: { provider: string }) {
               <SecretsForSection section="claude-cli" />
             </CardContent>
           </Card>
+          <ModelConnectorSection provider="claude-cli" />
         </div>
       )}
 

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { resolvePersonaIcon, AVAILABLE_ICONS } from "@/lib/persona-icons";
 
@@ -20,6 +21,7 @@ interface Persona {
   promptOverlay: string | null;
   expressionTags: string[];
   cognitiveOverrides: Record<string, unknown>;
+  semanticTier: "max" | "high" | "balanced" | "fast" | null;
   isDefault: boolean;
   isActive: boolean;
   sortOrder: number;
@@ -116,7 +118,7 @@ function PersonaCard({
   onToggle: () => void;
   onActivate: () => void;
   onDelete: () => void;
-  onUpdate: (data: { description?: string; icon?: string; promptOverlay?: string; expressionTags?: string[] }) => void;
+  onUpdate: (data: { description?: string; icon?: string; promptOverlay?: string; expressionTags?: string[]; semanticTier?: "max" | "high" | "balanced" | "fast" }) => void;
   activating: boolean;
 }) {
   const [editing, setEditing] = useState(false);
@@ -124,6 +126,7 @@ function PersonaCard({
   const [editOverlay, setEditOverlay] = useState(persona.promptOverlay || "");
   const [editTags, setEditTags] = useState(persona.expressionTags.join(", "));
   const [editIcon, setEditIcon] = useState(persona.icon);
+  const [editTier, setEditTier] = useState(persona.semanticTier || "balanced");
 
   const overrideEntries = Object.entries(persona.cognitiveOverrides);
 
@@ -134,6 +137,7 @@ function PersonaCard({
       icon: editIcon,
       promptOverlay: editOverlay || undefined,
       expressionTags: tags,
+      semanticTier: editTier,
     });
     setEditing(false);
   };
@@ -143,6 +147,7 @@ function PersonaCard({
     setEditOverlay(persona.promptOverlay || "");
     setEditTags(persona.expressionTags.join(", "));
     setEditIcon(persona.icon);
+    setEditTier(persona.semanticTier || "balanced");
     setEditing(false);
   };
 
@@ -188,6 +193,16 @@ function PersonaCard({
                 />
               </div>
               <div className="space-y-1.5">
+                <Label className="text-xs">Model Tier</Label>
+                <Select value={editTier} onValueChange={(value) => setEditTier(value as typeof editTier)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="max">Max</SelectItem><SelectItem value="high">High</SelectItem>
+                    <SelectItem value="balanced">Balanced</SelectItem><SelectItem value="fast">Fast</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
                 <Label className="text-xs">Expression Tags (comma-separated)</Label>
                 <Input
                   value={editTags}
@@ -213,6 +228,7 @@ function PersonaCard({
                   )}
                 </div>
                 <p className="text-sm leading-normal text-muted-foreground">{persona.description}</p>
+                <Badge variant="outline" className="text-xs">{persona.semanticTier || "balanced"} tier</Badge>
                 {overrideEntries.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {overrideEntries.map(([key, val]) => (
@@ -294,6 +310,7 @@ function CreatePersonaForm({ onSuccess }: { onSuccess: () => void }) {
   const [icon, setIcon] = useState("Bot");
   const [promptOverlay, setPromptOverlay] = useState("");
   const [expressionTags, setExpressionTags] = useState("");
+  const [semanticTier, setSemanticTier] = useState<"max" | "high" | "balanced" | "fast">("balanced");
   const { toast } = useToast();
 
   const mutation = useMutation({
@@ -306,6 +323,7 @@ function CreatePersonaForm({ onSuccess }: { onSuccess: () => void }) {
         promptOverlay: promptOverlay || undefined,
         expressionTags: tags,
         cognitiveOverrides: {},
+        semanticTier,
       });
     },
     onSuccess: () => {
@@ -315,6 +333,7 @@ function CreatePersonaForm({ onSuccess }: { onSuccess: () => void }) {
       setIcon("Bot");
       setPromptOverlay("");
       setExpressionTags("");
+      setSemanticTier("balanced");
       setOpen(false);
       onSuccess();
     },
@@ -368,6 +387,16 @@ function CreatePersonaForm({ onSuccess }: { onSuccess: () => void }) {
             placeholder="Behavioral instructions when this persona is active..."
             className="text-sm min-h-[100px] font-mono"
           />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Model Tier</Label>
+          <Select value={semanticTier} onValueChange={(value) => setSemanticTier(value as typeof semanticTier)}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="max">Max</SelectItem><SelectItem value="high">High</SelectItem>
+              <SelectItem value="balanced">Balanced</SelectItem><SelectItem value="fast">Fast</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">Expression Tags (comma-separated)</Label>
