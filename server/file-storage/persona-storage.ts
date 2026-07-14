@@ -31,6 +31,7 @@ export interface PersonaEntry {
   routingExamples: string[];
   isDefault: boolean;
   isActive: boolean;
+  isSystem: boolean;
   sortOrder: number;
   source: "seed" | "user";
   templatePersonaId: number | null;
@@ -52,6 +53,7 @@ function rowToEntry(row: typeof personas.$inferSelect): PersonaEntry {
     routingExamples: (row.routingExamples as string[]) || [],
     isDefault: row.isDefault,
     isActive: row.isActive,
+    isSystem: row.isSystem ?? false,
     sortOrder: row.sortOrder,
     source: (row.source || "user") as "seed" | "user",
     templatePersonaId: row.templatePersonaId ?? null,
@@ -73,7 +75,8 @@ const PERSONA_SEMANTIC_TIERS: Record<string, SemanticTier> = {
   Creative: "high",
   Coach: "high",
   Companion: "balanced",
-  Default: "fast", // fast = pre-orientation default; persona routing swaps tier after orient fires
+  Default: "balanced",
+  Router: "fast",
 };
 
 function semanticTierForPersona(name: string): SemanticTier {
@@ -89,6 +92,7 @@ const PERSONA_ROUTING_EXAMPLES: Record<string, string[]> = {
   Creative: ["Brainstorm names for this product", "Write a playful post about today's launch"],
   Coach: ["I keep procrastinating on the demo, hold me accountable", "Help me reflect on this week"],
   Companion: ["Rough day. Just need to talk", "Feeling anxious about tomorrow's call"],
+  Router: [],
 };
 
 function routingExamplesForPersona(name: string): string[] {
@@ -119,6 +123,25 @@ const SEED_PERSONAS = [
     isDefault: true,
     isActive: true,
     sortOrder: 0,
+    source: "seed" as const,
+  },
+  {
+    name: "Router",
+    description:
+      "System-internal session router — rapid classification only. Not a user-facing persona.",
+    icon: "Zap",
+    promptOverlay: [
+      "You are the session router. You do not answer the user.",
+      "Your only job is to call the orient tool with title, topics, and the correct persona name.",
+      "Pick the persona that best fits the opening message. Default when ambiguous.",
+      "Do this immediately, in your first response. No commentary.",
+    ].join("\n"),
+    expressionTags: [] as string[],
+    cognitiveOverrides: {},
+    isDefault: false,
+    isActive: false,
+    isSystem: true,
+    sortOrder: -1,
     source: "seed" as const,
   },
   {
@@ -600,11 +623,6 @@ class PersonaStorageClass {
       .from(personas)
       .where(eq(personas.source, "seed"))
       .limit(1);
-    if (existing.length > 0) {
-      // Update seed personas with latest overlays if they still have placeholders
-      await this.updateSeedOverlays();
-      return;
-    }
     for (const seed of SEED_PERSONAS) {
       await db
         .insert(personas)
@@ -619,13 +637,15 @@ class PersonaStorageClass {
           routingExamples: routingExamplesForPersona(seed.name),
           isDefault: seed.isDefault,
           isActive: seed.isActive,
+          isSystem: (seed as { isSystem?: boolean }).isSystem ?? false,
           sortOrder: seed.sortOrder,
           source: seed.source,
         })
         .onConflictDoNothing();
     }
     this.invalidateCache();
-    log.log("seedDefaults: seeded " + SEED_PERSONAS.length + " personas");
+    await this.updateSeedOverlays();
+    log.log("seedDefaults: ensured " + SEED_PERSONAS.length + " seed personas");
   }
 
   /** Update existing seed personas with production overlays if they have null/placeholder content */
@@ -640,11 +660,13 @@ class PersonaStorageClass {
           existing.promptOverlay !== seed.promptOverlay);
       const needsIconUpdate = existing.icon !== seed.icon;
       const expectedTier = semanticTierForPersona(seed.name);
-      const needsTierUpdate = existing.semanticTier === null || (seed.name === "Default" && existing.semanticTier !== expectedTier);
+      const needsTierUpdate = existing.semanticTier !== expectedTier;
       const needsRoutingUpdate =
         existing.routingExamples.length === 0 &&
         routingExamplesForPersona(seed.name).length > 0;
-      if (needsOverlayUpdate || needsIconUpdate || needsTierUpdate || needsRoutingUpdate) {
+      const expectedIsSystem = (seed as { isSystem?: boolean }).isSystem ?? false;
+      const needsSystemUpdate = existing.isSystem !== expectedIsSystem;
+      if (needsOverlayUpdate || needsIconUpdate || needsTierUpdate || needsRoutingUpdate || needsSystemUpdate) {
         const updates: Record<string, unknown> = { updatedAt: new Date() };
         if (needsOverlayUpdate) {
           updates.promptOverlay = seed.promptOverlay;
@@ -657,6 +679,7 @@ class PersonaStorageClass {
         }
         if (needsTierUpdate) updates.semanticTier = semanticTierForPersona(seed.name);
         if (needsRoutingUpdate) updates.routingExamples = routingExamplesForPersona(seed.name);
+        if (needsSystemUpdate) updates.isSystem = expectedIsSystem;
         await db
           .update(personas)
           .set(updates)

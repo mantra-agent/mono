@@ -16,7 +16,7 @@ export async function registerCognitionRoutes(app: Express) {
     log.debug("GET /api/personas");
     try {
       const all = await personaStorage.list();
-      res.json(all);
+      res.json(all.filter((p) => !p.isSystem));
     } catch (error: any) {
       log.error("GET /api/personas error:", error?.message);
       res.status(500).json({ error: error.message });

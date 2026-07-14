@@ -626,6 +626,7 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_provider_connections_kind_order ON provider_connections(connector_kind, sort_order)`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS semantic_tier TEXT`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS routing_examples JSONB DEFAULT '[]'::jsonb`);
+    await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT FALSE`);
     await pool.query(`DO $$ BEGIN ALTER TABLE personas ADD CONSTRAINT personas_semantic_tier_check CHECK (semantic_tier IS NULL OR semantic_tier IN ('max', 'high', 'balanced', 'fast')); EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
     await pool.query(`
       UPDATE personas SET semantic_tier = CASE name
@@ -635,10 +636,13 @@ export async function runSchemaBootstrap(
         WHEN 'Creative' THEN 'high'
         WHEN 'Coach' THEN 'high'
         WHEN 'Companion' THEN 'balanced'
+        WHEN 'Router' THEN 'fast'
         ELSE 'balanced'
       END
       WHERE semantic_tier IS NULL
     `);
+    await pool.query(`UPDATE personas SET semantic_tier = 'balanced' WHERE name = 'Default' AND semantic_tier = 'fast'`);
+    await pool.query(`UPDATE personas SET semantic_tier = 'fast', is_system = TRUE WHERE name = 'Router'`);
 
     // One-time migration: copy any surviving app_secrets provider_connection:* rows to credential_envelope
     try {

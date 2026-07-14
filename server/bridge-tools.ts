@@ -15220,7 +15220,7 @@ const cognitionTools: Record<string, ToolHandler> = {
 
       list_personas: async () => {
         const { personaStorage } = await import("./file-storage/persona-storage");
-        const all = await personaStorage.list();
+        const all = (await personaStorage.list()).filter(p => !p.isSystem);
         if (all.length === 0) return { result: "No personas found." };
         const lines = all.map(p =>
           `- ${p.isActive ? "▶ " : ""}**${p.name}** (id=${p.id}, ${p.source})${p.isDefault ? " [default]" : ""} — ${p.description}`
