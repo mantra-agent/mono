@@ -29,6 +29,9 @@ export interface ExecutionStep {
   parentId?: string;
   /** Time spent in the step excluding child intervals. */
   selfTimeMs?: number;
+  /** Stable trace span boundaries used for overlap-safe self-time calculation. */
+  startedAt?: number;
+  endedAt?: number;
 }
 
 export type MessageSegment =

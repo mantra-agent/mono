@@ -113,7 +113,7 @@ export function addToolCall(
   const updated = finishThinking(state);
   const segments = [...updated.segments];
   const newStep: ExecutionStep = {
-    id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: toolCallId ? `tool-${toolCallId}` : `tool-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     type: "tool_call",
     timestamp: Date.now(),
     toolName,
@@ -153,7 +153,8 @@ export function resolveToolResult(
         if (s.type !== "tool_call" || s.status !== "active") return s;
         if (toolCallId && s.toolCallId !== toolCallId) return s;
         foundMatch = true;
-        return { ...s, result, error, status: error ? "error" as const : "done" as const };
+        const endedAt = typeof ts === "number" ? ts : Date.now();
+        return { ...s, result, error, status: error ? "error" as const : "done" as const, endedAt, startedAt: s.timestamp, elapsedMs: Math.max(0, endedAt - s.timestamp) };
       }),
     };
   });
@@ -268,7 +269,7 @@ export function appendCompacting(state: StreamingContent, content: string, statu
 export function addSystemStep(
   state: StreamingContent,
   stepName: string,
-  detailOrOpts?: string | { systemStepName?: string; systemStepDetail?: string; systemStepMetadata?: Record<string, unknown>; status?: string; elapsedMs?: number; stepId?: string },
+  detailOrOpts?: string | { systemStepName?: string; systemStepDetail?: string; systemStepMetadata?: Record<string, unknown>; status?: string; elapsedMs?: number; stepId?: string; parentId?: string; startedAt?: number; endedAt?: number; selfTimeMs?: number },
 ): StreamingContent {
   const segments = [...state.segments];
   const lastSeg = segments[segments.length - 1];
@@ -292,7 +293,7 @@ export function addSystemStep(
 
   const stepId = opts?.stepId;
   const newStep: ExecutionStep = {
-    id: stepId ? `system-${stepName}-${stepId}` : `system-${stepName}-${Date.now()}`,
+    id: stepId ? (stepId.startsWith("system-") ? stepId : `system-${stepName}-${stepId}`) : `system-${stepName}-${Date.now()}`,
     type: "system",
     timestamp: Date.now(),
     systemStepName: resolvedName,
@@ -300,6 +301,10 @@ export function addSystemStep(
     systemStepMetadata: opts?.systemStepMetadata,
     status: (opts?.status as ExecutionStep["status"]) || "active",
     elapsedMs: opts?.elapsedMs,
+    parentId: opts?.parentId,
+    startedAt: opts?.startedAt ?? Date.now(),
+    endedAt: opts?.endedAt,
+    selfTimeMs: opts?.selfTimeMs,
     toolCallId: stepId,
   };
 
@@ -330,6 +335,10 @@ export function resolveSystemStep(
   detail?: string,
   stepId?: string,
   metadata?: Record<string, unknown>,
+  parentId?: string,
+  startedAt?: number,
+  endedAt?: number,
+  selfTimeMs?: number,
 ): StreamingContent {
   const resolveStep = (s: ExecutionStep): ExecutionStep => ({
     ...s,
@@ -337,6 +346,10 @@ export function resolveSystemStep(
     elapsedMs,
     systemStepDetail: detail ?? s.systemStepDetail,
     systemStepMetadata: metadata ?? s.systemStepMetadata,
+    parentId: parentId ?? s.parentId,
+    startedAt: startedAt ?? s.startedAt,
+    endedAt: endedAt ?? Date.now(),
+    selfTimeMs: selfTimeMs ?? s.selfTimeMs,
   });
 
   // Resolve the newest matching active step. A response can contain multiple

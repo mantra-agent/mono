@@ -160,11 +160,14 @@ export function stripMessageTimestamp(text: string): string {
 }
 
 export interface SystemStepRecord {
+  id?: string;
   name: string;
   status: "done" | "error";
   elapsedMs?: number;
   parentId?: string;
   selfTimeMs?: number;
+  startedAt?: number;
+  endedAt?: number;
   detail?: string;
   metadata?: Record<string, unknown>;
 }
@@ -421,7 +424,7 @@ function PhoneCallConfirmationChip({ confirmation }: { confirmation: PhoneConfir
   );
 }
 
-function ToolStepRow({ step, iconOverrides, summaryOnly, layer }: { step: ExecutionStep; iconOverrides?: Record<string, string>; summaryOnly?: boolean; layer?: 1 | 2 | 3 | 4 }) {
+function ToolStepRow({ step, iconOverrides, summaryOnly, layer, children = [], depth = 0 }: { step: ExecutionStep; iconOverrides?: Record<string, string>; summaryOnly?: boolean; layer?: 1 | 2 | 3 | 4; children?: ExecutionStep[]; depth?: number }) {
   const [expanded, setExpanded] = useState(false);
   const ToolIcon = resolveToolIcon(step.toolName || "", iconOverrides);
   const isActive = step.status === "active";
@@ -453,7 +456,7 @@ function ToolStepRow({ step, iconOverrides, summaryOnly, layer }: { step: Execut
   return (
     <div className="animate-in fade-in slide-in-from-bottom-1 duration-200" data-testid={`timeline-step-${step.id}`}>
       <div
-        className={`flex items-center gap-2 text-xs px-1.5 py-1 ${canExpand ? "cursor-pointer rounded-md hover-elevate" : ""}`}
+        className={`flex items-center gap-2 text-xs py-1 ${canExpand ? "cursor-pointer rounded-md hover-elevate" : ""}`} style={{ paddingLeft: `${6 + depth * 20}px` }}
         onClick={canExpand ? () => setExpanded(!expanded) : undefined}
         data-testid={`button-expand-tool-${step.id}`}
       >
@@ -503,6 +506,7 @@ function ToolStepRow({ step, iconOverrides, summaryOnly, layer }: { step: Execut
             </>
           )}
         </div>
+        {(isDone || isError) && step.elapsedMs != null && <span className="text-xs tabular-nums font-mono text-muted-foreground/50 whitespace-nowrap">{formatStepElapsed(step.elapsedMs)} total · {formatStepElapsed(getStepSelfTime(step, children) ?? step.elapsedMs)} self</span>}
         {canExpand && (
           <ChevronRight className={`h-3 w-3 text-muted-foreground/40 shrink-0 transition-transform duration-150 ${expanded ? "rotate-90" : ""}`} />
         )}
@@ -781,19 +785,28 @@ const SYSTEM_STEP_ICONS: Record<string, typeof Brain> = {
   voice_prefix_continuation: RefreshCw,
 };
 
-function SystemStepTree({ step, allSteps, layer, depth = 0 }: { step: ExecutionStep; allSteps: ExecutionStep[]; layer: 1 | 2 | 3 | 4; depth?: number }) {
-  const children = allSteps.filter(candidate => candidate.type === "system" && candidate.parentId === step.id);
-  return <>
-    <SystemStepRow step={step} layer={layer} children={children} depth={depth} />
-    {children.map(child => <SystemStepTree key={child.id} step={child} allSteps={allSteps} layer={layer} depth={depth + 1} />)}
-  </>;
+function getChildren(step: ExecutionStep, allSteps: ExecutionStep[]): ExecutionStep[] {
+  return allSteps.filter(candidate => candidate.parentId === step.id);
 }
 
 function getStepSelfTime(step: ExecutionStep, children: ExecutionStep[]): number | undefined {
   if (step.selfTimeMs != null) return step.selfTimeMs;
   if (step.elapsedMs == null || children.length === 0) return step.elapsedMs;
-  return Math.max(0, step.elapsedMs - children.reduce((sum, child) => sum + (child.elapsedMs || 0), 0));
+  const intervals = children
+    .filter(child => child.startedAt != null && child.endedAt != null)
+    .map(child => [child.startedAt!, child.endedAt!] as const)
+    .sort((a, b) => a[0] - b[0]);
+  if (intervals.length !== children.length) return Math.max(0, step.elapsedMs - children.reduce((sum, child) => sum + (child.elapsedMs || 0), 0));
+  let covered = 0;
+  let [start, end] = intervals[0];
+  for (const [nextStart, nextEnd] of intervals.slice(1)) {
+    if (nextStart <= end) end = Math.max(end, nextEnd);
+    else { covered += end - start; start = nextStart; end = nextEnd; }
+  }
+  covered += end - start;
+  return Math.max(0, step.elapsedMs - covered);
 }
+
 
 function SystemStepRow({ step, layer = 4, children = [], depth = 0 }: { step: ExecutionStep; layer?: 1 | 2 | 3 | 4; children?: ExecutionStep[]; depth?: number }) {
   const name = step.systemStepName || "unknown";
@@ -911,6 +924,14 @@ function ToolIconStrip({
   );
 }
 
+function DiagnosticStepTree({ step, allSteps, layer, iconOverrides, summaryOnly, depth = 0 }: { step: ExecutionStep; allSteps: ExecutionStep[]; layer: 1 | 2 | 3 | 4; iconOverrides?: Record<string, string>; summaryOnly?: boolean; depth?: number }) {
+  const children = getChildren(step, allSteps);
+  return <>
+    {step.type === "system" ? <SystemStepRow step={step} layer={layer} children={children} depth={depth} /> : step.type === "tool_call" ? <ToolStepRow step={step} iconOverrides={iconOverrides} summaryOnly={summaryOnly} layer={layer} children={children} depth={depth} /> : null}
+    {children.map(child => <DiagnosticStepTree key={child.id} step={child} allSteps={allSteps} layer={layer} iconOverrides={iconOverrides} summaryOnly={summaryOnly} depth={depth + 1} />)}
+  </>;
+}
+
 export function ExecutionTimeline({ steps, isStreaming, layer = 4 }: { steps: ExecutionStep[]; isStreaming: boolean; autoCollapse?: boolean; model?: string | null; layer?: 1 | 2 | 3 | 4 }) {
   const { data: iconOverrides } = useQuery<Record<string, string>>({
     queryKey: ["/api/tool-icons"],
@@ -951,11 +972,8 @@ export function ExecutionTimeline({ steps, isStreaming, layer = 4 }: { steps: Ex
   return (
     <div className="mb-3 space-y-0.5" data-testid="execution-timeline">
       {filteredSteps.map((step) => {
-        if (step.type === "system") {
-          if (step.parentId && filteredSteps.some(candidate => candidate.id === step.parentId)) return null;
-          const children = filteredSteps.filter(candidate => candidate.type === "system" && candidate.parentId === step.id);
-          return <SystemStepTree key={step.id} step={step} allSteps={filteredSteps} layer={layer} />;
-        }
+        if (step.parentId && filteredSteps.some(candidate => candidate.id === step.parentId)) return null;
+        if (step.type === "system") return <DiagnosticStepTree key={step.id} step={step} allSteps={filteredSteps} layer={layer} iconOverrides={iconOverrides} summaryOnly={summaryOnly} />;
         if (step.type === "thinking") {
           return <ThinkingBubble key={step.id} step={step} showTimer={layer >= 3} />;
         }
@@ -965,11 +983,7 @@ export function ExecutionTimeline({ steps, isStreaming, layer = 4 }: { steps: Ex
         if (step.type === "tool_call" && (step.toolName === "think" || step.toolName === "observe")) {
           return <ThoughtBubble key={step.id} step={step} />;
         }
-        if (step.type === "tool_call") {
-          return (
-            <ToolStepRow key={step.id} step={step} iconOverrides={iconOverrides} summaryOnly={summaryOnly} layer={layer} />
-          );
-        }
+        if (step.type === "tool_call") return <DiagnosticStepTree key={step.id} step={step} allSteps={filteredSteps} layer={layer} iconOverrides={iconOverrides} summaryOnly={summaryOnly} />;
         return null;
       })}
     </div>
@@ -998,7 +1012,7 @@ export function stepsFromSavedMessage(message: ChatMessage): ExecutionStep[] {
     message.systemSteps.forEach((step: SystemStepRecord, i: number) => {
       if (SUPPRESSED_TIMELINE_STEPS.has(step.name)) return;
       steps.push({
-        id: `system-${step.name}-${message.id}-${i}`,
+        id: step.id || `system-${step.name}-${message.id}-${i}`,
         type: "system",
         timestamp: Date.now(),
         systemStepName: step.name,
@@ -1007,6 +1021,8 @@ export function stepsFromSavedMessage(message: ChatMessage): ExecutionStep[] {
         elapsedMs: step.elapsedMs,
         parentId: step.parentId || (step.metadata?.parentId as string | undefined),
         selfTimeMs: step.selfTimeMs || (typeof step.metadata?.selfTimeMs === "number" ? step.metadata.selfTimeMs : undefined),
+        startedAt: step.startedAt,
+        endedAt: step.endedAt,
         status: step.status === "error" ? "error" : "done",
       });
     });

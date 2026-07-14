@@ -55,6 +55,10 @@ export interface JournalEntry {
   step?: string;
   detail?: string;
   elapsedMs?: number;
+  parentId?: string;
+  startedAt?: number;
+  endedAt?: number;
+  selfTimeMs?: number;
   severity?: string;
   seq?: number;
   terminationReason?: string;

@@ -133,6 +133,7 @@ export interface FileSession extends ChatSession {
 }
 
 export interface SystemStepRecord {
+  id?: string;
   name: string;
   status: "done" | "error";
   elapsedMs?: number;

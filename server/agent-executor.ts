@@ -732,6 +732,7 @@ interface RunIterationContext {
   llmHeadersEmitted?: boolean;
   thinkingStepActive?: boolean;
   activeToolUseSteps: Map<string, number>;
+  activeSystemSpans: Map<string, { id: string; startedAt: number; parentId?: string }>;
   // Chronology state — built incrementally by processStreamEvent
   segmentChronology: SegmentChronologyEntry[];
   systemStepsData: SystemStepRecord[];
@@ -1012,7 +1013,7 @@ export class AgentExecutor extends EventEmitter {
           ctx.llmConnectedEmitted = true;
           ctx.llmConnectedTime = now;
           ctx.publish("system_step", { step: "llm_request_sent", status: "done", elapsedMs: elapsed, detail: formatDispatchDetail((event as { metadata?: Record<string, unknown> }).metadata) });
-          ctx.publish("system_step", { step: "llm_connected", status: "started" });
+          ctx.publish("system_step", { step: "llm_connected", status: "started", parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
         }
         break;
       }
@@ -1022,7 +1023,7 @@ export class AgentExecutor extends EventEmitter {
           ctx.llmHeadersEmitted = true;
           const now = Date.now();
           const sinceDispatch = now - (ctx.llmConnectedTime || ctx.llmCallStartTime);
-          ctx.publish("system_step", { step: "llm_headers", status: "started" });
+          ctx.publish("system_step", { step: "llm_headers", status: "started", parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
           ctx.publish("system_step", { step: "llm_headers", status: "done", elapsedMs: sinceDispatch, detail: formatDispatchDetail((event as { metadata?: Record<string, unknown> }).metadata) });
         }
         break;
@@ -1037,7 +1038,7 @@ export class AgentExecutor extends EventEmitter {
           ctx.llmConnectedEmitted = true;
           ctx.llmConnectedTime = now;
           ctx.publish("system_step", { step: "llm_request_sent", status: "done", elapsedMs: elapsed });
-          ctx.publish("system_step", { step: "llm_connected", status: "started" });
+          ctx.publish("system_step", { step: "llm_connected", status: "started", parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
         }
         if (!ctx.llmConnectedDoneEmitted) {
           ctx.llmConnectedDoneEmitted = true;
@@ -1062,12 +1063,12 @@ export class AgentExecutor extends EventEmitter {
             const connectedElapsed = now - (ctx.llmConnectedTime || ctx.llmCallStartTime);
             ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed, detail: formatModelConnectionDetail(ctx) });
           }
-          ctx.publish("system_step", { step: "first_token", status: "started" });
+          ctx.publish("system_step", { step: "first_token", status: "started", parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
           ctx.publish("system_step", { step: "first_token", status: "done", elapsedMs: ttft, detail: formatInputContextDetail(options.contextPressure), metadata: options.contextPressure });
         }
         if (!ctx.thinkingStepActive) {
           ctx.thinkingStepActive = true;
-          ctx.publish("system_step", { step: "thinking", status: "started" });
+          ctx.publish("system_step", { step: "thinking", status: "started", parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
         }
         // Chronology: start a thinking segment if not already in one
         if (ctx.chronologyThinkingIdx < 0) {
@@ -1103,7 +1104,7 @@ export class AgentExecutor extends EventEmitter {
             const connectedElapsed = now - (ctx.llmConnectedTime || ctx.llmCallStartTime);
             ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed, detail: formatModelConnectionDetail(ctx) });
           }
-          ctx.publish("system_step", { step: "first_token", status: "started" });
+          ctx.publish("system_step", { step: "first_token", status: "started", parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
           ctx.publish("system_step", { step: "first_token", status: "done", elapsedMs: ttft, detail: formatInputContextDetail(options.contextPressure), metadata: options.contextPressure });
         }
         if (ctx.thinkingStepActive) {
@@ -1172,7 +1173,7 @@ export class AgentExecutor extends EventEmitter {
         log.verbose(() => `tool_use_start id=${toolCallId} name=${normalizedName} iteration=${ctx.iteration}`);
         ctx.publish("tool_call", { toolName: normalizedName, toolCallId });
         ctx.activeToolUseSteps.set(toolCallId, Date.now());
-        ctx.publish("system_step", { step: "tool_use", status: "started", detail: normalizedName, stepId: toolCallId });
+        ctx.publish("system_step", { step: "tool_use", status: "started", detail: normalizedName, stepId: toolCallId, parentId: `tool-${toolCallId}` });
         break;
       }
 
@@ -1286,7 +1287,7 @@ export class AgentExecutor extends EventEmitter {
         this.flushChronologyContent(ctx);
         ctx.publish("tool_call", { toolName: normalizedName, toolCallId, arguments: event.arguments });
         ctx.activeToolUseSteps.set(toolCallId, Date.now());
-        ctx.publish("system_step", { step: "tool_use", status: "started", detail: normalizedName || "unknown", stepId: toolCallId });
+        ctx.publish("system_step", { step: "tool_use", status: "started", detail: normalizedName || "unknown", stepId: toolCallId, parentId: `tool-${toolCallId}` });
         eventBus.publish({
           category: "tool",
           event: "agent.tool_call",
@@ -1796,15 +1797,43 @@ export class AgentExecutor extends EventEmitter {
       if (extra?.detail) event.detail = extra.detail;
       if (extra?.metadata) event.metadata = extra.metadata as Record<string, unknown>;
       if (extra?.elapsedMs !== undefined) event.elapsedMs = extra.elapsedMs;
+      const explicitStepId = extra?.stepId as string | undefined;
+      const spanKey = extra?.step ? `${String(extra.step)}:${explicitStepId || "default"}` : undefined;
+      if (type === "system_step" && extra?.step && spanKey) {
+        const status = extra.status;
+        if (status === "started" || status === "active") {
+          const startedAt = Date.now();
+          const id = explicitStepId ? `system-${String(extra.step)}-${explicitStepId}` : `system-${String(extra.step)}-${ctx.iteration}-${startedAt}`;
+          const parentId = extra.parentId as string | undefined;
+          ctx.activeSystemSpans.set(spanKey, { id, startedAt, parentId });
+          event.stepId = id;
+          event.startedAt = startedAt;
+          event.parentId = parentId;
+        } else if (status === "done" || status === "error") {
+          const span = ctx.activeSystemSpans.get(spanKey);
+          const endedAt = Date.now();
+          if (span) ctx.activeSystemSpans.delete(spanKey);
+          event.stepId = span?.id || explicitStepId;
+          event.startedAt = span?.startedAt ?? (extra.elapsedMs != null ? endedAt - extra.elapsedMs : endedAt);
+          event.endedAt = endedAt;
+          event.parentId = (extra.parentId as string | undefined) ?? span?.parentId;
+          event.selfTimeMs = extra.selfTimeMs;
+        }
+      }
       // Chronology: capture completed system steps
       if (type === "system_step" && extra?.step && (extra?.status === "done" || extra?.status === "error")) {
         const stepIdx = ctx.systemStepsData.length;
         ctx.systemStepsData.push({
+          id: event.stepId,
           name: extra.step as string,
           status: extra.status as "done" | "error",
           elapsedMs: extra.elapsedMs,
           detail: extra.detail as string | undefined,
           metadata: extra.metadata as Record<string, unknown> | undefined,
+          parentId: event.parentId,
+          startedAt: event.startedAt,
+          endedAt: event.endedAt,
+          selfTimeMs: event.selfTimeMs,
         });
         ctx.segmentChronology.push({ s: "system", i: stepIdx });
       }
@@ -1839,6 +1868,7 @@ export class AgentExecutor extends EventEmitter {
       firstTokenEmitted: false,
       thinkingStepActive: false,
       activeToolUseSteps: new Map(),
+      activeSystemSpans: new Map(),
       toolUseReceivedAt: new Map(),
       diagnosticLastAssistantTextLength: 0,
       diagnosticHadToolErrors: false,
@@ -2082,9 +2112,11 @@ export class AgentExecutor extends EventEmitter {
 
     try {
       ctx.llmCallStartTime = Date.now();
+      const modelSpanId = `model-${ctx.runId}-${ctx.iteration}`;
+      ctx.publish("system_step", { step: "llm_call", status: "started", stepId: modelSpanId });
       ctx.llmConnectedEmitted = false;
       ctx.llmConnectedDoneEmitted = false;
-      ctx.publish("system_step", { step: "llm_request_sent", status: "started" });
+      ctx.publish("system_step", { step: "llm_request_sent", status: "started", parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
 
       const boundedToolExecutor = options.toolExecutor
         ? async (name: string, args: Record<string, unknown>) => {
@@ -2199,6 +2231,8 @@ export class AgentExecutor extends EventEmitter {
         ctx.thinkingStepActive = false;
         ctx.publish("system_step", { step: "thinking", status: "done" });
       }
+
+      ctx.publish("system_step", { step: "llm_call", status: "done", stepId: modelSpanId, elapsedMs: Date.now() - ctx.llmCallStartTime });
 
       ctx.lastStreamDiagnostics = {
         eventCount: streamEventCount,
