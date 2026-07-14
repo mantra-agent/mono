@@ -365,7 +365,7 @@ const SECTION_CATALOG: Record<string, { description: string; recommendedFor: str
   "world_model.active_work.projects": { description: "Active projects with milestones", recommendedFor: "planning, review", tokenCost: "small" },
   "world_model.decisions": { description: "Open strategic decisions", recommendedFor: "strategy, decision-making", tokenCost: "small" },
   "memory": { description: "Memory wrapper (enables all memory sub-sections)", recommendedFor: "conversations", tokenCost: "small" },
-  "memory.graph": { description: "Semantically linked memory entries", recommendedFor: "conversations", tokenCost: "medium" },
+  "memory.graph": { description: "Semantically linked vNEXT claims", recommendedFor: "conversations", tokenCost: "medium" },
   "memory.recent_sessions": { description: "Recent session titles and topics (artifact dedup)", recommendedFor: "conversations", tokenCost: "medium" },
   "session_context": { description: "Current session metadata and history", recommendedFor: "conversations", tokenCost: "medium" },
   "thoughts": { description: "Recent metacognitive observations", recommendedFor: "conversations, reflection", tokenCost: "small" },
@@ -1707,7 +1707,7 @@ function renderVnextContext(
     tokenBudget,
   );
   if (allocated.length === 0) return "";
-  return ["Memories matching query:", ...allocated.map((item) => item.rendered)].join("\n");
+  return ["vNEXT claims matching query:", ...allocated.map((item) => item.rendered)].join("\n");
 }
 
 async function resolveGraphMemory(request: ContextRequest): Promise<string> {
@@ -1767,7 +1767,7 @@ async function resolveGraphMemory(request: ContextRequest): Promise<string> {
       path: "vnext",
       error: err instanceof Error ? err.message : String(err),
     }));
-    return "Graph memory temporarily unavailable.";
+    return "vNEXT graph memory temporarily unavailable.";
   }
 }
 

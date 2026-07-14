@@ -140,7 +140,7 @@ persona cognitiveOverrides.memoryGraphTokenBudget (default 4000)
   → renderVnextContext() per tier
 ```
 
-vNext-only. No legacy `memory_entries` fallback — retrieval errors return "Graph memory temporarily unavailable."; empty results render empty. Short/mid/long layer sections were removed from context assembly entirely.
+vNext-only. No legacy `memory_entries` fallback. Rendered output explicitly identifies vNEXT provenance; retrieval errors return "vNEXT graph memory temporarily unavailable."; empty results render empty. Short/mid/long layer sections were removed from context assembly entirely.
 
 **Key files:**
 - `server/context-builder.ts` — `resolveGraphMemory()`, `getMemoryGraphTokenBudget()`, `allocateTiers()`, `renderTieredEntry()`
