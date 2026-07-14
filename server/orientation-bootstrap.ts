@@ -145,21 +145,13 @@ export async function ensureSessionOriented(options: {
     }
 
     const personas = await personaStorage.list();
-    const routerPersona = personas.find((p) => p.name === "Router");
-    if (routerPersona) {
-      const active = await personaStorage.getActiveOrNull();
-      if (!active || active.id !== routerPersona.id) {
-        await personaStorage.activate(routerPersona.id);
-        log.debug(`bootstrap activated Router persona id=${routerPersona.id} sessionId=${sessionId}`);
-      }
-    }
 
     await onLlmStart?.();
 
     const completion = await chatCompletion({
       activity: ACTIVITY_CHAT,
       semanticTierOverride: "fast",
-      overrideReason: "orientation-bootstrap: Router persona is fast-tier; override is belt-and-suspenders",
+      overrideReason: "orientation-bootstrap: fixed-template classification runs on the fast tier by design",
       jsonMode: true,
       maxTokens: BOOTSTRAP_MAX_TOKENS,
       temperature: 0,

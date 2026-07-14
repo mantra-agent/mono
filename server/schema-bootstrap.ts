@@ -642,7 +642,8 @@ export async function runSchemaBootstrap(
       WHERE semantic_tier IS NULL
     `);
     await pool.query(`UPDATE personas SET semantic_tier = 'balanced' WHERE name = 'Default' AND semantic_tier = 'fast'`);
-    await pool.query(`UPDATE personas SET semantic_tier = 'fast', is_system = TRUE WHERE name = 'Router'`);
+    await pool.query(`UPDATE personas SET semantic_tier = 'fast', is_system = TRUE WHERE LOWER(name) = 'router' AND source = 'seed'`);
+    await pool.query(`UPDATE personas SET is_system = FALSE WHERE LOWER(name) = 'router' AND source <> 'seed' AND is_system = TRUE`);
 
     // One-time migration: copy any surviving app_secrets provider_connection:* rows to credential_envelope
     try {
@@ -1002,7 +1003,7 @@ export async function runSchemaBootstrap(
             UPDATE library_annotations SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
             UPDATE library_page_views SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
             UPDATE emotional_states SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
-            UPDATE personas SET scope = 'global', owner_user_id = NULL, account_id = NULL WHERE source = 'seed' OR is_default = true;
+            -- Persona templates are reconciled by personaStorage.seedDefaults().
             UPDATE personas SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
             UPDATE tasks SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id) WHERE owner_user_id IS NULL;
             UPDATE projects SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id) WHERE owner_user_id IS NULL;
