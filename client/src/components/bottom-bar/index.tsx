@@ -330,7 +330,7 @@ function BottomBarMenu({
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
               <Gauge className="h-3.5 w-3.5 mr-2" />
-              Model tier
+              Model
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent>
               <DropdownMenuRadioGroup value={currentModelTier} onValueChange={(value) => setModelTier(normalizeModelTier(value))}>
