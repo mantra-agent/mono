@@ -1,3 +1,4 @@
+import { semanticTierSchema } from "../model-connectors";
 import {
   pgTable,
   serial,
@@ -70,7 +71,8 @@ export const personas = pgTable(
     icon: text("icon").notNull().default("Bot"),
     promptOverlay: text("prompt_overlay"),
     expressionTags: jsonb("expression_tags").default([]), // string[]
-    cognitiveOverrides: jsonb("cognitive_overrides").default({}), // Record<string, unknown>
+    cognitiveOverrides: jsonb("cognitive_overrides").default({}),
+    semanticTier: text("semantic_tier"), // Record<string, unknown>
     isDefault: boolean("is_default").notNull().default(false),
     isActive: boolean("is_active").notNull().default(false),
     sortOrder: integer("sort_order").notNull().default(0),
@@ -97,7 +99,7 @@ export const personas = pgTable(
   ],
 );
 
-export const insertPersonaSchema = createInsertSchema(personas).omit({
+export const insertPersonaSchema = createInsertSchema(personas, { semanticTier: semanticTierSchema.nullable().optional() }).omit({
   id: true,
   createdAt: true,
   updatedAt: true,

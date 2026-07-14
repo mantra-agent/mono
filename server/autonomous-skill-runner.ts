@@ -975,8 +975,8 @@ async function runCouncilPipeline(
         question,
         runId: sessionId,
         advocates: [
-          { role: "Advocate A", model: getModelForTier("advocate") },
-          { role: "Advocate B", model: getModelForTier("advisary") },
+          { role: "Advocate A", model: getModelForTier("max") },
+          { role: "Advocate B", model: getModelForTier("max") },
         ],
       },
       deps,

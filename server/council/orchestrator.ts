@@ -32,8 +32,8 @@ export const COUNCIL_HARD_ROUND_CAP = 5;
  */
 export function getDefaultAdvocates(): AdvocateConfig[] {
   return [
-    { role: "Advocate A", model: getModelForTier("advocate") },
-    { role: "Advocate B", model: getModelForTier("advisary") },
+    { role: "Advocate A", model: getModelForTier("max") },
+    { role: "Advocate B", model: getModelForTier("max") },
   ];
 }
 

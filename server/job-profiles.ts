@@ -18,10 +18,10 @@ const jobLog = createLogger("JobProfiles");
 
 const DB_KEY = "model_profiles";
 
-export type TierId = "max" | "high" | "balanced" | "fast" | "advocate" | "advisary";
+export type TierId = "max" | "high" | "balanced" | "fast";
 
 /** Canonical tier ordering used in defaults loops, schemas, and UI tier ordering. */
-export const ALL_TIER_IDS: readonly TierId[] = ["max", "high", "balanced", "fast", "advocate", "advisary"] as const;
+export const ALL_TIER_IDS: readonly TierId[] = ["max", "high", "balanced", "fast"] as const;
 export type ActivityId = string;
 export type RoutingTier = TierId | "auto";
 
@@ -85,8 +85,6 @@ export const TIER_META: TierMeta[] = [
   { id: "high", label: "High", description: "Excellent quality-to-cost ratio" },
   { id: "balanced", label: "Balanced", description: "Good middle ground for most tasks" },
   { id: "fast", label: "Fast", description: "Optimized for speed and efficiency" },
-  { id: "advocate", label: "Advocate", description: "Council Advocate A — paired against the Advisary tier; configure to a different provider for genuine adversarial deliberation" },
-  { id: "advisary", label: "Advisary", description: "Council Advocate B — counterpoint advisor for adversarial deliberation; configure to a different provider than Advocate" },
 ];
 
 export const ACTIVITY_META: ActivityMeta[] = [
@@ -198,8 +196,6 @@ function detectDefaultTiers(): Record<TierId, string> {
       high: "claude-cli/claude-sonnet-sub",
       balanced: "claude-cli/claude-sonnet-sub",
       fast: "claude-cli/claude-sonnet-sub",
-      advocate: "claude-cli/claude-opus-sub",
-      advisary: "claude-cli/claude-opus-sub",
     };
   }
 
@@ -209,8 +205,6 @@ function detectDefaultTiers(): Record<TierId, string> {
       high: "anthropic/claude-sonnet-4-6",
       balanced: "anthropic/claude-3-haiku-20240307",
       fast: "openai/gpt-5-mini",
-      advocate: "anthropic/claude-opus-4-6",
-      advisary: "openai/gpt-5.2-pro",
     };
   }
   if (hasAnthropic) {
@@ -219,8 +213,6 @@ function detectDefaultTiers(): Record<TierId, string> {
       high: "anthropic/claude-sonnet-4-6",
       balanced: "anthropic/claude-sonnet-4-6",
       fast: "anthropic/claude-3-haiku-20240307",
-      advocate: "anthropic/claude-opus-4-6",
-      advisary: "anthropic/claude-opus-4-6",
     };
   }
   if (hasOpenai) {
@@ -229,8 +221,6 @@ function detectDefaultTiers(): Record<TierId, string> {
       high: "openai/gpt-5.2",
       balanced: "openai/gpt-5-mini",
       fast: "openai/gpt-5-mini",
-      advocate: "openai/gpt-5.2-pro",
-      advisary: "openai/gpt-5.2-pro",
     };
   }
   return {
@@ -238,8 +228,6 @@ function detectDefaultTiers(): Record<TierId, string> {
     high: "anthropic/claude-sonnet-4-6",
     balanced: "anthropic/claude-3-haiku-20240307",
     fast: "openai/gpt-5-mini",
-    advocate: "anthropic/claude-opus-4-6",
-    advisary: "openai/gpt-5.2-pro",
   };
 }
 

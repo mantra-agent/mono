@@ -870,7 +870,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
         } catch { /* session title resolution is best-effort */ }
       }
 
-      const tierOrder = ["max", "high", "balanced", "fast", "advocate", "advisary", "explicit-override", "embed", "unknown"];
+      const tierOrder = ["max", "high", "balanced", "fast", "explicit-override", "embed", "unknown"];
       const tierRank = (tier: string) => {
         const idx = tierOrder.indexOf(tier);
         return idx === -1 ? tierOrder.length : idx;
@@ -1131,7 +1131,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
   ]);
 
   const setTierSchema = z.object({
-    tierId: z.enum(["max", "high", "balanced", "fast", "advocate", "advisary"]),
+    tierId: z.enum(["max", "high", "balanced", "fast"]),
     model: z.string().min(1),
     thinkingBudget: z.number().int().min(0).optional(),
     thinking: thinkingTierSchema.optional(),
@@ -1170,7 +1170,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
   });
 
   const setThinkingBudgetSchema = z.object({
-    tierId: z.enum(["max", "high", "balanced", "fast", "advocate", "advisary"]),
+    tierId: z.enum(["max", "high", "balanced", "fast"]),
     thinkingBudget: z.number().int().min(0).max(128000).optional(),
     thinking: thinkingTierSchema.optional(),
   }).refine((d) => d.thinkingBudget !== undefined || d.thinking !== undefined, {
@@ -1199,7 +1199,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
 
   const setRoutingSchema = z.object({
     activityId: z.string().min(1),
-    tier: z.enum(["max", "high", "balanced", "fast", "advocate", "advisary", "auto"]),
+    tier: z.enum(["max", "high", "balanced", "fast", "auto"]),
   });
 
   app.post("/api/models/routing", async (req, res) => {
