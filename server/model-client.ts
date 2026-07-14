@@ -126,7 +126,6 @@ interface CodexResponsesRequest {
   service_tier?: "auto" | "default" | "flex" | "priority" | "fast";
   model_reasoning_summary?: "detailed" | "concise" | "auto";
   model_verbosity?: "low" | "medium" | "high";
-  max_output_tokens?: number;
   tools?: Array<
     | { type: "function"; name: string; description: string; parameters: Record<string, unknown> }
     | { type: "image_generation"; quality?: string; size?: string; background?: string; output_format?: string }
@@ -555,7 +554,7 @@ function buildOpenAIReasoningConfig(config: OpenAITierModelConfig | undefined, m
 
 function applyOpenAIConnectorConfig(params: Record<string, any>, config: OpenAITierModelConfig | undefined, model: string, options: ChatCompletionOptions, surface: "responses" | "codex"): void {
   const maxOutput = connectorMaxOutputTokens(config, options.maxTokens);
-  if (maxOutput !== undefined) params.max_output_tokens = maxOutput;
+  if (surface === "responses" && maxOutput !== undefined) params.max_output_tokens = maxOutput;
   const reasoning = buildOpenAIReasoningConfig(config, model, options.thinking, surface);
   if (reasoning) params.reasoning = reasoning;
   if (config?.verbosity) {
