@@ -169,7 +169,7 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
               <Mail className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               <span className="shrink-0 text-muted-foreground">Reply from</span>
               {senderReference ? (
-                <span onClick={(e) => e.stopPropagation()}>
+                <span className="inline-flex min-w-0 items-center" onClick={(e) => e.stopPropagation()}>
                   <ReferenceRenderer refValue={senderReference} surface="simple-row" className="mx-0" />
                 </span>
               ) : (
