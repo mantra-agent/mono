@@ -79,6 +79,34 @@ function deleteSlashTrigger(editor: Editor, fromPos: number | null) {
   if (previous === "/") editor.commands.deleteRange({ from: from - 1, to: from });
 }
 
+function isStandardEditorModifier(event: React.KeyboardEvent): boolean {
+  return (event.metaKey || event.ctrlKey) && !event.altKey;
+}
+
+function runStandardEditingShortcut(event: React.KeyboardEvent, editor: Editor): boolean {
+  if (!isStandardEditorModifier(event)) return false;
+
+  const key = event.key.toLowerCase();
+  const chain = editor.chain().focus();
+
+  if (!event.shiftKey && key === "b") return chain.toggleBold().run();
+  if (!event.shiftKey && key === "i") return chain.toggleItalic().run();
+  if (!event.shiftKey && key === "u") return chain.toggleUnderline().run();
+  if (!event.shiftKey && key === "z") return chain.undo().run();
+  if ((event.shiftKey && key === "z") || (!event.shiftKey && key === "y")) return chain.redo().run();
+
+  return false;
+}
+
+function handleStandardEditingShortcut(event: React.KeyboardEvent, editor: Editor, onChangeRef: MutableRefObject<(json: JSONContent, plainText: string) => void>): boolean {
+  if (event.defaultPrevented) return false;
+  const handled = runStandardEditingShortcut(event, editor);
+  if (!handled) return false;
+  event.preventDefault();
+  emitEditorChange(editor, onChangeRef);
+  return true;
+}
+
 function buildEditorCommands(onInsertLink?: () => void): EditorCommand[] {
   const commands: EditorCommand[] = [
     { id: "paragraph", label: "Text", hint: "Plain text block", icon: "T", isActive: (editor) => editor.isActive("paragraph"), run: (editor) => editor.chain().focus().setParagraph().run() },
@@ -93,6 +121,7 @@ function buildEditorCommands(onInsertLink?: () => void): EditorCommand[] {
     { id: "table", label: "Table", hint: "3 × 3 table with header", icon: "⊞", run: (editor) => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
     { id: "bold", label: "Bold", hint: "Emphasize selected text", shortcut: "⌘B", icon: <strong>B</strong>, isActive: (editor) => editor.isActive("bold"), run: (editor) => editor.chain().focus().toggleBold().run() },
     { id: "italic", label: "Italic", hint: "Italicize selected text", shortcut: "⌘I", icon: <em>I</em>, isActive: (editor) => editor.isActive("italic"), run: (editor) => editor.chain().focus().toggleItalic().run() },
+    { id: "underline", label: "Underline", hint: "Underline selected text", shortcut: "⌘U", icon: <u>U</u>, isActive: (editor) => editor.isActive("underline"), run: (editor) => editor.chain().focus().toggleUnderline().run() },
     { id: "strike", label: "Strikethrough", hint: "Cross out selected text", icon: <s>S</s>, isActive: (editor) => editor.isActive("strike"), run: (editor) => editor.chain().focus().toggleStrike().run() },
     { id: "inline-code", label: "Inline code", hint: "Format selected text as code", icon: "<>", isActive: (editor) => editor.isActive("code"), run: (editor) => editor.chain().focus().toggleCode().run() },
     { id: "undo", label: "Undo", hint: "Undo last edit", shortcut: "⌘Z", icon: "↩", run: (editor) => editor.chain().focus().undo().run() },
@@ -601,6 +630,8 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
           }
           // Query is derived from document text via transaction watcher (mobile-safe)
         }
+        if (handleStandardEditingShortcut(e, editor, onChangeRef)) return;
+
         // Slash detection moved to transaction watcher (mobile-safe)
         handleWikiKeyDown(e, editor);
       }}
