@@ -99,7 +99,7 @@ export function SessionTranscriptSurface({
         </div>
       )}
       {showWorkflow && workflowOwnsPlan && <WorkflowStickyBar workflow={workflow} />}
-      {showPlan && <PlanStickyBar plan={plan} />}
+      {showPlan && <PlanStickyBar plan={plan} sessionId={activeSession} />}
       {showWorkflow && !workflowOwnsPlan && <WorkflowStickyBar workflow={workflow} />}
       <div
         ref={scrollContainerRef}

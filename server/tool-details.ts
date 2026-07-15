@@ -289,13 +289,14 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: '{ "type": "pattern", "content": "I keep defaulting to long explanations when short ones land better" }',
   },
   plan: {
-    description: "Create, inspect, associate, modify, and execute multi-step plans. Plans decompose complex work into tracked steps with fresh context per step and durable checkpoint to Library pages.",
+    description: "Create, inspect, associate, unlink, modify, and execute multi-step plans. Plans decompose complex work into tracked steps with fresh context per step and durable checkpoint to Library pages.",
     whenToUse: "When a task requires more context than a single session can hold, or when you need crash-recoverable multi-step execution. Use for implementations, research, any complex work that benefits from decomposition.",
     example: 'Create: { "action": "create", "title": "Implement Feature X", "steps": [{"title": "Schema", "instructions": "..."}, {"title": "API", "instructions": "..."}] }\nAssociate: { "action": "associate_session", "planId": "plan-db-id" }\nExecute: { "action": "execute", "planId": "plan-db-id" }\nEdit: { "action": "edit", "planId": "plan-db-id", "title": "New title", "stepEdits": [{"stepId": "step-1", "instructions": "..."}] }\nAdd steps: { "action": "add_steps", "planId": "plan-db-id", "newSteps": [{"title": "New step", "instructions": "..."}] }',
     actions: {
       create: { description: "Create a new plan with title and steps. Returns the Plan DB ID and Library page ID.", requiredParams: ["title", "steps"], optionalParams: ["goalId", "projectId", "blocking", "workspace"] },
       get: { description: "Get plan status and step progress.", requiredParams: ["planId"] },
       associate_session: { description: "Link an existing plan's Library page to the current session without starting execution or creating a duplicate plan.", requiredParams: ["planId"] },
+      unlink_session: { description: "Remove the current session link from an existing plan without deleting the plan page or execution history.", requiredParams: ["planId"], optionalParams: ["sessionId"] },
       list: { description: "List all plans with status summaries.", optionalParams: ["limit"] },
       execute: { description: "Start executing a plan. Spawns child sessions per step.", requiredParams: ["planId"] },
       update_step: { description: "Manually update a step's status or outcome.", requiredParams: ["planId", "stepId"], optionalParams: ["status", "outcome"] },

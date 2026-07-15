@@ -64,6 +64,8 @@ export async function handlePlan(args: Record<string, any>): Promise<ToolHandler
       return handleGet(args);
     case "associate_session":
       return handleAssociateSession(args);
+    case "unlink_session":
+      return handleUnlinkSession(args);
     case "list":
       return handleList(args);
     case "execute":
@@ -79,7 +81,7 @@ export async function handlePlan(args: Record<string, any>): Promise<ToolHandler
     case "resume":
       return handleResume(args);
     default:
-      return { result: `Unknown plan action: "${action}". Available: create, get, associate_session, list, execute, update_step, edit, add_steps, pause, resume`, error: true };
+      return { result: `Unknown plan action: "${action}". Available: create, get, associate_session, unlink_session, list, execute, update_step, edit, add_steps, pause, resume`, error: true };
   }
 }
 
@@ -239,6 +241,34 @@ async function handleAssociateSession(args: Record<string, any>): Promise<ToolHa
   return {
     result: `Associated plan **${page.title.replace(/^Plan:\s*/, "")}** with this session.\n\nPlan DB ID: ${plan.id}\nPage ID: ${page.id} [page:${page.slug}]`,
   };
+}
+
+
+async function handleUnlinkSession(args: Record<string, any>): Promise<ToolHandlerResult> {
+  const planId = args.planId as string;
+  if (!planId) return { result: "Missing required 'planId' parameter.", error: true };
+
+  const sessionId = (args.sessionId as string | undefined) || (args._sessionId as string | undefined);
+  if (!sessionId) return { result: "No session context is available to unlink from this plan. Provide sessionId or run from the linked session.", error: true };
+
+  const resolved = await resolvePlanWithPage(planId);
+  if (!resolved) return planNotFound(planId);
+  const { plan, page } = resolved;
+
+  if (plan.originSessionId !== sessionId) {
+    return { result: `Plan **${page.title.replace(/^Plan:\s*/, "")}** is not linked to session ${sessionId}.`, error: true };
+  }
+  if (plan.status === "executing") {
+    return { result: "Cannot unlink a running plan from a session — pause it first.", error: true };
+  }
+
+  await db.update(planExecutions)
+    .set({ originSessionId: `unlinked:${sessionId}:${plan.id}`, updatedAt: new Date() })
+    .where(writablePlan(eq(planExecutions.id, plan.id)));
+
+  log.log(`[${plan.id}] Unlinked from session ${sessionId}`);
+
+  return { result: `Unlinked plan **${page.title.replace(/^Plan:\s*/, "")}** from this session. The plan page and execution history were preserved.\n\nPlan DB ID: ${plan.id}\nPage ID: ${page.id} [page:${page.slug}]` };
 }
 
 async function handleList(args: Record<string, any>): Promise<ToolHandlerResult> {
