@@ -1204,6 +1204,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
   ): Promise<{
     messages: ExecutorMessage[];
     conversationHistory: ConversationHistoryMessage[];
+    enrichedContent: string;
     toolDefs: ToolDefinition[];
     contextPressure: {
       preRunTokens: number;
@@ -1640,6 +1641,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     return {
       messages,
       conversationHistory,
+      enrichedContent,
       toolDefs,
       contextPressure: {
         preRunTokens: fullPreExecutorTokens,
@@ -2054,6 +2056,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       const {
         messages,
         conversationHistory,
+        enrichedContent,
         toolDefs,
         contextPressure,
       } = await buildChatHistory(
