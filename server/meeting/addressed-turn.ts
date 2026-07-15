@@ -4,16 +4,15 @@ import { ACTIVITY_FRAMING } from "../job-profiles";
 import { createLogger } from "../log";
 import type { MeetingParticipant } from "@shared/models/chat";
 
-const log = createLogger("MeetingAddressedInference");
+const log = createLogger("MeetingParticipationInference");
 const ACTIVE_EXCHANGE_MS = 45_000;
 const MAX_CONTEXT_TURNS = 8;
 const INFERENCE_TIMEOUT_MS = 1_500;
 
-export type MeetingAddressOutcome = "explicit" | "classified" | "fallback" | "ignored";
-export type MeetingParticipationBehavior = "on_address";
+export type MeetingParticipationOutcome = "explicit" | "classified" | "fallback" | "ignored";
 
-export interface MeetingAddressDecision {
-  outcome: MeetingAddressOutcome;
+export interface MeetingParticipationDecision {
+  outcome: MeetingParticipationOutcome;
   shouldRespond: boolean;
   reason: string;
   latencyMs: number;
@@ -22,14 +21,14 @@ export interface MeetingAddressDecision {
   classifierFailure?: "timeout" | "error" | "invalid_output";
 }
 
-export interface AddressedInferenceInput {
+export interface MeetingParticipationInput {
   sessionId: string;
   sessionKey: string;
   turnId: string;
+  currentMessageId: string;
   text: string;
   speakerLabel: string;
   participants: MeetingParticipant[];
-  meetingBehavior?: MeetingParticipationBehavior;
 }
 
 interface ExchangeContext {
@@ -102,13 +101,13 @@ function isQuestion(text: string): boolean {
 
 function decision(
   startedAt: number,
-  outcome: MeetingAddressOutcome,
+  outcome: MeetingParticipationOutcome,
   shouldRespond: boolean,
   reason: string,
   confidence: number,
   prompt?: string,
-  classifierFailure?: MeetingAddressDecision["classifierFailure"],
-): MeetingAddressDecision {
+  classifierFailure?: MeetingParticipationDecision["classifierFailure"],
+): MeetingParticipationDecision {
   return {
     outcome,
     shouldRespond,
@@ -121,24 +120,21 @@ function decision(
 }
 
 function deterministicFallback(
-  input: AddressedInferenceInput,
+  input: MeetingParticipationInput,
   context: ExchangeContext,
   startedAt: number,
-  classifierFailure: MeetingAddressDecision["classifierFailure"],
-): MeetingAddressDecision {
-  const meetingBehavior = input.meetingBehavior ?? "on_address";
+  classifierFailure: MeetingParticipationDecision["classifierFailure"],
+): MeetingParticipationDecision {
   const questionForm = isQuestion(input.text);
   const conversationContinues = context.agentAskedQuestion || context.speakerContinuesAgentExchange;
-  const shouldRespond = meetingBehavior === "on_address" && questionForm && conversationContinues;
+  const shouldRespond = questionForm && conversationContinues;
   const reason = shouldRespond
     ? context.agentAskedQuestion
       ? "classifier_failure_reply_to_recent_agent_question"
       : "classifier_failure_question_in_active_agent_exchange"
     : !questionForm
       ? "classifier_failure_non_question"
-      : !conversationContinues
-        ? "classifier_failure_question_without_agent_continuity"
-        : "classifier_failure_meeting_behavior_disallows_response";
+      : "classifier_failure_question_without_agent_continuity";
 
   return decision(
     startedAt,
@@ -151,7 +147,7 @@ function deterministicFallback(
   );
 }
 
-export async function inferAddressedMeetingTurn(input: AddressedInferenceInput): Promise<MeetingAddressDecision> {
+export async function inferMeetingParticipation(input: MeetingParticipationInput): Promise<MeetingParticipationDecision> {
   const startedAt = Date.now();
   const explicit = explicitInvocation(input.text);
   if (explicit) return decision(startedAt, "explicit", true, "explicit_mantra_alias", 1, explicit);
@@ -159,7 +155,10 @@ export async function inferAddressedMeetingTurn(input: AddressedInferenceInput):
   const other = clearlyAddressesOther(input.text, input.speakerLabel, input.participants);
   if (other) return decision(startedAt, "ignored", false, `addressed_other:${other}`, 0.98);
 
-  const messages = recentContext(await chatStorage.getMessagesBySession(input.sessionId));
+  const messages = recentContext(
+    await chatStorage.getMessagesBySession(input.sessionId),
+    input.currentMessageId,
+  );
   const exchange = buildExchangeContext(messages, input.speakerLabel);
   if (exchange.agentAskedQuestion) {
     return decision(startedAt, "classified", true, "reply_to_recent_agent_question", 0.96, input.text.trim());
@@ -177,22 +176,51 @@ export async function inferAddressedMeetingTurn(input: AddressedInferenceInput):
     const result = await chatCompletion({
       activity: ACTIVITY_FRAMING,
       messages: [
-        { role: "system", content: "Classify whether the final meeting turn is directed to the AI agent Mantra. Return JSON only: {decision:'addressed'|'not_addressed'|'uncertain',reason:string,confidence:number}. Prefer not_addressed for ordinary participant conversation. Never infer addressed merely because the statement is a question." },
-        { role: "user", content: JSON.stringify({ turn: input.text.slice(0, 2000), speaker: input.speakerLabel, recentTurns: context, agentAskedSpeaker: exchange.agentAskedQuestion, msSinceAgentSpoke: Number.isFinite(exchange.msSinceAgentSpoke) ? exchange.msSinceAgentSpoke : null, participants: input.participants.map((participant) => participant.label) }) },
+        {
+          role: "system",
+          content: [
+            "Decide whether the AI agent Mantra should speak after the final turn in a live multi-party meeting.",
+            "Return JSON only: {decision:'respond'|'stay_silent'|'uncertain',reason:string,confidence:number}.",
+            "Respond when Mantra is directly addressed, when someone clearly continues an active exchange with Mantra without repeating its name, or when someone answers a question Mantra asked.",
+            "Stay silent during ordinary participant-to-participant conversation, when another participant is being addressed, or when the evidence is uncertain.",
+            "A wake word is strong evidence, not a requirement. Never respond merely because the final turn is a question.",
+          ].join(" "),
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            turn: input.text.slice(0, 2000),
+            speaker: input.speakerLabel,
+            recentTurns: context,
+            agentAskedQuestion: exchange.agentAskedQuestion,
+            speakerContinuesAgentExchange: exchange.speakerContinuesAgentExchange,
+            msSinceAgentSpoke: Number.isFinite(exchange.msSinceAgentSpoke)
+              ? exchange.msSinceAgentSpoke
+              : null,
+            participants: input.participants.map((participant) => participant.label),
+          }),
+        },
       ],
       jsonMode: true,
       maxTokens: 96,
       temperature: 0,
       signal: controller.signal,
-      metadata: { source: "meeting_addressed_inference", activity: ACTIVITY_FRAMING, sessionId: input.sessionId, sessionKey: input.sessionKey, requestId: input.turnId },
+      metadata: { source: "meeting_participation_inference", activity: ACTIVITY_FRAMING, sessionId: input.sessionId, sessionKey: input.sessionKey, requestId: input.turnId },
     });
     const parsed = JSON.parse(result.content) as { decision?: string; reason?: string; confidence?: number };
-    if (!(["addressed", "not_addressed", "uncertain"] as string[]).includes(parsed.decision || "")) {
+    if (!(["respond", "stay_silent", "uncertain"] as string[]).includes(parsed.decision || "")) {
       throw new Error("invalid decision");
     }
     const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0));
-    if (parsed.decision === "addressed") {
-      return decision(startedAt, "classified", true, parsed.reason || "contextual_inference", confidence, input.text.trim());
+    if (parsed.decision === "respond") {
+      return decision(
+        startedAt,
+        "classified",
+        true,
+        parsed.reason || "contextual_participation",
+        confidence,
+        input.text.trim(),
+      );
     }
     return decision(startedAt, "ignored", false, parsed.reason || `classifier_${parsed.decision}`, confidence);
   } catch (error) {
@@ -203,7 +231,7 @@ export async function inferAddressedMeetingTurn(input: AddressedInferenceInput):
         : "error";
     const fallback = deterministicFallback(input, exchange, startedAt, classifierFailure);
     log.warn(
-      `address inference fallback sessionId=${input.sessionId} turnId=${input.turnId} failure=${classifierFailure} outcome=${fallback.outcome} shouldRespond=${fallback.shouldRespond} reason=${fallback.reason} latencyMs=${fallback.latencyMs}`,
+      `participation inference fallback sessionId=${input.sessionId} turnId=${input.turnId} failure=${classifierFailure} outcome=${fallback.outcome} shouldRespond=${fallback.shouldRespond} reason=${fallback.reason} latencyMs=${fallback.latencyMs}`,
       error,
     );
     return fallback;
