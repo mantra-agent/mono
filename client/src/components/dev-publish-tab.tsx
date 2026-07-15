@@ -1096,7 +1096,7 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/railway/environments", platformEnvironmentId, "status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/railway/environments", targetPlatformEnvironmentId, "status"] });
       queryClient.invalidateQueries({
         queryKey: [summaryPath],
       });
@@ -1257,7 +1257,7 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
             <>
               {stage.name === "compare" && changePreview}
               {(stage.name === "railway_build" || stage.name === "health_check") && productionDetails}
-              {showBuildLog && <InlineBuildLog isActive platformEnvironmentId={platformEnvironmentId} />}
+              {showBuildLog && <InlineBuildLog isActive platformEnvironmentId={targetPlatformEnvironmentId} />}
               {stage.log.length > 0 && !showBuildLog && (
                 <details className="mt-1.5">
                   <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
