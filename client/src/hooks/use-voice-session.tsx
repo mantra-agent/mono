@@ -11,6 +11,12 @@ import { createLogger } from "@/lib/logger";
 import { buildDisconnectReason } from "@/lib/ws-close-codes";
 import { playConnectionChime, playDisconnectionChime } from "@/lib/voice-chime";
 import { isNativeVoiceBridge, sendToNative, onNativeMessage } from "@/lib/native-voice-bridge";
+import {
+  reduceVoiceUserTranscript,
+  type VoiceTranscriptEntry,
+  type VoiceTranscriptStatus,
+} from "@/lib/voice-transcript-state";
+export type { VoiceTranscriptEntry, VoiceTranscriptStatus } from "@/lib/voice-transcript-state";
 
 const log = createLogger("VoiceSession");
 
@@ -45,40 +51,7 @@ async function warmUpAudioPipeline(): Promise<void> {
 
 export type VoiceStatus = "idle" | "connecting" | "active" | "ending" | "reconnecting";
 
-export type VoiceTranscriptStatus = "provisional" | "committed" | "placeholder";
 
-export interface VoiceTranscriptEntry {
-  source: "user" | "ai" | "system";
-  message: string;
-  timestamp: string;
-  /** Stable render/dedup identity for voice-originated transcript rows. */
-  transcriptId?: string;
-  /** Logical voice turn identity. Partial/final updates for one utterance share this. */
-  turnId?: string;
-  /** Canonical persisted chat voice identity, shared with ChatMessage.voice.turnKey. */
-  turnKey?: string;
-  /** Monotonic sequence from the bridge/server when available. */
-  sequence?: number;
-  /** Explicit transcript lifecycle. Only server-authoritative rows are committed. */
-  status: VoiceTranscriptStatus;
-  isError?: boolean;
-  /**
-   * Marks an assistant entry that was rendered from a partial
-   * `tentative_agent_response` (EL streams these via `onDebug` while the
-   * native LLM is still generating). The entry is updated in-place as
-   * more tokens arrive and replaced when the final `agent_response`
-   * fires through `onMessage`.
-   */
-  isTentative?: boolean;
-  /**
-   * v3 only. Marks a synthetic transcript line surfaced live from a
-   * webhook tool call (`voice_v3_tool_call` event over the WS event
-   * bus). Lets the chat window show what Sonnet is doing during the
-   * turn without waiting for `persistV3Turn` at end-of-turn.
-   */
-  isToolCall?: boolean;
-  persona?: { id: number; name: string; icon: string };
-}
 
 export type ConnectionPhaseStatus = "pending" | "active" | "done" | "error";
 
@@ -564,17 +537,6 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     return await fallbackRes.json() as VoiceStartResponse;
   }, []);
 
-  const cleanTranscriptText = useCallback((value: string) => (value || "")
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .map(line => line.trim())
-    .filter((line, index, lines) => line.length > 0 || (index > 0 && index < lines.length - 1))
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim(), []);
-
-  const normalizeTranscript = useCallback((value: string) => cleanTranscriptText(value).replace(/\s+/g, " ").toLowerCase(), [cleanTranscriptText]);
-
   const handleUserTranscript = useCallback((message: {
     source: string;
     message: string;
@@ -584,90 +546,26 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     status: VoiceTranscriptStatus;
     transcriptId?: string;
   }) => {
-    const normalizedSource = "user" as const;
-    const trimmedMessage = cleanTranscriptText(message.message || "");
-    if (!trimmedMessage) return;
-    const normalizedLower = normalizeTranscript(trimmedMessage);
     const turnId = message.turnId || `voice-user-${Date.now()}`;
-    const turnKey = message.turnKey;
-    const transcriptId = message.transcriptId || (turnKey ? `voice:user:${turnKey}` : `voice:user:${turnId}`);
-    const timestamp = new Date().toISOString();
-
-    setTranscript(prev => {
-      const sameText = (entry: VoiceTranscriptEntry) => {
-        const prior = normalizeTranscript(entry.message || "");
-        return prior === normalizedLower || prior.startsWith(normalizedLower) || normalizedLower.startsWith(prior);
-      };
-      let existingIndex = prev.findIndex(e =>
-        e.source === normalizedSource &&
-        !e.isToolCall &&
-        ((turnKey && e.turnKey === turnKey) || (message.turnId && e.turnId === message.turnId) || e.transcriptId === transcriptId)
-      );
-      if (existingIndex < 0) {
-        existingIndex = prev.findLastIndex(e =>
-          e.source === normalizedSource &&
-          e.status === "provisional" &&
-          !e.isToolCall &&
-          sameText(e)
-        );
-      }
-      if (existingIndex >= 0) {
-        const existing = prev[existingIndex];
-        const existingLower = normalizeTranscript(existing.message || "");
-        if (existing.sequence !== undefined && message.sequence !== undefined && message.sequence < existing.sequence) return prev;
-        if (existing.status === "committed" && message.status !== "committed") return prev;
-        if (existingLower === normalizedLower && existing.status === message.status) return prev;
-        if (existingLower.length > normalizedLower.length && existingLower.startsWith(normalizedLower) && message.status === "provisional") return prev;
-        const updated = [...prev];
-        updated[existingIndex] = {
-          ...existing,
-          message: trimmedMessage,
-          timestamp,
-          transcriptId,
-          turnId,
-          turnKey: turnKey ?? existing.turnKey,
-          sequence: message.sequence ?? existing.sequence,
-          status: message.status,
-        };
-        return updated;
-      }
-
-      const last = prev[prev.length - 1];
-      if (last?.source === normalizedSource && last.status === "placeholder") {
-        const updated = [...prev];
-        updated[prev.length - 1] = {
-          source: normalizedSource,
-          message: trimmedMessage,
-          timestamp,
-          transcriptId,
-          turnId,
-          turnKey,
-          sequence: message.sequence,
-          status: message.status,
-        };
-        return updated;
-      }
-
-      const committedDuplicate = [...prev].reverse().slice(0, 12).find(e =>
-        e.source === normalizedSource && e.status === "committed" && !e.isToolCall && sameText(e)
-      );
-      if (committedDuplicate && message.status === "committed") {
-        log.debug("VOICE:TRANSCRIPT:RECENT_DUPLICATE_SKIPPED", { messageLength: trimmedMessage.length, turnId });
-        return prev;
-      }
-
-      return [...prev, {
-        source: normalizedSource,
-        message: trimmedMessage,
-        timestamp,
-        transcriptId,
+    setTranscript((previous) => {
+      const mutation = reduceVoiceUserTranscript(previous, {
+        message: message.message || "",
         turnId,
-        turnKey,
+        turnKey: message.turnKey,
         sequence: message.sequence,
         status: message.status,
-      }];
+        transcriptId: message.transcriptId,
+        timestamp: new Date().toISOString(),
+      });
+      if (mutation.reason === "committed_duplicate") {
+        log.debug("VOICE:TRANSCRIPT:RECENT_DUPLICATE_SKIPPED", {
+          messageLength: mutation.messageLength,
+          turnId: mutation.turnId,
+        });
+      }
+      return mutation.transcript;
     });
-  }, [cleanTranscriptText, normalizeTranscript]);
+  }, []);
 
   const attemptReconnect = useCallback((source: string, context: Record<string, unknown>) => {
     if (reconnectInProgressRef.current) {
