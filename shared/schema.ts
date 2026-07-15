@@ -671,9 +671,19 @@ export const voiceSessionActive = pgTable("voice_session_active", {
   scope: text("scope").notNull().default("system"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
+  startRequestId: text("start_request_id"),
+  startResponse: jsonb("start_response"),
+  startReadyAt: timestamp("start_ready_at", { withTimezone: true }),
   inflightTurn: integer("inflight_turn").default(0),
   lastHeartbeat: timestamp("last_heartbeat", { withTimezone: true }),
-});
+}, (table) => [
+  uniqueIndex("idx_vsa_active_account_conversation_unique")
+    .on(table.accountId, table.chatSessionId)
+    .where(sql`${table.status} = 'active' AND ${table.scope} = 'user' AND ${table.chatSessionId} IS NOT NULL`),
+  uniqueIndex("idx_vsa_account_request_unique")
+    .on(table.accountId, table.startRequestId)
+    .where(sql`${table.scope} = 'user' AND ${table.startRequestId} IS NOT NULL`),
+]);
 
 export const insertVoiceSessionActiveSchema = createInsertSchema(voiceSessionActive).omit({
   id: true,

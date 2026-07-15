@@ -21,67 +21,6 @@ async function performAgentSetup(elAgentId: string): Promise<void> {
   voiceLog.log(`agent ${elAgentId} callback URL configured and voiceId cached`);
 }
 
-/**
- * Server-side single-flight for /api/voice/start, keyed by chatSessionId.
- * Concurrent starts for the same chat must converge on one outcome rather
- * than each independently calling createVoiceSession() and writing their
- * own ID into the in-memory sessions Map.
- *
- * Bounded by a 30s timeout so a process crash mid-handler can't hang
- * future clicks forever — when the timeout elapses, the slot is released
- * and the next request enters the slow path again.
- *
- * The "lock" is a shared Promise: the second concurrent caller awaits the
- * first's completion and then responds with a 409 + the first request's
- * sessionId so the client converges to the single live session rather than
- * spinning up a parallel one.
- */
-type StartSingleFlight = {
-  startedAt: number;
-  requestId: string;
-  done: Promise<{ sessionId: string | null; ok: boolean }>;
-  resolve: (v: { sessionId: string | null; ok: boolean }) => void;
-};
-const startInflightByChat = new Map<string, StartSingleFlight>();
-const START_LOCK_TIMEOUT_MS = 30_000;
-const START_DUPLICATE_WARN_WINDOW_MS = 2_000;
-
-function acquireStartLock(chatSessionId: string, requestId: string): { acquired: boolean; existing?: StartSingleFlight } {
-  const existing = startInflightByChat.get(chatSessionId);
-  if (existing) {
-    const ageMs = Date.now() - existing.startedAt;
-    if (ageMs < START_DUPLICATE_WARN_WINDOW_MS) {
-      voiceLog.error(`[VoiceSession] DUPLICATE_START_WARNING chatSessionId=${chatSessionId} firstRequestId=${existing.requestId} secondRequestId=${requestId} ageMs=${ageMs} — task-923 invariant: two /api/voice/start calls within ${START_DUPLICATE_WARN_WINDOW_MS}ms`);
-    }
-    return { acquired: false, existing };
-  }
-  let resolveFn!: (v: { sessionId: string | null; ok: boolean }) => void;
-  const done = new Promise<{ sessionId: string | null; ok: boolean }>((resolve) => { resolveFn = resolve; });
-  const slot: StartSingleFlight = {
-    startedAt: Date.now(),
-    requestId,
-    done,
-    resolve: resolveFn,
-  };
-  startInflightByChat.set(chatSessionId, slot);
-  // Auto-release after timeout to avoid permanent locks on crash.
-  setTimeout(() => {
-    if (startInflightByChat.get(chatSessionId) === slot) {
-      voiceLog.warn(`[VoiceSession] START_LOCK_TIMEOUT chatSessionId=${chatSessionId} requestId=${requestId} — releasing after ${START_LOCK_TIMEOUT_MS}ms`);
-      startInflightByChat.delete(chatSessionId);
-      slot.resolve({ sessionId: null, ok: false });
-    }
-  }, START_LOCK_TIMEOUT_MS).unref?.();
-  return { acquired: true };
-}
-
-function releaseStartLock(chatSessionId: string, result: { sessionId: string | null; ok: boolean }): void {
-  const slot = startInflightByChat.get(chatSessionId);
-  if (!slot) return;
-  startInflightByChat.delete(chatSessionId);
-  slot.resolve(result);
-}
-
 
 
 async function ensureAgentSetup(): Promise<void> {
@@ -563,12 +502,17 @@ export async function registerVoiceSessionRoutes(app: Express) {
 
   async function handleFastReconnect(
     chatSessionId: string,
+    previousLeaseSessionId: string | null,
     _sendPhaseEvent: (phase: string, status: "started" | "done" | "error", elapsedMs?: number) => void,
   ): Promise<{ assembled: { systemPrompt: string } | null; previousSessionId: string; previousTurnCount: number } | null> {
-    const { findSessionForChat } = await import("../voice-llm");
-    const prevSession = findSessionForChat(chatSessionId);
-    if (!prevSession) {
-      voiceLog.warn(`[fast-reconnect] no previous session found for chatSessionId=${chatSessionId}`);
+    if (!previousLeaseSessionId) {
+      voiceLog.warn(`[fast-reconnect] no previous durable lease found for chatSessionId=${chatSessionId}`);
+      return null;
+    }
+    const { getVoiceSession } = await import("../voice-llm");
+    const prevSession = getVoiceSession(previousLeaseSessionId);
+    if (!prevSession || prevSession.chatSessionId !== chatSessionId) {
+      voiceLog.warn(`[fast-reconnect] previous durable lease is not owned by this process chatSessionId=${chatSessionId} previousSessionId=${previousLeaseSessionId}`);
       return null;
     }
     const previousSessionId = prevSession.id;
@@ -637,6 +581,13 @@ export async function registerVoiceSessionRoutes(app: Express) {
     const chatSessionId: string | null = req.body.chatSessionId || null;
     const isReconnect = !!req.body.isReconnect;
 
+    if (!chatSessionId) {
+      return res.status(400).json({ error: "chatSessionId is required to start voice" });
+    }
+    if (req.principal?.actorType !== "user" || !req.principal.userId || !req.principal.accountId) {
+      return res.status(401).json({ error: "Authenticated user principal required to start voice" });
+    }
+
     voiceLog.log(`start request requestId=${requestId} chatSessionId=${chatSessionId || "(new)"} origin=${origin} mobile=${isMobile} stream=${!!wantsStream} isReconnect=${isReconnect}`);
 
     // ---- Pre-await error checks (must run BEFORE any res.writeHead). ----
@@ -648,45 +599,6 @@ export async function registerVoiceSessionRoutes(app: Express) {
         return res.end(JSON.stringify({ error: "Agent not configured — set ELEVENLABS_AGENT_ID in Settings → Connections" }));
       }
       return res.status(400).json({ error: "Agent not configured — set ELEVENLABS_AGENT_ID in Settings → Connections" });
-    }
-
-    // ---- Server-side single-flight (task-923 step 1c). ----
-    // Concurrent /api/voice/start calls for the same chatSessionId must
-    // converge on a single voice session. The second caller awaits the
-    // first's outcome and returns 409 + the first's sessionId.
-    let duplicateOfSessionId: string | null = null;
-    if (chatSessionId) {
-      const lock = acquireStartLock(chatSessionId, requestId);
-      if (!lock.acquired && lock.existing) {
-        try {
-          const result = await Promise.race([
-            lock.existing.done,
-            new Promise<{ sessionId: string | null; ok: boolean }>((resolve) =>
-              setTimeout(() => resolve({ sessionId: null, ok: false }), 15_000).unref?.()
-            ),
-          ]);
-          duplicateOfSessionId = result.sessionId;
-          voiceLog.warn(`start single-flight: duplicate request requestId=${requestId} chatSessionId=${chatSessionId} converged on primarySession=${duplicateOfSessionId || "(unknown)"}`);
-        } catch (err: unknown) {
-          voiceLog.warn(`start single-flight: await of primary failed requestId=${requestId}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-        if (wantsStream) {
-          res.writeHead(409, { "Content-Type": "application/json" });
-          return res.end(JSON.stringify({
-            error: "duplicate_start",
-            requestId,
-            sessionId: duplicateOfSessionId,
-            chatSessionId,
-            message: "A start for this chatSessionId is already in flight; reuse the primary session.",
-          }));
-        }
-        return res.status(409).json({
-          error: "duplicate_start",
-          requestId,
-          sessionId: duplicateOfSessionId,
-          chatSessionId,
-        });
-      }
     }
 
     // ---- Now safe to write SSE headers. CRITICAL: must happen BEFORE
@@ -742,19 +654,104 @@ export async function registerVoiceSessionRoutes(app: Express) {
       }
     }
 
-    // Send the immediate engine_setup "started" event so the wire is
-    // never silent during the slow ensureAgentSetup path.
-    sendPhaseEvent("engine_setup", "started");
+    // Send the immediate lease_claim phase so upstream layers never retry a
+    // silent request while PostgreSQL chooses the authoritative starter.
+    sendPhaseEvent("lease_claim", "started");
 
     try {
+      const { generateVoiceSessionId } = await import("../voice-llm");
+      sessionId = generateVoiceSessionId();
+      const leaseClaim = await storage.claimVoiceSessionActive({
+        sessionId,
+        chatSessionId,
+        requestId,
+        bootId: eventBus.bootId,
+        principal: req.principal,
+        reconnect: isReconnect,
+      });
+      if (leaseClaim.outcome === "conflict") {
+        const existingSessionId = leaseClaim.lease.sessionId;
+        voiceLog.warn(`voice lease claim conflict requestId=${requestId} chatSessionId=${chatSessionId} existingSessionId=${existingSessionId}`);
+        if (wantsStream) {
+          sendSSE({
+            type: "error",
+            error: "duplicate_start",
+            requestId,
+            sessionId: existingSessionId,
+            chatSessionId,
+            message: "An active voice session already owns this conversation.",
+          });
+          res.end();
+        } else {
+          res.status(409).json({ error: "duplicate_start", requestId, sessionId: existingSessionId, chatSessionId });
+        }
+        return;
+      }
+      if (leaseClaim.outcome === "existing") {
+        if (leaseClaim.lease.status !== "active") {
+          const terminalPayload = {
+            error: "start_request_finalized",
+            requestId,
+            sessionId: leaseClaim.lease.sessionId,
+            chatSessionId,
+            status: leaseClaim.lease.status,
+          };
+          voiceLog.warn(`voice start replay rejected for terminal request requestId=${requestId} sessionId=${leaseClaim.lease.sessionId} status=${leaseClaim.lease.status}`);
+          if (wantsStream) {
+            sendSSE({ type: "error", ...terminalPayload });
+            res.end();
+          } else {
+            res.status(409).json(terminalPayload);
+          }
+          return;
+        }
+        currentPhase = "lease_replay";
+        phaseStartMs = Date.now();
+        sendPhaseEvent("lease_replay", "started");
+        const replayDeadline = Date.now() + 30_000;
+        let replayLease = leaseClaim.lease;
+        while (!replayLease.startReadyAt || !replayLease.startResponse) {
+          if (Date.now() >= replayDeadline) {
+            throw new Error("Timed out waiting for the authoritative voice start response");
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          const refreshed = await storage.getVoiceSessionStartByRequest(requestId, req.principal);
+          if (!refreshed) {
+            throw new Error("The authoritative voice start failed before completion");
+          }
+          replayLease = refreshed;
+        }
+        const replayMetadata = replayLease.startResponse as Record<string, unknown>;
+        const { getSignedUrl: getReplaySignedUrl } = await import("../elevenlabs");
+        const replaySignedUrl = await getReplaySignedUrl(elAgentId);
+        const replayPayload = {
+          ...replayMetadata,
+          signedUrl: replaySignedUrl,
+          replayed: true,
+        };
+        sendPhaseEvent("lease_replay", "done", Date.now() - phaseStartMs);
+        voiceLog.log(`voice start replay complete requestId=${requestId} sessionId=${replayLease.sessionId} freshCredential=true`);
+        if (wantsStream) {
+          sendSSE({ type: "complete", ...replayPayload });
+          res.end();
+        } else {
+          res.json(replayPayload);
+        }
+        return;
+      }
+      const replacedLeaseSessionId = leaseClaim.replacedSessionId;
+      sendPhaseEvent("lease_claim", "done", Date.now() - phaseStartMs);
+      voiceLog.log(`voice lease claimed requestId=${requestId} sessionId=${sessionId} chatSessionId=${chatSessionId} replacedSessionId=${replacedLeaseSessionId || "(none)"}`);
+
+      currentPhase = "engine_setup";
+      phaseStartMs = Date.now();
+      sendPhaseEvent("engine_setup", "started");
       const engineSetupStart = Date.now();
       await ensureAgentSetup();
       sendPhaseEvent("engine_setup", "done", Date.now() - engineSetupStart);
 
       const { getCachedVoiceId, getSignedUrl } = await import("../elevenlabs");
-      const { generateVoiceSessionId, createVoiceSession, resumeVoiceSession, endSessionsForChat } = await import("../voice-llm");
-
-      sessionId = generateVoiceSessionId();
+      const { createVoiceSession, resumeVoiceSession, endSessionsForChat } = await import("../voice-llm");
       const voiceId = getCachedVoiceId();
 
       let contextElapsed = 0;
@@ -764,7 +761,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
       let previousTurnCount = 0;
 
       if (isReconnect && chatSessionId) {
-        const reconnectResult = await handleFastReconnect(chatSessionId, sendPhaseEvent);
+        const reconnectResult = await handleFastReconnect(chatSessionId, replacedLeaseSessionId, sendPhaseEvent);
         if (reconnectResult) {
           usedFastReconnect = true;
           assembled = reconnectResult.assembled;
@@ -869,11 +866,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
         session = createVoiceSession(chatSessionId || undefined, undefined, sessionId, chatSessionKey || undefined, isReconnect);
       }
 
-      // Voice is user-owned. The durable lease and in-memory session must share
-      // the same exact Principal before the provider can receive a signed URL.
-      if (req.principal?.actorType !== "user" || !req.principal.userId || !req.principal.accountId) {
-        throw new Error("Authenticated user principal required to start voice");
-      }
+      // The in-memory session inherits the same Principal that won the durable claim.
       session.principal = req.principal;
 
       if (assembled) {
@@ -917,9 +910,6 @@ export async function registerVoiceSessionRoutes(app: Express) {
             voiceLog.warn(`fire-and-forget persistVoiceSystemSteps failed: ${err instanceof Error ? err.message : String(err)}`);
           });
       }
-
-      await storage.createVoiceSessionActive(sessionId, chatSessionId, eventBus.bootId, session.principal);
-      voiceLog.log(`persisted owned voice_session_active row sessionId=${sessionId} chatSessionId=${chatSessionId} ownerUserId=${session.principal.userId} accountId=${session.principal.accountId}`);
 
       const timings = {
         context_assembly_voice: contextElapsed,
@@ -996,8 +986,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
       const sessionPersona = chatSessionId
         ? await (await import("../session-persona")).resolveSessionPersonaSnapshot(chatSessionId)
         : undefined;
-      const payload = {
-        signedUrl,
+      const replayMetadata = {
         agentId: elAgentId,
         voiceId,
         sessionId,
@@ -1008,6 +997,11 @@ export async function registerVoiceSessionRoutes(app: Express) {
         ...(serverTranscript ? { serverTranscript } : {}),
         ...(firstMessage ? { firstMessage } : {}),
       };
+      const completedLease = await storage.completeVoiceSessionStart(sessionId!, eventBus.bootId, replayMetadata);
+      if (!completedLease) {
+        throw new Error("Voice start lease disappeared before completion");
+      }
+      const payload = { signedUrl, ...replayMetadata };
 
       if (wantsStream) {
         sendSSE({ type: "complete", ...payload });
@@ -1015,7 +1009,6 @@ export async function registerVoiceSessionRoutes(app: Express) {
       } else {
         res.json(payload);
       }
-      if (chatSessionId) releaseStartLock(chatSessionId, { sessionId: sessionId!, ok: true });
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : String(error);
       const errStack = error instanceof Error ? error.stack?.split("\n").slice(0, 3).join(" | ") : undefined;
@@ -1037,7 +1030,6 @@ export async function registerVoiceSessionRoutes(app: Express) {
       } else {
         res.status(500).json({ error: errMsg });
       }
-      if (chatSessionId) releaseStartLock(chatSessionId, { sessionId: sessionId || null, ok: false });
     }
   });
 
