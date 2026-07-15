@@ -288,7 +288,6 @@ async function repairLegacyPersonalOwnership(userId: string, accountId: string):
       "skill_failure_dismissals",
       "system_hooks",
       "calendar_event_metadata",
-      "calendar_event_tasks",
       "calendar_event_people",
       "calendar_event_artifacts",
       "email_messages",

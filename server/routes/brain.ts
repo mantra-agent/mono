@@ -47,7 +47,6 @@ import {
   emailSyncCursors,
   emailSyncLog,
   calendarEventMetadata,
-  calendarEventTasks,
   calendarEventPeople,
   calendarEventArtifacts,
   sessionTree,
@@ -253,7 +252,6 @@ export const TABLE_REGISTRY: TableRegistryEntry[] = [
   { key: "email_sync_log", table: emailSyncLog, domain: "email", hasSerial: true },
 
   { key: "calendar_event_metadata", table: calendarEventMetadata, domain: "calendar", hasSerial: true },
-  { key: "calendar_event_tasks", table: calendarEventTasks, domain: "calendar", hasSerial: true, dependsOn: ["calendar_event_metadata"] },
   { key: "calendar_event_people", table: calendarEventPeople, domain: "calendar", hasSerial: true, dependsOn: ["calendar_event_metadata"] },
   { key: "calendar_event_artifacts", table: calendarEventArtifacts, domain: "calendar", hasSerial: true, dependsOn: ["calendar_event_metadata", "library_pages"] },
 

@@ -1,11 +1,9 @@
 import { db } from "./db";
 import {
   calendarEventMetadata,
-  calendarEventTasks,
   calendarEventPeople,
   calendarEventArtifacts,
   type CalendarEventMetadata,
-  type CalendarEventTask,
   type CalendarEventPerson,
   type CalendarEventArtifact,
 } from "@shared/schema";
@@ -22,7 +20,6 @@ const log = createLogger("CalendarMetadata");
 
 const _calendarCache = new TTLCache<any>("CalendarMetadata", Infinity);
 const calendarMetadataOwnerColumns = { ownerUserId: calendarEventMetadata.ownerUserId, principalAccountId: calendarEventMetadata.principalAccountId, vaultId: calendarEventMetadata.vaultId };
-const calendarTaskOwnerColumns = { ownerUserId: calendarEventTasks.ownerUserId, principalAccountId: calendarEventTasks.principalAccountId, vaultId: calendarEventTasks.vaultId };
 const calendarPeopleOwnerColumns = { ownerUserId: calendarEventPeople.ownerUserId, principalAccountId: calendarEventPeople.principalAccountId, vaultId: calendarEventPeople.vaultId };
 const calendarArtifactOwnerColumns = { ownerUserId: calendarEventArtifacts.ownerUserId, principalAccountId: calendarEventArtifacts.principalAccountId, vaultId: calendarEventArtifacts.vaultId };
 function principalCacheKey(): string {
@@ -251,43 +248,6 @@ export async function setMetadata(
   return meta;
 }
 
-// ─── linkTask ───
-
-export async function linkTask(
-  metadataId: number,
-  taskId?: number,
-  priorityTitle?: string,
-  taskTitle?: string,
-  estimateHours?: number
-): Promise<CalendarEventTask> {
-  log.log(`linkTask metadataId=${metadataId} taskId=${taskId} priorityTitle=${priorityTitle}`);
-  const rows = await db
-    .insert(calendarEventTasks)
-    .values({
-      metadataId,
-      taskId: taskId ?? null,
-      priorityTitle: priorityTitle ?? null,
-      taskTitle: taskTitle ?? null,
-      estimateHours: estimateHours ?? null,
-      createdAt: sql`CURRENT_TIMESTAMP`,
-      updatedAt: sql`CURRENT_TIMESTAMP`,
-      ...sensitiveOwnershipValues(),
-    })
-    .onConflictDoUpdate({
-      target: taskId != null
-        ? [calendarEventTasks.metadataId, calendarEventTasks.taskId]
-        : [calendarEventTasks.metadataId, calendarEventTasks.priorityTitle],
-      set: {
-        taskTitle: taskTitle ?? null,
-        estimateHours: estimateHours ?? null,
-        ...sensitiveOwnershipValues(),
-      },
-    })
-    .returning();
-  invalidateCalendarCache();
-  return rows[0];
-}
-
 // ─── Agent auto-join policy materialization and per-event override ───
 
 export type AgentJoinStatus = "scheduled" | "no_link" | "joined" | "failed";
@@ -412,37 +372,6 @@ export async function updateAgentJoinOutcome(metadataId: number, patch: AgentJoi
     .where(eq(calendarEventMetadata.id, metadataId));
   invalidateCalendarCache();
 }
-
-// ─── getLinkedTaskById ───
-
-export async function getLinkedTaskById(linkId: number): Promise<CalendarEventTask | null> {
-  const rows = await db.select().from(calendarEventTasks).where(combineWithSensitiveVisible(calendarTaskOwnerColumns, eq(calendarEventTasks.id, linkId))).limit(1);
-  return rows[0] ?? null;
-}
-
-// ─── unlinkTask ───
-
-export async function unlinkTask(linkId: number): Promise<void> {
-  log.log(`unlinkTask linkId=${linkId}`);
-  await db.delete(calendarEventTasks).where(combineWithSensitiveWritable(calendarTaskOwnerColumns, eq(calendarEventTasks.id, linkId)));
-  invalidateCalendarCache();
-}
-
-// ─── getLinkedTasks ───
-
-export async function getLinkedTasks(metadataId: number): Promise<CalendarEventTask[]> {
-  return _calendarCache.getOrFetch(`linkedTasks:${principalCacheKey()}:${metadataId}`, async () => {
-    return db.select().from(calendarEventTasks).where(combineWithSensitiveVisible(calendarTaskOwnerColumns, eq(calendarEventTasks.metadataId, metadataId)));
-  });
-}
-
-// ─── getLinkedTasksByMetadataIds (bulk) ───
-
-export async function getLinkedTasksByMetadataIds(metadataIds: number[]): Promise<CalendarEventTask[]> {
-  if (metadataIds.length === 0) return [];
-  return db.select().from(calendarEventTasks).where(combineWithSensitiveVisible(calendarTaskOwnerColumns, inArray(calendarEventTasks.metadataId, metadataIds)));
-}
-
 
 // ─── linkArtifact ───
 

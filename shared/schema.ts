@@ -962,30 +962,6 @@ export const insertCalendarEventMetadataSchema = createInsertSchema(calendarEven
 export type CalendarEventMetadata = typeof calendarEventMetadata.$inferSelect;
 export type InsertCalendarEventMetadata = z.infer<typeof insertCalendarEventMetadataSchema>;
 
-export const calendarEventTasks = pgTable("calendar_event_tasks", {
-  id: serial("id").primaryKey(),
-  metadataId: integer("metadata_id").notNull().references(() => calendarEventMetadata.id, { onDelete: "cascade" }),
-  ownerUserId: text("owner_user_id"),
-  principalAccountId: text("principal_account_id"),
-  vaultId: text("vault_id"),
-  taskId: integer("task_id"),
-  priorityTitle: text("priority_title"),
-  taskTitle: text("task_title"),
-  estimateHours: integer("estimate_hours"),
-  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-}, (table) => [
-  unique("calendar_event_tasks_metadata_task_unique").on(table.metadataId, table.taskId),
-  unique("calendar_event_tasks_metadata_priority_unique").on(table.metadataId, table.priorityTitle),
-]);
-
-export const insertCalendarEventTaskSchema = createInsertSchema(calendarEventTasks).omit({
-  id: true,
-  createdAt: true,
-});
-
-export type CalendarEventTask = typeof calendarEventTasks.$inferSelect;
-export type InsertCalendarEventTask = z.infer<typeof insertCalendarEventTaskSchema>;
-
 export const calendarEventPeople = pgTable("calendar_event_people", {
   id: serial("id").primaryKey(),
   metadataId: integer("metadata_id").notNull().references(() => calendarEventMetadata.id, { onDelete: "cascade" }),

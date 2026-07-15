@@ -1297,53 +1297,6 @@ export async function runSchemaBootstrap(
             WHERE person.metadata_id = duplicate_links.id;
           END IF;
 
-          IF to_regclass('public.calendar_event_tasks') IS NOT NULL THEN
-            WITH ranked AS (
-              SELECT
-                id,
-                MIN(id) OVER (PARTITION BY google_event_id, account_id, calendar_id) AS keep_id,
-                ROW_NUMBER() OVER (PARTITION BY google_event_id, account_id, calendar_id ORDER BY id) AS rn
-              FROM calendar_event_metadata
-            ), duplicate_links AS (
-              SELECT id, keep_id
-              FROM ranked
-              WHERE rn > 1
-            )
-            DELETE FROM calendar_event_tasks task
-            USING duplicate_links
-            WHERE task.metadata_id = duplicate_links.id
-              AND (
-                (task.task_id IS NOT NULL AND EXISTS (
-                  SELECT 1
-                  FROM calendar_event_tasks kept
-                  WHERE kept.metadata_id = duplicate_links.keep_id
-                    AND kept.task_id = task.task_id
-                ))
-                OR
-                (task.priority_title IS NOT NULL AND EXISTS (
-                  SELECT 1
-                  FROM calendar_event_tasks kept
-                  WHERE kept.metadata_id = duplicate_links.keep_id
-                    AND kept.priority_title = task.priority_title
-                ))
-              );
-
-            WITH ranked AS (
-              SELECT
-                id,
-                MIN(id) OVER (PARTITION BY google_event_id, account_id, calendar_id) AS keep_id,
-                ROW_NUMBER() OVER (PARTITION BY google_event_id, account_id, calendar_id ORDER BY id) AS rn
-              FROM calendar_event_metadata
-            ), duplicate_links AS (
-              SELECT id, keep_id
-              FROM ranked
-              WHERE rn > 1
-            )
-            UPDATE calendar_event_tasks task
-            SET metadata_id = duplicate_links.keep_id
-            FROM duplicate_links
-            WHERE task.metadata_id = duplicate_links.id;
-          END IF;
 
           WITH ranked AS (
             SELECT
@@ -1366,13 +1319,6 @@ export async function runSchemaBootstrap(
             ALTER TABLE calendar_event_artifacts ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;
             UPDATE calendar_event_artifacts SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL;
             UPDATE calendar_event_artifacts SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL;
-          END IF;
-
-          IF to_regclass('public.calendar_event_tasks') IS NOT NULL THEN
-            ALTER TABLE calendar_event_tasks ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;
-            ALTER TABLE calendar_event_tasks ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;
-            UPDATE calendar_event_tasks SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL;
-            UPDATE calendar_event_tasks SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL;
           END IF;
 
           IF to_regclass('public.calendar_event_people') IS NOT NULL THEN
@@ -1493,12 +1439,6 @@ export async function runSchemaBootstrap(
     await pool.query(`
       DO $migration$
       BEGIN
-        IF to_regclass('public.calendar_event_tasks') IS NOT NULL THEN
-          ALTER TABLE calendar_event_tasks ADD COLUMN IF NOT EXISTS owner_user_id TEXT;
-          ALTER TABLE calendar_event_tasks ADD COLUMN IF NOT EXISTS principal_account_id TEXT;
-          CREATE INDEX IF NOT EXISTS idx_calendar_event_tasks_owner ON calendar_event_tasks(owner_user_id);
-          CREATE INDEX IF NOT EXISTS idx_calendar_event_tasks_principal_account ON calendar_event_tasks(principal_account_id);
-        END IF;
         IF to_regclass('public.calendar_event_people') IS NOT NULL THEN
           ALTER TABLE calendar_event_people ADD COLUMN IF NOT EXISTS owner_user_id TEXT;
           ALTER TABLE calendar_event_people ADD COLUMN IF NOT EXISTS principal_account_id TEXT;
@@ -1546,14 +1486,6 @@ export async function runSchemaBootstrap(
                 account_id = COALESCE(ps.account_id, pe.account_id, ray_account_id)
             FROM plan_executions pe
             WHERE ps.plan_id = pe.id AND (ps.owner_user_id IS NULL OR ps.account_id IS NULL);
-          END IF;
-
-          IF to_regclass('public.calendar_event_tasks') IS NOT NULL AND to_regclass('public.calendar_event_metadata') IS NOT NULL THEN
-            UPDATE calendar_event_tasks cet
-            SET owner_user_id = COALESCE(cet.owner_user_id, cem.owner_user_id),
-                principal_account_id = COALESCE(cet.principal_account_id, cem.principal_account_id)
-            FROM calendar_event_metadata cem
-            WHERE cet.metadata_id = cem.id AND (cet.owner_user_id IS NULL OR cet.principal_account_id IS NULL);
           END IF;
           IF to_regclass('public.calendar_event_people') IS NOT NULL AND to_regclass('public.calendar_event_metadata') IS NOT NULL THEN
             UPDATE calendar_event_people cep

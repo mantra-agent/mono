@@ -1239,7 +1239,7 @@ async function fetchCalendarData(): Promise<string> {
 
   const sections: string[] = [];
 
-  const { listMetadataByEvents, getLinkedTasksByMetadataIds, getLinkedPeopleByMetadataIds, makeMetaKey } = await import("./calendar-metadata");
+  const { listMetadataByEvents, getLinkedPeopleByMetadataIds, makeMetaKey } = await import("./calendar-metadata");
 
   const allEvents = [...weekEvents, ...monthEvents];
   const eventIdentities = allEvents
@@ -1247,21 +1247,11 @@ async function fetchCalendarData(): Promise<string> {
     .map(e => ({ googleEventId: e.id, accountId: e.accountId, calendarId: e.calendarId }));
   const allMeta = await listMetadataByEvents(eventIdentities).catch(() => []);
   const metaIds = allMeta.map(m => m.id);
-  const [allLinkedTasks, allLinkedPeople] = await Promise.all([
-    getLinkedTasksByMetadataIds(metaIds).catch(() => []),
-    getLinkedPeopleByMetadataIds(metaIds).catch(() => []),
-  ]);
+  const allLinkedPeople = await getLinkedPeopleByMetadataIds(metaIds).catch(() => []);
 
-  type CalMeta = typeof allMeta[number];
-  type CalTask = typeof allLinkedTasks[number];
   type CalPerson = typeof allLinkedPeople[number];
 
   const metaByKey = new Map(allMeta.map(m => [makeMetaKey(m.googleEventId, m.accountId, m.calendarId), m]));
-  const tasksByMetaId = new Map<number, CalTask[]>();
-  for (const t of allLinkedTasks) {
-    if (!tasksByMetaId.has(t.metadataId)) tasksByMetaId.set(t.metadataId, []);
-    tasksByMetaId.get(t.metadataId)!.push(t);
-  }
   const peopleByMetaId = new Map<number, CalPerson[]>();
   for (const p of allLinkedPeople) {
     if (!peopleByMetaId.has(p.metadataId)) peopleByMetaId.set(p.metadataId, []);
@@ -1271,40 +1261,14 @@ async function fetchCalendarData(): Promise<string> {
   const buildAnnotation = (eventId: string, accountId: string, calendarId: string): string => {
     const meta = metaByKey.get(makeMetaKey(eventId, accountId, calendarId));
     if (!meta) return "";
-    const linkedTasks = tasksByMetaId.get(meta.id) || [];
     const linkedPeople = peopleByMetaId.get(meta.id) || [];
     if (meta.eventType === "meeting" && linkedPeople.length > 0) {
       return ` [meeting — ${linkedPeople.map(p => p.personName).join(", ")}]`;
-    }
-    if (linkedTasks.length > 0) {
-      const taskLabels = linkedTasks.map(t => {
-        const label = t.taskTitle || t.priorityTitle || `Task #${t.taskId}`;
-        const hrs = t.estimateHours ? ` (~${t.estimateHours}h)` : "";
-        return `${label}${hrs}`;
-      }).join(", ");
-      return ` [${meta.eventType} → ${taskLabels}]`;
     }
     return ` [${meta.eventType}]`;
   };
 
   if (weekEvents.length > 0) {
-    const focusBlocks = weekEvents.filter(e => metaByKey.get(makeMetaKey(e.id, e.accountId, e.calendarId))?.eventType === "focus_block");
-    const assignedFocusHours = focusBlocks.reduce((sum, e) => {
-      const start = new Date(e.start?.dateTime || e.start?.date || 0).getTime();
-      const end = new Date(e.end?.dateTime || e.end?.date || 0).getTime();
-      return sum + (end - start) / 3600000;
-    }, 0);
-    const assignedTaskHours = focusBlocks.reduce((sum, e) => {
-      const meta = metaByKey.get(makeMetaKey(e.id, e.accountId, e.calendarId));
-      if (!meta) return sum;
-      const tasks = tasksByMetaId.get(meta.id) ?? [];
-      return sum + tasks.reduce((s, t) => s + (t.estimateHours ?? 0), 0);
-    }, 0);
-    const unassignedBlocks = focusBlocks.filter(e => {
-      const meta = metaByKey.get(makeMetaKey(e.id, e.accountId, e.calendarId));
-      return !meta || (tasksByMetaId.get(meta.id) ?? []).length === 0;
-    });
-
     const eventLines = weekEvents.slice(0, 15).map(e => {
       const attendees = (e.attendees || []).filter((a: any) => !a.self).map((a: any) => a.displayName || a.email).slice(0, 5);
       const attendeeStr = attendees.length > 0 ? ` (with ${attendees.join(", ")})` : "";
@@ -1316,12 +1280,6 @@ async function fetchCalendarData(): Promise<string> {
 
     let weekSection = `### Upcoming (next 7 days)\n${eventLines.join("\n")}\n\n⚑ = high-prep event`;
 
-    if (focusBlocks.length > 0) {
-      weekSection += `\n\n**Focus Block Utilization:** ${assignedTaskHours.toFixed(1)}h assigned / ${assignedFocusHours.toFixed(1)}h total`;
-      if (unassignedBlocks.length > 0) {
-        weekSection += `\nUnassigned focus blocks: ${unassignedBlocks.map(e => formatTime(e.start?.dateTime || e.start?.date || "")).join(", ")}`;
-      }
-    }
 
     sections.push(weekSection);
   }

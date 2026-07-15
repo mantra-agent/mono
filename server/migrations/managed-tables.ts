@@ -18,7 +18,6 @@ export const MANAGED_TABLES: string[] = [
   "calendar_event_metadata",
   "calendar_event_artifacts",
   "calendar_event_people",
-  "calendar_event_tasks",
   "captures",
   "code_embeddings",
   "connected_accounts",

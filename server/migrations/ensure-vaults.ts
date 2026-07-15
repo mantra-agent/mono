@@ -97,7 +97,6 @@ export async function ensureVaults(): Promise<void> {
       "signal_items",
       // Phase 2: Calendar
       "calendar_event_metadata",
-      "calendar_event_tasks",
       "calendar_event_people",
       "calendar_event_artifacts",
       // Phase 2: People
@@ -218,7 +217,6 @@ export async function ensureVaults(): Promise<void> {
       { table: "connected_accounts", accountCol: "principal_account_id" },
       // Phase 2: Calendar (use account_id)
       { table: "calendar_event_metadata", accountCol: "account_id" },
-      { table: "calendar_event_tasks", accountCol: "principal_account_id" },
       { table: "calendar_event_people", accountCol: "principal_account_id" },
       { table: "calendar_event_artifacts", accountCol: "principal_account_id" },
       // Phase 2: People (use account_id)

@@ -105,17 +105,6 @@ CREATE TABLE IF NOT EXISTS calendar_event_metadata (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT calendar_event_metadata_event_account_calendar_unique UNIQUE (google_event_id, account_id, calendar_id)
 );
-CREATE TABLE IF NOT EXISTS calendar_event_tasks (
-  id SERIAL PRIMARY KEY,
-  metadata_id INTEGER NOT NULL REFERENCES calendar_event_metadata(id) ON DELETE CASCADE,
-  task_id INTEGER,
-  priority_title TEXT,
-  task_title TEXT,
-  estimate_hours INTEGER,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT calendar_event_tasks_metadata_task_unique UNIQUE (metadata_id, task_id),
-  CONSTRAINT calendar_event_tasks_metadata_priority_unique UNIQUE (metadata_id, priority_title)
-);
 CREATE TABLE IF NOT EXISTS sessions (
   id SERIAL PRIMARY KEY,
   title TEXT NOT NULL,

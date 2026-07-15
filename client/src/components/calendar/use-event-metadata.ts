@@ -17,16 +17,6 @@ export interface EventMetadataRecord {
   agenda: string | null;
 }
 
-export interface LinkedTaskRef {
-  id: number;
-  taskId: number | null;
-  priorityTitle: string | null;
-  taskTitle?: string;
-  taskPriority?: string;
-  estimateLow?: number | null;
-  estimateHigh?: number | null;
-}
-
 export interface LinkedPersonRef {
   id: string;
   name: string;
@@ -48,14 +38,12 @@ export interface LinkedArtifactRef {
 
 export interface EventMetadataQueryData {
   metadata: EventMetadataRecord | null;
-  tasks: LinkedTaskRef[];
   people: LinkedPersonRef[];
   artifacts: LinkedArtifactRef[];
 }
 
 const EMPTY_EVENT_METADATA: EventMetadataQueryData = {
   metadata: null,
-  tasks: [],
   people: [],
   artifacts: [],
 };
@@ -86,7 +74,6 @@ export function useEventMetadata(
       const data = await res.json();
       return {
         metadata: data.metadata ?? null,
-        tasks: data.tasks ?? [],
         people: data.people ?? [],
         artifacts: data.artifacts ?? [],
       };
