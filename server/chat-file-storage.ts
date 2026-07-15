@@ -1071,6 +1071,7 @@ export interface IChatFileStorage {
       thinking?: string;
       toolCalls?: unknown;
       model?: string;
+      persona?: PersonaSnapshot;
       systemSteps?: SystemStepRecord[];
       cost?: number;
       apiCallCount?: number;
@@ -1898,6 +1899,7 @@ export const chatFileStorage: IChatFileStorage = {
       thinking?: string;
       toolCalls?: unknown;
       model?: string;
+      persona?: PersonaSnapshot;
       systemSteps?: SystemStepRecord[];
       cost?: number;
       apiCallCount?: number;
@@ -1932,6 +1934,7 @@ export const chatFileStorage: IChatFileStorage = {
       if (updates.toolCalls !== undefined)
         msg.toolCalls = updates.toolCalls || null;
       if (updates.model !== undefined) msg.model = updates.model || null;
+      if (updates.persona !== undefined) msg.persona = updates.persona;
       if (updates.systemSteps !== undefined)
         msg.systemSteps =
           updates.systemSteps.length > 0 ? updates.systemSteps : null;

@@ -706,8 +706,47 @@ function createMcpTools(
   pendingToolCallIdQueue: string[],
   sdkToolFn: typeof import("@anthropic-ai/claude-agent-sdk").tool,
   notifyToolEvent?: () => void,
+  requestContinuationHandoff?: (toolCallId: string, continuation: "persona_switch") => Promise<void>,
 ) {
   let toolCallCounter = 0;
+  let activeToolExecutions = 0;
+  let toolActivityGeneration = 0;
+  let pendingContinuation: {
+    toolCallId: string;
+    continuation: "persona_switch";
+    resolve: () => void;
+  } | null = null;
+  let continuationHandoffScheduled = false;
+  let correlationWaitStartedAt: number | null = null;
+  const scheduleContinuationHandoff = () => {
+    if (continuationHandoffScheduled || !pendingContinuation) return;
+    continuationHandoffScheduled = true;
+    const observedGeneration = toolActivityGeneration;
+    setTimeout(async () => {
+      continuationHandoffScheduled = false;
+      if (!pendingContinuation) return;
+      if (activeToolExecutions > 0 || observedGeneration !== toolActivityGeneration) {
+        scheduleContinuationHandoff();
+        return;
+      }
+      if (correlationWaitStartedAt === null) correlationWaitStartedAt = Date.now();
+      if (pendingToolCallIdQueue.length > 0 && Date.now() - correlationWaitStartedAt < 500) {
+        scheduleContinuationHandoff();
+        return;
+      }
+      if (pendingToolCallIdQueue.length > 0) {
+        log.warn(`cliSdkStream: bounded stale correlation wait expired pendingIds=${pendingToolCallIdQueue.length}`);
+      }
+      correlationWaitStartedAt = null;
+      const handoff = pendingContinuation;
+      pendingContinuation = null;
+      try {
+        await requestContinuationHandoff?.(handoff.toolCallId, handoff.continuation);
+      } finally {
+        handoff.resolve();
+      }
+    }, 25);
+  };
 
   return toolDefs.map((def) => {
     const zodShape = toolDefToZodShape(def);
@@ -716,7 +755,8 @@ function createMcpTools(
       def.description,
       zodShape,
       async (args: Record<string, unknown>) => {
-        const callId = pendingToolCallIdQueue.shift() || `sdk-tool-${Date.now()}-${toolCallCounter++}`;
+        const invocationOrder = toolCallCounter++;
+        const callId = pendingToolCallIdQueue.shift() || `sdk-tool-${Date.now()}-${invocationOrder}`;
 
         const HEARTBEAT_INTERVAL_MS = 15_000;
         const emitKeepalive = (reason: string) => {
@@ -732,6 +772,8 @@ function createMcpTools(
             type: "tool_result_resolved",
             toolCallId: callId,
             toolName: def.name,
+            arguments: args,
+            order: invocationOrder,
             result: errText,
             error: true,
           });
@@ -739,6 +781,16 @@ function createMcpTools(
           return { content: [{ type: "text" as const, text: errText }], isError: true };
         }
 
+        activeToolExecutions++;
+        toolActivityGeneration++;
+        let executionReleased = false;
+        const releaseExecution = () => {
+          if (executionReleased) return;
+          executionReleased = true;
+          activeToolExecutions = Math.max(0, activeToolExecutions - 1);
+          toolActivityGeneration++;
+          scheduleContinuationHandoff();
+        };
         const heartbeat = setInterval(() => emitKeepalive(`tool_exec_active:${def.name}`), HEARTBEAT_INTERVAL_MS);
         try {
           const result = await toolExecutor(def.name, args);
@@ -746,10 +798,22 @@ function createMcpTools(
             type: "tool_result_resolved",
             toolCallId: callId,
             toolName: def.name,
+            arguments: args,
+            order: invocationOrder,
             result: result.result,
             error: result.error,
+            continuation: result.continuation,
           });
-          notifyToolEvent?.();
+          if (result.continuation) {
+            await new Promise<void>((resolve) => {
+              pendingContinuation = { toolCallId: callId, continuation: result.continuation!, resolve };
+              releaseExecution();
+              notifyToolEvent?.();
+              scheduleContinuationHandoff();
+            });
+          } else {
+            notifyToolEvent?.();
+          }
           return {
             content: [{ type: "text" as const, text: result.result }],
             isError: result.error || false,
@@ -761,6 +825,8 @@ function createMcpTools(
             type: "tool_result_resolved",
             toolCallId: callId,
             toolName: def.name,
+            arguments: args,
+            order: invocationOrder,
             result: errText,
             error: true,
           });
@@ -768,6 +834,7 @@ function createMcpTools(
           return { content: [{ type: "text" as const, text: errText }], isError: true };
         } finally {
           clearInterval(heartbeat);
+          releaseExecution();
         }
       },
     );
@@ -812,8 +879,26 @@ export async function* cliSdkStream(
       toolEventResolve = null;
     }
   };
+  let continuationHandoff: {
+    toolCallId: string;
+    continuation: "persona_switch";
+    resolve: () => void;
+  } | null = null;
+  const requestContinuationHandoff = (toolCallId: string, continuation: "persona_switch") =>
+    new Promise<void>((resolve) => {
+      continuationHandoff = { toolCallId, continuation, resolve };
+      notifyToolEvent();
+    });
 
-  const sdkTools = createMcpTools(toolDefs, toolExecutor, toolResultQueue, pendingToolCallIdQueue, sdkToolFn, notifyToolEvent);
+  const sdkTools = createMcpTools(
+    toolDefs,
+    toolExecutor,
+    toolResultQueue,
+    pendingToolCallIdQueue,
+    sdkToolFn,
+    notifyToolEvent,
+    requestContinuationHandoff,
+  );
 
   const mcpServer = sdkTools.length > 0
     ? createSdkMcpServer({ name: "xyz-tools", tools: sdkTools })
@@ -1075,6 +1160,36 @@ export async function* cliSdkStream(
         createToolEventPromise();
         while (toolResultQueue.length > 0) {
           yield toolResultQueue.shift()!;
+        }
+        if (continuationHandoff) {
+          const handoff = continuationHandoff;
+          continuationHandoff = null;
+          log.debug(`cliSdkStream: controlled continuation handoff requested type=${handoff.continuation} toolCallId=${handoff.toolCallId} model=${model}`);
+          try {
+            await Promise.race([
+              q.interrupt(),
+              new Promise<never>((_, reject) => setTimeout(() => reject(new Error("continuation_interrupt_timeout")), INTERRUPT_HARD_TIMEOUT_MS)),
+            ]);
+          } catch (interruptErr: unknown) {
+            log.warn(`cliSdkStream: controlled continuation interrupt degraded model=${model}: ${interruptErr instanceof Error ? interruptErr.message : String(interruptErr)}`);
+            if (!sdkAbortController.signal.aborted) sdkAbortController.abort();
+          }
+          // interrupt() confirms the old query stopped processing. Release the MCP
+          // callback only after that boundary, then close the iterator so return()
+          // cannot deadlock waiting for the callback it is trying to unwind.
+          handoff.resolve();
+          try {
+            await Promise.race([
+              iterator?.return?.() ?? Promise.resolve({ done: true, value: undefined }),
+              new Promise<never>((_, reject) => setTimeout(() => reject(new Error("continuation_return_timeout")), INTERRUPT_HARD_TIMEOUT_MS)),
+            ]);
+          } catch (returnErr: unknown) {
+            log.warn(`cliSdkStream: controlled continuation iterator close degraded model=${model}: ${returnErr instanceof Error ? returnErr.message : String(returnErr)}`);
+            if (!sdkAbortController.signal.aborted) sdkAbortController.abort();
+          }
+          pendingIterPromise = null;
+          iterDone = true;
+          break;
         }
         continue;
       }

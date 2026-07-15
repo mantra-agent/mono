@@ -21,7 +21,7 @@ import { STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_TIMEOUT_EXTENDED_MS, COMPACTION_LLM
 import pLimit from "p-limit";
 import { withQueryAttributionAsync } from "./db";
 import { abortTrace } from "./abort-trace";
-import type { ExecutorStreamEvent } from "@shared/models/chat";
+import type { ExecutorStreamEvent, PersonaSnapshot } from "@shared/models/chat";
 import type { SegmentChronologyEntry, SystemStepRecord } from "./chat-file-storage";
 import type { StreamEvent as ModelStreamEvent, StreamMessage } from "./model-client";
 import { maybeOffloadToolOutput } from "./tool-output-artifacts";
@@ -55,7 +55,14 @@ export interface ContentBlock {
 import type { ToolDefinition } from "@shared/models/tools";
 export type { ToolDefinition };
 
-export type ToolExecutor = (name: string, args: Record<string, unknown>) => Promise<{ result: string; error?: boolean; sideEffectOnly?: boolean }>;
+export type ToolExecutorResult = {
+  result: string;
+  error?: boolean;
+  sideEffectOnly?: boolean;
+  continuation?: "persona_switch";
+};
+
+export type ToolExecutor = (name: string, args: Record<string, unknown>) => Promise<ToolExecutorResult>;
 
 export type { ExecutorStreamEvent };
 export type StreamEvent = ExecutorStreamEvent;
@@ -96,6 +103,12 @@ export interface ExecutorRunOptions {
   voiceSessionId?: string;
   /** Outer Diagnostic span created before context assembly. */
   diagnosticTurnId?: string;
+  /** Refresh prompt, routing, and visible identity after orient changes the session persona. */
+  refreshAfterPersonaSwitch?: () => Promise<{
+    routingDecision: ModelRoutingDecision;
+    systemPrompt: string;
+    persona?: PersonaSnapshot;
+  }>;
 }
 
 function toolTransfersExecutionToChild(name: string, args: Record<string, unknown>): boolean {
@@ -759,6 +772,8 @@ interface RunIterationContext {
   diagnosticLastToolBatchCompletedAt?: number;
   diagnosticHadToolErrors: boolean;
   diagnosticFailedToolCount: number;
+  personaSwitchRequested?: { toolCallId: string };
+  iterationToolCalls: Array<{ id: string; name: string; args: Record<string, unknown>; order: number }>;
 }
 
 const ZOMBIE_CHECK_INTERVAL_MS = 60_000;
@@ -1286,6 +1301,14 @@ export class AgentExecutor extends EventEmitter {
           log.error(`[ToolExec] mode=executor_owned received tool_call_resolved id=${toolCallId} name=${normalizedName} — unexpected, tracking defensively`);
           ctx.pendingToolCalls.push({ id: toolCallId, name: normalizedName, input: event.arguments || {} });
         }
+        if (!ctx.iterationToolCalls.some((call) => call.id === toolCallId)) {
+          ctx.iterationToolCalls.push({
+            id: toolCallId,
+            name: normalizedName,
+            args: (event.arguments || {}) as Record<string, unknown>,
+            order: ctx.iterationToolCalls.length,
+          });
+        }
         // Mark as SDK-handled for backwards-compat (safety net during soak period)
         ctx.sdkHandledToolIds.add(toolCallId);
         // Flush chronology buffers so thinking/content before this tool call gets its own segment
@@ -1313,7 +1336,19 @@ export class AgentExecutor extends EventEmitter {
         const cachedArgs = ctx.toolCallArgsCache.get(toolCallId || "");
         if (toolCallId) ctx.toolCallArgsCache.delete(toolCallId);
         const toolIdx = ctx.resolvedToolCalls.length;
-        ctx.resolvedToolCalls.push({ id: toolCallId, name: normalizedName || event.toolName, args: matchingCall?.input || cachedArgs || {}, result: event.result, error: event.error, durationMs: 0, parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
+        const resolvedArgs = matchingCall?.input || cachedArgs || event.arguments || {};
+        ctx.resolvedToolCalls.push({ id: toolCallId, name: normalizedName || event.toolName, args: resolvedArgs, result: event.result, error: event.error, durationMs: 0, parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
+        if (toolCallId && !ctx.iterationToolCalls.some((call) => call.id === toolCallId)) {
+          ctx.iterationToolCalls.push({
+            id: toolCallId,
+            name: normalizedName || event.toolName,
+            args: resolvedArgs,
+            order: event.order ?? ctx.iterationToolCalls.length,
+          });
+        }
+        if (event.continuation === "persona_switch" && toolCallId) {
+          ctx.personaSwitchRequested = { toolCallId };
+        }
         // Chronology: record tool entry pointing to resolvedToolCalls index
         ctx.segmentChronology.push({ s: "tool", i: toolIdx });
         ctx.publish("tool_result", { toolCallId, toolName: normalizedName, result: event.result, error: event.error ? event.result : undefined });
@@ -1345,7 +1380,7 @@ export class AgentExecutor extends EventEmitter {
     options: ExecutorRunOptions,
     messages: ExecutorMessage[],
     cleanText: string,
-  ): Promise<{ toolResults: ContentBlock[]; allSideEffectOnly: boolean }> {
+  ): Promise<{ toolResults: ContentBlock[]; allSideEffectOnly: boolean; continuation?: ToolExecutorResult["continuation"] }> {
     const assistantContent: ContentBlock[] = [];
     if (ctx.iterationThinking) {
       assistantContent.push({ type: "thinking", thinking: ctx.iterationThinking });
@@ -1477,7 +1512,7 @@ export class AgentExecutor extends EventEmitter {
         }
       }
       log.verbose(() => `Tool "${tc.name}" starting id=${tc.id} inputKeys=${Object.keys(tc.input).join(",") || "none"} runId=${ctx.runId}`);
-      let toolResult: { result: string; error?: boolean; sideEffectOnly?: boolean };
+      let toolResult: ToolExecutorResult;
       try {
         if (toolTransfersExecutionToChild(tc.name, tc.input)) {
           const { admissionController } = await import("./run-admission");
@@ -1499,8 +1534,9 @@ export class AgentExecutor extends EventEmitter {
     };
 
     const sideEffectFlags: boolean[] = [];
+    let continuation: ToolExecutorResult["continuation"];
 
-    const processResult = async (tc: typeof toolCalls[0], toolResult: { result: string; error?: boolean; sideEffectOnly?: boolean }, durationMs: number) => {
+    const processResult = async (tc: typeof toolCalls[0], toolResult: ToolExecutorResult, durationMs: number) => {
       const boundedResult = await maybeOffloadToolOutput({
         toolName: tc.name,
         action: typeof tc.input.action === "string" ? tc.input.action : undefined,
@@ -1515,6 +1551,7 @@ export class AgentExecutor extends EventEmitter {
       // Chronology: record tool entry pointing to resolvedToolCalls index
       ctx.segmentChronology.push({ s: "tool", i: toolIdx });
       sideEffectFlags.push(!!toolResult.sideEffectOnly);
+      continuation = toolResult.continuation || continuation;
 
       ctx.publish("tool_result", { toolCallId: tc.id, toolName: tc.name, result: boundedToolResult.result, error: boundedToolResult.error ? boundedToolResult.result : undefined });
       const toolStepStart = ctx.activeToolUseSteps.get(tc.id);
@@ -1552,7 +1589,7 @@ export class AgentExecutor extends EventEmitter {
 
     const allSideEffectOnly = sideEffectFlags.length > 0 && sideEffectFlags.every(f => f);
 
-    return { toolResults, allSideEffectOnly };
+    return { toolResults, allSideEffectOnly, continuation };
   }
 
   // Inference recording is handled at the model-client boundary (recordInference)
@@ -1813,6 +1850,9 @@ export class AgentExecutor extends EventEmitter {
       if (extra?.stepId) (event as unknown as Record<string, unknown>).stepId = extra.stepId;
       if (extra?.step) event.step = extra.step;
       if (extra?.narrative) event.narrative = extra.narrative;
+      if (extra?.model) event.model = extra.model;
+      if (extra?.autoTier) event.autoTier = extra.autoTier;
+      if (extra?.persona) event.persona = extra.persona;
       if (extra?.detail) event.detail = extra.detail;
       if (extra?.metadata) event.metadata = extra.metadata as Record<string, unknown>;
       if (extra?.elapsedMs !== undefined) event.elapsedMs = extra.elapsedMs;
@@ -1892,6 +1932,7 @@ export class AgentExecutor extends EventEmitter {
       diagnosticLastAssistantTextLength: 0,
       diagnosticHadToolErrors: false,
       diagnosticFailedToolCount: 0,
+      iterationToolCalls: [],
       segmentChronology: [],
       systemStepsData: [],
       chronologyThinkingIdx: -1,
@@ -1992,8 +2033,11 @@ export class AgentExecutor extends EventEmitter {
     chatCompletionStream: typeof import("./model-client")["chatCompletionStream"],
     contextLimit: number,
     hasRunStage2: boolean,
-  ): Promise<{ finalContent: string; shouldContinue: boolean; hasRunStage2: boolean; exitCause?: "natural_stop" | "aborted" | "circuit_breaker"; continuationType?: "tool_call" | "max_tokens" }> {
+  ): Promise<{ finalContent: string; shouldContinue: boolean; hasRunStage2: boolean; exitCause?: "natural_stop" | "aborted" | "circuit_breaker"; continuationType?: "tool_call" | "max_tokens"; personaSwitchRequested?: boolean }> {
     const iterStartTime = Date.now();
+    const resolvedToolCallsBeforeIteration = ctx.resolvedToolCalls.length;
+    ctx.personaSwitchRequested = undefined;
+    ctx.iterationToolCalls = [];
     log.verbose(() => `Iteration ${ctx.iteration + 1} starting, messageCount=${messages.length}, model=${modelString}`);
 
     const tokensBefore = estimateTotalTokens(messages);
@@ -2363,6 +2407,46 @@ export class AgentExecutor extends EventEmitter {
       }
     }
 
+    if (ctx.personaSwitchRequested) {
+      const iterationResults = ctx.resolvedToolCalls.slice(resolvedToolCallsBeforeIteration);
+      const resultsById = new Map(iterationResults.map((call) => [call.id, call]));
+      const orderedCalls = ctx.iterationToolCalls
+        .filter((call) => resultsById.has(call.id))
+        .sort((a, b) => a.order - b.order);
+      if (orderedCalls.length !== iterationResults.length) {
+        throw new Error(`Persona switch transcript mismatch: announced=${ctx.iterationToolCalls.length} resolved=${iterationResults.length} ordered=${orderedCalls.length}`);
+      }
+      const assistantContent: ContentBlock[] = [];
+      if (cleanText) assistantContent.push({ type: "text", text: cleanText });
+      for (const call of orderedCalls) {
+        assistantContent.push({ type: "tool_use", id: call.id, name: call.name, input: call.args });
+      }
+      messages.push({ role: "assistant", content: assistantContent });
+      messages.push({
+        role: "tool_result",
+        content: orderedCalls.map((call) => {
+          const result = resultsById.get(call.id)!;
+          return {
+            type: "tool_result" as const,
+            tool_use_id: call.id,
+            content: result.result,
+            is_error: !!result.error,
+          };
+        }),
+      });
+      const toolCallId = ctx.personaSwitchRequested.toolCallId;
+      ctx.personaSwitchRequested = undefined;
+      ctx.publish("tool_use_pause", { content: "" });
+      log.log(`persona switch boundary requested runId=${ctx.runId} sessionId=${options.sessionId || "none"} toolCallId=${toolCallId}`);
+      return {
+        finalContent: cleanText,
+        shouldContinue: true,
+        hasRunStage2,
+        continuationType: "tool_call",
+        personaSwitchRequested: true,
+      };
+    }
+
     // === Execution ownership gate ===
     // In sdk_owned mode, pendingToolCalls should be empty because tool_call_resolved
     // routes directly to resolvedToolCalls (Phase 1 structural fix). If we still find
@@ -2396,8 +2480,18 @@ export class AgentExecutor extends EventEmitter {
     }
 
     if (unresolvedToolCalls.length > 0 && options.toolExecutor) {
-      const { toolResults, allSideEffectOnly } = await this.executeToolCalls(unresolvedToolCalls, ctx, options, messages, cleanText);
+      const { toolResults, allSideEffectOnly, continuation } = await this.executeToolCalls(unresolvedToolCalls, ctx, options, messages, cleanText);
       messages.push({ role: "tool_result", content: toolResults });
+      if (continuation === "persona_switch") {
+        ctx.publish("tool_use_pause", { content: "" });
+        return {
+          finalContent: cleanText,
+          shouldContinue: true,
+          hasRunStage2,
+          continuationType: "tool_call",
+          personaSwitchRequested: true,
+        };
+      }
 
       const batchResolvedCalls = ctx.resolvedToolCalls.slice(-unresolvedToolCalls.length);
       const failedCalls = batchResolvedCalls.filter(tc => tc.error);
@@ -2486,7 +2580,9 @@ export class AgentExecutor extends EventEmitter {
   }
 
   async run(options: ExecutorRunOptions): Promise<ExecutorRunResult> {
-    const { runId, abortController, startTime, modelString, maxTokens, thinkingBudget, thinking, routingTier, routingDecision, ctx } = await this.initializeRun(options);
+    const initialized = await this.initializeRun(options);
+    const { runId, abortController, startTime, ctx } = initialized;
+    let { modelString, maxTokens, thinkingBudget, thinking, routingTier, routingDecision } = initialized;
 
     const messages = [...options.messages];
     let hasRunStage2 = false;
@@ -2523,7 +2619,7 @@ export class AgentExecutor extends EventEmitter {
       options.onEvent?.({ type: "admitted" } as any);
 
       const { chatCompletionStream } = await import("./model-client");
-      const contextLimit = getContextWindow(modelString);
+      let contextLimit = getContextWindow(modelString);
       let lastExitCause: "natural_stop" | "aborted" | "circuit_breaker" | "yield_to_interactive" | undefined;
 
       while (true) {
@@ -2547,6 +2643,58 @@ export class AgentExecutor extends EventEmitter {
           });
         }
         hasRunStage2 = result.hasRunStage2;
+
+        if (result.personaSwitchRequested) {
+          if (!options.refreshAfterPersonaSwitch) {
+            throw new Error("Persona changed mid-turn, but no continuation refresh handler is configured");
+          }
+          const previousModel = modelString;
+          const previousPersonaId = routingDecision.personaId;
+          const refreshed = await options.refreshAfterPersonaSwitch();
+          routingDecision = refreshed.routingDecision;
+          modelString = routingDecision.modelString;
+          routingTier = routingDecision.tier;
+          const tierThinking: ThinkingTierConfig = options.thinking
+            ? options.thinking
+            : options.thinkingBudget !== undefined
+              ? thinkingBudgetToTier(options.thinkingBudget)
+              : { type: "disabled" };
+          const parsedModel = modelString.includes("/") ? modelString.split("/").slice(1).join("/") : modelString;
+          thinking = resolveThinkingConfig(parsedModel, tierThinking);
+          thinkingBudget = thinking.thinking.type === "enabled" ? (thinking.thinking.budgetTokens ?? 0) : 0;
+          const { getMaxOutputTokens } = await import("./model-registry");
+          maxTokens = getMaxOutputTokens(parsedModel);
+          contextLimit = getContextWindow(modelString);
+          const systemIndex = messages.findIndex((message) => message.role === "system");
+          const systemMessage: ExecutorMessage = { role: "system", content: refreshed.systemPrompt };
+          if (systemIndex >= 0) messages[systemIndex] = systemMessage;
+          else messages.unshift(systemMessage);
+          ctx.modelString = modelString;
+          ctx.resolvedModel = modelString;
+          ctx.resolvedProvider = routingDecision.provider;
+          ctx.routingDecision = routingDecision;
+          ctx.routingTier = String(routingTier);
+          const activeRun = this.activeRuns.get(runId);
+          if (activeRun) activeRun.model = modelString;
+          ctx.publish("model_info", {
+            model: modelString,
+            autoTier: String(routingTier),
+            persona: refreshed.persona,
+          });
+          ctx.publish("system_step", {
+            step: "persona_switch",
+            status: "done",
+            detail: `${refreshed.persona?.name || "Persona"} · ${previousModel} → ${modelString}`,
+            metadata: {
+              previousModel,
+              model: modelString,
+              previousPersonaId,
+              personaId: refreshed.persona?.id,
+              tier: routingTier,
+            },
+          });
+          log.log(`persona switch applied runId=${runId} sessionId=${options.sessionId || "none"} persona=${refreshed.persona?.name || "unknown"} model=${previousModel}->${modelString} tier=${routingTier}`);
+        }
 
         if (!result.shouldContinue) {
           lastExitCause = result.exitCause;
