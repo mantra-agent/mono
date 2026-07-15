@@ -9,25 +9,24 @@ import { formatHour, getWindowLabel, inRange } from "@shared/wellness-window";
 import { queryActivityStatus } from "../routes/wellness";
 import { sourceRefsToReferenceRefs } from "@shared/simple-references";
 import { createReferenceRef } from "@shared/references";
+import { createMeetingArtifactChild, createMeetingPersonChild } from "@shared/meeting-feed-items";
 import { listAllEvents, type CalendarEvent } from "../google-calendar";
 import { listMetadataByEvents, classifyEventByTitle, getLinkedArtifactsByMetadataIds } from "../calendar-metadata";
+import { meetingInteractionContext, meetingPersonSummary, resolveMeetingArtifactContext, type MeetingArtifactContext } from "../meeting-context";
 import { computeAgendaSignals, computeContextBadge, peopleStorage, type Interaction, type ScoredAgendaItem } from "../people-storage";
 import { ensurePeopleSurfaceStates, listPeopleSurfaceStates } from "./people-surface-state";
 import { signalStorage } from "../news-storage";
 import type { SignalItem } from "@shared/models/signal";
 import { db } from "../db";
 import { emailMessages, emailEnrichments } from "@shared/schema";
-import { libraryPages } from "@shared/models/info";
-import { and, sql, inArray } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
-import { visibleScopePredicate } from "../scoped-storage";
 import { queryQualifyingInteractionSeries } from "../interaction-activity";
 
 const log = createLogger("SimpleCollectors");
 
 type EmailPersonMap = Map<string, { id: string; name: string; summary: string | null; lastInteractionContext: string | null }>;
-type MeetingArtifactView = { linkId: number; pageId: string; title: string; slug: string; artifactKind: string; source: string | null; summary: string | null; oneLiner: string | null };
-type MeetingArtifactMap = Map<number, MeetingArtifactView[]>;
+type MeetingArtifactMap = Map<number, MeetingArtifactContext[]>;
 
 async function buildEmailPersonMap(): Promise<EmailPersonMap> {
   const map: EmailPersonMap = new Map();
@@ -40,8 +39,8 @@ async function buildEmailPersonMap(): Promise<EmailPersonMap> {
           map.set(ci.value.toLowerCase(), {
             id: person.id,
             name: person.name,
-            summary: person.aiSummary?.trim() || person.quickSummary?.trim() || person.identityContent?.trim() || null,
-            lastInteractionContext: interactionContext(latestInteraction(person.interactions ?? [])),
+            summary: meetingPersonSummary(person),
+            lastInteractionContext: meetingInteractionContext(person.interactions ?? []),
           });
         }
       }
@@ -382,6 +381,17 @@ function itemFromGoal(goal: GoalIndexEntry, index: number, fallbackSection?: Sim
 // ─── People ───
 
 type SimplePeopleSurfaceTier = "follow_up" | "maintenance";
+
+function latestInteraction(interactions: Interaction[]): Interaction | null {
+  return interactions
+    .filter(interaction => interaction.date)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0] ?? null;
+}
+
+function interactionContext(interaction: Interaction | null): string | null {
+  return interaction ? meetingInteractionContext([interaction]) : null;
+}
+
 type TieredAgendaItem = ScoredAgendaItem & {
   simpleSurfaceTier: SimplePeopleSurfaceTier;
   urgencyScore: number;
@@ -389,19 +399,6 @@ type TieredAgendaItem = ScoredAgendaItem & {
   lastInteractionContext: string | null;
   snoozedUntil?: string | null;
 };
-
-function latestInteraction(interactions: Interaction[]): Interaction | null {
-  return interactions
-    .filter(ix => ix.date)
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0] ?? null;
-}
-
-function interactionContext(interaction: Interaction | null): string | null {
-  if (!interaction) return null;
-  const summary = interaction.summary?.trim() || "No summary recorded";
-  const date = interaction.date ? interaction.date.slice(0, 10) : "date missing";
-  return `${date} ${interaction.type}: ${summary}`;
-}
 
 function reasonKey(item: ScoredAgendaItem): string {
   if (item.responseOwedDetails) return `response:${item.responseOwedDetails}`;
@@ -1059,33 +1056,11 @@ async function buildMeetingArtifactMap(metadataIds: number[]): Promise<MeetingAr
   const map: MeetingArtifactMap = new Map();
   if (metadataIds.length === 0) return map;
   try {
-    const links = await getLinkedArtifactsByMetadataIds(metadataIds);
-    if (links.length === 0) return map;
-    const pageIds = Array.from(new Set(links.map(link => link.libraryPageId)));
-    const principal = getCurrentPrincipalOrSystem();
-    const pages = await db
-      .select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug, oneLiner: libraryPages.oneLiner, summary: libraryPages.summary, plainTextContent: libraryPages.plainTextContent })
-      .from(libraryPages)
-      .where(and(
-        inArray(libraryPages.id, pageIds),
-        visibleScopePredicate(principal, { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId }),
-      ));
-    const pagesById = new Map(pages.map(page => [page.id, page]));
-    for (const link of links) {
-      const page = pagesById.get(link.libraryPageId);
-      if (!page) continue;
-      const list = map.get(link.metadataId) ?? [];
-      list.push({
-        linkId: link.id,
-        pageId: page.id,
-        title: link.title || page.title || "Meeting artifact",
-        slug: page.slug,
-        artifactKind: link.artifactKind,
-        source: link.source,
-        summary: page.summary?.trim() || page.plainTextContent?.trim() || null,
-        oneLiner: page.oneLiner?.trim() || null,
-      });
-      map.set(link.metadataId, list);
+    const artifacts = await resolveMeetingArtifactContext(await getLinkedArtifactsByMetadataIds(metadataIds));
+    for (const artifact of artifacts) {
+      const list = map.get(artifact.metadataId) ?? [];
+      list.push(artifact);
+      map.set(artifact.metadataId, list);
     }
   } catch (err) {
     log.warn(`buildMeetingArtifactMap failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1093,7 +1068,7 @@ async function buildMeetingArtifactMap(metadataIds: number[]): Promise<MeetingAr
   return map;
 }
 
-function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: number, timezone: string, emailMap: EmailPersonMap, artifacts: MeetingArtifactView[] = [], meta?: CalendarEventMetadata): SimpleFeedItem {
+function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: number, timezone: string, emailMap: EmailPersonMap, artifacts: MeetingArtifactContext[] = [], meta?: CalendarEventMetadata): SimpleFeedItem {
   const sourceRef: SimpleSourceRef = {
     type: "calendar",
     id: `${event.accountId}:${event.id}`,
@@ -1127,54 +1102,31 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
   for (const attendee of externalAttendees.slice(0, 6)) {
     const matched = emailMap.get(attendee.email.toLowerCase());
     const name = matched?.name ?? (attendee.displayName || attendee.email.split("@")[0]);
-    const personSourceRef: SimpleSourceRef | null = matched
-      ? { type: "person", id: matched.id, label: matched.name, href: `/people/${matched.id}` }
-      : null;
-    children.push({
-      id: `meeting-${event.accountId}-${event.id}-attendee-${attendee.email}`,
+    children.push(createMeetingPersonChild({
+      key: `meeting-${event.accountId}-${event.id}-attendee-${attendee.email}`,
       section,
-      widgetType: "generic",
-      title: name,
-      status: "active",
-      sourceRefs: personSourceRef ? [personSourceRef] : [sourceRef],
-      ...(personSourceRef ? { references: sourceRefsToReferenceRefs([personSourceRef]) } : {}),
-      payload: {
-        kind: "meeting_attendee",
-        email: attendee.email,
-        responseStatus: attendee.responseStatus || null,
-        personId: matched?.id ?? null,
-        profileSummary: matched?.summary ?? null,
-        lastInteractionContext: matched?.lastInteractionContext ?? null,
-      },
-    });
+      parentSourceRef: sourceRef,
+      name,
+      email: attendee.email,
+      responseStatus: attendee.responseStatus,
+      personId: matched?.id,
+      profileSummary: matched?.summary,
+      lastInteractionContext: matched?.lastInteractionContext,
+    }));
   }
 
   for (const artifact of artifacts) {
-    const artifactSourceRef: SimpleSourceRef = {
-      type: "artifact",
-      id: artifact.pageId,
-      label: artifact.title,
-      href: `/info#library?page=${encodeURIComponent(artifact.slug)}`,
-    };
-    children.push({
-      id: `meeting-${event.accountId}-${event.id}-artifact-${artifact.linkId}`,
+    children.push(createMeetingArtifactChild({
+      key: `meeting-${event.accountId}-${event.id}-artifact-${artifact.id}`,
       section,
-      widgetType: "generic",
       title: artifact.title,
-      status: "active",
-      sourceRefs: [artifactSourceRef],
-      references: [{ type: "page", id: artifact.pageId, canonical: `@page:${artifact.pageId}`, metadata: { title: artifact.title, slug: artifact.slug } }],
-      payload: {
-        kind: "meeting_artifact",
-        artifactKind: artifact.artifactKind,
-        pageId: artifact.pageId,
-        slug: artifact.slug,
-        source: artifact.source,
-        artifactSummary: artifact.summary,
-        artifactOneLiner: artifact.oneLiner,
-      },
-      actions: [{ id: "open-artifact", label: "Open", type: "navigate", href: `/info#library?page=${encodeURIComponent(artifact.slug)}`, sourceRef: artifactSourceRef }],
-    });
+      libraryPageId: artifact.libraryPageId,
+      slug: artifact.slug,
+      artifactKind: artifact.artifactKind,
+      source: artifact.source,
+      summary: artifact.summary,
+      oneLiner: artifact.oneLiner,
+    }));
   }
 
   return {

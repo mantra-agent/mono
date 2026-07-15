@@ -21,6 +21,7 @@ import {
 import { extractMeetingUrl } from "./meeting/join";
 import { getMeetingJoinPolicy, shouldJoinMeeting } from "./meeting/join-policy";
 import { getBandwidthSummary } from "./calendar-bandwidth";
+import { resolveMeetingArtifactContext, resolveMeetingPeopleContext } from "./meeting-context";
 
 const log = createLogger("CalendarRoutes");
 
@@ -438,7 +439,15 @@ export function registerCalendarRoutes(app: Express): void {
       }
       const meta = await getMetadata(req.params.eventId, accountId, calendarId);
       if (!meta) return res.json({ metadata: null });
-      const [tasks, people, artifacts] = await Promise.all([getLinkedTasks(meta.id), getLinkedPeople(meta.id), getLinkedArtifacts(meta.id)]);
+      const [tasks, linkedPeople, linkedArtifacts] = await Promise.all([
+        getLinkedTasks(meta.id),
+        getLinkedPeople(meta.id),
+        getLinkedArtifacts(meta.id),
+      ]);
+      const [people, artifacts] = await Promise.all([
+        resolveMeetingPeopleContext(linkedPeople),
+        resolveMeetingArtifactContext(linkedArtifacts),
+      ]);
       res.json({ metadata: meta, tasks, people, artifacts });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

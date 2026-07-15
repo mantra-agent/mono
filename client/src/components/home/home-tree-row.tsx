@@ -152,6 +152,8 @@ function expandedContent(item: SimpleFeedItem): string | null {
 interface SimpleTreeRowProps {
   item: SimpleFeedItem;
   depth?: number;
+  /** Embedded rows reuse Simple's reference, expander, content, and tree styling without feed-only rails. */
+  layout?: "feed" | "embedded";
   /** Content to render in the title area. Falls back to reference link or item.title. */
   children?: ReactNode;
 }
@@ -159,7 +161,7 @@ interface SimpleTreeRowProps {
 const INDENT_PX = 24;
 const CONNECTOR_CLASS = "border-muted-foreground/50";
 
-export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps) {
+export function SimpleTreeRow({ item, depth = 0, layout = "feed", children }: SimpleTreeRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [entryOpen, setEntryOpen] = useState(false);
   const [entryContent, setEntryContent] = useState("");
@@ -222,6 +224,7 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
   const completed = item.status === "completed" || mutation.isSuccess;
   const disabled = (!action && !entryUi) || mutation.isPending || completed;
   const showCheckCircle = completed || item.completable || item.widgetType === "meeting";
+  const embedded = layout === "embedded";
 
   const titleHref = firstExternalUrl(item.title);
   const mapHref = isMeetingLocationItem(item) ? mapsSearchHref(item.title) : null;
@@ -287,7 +290,7 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
           !item.completable && "hover:bg-accent/50 rounded-md",
           canExpand && "cursor-pointer",
         )}
-        style={{ paddingLeft: `${depth * INDENT_PX}px` }}
+        style={{ paddingLeft: `${embedded ? 0 : depth * INDENT_PX}px` }}
         onClick={(event) => {
           if (shouldIgnoreRowToggle(event.target)) return;
           toggleExpanded();
@@ -302,26 +305,30 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
           }
         }}
       >
-        {/* Time column */}
-        <span className="w-14 shrink-0 whitespace-pre-line text-right pr-1.5 text-[11px] leading-tight tabular-nums text-muted-foreground">
-          {item.time ?? ""}
-        </span>
+        {!embedded && (
+          <>
+            {/* Time column */}
+            <span className="w-14 shrink-0 whitespace-pre-line text-right pr-1.5 text-[11px] leading-tight tabular-nums text-muted-foreground">
+              {item.time ?? ""}
+            </span>
 
-        {/* Checkbox column (always rendered for vertical alignment) */}
-        <span className="w-4 shrink-0 flex items-center justify-center">
-          {item.payload?.needsDate && !completed ? (
-            <SimpleCheckCircle variant="caution" tooltip="Missing Due Date" />
-          ) : showCheckCircle ? (
-            <SimpleCheckCircle
-              checked={completed}
-              pending={mutation.isPending}
-              disabled={disabled}
-              interactive={item.completable && !completed}
-              label={`Complete ${item.title}`}
-              onClick={requestCompletion}
-            />
-          ) : null}
-        </span>
+            {/* Checkbox column (always rendered for vertical alignment) */}
+            <span className="w-4 shrink-0 flex items-center justify-center">
+              {item.payload?.needsDate && !completed ? (
+                <SimpleCheckCircle variant="caution" tooltip="Missing Due Date" />
+              ) : showCheckCircle ? (
+                <SimpleCheckCircle
+                  checked={completed}
+                  pending={mutation.isPending}
+                  disabled={disabled}
+                  interactive={item.completable && !completed}
+                  label={`Complete ${item.title}`}
+                  onClick={requestCompletion}
+                />
+              ) : null}
+            </span>
+          </>
+        )}
 
         {/* Content area */}
         <div
@@ -335,7 +342,7 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
           {depth > 0 && (
             <span
               className="pointer-events-none absolute inset-y-0"
-              style={{ left: "-32px", width: "12px" }}
+              style={embedded ? { left: "-12px", width: "12px" } : { left: "-32px", width: "12px" }}
               aria-hidden="true"
             >
               <span className={cn("absolute left-0 top-0 bottom-1/2 border-l", CONNECTOR_CLASS)} />
@@ -346,7 +353,7 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
         </div>
 
         {/* Right control rail: agent toggle (meetings), expander, then overflow. */}
-        {item.widgetType === "meeting" && <MeetingAgentToggle item={item} />}
+        {!embedded && item.widgetType === "meeting" && <MeetingAgentToggle item={item} />}
         <span className="ml-1 flex w-5 shrink-0 items-center justify-center">
           {canExpand ? (
             <button
@@ -359,30 +366,32 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
             </button>
           ) : null}
         </span>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="flex w-5 shrink-0 items-center justify-center rounded p-0.5 opacity-0 transition-opacity hover:bg-accent/60 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-              aria-label={`Actions for ${item.title}`}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-44">
-            <DropdownMenuItem
-              disabled={discussMutation.isPending}
-              onClick={(e) => {
-                e.stopPropagation();
-                discussMutation.mutate();
-              }}
-            >
-              {discussMutation.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <MessageSquare className="mr-2 h-3.5 w-3.5" />}
-              Discuss
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {!embedded && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="flex w-5 shrink-0 items-center justify-center rounded p-0.5 opacity-0 transition-opacity hover:bg-accent/60 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+                aria-label={`Actions for ${item.title}`}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuItem
+                disabled={discussMutation.isPending}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  discussMutation.mutate();
+                }}
+              >
+                {discussMutation.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <MessageSquare className="mr-2 h-3.5 w-3.5" />}
+                Discuss
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       {/* Expanded content */}
@@ -396,7 +405,7 @@ export function SimpleTreeRow({ item, depth = 0, children }: SimpleTreeRowProps)
       {expanded && hasChildren && (
         <div>
           {item.children!.map(child => (
-            <SimpleTreeRow key={child.id} item={child} depth={depth + 1} />
+            <SimpleTreeRow key={child.id} item={child} depth={depth + 1} layout={layout} />
           ))}
         </div>
       )}

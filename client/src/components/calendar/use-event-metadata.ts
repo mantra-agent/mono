@@ -30,14 +30,20 @@ export interface LinkedTaskRef {
 export interface LinkedPersonRef {
   id: string;
   name: string;
+  profileSummary: string | null;
+  lastInteractionContext: string | null;
 }
 
 export interface LinkedArtifactRef {
   id: number;
+  metadataId: number;
   libraryPageId: string;
-  title?: string | null;
-  artifactKind?: string | null;
-  slug?: string | null;
+  title: string;
+  artifactKind: string;
+  slug: string;
+  source: string | null;
+  summary: string | null;
+  oneLiner: string | null;
 }
 
 export interface EventMetadataQueryData {
