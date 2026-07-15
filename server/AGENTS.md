@@ -188,6 +188,7 @@ AgentExecutor stream → publishJournalToUI() → SessionManager.applyEvent()
 - Chat response ownership begins when a message is accepted, before model selection or context assembly. `server/integrations/chat/run-lifecycle.ts` is the sole generation authority across preparation, execution, persistence, and finalization. User messages always persist; only the newest generation may produce or settle an assistant response. Supersession and explicit cancellation are distinct terminal reasons.
 - Browser message POSTs carry a `clientTurnId`. `chat-file-storage.ts` atomically deduplicates that ID under the session lock before generation ownership changes, so a replay cannot create another user row or supersede the active run.
 - Client presence is one logical entry per browser tab. WebSocket registration and HTTP heartbeat must carry the same per-tab ID and merge at `server/client-presence.ts`; transports are not clients.
+- Event-socket subscription mutation is synchronous with socket lifecycle. `server/realtime-transport-metrics.ts` mirrors physical socket↔session links for observability, while `SessionManager` remains authoritative for logical subscription owners; the Performance page reports divergence between them.
 - State is in-memory only — lost on restart. Clients resubscribe and get a fresh snapshot on reconnect
 - Reducers are pure functions — all side effects (broadcast, status tracking) live in SessionManager
 

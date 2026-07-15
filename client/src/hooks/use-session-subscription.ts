@@ -120,6 +120,7 @@ export function useSessionSubscriptions(
   const tabId = useMemo(getStreamTraceTabId, []);
   const initialSessionIdsRef = useRef<string[]>(normalizeSessionIds(sessionIds));
   const sharedWSRef = useRef<ReturnType<typeof acquireSharedWS> | null>(null);
+  const wsOwnerId = `${owner}:${handlerId}`;
   const subscribedIdsRef = useRef<Set<string>>(new Set());
   const requestedIdsRef = useRef<Set<string>>(new Set());
   const wsConnectedRef = useRef(false);
@@ -271,7 +272,7 @@ export function useSessionSubscriptions(
 
   useEffect(() => {
     log.debug("STREAM:HOOK:MOUNT", { handlerId, owner, tabId, activeSession: activeSessionRef.current, initialSessionIds: initialSessionIdsRef.current });
-    const sharedWS = acquireSharedWS(`${owner}:${handlerId}`);
+    const sharedWS = acquireSharedWS(wsOwnerId);
     sharedWSRef.current = sharedWS;
     setStreamConnected(sharedWS.getReadyState() === WebSocket.OPEN);
 
@@ -312,9 +313,10 @@ export function useSessionSubscriptions(
       sharedWS.removeErrorHandler(handlerId);
       sharedWSRef.current = null;
       log.debug("STREAM:HOOK:UNMOUNT", { handlerId, owner, tabId, activeSession: activeSessionRef.current });
-      releaseSharedWS(`${owner}:${handlerId}`);
+      sharedWS.setStreamActive(wsOwnerId, false);
+      releaseSharedWS(wsOwnerId);
     };
-  }, [handlerId, handleMessage, handleReconnect, owner, refreshSubscriptions, sendSubscribe, sendUnsubscribe, setStreamConnected, tabId]);
+  }, [handlerId, handleMessage, handleReconnect, owner, refreshSubscriptions, sendSubscribe, sendUnsubscribe, setStreamConnected, tabId, wsOwnerId]);
 
   useEffect(() => {
     const normalizedIds = normalizedKey ? normalizedKey.split("\u0000") : [];
@@ -362,10 +364,8 @@ export function useSessionSubscriptions(
       }
       return changed ? next : prev;
     });
-    if (nextIds.size > 0) {
-      sharedWSRef.current?.setStreamActive(true);
-    }
-  }, [handlerId, normalizedKey, owner, sendSubscribe, sendUnsubscribe, tabId, wsConnected]);
+    sharedWSRef.current?.setStreamActive(wsOwnerId, nextIds.size > 0);
+  }, [handlerId, normalizedKey, owner, sendSubscribe, sendUnsubscribe, tabId, wsConnected, wsOwnerId]);
 
   return { streams, wsConnected };
 }

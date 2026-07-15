@@ -84,6 +84,26 @@ export interface EventLoopResource {
   avgMs: number;
 }
 
+export interface RealtimeTransportResource {
+  eventSockets: number;
+  peakEventSockets: number;
+  sessionSockets: number;
+  peakSessionSockets: number;
+  sessionSocketLinks: number;
+  peakSessionSocketLinks: number;
+  uniqueSubscribedSessions: number;
+  sessionOwnerLinks: number;
+  staleSessionSocketLinks: number;
+  pendingSubscribedSessions: number;
+  liveSessions: number;
+  streamingSessions: number;
+  subscriptionDivergence: number;
+  oldestEventSocketAgeMs: number;
+  connectionsOpened: number;
+  connectionsClosed: number;
+  abnormalDisconnects: number;
+}
+
 export interface SystemResourcesData {
   generatedAt: number;
   dbPool: DbPoolResource;
@@ -94,6 +114,7 @@ export interface SystemResourcesData {
   admission: AdmissionResource;
   zombies: ZombieResource;
   eventLoop: EventLoopResource;
+  realtime: RealtimeTransportResource;
   memory: MemoryResource;
   divergence: {
     value: number;

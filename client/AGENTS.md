@@ -179,6 +179,7 @@ Focus Session is the canonical session entry surface. Keep ownership split by ro
 - `client/src/components/bottom-bar/index.tsx` — Single normal composer/input owner for creating/sending session messages. It owns file upload, mention autocomplete, voice input display, and `useChatSend`.
 - `client/src/components/message-list.tsx` — Message rendering with markdown, code blocks, tool calls, images, and entity/reference widgets.
 - `client/src/hooks/use-client-presence.tsx` — One application-level provider owns presence registration and heartbeat. Consumers read its context; they must not instantiate transport side effects independently.
+- `client/src/lib/ws-connection.ts` — The shared event socket owns a balanced logical-owner registry and exposes a read-only diagnostics snapshot. Every acquisition uses a stable owner ID, every cleanup releases that same ID, and session liveness is reference-counted by owner rather than a process-wide boolean.
 
 Composer turn admission must use a synchronous ref before any state update or await. React state is display state, not a concurrency lock. Every message POST carries a stable `clientTurnId` so the server can make retries replay-safe.
 
