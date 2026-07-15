@@ -52,6 +52,19 @@ export async function distributeRecap(
   recap: MeetingRecapMeta,
   principal: Principal,
 ): Promise<void> {
+  // TRAP: Verify principal context is correct. This catches leaks across ALS boundaries.
+  const { getCurrentPrincipal } = await import("../principal-context");
+  const ambientPrincipal = getCurrentPrincipal();
+
+  if (!ambientPrincipal || ambientPrincipal.userId !== principal.userId) {
+    const msg =
+      `TRAP: Principal context mismatch for session ${sessionId}. ` +
+      `Parameter userId=${principal.userId}, ambient userId=${ambientPrincipal?.userId ?? 'null'}. ` +
+      `This indicates the distribution callback lost its AsyncLocalStorage principal context.`;
+    log.error(msg);
+    throw new Error(msg);
+  }
+
   log.info(`Starting recap distribution for session ${sessionId}`);
 
   try {
@@ -114,10 +127,48 @@ async function runDistribution(
 
   log.info(`Distributing recap for session ${sessionId} to ${attendees.length} attendee(s)`);
 
-  // 3. Decide send method.
+  // 3. Require Gmail account. Never fall back to automatic send.
   const gmailAccounts = await listGmailAccounts();
   const gmailAccountId = gmailAccounts[0]?.id ?? null;
-  const useGmail = !!gmailAccountId;
+
+  if (!gmailAccountId) {
+    log.warn(`No Gmail account connected for session ${sessionId}; blocking distribution`);
+
+    // Mark all attendees as blocked with visible error. Idempotent via future UNIQUE constraint.
+    for (const attendee of attendees) {
+      try {
+        const owned = ownedInsertValues(principal, scopeColumns);
+        await db
+          .insert(meetingRecapDistributions)
+          .values({
+            sessionId,
+            attendeeEmail: attendee.email,
+            attendeeName: attendee.name ?? null,
+            isMantraUser: false,
+            sendMethod: "blocked",
+            status: "failed",
+            error: "Gmail account not connected",
+            ...owned,
+          })
+          .onConflictDoNothing();  // Idempotent via UNIQUE constraint (planned)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn(`Failed to record blocked distribution for ${attendee.email}: ${msg}`);
+      }
+    }
+
+    await chatStorage.updateMeetingMeta(sessionId, {
+      recap: {
+        ...recap,
+        distributionStatus: "blocked",
+        distributionError: "Gmail account not connected",
+      },
+    });
+    return;
+  }
+
+  const useGmail = true;  // Explicit: Gmail is required and verified above.
+
 
   // 4. Build email content.
   const subject = `Meeting recap: ${recap.pageTitle ?? meeting.title ?? "Our meeting"}`;
@@ -137,7 +188,7 @@ async function runDistribution(
           attendeeEmail: attendee.email,
           attendeeName: attendee.name ?? null,
           isMantraUser: false,
-          sendMethod: useGmail ? "gmail_draft" : "sendgrid",
+          sendMethod: "gmail_draft",  // Gmail is required; verified above.
           status: "pending",
           ...owned,
         })
@@ -160,31 +211,6 @@ async function runDistribution(
 
         draftIds.push(draft.id);
         log.debug(`Gmail draft created for ${attendee.email} (draftId=${draft.id})`);
-      } else {
-        // SendGrid direct fallback.
-        const result = await sendNotification({
-          channel: "email",
-          to: attendee.email,
-          subject,
-          body: text,
-          html,
-          metadata: { sessionId, source: "meeting-recap" },
-        });
-
-        const status = result.ok ? "sent" : "failed";
-        await db
-          .update(meetingRecapDistributions)
-          .set({
-            status,
-            error: result.ok ? null : (result.error?.slice(0, 500) ?? "unknown"),
-            updatedAt: new Date(),
-          })
-          .where(eq(meetingRecapDistributions.id, row.id));
-
-        log.debug(
-          `SendGrid ${status} for ${attendee.email}: ${result.ok ? "ok" : result.error}`,
-        );
-      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`Recap distribution failed for attendee ${attendee.email} (session=${sessionId}): ${msg}`);
