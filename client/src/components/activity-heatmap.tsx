@@ -1,14 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { LucideIcon } from "lucide-react";
 
 export interface ActivityHeatmapDay {
   date: string;
   value: number;
 }
 
+interface ActivityHeatmapMarker {
+  icon: LucideIcon;
+  criterion: "above-80-percent-of-maximum" | "top-decile";
+  filled?: boolean;
+}
+
 interface ActivityHeatmapProps {
   days: ActivityHeatmapDay[];
+  marker?: ActivityHeatmapMarker;
   onSelectDate?: (date: string) => void;
   valueLabel: string;
+}
+
+function percentileThreshold(values: number[], percentile: number): number | null {
+  const positiveValues = values.filter((value) => value > 0).sort((left, right) => left - right);
+  if (positiveValues.length === 0) return null;
+  const index = Math.ceil(percentile * positiveValues.length) - 1;
+  return positiveValues[Math.max(0, index)];
 }
 
 export function heatmapFillColor(percent: number): string {
@@ -17,7 +32,7 @@ export function heatmapFillColor(percent: number): string {
   return `hsl(var(--success) / ${opacity.toFixed(2)})`;
 }
 
-export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeatmapProps) {
+export function ActivityHeatmap({ days, marker, onSelectDate, valueLabel }: ActivityHeatmapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const labelColumnRef = useRef<HTMLDivElement | null>(null);
   const [weeksToShow, setWeeksToShow] = useState(12);
@@ -41,9 +56,9 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
     return () => observer.disconnect();
   }, []);
 
-  const { weeks, maximum, latestDate } = useMemo(() => {
+  const { weeks, maximum, latestDate, topDecileThreshold } = useMemo(() => {
     const latest = days.at(-1)?.date;
-    if (!latest) return { weeks: [], maximum: 0, latestDate: "" };
+    if (!latest) return { weeks: [], maximum: 0, latestDate: "", topDecileThreshold: null };
 
     const valuesByDate = new Map(days.map((day) => [day.date, day.value]));
     const latestDay = new Date(`${latest}T12:00:00Z`);
@@ -61,11 +76,14 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
 
     const grouped: ActivityHeatmapDay[][] = [];
     for (let index = 0; index < alignedDays.length; index += 7) grouped.push(alignedDays.slice(index, index + 7));
-    const visibleValues = alignedDays.filter((day) => day.date <= latest);
+    const visibleValues = alignedDays
+      .filter((day) => day.date <= latest)
+      .map((day) => day.value);
     return {
       weeks: grouped,
-      maximum: Math.max(0, ...visibleValues.map((day) => day.value)),
+      maximum: Math.max(0, ...visibleValues),
       latestDate: latest,
+      topDecileThreshold: percentileThreshold(visibleValues, 0.9),
     };
   }, [days, weeksToShow]);
   const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -88,6 +106,12 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
             {week.map((day) => {
               if (day.date > latestDate) return <div key={day.date} className="h-5 w-5 shrink-0" />;
               const percent = maximum === 0 ? 0 : Math.round((day.value / maximum) * 100);
+              const showMarker = marker?.criterion === "above-80-percent-of-maximum"
+                ? percent > 80
+                : marker?.criterion === "top-decile"
+                  ? topDecileThreshold !== null && day.value >= topDecileThreshold
+                  : false;
+              const MarkerIcon = marker?.icon;
               return (
                 <button
                   key={day.date}
@@ -97,7 +121,16 @@ export function ActivityHeatmap({ days, onSelectDate, valueLabel }: ActivityHeat
                   style={{ backgroundColor: heatmapFillColor(percent) }}
                   className={`relative block h-5 w-5 shrink-0 appearance-none rounded-[3px] border-0 p-0 transition-shadow hover:ring-1 hover:ring-foreground/60 ${day.date === latestDate ? "ring-1 ring-foreground/60" : ""}`}
                   data-testid={`heatmap-cell-${day.date}`}
-                />
+                >
+                  {showMarker && MarkerIcon && (
+                    <MarkerIcon
+                      aria-hidden="true"
+                      className="absolute inset-0 m-auto h-3.5 w-3.5 text-white drop-shadow-sm"
+                      fill={marker.filled ? "currentColor" : "none"}
+                      strokeWidth={1.5}
+                    />
+                  )}
+                </button>
               );
             })}
           </div>
