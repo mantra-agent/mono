@@ -45,6 +45,8 @@ async function warmUpAudioPipeline(): Promise<void> {
 
 export type VoiceStatus = "idle" | "connecting" | "active" | "ending" | "reconnecting";
 
+export type VoiceTranscriptStatus = "provisional" | "committed" | "placeholder";
+
 export interface VoiceTranscriptEntry {
   source: "user" | "ai" | "system";
   message: string;
@@ -57,10 +59,9 @@ export interface VoiceTranscriptEntry {
   turnKey?: string;
   /** Monotonic sequence from the bridge/server when available. */
   sequence?: number;
-  /** True once the bridge/server says the utterance is final. */
-  isFinal?: boolean;
+  /** Explicit transcript lifecycle. Only server-authoritative rows are committed. */
+  status: VoiceTranscriptStatus;
   isError?: boolean;
-  isPlaceholder?: boolean;
   /**
    * Marks an assistant entry that was rendered from a partial
    * `tentative_agent_response` (EL streams these via `onDebug` while the
@@ -580,7 +581,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     turnId?: string;
     turnKey?: string;
     sequence?: number;
-    isFinal?: boolean;
+    status: VoiceTranscriptStatus;
     transcriptId?: string;
   }) => {
     const normalizedSource = "user" as const;
@@ -593,17 +594,30 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     const timestamp = new Date().toISOString();
 
     setTranscript(prev => {
-      const existingIndex = prev.findIndex(e =>
+      const sameText = (entry: VoiceTranscriptEntry) => {
+        const prior = normalizeTranscript(entry.message || "");
+        return prior === normalizedLower || prior.startsWith(normalizedLower) || normalizedLower.startsWith(prior);
+      };
+      let existingIndex = prev.findIndex(e =>
         e.source === normalizedSource &&
         !e.isToolCall &&
         ((turnKey && e.turnKey === turnKey) || (message.turnId && e.turnId === message.turnId) || e.transcriptId === transcriptId)
       );
+      if (existingIndex < 0) {
+        existingIndex = prev.findLastIndex(e =>
+          e.source === normalizedSource &&
+          e.status === "provisional" &&
+          !e.isToolCall &&
+          sameText(e)
+        );
+      }
       if (existingIndex >= 0) {
         const existing = prev[existingIndex];
         const existingLower = normalizeTranscript(existing.message || "");
         if (existing.sequence !== undefined && message.sequence !== undefined && message.sequence < existing.sequence) return prev;
-        if (existingLower === normalizedLower && existing.isFinal && message.isFinal !== false) return prev;
-        if (existingLower.length > normalizedLower.length && existingLower.startsWith(normalizedLower) && message.isFinal !== true) return prev;
+        if (existing.status === "committed" && message.status !== "committed") return prev;
+        if (existingLower === normalizedLower && existing.status === message.status) return prev;
+        if (existingLower.length > normalizedLower.length && existingLower.startsWith(normalizedLower) && message.status === "provisional") return prev;
         const updated = [...prev];
         updated[existingIndex] = {
           ...existing,
@@ -613,14 +627,13 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
           turnId,
           turnKey: turnKey ?? existing.turnKey,
           sequence: message.sequence ?? existing.sequence,
-          isFinal: message.isFinal ?? existing.isFinal,
-          isPlaceholder: false,
+          status: message.status,
         };
         return updated;
       }
 
       const last = prev[prev.length - 1];
-      if (last?.source === normalizedSource && last.isPlaceholder) {
+      if (last?.source === normalizedSource && last.status === "placeholder") {
         const updated = [...prev];
         updated[prev.length - 1] = {
           source: normalizedSource,
@@ -630,19 +643,15 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
           turnId,
           turnKey,
           sequence: message.sequence,
-          isFinal: message.isFinal,
+          status: message.status,
         };
         return updated;
       }
 
-      // Replay guard for final native/WS events that arrive after an assistant/tool
-      // row: compare against recent committed user rows, not only the last entry.
-      const recentDuplicate = [...prev].reverse().slice(0, 12).find(e => {
-        if (e.source !== normalizedSource || e.isPlaceholder) return false;
-        const prior = normalizeTranscript(e.message || "");
-        return prior === normalizedLower || prior.startsWith(normalizedLower) || normalizedLower.startsWith(prior);
-      });
-      if (recentDuplicate && message.isFinal !== false) {
+      const committedDuplicate = [...prev].reverse().slice(0, 12).find(e =>
+        e.source === normalizedSource && e.status === "committed" && !e.isToolCall && sameText(e)
+      );
+      if (committedDuplicate && message.status === "committed") {
         log.debug("VOICE:TRANSCRIPT:RECENT_DUPLICATE_SKIPPED", { messageLength: trimmedMessage.length, turnId });
         return prev;
       }
@@ -655,7 +664,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
         turnId,
         turnKey,
         sequence: message.sequence,
-        isFinal: message.isFinal,
+        status: message.status,
       }];
     });
   }, [cleanTranscriptText, normalizeTranscript]);
@@ -704,6 +713,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
               source: "system" as const,
               message: "Voice session ended — could not reconnect",
               timestamp: new Date().toISOString(),
+              status: "committed" as const,
               isError: true,
             }]);
             setVoiceThinking(false);
@@ -722,6 +732,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
         source: "system" as const,
         message: "Voice session ended — could not reconnect",
         timestamp: new Date().toISOString(),
+        status: "committed" as const,
         isError: true,
       }]);
       setVoiceThinking(false);
@@ -802,6 +813,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       source: "system" as const,
       message: errorMsg || "An error occurred in the voice session.",
       timestamp: new Date().toISOString(),
+      status: "committed" as const,
       isError: true,
     }]);
     setVoiceThinking(false);
@@ -955,12 +967,17 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
                 emitVoiceDiag("first_user_speech", `First user speech ${elapsedSinceConnect}ms after connect`, "done");
                 phoneDiag("first_user_speech", { elapsedSinceConnect });
               }
-              // The server voice_user_transcript event is the canonical user-message
-              // projection. Native transcript callbacks carry provider-local identity
-              // and previously created a second row before the server revision arrived.
-              log.debug("VOICE:NATIVE:USER_TRANSCRIPT_SKIPPED", {
-                reason: "server_transcript_authoritative",
+              handleUserTranscript({
+                source: "user",
+                message: msg.text,
+                turnId: msg.turnId,
+                sequence: msg.sequence,
+                transcriptId: msg.eventId,
+                status: "provisional",
+              });
+              log.debug("VOICE:NATIVE:USER_TRANSCRIPT_PROVISIONAL", {
                 messageLength: msg.text.length,
+                providerFinal: msg.isFinal,
               });
             }
             break;
@@ -1117,13 +1134,16 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
           emitVoiceDiag("first_user_speech", detail, "done");
           phoneDiag("first_user_speech", { elapsedSinceConnect });
         }
-        // The server voice_user_transcript event is authoritative for user text.
-        // ElevenLabs onMessage has no canonical voiceTurnId, so rendering it here
-        // creates a duplicate row when the server publishes the same transcript.
-        log.debug("VOICE:MESSAGE:USER_TRANSCRIPT_SKIPPED", {
-          reason: "server_transcript_authoritative",
-          messageLength: message.message?.length || 0,
-        });
+        if (message.message?.trim()) {
+          handleUserTranscript({
+            source: "user",
+            message: message.message,
+            status: "provisional",
+          });
+          log.debug("VOICE:MESSAGE:USER_TRANSCRIPT_PROVISIONAL", {
+            messageLength: message.message.length,
+          });
+        }
       },
       onError: handleVoiceError,
       onDebug: (_debug: { type: string; response?: string }) => {
@@ -1195,9 +1215,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             source: (m.role === "user" ? "user" : "ai") as "user" | "ai",
             message: m.content,
             timestamp: m.timestamp || new Date().toISOString(),
-            // Reconnect snapshots come from persisted chat history. They are
-            // committed transcript rows, never an in-progress composer turn.
-            isFinal: true,
+            status: "committed" as const,
             persona: m.persona || (m.role === "assistant" ? sessionPersonaRef.current || undefined : undefined),
           }));
         if (mapped.length > 0) {
@@ -1311,6 +1329,9 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     let reconnectAttempts = 0;
     let lastMessageAt = Date.now();
+    let lastVoiceEventId: string | null = null;
+    let lastVoiceEventTimestamp = 0;
+    const appliedVoiceEventIds = new Set<string>();
     let disposed = false;
 
     const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -1359,16 +1380,38 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
         reconnectAttempts = 0;
         lastMessageAt = Date.now();
         startHeartbeat();
+        ws?.send(JSON.stringify({
+          type: "events.resume",
+          afterEventId: lastVoiceEventId,
+          category: "voice",
+          chatSessionId: chatConversationIdRef.current,
+        }));
       };
 
-      ws.onmessage = (e) => {
-        lastMessageAt = Date.now();
-        try {
-          const msg = JSON.parse(e.data);
-          if (msg.type !== "event" || msg.event?.category !== "voice") return;
+      const applyVoiceEvent = (event: Record<string, any>) => {
+        if (event?.category !== "voice") return;
+        const activeChatSessionId = chatConversationIdRef.current;
+        const eventChatSessionId = typeof event?.payload?.chatSessionId === "string"
+          ? event.payload.chatSessionId
+          : null;
+        if (!activeChatSessionId || eventChatSessionId !== activeChatSessionId) return;
+        const eventId = typeof event.id === "string" ? event.id : null;
+        if (eventId && appliedVoiceEventIds.has(eventId)) return;
+        if (eventId) {
+          appliedVoiceEventIds.add(eventId);
+          const eventTimestamp = typeof event.timestamp === "number" ? event.timestamp : 0;
+          if (eventChatSessionId === activeChatSessionId && eventTimestamp >= lastVoiceEventTimestamp) {
+            lastVoiceEventTimestamp = eventTimestamp;
+            lastVoiceEventId = eventId;
+          }
+          if (appliedVoiceEventIds.size > 500) {
+            const oldest = appliedVoiceEventIds.values().next().value;
+            if (oldest) appliedVoiceEventIds.delete(oldest);
+          }
+        }
 
-          if (msg.event?.event === "voice_thinking") {
-            const eventChatSessionId = msg.event?.payload?.chatSessionId;
+          if (event?.event === "voice_thinking") {
+            const eventChatSessionId = event?.payload?.chatSessionId;
             const activeChatSessionId = chatConversationIdRef.current;
             if (activeChatSessionId && (!eventChatSessionId || eventChatSessionId === activeChatSessionId)) {
               setTranscript(prev => {
@@ -1378,7 +1421,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
                   source: "user" as const,
                   message: "…",
                   timestamp: new Date().toISOString(),
-                  isPlaceholder: true,
+                  status: "placeholder" as const,
                 }];
               });
               setVoiceThinking(true);
@@ -1394,8 +1437,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             }
           }
 
-          if (msg.event?.event === "voice_user_transcript") {
-            const p = msg.event.payload;
+          if (event?.event === "voice_user_transcript") {
+            const p = event.payload;
             const activeChatSessionId = chatConversationIdRef.current;
             if (activeChatSessionId && (!p.chatSessionId || p.chatSessionId === activeChatSessionId)) {
               const text = typeof p.text === "string" ? p.text : "";
@@ -1406,13 +1449,13 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
                   turnId: typeof p.turnId === "string" ? p.turnId : (typeof p.turn === "number" ? `server-turn-${p.turn}` : undefined),
                   turnKey: typeof p.turnKey === "string" ? p.turnKey : undefined,
                   sequence: typeof p.seq === "number" ? p.seq : undefined,
-                  isFinal: true,
+                  status: "committed",
                 });
               }
             }
           }
 
-          if (msg.event?.event === "voice_v3_tool_call") {
+          if (event?.event === "voice_v3_tool_call") {
             // Live tool-call event from the v3 webhook layer
             // (`recordV3ToolCall` → eventBus → SharedWS). Render a
             // synthetic system entry so the user can see what Sonnet is
@@ -1421,7 +1464,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             // ALSO attached to the assistant message via
             // `persistV3Turn`, so the chat history is unchanged on
             // reload — we just stop the UI from looking frozen.
-            const p = msg.event.payload;
+            const p = event.payload;
             const activeChatSessionId = chatConversationIdRef.current;
             if (activeChatSessionId && (!p.chatSessionId || p.chatSessionId === activeChatSessionId)) {
               const name = typeof p.name === "string" ? p.name : "";
@@ -1446,6 +1489,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
                     source: "system" as const,
                     message: callId ? `${label} [${callId}]` : label,
                     timestamp: typeof p.timestamp === "string" ? p.timestamp : new Date().toISOString(),
+                    status: "committed",
                     isToolCall: true,
                     isError,
                   };
@@ -1460,8 +1504,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             }
           }
 
-          if (msg.event?.event === "voice_diagnostic") {
-            const p = msg.event.payload;
+          if (event?.event === "voice_diagnostic") {
+            const p = event.payload;
             const activeChatSessionId = chatConversationIdRef.current;
             if (activeChatSessionId && (!p.chatSessionId || p.chatSessionId === activeChatSessionId)) {
               const stepName = typeof p.stepName === "string" ? p.stepName : "";
@@ -1475,8 +1519,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             }
           }
 
-          if (msg.event?.event === "voice_connection_dropped") {
-            const p = msg.event.payload;
+          if (event?.event === "voice_connection_dropped") {
+            const p = event.payload;
             const activeChatSessionId = chatConversationIdRef.current;
             if (activeChatSessionId && (!p.chatSessionId || p.chatSessionId === activeChatSessionId)) {
               const detail = typeof p.detail === "string" ? p.detail : "Connection dropped";
@@ -1484,12 +1528,13 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
                 source: "system" as const,
                 message: detail,
                 timestamp: new Date().toISOString(),
+                status: "committed" as const,
                 isError: true,
               }]);
             }
           }
 
-          if (msg.event?.event === "voice_duplicate_detected") {
+          if (event?.event === "voice_duplicate_detected") {
             // task-923 step 6 (defense in depth). The server eliminated
             // a duplicate session for this chat — if we're holding two
             // local Conversation objects (an orphan from the silent-9.7s
@@ -1498,7 +1543,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             // explicit signal, NOT on every reconnect, because
             // attemptReconnect's clean swap legitimately replaces
             // conversationRef.current.
-            const p = msg.event.payload;
+            const p = event.payload;
             const activeChatSessionId = chatConversationIdRef.current;
             const localSessionId = voiceSessionIdRef.current;
             if (activeChatSessionId && (!p.chatSessionId || p.chatSessionId === activeChatSessionId)) {
@@ -1524,8 +1569,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             }
           }
 
-          if (msg.event?.event === "voice_reconnect_lifecycle") {
-            const p = msg.event.payload;
+          if (event?.event === "voice_reconnect_lifecycle") {
+            const p = event.payload;
             const activeChatSessionId = chatConversationIdRef.current;
             if (activeChatSessionId && (!p.chatSessionId || p.chatSessionId === activeChatSessionId)) {
               if (p.status === "resumed") {
@@ -1533,6 +1578,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
                   source: "system" as const,
                   message: "Connection restored",
                   timestamp: new Date().toISOString(),
+                  status: "committed" as const,
                   isError: false,
                 }]);
               } else if (p.status === "resume_failed_fresh") {
@@ -1540,14 +1586,15 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
                   source: "system" as const,
                   message: "Reconnect failed — starting fresh session",
                   timestamp: new Date().toISOString(),
+                  status: "committed" as const,
                   isError: true,
                 }]);
               }
             }
           }
 
-          if (msg.event?.event === "voice_tool_start") {
-            const p = msg.event.payload;
+          if (event?.event === "voice_tool_start") {
+            const p = event.payload;
             const activeChatSessionId = chatConversationIdRef.current;
             if (activeChatSessionId && (!p.chatSessionId || p.chatSessionId === activeChatSessionId)) {
               setVoiceThinking(false);
@@ -1559,8 +1606,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             }
           }
 
-          if (msg.event?.event === "voice_tool_done") {
-            const p = msg.event.payload;
+          if (event?.event === "voice_tool_done") {
+            const p = event.payload;
             const activeChatSessionId = chatConversationIdRef.current;
             if (activeChatSessionId && (!p.chatSessionId || p.chatSessionId === activeChatSessionId)) {
               voiceToolHandlerRef.current?.("done", {
@@ -1572,8 +1619,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             }
           }
 
-          if (msg.event?.event === "voice_tools_cleared") {
-            const p = msg.event.payload;
+          if (event?.event === "voice_tools_cleared") {
+            const p = event.payload;
             const activeChatSessionId = chatConversationIdRef.current;
             if (activeChatSessionId && (!p.chatSessionId || p.chatSessionId === activeChatSessionId)) {
               log.debug("VOICE:TOOLS:CLEARED", { reason: String(p.reason || "unknown").slice(0, 80), turn: p.turn });
@@ -1581,7 +1628,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             }
           }
 
-          if (msg.event?.event === "session_end") {
+          if (event?.event === "session_end") {
             log.info("VOICE:SERVER_END_DETECTED", { action: "mark_intentional_end" });
             try { navigator.sendBeacon("/api/voice/diagnostic", new Blob([JSON.stringify({ event: "server_end_detected", details: {} })], { type: "application/json" })); } catch (err: unknown) { log.debug("VOICE:BEACON:SERVER_END_DETECTED_FAILED", toBoundedLogError(err)); }
             intentionalEndRef.current = true;
@@ -1595,7 +1642,27 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
 
             cleanupSession("server-end");
           }
-        } catch (err: unknown) { log.error("VOICE:EVENT_WS:MESSAGE_PROCESSING_FAILED", toBoundedLogError(err)); }
+      };
+
+      ws.onmessage = (e) => {
+        lastMessageAt = Date.now();
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === "event" && msg.event) {
+            applyVoiceEvent(msg.event);
+          } else if (msg.type === "history" && Array.isArray(msg.events)) {
+            for (const event of msg.events) applyVoiceEvent(event);
+          } else if (msg.type === "events.resume.complete") {
+            log.debug("VOICE:EVENT_WS:RESUME_COMPLETE", {
+              cursorFound: Boolean(msg.cursorFound),
+              replayed: Number(msg.replayed || 0),
+            });
+          } else if (msg.type === "events.resume.error") {
+            log.warn("VOICE:EVENT_WS:RESUME_FAILED", { message: String(msg.message || "unknown") });
+          }
+        } catch (err: unknown) {
+          log.error("VOICE:EVENT_WS:MESSAGE_PROCESSING_FAILED", toBoundedLogError(err));
+        }
       };
 
       ws.onclose = (ev) => {

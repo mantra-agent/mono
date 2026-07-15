@@ -87,7 +87,7 @@ function getLastAssistantText(content: StreamingContent | null): string {
 type VoiceInputDisplay = { text: string; state: "empty" | "active" | "committed" };
 
 function getVoiceInputDisplay(transcript: VoiceTranscriptEntry[]): VoiceInputDisplay {
-  const userEntries = transcript.filter((entry) => entry.source === "user" && entry.isFinal !== true && entry.message.trim().length > 0);
+  const userEntries = transcript.filter((entry) => entry.source === "user" && entry.status === "provisional" && entry.message.trim().length > 0);
   if (userEntries.length === 0) return { text: "", state: "empty" };
 
   const latest = userEntries[userEntries.length - 1];
@@ -105,7 +105,7 @@ function getVoiceInputDisplay(transcript: VoiceTranscriptEntry[]): VoiceInputDis
   const displayEntry = bySequence.at(-1) ?? sameTurn.at(-1) ?? latest;
   return {
     text: displayEntry.message,
-    state: displayEntry.isFinal === true ? "committed" : "active",
+    state: displayEntry.status === "committed" ? "committed" : "active",
   };
 }
 

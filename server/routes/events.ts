@@ -64,6 +64,42 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
           registerClientPresence(ws, accountId, msg.kind, typeof msg.clientId === "string" ? msg.clientId : undefined);
           return;
         }
+        if (msg.type === "events.resume") {
+          const afterEventId = typeof msg.afterEventId === "string" ? msg.afterEventId : undefined;
+          const category = typeof msg.category === "string" ? msg.category : undefined;
+          const chatSessionId = typeof msg.chatSessionId === "string" ? msg.chatSessionId : undefined;
+          void runWithPrincipal(principal, async () => {
+            const { replayVisibleEvents } = await import("../event-persistence");
+            const replay = await replayVisibleEvents({
+              afterEventId,
+              category,
+              payloadQuery: chatSessionId ? { chatSessionId } : undefined,
+              limit: 200,
+              principal,
+            });
+            if (ws.readyState !== WebSocket.OPEN) return;
+            for (const event of replay.events) {
+              if (event.event === "chat.stream") continue;
+              ws.send(JSON.stringify({ type: "event", event, replay: true }));
+            }
+            ws.send(JSON.stringify({
+              type: "events.resume.complete",
+              afterEventId: afterEventId || null,
+              cursorFound: replay.cursorFound,
+              replayed: replay.events.length,
+            }));
+          }).catch((error) => {
+            eventsLog.error("WS:EVENTS:RESUME_FAILED", {
+              connectionId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "events.resume.error", message: "Event replay failed" }));
+            }
+          });
+          return;
+        }
+
         // Server-authoritative session subscription (by sessionId)
         if (msg.type === "session.subscribe" && typeof msg.sessionId === "string") {
           const subSessionId = msg.sessionId;
