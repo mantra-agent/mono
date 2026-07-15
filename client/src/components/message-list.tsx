@@ -168,8 +168,8 @@ function getVisibleVoiceTranscript(
 
   for (const entry of transcript) {
     if (entry.source !== "user" || !entry.turnId) continue;
-    if (entry.isFinal === false) userTurnsBackInInput.add(entry.turnId);
-    else if (entry.isFinal === true) userTurnsBackInInput.delete(entry.turnId);
+    if (entry.status === "provisional") userTurnsBackInInput.add(entry.turnId);
+    else if (entry.status === "committed") userTurnsBackInInput.delete(entry.turnId);
   }
 
   return transcript
@@ -177,7 +177,7 @@ function getVisibleVoiceTranscript(
     .filter(({ entry, index }) => {
       if (!entry.message.trim()) return false;
       if (entry.source === "user" && entry.turnId && userTurnsBackInInput.has(entry.turnId)) return false;
-      if (entry.source === "user" && entry.isFinal === false) return false;
+      if (entry.source === "user" && entry.status !== "committed") return false;
       const key = entry.turnKey || entry.transcriptId || entry.turnId || `${entry.source}:${normalizeTranscriptText(entry.message)}:${index}`;
       if (seen.has(key)) return false;
       seen.add(key);

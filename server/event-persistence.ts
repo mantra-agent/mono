@@ -129,6 +129,78 @@ export async function queryEvents(filters: EventQueryFilters): Promise<{ events:
   return { events, total };
 }
 
+
+export interface EventReplayResult {
+  events: BusEvent[];
+  cursorFound: boolean;
+}
+
+export async function replayVisibleEvents(input: {
+  afterEventId?: string;
+  category?: string;
+  payloadQuery?: Record<string, unknown>;
+  limit?: number;
+  principal: Principal;
+}): Promise<EventReplayResult> {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  appendVisibleEventScope(conditions, params, input.principal);
+  let cursorFound = !input.afterEventId;
+
+  if (input.afterEventId) {
+    const cursorConditions = ["event_id = $1"];
+    const cursorParams: unknown[] = [input.afterEventId];
+    appendVisibleEventScope(cursorConditions, cursorParams, input.principal);
+    const cursor = await pool.query(
+      `SELECT id FROM system_events WHERE ${cursorConditions.join(" AND ")} LIMIT 1`,
+      cursorParams,
+    );
+    if (cursor.rows.length > 0) {
+      cursorFound = true;
+      params.push(cursor.rows[0].id);
+      conditions.push(`id > $${params.length}`);
+    }
+  }
+
+  if (input.category) {
+    params.push(input.category);
+    conditions.push(`category = $${params.length}`);
+  }
+  if (input.payloadQuery && Object.keys(input.payloadQuery).length > 0) {
+    params.push(JSON.stringify(input.payloadQuery));
+    conditions.push(`payload @> $${params.length}::jsonb`);
+  }
+
+  const limit = Math.min(Math.max(input.limit ?? 200, 1), 200);
+  params.push(limit);
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const order = cursorFound && input.afterEventId ? "ASC" : "DESC";
+  const result = await pool.query(
+    `SELECT event_id, boot_id, category, event, payload, run_id, session_key, scope, owner_user_id, account_id, created_at
+     FROM system_events ${where}
+     ORDER BY id ${order}
+     LIMIT $${params.length}`,
+    params,
+  );
+  const rows = cursorFound && input.afterEventId ? result.rows : [...result.rows].reverse();
+  return {
+    cursorFound,
+    events: rows.map((row) => ({
+      id: row.event_id,
+      timestamp: new Date(row.created_at).getTime(),
+      category: row.category,
+      event: row.event,
+      payload: row.payload || {},
+      runId: row.run_id || undefined,
+      sessionKey: row.session_key || undefined,
+      bootId: row.boot_id || undefined,
+      audience: row.scope === "user"
+        ? { scope: "user", ownerUserId: row.owner_user_id, accountId: row.account_id }
+        : { scope: row.scope },
+    })),
+  };
+}
+
 export async function getEventByDbId(dbId: number, principal: Principal = getCurrentPrincipalOrSystem()): Promise<any | undefined> {
   return getEventByColumn("id", dbId, principal);
 }

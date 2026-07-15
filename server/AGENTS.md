@@ -178,6 +178,7 @@ Server-authoritative streaming state for chat sessions. The server maintains a `
 - `session.delta { sessionId, streamingContent, status }` — Incremental state update during streaming
 - `session.unsubscribe { sessionId }` — Client unsubscribes
 - `/ws/events` upgrades require an authenticated user Principal. Generic events carry one audience discriminant (`user`, `system`, or `global`); both live and replay delivery use the same visibility predicate. `session.subscribe` must verify the requested session through principal-scoped storage before touching `SessionManager`.
+- Event reconnect uses `events.resume` with a durable event ID cursor. Replay is principal-scoped, bounded to 200 rows, and filtered by the canonical payload identity. Replayed records use the ordinary `type: "event"` envelope so live and replay consumers share one reducer.
 
 ### Event Flow
 ```
