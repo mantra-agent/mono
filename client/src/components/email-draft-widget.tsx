@@ -214,7 +214,7 @@ function ThreadHistory({ messages }: { messages: ThreadMessage[] }) {
 // Main widget
 // ---------------------------------------------------------------------------
 
-export function EmailDraftWidget({ draftId }: { draftId: string }) {
+export function EmailDraftWidget({ draftId, isRecapDraft = false }: { draftId: string; isRecapDraft?: boolean }) {
   const [showCc, setShowCc] = useState(false);
   const [showBcc, setShowBcc] = useState(false);
   const [sentExpanded, setSentExpanded] = useState(false);
@@ -486,6 +486,13 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
       </div>
 
       {/* Fields */}
+
+      {/* Recap draft indicator */}
+      {isRecapDraft && (
+        <div className="px-3 py-1.5 text-xs bg-info/10 text-info border-b border-info/20">
+          <span>📎 Recipients are fixed for this recap email</span>
+        </div>
+      )}
       <div className="px-3 py-2 space-y-1.5">
         {/* From */}
         {accounts.length > 0 && (
@@ -494,7 +501,7 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
             <Select
               value={merged.gmailAccountId || ""}
               onValueChange={(val) => immediatePatch("gmailAccountId", val)}
-              disabled={isBusy}
+              disabled={isBusy || isRecapDraft}
             >
               <SelectTrigger className="h-7 text-xs flex-1">
                 <SelectValue placeholder="Select account">
@@ -517,7 +524,7 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
           label="To"
           values={merged.to}
           onChange={(val) => immediatePatch("to", val)}
-          disabled={isBusy}
+          disabled={isBusy || isRecapDraft}
         />
 
         {/* CC / BCC toggles */}
@@ -545,7 +552,7 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
             label="CC"
             values={merged.cc}
             onChange={(val) => immediatePatch("cc", val)}
-            disabled={isBusy}
+            disabled={isBusy || isRecapDraft}
           />
         )}
 
@@ -554,7 +561,7 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
             label="BCC"
             values={merged.bcc}
             onChange={(val) => immediatePatch("bcc", val)}
-            disabled={isBusy}
+            disabled={isBusy || isRecapDraft}
           />
         )}
 
@@ -565,7 +572,7 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
             type="text"
             value={merged.subject}
             onChange={(e) => debouncedPatch("subject", e.target.value)}
-            disabled={isBusy}
+            disabled={isBusy || isRecapDraft}
             className="flex-1 bg-transparent text-sm outline-none border-b border-transparent focus:border-border/40 py-0.5"
             placeholder="Subject"
           />
@@ -576,7 +583,7 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
           <textarea
             value={merged.body}
             onChange={(e) => debouncedPatch("body", e.target.value)}
-            disabled={isBusy}
+            disabled={isBusy || isRecapDraft}
             rows={Math.max(3, merged.body.split("\n").length)}
             className="w-full bg-transparent text-sm outline-none resize-none border border-border/30 rounded-sm p-2 focus:border-border/60"
             placeholder="Compose your message..."
@@ -606,7 +613,7 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
           variant="ghost"
           size="sm"
           onClick={() => discardMutation.mutate()}
-          disabled={isBusy}
+          disabled={isBusy || isRecapDraft}
           className="text-muted-foreground"
         >
           {isDiscarding ? (
