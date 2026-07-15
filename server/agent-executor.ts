@@ -780,7 +780,7 @@ interface RunIterationContext {
 
 const ZOMBIE_CHECK_INTERVAL_MS = 60_000;
 const ZOMBIE_IDLE_THRESHOLD_MS = 5 * 60 * 1000;
-const ZOMBIE_HARD_CAP_MS = 20 * 60 * 1000;
+const ZOMBIE_HARD_CAP_MS = 40 * 60 * 1000;
 
 /**
  * Merge per-iteration content results into a single final string.
@@ -823,9 +823,9 @@ export class AgentExecutor extends EventEmitter {
   private startZombieDetection(): void {
     // Zombie detection used to be observe-only — we logged a warning and walked
     // away, which let leaked admission slots accumulate silently. Now we ACT:
-    // any run still alive past ZOMBIE_THRESHOLD_MS without already being
-    // aborted gets an abort signal with reason "zombie_timeout". The run's own
-    // finally then does the bounded drain and slot release. We skip already-
+    // any run still alive past the inactivity threshold or its execution hard
+    // cap gets the matching inactivity or execution-limit reason. The run's
+    // own finally then does the bounded drain and slot release. We skip already-
     // aborted runs so the drain grace window can finish without us re-firing.
     this.zombieCheckTimer = setInterval(() => {
       const now = Date.now();
