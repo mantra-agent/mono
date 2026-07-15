@@ -515,3 +515,7 @@ Legacy host-level Railway setup is not an application configuration surface. Cro
 ## Cloudflare Pages provider boundary
 
 Cloudflare Pages project truth and deployment commands live in `server/platforms/cloudflare-pages-service.ts`. Callers supply a decrypted credential obtained through the scoped provider-connection store. The boundary uses bounded requests, returns provider project Git/build truth, and represents deployment commands with the single `outcome` discriminant. Never expose or log provider credentials.
+
+## Runtime Architecture
+
+Container deployments use Tini as PID 1. The shell entrypoint must `exec` the Node server as Tini's direct child. Never make Node PID 1 and never replace Tini with route-level or child-specific reaping logic; Tini owns signal forwarding and orphaned descendant reaping for git, esbuild, Chromium, and provider tooling.
