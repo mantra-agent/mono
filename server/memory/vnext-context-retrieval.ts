@@ -14,7 +14,7 @@ import { db } from "../db";
 import { createLogger } from "../log";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { combineWithVisibleScope } from "../scoped-storage";
-import type { BlendWeights } from "./associative-retrieval";
+import type { BlendWeights } from "./vnext-retrieval-policy";
 import { generateEmbedding } from "./embedding";
 import { executeVnextClaimSemanticSearch } from "./vnext-claim-storage";
 

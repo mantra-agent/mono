@@ -125,6 +125,10 @@ Key files:
 - Refreshed during myelination (sleep cycle phase)
 - `server/memory/graph.ts` — `computeNeighborhood()`, `cacheNeighborhoods()`
 
+### Retrieval Ownership
+
+All user-facing and context retrieval is vNEXT-only. `memory.search`, `search_claims`, People summarization, Library semantic search, the Memory Query API, and `memory.graph` read `memory_vnext_claims`; they never query or fall back to `memory_entries`. Retrieval algorithms may expose different modes over the same claim store: explicit hybrid search for tools/UI and contextual graph expansion for prompt assembly. Shared ranking policy lives in `vnext-retrieval-policy.ts`, while each mode owns its orchestration. Legacy `memory_entries` code is write-side ingestion, migration, maintenance, and compatibility CRUD only until retirement. Do not import legacy search from a vNEXT module or blend stores in one result set.
+
 ### Tiered Context Assembly (memory.graph)
 
 The `memory.graph` context section uses tiered context assembly instead of flat rendering. It allocates token budget from the active persona and renders memories at depth proportional to relevance.
@@ -146,7 +150,8 @@ vNext-only. No legacy `memory_entries` fallback. Rendered output explicitly iden
 - `server/context-builder.ts` — `resolveGraphMemory()`, `getMemoryGraphTokenBudget()`, `allocateTiers()`, `renderTieredEntry()`
 - `server/memory/vnext-context-retrieval.ts` — `retrieveVnextContext()` blend scoring over claims
 - `server/memory/vnext-claim-storage.ts` — semantic claim search + canonical `mapRawVnextClaimRow()` mapper
-- `server/memory/associative-retrieval.ts` — `modulateWeights()`, `detectSessionType()`, `BLEND_WEIGHTS`
+- `server/memory/vnext-retrieval-policy.ts` — `modulateWeights()`, `detectSessionType()`, `BLEND_WEIGHTS`
+- `server/memory/vnext-search.ts` — explicit hybrid semantic/lexical vNEXT search with structured filters
 
 **Tiers:**
 
@@ -347,7 +352,7 @@ Every vNext claim admitted through the canonical Stage 1 mutation path must have
 
 Legacy active vNext claims missing embeddings are repaired through the settled-source maintenance path using a bounded, idempotent backfill under each owning principal. Retired claims are excluded, and each update rechecks both ownership and `embedding IS NULL` so retries are safe. `vnext_claim_counts` is the principal-scoped coverage check; healthy coverage is `activeMissingEmbedding=0` and `embeddingCoverage=1`.
 
-vNext graph context is the primary retrieval path. It combines principal-scoped semantic and recent seeds, follows at most two bounded hops across visible claim links, excludes retired claims, scores lifecycle stage, claim type, confidence, reinforcement, connectivity, provenance, semantic/causal/contrastive/temporal signals, balances semantic and recent graph results, and renders within the existing persona memory token budget. Legacy graph retrieval runs only when vNext returns no renderable claims or errors, and every fallback must emit a structured `memory.graph.context_fallback` reason.
+vNext graph context is the only context retrieval path. It combines principal-scoped semantic and recent seeds, follows at most two bounded hops across visible claim links, excludes retired claims, scores lifecycle stage, claim type, confidence, reinforcement, connectivity, provenance, semantic/causal/contrastive/temporal signals, balances semantic and recent graph results, and renders within the existing persona memory token budget. Empty results stay empty; failures surface as vNEXT unavailable and never fall back to `memory_entries`.
 
 ### Observability
 

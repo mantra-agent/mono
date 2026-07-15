@@ -48,10 +48,6 @@ import { migrateProjectNotesSpecToLibrary } from "./migrations/migrate-project-n
 const objectAclsMigrationReady = addObjectAclsTable();
 const vaultsMigrationReady = objectAclsMigrationReady.then(() => ensureVaults());
 
-const ENABLE_ASSOCIATIVE_RETRIEVAL = process.env.ASSOCIATIVE_RETRIEVAL === "true";
-serverLog.log(`[AssociativeRetrieval] enabled=${ENABLE_ASSOCIATIVE_RETRIEVAL}`);
-
-
 
 import { registerSessionOutputBufferListener } from "./session-output-buffer-listener";
 registerSessionOutputBufferListener();

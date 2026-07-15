@@ -110,7 +110,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   memory: {
-    description: "Unified memory system — read/write knowledge files, search all layers, manage graph links, run maintenance ops, link/get entity associations, batch retrieve, find duplicates, count entries, bulk delete. Actions: read, write, read_entry, search, create_link, update_entry, delete_entry, get, get_many, find_duplicates, count, bulk_delete, consolidate_short, integrate_mid_to_long, run_myelination, run_memory_decay, run_memory_reinforcement, run_capability_audit, run_full_sleep_cycle, compute_gsi, run_nrem, run_rem, link_entity, get_entity_links, list_sources, add_source, delete_source, search_claims, vnext_claim_counts, vnext_claim_detail, run_vnext_lifecycle.",
+    description: "Unified memory system — read/write knowledge files, search vNEXT claims, manage legacy maintenance records and graph links, run maintenance ops, link/get entity associations, batch retrieve, find duplicates, count entries, bulk delete. Actions: read, write, read_entry, search, create_link, update_entry, delete_entry, get, get_many, find_duplicates, count, bulk_delete, consolidate_short, integrate_mid_to_long, run_myelination, run_memory_decay, run_memory_reinforcement, run_capability_audit, run_full_sleep_cycle, compute_gsi, run_nrem, run_rem, link_entity, get_entity_links, list_sources, add_source, delete_source, search_claims, vnext_claim_counts, vnext_claim_detail, run_vnext_lifecycle.",
     category: "memory",
 
     parameters: {
@@ -124,9 +124,9 @@ export const TOOLS: Record<string, ToolMeta> = {
         ids: { type: "array", items: { type: "number" }, description: "Array of memory entry IDs (for get_many, max 100)" },
         confirm: { type: "boolean", description: "Confirm deletion (for delete_entry, default false — omit for preview)" },
         reason: { type: "string", description: "Reason for deletion (required when confirm:true for delete_entry)" },
-        query: { type: "string", description: "Search query (for search). Use '*' with structured filters to retrieve entries without semantic matching." },
-        source: { type: "string", description: "Filter by source type (for search, find_duplicates)" },
-        layer: { type: "string", description: "Filter by memory layer (for search, update_entry, find_duplicates)" },
+        query: { type: "string", description: "Search query (for vNEXT claim search). Use '*' with structured filters to retrieve claims without semantic ranking." },
+        source: { type: "string", description: "Filter by source type (for vNEXT search; legacy find_duplicates also accepts it)" },
+        layer: { type: "string", description: "Legacy memory layer (for update_entry and find_duplicates only; rejected by vNEXT search)" },
         integrationStage: { type: "string", enum: ["stage_0", "stage_1", "stage_2", "stage_3", "stage_4"], description: "Memory integration stage (for update_entry; stage_1 requires generated title, summary, and topics/tags; stage_4 means sleep-upkeep-maintained canonical memory)" },
         limit: { type: "number", description: "Max results (for search default 20, find_duplicates default 20)" },
         startDate: { type: "string", description: "Start date for date range filter (for search, format: YYYY-MM-DD). Inclusive." },
@@ -150,7 +150,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         context: { type: "string", description: "Context string (for add_source)" },
         quote: { type: "string", description: "Quote from source (for add_source)" },
         claimType: { type: "string", description: "Filter by claim type: state, cause, or action (for search_claims)" },
-        storage: { type: "string", enum: ["vnext", "legacy"], description: "Restrict search_claims to vNext claims or legacy memory_entries compatibility rows" },
+        storage: { type: "string", enum: ["vnext"], description: "Optional explicit vNEXT storage selector for search_claims; legacy search is retired" },
         lifecycleStage: { type: "string", enum: ["extracted", "sourced", "linked", "canonical", "retired"], description: "Filter vNext claims by lifecycle stage (for search_claims)" },
         hasEntityLinks: { type: "boolean", description: "Filter claims by whether they have entity links (for search_claims)" },
         minLinks: { type: "number", description: "Filter: minimum link count (for search)" },

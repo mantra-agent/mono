@@ -38,7 +38,7 @@ import { listAllEvents, isHighPrepEvent, hasCalendarAccess } from "./google-cale
 import { listGmailAccounts } from "./gmail";
 import { getJournalEntriesSince } from "./thoughts";
 import { getRecentThoughts } from "./thoughts";
-import { CAUSAL_RELATIONSHIP_TYPES, detectSessionType, BLEND_WEIGHTS, modulateWeights } from "./memory/associative-retrieval";
+import { detectSessionType, BLEND_WEIGHTS, modulateWeights } from "./memory/vnext-retrieval-policy";
 import { getSkillDefinitionsForContext, getToolSchemas } from "./tool-registry";
 import { withTimeout, isTimeoutError, SECTION_RESOLVE_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";

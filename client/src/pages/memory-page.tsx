@@ -316,14 +316,19 @@ interface PalaceData {
   semantics?: string;
 }
 
-interface SearchResult extends MemoryEntry {
-  score?: number;
-  embeddingSim?: number;
-  tagSim?: number;
-  titleSim?: number;
-  textMatch?: boolean;
-  graphHop?: number | null;
-  graphLinkStrength?: number | null;
+interface VnextSearchResult extends VnextClaim {
+  score: number;
+  embeddingSimilarity: number;
+  lexicalSimilarity: number;
+  textMatch: boolean;
+  linkCount: number;
+  retrievalPath: string[];
+}
+
+interface VnextSearchResponse {
+  storage: "memory_vnext_claims";
+  total: number;
+  results: VnextSearchResult[];
 }
 
 
@@ -3950,57 +3955,28 @@ function QueryTab() {
   const { toast } = useToast();
   const { timezone } = useTimezone();
   const [searchQuery, setSearchQuery] = useState("");
-  const [layerFilter, setLayerFilter] = useState<string>("all");
-  const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
+  const [claimTypeFilter, setClaimTypeFilter] = useState<string>("all");
+  const [selectedResult, setSelectedResult] = useState<VnextSearchResult | null>(null);
 
   const searchMutation = useMutation({
     mutationFn: async () => {
-      const body: Record<string, unknown> = {
-        query: searchQuery,
-        limit: 20,
-      };
-      if (layerFilter !== "all") {
-        body.layer = layerFilter;
-      }
+      const body: Record<string, unknown> = { query: searchQuery, limit: 20 };
+      if (claimTypeFilter !== "all") body.claimType = claimTypeFilter;
       const res = await apiRequest("POST", "/api/memory/search", body);
-      return await res.json() as SearchResult[];
+      return await res.json() as VnextSearchResponse;
     },
     onError: (err: Error) => {
-      log.error("search failed:", err);
+      log.error("vNext search failed:", err);
       toast({ title: "Search failed", description: err.message, variant: "destructive" });
     },
   });
 
   const handleSearch = useCallback(() => {
     if (!searchQuery.trim()) return;
+    setSelectedResult(null);
     searchMutation.mutate();
   }, [searchQuery, searchMutation]);
-
-  const results = searchMutation.data;
-
-  const selectedId = selectedResult?.id ?? null;
-  const { data: selectedEntryLinks } = useQuery<Array<{ link: MemoryLink; entry: MemoryEntry; direction: string }>>({
-    queryKey: ["/api/memory/entries", selectedId, "links"],
-    queryFn: async () => {
-      if (!selectedId) return [];
-      const res = await fetch(`/api/memory/entries/${selectedId}/links`);
-      return res.json();
-    },
-    enabled: !!selectedId && (selectedResult?.layer === "long" || !!(selectedResult?.metadata as Record<string, unknown>)?.recalledAt),
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await apiRequest("DELETE", `/api/memory/entries/${id}`);
-    },
-    onSuccess: () => {
-      toast({ title: "Entry deleted" });
-      setSelectedResult(null);
-    },
-    onError: (err: Error) => {
-      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
-    },
-  });
+  const results = searchMutation.data?.results;
 
   return (
     <div className={cn("flex flex-col", MEMORY_SHELL_CLASS)} data-testid="query-tab">
@@ -4008,108 +3984,52 @@ function QueryTab() {
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
-              placeholder="Search memories..."
-              className="pl-8"
-              data-testid="input-search-query"
-            />
+            <Input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") handleSearch(); }} placeholder="Search vNext memories..." className="pl-8" data-testid="input-search-query" />
           </div>
-          <Button
-            onClick={handleSearch}
-            disabled={searchMutation.isPending || !searchQuery.trim()}
-            data-testid="button-search"
-          >
+          <Button onClick={handleSearch} disabled={searchMutation.isPending || !searchQuery.trim()} data-testid="button-search">
             {searchMutation.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Search className="h-3.5 w-3.5 mr-1.5" />}
             Search
           </Button>
         </div>
-        <div className="flex items-center gap-4 flex-wrap">
-          <div className="flex items-center gap-2">
-            <Label className="text-xs text-muted-foreground">Layer</Label>
-            <Select value={layerFilter} onValueChange={setLayerFilter}>
-              <SelectTrigger className="w-28" data-testid="select-layer-filter">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All</SelectItem>
-                <SelectItem value="short">Short</SelectItem>
-                <SelectItem value="mid">Mid</SelectItem>
-                <SelectItem value="long">Long</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+        <div className="flex items-center gap-2">
+          <Label className="text-xs text-muted-foreground">Claim type</Label>
+          <Select value={claimTypeFilter} onValueChange={setClaimTypeFilter}>
+            <SelectTrigger className="w-28" data-testid="select-claim-type-filter"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              <SelectItem value="state">State</SelectItem>
+              <SelectItem value="cause">Cause</SelectItem>
+              <SelectItem value="action">Action</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
       <div className="flex flex-1 overflow-hidden min-h-0">
         <div className={cn(selectedResult ? "hidden @md:flex" : "flex", "@md:w-80 w-full shrink-0 border-r overflow-y-auto scrollbar-thin flex-col", MEMORY_PANEL_CLASS)} data-testid="query-list-panel">
-          {!results && !searchMutation.isPending && (
-            <div className={cn(MEMORY_EMPTY_CLASS, "px-4")} data-testid="query-empty">
-              <Search className="h-10 w-10 text-muted-foreground/30 mb-3" />
-              <h3 className="text-sm font-medium text-foreground mb-1">Search your memories</h3>
-              <p className="text-xs text-muted-foreground/70 max-w-sm">
-                Search by keyword, meaning, or related topics. Results are ranked using semantic similarity, title matching, tags, and graph connections.
-              </p>
-            </div>
-          )}
-
-          {searchMutation.isPending && (
-            <div className="space-y-1 p-2">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Skeleton key={i} className="h-12 w-full rounded-md" />
-              ))}
-            </div>
-          )}
-
-          {results && results.length === 0 && (
-            <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="query-no-results">
-              No matching memories.
-            </div>
-          )}
-
+          {!results && !searchMutation.isPending && <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="query-empty">Search active vNext claims by meaning, title, content, or topic.</div>}
+          {searchMutation.isPending && <div className="space-y-1 p-2">{Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-12 w-full rounded-md" />)}</div>}
+          {results && results.length === 0 && <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="query-no-results">No matching vNext claims.</div>}
           {results && results.length > 0 && (
             <div className="space-y-px p-1" data-testid="query-results">
               {results.map((result) => {
                 const isSelected = selectedResult?.id === result.id;
-                const displayTitle = getDisplayTitle(result);
                 return (
-                  <div
-                    key={result.id}
-                    className={cn("flex items-center gap-2 px-3 py-2 cursor-pointer", MEMORY_LIST_ROW_CLASS, isSelected && MEMORY_SELECTED_ROW_CLASS)}
-                    onClick={() => setSelectedResult(isSelected ? null : result)}
-                    data-testid={`result-row-${result.id}`}
-                  >
-                    <SourceIcon source={result.source} className="h-3 w-3 text-muted-foreground/70 shrink-0" />
+                  <button type="button" key={result.id} className={cn("flex w-full items-center gap-2 px-3 py-2 text-left", MEMORY_LIST_ROW_CLASS, isSelected && MEMORY_SELECTED_ROW_CLASS)} onClick={() => setSelectedResult(isSelected ? null : result)} data-testid={`result-row-${result.id}`}>
+                    <VnextClaimTypeIcon claimType={result.claimType} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <p className="text-sm truncate text-foreground/90 flex-1 min-w-0" data-testid={`result-title-${result.id}`}>
-                          {displayTitle}
-                        </p>
-                        <span className="text-xs text-muted-foreground/60 shrink-0 ml-auto" data-testid={`result-time-${result.id}`}>
-                          {relativeTime(result.createdAt)}
-                        </span>
+                        <p className="text-sm truncate text-foreground/90 flex-1 min-w-0" data-testid={`result-title-${result.id}`}>{result.title || firstLine(result.content)}</p>
+                        <span className="text-xs text-muted-foreground/60 shrink-0 ml-auto" data-testid={`result-time-${result.id}`}>{result.createdAt ? relativeTime(result.createdAt) : ""}</span>
                       </div>
                       <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
-                        {result.score !== undefined && (
-                          <span className="text-xs text-muted-foreground/70 font-mono shrink-0" data-testid={`result-score-${result.id}`}>
-                            {(result.score * 100).toFixed(0)}%
-                          </span>
-                        )}
-                        {result.graphHop != null && (
-                          <Badge variant="outline" className="text-xs px-1 py-0 shrink-0" data-testid={`result-hop-${result.id}`}>
-                            hop {result.graphHop}
-                          </Badge>
-                        )}
-                        {displayTags(result.tags).slice(0, 3).map((tag) => (
-                          <Badge key={tag} variant="outline" className="text-xs px-1 py-0 shrink-0" data-testid={`result-tag-${result.id}-${tag}`}>{tag}</Badge>
-                        ))}
+                        <span className="text-xs text-muted-foreground/70 font-mono shrink-0" data-testid={`result-score-${result.id}`}>{(result.score * 100).toFixed(0)}%</span>
+                        <Badge variant="outline" className="text-xs px-1 py-0 shrink-0">{lifecycleLabel(result.lifecycleStage)}</Badge>
+                        {(result.topics ?? []).slice(0, 2).map((topic) => <Badge key={topic} variant="outline" className="text-xs px-1 py-0 shrink-0">{topic}</Badge>)}
                       </div>
                     </div>
                     <ChevronRight className="h-3 w-3 text-muted-foreground/40 shrink-0" />
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -4119,157 +4039,28 @@ function QueryTab() {
         <div className={cn(selectedResult ? "flex" : "hidden @md:flex", "flex-1 flex-col overflow-hidden min-w-0", MEMORY_PANEL_CLASS)} data-testid="query-detail-panel">
           {selectedResult ? (
             <div className="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-4">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="@md:hidden shrink-0 -ml-1"
-                    onClick={() => setSelectedResult(null)}
-                    data-testid="button-back-query-detail"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <SourceIcon source={selectedResult.source} className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <h3 className="text-base font-semibold text-foreground truncate" data-testid="query-detail-title">
-                    {getDisplayTitle(selectedResult, 80)}
-                  </h3>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => deleteMutation.mutate(selectedResult.id)}
-                    disabled={deleteMutation.isPending}
-                    data-testid={`button-delete-entry-${selectedResult.id}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                  </Button>
-                  <Button variant="ghost" size="icon" onClick={() => setSelectedResult(null)} className="hidden @md:inline-flex" data-testid="button-close-query-detail">
-                    <X className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
+              <div className="flex items-center gap-2 min-w-0">
+                <Button variant="ghost" size="icon" className="@md:hidden shrink-0 -ml-1" onClick={() => setSelectedResult(null)} data-testid="button-back-query-detail"><ChevronLeft className="h-4 w-4" /></Button>
+                <VnextClaimTypeIcon claimType={selectedResult.claimType} />
+                <h3 className="text-base font-semibold text-foreground truncate" data-testid="query-detail-title">{selectedResult.title || firstLine(selectedResult.content)}</h3>
+                <Button variant="ghost" size="icon" onClick={() => setSelectedResult(null)} className="hidden @md:inline-flex ml-auto" data-testid="button-close-query-detail"><X className="h-3.5 w-3.5" /></Button>
               </div>
-
-              <MemorySignals entry={selectedResult} timezone={timezone} prefix="query-detail" />
-
               <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
-                <LayerBadge layer={selectedResult.layer} />
-                <span className="flex items-center gap-1" data-testid="query-detail-time">
-                  <Clock className="h-2.5 w-2.5" />
-                  {selectedResult.createdAt
-                    ? new Date(selectedResult.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
-                    : "Unknown"}
-                </span>
-                <span className="flex items-center gap-1" data-testid="query-detail-id">
-                  <Hash className="h-2.5 w-2.5" />{selectedResult.id}
-                </span>
-                <span className="text-muted-foreground/50" data-testid="query-detail-tokens">
-                  ~{formatTokens(estimateTokens(selectedResult.content))} tok
-                </span>
-                {selectedResult.score !== undefined && (
-                  <span className="font-mono" data-testid="query-detail-score">
-                    score {(selectedResult.score * 100).toFixed(1)}%
-                  </span>
-                )}
-                {selectedResult.graphHop != null && (
-                  <Badge variant="outline" className="text-xs px-1.5 py-0" data-testid="query-detail-hop">
-                    hop {selectedResult.graphHop}
-                  </Badge>
-                )}
+                <Badge variant="outline">{lifecycleLabel(selectedResult.lifecycleStage)}</Badge>
+                <Badge variant="outline">{claimTypeLabel(selectedResult.claimType)}</Badge>
+                <span>{Math.round(selectedResult.confidence * 100)}% confidence</span>
+                <span className="flex items-center gap-1"><Clock className="h-2.5 w-2.5" />{selectedResult.createdAt ? new Date(selectedResult.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : "Unknown"}</span>
+                <span className="flex items-center gap-1"><Hash className="h-2.5 w-2.5" />{selectedResult.id}</span>
+                <span className="font-mono">score {(selectedResult.score * 100).toFixed(1)}%</span>
+                <span>{selectedResult.linkCount} links</span>
+                <span>{selectedResult.recallCount ?? 0} recalls</span>
               </div>
-
-              {selectedResult.summary && selectedResult.summary !== selectedResult.content && (
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-1.5">Summary</p>
-                  <p className="text-sm text-foreground/80 whitespace-pre-wrap" data-testid="query-detail-summary">
-                    {selectedResult.summary}
-                  </p>
-                </div>
-              )}
-
-              {displayTags(selectedResult.tags).length > 0 && (
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {displayTags(selectedResult.tags).map((tag) => (
-                    <Badge key={tag} variant="outline" className="text-xs" data-testid={`query-detail-tag-${tag}`}>{tag}</Badge>
-                  ))}
-                </div>
-              )}
-
-              {(selectedResult.metadata as any)?.recalledAt && (
-                <Badge variant="secondary" className="text-xs bg-info/10 text-info-foreground" data-testid="query-recalled-badge">
-                  Recalled from {(selectedResult.metadata as any)?.previousLayer || "deeper memory"}
-                </Badge>
-              )}
-
-
-              {(selectedResult.layer === "long" || !!(selectedResult.metadata as any)?.recalledAt) && (() => {
-                const resultLinks = (selectedEntryLinks ?? []);
-                return (
-                  <>
-                    {resultLinks.length > 0 && (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
-                          <Link2 className="h-3 w-3" />
-                          Discovered Links ({resultLinks.length})
-                        </p>
-                        <div className="space-y-1">
-                          {resultLinks.map(({ link, entry: linkedEntry }) => (
-                            <div
-                              key={link.id}
-                              className={cn("flex items-center gap-2 px-3 py-2 cursor-pointer", MEMORY_LIST_ROW_CLASS)}
-                              onClick={() => setSelectedResult({ ...linkedEntry, score: undefined, graphHop: undefined })}
-                              data-testid={`query-detail-link-${link.id}`}
-                            >
-                              <SourceIcon source={linkedEntry.source} className="h-3 w-3 text-muted-foreground/70 shrink-0" />
-                              <div className="min-w-0 flex-1">
-                                <p className="text-sm truncate text-foreground/80">{linkedEntry.title || firstLine(linkedEntry.content)}</p>
-                                <p className="text-xs text-muted-foreground truncate">{link.relationship}</p>
-                              </div>
-                              <span className="text-xs text-muted-foreground/50 shrink-0">
-                                {(link.strength * 100).toFixed(0)}%
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </>
-                );
-              })()}
-
-              <div>
-                <p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
-                  <FileText className="h-3 w-3" />
-                  Content
-                </p>
-                <div data-testid="query-detail-content">
-                  <ExchangeContentRenderer content={selectedResult.content} />
-                </div>
-              </div>
-
-              {selectedResult.metadata && Object.keys(selectedResult.metadata).length > 0 && (
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-1.5">Metadata</p>
-                  <pre className="text-xs font-mono whitespace-pre-wrap text-foreground/70 bg-muted/20 border border-card-border rounded-md p-3" data-testid="query-detail-metadata">
-                    {JSON.stringify(selectedResult.metadata, null, 2)}
-                  </pre>
-                </div>
-              )}
-
-              <SourceRefsSection entryId={selectedResult.id} />
-
-              <EntityLinksSection entryId={selectedResult.id} />
-
-              <EventHistorySection entryId={selectedResult.id} timezone={timezone} />
+              {(selectedResult.topics ?? []).length > 0 && <div className="flex items-center gap-1.5 flex-wrap">{selectedResult.topics!.map((topic) => <Badge key={topic} variant="outline" className="text-xs">{topic}</Badge>)}</div>}
+              <div><p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1"><FileText className="h-3 w-3" />Claim</p><SimpleTextFrame content={selectedResult.content} /></div>
+              <VnextSourceRefsSection claimId={selectedResult.id} />
+              {selectedResult.metadata && Object.keys(selectedResult.metadata).length > 0 && <div><p className="text-xs font-medium text-muted-foreground mb-1.5">Metadata</p><pre className="text-xs font-mono whitespace-pre-wrap text-foreground/70 bg-muted/20 border border-card-border rounded-md p-3" data-testid="query-detail-metadata">{JSON.stringify(selectedResult.metadata, null, 2)}</pre></div>}
             </div>
-          ) : (
-            <div className={cn("flex-1 px-6", MEMORY_EMPTY_CLASS)} data-testid="query-no-selection">
-              <Search className="h-10 w-10 text-muted-foreground/30 mb-3" />
-              <p className="text-sm text-muted-foreground">Select a result to view details</p>
-              <p className="text-xs text-muted-foreground/60 mt-1">Click on any result in the left panel</p>
-            </div>
-          )}
+          ) : <div className="flex-1 px-2 py-1.5 text-sm text-muted-foreground" data-testid="query-no-selection">Select a vNext claim to view details.</div>}
         </div>
       </div>
     </div>
