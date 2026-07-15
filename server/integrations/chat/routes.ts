@@ -1183,6 +1183,14 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     return `[Compacted historical tool result: ${lines} lines, ${content.length.toLocaleString()} chars] ${content.slice(0, 200)}...`;
   }
 
+  type ConversationHistoryMessage = {
+    role: "user" | "assistant" | "system" | "tool";
+    content: string;
+    toolCallId?: string;
+    toolCalls?: any[];
+    thinking?: string;
+  };
+
   async function buildChatHistory(
     sessionId: string,
     enrichedContent: string,
@@ -1195,6 +1203,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     currentMessageId?: string,
   ): Promise<{
     messages: ExecutorMessage[];
+    conversationHistory: ConversationHistoryMessage[];
     toolDefs: ToolDefinition[];
     contextPressure: {
       preRunTokens: number;
@@ -1230,13 +1239,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       `loadHistory DONE messageCount=${existingMessages.length} elapsed=${Date.now() - histStart}ms sessionId=${sessionId}`,
     );
 
-    const conversationHistory: Array<{
-      role: "user" | "assistant" | "system" | "tool";
-      content: string;
-      toolCallId?: string;
-      toolCalls?: any[];
-      thinking?: string;
-    }> = [];
+    const conversationHistory: ConversationHistoryMessage[] = [];
 
     const tsPrefix = (createdAt: unknown): string => {
       const d =
@@ -1636,6 +1639,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     );
     return {
       messages,
+      conversationHistory,
       toolDefs,
       contextPressure: {
         preRunTokens: fullPreExecutorTokens,
@@ -2047,7 +2051,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         preChronology.push({ s: "system", i: idx });
       };
 
-      const { messages, toolDefs, contextPressure } = await buildChatHistory(
+      const {
+        messages,
+        conversationHistory,
+        toolDefs,
+        contextPressure,
+      } = await buildChatHistory(
         sessionId,
         content,
         chatModel,
