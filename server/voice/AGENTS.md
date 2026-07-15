@@ -69,3 +69,7 @@ Uses per-iteration content model (`iterationResults[]`) with explicit `mergeIter
 
 ### Speech Synthesis Ownership
 Normal voice configuration is the sole source of truth for voice identity, model, expression tags, pronunciation, and voice settings. `voice/synthesis.ts` owns the portable provider request: `streamVoiceAudio()` returns progressive audio, and buffered consumers derive bytes through `synthesizeVoiceAudio()` rather than opening a second provider path. Meeting/Recall and phone/Twilio may deliver, buffer, or transcode that audio, but must not own provider selection or speech configuration.
+
+## Start Flow
+
+`start-preparation.ts` owns start-domain preparation: chat session-key resolution, context and signed-URL prefetch, CLI pre-warm, default persona readiness, FTUE pre-orientation, exact reconnect preparation, and exceptional system-step persistence. HTTP/SSE transport, lease claiming, provider handoff, and response completion remain in `routes/voice-session.ts`. Do not pass Express request or response objects into the preparation module.
