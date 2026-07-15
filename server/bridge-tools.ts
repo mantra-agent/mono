@@ -8800,8 +8800,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
   async meeting_bot(args: Record<string, any>): Promise<ToolHandlerResult> {
     const action = typeof args.action === "string" ? args.action : "";
-    if (!["join", "status", "diagnostics", "leave"].includes(action)) {
-      return { result: `Unknown meeting_bot action: ${action}. Allowed: join, status, diagnostics, leave`, error: true };
+    if (!["join", "status", "diagnostics", "leave", "recap"].includes(action)) {
+      return { result: `Unknown meeting_bot action: ${action}. Allowed: join, status, diagnostics, leave, recap`, error: true };
     }
 
     if (action === "diagnostics") {
@@ -8812,7 +8812,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
     const { chatStorage } = await import("./integrations/chat/storage");
 
-    if (action === "status" || action === "leave") {
+    if (action === "status" || action === "leave" || action === "recap") {
       const sessionId = typeof args.sessionId === "string" ? args.sessionId.trim() : "";
       if (!sessionId) return { result: "Missing sessionId", error: true };
       const session = await chatStorage.getSession(sessionId);
@@ -8829,8 +8829,90 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             participants: session.meeting.participants,
             startedAt: session.meeting.startedAt,
             endedAt: session.meeting.endedAt,
+            recap: session.meeting.recap,
             link: `/session?c=${sessionId}`,
           }),
+        };
+      }
+      if (action === "recap") {
+        const { getCurrentPrincipal } = await import("./principal-context");
+        const principal = getCurrentPrincipal();
+        if (!principal || principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+          return { result: "A user principal is required to prepare recap drafts.", error: true };
+        }
+        const meeting = session.meeting;
+        if (meeting.ownerUserId !== principal.userId || meeting.principalAccountId !== principal.accountId) {
+          return { result: `No meeting session found for id ${sessionId}`, error: true };
+        }
+
+        let recap = meeting.recap;
+        if (!recap || recap.status !== "ready") {
+          const { finalizeMeetingSession } = await import("./meeting/recap");
+          const finalization = await finalizeMeetingSession(sessionId);
+          if (finalization.outcome === "failed") {
+            return { result: `Meeting recap is not ready: ${finalization.recap.error ?? "recap generation failed"}`, error: true };
+          }
+          if (finalization.outcome === "already_generating") {
+            return { result: "Meeting recap is still generating. Try again after it is ready.", error: true };
+          }
+          recap = finalization.recap;
+        }
+
+        if (!recap || recap.status !== "ready") {
+          return { result: "Meeting recap is not ready yet.", error: true };
+        }
+
+        const { distributeRecap } = await import("./meeting/distribution");
+        await distributeRecap(sessionId, meeting, recap, principal, { retryFailed: true });
+
+        const { db } = await import("./db");
+        const { meetingRecapDistributions } = await import("@shared/schema");
+        const { combineWithVisibleScope } = await import("./scoped-storage");
+        const { eq } = await import("drizzle-orm");
+        const scopeColumns = {
+          scope: meetingRecapDistributions.scope,
+          ownerUserId: meetingRecapDistributions.ownerUserId,
+          accountId: meetingRecapDistributions.accountId,
+        };
+        const distributions = await db
+          .select({
+            attendeeEmail: meetingRecapDistributions.attendeeEmail,
+            attendeeName: meetingRecapDistributions.attendeeName,
+            draftId: meetingRecapDistributions.draftId,
+            status: meetingRecapDistributions.status,
+            error: meetingRecapDistributions.error,
+          })
+          .from(meetingRecapDistributions)
+          .where(
+            combineWithVisibleScope(
+              principal,
+              scopeColumns,
+              eq(meetingRecapDistributions.sessionId, sessionId),
+            ),
+          )
+          .orderBy(meetingRecapDistributions.createdAt);
+
+        const draftIds = distributions
+          .map((row) => row.draftId)
+          .filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+        const updated = await chatStorage.getSession(sessionId);
+        const refs = draftIds.map((id) => `@email_draft:${id}`).join(" ");
+        const summary = draftIds.length > 0
+          ? `Recap draft widget${draftIds.length === 1 ? "" : "s"} ready for review: ${refs}`
+          : `No recap draft widgets were created for this meeting.`;
+        return {
+          result: JSON.stringify({
+            sessionId,
+            title: updated?.meeting?.title || updated?.title || meeting.title || session.title,
+            recap: updated?.meeting?.recap ?? recap,
+            distributions,
+            draftIds,
+            link: `/session?c=${sessionId}`,
+            message: summary,
+          }, null, 2) + (refs ? `
+
+${refs}` : ""),
+          data: { draftIds },
         };
       }
       // leave
