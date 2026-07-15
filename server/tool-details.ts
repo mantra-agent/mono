@@ -244,7 +244,7 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
   meetings: {
     description: "Manage calendar events — create, list, update, delete meetings, classify events, and link tasks/people.",
     whenToUse: "User wants to schedule, check, reschedule, cancel meetings, classify calendar events, or link tasks/priorities to calendar blocks.",
-    example: 'Add: { "action": "add", "summary": "Meeting with Sarah", "start": "2026-02-23T14:00:00-06:00" }\nList: { "action": "list" }\nSet metadata: { "action": "set_metadata", "googleEventId": "...", "accountId": "...", "calendarId": "primary", "eventType": "focus_block", "attendeeEmails": ["sarah@example.com"] }\nGet metadata: { "action": "get_metadata", "googleEventId": "...", "accountId": "...", "calendarId": "primary" }\nLink task: { "action": "link_task", "metadataId": 1, "taskId": 485 }\nUnlink task: { "action": "unlink_task", "linkId": 3 }',
+    example: 'Add: { "action": "add", "summary": "Meeting with Sarah", "start": "2026-02-23T14:00:00-06:00" }\nList: { "action": "list" }\nSet metadata: { "action": "set_metadata", "googleEventId": "...", "accountId": "...", "calendarId": "primary", "eventType": "focus_block", "attendeeEmails": ["sarah@example.com"] }\nGet metadata: { "action": "get_metadata", "googleEventId": "...", "accountId": "...", "calendarId": "primary" }',
     actions: {
       add: { description: "Create a new calendar event.", requiredParams: ["summary", "start"], optionalParams: ["end", "description", "location", "attendees", "accountId", "calendarId"] },
       list: { description: "List upcoming calendar events. Shows event type badges and linked task names inline.", optionalParams: ["from", "to", "limit"] },
@@ -252,8 +252,6 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
       delete: { description: "Delete/cancel a calendar event.", requiredParams: ["eventId"], optionalParams: ["accountId", "calendarId"] },
       set_metadata: { description: "Classify a calendar event, link People from attendee emails, and set its private agenda as a Library page. Event types: focus_block, exercise, meeting, planning, admin, personal.", requiredParams: ["googleEventId", "accountId", "calendarId", "eventType"], optionalParams: ["notes", "agendaLibraryPageId", "attendeeEmails"] },
       get_metadata: { description: "Get full metadata for a calendar event including linked tasks, people, and artifacts.", requiredParams: ["googleEventId", "accountId", "calendarId"] },
-      link_task: { description: "Link a task or priority to a calendar event metadata record. Provide metadataId + either taskId (for tasks) or priorityTitle (for priorities).", requiredParams: ["metadataId"], optionalParams: ["taskId", "priorityTitle", "taskTitle", "estimateHours"] },
-      unlink_task: { description: "Remove a task/priority link from a calendar event by link record ID.", requiredParams: ["linkId"] },
       link_artifact: { description: "Link a Library page artifact such as a brief, agenda, research note, follow-up, or recap to a calendar event metadata record.", requiredParams: ["metadataId", "libraryPageId"], optionalParams: ["artifactKind", "title", "source"] },
       unlink_artifact: { description: "Remove a Library artifact link from a calendar event by link record ID.", requiredParams: ["linkId"] },
     },

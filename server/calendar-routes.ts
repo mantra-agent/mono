@@ -14,7 +14,7 @@ import { db } from "./db";
 import { libraryPages } from "@shared/models/info";
 import { eq } from "drizzle-orm";
 import {
-  getMetadata, setMetadata, linkTask, unlinkTask, getLinkedTasks, getLinkedPeople, linkArtifact, unlinkArtifact, getLinkedArtifacts,
+  getMetadata, setMetadata, getLinkedPeople, linkArtifact, unlinkArtifact, getLinkedArtifacts,
   autoLogMeetingInteractions, EVENT_TYPES, CAPACITY_TYPES, type EventType, type CapacityType,
   setAgentJoin, setMeetingAgendaPage,
 } from "./calendar-metadata";
@@ -439,8 +439,7 @@ export function registerCalendarRoutes(app: Express): void {
       }
       const meta = await getMetadata(req.params.eventId, accountId, calendarId);
       if (!meta) return res.json({ metadata: null });
-      const [tasks, linkedPeople, linkedArtifacts] = await Promise.all([
-        getLinkedTasks(meta.id),
+      const [linkedPeople, linkedArtifacts] = await Promise.all([
         getLinkedPeople(meta.id),
         getLinkedArtifacts(meta.id),
       ]);
@@ -448,7 +447,7 @@ export function registerCalendarRoutes(app: Express): void {
         resolveMeetingPeopleContext(linkedPeople),
         resolveMeetingArtifactContext(linkedArtifacts),
       ]);
-      res.json({ metadata: meta, tasks, people, artifacts });
+      res.json({ metadata: meta, people, artifacts });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -497,7 +496,7 @@ export function registerCalendarRoutes(app: Express): void {
       if (agendaLibraryPageId || agenda !== undefined) {
         await setMeetingAgendaPage(meta, agendaLibraryPageId, agenda, eventSummary || "Meeting");
       }
-      const [tasks, people, artifacts] = await Promise.all([getLinkedTasks(meta.id), getLinkedPeople(meta.id), getLinkedArtifacts(meta.id)]);
+      const [people, artifacts] = await Promise.all([getLinkedPeople(meta.id), getLinkedArtifacts(meta.id)]);
 
       // Auto-log meeting interactions for linked people when the event has ended
       let autoLoggedCount = 0;
@@ -512,7 +511,7 @@ export function registerCalendarRoutes(app: Express): void {
         }
       }
 
-      res.json({ metadata: meta, tasks, people, artifacts, autoLoggedInteractions: autoLoggedCount });
+      res.json({ metadata: meta, people, artifacts, autoLoggedInteractions: autoLoggedCount });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -576,33 +575,6 @@ export function registerCalendarRoutes(app: Express): void {
     }
   });
 
-  const linkTaskSchema = z.object({
-    taskId: z.number().optional(),
-    priorityTitle: z.string().optional(),
-    taskTitle: z.string().optional(),
-    estimateHours: z.number().optional(),
-  });
-
-  app.post("/api/calendar/metadata/:metadataId/tasks", async (req, res) => {
-    try {
-      const metadataId = parseInt(req.params.metadataId, 10);
-      if (isNaN(metadataId)) return res.status(400).json({ error: "Invalid metadataId" });
-      const parsed = linkTaskSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
-      }
-      const { taskId, priorityTitle, taskTitle, estimateHours } = parsed.data;
-      if (!taskId && !priorityTitle) {
-        return res.status(400).json({ error: "Provide either taskId or priorityTitle" });
-      }
-      const link = await linkTask(metadataId, taskId, priorityTitle, taskTitle, estimateHours);
-      res.json({ link });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-
   const linkArtifactSchema = z.object({
     libraryPageId: z.string().min(1),
     artifactKind: z.string().optional(),
@@ -640,16 +612,6 @@ export function registerCalendarRoutes(app: Express): void {
     }
   });
 
-  app.delete("/api/calendar/metadata/tasks/:linkId", async (req, res) => {
-    try {
-      const linkId = parseInt(req.params.linkId, 10);
-      if (isNaN(linkId)) return res.status(400).json({ error: "Invalid linkId" });
-      await unlinkTask(linkId);
-      res.json({ success: true });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
 }
 
 async function syncMeetingInteractions() {

@@ -5025,7 +5025,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         catch { return iso; }
       };
 
-      const { listMetadataByEvents, getLinkedTasksByMetadataIds, getLinkedPeopleByMetadataIds, makeMetaKey } = await import("./calendar-metadata");
+      const { listMetadataByEvents, getLinkedPeopleByMetadataIds, makeMetaKey } = await import("./calendar-metadata");
 
       const eventIdentities = events.filter(e => e.id).map(e => ({
         googleEventId: e.id,
@@ -5034,20 +5034,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       }));
       const allMeta = await listMetadataByEvents(eventIdentities).catch(() => []);
       const metaIds = allMeta.map(m => m.id);
-      const [allLinkedTasks, allLinkedPeople] = await Promise.all([
-        getLinkedTasksByMetadataIds(metaIds).catch(() => []),
-        getLinkedPeopleByMetadataIds(metaIds).catch(() => []),
-      ]);
+      const allLinkedPeople = await getLinkedPeopleByMetadataIds(metaIds).catch(() => []);
 
-      type MetaTask = typeof allLinkedTasks[number];
       type MetaPerson = typeof allLinkedPeople[number];
 
       const metaByKey = new Map(allMeta.map(m => [makeMetaKey(m.googleEventId, m.accountId, m.calendarId), m]));
-      const tasksByMetaId = new Map<number, MetaTask[]>();
-      for (const t of allLinkedTasks) {
-        if (!tasksByMetaId.has(t.metadataId)) tasksByMetaId.set(t.metadataId, []);
-        tasksByMetaId.get(t.metadataId)!.push(t);
-      }
       const peopleByMetaId = new Map<number, MetaPerson[]>();
       for (const p of allLinkedPeople) {
         if (!peopleByMetaId.has(p.metadataId)) peopleByMetaId.set(p.metadataId, []);
@@ -5062,18 +5053,10 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         const meta = metaByKey.get(makeMetaKey(e.id, e.accountId, e.calendarId));
         let metaBadge = "";
         if (meta) {
-          const linkedTasks = tasksByMetaId.get(meta.id) ?? [];
           const linkedPeople = peopleByMetaId.get(meta.id) ?? [];
 
           if (meta.eventType === "meeting" && linkedPeople.length > 0) {
             metaBadge = ` [meeting — ${linkedPeople.map(p => p.personName).join(", ")}]`;
-          } else if (linkedTasks.length > 0) {
-            const taskLabels = linkedTasks.map(t => {
-              const label = t.taskTitle || t.priorityTitle || `Task #${t.taskId}`;
-              const hrs = t.estimateHours ? ` (~${t.estimateHours}h)` : "";
-              return `${label}${hrs}`;
-            }).join(", ");
-            metaBadge = ` [${meta.eventType} → ${taskLabels}]`;
           } else {
             metaBadge = ` [${meta.eventType}]`;
           }
@@ -5255,7 +5238,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const calPermCheck = await checkGmailPermission(args.accountId, "calendarView", "view calendar event metadata");
       if (calPermCheck.denied) return calPermCheck.result;
 
-      const { getMetadata, getLinkedTasks, getLinkedPeople, getLinkedArtifacts, resolveMeetingAgendaPage } = await import("./calendar-metadata");
+      const { getMetadata, getLinkedPeople, getLinkedArtifacts, resolveMeetingAgendaPage } = await import("./calendar-metadata");
       const googleEventId = args.googleEventId || args.eventId;
       const accountId = args.accountId;
       const calendarId = args.calendarId || "primary";
@@ -5265,8 +5248,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const meta = await getMetadata(googleEventId, accountId, calendarId);
       if (!meta) return { result: `No metadata found for event ${googleEventId}` };
 
-      const [tasks, people, artifacts, agendaPage] = await Promise.all([
-        getLinkedTasks(meta.id),
+      const [people, artifacts, agendaPage] = await Promise.all([
         getLinkedPeople(meta.id),
         getLinkedArtifacts(meta.id),
         resolveMeetingAgendaPage(meta),
@@ -5279,14 +5261,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         ...(agendaPage ? [`Agenda: @page:${agendaPage.id}`] : meta.agenda ? [`Legacy private agenda:\n${meta.agenda}`] : []),
       ];
 
-      if (tasks.length > 0) {
-        lines.push(`Linked tasks/priorities:`);
-        for (const t of tasks) {
-          const label = t.taskTitle || t.priorityTitle || `Task #${t.taskId}`;
-          const hrs = t.estimateHours ? ` (~${t.estimateHours}h)` : "";
-          lines.push(`  - [linkId: ${t.id}] ${label}${hrs}`);
-        }
-      }
 
       if (people.length > 0) {
         lines.push(`Linked people: ${people.map(p => p.personName).join(", ")}`);
@@ -5303,60 +5277,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       return { result: lines.join("\n") };
     } catch (err: any) {
       return { result: `Failed to get metadata: ${err.message}`, error: true };
-    }
-  },
-
-  async link_task_meeting(args) {
-    try {
-      const { linkTask, getMetadataByIds } = await import("./calendar-metadata");
-      const metadataId = args.metadataId;
-      if (!metadataId) return { result: "Missing metadataId", error: true };
-      if (!args.taskId && !args.priorityTitle) return { result: "Provide either taskId or priorityTitle", error: true };
-
-      const metaRows = await getMetadataByIds([metadataId]);
-      if (!metaRows[0]) return { result: `No calendar event metadata found for id ${metadataId}`, error: true };
-      const accountId = metaRows[0].accountId;
-
-      const calPermCheck = await checkGmailPermission(accountId, "calendarEdit", "link tasks to calendar events");
-      if (calPermCheck.denied) return calPermCheck.result;
-
-      let taskTitle = args.taskTitle;
-      if (args.taskId && !taskTitle) {
-        try {
-          const { fileTaskStorage } = await import("./file-storage/tasks");
-          const task = await fileTaskStorage.getTask(args.taskId);
-          if (task) taskTitle = task.title;
-        } catch { /* ignore */ }
-      }
-
-      const link = await linkTask(metadataId, args.taskId, args.priorityTitle, taskTitle, args.estimateHours);
-      const label = taskTitle || args.priorityTitle || `Task #${args.taskId}`;
-      return { result: `Linked "${label}" to calendar event metadata (linkId: ${link.id})` };
-    } catch (err: any) {
-      return { result: `Failed to link task: ${err.message}`, error: true };
-    }
-  },
-
-  async unlink_task_meeting(args) {
-    try {
-      const { unlinkTask, getLinkedTaskById, getMetadataByIds } = await import("./calendar-metadata");
-      const linkId = args.linkId;
-      if (!linkId) return { result: "Missing linkId", error: true };
-
-      const taskLink = await getLinkedTaskById(linkId);
-      if (!taskLink) return { result: `Task link ${linkId} not found`, error: true };
-
-      const metaRows = await getMetadataByIds([taskLink.metadataId]);
-      if (!metaRows[0]) return { result: `Calendar event metadata not found for link ${linkId}`, error: true };
-      const accountId = metaRows[0].accountId;
-
-      const calPermCheck = await checkGmailPermission(accountId, "calendarEdit", "remove task links from calendar events");
-      if (calPermCheck.denied) return calPermCheck.result;
-
-      await unlinkTask(linkId);
-      return { result: `Task link ${linkId} removed` };
-    } catch (err: any) {
-      return { result: `Failed to unlink task: ${err.message}`, error: true };
     }
   },
 
@@ -10256,13 +10176,11 @@ ${refs}` : ""),
       delete: (a) => bridgeHandlers.delete_meeting(a),
       set_metadata: (a) => bridgeHandlers.set_metadata_meeting(a),
       get_metadata: (a) => bridgeHandlers.get_metadata_meeting(a),
-      link_task: (a) => bridgeHandlers.link_task_meeting(a),
-      unlink_task: (a) => bridgeHandlers.unlink_task_meeting(a),
       link_artifact: (a) => bridgeHandlers.link_artifact_meeting(a),
       unlink_artifact: (a) => bridgeHandlers.unlink_artifact_meeting(a),
     };
     const handler = sub[action];
-    if (!handler) return { result: `Unknown meetings action: ${action}. Available: add, list, update, delete, set_metadata, get_metadata, link_task, unlink_task, link_artifact, unlink_artifact`, error: true };
+    if (!handler) return { result: `Unknown meetings action: ${action}. Available: add, list, update, delete, set_metadata, get_metadata, link_artifact, unlink_artifact`, error: true };
     return handler(args);
   },
 

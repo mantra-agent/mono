@@ -9,14 +9,12 @@ import { getEvent, type CalendarEvent } from "../google-calendar";
 import {
   getLinkedArtifacts,
   getLinkedPeople,
-  getLinkedTasks,
   getMetadata,
 } from "../calendar-metadata";
 import { PeopleStorage, type Interaction } from "../people-storage";
 
 const log = createLogger("MeetingContextPacket");
 const MAX_ATTENDEES = 20;
-const MAX_TASKS = 12;
 const MAX_ARTIFACTS = 12;
 const MAX_INTERACTIONS_PER_PERSON = 3;
 const MAX_DESCRIPTION_CHARS = 1_200;
@@ -54,7 +52,6 @@ export interface MeetingContextPacket {
   notes?: string;
   agenda?: string;
   attendees: MeetingContextAttendee[];
-  tasks: Array<{ id?: number; title: string }>;
   artifacts: MeetingContextArtifact[];
   unresolvedAttendees: string[];
   unresolvedArtifacts: string[];
@@ -173,14 +170,12 @@ export async function buildMeetingContextPacket(meeting: MeetingSessionMeta): Pr
 
   const event = await getEvent(identity.accountId, identity.calendarId, identity.providerEventId);
   const metadata = await getMetadata(identity.providerEventId, identity.accountId, identity.calendarId);
-  const [linkedTasks, attendeeResolution, artifactResolution] = metadata
+  const [attendeeResolution, artifactResolution] = metadata
     ? await Promise.all([
-        getLinkedTasks(metadata.id),
         resolveAttendees(event, metadata.id),
         resolveArtifacts(metadata.id),
       ])
     : [
-        [],
         {
           attendees: event.attendees.filter(attendee => !attendee.self).slice(0, MAX_ATTENDEES).map(attendee => ({
             label: attendee.displayName || attendee.email,
@@ -208,15 +203,11 @@ export async function buildMeetingContextPacket(meeting: MeetingSessionMeta): Pr
     notes: bounded(metadata?.notes, 800),
     agenda: bounded(metadata?.agenda || meeting.agenda, 1_200),
     attendees: attendeeResolution.attendees,
-    tasks: linkedTasks.slice(0, MAX_TASKS).map(task => ({
-      id: task.taskId ?? undefined,
-      title: task.taskTitle || task.priorityTitle || (task.taskId ? `Task ${task.taskId}` : "Unresolved linked task"),
-    })),
     artifacts: artifactResolution.artifacts,
     unresolvedAttendees: attendeeResolution.unresolved,
     unresolvedArtifacts: artifactResolution.unresolved,
   };
-  log.debug(`built version=${packet.version} event=${identity.providerEventId} attendees=${packet.attendees.length} tasks=${packet.tasks.length} artifacts=${packet.artifacts.length}`);
+  log.debug(`built version=${packet.version} event=${identity.providerEventId} attendees=${packet.attendees.length} artifacts=${packet.artifacts.length}`);
   return packet;
 }
 
@@ -243,8 +234,6 @@ export function renderMeetingContextPacket(packet: MeetingContextPacket): string
     return `- ${attendee.label}${email}${identity}.${interactions}`;
   }) : ["- None listed."]));
 
-  lines.push("", "Linked tasks:");
-  lines.push(...(packet.tasks.length ? packet.tasks.map(task => `- ${task.id ? `@task:${task.id} ` : ""}${task.title}`) : ["- None linked."]));
   lines.push("", "Linked Library artifacts:");
   lines.push(...(packet.artifacts.length ? packet.artifacts.map(artifact => `- @page:${artifact.id} [${artifact.kind}] ${artifact.title}${artifact.summary ? `: ${artifact.summary}` : ""}`) : ["- None linked."]));
   lines.push("", "Explicit unresolved links:");

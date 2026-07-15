@@ -40,7 +40,6 @@ import {
   UserPlus,
   Link as LinkIcon,
   X,
-  Search,
   Plus,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -51,7 +50,6 @@ import {
   eventMetadataQueryKey,
   useEventMetadata,
   type LinkedPersonRef,
-  type LinkedTaskRef,
 } from "@/components/calendar/use-event-metadata";
 import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
 
@@ -122,17 +120,7 @@ interface CalendarMetadata {
   capacityType: CapacityTypeValue | null;
   notes: string | null;
   agenda: string | null;
-  linkedTasks: LinkedTaskRef[];
   linkedPeople: LinkedPersonRef[];
-}
-
-interface ActiveTask {
-  id: number;
-  title: string;
-  priority: string;
-  estimateLow: number | null;
-  estimateHigh: number | null;
-  status: string;
 }
 
 const PERSONAL_DOMAINS = new Set([
@@ -232,10 +220,9 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   const { data: metadataData, isLoading: metaLoading } = useEventMetadata(eventId, accountId, calendarId, !isCreate);
   const metadata: CalendarMetadata | null = metadataData?.metadata
     ? {
-        ...(metadataData.metadata as Omit<CalendarMetadata, "linkedTasks" | "linkedPeople">),
+        ...(metadataData.metadata as Omit<CalendarMetadata, "linkedPeople">),
         eventType: isEventTypeValue(metadataData.metadata.eventType) ? metadataData.metadata.eventType : null,
         capacityType: (metadataData.metadata.capacityType as CapacityTypeValue | null) ?? null,
-        linkedTasks: metadataData.tasks,
         linkedPeople: metadataData.people,
       }
     : null;
@@ -279,8 +266,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   const [recurrenceWeekdays, setRecurrenceWeekdays] = useState<string[]>([]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showRecurringScopeDialog, setShowRecurringScopeDialog] = useState(false);
-  const [showTaskSearch, setShowTaskSearch] = useState(false);
-  const [taskSearchQuery, setTaskSearchQuery] = useState("");
   const agendaPage = metadataData?.artifacts.find(artifact => artifact.artifactKind === "agenda") ?? null;
   const [initialized, setInitialized] = useState(isCreate);
 
@@ -438,50 +423,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/calendar/metadata"] }),
     onError: (err: any) => toast({ title: "Failed to update event type", description: err.message, variant: "destructive" }),
   });
-
-  const unlinkTaskMutation = useMutation({
-    mutationFn: async (linkId: number) => {
-      await apiRequest("DELETE", `/api/calendar/metadata/tasks/${linkId}`);
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/calendar/metadata"] }),
-    onError: (err: any) => toast({ title: "Failed to unlink task", description: err.message, variant: "destructive" }),
-  });
-
-  const linkTaskMutation = useMutation({
-    mutationFn: async (taskId: number) => {
-      if (!metadata) throw new Error("No metadata record");
-      await apiRequest("POST", `/api/calendar/metadata/${metadata.id}/tasks`, { taskId });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/calendar/metadata"] });
-      setShowTaskSearch(false);
-      setTaskSearchQuery("");
-    },
-    onError: (err: any) => toast({ title: "Failed to link task", description: err.message, variant: "destructive" }),
-  });
-
-  // --- Task search ---
-  const { data: activeTasks } = useQuery<ActiveTask[]>({
-    queryKey: ["/api/projects/tasks", { status: "active" }],
-    queryFn: async () => {
-      const res = await fetch("/api/projects/tasks?status=active", { credentials: "include" });
-      if (!res.ok) return [];
-      const data = await res.json();
-      return Array.isArray(data) ? data : (data.tasks ?? []);
-    },
-    enabled: showTaskSearch,
-    retry: false,
-  });
-
-  const filteredTasks = (activeTasks ?? []).filter(t =>
-    t.title.toLowerCase().includes(taskSearchQuery.toLowerCase()),
-  );
-
-  const priorityColors: Record<string, string> = {
-    high: "bg-error/10 text-error-foreground",
-    mid: "bg-warning/10 text-warning-foreground",
-    low: "bg-neutral/10 text-neutral-foreground",
-  };
 
   const canSubmit = title.trim().length > 0 && selectedCalendarId && start && end;
 
@@ -997,112 +938,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
             </div>
           )}
 
-
-          {/* Linked Work (edit mode only) */}
-          {!isCreate && (
-            <div className="space-y-2" data-testid="linked-tasks-section">
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Linked Work</h4>
-              {metadata && metadata.linkedTasks.length > 0 ? (
-                <div className="space-y-1.5">
-                  {metadata.linkedTasks.map(link => {
-                    const avgEst =
-                      link.estimateLow != null && link.estimateHigh != null
-                        ? Math.round((link.estimateLow + link.estimateHigh) / 2)
-                        : link.estimateLow ?? link.estimateHigh ?? null;
-                    return (
-                      <div key={link.id} className="flex items-center gap-2 text-sm group" data-testid={`linked-task-${link.id}`}>
-                        {link.taskPriority && (
-                          <span className={cn("text-xs font-medium px-1.5 py-0.5 rounded shrink-0", priorityColors[link.taskPriority] ?? priorityColors.low)}>
-                            {link.taskPriority.toUpperCase()}
-                          </span>
-                        )}
-                        <span className="truncate flex-1">{link.priorityTitle ?? link.taskTitle ?? `Task #${link.taskId}`}</span>
-                        {avgEst != null && <span className="text-xs text-muted-foreground shrink-0">~{avgEst}h</span>}
-                        {!isReadOnly && (
-                          <button
-                            onClick={() => unlinkTaskMutation.mutate(link.id)}
-                            disabled={unlinkTaskMutation.isPending}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive shrink-0"
-                            data-testid={`unlink-task-${link.id}`}
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground" data-testid="no-tasks-linked">No tasks linked</p>
-              )}
-
-              {!isReadOnly && (
-                showTaskSearch ? (
-                  <div className="border rounded-md p-2 space-y-2 bg-background" data-testid="task-search-overlay">
-                    <div className="relative">
-                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                      <Input
-                        autoFocus
-                        placeholder="Search tasks..."
-                        value={taskSearchQuery}
-                        onChange={e => setTaskSearchQuery(e.target.value)}
-                        className="pl-7 h-7 text-xs"
-                        data-testid="task-search-input"
-                      />
-                    </div>
-                    <ScrollArea className="max-h-40">
-                      <div className="space-y-0.5">
-                        {filteredTasks.length === 0 && (
-                          <p className="text-xs text-muted-foreground text-center py-2">No tasks found</p>
-                        )}
-                        {filteredTasks.map(task => (
-                          <button
-                            key={task.id}
-                            onClick={() => {
-                              if (!metadata) {
-                                setTypeMutation.mutate({ eventType: "focus_block" });
-                                toast({ title: "Please select an event type first, then link the task." });
-                                return;
-                              }
-                              linkTaskMutation.mutate(task.id);
-                            }}
-                            disabled={linkTaskMutation.isPending}
-                            className="w-full flex items-center gap-2 text-xs px-2 py-1.5 rounded hover:bg-muted transition-colors text-left"
-                            data-testid={`task-option-${task.id}`}
-                          >
-                            <span className={cn("text-xs font-medium px-1.5 py-0.5 rounded shrink-0", priorityColors[task.priority] ?? priorityColors.low)}>
-                              {task.priority.toUpperCase()}
-                            </span>
-                            <span className="truncate flex-1">{task.title}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </ScrollArea>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 text-xs w-full"
-                      onClick={() => { setShowTaskSearch(false); setTaskSearchQuery(""); }}
-                      data-testid="button-cancel-task-search"
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={() => setShowTaskSearch(true)}
-                    data-testid="button-link-task"
-                  >
-                    <LinkIcon className="h-3 w-3 mr-1" />
-                    Link task...
-                  </Button>
-                )
-              )}
-            </div>
-          )}
 
           {/* Linked People (edit mode only) */}
           {!isCreate && metadata && metadata.linkedPeople.length > 0 && (
