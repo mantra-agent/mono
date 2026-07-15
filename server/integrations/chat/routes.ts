@@ -21,6 +21,7 @@ import type {
 import { randomUUID } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
+import { pipeline } from "node:stream/promises";
 import {
   storageBackend,
 } from "../../object_storage/s3-backend";
@@ -372,7 +373,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
   const { OUTPUT_MEDIA_HTML, nextMeetingAudio, outputMediaSession } = await import("../../meeting/output-media");
   app.get("/api/meeting-output/:token", (req, res) => {
     if (!outputMediaSession(req.params.token as string)) return res.status(401).send("Invalid or expired meeting output token");
-    res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; media-src blob:; connect-src 'self'");
+    res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; media-src 'self'; connect-src 'self'");
     res.type("html").send(OUTPUT_MEDIA_HTML);
   });
   app.get("/api/meeting-output/:token/audio", async (req, res) => {
@@ -380,7 +381,23 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     if (!sessionId) return res.status(401).end();
     const audio = await nextMeetingAudio(sessionId);
     if (!audio) return res.status(204).end();
-    res.type("audio/mpeg").send(audio);
+
+    res.status(200);
+    res.setHeader("Content-Type", audio.contentType);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Accept-Ranges", "none");
+    try {
+      await pipeline(audio.stream, res);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (req.destroyed || res.destroyed) {
+        chatLog.warn(`meeting audio client disconnected sessionId=${sessionId}: ${detail}`);
+        return;
+      }
+      chatLog.error(`meeting audio stream failed sessionId=${sessionId}: ${detail}`);
+      if (!res.headersSent) res.status(502).end();
+      else res.destroy(error instanceof Error ? error : new Error(detail));
+    }
   });
   app.use(["/api/sessions", "/api/chat"], requireAuth);
   app.get("/api/sessions", async (req: Request, res: Response) => {
