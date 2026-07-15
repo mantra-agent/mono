@@ -211,6 +211,7 @@ async function runDistribution(
 
         draftIds.push(draft.id);
         log.debug(`Gmail draft created for ${attendee.email} (draftId=${draft.id})`);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`Recap distribution failed for attendee ${attendee.email} (session=${sessionId}): ${msg}`);

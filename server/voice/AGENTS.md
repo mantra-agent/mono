@@ -64,4 +64,4 @@ Uses per-iteration content model (`iterationResults[]`) with explicit `mergeIter
 - Never block the SSE response — use fire-and-forget for non-critical logging
 
 ### Speech Synthesis Ownership
-Normal voice configuration is the sole source of truth for voice identity, model, expression tags, pronunciation, and voice settings. `voice/synthesis.ts` converts assistant text to portable audio for transports that require bytes. Meeting/Recall and phone/Twilio may deliver or transcode those bytes, but must not own provider selection or speech configuration.
+Normal voice configuration is the sole source of truth for voice identity, model, expression tags, pronunciation, and voice settings. `voice/synthesis.ts` owns the portable provider request: `streamVoiceAudio()` returns progressive audio, and buffered consumers derive bytes through `synthesizeVoiceAudio()` rather than opening a second provider path. Meeting/Recall and phone/Twilio may deliver, buffer, or transcode that audio, but must not own provider selection or speech configuration.
