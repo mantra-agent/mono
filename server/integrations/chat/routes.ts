@@ -1192,6 +1192,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       status: "started" | "done",
       elapsedMs?: number,
     ) => void,
+    currentMessageId?: string,
   ): Promise<{
     messages: ExecutorMessage[];
     toolDefs: ToolDefinition[];
@@ -1261,19 +1262,28 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       );
       for (let i = 0; i < durableHistoryMessages.length; i++) {
         const msg = durableHistoryMessages[i];
-        if (i === sourceLastUserIdx && msg.content === enrichedContent) {
+        const baseContent = msg.content || "";
+        const attributedContent =
+          msg.role === "user" && msg.speaker?.label?.trim()
+            ? `[${msg.speaker.label.trim()}] ${baseContent}`
+            : baseContent;
+        const isCurrentMessage = currentMessageId
+          ? msg.id === currentMessageId
+          : i === sourceLastUserIdx
+            && (baseContent === enrichedContent
+              || attributedContent === enrichedContent);
+        if (isCurrentMessage) {
           chatLog.log(
             `excluding last user message from history (will be appended separately) idx=${i} sessionId=${sessionId}`,
           );
           continue;
         }
         const prefix = tsPrefix(msg.createdAt);
-        const baseContent = msg.content || "";
         const locationNote =
           msg.role === "user" && msg.pageContext?.route
             ? ` [page: ${msg.pageContext.pageTitle || msg.pageContext.route}${msg.pageContext.tab ? ` > ${msg.pageContext.tab}` : ""}]`
             : "";
-        const stamped = `${prefix}${locationNote} ${baseContent}`;
+        const stamped = `${prefix}${locationNote} ${attributedContent}`;
         if (msg.role === "user" || msg.role === "assistant") {
           conversationHistory.push({
             role: msg.role as "user" | "assistant",
@@ -1616,6 +1626,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           enrichedContent,
           resolvedModel,
           onProgress,
+          currentMessageId,
         );
       }
     }
@@ -1710,6 +1721,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     onResponse?: (content: string) => Promise<void> | void,
     registeredRunGeneration?: number,
     acceptedLease?: ChatRunLease,
+    currentMessageId?: string,
   ) {
     const lease = acceptedLease ?? chatRunLifecycle.begin(sessionId, sessionKey);
     let selectedAutoTier = autoTier;
@@ -2040,6 +2052,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         content,
         chatModel,
         onCtxProgress,
+        currentMessageId,
       );
       chatRunLifecycle.assertCurrent(lease);
       const contextEndedAt = Date.now();
@@ -2993,28 +3006,28 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       title: session.title || undefined,
     });
 
-    const { inferAddressedMeetingTurn } = await import("../../meeting/addressed-turn");
+    const { inferMeetingParticipation } = await import("../../meeting/addressed-turn");
     const turnId = event.turnId || persistedMessage?.id || `${sessionId}:${Date.now()}`;
-    const addressDecision = await inferAddressedMeetingTurn({
+    const participationDecision = await inferMeetingParticipation({
       sessionId,
       sessionKey,
       turnId,
+      currentMessageId: persistedMessage.id,
       text: event.text,
       speakerLabel: resolution.speaker.label,
       participants: resolution.participants,
-      meetingBehavior: "on_address",
     });
     chatLog.log(
-      `meeting address decision sessionId=${sessionId} turnId=${turnId} messageId=${persistedMessage.id} outcome=${addressDecision.outcome} shouldRespond=${addressDecision.shouldRespond} reason=${addressDecision.reason} confidence=${addressDecision.confidence} latencyMs=${addressDecision.latencyMs} classifierFailure=${addressDecision.classifierFailure || "none"}`,
+      `meeting participation decision sessionId=${sessionId} turnId=${turnId} messageId=${persistedMessage.id} outcome=${participationDecision.outcome} shouldRespond=${participationDecision.shouldRespond} reason=${participationDecision.reason} confidence=${participationDecision.confidence} latencyMs=${participationDecision.latencyMs} classifierFailure=${participationDecision.classifierFailure || "none"}`,
     );
 
-    const shouldTriggerAddressed =
-      addressDecision.shouldRespond &&
-      !!addressDecision.prompt;
+    const shouldTriggerParticipation =
+      participationDecision.shouldRespond &&
+      !!participationDecision.prompt;
 
-    // Non-addressed transcript is passive context only. Addressed turns are
+    // Passive transcript remains context only. The participation decision is
     // the sole path that may start an agent run without composer interaction.
-    if (!shouldTriggerAddressed) {
+    if (!shouldTriggerParticipation) {
       return {
         ok: true,
         sessionId,
@@ -3063,14 +3076,14 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     // The agent sees the attributed line; persisted content stays raw.
     let streamContent = `[${resolution.speaker.label}] ${event.text}`;
     let sayAddressedAloud = false;
-    if (shouldTriggerAddressed && persistedMessage) {
+    if (shouldTriggerParticipation) {
       const { claimAddressedMeetingTurn } = await import("../../meeting/addressed-turn");
       const claim = await claimAddressedMeetingTurn(sessionId, turnId);
       chatLog.log(
         `meeting address claim sessionId=${sessionId} messageId=${persistedMessage.id} decision=${claim}`,
       );
       if (claim === "claimed") {
-        streamContent = `[${resolution.speaker.label}] ${addressDecision.prompt}`;
+        streamContent = `[${resolution.speaker.label}] ${participationDecision.prompt}`;
         sayAddressedAloud = true;
       }
     }
@@ -3085,6 +3098,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       sayAddressedAloud,
       undefined,
       runGeneration,
+      undefined,
+      persistedMessage.id,
     ).catch((err) => {
       chatLog.error("meeting ingest processChatStream error:", err);
     });
