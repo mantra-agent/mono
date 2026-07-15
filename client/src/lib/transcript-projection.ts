@@ -53,6 +53,8 @@ export interface FrozenStreamHandoff {
   sessionId: string;
   renderId: string;
   streaming: StreamingContent;
+  /** Authoritative live snapshot this frozen copy was captured from. */
+  capturedFrom: StreamingContent;
   lowerBound: number | null;
 }
 
@@ -256,9 +258,11 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
       ? `draft-assistant-attempt-${currentTurnStreaming.assistantAttemptId}`
       : visiblePendingTurn?.clientTurnId
         ? `draft-assistant-${visiblePendingTurn.clientTurnId}`
-        : activeSession
-          ? `draft-assistant-server-${activeSession}`
-          : null
+        : currentTurnStreaming.runId
+          ? `draft-assistant-run-${currentTurnStreaming.runId}`
+          : activeSession
+            ? `draft-assistant-server-${activeSession}`
+            : null
     : null;
 
   // --- Frozen handoff decisions ---
@@ -266,7 +270,12 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
     activeSession &&
     hasLiveStreamingState &&
     liveStreamRenderId &&
-    currentTurnStreaming.segments.length > 0
+    currentTurnStreaming.segments.length > 0 &&
+    (
+      frozenStreamHandoff?.sessionId !== activeSession ||
+      frozenStreamHandoff.renderId !== liveStreamRenderId ||
+      frozenStreamHandoff.capturedFrom !== currentTurnStreaming
+    )
   );
 
   const newFrozenHandoff: FrozenStreamHandoff | null = shouldCaptureFrozenHandoff
@@ -283,6 +292,7 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
           sessionId: activeSession!,
           renderId: liveStreamRenderId!,
           streaming: freezeStreamingContent(currentTurnStreaming),
+          capturedFrom: currentTurnStreaming,
           lowerBound: Number.isFinite(lowerBound) ? lowerBound : null,
         };
       })()

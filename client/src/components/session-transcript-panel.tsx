@@ -450,8 +450,6 @@ export function SessionTranscriptPanel({
     const appearedSincePrev = displayIds.filter((id) => !(prev?.displayIds ?? []).includes(id));
     const renderRevisionChanged = prev?.renderRevision !== renderRevision;
     const shouldLog =
-      !!visiblePendingTurn ||
-      isStreaming ||
       renderRevisionChanged ||
       disappearedSincePrev.length > 0 ||
       appearedSincePrev.length > 0 ||

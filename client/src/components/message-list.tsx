@@ -219,6 +219,14 @@ export function MessageList({
   const { layer } = useVisibilityLayer();
   const { childBlocks, crossMessages } = useLiveSessionBlocks(activeSession);
   const liveDraftCreatedAtRef = useRef<{ id: string; anchorId: string | null; createdAt: string; ts: number } | null>(null);
+  const previousStreamTargetTraceRef = useRef<string | null>(null);
+  const finalizedTurnRenderKeysRef = useRef<{
+    sessionId: string | null;
+    byMessageId: Map<string, string>;
+  }>({ sessionId: activeSession, byMessageId: new Map() });
+  if (finalizedTurnRenderKeysRef.current.sessionId !== activeSession) {
+    finalizedTurnRenderKeysRef.current = { sessionId: activeSession, byMessageId: new Map() };
+  }
   // Keep optimistic and server-empty Thinking on the same render path. When
   // the assistant is known to be working but no server segments are visible yet,
   // expose an active empty stream instead of fabricating a fake timeline step.
@@ -474,6 +482,23 @@ export function MessageList({
 
   const hiddenStreamingCheckpointIds: string[] = [];
   const overlappingPersistedAssistant = persistedAssistantForStreamingTurn;
+  if (activeStreamingDraftId && overlappingPersistedAssistant) {
+    // React identity follows the logical assistant turn, not its storage phase.
+    // When persistence catches up, the finalized message updates the existing
+    // ChatTurn in place instead of unmounting the streamed subtree and mounting
+    // a second keyed tree. The mapping survives frozen-handoff cleanup and is
+    // bounded to the active session. A newer persisted checkpoint supersedes
+    // any older message that temporarily represented the same streamed turn.
+    for (const [messageId, renderKey] of finalizedTurnRenderKeysRef.current.byMessageId) {
+      if (renderKey === activeStreamingDraftId && messageId !== overlappingPersistedAssistant.id) {
+        finalizedTurnRenderKeysRef.current.byMessageId.delete(messageId);
+      }
+    }
+    finalizedTurnRenderKeysRef.current.byMessageId.set(
+      overlappingPersistedAssistant.id,
+      activeStreamingDraftId,
+    );
+  }
   if (needsStreamingTarget && overlappingPersistedAssistant) {
     // During finalization the frozen stream intentionally overlaps the first
     // render containing its persisted replacement. Keep the existing live turn
@@ -571,20 +596,40 @@ export function MessageList({
 
   if (hasRenderableStreamForTurn || pendingTurn) {
     const selected = streamingTargetIdx >= 0 ? items[streamingTargetIdx] : null;
-    log.debug("STREAM:TARGET:SELECT", {
+    const selectedMessageId = selected?.kind === "message" ? selected.msg.id : null;
+    const traceKey = [
       activeSession,
-      clientTurnId: activeTurn?.clientTurnId ?? null,
+      activeTurn?.clientTurnId ?? null,
       activeTurnKey,
-      pendingStatus: activeTurn?.status ?? null,
-      streamingSource: effectiveStreaming.source,
-      segments: effectiveStreaming.segments.length,
+      activeTurn?.status ?? null,
+      effectiveStreaming.source,
+      effectiveStreaming.segments.length,
       hasVisibleStreamingPayload,
-      selectedIndex: streamingTargetIdx,
-      selectedMessageId: selected?.kind === "message" ? selected.msg.id : null,
+      streamingTargetIdx,
+      selectedMessageId,
       needsStreamingTarget,
       isSessionStreaming,
-      hiddenStreamingCheckpointIds,
-    });
+      hiddenStreamingCheckpointIds.join(","),
+    ].join("|");
+    if (previousStreamTargetTraceRef.current !== traceKey) {
+      previousStreamTargetTraceRef.current = traceKey;
+      log.debug("STREAM:TARGET:SELECT", {
+        activeSession,
+        clientTurnId: activeTurn?.clientTurnId ?? null,
+        activeTurnKey,
+        pendingStatus: activeTurn?.status ?? null,
+        streamingSource: effectiveStreaming.source,
+        segments: effectiveStreaming.segments.length,
+        hasVisibleStreamingPayload,
+        selectedIndex: streamingTargetIdx,
+        selectedMessageId,
+        needsStreamingTarget,
+        isSessionStreaming,
+        hiddenStreamingCheckpointIds,
+      });
+    }
+  } else {
+    previousStreamTargetTraceRef.current = null;
   }
 
 
@@ -672,9 +717,10 @@ export function MessageList({
       }
     }
     const suppressed = draftIdsByMessageId.get(msg.id)?.filter((id) => emailDraftOwnerByDraftId.get(id) !== msg.id);
+    const renderKey = finalizedTurnRenderKeysRef.current.byMessageId.get(msg.id) ?? msg.id;
     return (
       <ChatTurn
-        key={msg.id}
+        key={renderKey}
         message={msg}
         isLast={isLast}
         streaming={isStreamingTarget ? effectiveStreaming : undefined}
