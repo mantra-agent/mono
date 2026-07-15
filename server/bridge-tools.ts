@@ -15419,7 +15419,7 @@ const SIDE_EFFECT_ONLY_ACTIONS: Record<string, Set<string>> = {
   cognition: new Set(["set_emotion", "create_persona", "update_persona"]),
   pronunciation: new Set(["add", "update", "remove"]),
   decisions: new Set(["create", "update", "delete", "lock", "reopen", "add_update", "edit_update", "delete_update", "add_link", "remove_link"]),
-  plan: new Set(["update_step", "add_steps", "pause"]),
+  plan: new Set(["update_step", "add_steps", "pause", "unlink_session"]),
 };
 
 const SIDE_EFFECT_ONLY_TOOLS = new Set([

@@ -11,7 +11,7 @@ import { requireAuth } from "../auth";
 import { parsePlanFromContent } from "../lib/plan-utils";
 import { db } from "../db";
 import { libraryPages } from "@shared/models/info";
-import { planExecutions } from "@shared/schema";
+import { planExecutions, planSteps } from "@shared/schema";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { logPatchClearAudit, sanitizePatch } from "../lib/patch-guard";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
@@ -19,9 +19,11 @@ import { eq, desc, ilike, type SQL } from "drizzle-orm";
 
 const log = createLogger("WorkRoutes");
 const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
+const planStepScopeColumns = { ownerUserId: planSteps.ownerUserId, accountId: planSteps.accountId };
 const libraryScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
 function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
 function writablePlan(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
+function visiblePlanStep(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planStepScopeColumns, predicate); }
 function visibleLibrary(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), libraryScopeColumns, predicate); }
 
 function routeError(error: unknown, operation: string): { message: string; operation: string } {
@@ -433,6 +435,65 @@ export async function registerProjectsRoutes(app: Express) {
 
   // ── Plan routes ──────────────────────────────────────────────────
 
+
+  async function planSummaryFromPage(page: { id: string; title: string | null; slug: string | null; plainTextContent: string | null }) {
+    const content = page.plainTextContent || "";
+    const parsed = parsePlanFromContent(content);
+    if (!parsed) return null;
+
+    const dbPlan = await getPlanDbState(page.id);
+    let effectiveSteps = parsed.meta.steps;
+    let effectiveMeta = parsed.meta;
+    if (dbPlan) {
+      const dbSteps = await db.select().from(planSteps)
+        .where(visiblePlanStep(eq(planSteps.planId, dbPlan.id)))
+        .orderBy(planSteps.position);
+      if (dbSteps.length > 0) {
+        effectiveSteps = dbSteps.map(s => ({
+          id: s.id,
+          title: s.title,
+          status: s.status as typeof parsed.meta.steps[number]["status"],
+          duration: s.durationSeconds ?? undefined,
+          outcome: s.outcome ?? undefined,
+          error: s.error ?? undefined,
+          sessionId: s.sessionId ?? undefined,
+          startedAt: s.startedAt?.toISOString(),
+          completedAt: s.completedAt?.toISOString(),
+        }));
+      }
+      effectiveMeta = {
+        ...parsed.meta,
+        id: dbPlan.id,
+        status: dbPlan.status as typeof parsed.meta.status,
+        updatedAt: dbPlan.updatedAt.toISOString(),
+        originSessionId: dbPlan.originSessionId,
+        goalId: dbPlan.goalId ?? undefined,
+        projectId: dbPlan.projectId ?? undefined,
+        workspace: dbPlan.workspace ?? undefined,
+        workspaceDir: dbPlan.workspaceDir ?? undefined,
+        blocking: dbPlan.blocking,
+        steps: effectiveSteps,
+      };
+    }
+
+    return {
+      id: effectiveMeta.id,
+      pageId: page.id,
+      pageSlug: page.slug || "",
+      title: (page.title || "Untitled Plan").replace(/^Plan:\s*/i, ""),
+      status: effectiveMeta.status,
+      archivedAt: dbPlan?.archivedAt?.toISOString() ?? null,
+      steps: effectiveSteps.map(s => ({
+        ...s,
+        sessions: s.sessionId ? [{ id: s.sessionId, role: "primary" }] : [],
+      })),
+      blocking: effectiveMeta.blocking,
+      originSessionId: effectiveMeta.originSessionId,
+      createdAt: effectiveMeta.createdAt,
+      updatedAt: effectiveMeta.updatedAt,
+    };
+  }
+
   app.get("/api/plans", async (_req, res) => {
     try {
       const pages = await db.select({
@@ -452,31 +513,8 @@ export async function registerProjectsRoutes(app: Express) {
       const archived: any[] = [];
 
       for (const page of pages) {
-        const content = page.plainTextContent || "";
-        const parsed = parsePlanFromContent(content);
-        if (!parsed) continue;
-
-        const dbPlan = await getPlanDbState(page.id);
-        const summary = {
-          id: dbPlan?.id ?? parsed.meta.id,
-          pageId: page.id,
-          pageSlug: page.slug || "",
-          title: page.title || "Untitled",
-          status: dbPlan?.status ?? parsed.meta.status,
-          archivedAt: dbPlan?.archivedAt?.toISOString() ?? null,
-          steps: parsed.meta.steps.map(s => ({
-            id: s.id,
-            title: s.title,
-            status: s.status,
-            duration: s.duration,
-            outcome: s.outcome,
-            error: s.error,
-            sessionId: s.sessionId,
-            sessions: s.sessionId ? [{ id: s.sessionId, role: "primary" }] : [],
-          })),
-          createdAt: parsed.meta.createdAt,
-          updatedAt: parsed.meta.updatedAt,
-        };
+        const summary = await planSummaryFromPage(page);
+        if (!summary) continue;
 
         if (summary.archivedAt) {
           archived.push(summary);
@@ -513,28 +551,9 @@ export async function registerProjectsRoutes(app: Express) {
 
       if (!page) return res.status(404).json({ error: "Plan not found" });
 
-      const content = page.plainTextContent || "";
-      const parsed = parsePlanFromContent(content);
-      if (!parsed) return res.status(404).json({ error: "Page does not contain plan data" });
-
-      const dbPlan = await getPlanDbState(page.id);
-      const title = (page.title || "Untitled Plan").replace(/^Plan:\s*/i, "");
-      res.json({
-        id: dbPlan?.id ?? parsed.meta.id,
-        title,
-        status: dbPlan?.status ?? parsed.meta.status,
-        steps: parsed.meta.steps.map(s => ({
-          ...s,
-          sessions: s.sessionId ? [{ id: s.sessionId, role: "primary" }] : [],
-        })),
-        pageId: page.id,
-        pageSlug: page.slug || "",
-        blocking: parsed.meta.blocking,
-        originSessionId: parsed.meta.originSessionId,
-        createdAt: parsed.meta.createdAt,
-        updatedAt: parsed.meta.updatedAt,
-        archivedAt: dbPlan?.archivedAt?.toISOString() ?? null,
-      });
+      const summary = await planSummaryFromPage(page);
+      if (!summary) return res.status(404).json({ error: "Page does not contain plan data" });
+      res.json(summary);
     } catch (error: unknown) {
       const err = routeError(error, "get_plan");
       res.status(500).json({ error: err.message, operation: err.operation });
@@ -548,6 +567,32 @@ export async function registerProjectsRoutes(app: Express) {
       .where(visiblePlan(eq(planExecutions.pageId, pageId)));
     return rows[0] ?? null;
   }
+
+
+  app.delete("/api/sessions/:id/plan", async (req, res) => {
+    try {
+      const sessionId = req.params.id;
+      const TERMINAL_PLAN_STATUSES = ["completed", "completed_with_failures", "failed", "aborted"];
+      const rows = await db.select().from(planExecutions)
+        .where(visiblePlan(eq(planExecutions.originSessionId, sessionId)))
+        .orderBy(desc(planExecutions.createdAt));
+
+      const active = rows.find(p => !TERMINAL_PLAN_STATUSES.includes(p.status));
+      if (!active) return res.status(404).json({ error: "No active plan is linked with this session." });
+      if (active.status === "executing") {
+        return res.status(409).json({ error: "Cannot remove a running plan from a session — pause it first." });
+      }
+
+      await db.update(planExecutions)
+        .set({ originSessionId: `unlinked:${sessionId}:${active.id}`, updatedAt: new Date() })
+        .where(writablePlan(eq(planExecutions.id, active.id)));
+
+      res.json({ ok: true, planId: active.id, pageId: active.pageId });
+    } catch (error: unknown) {
+      const err = routeError(error, "unlink_session_plan");
+      res.status(500).json({ error: err.message, operation: err.operation });
+    }
+  });
 
   app.post("/api/plans/:id/execute", async (req, res) => {
     try {

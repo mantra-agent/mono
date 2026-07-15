@@ -1144,15 +1144,15 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   plan: {
-    description: "Create, inspect, associate, modify, and execute multi-step plans. Plans decompose complex work into tracked steps, each executed in a spawned child session with fresh context. Progress is checkpointed to a Library page after every step. Actions: create (build a new plan), get (inspect plan status), associate_session (link an existing plan to the current session without execution), list (browse all plans), execute (start running a plan), update_step (manually update a step's status/outcome), edit (rename or revise plan metadata/step definitions), add_steps (insert new steps mid-execution), pause (halt execution after current step), resume (restart from next pending step).",
+    description: "Create, inspect, associate, unlink, modify, and execute multi-step plans. Plans decompose complex work into tracked steps, each executed in a spawned child session with fresh context. Progress is checkpointed to a Library page after every step. Actions: create (build a new plan), get (inspect plan status), associate_session (link an existing plan to the current session without execution), unlink_session (remove the current session link without deleting the plan), list (browse all plans), execute (start running a plan), update_step (manually update a step's status/outcome), edit (rename or revise plan metadata/step definitions), add_steps (insert new steps mid-execution), pause (halt execution after current step), resume (restart from next pending step).",
     category: "execution",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["create", "get", "associate_session", "list", "execute", "update_step", "edit", "add_steps", "pause", "resume"], description: "Action to perform" },
+        action: { type: "string", enum: ["create", "get", "associate_session", "unlink_session", "list", "execute", "update_step", "edit", "add_steps", "pause", "resume"], description: "Action to perform" },
         title: { type: "string", description: "Plan title (for create/edit)" },
         steps: { type: "array", items: { type: "object", properties: { title: { type: "string" }, instructions: { type: "string" } }, required: ["title", "instructions"] }, description: "Ordered steps with title and instructions (for create)" },
-        planId: { type: "string", description: "Plan ID — prefer the Plan DB ID; Library page ID or slug also resolve when unambiguous (for get, associate_session, execute, update_step, edit, add_steps, pause, resume)" },
+        planId: { type: "string", description: "Plan ID — prefer the Plan DB ID; Library page ID or slug also resolve when unambiguous (for get, associate_session, unlink_session, execute, update_step, edit, add_steps, pause, resume)" },
         goalId: { type: "string", description: "Optional goal to link (for create/edit)" },
         projectId: { type: "number", description: "Optional project to link (for create/edit)" },
         blocking: { type: "boolean", description: "Block originating session during execution (create/edit; default on create: auto — true for ≤5 steps, false for >5)" },
@@ -1163,6 +1163,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         outcome: { type: "string", description: "Step outcome summary (for update_step)" },
         newSteps: { type: "array", items: { type: "object", properties: { title: { type: "string" }, instructions: { type: "string" } }, required: ["title", "instructions"] }, description: "New steps to add (for add_steps)" },
         afterStepId: { type: "string", description: "Insert new steps after this step ID, null to append (for add_steps)" },
+        sessionId: { type: "string", description: "Session ID to unlink from a plan (for unlink_session; defaults to the current session)" },
         limit: { type: "number", description: "Max results (for list, default 20)" },
       },
       required: ["action"],

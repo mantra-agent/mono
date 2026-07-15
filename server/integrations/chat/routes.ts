@@ -57,14 +57,17 @@ import {
   type MessageSpeakerMeta,
 } from "@shared/models/chat";
 import { db } from "../../db";
-import { and, eq, inArray, isNull, notInArray, sql as drizzleSql } from "drizzle-orm";
-import { visibleScopePredicate } from "../../scoped-storage";
+import { and, eq, inArray, isNull, notInArray, sql as drizzleSql, type SQL } from "drizzle-orm";
+import { combineWithVisibleScope, visibleScopePredicate } from "../../scoped-storage";
 import { libraryPages } from "@shared/models/info";
 import { planExecutions, workflowRuns } from "@shared/schema";
 import { createLogger } from "../../log";
 import { requireAuth } from "../../auth";
+import { getCurrentPrincipalOrSystem } from "../../principal-context";
 
 const chatLog = createLogger("ChatStream");
+const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
+function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
 
 function isLiveSessionStatus(session: { status?: string }): boolean {
   return session.status === "streaming";
@@ -645,10 +648,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           status: planExecutions.status,
         })
         .from(planExecutions)
-        .where(and(
+        .where(visiblePlan(and(
           eq(planExecutions.originSessionId, id),
           notInArray(planExecutions.status, TERMINAL_PLAN_STATUSES),
-        ))
+        )))
         .orderBy(planExecutions.createdAt)
         .limit(1)
         .then(r => r[0] || null),

@@ -17,6 +17,7 @@ import {
   MailOpen,
   MoreHorizontal,
   Pause,
+  Trash2,
   Play,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Progress } from "@/components/ui/progress";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -56,6 +67,7 @@ interface PlanWidgetProps {
   plan: PlanWidgetPlan;
   variant?: "sticky" | "card";
   showArchiveAction?: boolean;
+  sessionId?: string;
   className?: string;
 }
 
@@ -159,12 +171,14 @@ export function PlanWidget({
   plan,
   variant = "sticky",
   showArchiveAction = false,
+  sessionId,
   className,
 }: PlanWidgetProps) {
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
   const [isFlashing, setIsFlashing] = useState(false);
   const [isMinimal, setIsMinimal] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const isExecuting = plan.status === "executing";
   const isTerminal =
@@ -179,6 +193,7 @@ export function PlanWidget({
   const canPause = !isArchived && isExecuting;
   const canResume = !isArchived && (isPaused || needsReview || isCreated || plan.status === "failed");
   const canArchive = showArchiveAction && !isArchived && !isExecuting;
+  const canDeleteFromSession = Boolean(sessionId);
 
   const progressedCount = plan.steps.filter(isProgressedStep).length;
   const progressPercent = plan.steps.length > 0
@@ -250,6 +265,27 @@ export function PlanWidget({
     onSettled: invalidatePlanQueries,
   });
 
+  const unlinkMutation = useMutation({
+    mutationFn: async () => {
+      if (!sessionId) throw new Error("No session is attached to this plan widget");
+      const res = await apiRequest("DELETE", `/api/sessions/${encodeURIComponent(sessionId)}/plan`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || "Delete failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Plan removed from session" });
+      if (sessionId) queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+      invalidatePlanQueries();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
+    },
+  });
+
   const archiveMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/plans/${plan.pageId}/archive`);
@@ -292,6 +328,7 @@ export function PlanWidget({
   }
 
   return (
+    <>
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
       <div
         className={cn(
@@ -331,7 +368,7 @@ export function PlanWidget({
             </button>
           </CollapsibleTrigger>
 
-          {(canPause || canResume || canArchive) && (
+          {(canPause || canResume || canArchive || canDeleteFromSession) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
@@ -359,6 +396,19 @@ export function PlanWidget({
                   >
                     <Archive className="mr-2 h-4 w-4" />
                     Archive
+                  </DropdownMenuItem>
+                )}
+                {canDeleteFromSession && (
+                  <DropdownMenuItem
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      setConfirmDeleteOpen(true);
+                    }}
+                    disabled={unlinkMutation.isPending}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete
                   </DropdownMenuItem>
                 )}
               </DropdownMenuContent>
@@ -389,5 +439,26 @@ export function PlanWidget({
         </CollapsibleContent>
       </div>
     </Collapsible>
+    <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remove this plan from the session?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This removes the Plan widget from this session. It does not delete the plan page or its execution history.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={() => unlinkMutation.mutate()}
+            disabled={unlinkMutation.isPending}
+          >
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }
