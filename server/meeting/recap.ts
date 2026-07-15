@@ -132,13 +132,30 @@ async function generateRecap(sessionId: string, sessionTitle: string, meeting: M
     `Meeting recap ready for session ${sessionId}: page=${page.slug}, interactions=${interactionsLogged}`,
   );
 
+
   // Kick off distribution as a non-blocking side effect.
-  // The principal is already in AsyncLocalStorage (runWithPrincipal context).
-  // Import is deferred so distribution failures never affect recap finalization.
-  const currentPrincipal = (await import("../principal-context")).getCurrentPrincipalOrSystem();
+  // The principal must be in AsyncLocalStorage (runWithPrincipal context).
+  // If the principal is missing, we skip distribution rather than falling back to system.
+  const currentPrincipal = (await import("../principal-context")).getCurrentPrincipal();
+  
+  if (!currentPrincipal) {
+    log.warn(
+      `No principal in context for session ${sessionId}; skipping distribution. ` +
+      `This should not happen—check that finalizeMeetingSession is called within runWithPrincipal.`,
+    );
+    return;
+  }
+  
+  // Wrap distribution execution in the principal context to protect the ALS boundary.
   setImmediate(() => {
-    import("./distribution")
-      .then(({ distributeRecap }) => distributeRecap(sessionId, meeting, recapMeta, currentPrincipal))
+    import("../principal-context")
+      .then(({ runWithPrincipal: rwp }) =>
+        import("./distribution").then(({ distributeRecap }) =>
+          rwp(currentPrincipal, () =>
+            distributeRecap(sessionId, meeting, recapMeta, currentPrincipal),
+          ),
+        ),
+      )
       .catch((err) =>
         log.error(
           `Recap distribution kickoff failed for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
