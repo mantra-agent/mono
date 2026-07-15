@@ -11,6 +11,15 @@ const INFERENCE_TIMEOUT_MS = 1_500;
 
 export type MeetingParticipationOutcome = "explicit" | "classified" | "fallback" | "ignored";
 
+export interface MeetingParticipationEvidence {
+  currentTurnIsQuestion: boolean;
+  agentAskedQuestion: boolean;
+  speakerContinuesAgentExchange: boolean;
+  msSinceAgentSpoke: number | null;
+  lastAssistantMessageId?: string;
+  lastAssistantActivityAt?: string;
+}
+
 export interface MeetingParticipationDecision {
   outcome: MeetingParticipationOutcome;
   shouldRespond: boolean;
@@ -21,6 +30,7 @@ export interface MeetingParticipationDecision {
   classifierFailure?: "timeout" | "error" | "invalid_output";
   invocationKind?: "leading" | "trailing";
   invocationAlias?: "mantra" | "mancha";
+  evidence?: MeetingParticipationEvidence;
 }
 
 export interface MeetingParticipationInput {
@@ -36,6 +46,7 @@ export interface MeetingParticipationInput {
 interface ExchangeContext {
   messages: Message[];
   lastAssistant?: Message;
+  lastAssistantActivityAt?: string;
   msSinceAgentSpoke: number;
   agentAskedQuestion: boolean;
   speakerContinuesAgentExchange: boolean;
@@ -108,8 +119,17 @@ function buildExchangeContext(messages: Message[], speaker: string): ExchangeCon
     }
   }
   const lastAssistant = lastAssistantIndex >= 0 ? messages[lastAssistantIndex] : undefined;
-  const msSinceAgentSpoke = lastAssistant
-    ? Date.now() - Date.parse(lastAssistant.createdAt)
+  // Assistant messages are created as empty drafts before inference. Their
+  // updatedAt advances when the completed response is persisted, so it is the
+  // truthful conversational clock for follow-up detection.
+  const lastAssistantActivityAt = lastAssistant
+    ? lastAssistant.updatedAt || lastAssistant.createdAt
+    : undefined;
+  const lastAssistantActivityMs = lastAssistantActivityAt
+    ? Date.parse(lastAssistantActivityAt)
+    : Number.NaN;
+  const msSinceAgentSpoke = Number.isFinite(lastAssistantActivityMs)
+    ? Math.max(0, Date.now() - lastAssistantActivityMs)
     : Number.POSITIVE_INFINITY;
   const agentAskedQuestion = !!lastAssistant
     && msSinceAgentSpoke <= ACTIVE_EXCHANGE_MS
@@ -124,6 +144,7 @@ function buildExchangeContext(messages: Message[], speaker: string): ExchangeCon
   return {
     messages,
     lastAssistant,
+    lastAssistantActivityAt,
     msSinceAgentSpoke,
     agentAskedQuestion,
     speakerContinuesAgentExchange: !!lastAssistant
@@ -139,6 +160,26 @@ function isQuestion(text: string): boolean {
   return /^(?:can|could|would|will|do|does|did|is|are|was|were|have|has|had|should|may|might|what|when|where|which|who|whom|whose|why|how)\b/i.test(normalized);
 }
 
+function buildDecisionEvidence(
+  input: MeetingParticipationInput,
+  context: ExchangeContext,
+): MeetingParticipationEvidence {
+  return {
+    currentTurnIsQuestion: isQuestion(input.text),
+    agentAskedQuestion: context.agentAskedQuestion,
+    speakerContinuesAgentExchange: context.speakerContinuesAgentExchange,
+    msSinceAgentSpoke: Number.isFinite(context.msSinceAgentSpoke)
+      ? context.msSinceAgentSpoke
+      : null,
+    ...(context.lastAssistant?.id
+      ? { lastAssistantMessageId: context.lastAssistant.id }
+      : {}),
+    ...(context.lastAssistantActivityAt
+      ? { lastAssistantActivityAt: context.lastAssistantActivityAt }
+      : {}),
+  };
+}
+
 function decision(
   startedAt: number,
   outcome: MeetingParticipationOutcome,
@@ -148,6 +189,7 @@ function decision(
   prompt?: string,
   classifierFailure?: MeetingParticipationDecision["classifierFailure"],
   invocation?: Pick<ExplicitInvocation, "kind" | "alias">,
+  evidence?: MeetingParticipationEvidence,
 ): MeetingParticipationDecision {
   return {
     outcome,
@@ -161,6 +203,7 @@ function decision(
       invocationKind: invocation.kind,
       invocationAlias: invocation.alias,
     } : {}),
+    ...(evidence ? { evidence } : {}),
   };
 }
 
@@ -170,16 +213,16 @@ function deterministicFallback(
   startedAt: number,
   classifierFailure: MeetingParticipationDecision["classifierFailure"],
 ): MeetingParticipationDecision {
-  const questionForm = isQuestion(input.text);
-  const conversationContinues = context.agentAskedQuestion || context.speakerContinuesAgentExchange;
-  const shouldRespond = questionForm && conversationContinues;
-  const reason = shouldRespond
-    ? context.agentAskedQuestion
-      ? "classifier_failure_reply_to_recent_agent_question"
-      : "classifier_failure_question_in_active_agent_exchange"
-    : !questionForm
-      ? "classifier_failure_non_question"
-      : "classifier_failure_question_without_agent_continuity";
+  const evidence = buildDecisionEvidence(input, context);
+  const shouldRespond = context.agentAskedQuestion
+    || (evidence.currentTurnIsQuestion && context.speakerContinuesAgentExchange);
+  const reason = context.agentAskedQuestion
+    ? "classifier_failure_reply_to_recent_agent_question"
+    : shouldRespond
+      ? "classifier_failure_question_in_active_agent_exchange"
+      : !evidence.currentTurnIsQuestion
+        ? "classifier_failure_non_question_without_agent_question"
+        : "classifier_failure_question_without_agent_continuity";
 
   return decision(
     startedAt,
@@ -189,6 +232,8 @@ function deterministicFallback(
     shouldRespond ? 0.82 : 0.9,
     shouldRespond ? input.text.trim() : undefined,
     classifierFailure,
+    undefined,
+    evidence,
   );
 }
 
@@ -216,8 +261,19 @@ export async function inferMeetingParticipation(input: MeetingParticipationInput
     input.currentMessageId,
   );
   const exchange = buildExchangeContext(messages, input.speakerLabel);
+  const evidence = buildDecisionEvidence(input, exchange);
   if (exchange.agentAskedQuestion) {
-    return decision(startedAt, "classified", true, "reply_to_recent_agent_question", 0.96, input.text.trim());
+    return decision(
+      startedAt,
+      "classified",
+      true,
+      "reply_to_recent_agent_question",
+      0.96,
+      input.text.trim(),
+      undefined,
+      undefined,
+      evidence,
+    );
   }
 
   const controller = new AbortController();
@@ -276,9 +332,22 @@ export async function inferMeetingParticipation(input: MeetingParticipationInput
         parsed.reason || "contextual_participation",
         confidence,
         input.text.trim(),
+        undefined,
+        undefined,
+        evidence,
       );
     }
-    return decision(startedAt, "ignored", false, parsed.reason || `classifier_${parsed.decision}`, confidence);
+    return decision(
+      startedAt,
+      "ignored",
+      false,
+      parsed.reason || `classifier_${parsed.decision}`,
+      confidence,
+      undefined,
+      undefined,
+      undefined,
+      evidence,
+    );
   } catch (error) {
     const classifierFailure = controller.signal.aborted
       ? "timeout"
@@ -287,7 +356,7 @@ export async function inferMeetingParticipation(input: MeetingParticipationInput
         : "error";
     const fallback = deterministicFallback(input, exchange, startedAt, classifierFailure);
     log.warn(
-      `participation inference fallback sessionId=${input.sessionId} turnId=${input.turnId} failure=${classifierFailure} outcome=${fallback.outcome} shouldRespond=${fallback.shouldRespond} reason=${fallback.reason} latencyMs=${fallback.latencyMs}`,
+      `participation inference fallback sessionId=${input.sessionId} turnId=${input.turnId} failure=${classifierFailure} outcome=${fallback.outcome} shouldRespond=${fallback.shouldRespond} reason=${fallback.reason} latencyMs=${fallback.latencyMs} currentTurnIsQuestion=${fallback.evidence?.currentTurnIsQuestion ?? "unknown"} agentAskedQuestion=${fallback.evidence?.agentAskedQuestion ?? "unknown"} speakerContinuesAgentExchange=${fallback.evidence?.speakerContinuesAgentExchange ?? "unknown"} msSinceAgentSpoke=${fallback.evidence?.msSinceAgentSpoke ?? "unknown"} lastAssistantMessageId=${fallback.evidence?.lastAssistantMessageId ?? "none"} lastAssistantActivityAt=${fallback.evidence?.lastAssistantActivityAt ?? "none"}`,
       error,
     );
     return fallback;
