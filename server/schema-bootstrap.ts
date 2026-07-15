@@ -3494,17 +3494,6 @@ export async function runSchemaBootstrap(
     );
   });
 
-  await heal("abandon stale voice sessions", async () => {
-    const result = await pool.query(
-      `UPDATE voice_session_active SET status = 'abandoned', ended_at = NOW() WHERE status = 'active' RETURNING session_id`,
-    );
-    if (result.rowCount && result.rowCount > 0) {
-      log(
-        `[startup] abandoned ${result.rowCount} stale voice session(s) from previous boot`,
-        "boot",
-      );
-    }
-  });
 
   await heal("prune old voice_session_active rows", async () => {
     const { storage } = await import("./storage");
