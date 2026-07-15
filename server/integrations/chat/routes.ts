@@ -236,8 +236,10 @@ function describeAbortReasonForUser(result: ExecutorRunResult): string | null {
       return `Timeout: executor stream idle-timeout watchdog stopped the run after no stream/tool activity (${duration}). This was not user-cancelled.`;
     case "pipeline_timeout":
       return `Timeout: pipeline watchdog stopped the run after ${duration}${toolText}.`;
+    case "run_time_limit":
+      return `Execution time limit reached after ${duration}${toolText}. This was not a processing error or user cancellation.`;
     case "zombie_timeout":
-      return `Timeout: executor zombie watchdog stopped the run after ${duration}${toolText}. The run exceeded the active-run idle/hard-cap guard, not a user cancellation.`;
+      return `Executor activity watchdog stopped the run after ${duration}${toolText}. This was not a user cancellation.`;
     case "cancelled":
       return `Cancelled: an upstream controller stopped the run${toolText}. This may be a parent plan, stop action, superseding retry, or shutdown.`;
     case "superseded":
@@ -304,9 +306,16 @@ function buildSystemNotice(result: ExecutorRunResult): SystemNotice {
         actionHint =
           "Retry from the last useful result, avoiding the repeated failing call.";
         break;
-      case "zombie_timeout":
+      case "run_time_limit":
+        severity = "warning";
         errorType = "response_interrupted";
-        description = `Timeout: executor zombie watchdog stopped the run${durationMs != null ? ` after ${(durationMs / 60000).toFixed(1)} minutes` : ""}${toolCallCount > 0 ? ` and ${toolCallCount} tool call${toolCallCount !== 1 ? "s" : ""}` : ""}. The run exceeded the active-run idle/hard-cap guard, not a user cancellation.`;
+        description = `Execution time limit reached${durationMs != null ? ` after ${(durationMs / 60000).toFixed(1)} minutes` : ""}${toolCallCount > 0 ? ` and ${toolCallCount} tool call${toolCallCount !== 1 ? "s" : ""}` : ""}. The execution watchdog stopped the run. This was not a processing error or user cancellation.`;
+        actionHint = "Send another message and I'll continue where I left off.";
+        break;
+      case "zombie_timeout":
+        severity = "warning";
+        errorType = "response_interrupted";
+        description = `Executor activity watchdog stopped the run${durationMs != null ? ` after ${(durationMs / 60000).toFixed(1)} minutes` : ""}${toolCallCount > 0 ? ` and ${toolCallCount} tool call${toolCallCount !== 1 ? "s" : ""}` : ""}. This was not a processing error or user cancellation.`;
         actionHint = "Send another message and I'll continue where I left off.";
         break;
     }
