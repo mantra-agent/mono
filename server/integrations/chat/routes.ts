@@ -2466,9 +2466,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         );
       }
 
-      if (sayAloud && result.status === "succeeded" && responseContent.trim()) {
+      if (sayAloud && !isSuperseded && responseContent.trim()) {
         const currentSession = await chatStorage.getSession(sessionId);
         if (currentSession?.type === "meeting") {
+          chatLog.log(
+            `meeting speech scheduled sessionId=${sessionId} resultStatus=${result.status} terminationReason=${result.terminationReason || "unknown"} contentLen=${responseContent.length}`,
+          );
           import("../../meeting/output-media")
             .then(({ speakMeetingResponse }) => speakMeetingResponse(sessionId, responseContent))
             .catch((err) => chatLog.error(`say-aloud failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`));
