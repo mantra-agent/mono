@@ -19,6 +19,8 @@ export interface MeetingParticipationDecision {
   confidence: number;
   prompt?: string;
   classifierFailure?: "timeout" | "error" | "invalid_output";
+  invocationKind?: "leading" | "trailing";
+  invocationAlias?: "mantra" | "mancha";
 }
 
 export interface MeetingParticipationInput {
@@ -39,10 +41,48 @@ interface ExchangeContext {
   speakerContinuesAgentExchange: boolean;
 }
 
-function explicitInvocation(text: string): string | null {
+interface ExplicitInvocation {
+  prompt: string;
+  kind: "leading" | "trailing";
+  alias: "mantra" | "mancha";
+}
+
+function normalizeInvocationAlias(alias: string | undefined): ExplicitInvocation["alias"] {
+  return alias?.toLowerCase() === "mancha" ? "mancha" : "mantra";
+}
+
+function explicitInvocation(text: string): ExplicitInvocation | null {
   const normalized = text.replace(/\s+/g, " ").trim();
-  const match = /(?:^|[.!?]\s+)(?:hey[\s,.:;!?-]+)?m[ao]ntra\b[\s,.:;!?-]*(.*)$/i.exec(normalized);
-  return match ? (match[1]?.trim() || normalized) : null;
+  if (!normalized) return null;
+
+  const leading = /(?:^|[.!?]\s+)(?:(?:hey|hi|hello)[\s,.:;!?-]+)?(mantra|mancha)\b[\s,.:;!?-]*(.*)$/i.exec(normalized);
+  if (leading) {
+    return {
+      prompt: leading[2]?.trim() || normalized,
+      kind: "leading",
+      alias: normalizeInvocationAlias(leading[1]),
+    };
+  }
+
+  const punctuatedTrailing = /^(.+?)[,:;-]\s*(mantra|mancha)[\s,.:;!?-]*$/i.exec(normalized);
+  if (punctuatedTrailing) {
+    return {
+      prompt: normalized,
+      kind: "trailing",
+      alias: normalizeInvocationAlias(punctuatedTrailing[2]),
+    };
+  }
+
+  const questionTrailing = /^(.+?)\s+(mantra|mancha)[\s.!?]*$/i.exec(normalized);
+  if (questionTrailing && isQuestion(questionTrailing[1] || "")) {
+    return {
+      prompt: normalized,
+      kind: "trailing",
+      alias: normalizeInvocationAlias(questionTrailing[2]),
+    };
+  }
+
+  return null;
 }
 
 function clearlyAddressesOther(text: string, speaker: string, participants: MeetingParticipant[]): string | null {
@@ -107,6 +147,7 @@ function decision(
   confidence: number,
   prompt?: string,
   classifierFailure?: MeetingParticipationDecision["classifierFailure"],
+  invocation?: Pick<ExplicitInvocation, "kind" | "alias">,
 ): MeetingParticipationDecision {
   return {
     outcome,
@@ -116,6 +157,10 @@ function decision(
     confidence,
     ...(prompt ? { prompt } : {}),
     ...(classifierFailure ? { classifierFailure } : {}),
+    ...(invocation ? {
+      invocationKind: invocation.kind,
+      invocationAlias: invocation.alias,
+    } : {}),
   };
 }
 
@@ -150,7 +195,18 @@ function deterministicFallback(
 export async function inferMeetingParticipation(input: MeetingParticipationInput): Promise<MeetingParticipationDecision> {
   const startedAt = Date.now();
   const explicit = explicitInvocation(input.text);
-  if (explicit) return decision(startedAt, "explicit", true, "explicit_mantra_alias", 1, explicit);
+  if (explicit) {
+    return decision(
+      startedAt,
+      "explicit",
+      true,
+      `explicit_${explicit.alias}_${explicit.kind}`,
+      1,
+      explicit.prompt,
+      undefined,
+      explicit,
+    );
+  }
 
   const other = clearlyAddressesOther(input.text, input.speakerLabel, input.participants);
   if (other) return decision(startedAt, "ignored", false, `addressed_other:${other}`, 0.98);
