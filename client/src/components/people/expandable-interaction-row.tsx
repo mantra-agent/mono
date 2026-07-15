@@ -37,6 +37,7 @@ interface ExpandableInteractionRowProps {
   leadingContent?: ReactNode;
   menuContent?: ReactNode;
   testId?: string;
+  mobileLayout?: "stacked" | "inline";
 }
 
 const icons: Record<string, LucideIcon> = {
@@ -67,7 +68,7 @@ function formatShortDate(value: string): string {
   return localDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export function ExpandableInteractionRow({ interaction, personName, leadingContent, menuContent, testId }: ExpandableInteractionRowProps) {
+export function ExpandableInteractionRow({ interaction, personName, leadingContent, menuContent, testId, mobileLayout }: ExpandableInteractionRowProps) {
   const Icon = icons[interaction.type] || Calendar;
   const DirectionIcon = interaction.direction === "inbound"
     ? ArrowDownLeft
@@ -103,8 +104,12 @@ export function ExpandableInteractionRow({ interaction, personName, leadingConte
       expandedContentClassName="px-2 pb-2 pl-2"
       menuContent={menuContent}
       testId={testId || `interaction-${interaction.id}`}
+      mobileLayout={mobileLayout}
     >
-      <div className="flex min-w-0 items-center justify-end gap-1.5">
+      <div className={cn(
+        "flex w-full min-w-0 items-center gap-1.5",
+        mobileLayout === "inline" ? "justify-start sm:justify-end" : "justify-end",
+      )}>
         {leadingContent}
         <span className={cn("truncate text-xs", interaction.responseOwed ? "text-foreground" : "text-muted-foreground")}>{interaction.summary}</span>
         {DirectionIcon && <DirectionIcon className="h-3 w-3 shrink-0 text-muted-foreground" aria-label={interaction.direction} />}

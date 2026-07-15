@@ -17,6 +17,7 @@ export function ProfileTreeRow({
   menuContent,
   testId,
   defaultOpen = false,
+  mobileLayout = "stacked",
 }: {
   label: ReactNode;
   icon?: ReactNode;
@@ -29,6 +30,7 @@ export function ProfileTreeRow({
   menuContent?: ReactNode;
   testId?: string;
   defaultOpen?: boolean;
+  mobileLayout?: "stacked" | "inline";
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -39,14 +41,26 @@ export function ProfileTreeRow({
   return (
     <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
       <div className="group last:border-b-0">
-        <div className="group relative grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 rounded-md px-2 py-1.5 text-left text-sm select-none transition-colors hover:bg-accent/70 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto]">
+        <div
+          className={cn(
+            "group relative grid w-full items-center gap-x-2 rounded-md px-2 py-1.5 text-left text-sm select-none transition-colors hover:bg-accent/70",
+            mobileLayout === "inline"
+              ? "grid-cols-[auto_minmax(0,1fr)_auto_auto] gap-y-0"
+              : "grid-cols-[minmax(0,1fr)_auto] gap-y-1",
+            "sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] sm:gap-y-1",
+          )}
+        >
           <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
             <span className="flex shrink-0 items-center justify-center text-muted-foreground">{icon}</span>
             <span className="min-w-0 break-words">{label}</span>
           </div>
           <div
             className={cn(
-              "col-span-2 flex min-w-0 max-w-full items-center justify-start pl-6 text-left text-xs leading-relaxed sm:col-span-1 sm:w-48 sm:justify-end sm:pl-0 sm:text-right",
+              "flex min-w-0 max-w-full items-center text-xs leading-relaxed",
+              mobileLayout === "inline"
+                ? "col-span-1 justify-end overflow-hidden pl-0 text-right"
+                : "col-span-2 justify-start pl-6 text-left",
+              "sm:col-span-1 sm:w-48 sm:justify-end sm:overflow-visible sm:pl-0 sm:text-right",
               "[&_input]:h-5 [&_input]:w-48 [&_input]:bg-muted/50 [&_input]:px-1.5 [&_input]:py-0 [&_input]:text-right [&_input]:text-xs [&_input]:leading-none",
               "[&_input[type=date]]:[color-scheme:dark] [&_input[type=date]::-webkit-calendar-picker-indicator]:h-3 [&_input[type=date]::-webkit-calendar-picker-indicator]:w-3 [&_input[type=date]::-webkit-calendar-picker-indicator]:opacity-60 [&_input[type=date]::-webkit-calendar-picker-indicator]:invert",
               "[&_textarea]:bg-muted/50 [&_textarea]:text-xs",
