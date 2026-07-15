@@ -12,6 +12,7 @@ import { getSecretSync, onSecretChange } from "./secrets-store";
 import type { ToolDefinition } from "@shared/models/tools";
 import { createNamedSystemPrincipal } from "./principal";
 import { runWithPrincipal } from "./principal-context";
+import { resolveSessionModelTierOverride } from "./session-model-tier-override";
 
 let _openaiClient: OpenAI | null = null;
 let _anthropicClient: Anthropic | null = null;
