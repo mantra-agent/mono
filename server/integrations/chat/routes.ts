@@ -1638,17 +1638,31 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     onEvent?: Parameters<typeof agentExecutor.run>[0]["onEvent"],
     routingTier?: string,
     diagnosticTurnId?: string,
+    refreshAfterPersonaSwitch?: Parameters<typeof agentExecutor.run>[0]["refreshAfterPersonaSwitch"],
   ): Promise<ExecutorRunResult> {
     const toolExecutor = async (name: string, args: Record<string, any>) => {
+      const shouldTrackPersonaChange = name === "orient" && typeof args.persona !== "undefined";
+      const previousPersonaId = shouldTrackPersonaChange
+        ? (await chatStorage.getSession(sessionId))?.personaId
+        : undefined;
       const toolCallId = generateToolCallId();
       const toolResult = await executeTool(name, toolCallId, args, {
         sessionKey,
         sessionId,
       });
+      const nextPersonaId = shouldTrackPersonaChange && !toolResult.error
+        ? (await chatStorage.getSession(sessionId))?.personaId
+        : undefined;
+      const personaChanged =
+        shouldTrackPersonaChange &&
+        !toolResult.error &&
+        nextPersonaId != null &&
+        nextPersonaId !== previousPersonaId;
       return {
         result: toolResult.result,
         error: toolResult.error,
         sideEffectOnly: toolResult.sideEffectOnly,
+        continuation: personaChanged ? "persona_switch" as const : undefined,
       };
     };
 
@@ -1664,6 +1678,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       contextPressure,
       onEvent,
       diagnosticTurnId,
+      refreshAfterPersonaSwitch,
     });
   }
 
@@ -2046,6 +2061,60 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       if (!resolvedRoutingDecision) {
         throw new Error("Chat routing decision was not resolved");
       }
+      const refreshAfterPersonaSwitch: NonNullable<Parameters<typeof agentExecutor.run>[0]["refreshAfterPersonaSwitch"]> = async () => {
+        chatRunLifecycle.assertCurrent(lease);
+        const sessionForRouting = await chatStorage.getSession(sessionId);
+        const sessionTierOverride = normalizeSessionModelTierOverride(sessionForRouting?.modelTier);
+        const routingDecision = (await resolveModelCandidates(
+          ACTIVITY_CHAT,
+          sessionTierOverride
+            ? {
+                semanticTierOverride: sessionTierOverride,
+                overrideReason: "session model tier override",
+                sessionId,
+              }
+            : { sessionId },
+        ))[0];
+
+        let meetingContext: string | undefined;
+        if (sessionForRouting?.type === "meeting" && sessionForRouting.meeting) {
+          try {
+            const { buildMeetingContextPacket, renderMeetingContextPacket } = await import("../../meeting/context-packet");
+            const packet = await buildMeetingContextPacket(sessionForRouting.meeting);
+            meetingContext = packet ? renderMeetingContextPacket(packet) : undefined;
+          } catch (err) {
+            chatLog.warn(`persona switch meeting context degraded sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+
+        const refreshedContext = await assembleContext({
+          profile: "chat",
+          conversationHistory,
+          toolDefinitions: getToolDefinitions().map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+          })),
+          model: routingDecision.modelString,
+          sessionId,
+          currentMessage: enrichedContent,
+          meetingContext,
+        });
+        const { resolveSessionPersonaSnapshot } = await import("../../session-persona");
+        const persona = await resolveSessionPersonaSnapshot(sessionId);
+        if (assistantDraft && persona) {
+          assistantDraft = await chatStorage.updateAssistantDraft(sessionId, assistantDraft.id, {
+            model: routingDecision.modelString,
+            persona,
+          });
+        }
+        chatRunLifecycle.assertCurrent(lease);
+        return {
+          routingDecision,
+          systemPrompt: refreshedContext.systemPrompt,
+          persona,
+        };
+      };
+
       const result = await executeChatAgent(
         sessionKey,
         sessionId,
@@ -2064,6 +2133,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         },
         chatRoutingTier,
         diagnosticTurnId,
+        refreshAfterPersonaSwitch,
       );
       if (assistantDraftCheckpointPending) {
         clearTimeout(assistantDraftCheckpointPending);
