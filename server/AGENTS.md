@@ -115,6 +115,8 @@ The context system builds the LLM prompt from ~40 dynamically resolved sections.
 
 Single engine: ElevenLabs handles audio, our server handles LLM via custom-LLM transport.
 
+Real-time voice database work uses the reserved `voice` lane. Install it before route registration for start, custom-LLM callback, and session-save endpoints only. AsyncLocalStorage selects the lane through the canonical `db` proxy, so storage methods must not bypass it with raw general-pool access. The four voice connections are carved from the existing thirty-connection per-process budget and enforce a 750 ms acquisition ceiling plus a 4 s statement ceiling. Config, diagnostics, boot reconciliation, and other non-call traffic remain on the general lane. Pool closure belongs to the server's graceful-shutdown coordinator, never an eager module-level signal handler.
+
 ### Key Files
 - `voice/` — Decomposed custom-LLM pipeline (see `voice/AGENTS.md` for full module map)
   - `voice/utils.ts` — Text helpers, URL resolution (`getPublicBaseUrl`)

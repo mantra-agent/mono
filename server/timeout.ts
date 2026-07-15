@@ -6,8 +6,16 @@ export const COMPACTION_LLM_TIMEOUT_MS = 30_000;
 export const STREAM_FINAL_MESSAGE_TIMEOUT_MS = 5_000;
 export const EMBEDDING_API_TIMEOUT_MS = 10_000;
 export const DB_STATEMENT_TIMEOUT_MS = 10_000;
+// Total PostgreSQL budget per app process. Voice capacity is reserved from
+// this total, never added on top of it.
 export const DB_POOL_MAX = 30;
 export const DB_POOL_MIN = 20;
+export const VOICE_DB_POOL_MAX = 4;
+export const VOICE_DB_POOL_MIN = 4;
+export const GENERAL_DB_POOL_MAX = DB_POOL_MAX - VOICE_DB_POOL_MAX;
+export const GENERAL_DB_POOL_MIN = DB_POOL_MIN - VOICE_DB_POOL_MIN;
+export const VOICE_DB_ACQUIRE_TIMEOUT_MS = 750;
+export const VOICE_DB_STATEMENT_TIMEOUT_MS = 4_000;
 export const DB_IDLE_TIMEOUT_MS = 60_000;
 // Bounded grace window the executor waits for a run's spawned background work
 // (in-flight cost-log inserts, iterator-return chains, interrupt acks) to drain

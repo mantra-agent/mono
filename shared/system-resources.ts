@@ -5,6 +5,8 @@ export interface DbPoolResource {
   saturatedForMs: number;
   lastProbeDurationMs: number | null;
   lastSuccessfulProbeAt: number | null;
+  general?: { total: number; idle: number; waiting: number; max: number };
+  voice?: { total: number; idle: number; waiting: number; max: number };
 }
 
 export interface InFlightResource {

@@ -641,7 +641,7 @@ function ResourcesView({
           <ResourceTile
             label="DB Pool"
             value={`${r.dbPool.total} / ${r.dbPool.idle} / ${r.dbPool.waiting}`}
-            sub={`total / idle / waiting${r.dbPool.saturatedForMs > 0 ? ` · saturated ${formatMs(r.dbPool.saturatedForMs)}` : ""}`}
+            sub={`${r.dbPool.general && r.dbPool.voice ? `general ${r.dbPool.general.total}/${r.dbPool.general.idle}/${r.dbPool.general.waiting} · voice ${r.dbPool.voice.total}/${r.dbPool.voice.idle}/${r.dbPool.voice.waiting}` : "total / idle / waiting"}${r.dbPool.saturatedForMs > 0 ? ` · saturated ${formatMs(r.dbPool.saturatedForMs)}` : ""}`}
             status={dbStatus(r.dbPool)}
             testId="tile-db-pool"
             history={histories.dbWaiting}
