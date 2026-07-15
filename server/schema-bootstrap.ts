@@ -540,6 +540,20 @@ export async function runSchemaBootstrap(
         last_heartbeat TIMESTAMP
       )
     `);
+    // CREATE TABLE IF NOT EXISTS does not upgrade an existing partial table.
+    // Ensure every current lease column before creating indexes that depend on
+    // them, otherwise startup aborts before the later full voice auto-heal runs.
+    await ensureColumns("voice_session_active", [
+      { name: "boot_id", type: "TEXT" },
+      { name: "scope", type: "TEXT NOT NULL DEFAULT 'system'" },
+      { name: "owner_user_id", type: "TEXT" },
+      { name: "account_id", type: "TEXT" },
+      { name: "start_request_id", type: "TEXT" },
+      { name: "start_response", type: "JSONB" },
+      { name: "start_ready_at", type: "TIMESTAMPTZ" },
+      { name: "inflight_turn", type: "INTEGER DEFAULT 0" },
+      { name: "last_heartbeat", type: "TIMESTAMP" },
+    ]);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_boot ON voice_session_active(boot_id) WHERE status = 'active'`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_owner ON voice_session_active(owner_user_id) WHERE status = 'active'`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_account ON voice_session_active(account_id) WHERE status = 'active'`);
