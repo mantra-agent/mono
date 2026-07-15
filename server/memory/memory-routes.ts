@@ -32,7 +32,7 @@ import { chatCompletion } from "../model-client";
 import { ACTIVITY_MEMORY } from "../job-profiles";
 import { db } from "../db";
 import { createLogger } from "../log";
-import { unifiedMemorySearch } from "./unified-search";
+import { searchVnextMemory } from "./vnext-search";
 import { requireAuth } from "../auth";
 import { requirePermission } from "../permissions";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
@@ -193,10 +193,10 @@ const updateEntrySchema = z.object({
 
 const searchSchema = z.object({
   query: z.string().min(1),
-  layer: z.enum(memoryLayers).optional(),
-  limit: z.number().int().positive().default(20),
+  limit: z.number().int().positive().max(100).default(20),
   source: z.string().optional(),
-  archiveMode: z.boolean().optional(),
+  claimType: z.string().optional(),
+  lifecycleStage: z.string().optional(),
 });
 
 const triggerTransitionSchema = z.object({
@@ -479,22 +479,21 @@ async function handleSearchEntries(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const { query, layer, limit, source, archiveMode } = parsed.data;
-
-    const results = await unifiedMemorySearch({ query, layer, limit, source, archiveMode });
-
-    res.json(
-      results.map((r) => ({
-        ...r.entry,
-        score: r.score,
-        embeddingSim: r.embeddingSim,
-        tagSim: r.tagSim,
-        titleSim: r.titleSim,
-        textMatch: r.textMatch,
-        graphHop: r.graphHop,
-        graphLinkStrength: r.graphLinkStrength,
+    const { query, limit, source, claimType, lifecycleStage } = parsed.data;
+    const response = await searchVnextMemory({ query, limit, source, claimType, lifecycleStage });
+    res.json({
+      storage: response.storage,
+      total: response.total,
+      results: response.results.map(({ claim, score, embeddingSimilarity, lexicalSimilarity, textMatch, linkCount, retrievalPath }) => ({
+        ...serializeVnextClaim(claim),
+        score,
+        embeddingSimilarity,
+        lexicalSimilarity,
+        textMatch,
+        linkCount,
+        retrievalPath,
       })),
-    );
+    });
   } catch (error: unknown) {
     res.status(500).json({ error: errorMessage(error) });
   }

@@ -24,9 +24,7 @@ import { pathExists, resolveWorkspacePath } from "./fs-utils";
 import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
 import { getToolSchemas, type ToolSchema } from "./tool-registry";
 import { getSecretSync } from "./secrets-store";
-import { unifiedMemorySearch, type UnifiedSearchResult } from "./memory/unified-search";
-import { isSummaryStale } from "./memory/memory-storage";
-import type { MemoryLayer } from "@shared/schema";
+import { searchVnextMemory, type VnextSearchOptions } from "./memory/vnext-search";
 import { sensitiveOwnershipValues } from "./sensitive-scope";
 import { visibleFinanceForCurrentPrincipal } from "./finance-scope";
 // Priority handling delegated to GoalsService
@@ -12678,47 +12676,36 @@ const memoryTools: Record<string, ToolHandler> = {
 
   async memory_read_entry(args) {
     const id = typeof args.id === "number" ? args.id : parseInt(args.id, 10);
-    if (isNaN(id)) return { result: "Missing or invalid entry ID. Provide a numeric ID from memory_search results.", error: true };
+    if (isNaN(id)) return { result: "Missing or invalid vNEXT claim ID. Provide a numeric ID from memory.search results.", error: true };
 
     try {
-      const { memoryStorage } = await import("./memory/memory-storage");
-      const entry = await memoryStorage.getEntry(id);
-      if (!entry) return { result: `Memory entry #${id} not found`, error: true };
-
-      const meta = [
-        `ID: ${entry.id}`,
-        `Layer: ${entry.layer}`,
-        `Integration stage: ${entry.integrationStage}`,
-        `Source: ${entry.source}`,
-        entry.sourceId ? `Source ID: ${entry.sourceId}` : "",
-        entry.title ? `Title: ${entry.title}` : "",
-        `Created: ${new Date(entry.createdAt).toISOString().slice(0, 16)}`,
-        entry.tags && entry.tags.length > 0 ? `Tags: ${entry.tags.join(", ")}` : "",
+      const { memoryVnextClaimStorage } = await import("./memory/vnext-claim-storage");
+      const detail = await memoryVnextClaimStorage.getClaimDetail(id);
+      if (!detail) return { result: `vNEXT claim #${id} not found`, error: true };
+      await memoryVnextClaimStorage.reinforceClaim(id);
+      const claim = detail.claim;
+      const metadata = [
+        `ID: ${claim.id}`,
+        `Storage: memory_vnext_claims`,
+        `Lifecycle: ${claim.lifecycleStage}`,
+        `Claim type: ${claim.claimType}`,
+        `Confidence: ${claim.confidence.toFixed(2)}`,
+        `Source: ${claim.source}`,
+        claim.sourceId ? `Source ID: ${claim.sourceId}` : "",
+        claim.title ? `Title: ${claim.title}` : "",
+        `Created: ${claim.createdAt.toISOString().slice(0, 16)}`,
+        claim.topics?.length ? `Topics: ${claim.topics.join(", ")}` : "",
       ].filter(Boolean).join("\n");
-
-      const links = entry.links.length > 0
-        ? `\n\nLinked entries: ${entry.links.map(l => `#${l.fromId === id ? l.toId : l.fromId} (${l.relationship})`).join(", ")}`
+      const sources = detail.sources.length > 0
+        ? `\n\nSources:\n${detail.sources.map((source) => `- ${source.sourceType}/${source.sourceId} (${source.relationship}, strength ${source.strength.toFixed(2)})${source.quote ? `: ${source.quote}` : ""}`).join("\n")}`
         : "";
-
-      if (entry.layer === "long" || entry.layer === "mid") {
-        try {
-          const existingMeta = (entry.metadata as Record<string, unknown>) || {};
-          await memoryStorage.updateEntry(id, {
-            layer: "short",
-            graphed: false,
-            metadata: { ...existingMeta, recalledAt: new Date().toISOString(), previousLayer: entry.layer, decay_score: 1.0 },
-          });
-          await memoryStorage.appendEvent(id, "recalled", { fromLayer: entry.layer });
-          toolExec.log(`[MemoryTransition] RECALL #${id} "${entry.title || entry.content.slice(0, 40)}" ${entry.layer} → short (tool recall)`);
-          toolExec.log(`Recalled entry #${id} from ${entry.layer} → short (preserving ID, links)`);
-        } catch (recallErr: any) {
-          toolExec.warn(`Failed to recall entry #${id}: ${recallErr.message}`);
-        }
-      }
-
-      return { result: `${meta}\n\n--- Content ---\n${entry.content}${links}` };
-    } catch (err: any) {
-      return { result: `Error reading entry #${id}: ${err.message}`, error: true };
+      const links = detail.claimLinks.length > 0
+        ? `\n\nClaim links:\n${detail.claimLinks.map((link) => `- #${link.fromClaimId === id ? link.toClaimId : link.fromClaimId} (${link.relationship}, strength ${link.strength.toFixed(2)})`).join("\n")}`
+        : "";
+      return { result: `${metadata}\n\n--- Claim ---\n${claim.content}${sources}${links}` };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { result: `Error reading vNEXT claim #${id}: ${message}`, error: true };
     }
   },
 
@@ -12727,90 +12714,69 @@ const memoryTools: Record<string, ToolHandler> = {
     if (!query || typeof query !== "string") return { result: "Missing query string", error: true };
 
     try {
-      const source = args.source as string | undefined;
-      const layer = args.layer as MemoryLayer | undefined;
-      const limit = typeof args.limit === "number" ? Math.min(args.limit, 100) : 20;
-      const startDate = args.startDate as string | undefined;
-      const endDate = args.endDate as string | undefined;
-      const timezone = args.timezone as string | undefined;
-
-      const searchOptions: import("./memory/unified-search").UnifiedSearchOptions = {
+      const unsupported = [
+        ["layer", args.layer],
+        ["integrationStage", args.integrationStage],
+        ["hasSummary", args.hasSummary],
+        ["hasDeletionScheduled", args.hasDeletionScheduled],
+        ["deletionExpired", args.deletionExpired],
+      ].filter(([, value]) => value !== undefined).map(([name]) => name);
+      if (unsupported.length > 0) {
+        return { result: `Legacy-only memory.search filters are retired: ${unsupported.join(", ")}. Search vNEXT claims with source, dates, links, recall count, title, lifecycle, and content length filters.`, error: true };
+      }
+      const options: VnextSearchOptions = {
         query,
-        limit,
-        layer,
-        source,
-        startDate,
-        endDate,
-        timezone,
+        limit: typeof args.limit === "number" ? Math.min(args.limit, 100) : 20,
+        offset: typeof args.offset === "number" ? Math.max(args.offset, 0) : 0,
+        source: typeof args.source === "string" ? args.source : undefined,
+        claimType: typeof args.claimType === "string" ? args.claimType : undefined,
+        lifecycleStage: typeof args.lifecycleStage === "string" ? args.lifecycleStage : undefined,
+        startDate: typeof args.startDate === "string" ? args.startDate : undefined,
+        endDate: typeof args.endDate === "string" ? args.endDate : undefined,
+        timezone: typeof args.timezone === "string" ? args.timezone : undefined,
+        minLinks: args.minLinks !== undefined ? Number(args.minLinks) : undefined,
+        maxLinks: args.maxLinks !== undefined ? Number(args.maxLinks) : undefined,
+        minContentLength: args.minContentLength !== undefined ? Number(args.minContentLength) : undefined,
+        maxContentLength: args.maxContentLength !== undefined ? Number(args.maxContentLength) : undefined,
+        recalledBefore: typeof args.recalledBefore === "string" ? args.recalledBefore : undefined,
+        recalledAfter: typeof args.recalledAfter === "string" ? args.recalledAfter : undefined,
+        minRecallCount: args.minRecallCount !== undefined ? Number(args.minRecallCount) : undefined,
+        maxRecallCount: args.maxRecallCount !== undefined ? Number(args.maxRecallCount) : undefined,
+        hasTitle: args.hasTitle !== undefined ? Boolean(args.hasTitle) : undefined,
+        createdBefore: typeof args.createdBefore === "string" ? args.createdBefore : undefined,
+        createdAfter: typeof args.createdAfter === "string" ? args.createdAfter : undefined,
+        updatedBefore: typeof args.updatedBefore === "string" ? args.updatedBefore : undefined,
+        updatedAfter: typeof args.updatedAfter === "string" ? args.updatedAfter : undefined,
+        sortBy: ["createdAt", "contentLength", "linkCount", "recallCount"].includes(String(args.sortBy))
+          ? args.sortBy as VnextSearchOptions["sortBy"]
+          : undefined,
+        sortOrder: args.sortOrder === "asc" || args.sortOrder === "desc" ? args.sortOrder : undefined,
       };
+      const response = await searchVnextMemory(options);
+      if (response.results.length === 0) return { result: `No vNEXT claims found for "${query}"` };
 
-      if (args.minLinks !== undefined) searchOptions.minLinks = Number(args.minLinks);
-      if (args.maxLinks !== undefined) searchOptions.maxLinks = Number(args.maxLinks);
-      if (args.minContentLength !== undefined) searchOptions.minContentLength = Number(args.minContentLength);
-      if (args.maxContentLength !== undefined) searchOptions.maxContentLength = Number(args.maxContentLength);
-      if (args.recalledBefore) searchOptions.recalledBefore = String(args.recalledBefore);
-      if (args.recalledAfter) searchOptions.recalledAfter = String(args.recalledAfter);
-      if (args.minRecallCount !== undefined) searchOptions.minRecallCount = Number(args.minRecallCount);
-      if (args.maxRecallCount !== undefined) searchOptions.maxRecallCount = Number(args.maxRecallCount);
-      if (args.hasTitle !== undefined) searchOptions.hasTitle = Boolean(args.hasTitle);
-      if (args.hasSummary !== undefined) searchOptions.hasSummary = Boolean(args.hasSummary);
-      if (args.hasDeletionScheduled !== undefined) searchOptions.hasDeletionScheduled = Boolean(args.hasDeletionScheduled);
-      if (args.deletionExpired !== undefined) searchOptions.deletionExpired = Boolean(args.deletionExpired);
-      if (args.createdBefore) searchOptions.createdBefore = String(args.createdBefore);
-      if (args.createdAfter) searchOptions.createdAfter = String(args.createdAfter);
-      if (args.updatedBefore) searchOptions.updatedBefore = String(args.updatedBefore);
-      if (args.updatedAfter) searchOptions.updatedAfter = String(args.updatedAfter);
-      if (args.sortBy) {
-        const sb = String(args.sortBy);
-        if (sb === "createdAt" || sb === "contentLength" || sb === "linkCount" || sb === "recallCount") {
-          searchOptions.sortBy = sb;
-        }
-      }
-      if (args.sortOrder) {
-        const so = String(args.sortOrder);
-        if (so === "asc" || so === "desc") {
-          searchOptions.sortOrder = so;
-        }
-      }
-      if (args.offset !== undefined) searchOptions.offset = Number(args.offset);
-
-      const results: UnifiedSearchResult[] = await unifiedMemorySearch(searchOptions);
-
-      if (results.length === 0) {
-        return { result: `No results found for "${query}"` };
-      }
-
-      const formatted = results.map((r: UnifiedSearchResult, i: number) => {
-        const meta = [`id=${r.entry.id}`, `layer=${r.entry.layer}`, `stage=${r.entry.integrationStage}`, `source=${r.entry.source}`, `score=${r.score.toFixed(3)}`];
-        if (r.embeddingSim > 0) meta.push(`emb=${r.embeddingSim.toFixed(3)}`);
-        if (r.graphHop !== null) meta.push(`hop=${r.graphHop}`);
-        if (r.enriched) {
-          meta.push(`links=${r.enriched.linkCount}`);
-          meta.push(`recalls=${r.enriched.recallCount}`);
-          meta.push(`len=${r.enriched.contentLength}`);
-          if (r.enriched.deletionScheduled) meta.push(`delSched=${r.enriched.deletionScheduled}`);
-          if (r.enriched.deletionReason) meta.push(`delReason=${r.enriched.deletionReason}`);
-          if (r.enriched.recalledAt) meta.push(`recalledAt=${r.enriched.recalledAt}`);
-        }
-        const date = r.entry.createdAt ? new Date(r.entry.createdAt).toISOString().slice(0, 16) : "";
-        const title = r.entry.title ? `"${r.entry.title}"` : "";
-
-        let preview: string;
-        if (r.entry.summary && !isSummaryStale(r.entry)) {
-          preview = r.entry.summary;
-        } else {
-          const content = (r.entry.content || "").replace(/<<<\w+>>>/g, " ").trim();
-          preview = content.length > 300 ? content.slice(0, 300) + "..." : content;
-        }
-
-        return `[${i + 1}] (${meta.join(", ")}) ${date} ${title}\n${preview}`;
+      const formatted = response.results.map((result, index) => {
+        const claim = result.claim;
+        const meta = [
+          `id=${claim.id}`,
+          `storage=vnext`,
+          `stage=${claim.lifecycleStage}`,
+          `type=${claim.claimType}`,
+          `source=${claim.source}`,
+          `score=${result.score.toFixed(3)}`,
+          `emb=${result.embeddingSimilarity.toFixed(3)}`,
+          `links=${result.linkCount}`,
+          `recalls=${claim.recallCount}`,
+        ];
+        const date = claim.createdAt ? new Date(claim.createdAt).toISOString().slice(0, 16) : "";
+        const title = claim.title ? `"${claim.title}"` : "";
+        const preview = claim.content.length > 500 ? `${claim.content.slice(0, 500)}...` : claim.content;
+        return `[${index + 1}] (${meta.join(", ")}) ${date} ${title}\n${preview}`;
       }).join("\n\n");
-
-      const header = `Found ${results.length} results for "${query}". Use memory_read_entry(id) to see full content of any entry.\n\n`;
-      return { result: header + formatted };
+      return { result: `Found ${response.results.length} vNEXT claims for "${query}". Use memory.vnext_claim_detail(id) for full provenance and graph details.\n\n${formatted}` };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      return { result: `Search error: ${message}`, error: true };
+      return { result: `vNEXT search error: ${message}`, error: true };
     }
   },
 };
@@ -13505,132 +13471,51 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
     }
     if (action === "search_claims") {
       try {
-        const { memoryVnextClaimStorage } = await import("./memory/vnext-claim-storage");
-        const { db } = await import("./db");
-        const { memoryEntries } = await import("../shared/models/memory");
-        const { sql, desc, and } = await import("drizzle-orm");
-        const { combineWithVisibleScope } = await import("./scoped-storage");
-        const { getCurrentPrincipalOrSystem } = await import("./principal-context");
-
-        const lim = typeof args.limit === "number" ? Math.min(args.limit, 100) : 20;
-        const off = typeof args.offset === "number" ? Math.max(args.offset, 0) : 0;
-        const storageFilter = typeof args.storage === "string" ? args.storage : undefined;
-        const includeVnext = storageFilter !== "legacy" && typeof args.integrationStage !== "string";
-        const includeLegacy = storageFilter !== "vnext" && typeof args.lifecycleStage !== "string";
-        const vnextRows = includeVnext
-          ? await memoryVnextClaimStorage.searchClaims({
-              claimType: typeof args.claimType === "string" ? args.claimType : undefined,
-              hasEntityLinks: typeof args.hasEntityLinks === "boolean" ? args.hasEntityLinks : undefined,
-              entityId: typeof args.entityId === "string" ? args.entityId : undefined,
-              createdAfter: typeof args.createdAfter === "string" ? args.createdAfter : undefined,
-              createdBefore: typeof args.createdBefore === "string" ? args.createdBefore : undefined,
-              lifecycleStage: typeof args.lifecycleStage === "string" ? args.lifecycleStage : undefined,
-              limit: lim + off,
-              offset: 0,
-            })
-          : [];
-
-        let legacyRows: any[] = [];
-        if (includeLegacy) {
-          const conditions: any[] = [sql`metadata->>'claimType' IS NOT NULL`];
-          if (typeof args.claimType === "string") {
-            conditions.push(sql`metadata->>'claimType' = ${args.claimType}`);
-          }
-          if (typeof args.hasEntityLinks === "boolean") {
-            conditions.push(args.hasEntityLinks
-              ? sql`EXISTS (SELECT 1 FROM memory_entity_links mel WHERE mel.memory_id = memory_entries.id)`
-              : sql`NOT EXISTS (SELECT 1 FROM memory_entity_links mel WHERE mel.memory_id = memory_entries.id)`);
-          }
-          if (typeof args.entityId === "string") {
-            conditions.push(sql`EXISTS (SELECT 1 FROM memory_entity_links mel WHERE mel.memory_id = memory_entries.id AND mel.entity_id = ${args.entityId})`);
-          }
-          if (typeof args.createdAfter === "string") {
-            conditions.push(sql`memory_entries.created_at > ${args.createdAfter}::timestamptz`);
-          }
-          if (typeof args.createdBefore === "string") {
-            conditions.push(sql`memory_entries.created_at < ${args.createdBefore}::timestamptz`);
-          }
-          if (typeof args.integrationStage === "string") {
-            conditions.push(sql`memory_entries.integration_stage = ${args.integrationStage}`);
-          }
-
-          const memoryScopeColumns = {
-            scope: memoryEntries.scope,
-            ownerUserId: memoryEntries.ownerUserId,
-            accountId: memoryEntries.accountId,
-            vaultId: memoryEntries.vaultId,
-          };
-
-          legacyRows = await db
-            .select({
-              id: memoryEntries.id,
-              title: memoryEntries.title,
-              content: memoryEntries.content,
-              layer: memoryEntries.layer,
-              source: memoryEntries.source,
-              integrationStage: memoryEntries.integrationStage,
-              tags: memoryEntries.tags,
-              metadata: memoryEntries.metadata,
-              createdAt: memoryEntries.createdAt,
-            })
-            .from(memoryEntries)
-            .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), memoryScopeColumns, and(...conditions)))
-            .orderBy(desc(memoryEntries.createdAt))
-            .limit(lim + off);
+        if (args.storage === "legacy" || typeof args.integrationStage === "string") {
+          return { result: "Legacy claim search has been retired. search_claims reads memory_vnext_claims only; use lifecycleStage instead of integrationStage.", error: true };
         }
-
-        toolExec.debug(`[memory.vnext] search_claims vnext=${vnextRows.length} legacy=${legacyRows.length} includeVnext=${includeVnext} includeLegacy=${includeLegacy}`);
-        const claims = [
-          ...vnextRows.map(r => ({
-            id: r.id,
-            storage: "memory_vnext_claims",
-            title: r.title || r.content,
-            content: r.content ? r.content.substring(0, 500) : null,
-            claimType: r.claimType,
-            confidence: r.confidence,
-            extractedFrom: r.sourceMemoryId ?? null,
-            source: r.source,
-            sourceId: r.sourceId,
-            entityMentions: r.entityMentions || [],
-            layer: "vnext",
-            integrationStage: null,
-            lifecycleStage: r.lifecycleStage,
-            lifecycleStageUpdatedAt: r.lifecycleStageUpdatedAt ? new Date(r.lifecycleStageUpdatedAt).toISOString() : null,
-            tags: r.topics || [],
-            createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : null,
-          })),
-          ...legacyRows.map(r => ({
-            id: r.id,
-            storage: "legacy_memory_entries",
-            title: r.title || null,
-            content: r.content ? r.content.substring(0, 500) : null,
-            claimType: (r.metadata as any)?.claimType || null,
-            confidence: (r.metadata as any)?.confidence || null,
-            extractedFrom: (r.metadata as any)?.extractedFrom || null,
-            entityMentions: (r.metadata as any)?.entityMentions || [],
-            layer: r.layer,
-            integrationStage: r.integrationStage,
-            lifecycleStage: null,
-            lifecycleStageUpdatedAt: null,
-            tags: r.tags || [],
-            createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : null,
-          })),
-        ]
-          .sort((a, b) => Date.parse(b.createdAt || "0") - Date.parse(a.createdAt || "0"))
-          .slice(off, off + lim);
-
+        const { memoryVnextClaimStorage } = await import("./memory/vnext-claim-storage");
+        const limit = typeof args.limit === "number" ? Math.min(args.limit, 100) : 20;
+        const offset = typeof args.offset === "number" ? Math.max(args.offset, 0) : 0;
+        const rows = await memoryVnextClaimStorage.searchClaims({
+          claimType: typeof args.claimType === "string" ? args.claimType : undefined,
+          hasEntityLinks: typeof args.hasEntityLinks === "boolean" ? args.hasEntityLinks : undefined,
+          entityId: typeof args.entityId === "string" ? args.entityId : undefined,
+          createdAfter: typeof args.createdAfter === "string" ? args.createdAfter : undefined,
+          createdBefore: typeof args.createdBefore === "string" ? args.createdBefore : undefined,
+          lifecycleStage: typeof args.lifecycleStage === "string" ? args.lifecycleStage : undefined,
+          limit,
+          offset,
+        });
+        toolExec.debug(`[memory.vnext] search_claims count=${rows.length} offset=${offset} limit=${limit}`);
         return { result: JSON.stringify({
-          total: claims.length,
-          storage: includeVnext && includeLegacy ? "mixed_vnext_and_legacy" : includeVnext ? "memory_vnext_claims" : "legacy_memory_entries",
-          includeVnext,
-          includeLegacy,
-          claims,
+          total: rows.length,
+          storage: "memory_vnext_claims",
+          includeVnext: true,
+          includeLegacy: false,
+          claims: rows.map((claim) => ({
+            id: claim.id,
+            storage: "memory_vnext_claims",
+            title: claim.title || claim.content,
+            content: claim.content.slice(0, 500),
+            claimType: claim.claimType,
+            confidence: claim.confidence,
+            extractedFrom: claim.sourceMemoryId ?? null,
+            source: claim.source,
+            sourceId: claim.sourceId,
+            entityMentions: claim.entityMentions || [],
+            lifecycleStage: claim.lifecycleStage,
+            lifecycleStageUpdatedAt: claim.lifecycleStageUpdatedAt?.toISOString() ?? null,
+            tags: claim.topics || [],
+            createdAt: claim.createdAt?.toISOString() ?? null,
+          })),
         }) };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { result: `Failed to search claims: ${msg}`, error: true };
+        return { result: `Failed to search vNEXT claims: ${msg}`, error: true };
       }
     }
+
     return { result: `Unknown memory action: ${action}`, error: true };
   },
   async settings(args) {

@@ -8,7 +8,7 @@ import { getPromptModulePrompt } from "./prompt-modules";
 import { contextBuilder } from "./context-builder";
 import { ACTIVITY_FRAMING } from "./job-profiles";
 import { createLogger } from "./log";
-import { unifiedMemorySearch } from "./memory/unified-search";
+import { searchVnextMemory } from "./memory/vnext-search";
 
 const log = createLogger("PeopleRoutes");
 
@@ -639,18 +639,18 @@ export function registerPeopleRoutes(app: Express, peopleStorage: PeopleStorage)
       let linkedMemoriesText = "";
       try {
         const personNames = [person.name, ...(person.nicknames || [])];
-        const allMemories: Array<{ id: number; title: string | null; summary: string | null; content: string }> = [];
+        const allClaims: Array<{ id: number; title: string | null; content: string }> = [];
         for (const name of personNames) {
           if (name && name.trim()) {
-            const results = await unifiedMemorySearch({ query: name.trim(), limit: 15 });
-            allMemories.push(...results.map(r => r.entry));
+            const response = await searchVnextMemory({ query: name.trim(), limit: 15 });
+            allClaims.push(...response.results.map(({ claim }) => claim));
           }
         }
-        const uniqueMemories = Array.from(new Map(allMemories.map(m => [m.id, m])).values());
-        if (uniqueMemories.length > 0) {
-          linkedMemoriesText = uniqueMemories
+        const uniqueClaims = Array.from(new Map(allClaims.map((claim) => [claim.id, claim])).values());
+        if (uniqueClaims.length > 0) {
+          linkedMemoriesText = uniqueClaims
             .slice(0, 20)
-            .map(m => `[Memory #${m.id}] ${m.title || "(untitled)"}: ${m.summary || m.content?.slice(0, 200) || ""}`)
+            .map((claim) => `[vNEXT Claim #${claim.id}] ${claim.title || "(untitled)"}: ${claim.content.slice(0, 300)}`)
             .join("\n");
         }
       } catch (e: unknown) {

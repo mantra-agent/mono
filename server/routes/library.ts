@@ -45,7 +45,7 @@ import {
   wrapLightEntry,
 } from "../memory/memory-storage";
 import { scheduleMemoryLinks } from "../memory/link-scheduling";
-import { unifiedMemorySearch } from "../memory/unified-search";
+import { searchVnextMemory } from "../memory/vnext-search";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
 import { getPrincipal } from "../principal";
@@ -1659,11 +1659,17 @@ export async function registerLibraryRoutes(app: Express) {
     try {
       const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
       if (!q) return res.json([]);
-      const results = await unifiedMemorySearch({ query: q, limit: 20 });
-      const filtered = results.filter(
-        (r) => r.entry.source === "library" || r.entry.source === "note",
-      );
-      res.json(filtered);
+      const response = await searchVnextMemory({ query: q, limit: 20, source: ["library", "note"] });
+      res.json(response.results.map(({ claim, score, embeddingSimilarity, lexicalSimilarity, textMatch, linkCount, retrievalPath }) => ({
+        storage: "memory_vnext_claims",
+        claim,
+        score,
+        embeddingSimilarity,
+        lexicalSimilarity,
+        textMatch,
+        linkCount,
+        retrievalPath,
+      })));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
