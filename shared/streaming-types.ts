@@ -8,6 +8,9 @@
  */
 
 export type ExecutionStepType = "thinking" | "tool_call" | "compacting" | "system";
+export type DiagnosticTimingKind = "span" | "milestone";
+export type DiagnosticVisibility = "default" | "raw" | "hidden";
+export type DiagnosticChildMode = "serial" | "parallel";
 
 export interface ExecutionStep {
   id: string;
@@ -27,6 +30,14 @@ export interface ExecutionStep {
   elapsedMs?: number;
   /** Explicit trace parent. Children are rendered beneath this step in Diagnostic detail. */
   parentId?: string;
+  /** Intervals contribute duration; milestones are instantaneous checkpoints. */
+  timingKind?: DiagnosticTimingKind;
+  /** Raw telemetry is retained but excluded from the default hierarchy. */
+  diagnosticVisibility?: DiagnosticVisibility;
+  /** Declares that direct child spans intentionally overlap. */
+  childMode?: DiagnosticChildMode;
+  /** Timestamp for milestone nodes. */
+  occurredAt?: number;
   /** Time spent in the step excluding child intervals. */
   selfTimeMs?: number;
   /** Stable trace span boundaries used for overlap-safe self-time calculation. */

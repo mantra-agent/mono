@@ -16,6 +16,7 @@ import type {
   MeetingSessionMeta,
   MessageSpeakerMeta,
   PersonaSnapshot,
+  SystemStepRecord,
 } from "@shared/models/chat";
 
 const log = createLogger("ChatStorage");
@@ -141,14 +142,7 @@ export type MeetingRecapClaim =
   | { outcome: "already_ready"; session: FileSession }
   | { outcome: "not_meeting" };
 
-export interface SystemStepRecord {
-  id?: string;
-  name: string;
-  status: "done" | "error";
-  elapsedMs?: number;
-  detail?: string;
-  metadata?: Record<string, unknown>;
-}
+export type { SystemStepRecord } from "@shared/models/chat";
 
 export type SegmentChronologyEntry =
   | { s: "system"; i: number }

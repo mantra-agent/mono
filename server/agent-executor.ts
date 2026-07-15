@@ -1,4 +1,5 @@
 // Use createLogger for logging ONLY
+import { canonicalSystemStepId } from "./streaming-reducers";
 import { EventEmitter } from "events";
 import { randomUUID } from "crypto";
 import { eventBus } from "./event-bus";
@@ -208,7 +209,7 @@ function formatInputContextDetail(contextPressure: ExecutorRunOptions["contextPr
   return pieces.join(" · ");
 }
 
-/** Human-readable model identity for the Connected diagnostic: display name, provider (call type), routing tier. */
+/** Human-readable model identity for the Response span: display name, provider, routing tier. */
 function formatModelConnectionDetail(ctx: RunIterationContext): string {
   const raw = ctx.resolvedModel || ctx.modelString;
   const modelId = raw.includes("/") ? raw.split("/").slice(1).join("/") : raw;
@@ -747,13 +748,15 @@ interface RunIterationContext {
   backgroundWork: Set<Promise<void>>;
   llmCallStartTime?: number;
   llmConnectedTime?: number;
+  llmRequestSentEmitted?: boolean;
   firstTokenEmitted?: boolean;
   llmConnectedEmitted?: boolean;
   llmConnectedDoneEmitted?: boolean;
   llmHeadersEmitted?: boolean;
+  activeResponsePhase?: { step: "llm_request_sent" | "llm_wait_provider" | "llm_wait_first_token" | "llm_receive_stream"; stepId: string };
   thinkingStepActive?: boolean;
   activeToolUseSteps: Map<string, number>;
-  activeSystemSpans: Map<string, { id: string; startedAt: number; parentId?: string }>;
+  activeSystemSpans: Map<string, { id: string; startedAt: number; parentId?: string; detail?: string; metadata?: Record<string, unknown>; diagnosticVisibility?: "default" | "raw" | "hidden"; childMode?: "serial" | "parallel" }>;
   // Chronology state — built incrementally by processStreamEvent
   segmentChronology: SegmentChronologyEntry[];
   systemStepsData: SystemStepRecord[];
@@ -1008,6 +1011,66 @@ export class AgentExecutor extends EventEmitter {
     ctx.chronologyContentBuf = "";
   }
 
+  private responseParentId(ctx: RunIterationContext): string {
+    return `system-llm_call-model-${ctx.runId}-${ctx.iteration}`;
+  }
+
+  private startResponsePhase(
+    ctx: RunIterationContext,
+    step: NonNullable<RunIterationContext["activeResponsePhase"]>["step"],
+    detail?: string,
+  ): void {
+    const stepId = `${ctx.runId}-${ctx.iteration}-${step}`;
+    ctx.publish("system_step", {
+      step,
+      status: "started",
+      stepId,
+      parentId: this.responseParentId(ctx),
+      detail,
+    });
+    ctx.activeResponsePhase = { step, stepId };
+  }
+
+  private finishResponsePhase(ctx: RunIterationContext, status: "done" | "error", detail?: string): void {
+    const phase = ctx.activeResponsePhase;
+    if (!phase) return;
+    ctx.publish("system_step", { step: phase.step, status, stepId: phase.stepId, detail });
+    ctx.activeResponsePhase = undefined;
+  }
+
+  private transitionResponsePhase(
+    ctx: RunIterationContext,
+    next: NonNullable<RunIterationContext["activeResponsePhase"]>["step"],
+    completedDetail?: string,
+  ): void {
+    this.finishResponsePhase(ctx, "done", completedDetail);
+    this.startResponsePhase(ctx, next);
+  }
+
+  private markFirstResponseOutput(
+    ctx: RunIterationContext,
+    options: ExecutorRunOptions,
+    outputType: "thinking" | "text" | "tool",
+  ): void {
+    if (ctx.firstTokenEmitted || !ctx.llmCallStartTime) return;
+    const occurredAt = Date.now();
+    ctx.firstTokenEmitted = true;
+    if (!ctx.llmConnectedEmitted) {
+      ctx.llmConnectedEmitted = true;
+      ctx.llmConnectedTime = occurredAt;
+    }
+    this.transitionResponsePhase(ctx, "llm_receive_stream");
+    ctx.publish("system_step", {
+      step: "first_token",
+      status: "done",
+      timingKind: "milestone",
+      occurredAt,
+      parentId: this.responseParentId(ctx),
+      detail: formatInputContextDetail(options.contextPressure),
+      metadata: { ...options.contextPressure, outputType },
+    });
+  }
+
   private async processStreamEvent(
     event: ModelStreamEvent,
     ctx: RunIterationContext,
@@ -1028,68 +1091,44 @@ export class AgentExecutor extends EventEmitter {
         break;
       }
       case "request_sent": {
-        // Server-side semantic boundary: chatCompletionStream entry → SDK handoff complete
-        // (warm pool acquired, or query() returned for a cold spawn). This is what the
-        // UI's "Request Sent" marker should reflect, *not* "first SDK event arrived".
-        if (ctx.llmCallStartTime && !ctx.llmConnectedEmitted) {
-          const now = Date.now();
-          const elapsed = now - ctx.llmCallStartTime;
-          ctx.llmConnectedEmitted = true;
-          ctx.llmConnectedTime = now;
-          ctx.publish("system_step", { step: "llm_request_sent", status: "done", elapsedMs: elapsed, detail: formatDispatchDetail((event as { metadata?: Record<string, unknown> }).metadata) });
-          ctx.publish("system_step", { step: "llm_connected", status: "started", parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
-        }
+        if (!ctx.llmCallStartTime || ctx.llmRequestSentEmitted) break;
+        ctx.llmRequestSentEmitted = true;
+        this.transitionResponsePhase(ctx, "llm_wait_provider", formatDispatchDetail((event as { metadata?: Record<string, unknown> }).metadata));
         break;
       }
       case "headers_received": {
-        // Provider HTTP response headers arrived: splits network/queueing from prompt prefill.
-        if (!ctx.llmHeadersEmitted && !ctx.llmConnectedDoneEmitted && ctx.llmCallStartTime) {
-          ctx.llmHeadersEmitted = true;
-          const now = Date.now();
-          const sinceDispatch = now - (ctx.llmConnectedTime || ctx.llmCallStartTime);
-          ctx.publish("system_step", { step: "llm_headers", status: "started", parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
-          ctx.publish("system_step", { step: "llm_headers", status: "done", elapsedMs: sinceDispatch, detail: formatDispatchDetail((event as { metadata?: Record<string, unknown> }).metadata) });
-        }
+        if (ctx.llmHeadersEmitted) break;
+        ctx.llmHeadersEmitted = true;
+        if (ctx.activeResponsePhase?.step !== "llm_wait_provider") break;
+        this.transitionResponsePhase(ctx, "llm_wait_first_token", formatDispatchDetail((event as { metadata?: Record<string, unknown> }).metadata));
         break;
       }
       case "connected": {
-        // The SDK's first event has landed — the CLI is actually streaming back at us.
-        // This is the UI's "Connected" marker. If for some reason request_sent was never
-        // emitted (non-CLI providers), close out llm_request_sent here too.
+        // Connector readiness is provider-specific raw telemetry, not an additive phase.
         const now = Date.now();
-        if (ctx.llmCallStartTime && !ctx.llmConnectedEmitted) {
-          const elapsed = now - ctx.llmCallStartTime;
+        if (!ctx.llmConnectedEmitted) {
           ctx.llmConnectedEmitted = true;
           ctx.llmConnectedTime = now;
-          ctx.publish("system_step", { step: "llm_request_sent", status: "done", elapsedMs: elapsed });
-          ctx.publish("system_step", { step: "llm_connected", status: "started", parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
+          if (ctx.activeResponsePhase?.step === "llm_wait_provider") {
+            this.transitionResponsePhase(ctx, "llm_wait_first_token");
+          }
         }
         if (!ctx.llmConnectedDoneEmitted) {
           ctx.llmConnectedDoneEmitted = true;
-          const connectedElapsed = now - (ctx.llmConnectedTime || ctx.llmCallStartTime || now);
-          ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed, detail: formatModelConnectionDetail(ctx) });
+          ctx.publish("system_step", {
+            step: "llm_connected",
+            status: "done",
+            timingKind: "milestone",
+            diagnosticVisibility: "raw",
+            occurredAt: now,
+            parentId: this.responseParentId(ctx),
+          });
         }
         break;
       }
 
       case "thinking_delta": {
-        if (!ctx.firstTokenEmitted && ctx.llmCallStartTime) {
-          const now = Date.now();
-          const ttft = now - ctx.llmCallStartTime;
-          ctx.firstTokenEmitted = true;
-          if (!ctx.llmConnectedEmitted) {
-            ctx.llmConnectedEmitted = true;
-            ctx.llmConnectedTime = now;
-            ctx.publish("system_step", { step: "llm_request_sent", status: "done", elapsedMs: ttft });
-          }
-          if (!ctx.llmConnectedDoneEmitted) {
-            ctx.llmConnectedDoneEmitted = true;
-            const connectedElapsed = now - (ctx.llmConnectedTime || ctx.llmCallStartTime);
-            ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed, detail: formatModelConnectionDetail(ctx) });
-          }
-          ctx.publish("system_step", { step: "first_token", status: "started", parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
-          ctx.publish("system_step", { step: "first_token", status: "done", elapsedMs: ttft, detail: formatInputContextDetail(options.contextPressure), metadata: options.contextPressure });
-        }
+        this.markFirstResponseOutput(ctx, options, "thinking");
         if (!ctx.thinkingStepActive) {
           ctx.thinkingStepActive = true;
           ctx.publish("system_step", { step: "thinking", status: "started", parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
@@ -1114,23 +1153,7 @@ export class AgentExecutor extends EventEmitter {
       }
 
       case "text_delta": {
-        if (!ctx.firstTokenEmitted && ctx.llmCallStartTime) {
-          const now = Date.now();
-          const ttft = now - ctx.llmCallStartTime;
-          ctx.firstTokenEmitted = true;
-          if (!ctx.llmConnectedEmitted) {
-            ctx.llmConnectedEmitted = true;
-            ctx.llmConnectedTime = now;
-            ctx.publish("system_step", { step: "llm_request_sent", status: "done", elapsedMs: ttft });
-          }
-          if (!ctx.llmConnectedDoneEmitted) {
-            ctx.llmConnectedDoneEmitted = true;
-            const connectedElapsed = now - (ctx.llmConnectedTime || ctx.llmCallStartTime);
-            ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed, detail: formatModelConnectionDetail(ctx) });
-          }
-          ctx.publish("system_step", { step: "first_token", status: "started", parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
-          ctx.publish("system_step", { step: "first_token", status: "done", elapsedMs: ttft, detail: formatInputContextDetail(options.contextPressure), metadata: options.contextPressure });
-        }
+        this.markFirstResponseOutput(ctx, options, "text");
         if (ctx.thinkingStepActive) {
           ctx.thinkingStepActive = false;
           ctx.publish("system_step", { step: "thinking", status: "done" });
@@ -1164,21 +1187,7 @@ export class AgentExecutor extends EventEmitter {
       }
 
       case "tool_use_start": {
-        if (!ctx.firstTokenEmitted && ctx.llmCallStartTime) {
-          const now = Date.now();
-          const ttft = now - ctx.llmCallStartTime;
-          ctx.firstTokenEmitted = true;
-          if (!ctx.llmConnectedEmitted) {
-            ctx.llmConnectedEmitted = true;
-            ctx.llmConnectedTime = now;
-            ctx.publish("system_step", { step: "llm_request_sent", status: "done", elapsedMs: ttft });
-          }
-          if (!ctx.llmConnectedDoneEmitted) {
-            ctx.llmConnectedDoneEmitted = true;
-            const connectedElapsed = now - (ctx.llmConnectedTime || ctx.llmCallStartTime);
-            ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed, detail: formatModelConnectionDetail(ctx) });
-          }
-        }
+        this.markFirstResponseOutput(ctx, options, "tool");
         if (ctx.thinkingStepActive) {
           ctx.thinkingStepActive = false;
           ctx.publish("system_step", { step: "thinking", status: "done" });
@@ -1265,21 +1274,7 @@ export class AgentExecutor extends EventEmitter {
         break;
 
       case "tool_call_resolved": {
-        if (!ctx.firstTokenEmitted && ctx.llmCallStartTime) {
-          const now = Date.now();
-          const ttft = now - ctx.llmCallStartTime;
-          ctx.firstTokenEmitted = true;
-          if (!ctx.llmConnectedEmitted) {
-            ctx.llmConnectedEmitted = true;
-            ctx.llmConnectedTime = now;
-            ctx.publish("system_step", { step: "llm_request_sent", status: "done", elapsedMs: ttft });
-          }
-          if (!ctx.llmConnectedDoneEmitted) {
-            ctx.llmConnectedDoneEmitted = true;
-            const connectedElapsed = now - (ctx.llmConnectedTime || ctx.llmCallStartTime);
-            ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed, detail: formatModelConnectionDetail(ctx) });
-          }
-        }
+        this.markFirstResponseOutput(ctx, options, "tool");
         if (ctx.thinkingStepActive) {
           ctx.thinkingStepActive = false;
           ctx.publish("system_step", { step: "thinking", status: "done" });
@@ -1864,15 +1859,38 @@ export class AgentExecutor extends EventEmitter {
       if (extra?.detail) event.detail = extra.detail;
       if (extra?.metadata) event.metadata = extra.metadata as Record<string, unknown>;
       if (extra?.elapsedMs !== undefined) event.elapsedMs = extra.elapsedMs;
+      event.timingKind = extra?.timingKind;
+      event.diagnosticVisibility = extra?.diagnosticVisibility;
+      event.childMode = extra?.childMode;
+      event.occurredAt = extra?.occurredAt;
       const explicitStepId = extra?.stepId as string | undefined;
       const spanKey = extra?.step ? `${String(extra.step)}:${explicitStepId || "default"}` : undefined;
       if (type === "system_step" && extra?.step && spanKey) {
         const status = extra.status;
-        if (status === "started" || status === "active") {
+        if (extra.timingKind === "milestone") {
+          const occurredAt = extra.occurredAt ?? Date.now();
+          event.stepId = explicitStepId || `system-${String(extra.step)}-${ctx.iteration}-${occurredAt}`;
+          event.startedAt = occurredAt;
+          event.endedAt = occurredAt;
+          event.occurredAt = occurredAt;
+          event.elapsedMs = undefined;
+          event.parentId = extra.parentId as string | undefined;
+        } else if (status === "started" || status === "active") {
           const startedAt = Date.now();
-          const id = explicitStepId ? `system-${String(extra.step)}-${explicitStepId}` : `system-${String(extra.step)}-${ctx.iteration}-${startedAt}`;
+          const id = explicitStepId
+            ? canonicalSystemStepId(String(extra.step), explicitStepId)
+            : `system-${String(extra.step)}-${ctx.iteration}-${startedAt}`;
           const parentId = extra.parentId as string | undefined;
-          ctx.activeSystemSpans.set(spanKey, { id, startedAt, parentId });
+          ctx.activeSystemSpans.set(spanKey, {
+            id,
+            startedAt,
+            parentId,
+            detail: extra.detail,
+            metadata: extra.metadata as Record<string, unknown> | undefined,
+            diagnosticVisibility: extra.diagnosticVisibility,
+            childMode: extra.childMode,
+          });
+          event.timingKind = "span";
           event.stepId = id;
           event.startedAt = startedAt;
           event.parentId = parentId;
@@ -1880,10 +1898,16 @@ export class AgentExecutor extends EventEmitter {
           const span = ctx.activeSystemSpans.get(spanKey);
           const endedAt = Date.now();
           if (span) ctx.activeSystemSpans.delete(spanKey);
-          event.stepId = span?.id || explicitStepId;
+          event.stepId = span?.id || (explicitStepId ? canonicalSystemStepId(String(extra.step), explicitStepId) : undefined);
           event.startedAt = span?.startedAt ?? (extra.elapsedMs != null ? endedAt - extra.elapsedMs : endedAt);
           event.endedAt = endedAt;
           event.parentId = (extra.parentId as string | undefined) ?? span?.parentId;
+          event.detail = extra.detail ?? span?.detail;
+          event.metadata = (extra.metadata as Record<string, unknown> | undefined) ?? span?.metadata;
+          event.diagnosticVisibility = extra.diagnosticVisibility ?? span?.diagnosticVisibility;
+          event.childMode = extra.childMode ?? span?.childMode;
+          event.timingKind = "span";
+          event.elapsedMs = Math.max(0, endedAt - event.startedAt);
           event.selfTimeMs = extra.selfTimeMs;
         }
       }
@@ -1894,19 +1918,23 @@ export class AgentExecutor extends EventEmitter {
           id: event.stepId,
           name: extra.step as string,
           status: extra.status as "done" | "error",
-          elapsedMs: extra.elapsedMs,
-          detail: extra.detail as string | undefined,
-          metadata: extra.metadata as Record<string, unknown> | undefined,
+          elapsedMs: event.elapsedMs,
+          detail: event.detail,
+          metadata: event.metadata,
           parentId: event.parentId,
           startedAt: event.startedAt,
           endedAt: event.endedAt,
           selfTimeMs: event.selfTimeMs,
+          timingKind: event.timingKind,
+          diagnosticVisibility: event.diagnosticVisibility,
+          childMode: event.childMode,
+          occurredAt: event.occurredAt,
         });
         ctx.segmentChronology.push({ s: "system", i: stepIdx });
       }
       emit(event);
       if (options.sessionId) {
-        journal(type, extra);
+        journal(type, { ...extra, stepId: event.stepId, parentId: event.parentId, startedAt: event.startedAt, endedAt: event.endedAt, selfTimeMs: event.selfTimeMs, timingKind: event.timingKind, diagnosticVisibility: event.diagnosticVisibility, childMode: event.childMode, occurredAt: event.occurredAt, elapsedMs: event.elapsedMs });
       } else {
         log.warn(`publish without sessionId — type=${type} sessionKey=${options.sessionKey} runId=${runId}`);
         publishJournalToUI({
@@ -2097,6 +2125,11 @@ export class AgentExecutor extends EventEmitter {
     ctx.pendingToolCalls = [];
     ctx.iterationStopReason = undefined;
     ctx.firstTokenEmitted = false;
+    ctx.llmRequestSentEmitted = false;
+    ctx.llmConnectedEmitted = false;
+    ctx.llmConnectedDoneEmitted = false;
+    ctx.llmHeadersEmitted = false;
+    ctx.activeResponsePhase = undefined;
     ctx.thinkingStepActive = false;
 
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2184,10 +2217,13 @@ export class AgentExecutor extends EventEmitter {
     try {
       ctx.llmCallStartTime = Date.now();
       const modelSpanId = `model-${ctx.runId}-${ctx.iteration}`;
-      ctx.publish("system_step", { step: "llm_call", status: "started", stepId: modelSpanId, parentId: options.diagnosticTurnId, detail: `Response ${ctx.iteration}` });
+      ctx.publish("system_step", { step: "llm_call", status: "started", stepId: modelSpanId, parentId: options.diagnosticTurnId, detail: formatModelConnectionDetail(ctx), childMode: "serial" });
+      ctx.llmRequestSentEmitted = false;
       ctx.llmConnectedEmitted = false;
       ctx.llmConnectedDoneEmitted = false;
-      ctx.publish("system_step", { step: "llm_request_sent", status: "started", parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
+      ctx.llmHeadersEmitted = false;
+      ctx.activeResponsePhase = undefined;
+      this.startResponsePhase(ctx, "llm_request_sent");
 
       const boundedToolExecutor = options.toolExecutor
         ? async (name: string, args: Record<string, unknown>) => {
@@ -2283,27 +2319,25 @@ export class AgentExecutor extends EventEmitter {
         if (runEntry) runEntry.lastActivityAt = Date.now();
       }
 
-      if (!ctx.firstTokenEmitted && ctx.llmCallStartTime) {
-        ctx.firstTokenEmitted = true;
-        const now = Date.now();
-        const requestElapsed = now - ctx.llmCallStartTime;
-        if (!ctx.llmConnectedEmitted) {
-          ctx.llmConnectedEmitted = true;
-          ctx.llmConnectedTime = now;
-          ctx.publish("system_step", { step: "llm_request_sent", status: "done", elapsedMs: requestElapsed });
-        }
-        if (!ctx.llmConnectedDoneEmitted) {
-          ctx.llmConnectedDoneEmitted = true;
-          const connectedElapsed = now - (ctx.llmConnectedTime || ctx.llmCallStartTime);
-          ctx.publish("system_step", { step: "llm_connected", status: "done", elapsedMs: connectedElapsed, detail: formatModelConnectionDetail(ctx) });
+      if (!ctx.aborted && abortController.signal.aborted) {
+        ctx.aborted = true;
+        if (!ctx.abortReason) {
+          const reason = "reason" in abortController.signal
+            ? (abortController.signal as { reason?: string }).reason
+            : undefined;
+          ctx.abortReason = typeof reason === "string" && VALID_ABORT_REASONS.has(reason)
+            ? reason as AbortReason
+            : "cancelled";
         }
       }
+      const responseStatus = ctx.aborted ? "error" : "done";
+      this.finishResponsePhase(ctx, responseStatus);
       if (ctx.thinkingStepActive) {
         ctx.thinkingStepActive = false;
-        ctx.publish("system_step", { step: "thinking", status: "done" });
+        ctx.publish("system_step", { step: "thinking", status: responseStatus });
       }
 
-      ctx.publish("system_step", { step: "llm_call", status: "done", stepId: modelSpanId, elapsedMs: Date.now() - ctx.llmCallStartTime });
+      ctx.publish("system_step", { step: "llm_call", status: responseStatus, stepId: modelSpanId });
 
       ctx.lastStreamDiagnostics = {
         eventCount: streamEventCount,
@@ -2340,16 +2374,8 @@ export class AgentExecutor extends EventEmitter {
         ctx.providerFailure = providerFailure;
         ctx.publish("error", { error: providerFailure.userMessage, providerFailure });
       }
-      if (!ctx.firstTokenEmitted && ctx.llmCallStartTime) {
-        ctx.firstTokenEmitted = true;
-        const now = Date.now();
-        if (!ctx.llmConnectedEmitted) {
-          ctx.publish("system_step", { step: "llm_request_sent", status: "error", elapsedMs: now - ctx.llmCallStartTime });
-        } else {
-          const connectedElapsed = now - (ctx.llmConnectedTime || ctx.llmCallStartTime);
-          ctx.publish("system_step", { step: "llm_connected", status: "error", elapsedMs: connectedElapsed });
-        }
-      }
+      this.finishResponsePhase(ctx, "error");
+      ctx.publish("system_step", { step: "llm_call", status: "error", stepId: modelSpanId });
       if (ctx.thinkingStepActive) {
         ctx.thinkingStepActive = false;
         ctx.publish("system_step", { step: "thinking", status: "error" });

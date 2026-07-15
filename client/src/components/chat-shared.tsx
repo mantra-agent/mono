@@ -58,7 +58,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ChatStreamEvent, ToolCallInfo, ChildSessionBlockMeta, CrossSessionMeta, CompactionMeta, PageContext } from "@shared/models/chat";
+import type { ChatStreamEvent, ToolCallInfo, ChildSessionBlockMeta, CrossSessionMeta, CompactionMeta, PageContext, SystemStepRecord } from "@shared/models/chat";
 import { SYSTEM_STEP_META } from "@shared/event-catalog";
 
 import type { ExecutionStep, MessageSegment, StreamingContent } from "@shared/streaming-types";
@@ -160,18 +160,7 @@ export function stripMessageTimestamp(text: string): string {
   return text.replace(MESSAGE_TIMESTAMP_REGEX, "");
 }
 
-export interface SystemStepRecord {
-  id?: string;
-  name: string;
-  status: "done" | "error";
-  elapsedMs?: number;
-  parentId?: string;
-  selfTimeMs?: number;
-  startedAt?: number;
-  endedAt?: number;
-  detail?: string;
-  metadata?: Record<string, unknown>;
-}
+
 
 export type SegmentChronologyEntry =
   | { s: "system"; i: number }
@@ -509,7 +498,7 @@ function ToolStepRow({ step, iconOverrides, summaryOnly, layer, children = [], d
             </>
           )}
         </div>
-        {(isDone || isError) && step.elapsedMs != null && <span className="text-xs tabular-nums font-mono text-muted-foreground/50 whitespace-nowrap">{formatStepElapsed(getStepSelfTime(step, children) ?? step.elapsedMs)} self · {formatStepElapsed(step.elapsedMs)} total</span>}
+        {(isDone || isError) && step.elapsedMs != null && <span className="text-xs tabular-nums font-mono text-muted-foreground/50 whitespace-nowrap">{formatStepElapsed(step.selfTimeMs ?? step.elapsedMs)} self · {formatStepElapsed(step.elapsedMs)} total</span>}
         {canExpand && (
           <ChevronRight className={`h-3 w-3 text-muted-foreground/40 shrink-0 transition-transform duration-150 ${expanded ? "rotate-90" : ""}`} />
         )}
@@ -763,6 +752,9 @@ const SYSTEM_STEP_ICONS: Record<string, typeof Brain> = {
   contextAssembly: Brain,
   llm_call: Send,
   llm_request_sent: Send,
+  llm_wait_provider: Radio,
+  llm_wait_first_token: Timer,
+  llm_receive_stream: Activity,
   llm_connected: Wifi,
   llm_headers: Radio,
   compaction: Cog,
@@ -794,26 +786,51 @@ function getChildren(step: ExecutionStep, allSteps: ExecutionStep[]): ExecutionS
   return allSteps.filter(candidate => candidate.parentId === step.id);
 }
 
-function getStepSelfTime(step: ExecutionStep, children: ExecutionStep[]): number | undefined {
-  if (step.selfTimeMs != null) return step.selfTimeMs;
-  if (step.elapsedMs == null || children.length === 0) return step.elapsedMs;
+function getStepDuration(step: ExecutionStep): number | undefined {
+  if (step.timingKind === "milestone") return undefined;
+  if (step.startedAt != null && step.endedAt != null) return Math.max(0, step.endedAt - step.startedAt);
+  return step.elapsedMs;
+}
+
+function coveredChildDuration(step: ExecutionStep, children: ExecutionStep[]): number {
+  if (step.startedAt == null || step.endedAt == null) return 0;
   const intervals = children
-    .filter(child => child.startedAt != null && child.endedAt != null)
-    .map(child => [child.startedAt!, child.endedAt!] as const)
+    .filter(child => child.timingKind !== "milestone" && child.startedAt != null && child.endedAt != null)
+    .map(child => [Math.max(step.startedAt!, child.startedAt!), Math.min(step.endedAt!, child.endedAt!)] as const)
+    .filter(([start, end]) => end > start)
     .sort((a, b) => a[0] - b[0]);
-  if (intervals.length !== children.length) return Math.max(0, step.elapsedMs - children.reduce((sum, child) => sum + (child.elapsedMs || 0), 0));
+  if (intervals.length === 0) return 0;
   let covered = 0;
   let [start, end] = intervals[0];
   for (const [nextStart, nextEnd] of intervals.slice(1)) {
     if (nextStart <= end) end = Math.max(end, nextEnd);
     else { covered += end - start; start = nextStart; end = nextEnd; }
   }
-  covered += end - start;
-  return Math.max(0, step.elapsedMs - covered);
+  return covered + end - start;
+}
+
+function getStepUnattributedTime(step: ExecutionStep, children: ExecutionStep[]): number | undefined {
+  const duration = getStepDuration(step);
+  if (duration == null || children.length === 0) return undefined;
+  if (step.startedAt == null || step.endedAt == null) return step.selfTimeMs;
+  return Math.max(0, duration - coveredChildDuration(step, children));
+}
+
+function hasOverlappingChildren(children: ExecutionStep[]): boolean {
+  const intervals = children
+    .filter(child => child.timingKind !== "milestone" && child.startedAt != null && child.endedAt != null)
+    .map(child => [child.startedAt!, child.endedAt!] as const)
+    .sort((a, b) => a[0] - b[0]);
+  let latestEnd = Number.NEGATIVE_INFINITY;
+  for (const [start, end] of intervals) {
+    if (start < latestEnd) return true;
+    latestEnd = Math.max(latestEnd, end);
+  }
+  return false;
 }
 
 
-function SystemStepRow({ step, layer = 4, children = [], depth = 0 }: { step: ExecutionStep; layer?: 1 | 2 | 3 | 4; children?: ExecutionStep[]; depth?: number }) {
+function SystemStepRow({ step, layer = 4, children = [], parentStartedAt, depth = 0 }: { step: ExecutionStep; layer?: 1 | 2 | 3 | 4; children?: ExecutionStep[]; parentStartedAt?: number; depth?: number }) {
   const name = step.systemStepName || "unknown";
   const meta = SYSTEM_STEP_META[name];
   const Icon = SYSTEM_STEP_ICONS[name] || Cog;
@@ -824,6 +841,13 @@ function SystemStepRow({ step, layer = 4, children = [], depth = 0 }: { step: Ex
   const isWorkingCompression = name === "working_context_compression" || step.type === "compacting";
   const label = isWorkingCompression && layer === 2 ? "Context Compressed" : (meta?.label || name);
   const showSystemDetail = !!step.systemStepDetail && (!isWorkingCompression || layer >= 3);
+  const duration = getStepDuration(step);
+  const unattributed = getStepUnattributedTime(step, children);
+  const isParallel = step.childMode === "parallel" || (step.childMode == null && hasOverlappingChildren(children));
+  const displayedUnattributed = unattributed != null && unattributed >= 10 ? Math.min(unattributed, duration ?? unattributed) : undefined;
+  const milestoneOffset = step.timingKind === "milestone" && step.occurredAt != null && parentStartedAt != null
+    ? Math.max(0, step.occurredAt - parentStartedAt)
+    : undefined;
 
   const bgColor = isError
     ? "bg-error/10"
@@ -871,9 +895,13 @@ function SystemStepRow({ step, layer = 4, children = [], depth = 0 }: { step: Ex
         <span className={cn("text-xs font-mono", isWorkingCompression ? "text-warning/80" : "text-muted-foreground/50")}>{step.systemStepDetail}</span>
       )}
       {isActive && <SystemStepTimer startTime={step.timestamp} />}
-      {(isDone || isError) && step.elapsedMs != null && !isWorkingCompression && (
+      {(isDone || isError) && !isWorkingCompression && (
         <span className="text-xs tabular-nums font-mono text-muted-foreground/50 whitespace-nowrap" data-testid={`text-step-time-${name}`}>
-          {formatStepElapsed(getStepSelfTime(step, children) ?? step.elapsedMs)} self · {formatStepElapsed(step.elapsedMs)} total
+          {step.timingKind === "milestone"
+            ? `at +${formatStepElapsed(milestoneOffset ?? 0)}`
+            : duration != null
+              ? `${formatStepElapsed(duration)}${children.length > 0 ? " wall" : ""}${isParallel ? " · parallel" : ""}${displayedUnattributed != null ? ` · ${formatStepElapsed(displayedUnattributed)} unattributed` : ""}`
+              : ""}
         </span>
       )}
     </div>
@@ -929,11 +957,12 @@ function ToolIconStrip({
   );
 }
 
-function DiagnosticStepTree({ step, allSteps, layer, iconOverrides, summaryOnly, depth = 0 }: { step: ExecutionStep; allSteps: ExecutionStep[]; layer: 1 | 2 | 3 | 4; iconOverrides?: Record<string, string>; summaryOnly?: boolean; depth?: number }) {
+function DiagnosticStepTree({ step, allSteps, visibleSteps, layer, iconOverrides, summaryOnly, depth = 0 }: { step: ExecutionStep; allSteps: ExecutionStep[]; visibleSteps: ExecutionStep[]; layer: 1 | 2 | 3 | 4; iconOverrides?: Record<string, string>; summaryOnly?: boolean; depth?: number }) {
   const children = getChildren(step, allSteps);
+  const visibleChildren = getChildren(step, visibleSteps);
   return <>
-    {step.type === "system" ? <SystemStepRow step={step} layer={layer} children={children} depth={depth} /> : step.type === "tool_call" ? <ToolStepRow step={step} iconOverrides={iconOverrides} summaryOnly={summaryOnly} layer={layer} children={children} depth={depth} /> : null}
-    {children.map(child => <DiagnosticStepTree key={child.id} step={child} allSteps={allSteps} layer={layer} iconOverrides={iconOverrides} summaryOnly={summaryOnly} depth={depth + 1} />)}
+    {step.type === "system" ? <SystemStepRow step={step} layer={layer} children={children} parentStartedAt={allSteps.find(candidate => candidate.id === step.parentId)?.startedAt} depth={depth} /> : step.type === "tool_call" ? <ToolStepRow step={step} iconOverrides={iconOverrides} summaryOnly={summaryOnly} layer={layer} children={children} depth={depth} /> : null}
+    {visibleChildren.map(child => <DiagnosticStepTree key={child.id} step={child} allSteps={allSteps} visibleSteps={visibleSteps} layer={layer} iconOverrides={iconOverrides} summaryOnly={summaryOnly} depth={depth + 1} />)}
   </>;
 }
 
@@ -943,7 +972,8 @@ export function ExecutionTimeline({ steps, isStreaming, layer = 4 }: { steps: Ex
     staleTime: 60_000,
   });
 
-  const filteredSteps = filterStepsByLayer(steps, layer, isStreaming);
+  const layerSteps = filterStepsByLayer(steps, layer, isStreaming);
+  const filteredSteps = layerSteps.filter(step => step.diagnosticVisibility !== "hidden" && step.diagnosticVisibility !== "raw");
 
   log.verbose(() => `RENDER:TIMELINE steps=${steps.length} filtered=${filteredSteps.length} streaming=${isStreaming} layer=${layer}`);
 
@@ -978,7 +1008,7 @@ export function ExecutionTimeline({ steps, isStreaming, layer = 4 }: { steps: Ex
     <div className="mb-3 space-y-0.5" data-testid="execution-timeline">
       {filteredSteps.map((step) => {
         if (step.parentId && filteredSteps.some(candidate => candidate.id === step.parentId)) return null;
-        if (step.type === "system") return <DiagnosticStepTree key={step.id} step={step} allSteps={filteredSteps} layer={layer} iconOverrides={iconOverrides} summaryOnly={summaryOnly} />;
+        if (step.type === "system") return <DiagnosticStepTree key={step.id} step={step} allSteps={steps} visibleSteps={filteredSteps} layer={layer} iconOverrides={iconOverrides} summaryOnly={summaryOnly} />;
         if (step.type === "thinking") {
           return <ThinkingBubble key={step.id} step={step} showTimer={layer >= 3} />;
         }
@@ -988,7 +1018,7 @@ export function ExecutionTimeline({ steps, isStreaming, layer = 4 }: { steps: Ex
         if (step.type === "tool_call" && (step.toolName === "think" || step.toolName === "observe")) {
           return <ThoughtBubble key={step.id} step={step} />;
         }
-        if (step.type === "tool_call") return <DiagnosticStepTree key={step.id} step={step} allSteps={filteredSteps} layer={layer} iconOverrides={iconOverrides} summaryOnly={summaryOnly} />;
+        if (step.type === "tool_call") return <DiagnosticStepTree key={step.id} step={step} allSteps={steps} visibleSteps={filteredSteps} layer={layer} iconOverrides={iconOverrides} summaryOnly={summaryOnly} />;
         return null;
       })}
     </div>
@@ -1015,7 +1045,6 @@ export function stepsFromSavedMessage(message: ChatMessage): ExecutionStep[] {
   const steps: ExecutionStep[] = [];
   if (message.systemSteps && Array.isArray(message.systemSteps)) {
     message.systemSteps.forEach((step: SystemStepRecord, i: number) => {
-      if (SUPPRESSED_TIMELINE_STEPS.has(step.name)) return;
       steps.push({
         id: step.id || `system-${step.name}-${message.id}-${i}`,
         type: "system",
@@ -1028,6 +1057,10 @@ export function stepsFromSavedMessage(message: ChatMessage): ExecutionStep[] {
         selfTimeMs: step.selfTimeMs || (typeof step.metadata?.selfTimeMs === "number" ? step.metadata.selfTimeMs : undefined),
         startedAt: step.startedAt,
         endedAt: step.endedAt,
+        timingKind: step.timingKind,
+        diagnosticVisibility: step.diagnosticVisibility ?? (SUPPRESSED_TIMELINE_STEPS.has(step.name) ? "hidden" : undefined),
+        childMode: step.childMode,
+        occurredAt: step.occurredAt,
         status: step.status === "error" ? "error" : "done",
       });
     });
@@ -1139,7 +1172,7 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
     switch (entry.s) {
       case "system": {
         const step = message.systemSteps?.[entry.i];
-        if (step && !SUPPRESSED_TIMELINE_STEPS.has(step.name)) {
+        if (step) {
           currentTimelineSteps.push({
             id: step.id || `system-${step.name}-${message.id}-${entry.i}`,
             type: "system",
@@ -1152,6 +1185,10 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
             selfTimeMs: step.selfTimeMs || (typeof step.metadata?.selfTimeMs === "number" ? step.metadata.selfTimeMs : undefined),
             startedAt: step.startedAt,
             endedAt: step.endedAt,
+            timingKind: step.timingKind,
+            diagnosticVisibility: step.diagnosticVisibility ?? (SUPPRESSED_TIMELINE_STEPS.has(step.name) ? "hidden" : undefined),
+            childMode: step.childMode,
+            occurredAt: step.occurredAt,
             status: step.status === "error" ? "error" : "done",
           });
         }

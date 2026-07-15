@@ -62,6 +62,7 @@ subscribe by sessionId via WS and receive snapshots + deltas.
 - `client/src/components/session-transcript-panel.tsx` — Transcript/header surface; consumes the selected `SessionStreamState` and never owns normal message composition
 - `client/src/components/bottom-bar/index.tsx` — Single normal session composer/input owner; sends through `useChatSend`
 - `client/src/components/chat-shared.tsx` — `filterStepsByLayer`
+- Diagnostic trees render the complete trace before visibility filtering. Span duration comes from boundaries, milestones render as parent-relative offsets, and overlapping children are wall-clock/parallel rather than additive. Never reconstruct timing by subtracting visible child labels.
 
 ### Protocol
 1. Chat route subscribes to the focused session plus bounded live streaming sessions via `session.subscribe { sessionId }` on the shared WS
