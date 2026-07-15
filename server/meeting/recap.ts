@@ -42,6 +42,10 @@ interface RecapContent {
 /**
  * Finalize an ended meeting session. Safe to call multiple times — the atomic
  * recap claim makes duplicate calls no-ops. Never throws.
+ * 
+ * CHANGE 1: Validates that principal can be reconstructed before proceeding.
+ * Fails fast if ownerUserId or principalAccountId are missing (distribution
+ * will be blocked with a clear error, not silently skipped).
  */
 export async function finalizeMeetingSession(sessionId: string): Promise<void> {
   let claimed;
@@ -57,33 +61,42 @@ export async function finalizeMeetingSession(sessionId: string): Promise<void> {
   }
   const meeting = claimed.meeting;
 
+  // CHANGE 1: Validate that principal can be reconstructed before proceeding
+  if (!meeting.ownerUserId || !meeting.principalAccountId) {
+    log.error(
+      `Cannot finalize recap for session ${sessionId}: ` +
+      `missing ownerUserId=${meeting.ownerUserId ?? "none"} or ` +
+      `principalAccountId=${meeting.principalAccountId ?? "none"}`
+    );
+    await chatStorage.updateMeetingMeta(sessionId, {
+      recap: { 
+        status: "failed", 
+        error: "Missing owner or account context; cannot generate recap" 
+      },
+    }).catch((e) =>
+      log.error(`Failed to record failure for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`)
+    );
+    return;
+  }
+
   const run = () => generateRecap(sessionId, claimed.title, meeting);
 
   try {
-    // Reconstruct the owning user principal so library page + interactions are
-    // user-owned, not system orphans.
-    if (meeting.ownerUserId) {
-      const user = await storage.getUser(meeting.ownerUserId);
-      if (user && meeting.principalAccountId) {
-        const principal = createUserPrincipalFromUser(user, meeting.principalAccountId);
-        await runWithPrincipal(principal, run);
-        return;
-      }
-      log.warn(
-        `Meeting ${sessionId} owner ${meeting.ownerUserId} could not be resolved to a principal (user=${!!user}, accountId=${meeting.principalAccountId ?? "none"}); using ambient principal`,
-      );
-    } else {
-      log.warn(`Meeting ${sessionId} has no captured owner; recap will run under ambient principal`);
+    const user = await storage.getUser(meeting.ownerUserId);
+    if (!user) {
+      throw new Error(`Owner user ${meeting.ownerUserId} not found`);
     }
-    await run();
+    
+    const principal = createUserPrincipalFromUser(user, meeting.principalAccountId);
+    await runWithPrincipal(principal, run);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error(`Meeting recap failed for session ${sessionId}: ${message}`);
-    await chatStorage
-      .updateMeetingMeta(sessionId, { recap: { status: "failed", error: message.slice(0, 500) } })
-      .catch((e) =>
-        log.error(`Failed to record recap failure for session ${sessionId}: ${e instanceof Error ? e.message : String(e)}`),
-      );
+    await chatStorage.updateMeetingMeta(sessionId, {
+      recap: { status: "failed", error: message.slice(0, 500) },
+    }).catch((e) =>
+      log.error(`Failed to record failure for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`)
+    );
   }
 }
 
@@ -132,33 +145,31 @@ async function generateRecap(sessionId: string, sessionTitle: string, meeting: M
     `Meeting recap ready for session ${sessionId}: page=${page.slug}, interactions=${interactionsLogged}`,
   );
 
-
-  // Kick off distribution as a non-blocking side effect.
-  // The principal must be in AsyncLocalStorage (runWithPrincipal context).
-  // If the principal is missing, we skip distribution rather than falling back to system.
+  // CHANGE 2: Capture current principal and wrap distribution with context.
+  // Protect the AsyncLocalStorage boundary as setImmediate exits the context.
   const currentPrincipal = (await import("../principal-context")).getCurrentPrincipal();
-  
   if (!currentPrincipal) {
-    log.warn(
-      `No principal in context for session ${sessionId}; skipping distribution. ` +
-      `This should not happen—check that finalizeMeetingSession is called within runWithPrincipal.`,
+    log.error(
+      `TRAP: No principal in context when starting distribution for session ${sessionId}. ` +
+      `This indicates the recap was generated without a user principal.`
     );
+    // Don't kick off distribution if we don't have a principal
     return;
   }
-  
-  // Wrap distribution execution in the principal context to protect the ALS boundary.
+
+  // Kick off distribution with principal context preserved
   setImmediate(() => {
     import("../principal-context")
-      .then(({ runWithPrincipal: rwp }) =>
-        import("./distribution").then(({ distributeRecap }) =>
-          rwp(currentPrincipal, () =>
-            distributeRecap(sessionId, meeting, recapMeta, currentPrincipal),
-          ),
-        ),
-      )
+      .then(async ({ runWithPrincipal: rwp }) => {
+        const { distributeRecap } = await import("./distribution");
+        return rwp(currentPrincipal, () =>
+          distributeRecap(sessionId, meeting, recapMeta, currentPrincipal),
+        );
+      })
       .catch((err) =>
         log.error(
-          `Recap distribution kickoff failed for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+          `Recap distribution kickoff failed for session ${sessionId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`
         ),
       );
   });
@@ -275,7 +286,7 @@ function buildRecapMarkdown(recap: RecapContent, meeting: MeetingSessionMeta): s
   parts.push(`## Details\n\n${recap.details}`);
   parts.push(`## Key Decisions\n\n${listOrNone(recap.decisions)}`);
   parts.push(`## Open Questions\n\n${listOrNone(recap.openQuestions)}`);
-  parts.push(`## Follow-ups\n\n${listOrNone(recap.followUps)}`);
+  parts.push(`## Action Items\n\n${listOrNone(recap.followUps)}`);
   return parts.join("\n\n");
 }
 
