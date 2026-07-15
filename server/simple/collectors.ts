@@ -21,6 +21,7 @@ import { libraryPages } from "@shared/models/info";
 import { and, sql, inArray } from "drizzle-orm";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { visibleScopePredicate } from "../scoped-storage";
+import { queryQualifyingInteractionSeries } from "../interaction-activity";
 
 const log = createLogger("SimpleCollectors");
 
@@ -856,10 +857,8 @@ async function collectAgendaPeople(today: string): Promise<TieredAgendaItem[]> {
   const candidateEntries = people.filter(entry => !["self", "agent", "user"].includes(entry.cabinetLevel));
   const fullPeople = await peopleStorage.getPeopleByIds(candidateEntries.map(entry => entry.id));
   const peopleById = new Map(fullPeople.map(person => [person.id, person]));
-  const completedInteractionsToday = fullPeople.reduce(
-    (count, person) => count + (person.interactions ?? []).filter(interaction => dateOnlyString(interaction.date) === today).length,
-    0,
-  );
+  const qualifyingInteractions = await queryQualifyingInteractionSeries(today, today);
+  const completedInteractionsToday = qualifyingInteractions.get(today) ?? 0;
   const reconnectAllowance = Math.max(0, DAILY_INTERACTION_TARGET - completedInteractionsToday);
   log.debug("computed relationship surfacing allowance", {
     today,
