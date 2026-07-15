@@ -23,7 +23,6 @@ import {
   Brain,
   Heart,
   SlidersHorizontal,
-  FileText,
   Plane,
   Video,
   Phone,
@@ -35,6 +34,9 @@ import {
 import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
 import { fromCivilDate } from "@shared/civil-date";
+import { createMeetingArtifactChild, createMeetingPersonChild } from "@shared/meeting-feed-items";
+import type { SimpleSourceRef } from "@shared/models/simple";
+import { SimpleTreeRow } from "@/components/home/home-tree-row";
 
 interface CalendarInfo {
   id: string;
@@ -873,7 +875,35 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
   const external = hasExternalAttendees(event, accountEmails);
   const people = data?.people ?? [];
   const artifacts = data?.artifacts ?? [];
-  const hasDetails = Boolean(event.location || people.length || artifacts.length);
+  const parentSourceRef: SimpleSourceRef = {
+    type: "calendar",
+    id: `${event.accountId}:${event.id}`,
+    label: event.summary,
+    href: `/schedule/${encodeURIComponent(event.id)}?calendarId=${encodeURIComponent(event.calendarId)}&accountId=${encodeURIComponent(event.accountId)}`,
+  };
+  const contextChildren = [
+    ...people.map(person => createMeetingPersonChild({
+      key: `schedule-${event.accountId}-${event.id}-person-${person.id}`,
+      section: "now",
+      parentSourceRef,
+      name: person.name,
+      personId: person.id,
+      profileSummary: person.profileSummary,
+      lastInteractionContext: person.lastInteractionContext,
+    })),
+    ...artifacts.map(artifact => createMeetingArtifactChild({
+      key: `schedule-${event.accountId}-${event.id}-artifact-${artifact.id}`,
+      section: "now",
+      title: artifact.title,
+      libraryPageId: artifact.libraryPageId,
+      slug: artifact.slug,
+      artifactKind: artifact.artifactKind,
+      source: artifact.source,
+      summary: artifact.summary,
+      oneLiner: artifact.oneLiner,
+    })),
+  ];
+  const hasDetails = Boolean(event.location || contextChildren.length);
   const focusLabel = event.summary.replace(/^Focus:\s*/i, "");
   const isWellnessBlock = isFocusBlock && /^Wellness\b/i.test(focusLabel);
 
@@ -934,22 +964,13 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
               <span className="truncate">{event.location}</span>
             </div>
           )}
-          {people.map(person => (
-            <a key={person.id} href={`/people/${person.id}`} className="flex items-center gap-1.5 hover:text-foreground">
-              <Users className="h-3 w-3 shrink-0" />
-              <span className="truncate">{person.name}</span>
-            </a>
-          ))}
-          {artifacts.map(artifact => (
-            <a
-              key={artifact.id}
-              href={`/info#library?page=${encodeURIComponent(artifact.slug || artifact.libraryPageId)}`}
-              className="flex items-center gap-1.5 hover:text-foreground"
-            >
-              <FileText className="h-3 w-3 shrink-0" />
-              <span className="truncate">{artifact.title || artifact.artifactKind || "Meeting artifact"}</span>
-            </a>
-          ))}
+          {contextChildren.length > 0 && (
+            <div className="pl-3">
+              {contextChildren.map(child => (
+                <SimpleTreeRow key={child.id} item={child} depth={1} layout="embedded" />
+              ))}
+            </div>
+          )}
           <button type="button" onClick={() => onEventClick(event)} className="text-cta hover:underline">Open event</button>
         </div>
       )}
