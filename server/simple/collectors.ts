@@ -857,10 +857,15 @@ async function collectAgendaPeople(today: string): Promise<TieredAgendaItem[]> {
   const fullPeople = await peopleStorage.getPeopleByIds(candidateEntries.map(entry => entry.id));
   const peopleById = new Map(fullPeople.map(person => [person.id, person]));
   const completedInteractionsToday = fullPeople.reduce(
-    (count, person) => count + (person.interactions ?? []).filter(interaction => isTodayInTimezone(interaction.date)).length,
+    (count, person) => count + (person.interactions ?? []).filter(interaction => dateOnlyString(interaction.date) === today).length,
     0,
   );
   const reconnectAllowance = Math.max(0, DAILY_INTERACTION_TARGET - completedInteractionsToday);
+  log.debug("computed relationship surfacing allowance", {
+    today,
+    completedInteractionsToday,
+    reconnectAllowance,
+  });
   const agenda: TieredAgendaItem[] = [];
   const now = Date.now();
   for (const entry of candidateEntries) {
