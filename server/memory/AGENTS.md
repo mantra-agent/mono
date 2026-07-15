@@ -323,9 +323,10 @@ All vNext claim logic lives in `server/memory/vnext-*` modules with zero imports
 
 Session and Library ingestion must follow idempotent source-of-truth sync patterns:
 
-- Sessions: archive/saved-session summary sync writes or updates one compact session-summary memory and writes `memoryEntryId` back to the session record.
-- Library pages: page create/update sync writes or updates a compact memory entry and keeps the page-to-memory pointer current.
-- Both paths must attach `memory_sources`, set/maintain `integration_stage`, preserve hash-based skip behavior, and emit structured logs for create/update/skip/error/source-ref outcomes.
+- vNext source admission is independent of legacy mirrors. Saved sessions enqueue `session:<id>` directly, and Library create/update enqueues `library_page:<id>` directly. A failed or removed `memory_entries` mirror must never prevent vNext source registration, extraction, or claim persistence.
+- The vNext poller loads complete source content from the session and Library stores, persists claims with canonical source refs, and sets `sourceMemoryId: null`.
+- Legacy compatibility mirrors may still be maintained separately: sessions write/update one compact summary mirror and Library pages maintain their page-to-memory pointer. Mirror writes are not an admission boundary for vNext.
+- Legacy mirror paths must attach `memory_sources`, set/maintain `integration_stage`, preserve hash-based skip behavior, and emit structured logs for create/update/skip/error/source-ref outcomes.
 - Do not reintroduce raw `[Exchange]` memory writes or make full transcripts graph eligible.
 
 ### StageOneSweep and legacy reconciliation

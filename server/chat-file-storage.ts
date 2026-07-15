@@ -723,21 +723,33 @@ async function syncSessionMemoryMirrorIfReady(data: SessionData, options?: { wri
     memoryMirrorLog.debug(`[ingest] writeback_unchanged source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId}`);
   }
 
-  try {
-    const principal = getCurrentPrincipalOrSystem();
-    const { markSourceChanged } = await import("./memory/vnext-source-queue");
-    await markSourceChanged("session", data.id, principal);
-    memoryMirrorLog.info(
-      `[vnext_ingest] queued source=session sessionId=${data.id} memoryEntryId=${memEntryId} messageCount=${data.messages.length}`,
-    );
-  } catch (err: unknown) {
-    memoryMirrorLog.warn(
-      `[vnext_ingest] queue_failed source=session sessionId=${data.id} memoryEntryId=${memEntryId} ` +
-      `error=${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
 }
 
+async function syncVnextSessionSourceIfReady(data: SessionData, context: string): Promise<void> {
+  if (data.status !== "saved") {
+    memoryMirrorLog.debug(
+      `[vnext_ingest] skip source=session sessionId=${data.id} context=${context} reason=status_not_saved status=${data.status}`,
+    );
+    return;
+  }
+
+  const principal = getCurrentPrincipalOrSystem();
+  const { markSourceChanged } = await import("./memory/vnext-source-queue");
+  await markSourceChanged("session", data.id, principal);
+  memoryMirrorLog.info(
+    `[vnext_ingest] queued source=session sessionId=${data.id} context=${context} messageCount=${data.messages.length}`,
+  );
+}
+
+function queueVnextSessionSource(data: SessionData, context: string): void {
+  const snapshot = structuredClone(data) as SessionData;
+  void syncVnextSessionSourceIfReady(snapshot, context).catch((err: unknown) => {
+    memoryMirrorLog.warn(
+      `[vnext_ingest] queue_failed source=session sessionId=${snapshot.id} context=${context} ` +
+      `error=${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
+}
 
 function queueSessionMemoryMirror(data: SessionData, context: string): void {
   if (data.status !== "saved") {
@@ -1388,6 +1400,7 @@ export const chatFileStorage: IChatFileStorage = {
       await writeConv(data);
       invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
       publishSessionStatusChanged(data, previousStatus, data.status);
+      queueVnextSessionSource(data, "saveSession");
       queueSessionMemoryMirror(data, "saveSession");
       import("./chat-markdown")
         .then((m) => m.generateChatMarkdown(id))
@@ -1465,7 +1478,8 @@ export const chatFileStorage: IChatFileStorage = {
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
       invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
-      queueSessionMemoryMirror(data, "archiveSession");
+      queueVnextSessionSource(data, "updateSessionStatus");
+      queueSessionMemoryMirror(data, "updateSessionStatus");
       publishSessionStatusChanged(data, previousStatus, status);
     });
   },
@@ -2223,6 +2237,7 @@ export const chatFileStorage: IChatFileStorage = {
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
       invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
+      queueVnextSessionSource(data, "archiveSession");
       queueSessionMemoryMirror(data, "archiveSession");
     });
   },
@@ -2406,6 +2421,7 @@ export const chatFileStorage: IChatFileStorage = {
         memoryMirrorLog.warn(`[ingest] skip source=chat_journal sessionId=${id} reason=session_not_found`);
         return;
       }
+      await syncVnextSessionSourceIfReady(data, "syncSessionMemoryMirror");
       await syncSessionMemoryMirrorIfReady(data);
       invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
     });
