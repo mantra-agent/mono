@@ -66,7 +66,7 @@ export async function joinMeetingByUrl(opts: {
   const session = await chatStorage.createMeetingSession(title, {
     title,
     platform,
-    participants: [],
+    participants: identity.participants,
     botStatus: "dialing",
     meetingUrl: identity.meetingUrl,
     agenda: identity.agenda,

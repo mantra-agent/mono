@@ -245,6 +245,7 @@ async function processDueJoin(row: DueJoinRow): Promise<void> {
           eventEnd: event.end.dateTime || event.end.date || undefined,
           title: event.summary || undefined,
           agenda: row.agenda ?? undefined,
+          attendees: event.attendees,
         },
       });
       await updateAgentJoinOutcome(row.id, {
