@@ -54,6 +54,7 @@ function referenceDecorations(doc: ProseMirrorNode): DecorationSet {
         }),
         Decoration.widget(from, () => createReferenceWidget(part.ref), {
           side: -1,
+          key: `${from}:${part.ref.canonical}`,
           ignoreSelection: false,
           destroy(node) {
             (node as HTMLElement & { __referenceRoot?: Root }).__referenceRoot?.unmount();
