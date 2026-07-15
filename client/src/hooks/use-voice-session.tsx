@@ -1195,6 +1195,9 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             source: (m.role === "user" ? "user" : "ai") as "user" | "ai",
             message: m.content,
             timestamp: m.timestamp || new Date().toISOString(),
+            // Reconnect snapshots come from persisted chat history. They are
+            // committed transcript rows, never an in-progress composer turn.
+            isFinal: true,
             persona: m.persona || (m.role === "assistant" ? sessionPersonaRef.current || undefined : undefined),
           }));
         if (mapped.length > 0) {

@@ -103,39 +103,38 @@ async function ensureAgentSetup(): Promise<void> {
 }
 
 export async function registerVoiceSessionRoutes(app: Express) {
-  // Boot recovery is fully fire-and-forget. Each underlying step has its own
-  // 2s budget (BOOT_RECOVERY_PER_ROW_BUDGET_MS in voice-llm); we additionally
-  // bound the bulk abandonStaleVoiceSessions call here so a stuck pool client
-  // can never hold the boot path open. Every quarantine event — bulk timeout
-  // OR each individually abandoned row — logs [BOOT_QUARANTINE] to stderr
-  // (synchronously, SIGKILL-survivable) so poisoned row IDs are always
-  // attributable in production logs.
+  // Boot recovery is fully fire-and-forget and bounded. Multiple app processes
+  // can share the same database, so a foreign boot_id may still own a healthy
+  // voice session. Only leases older than the server-wide two-hour maximum are
+  // safe to abandon here. Periodic reconciliation is separately owner-scoped.
   const BOOT_BULK_BUDGET_MS = 2000;
+  const VOICE_SESSION_MAX_AGE_MS = 2 * 60 * 60 * 1000;
   const bulkStart = Date.now();
+  const staleBefore = new Date(bulkStart - VOICE_SESSION_MAX_AGE_MS);
   Promise.race([
-    storage.abandonStaleVoiceSessions(eventBus.bootId),
+    storage.abandonExpiredVoiceSessions(staleBefore),
     new Promise<null>((resolve) => setTimeout(() => resolve(null), BOOT_BULK_BUDGET_MS)),
   ]).then(async (orphaned) => {
     const ts = new Date().toISOString();
     if (orphaned === null) {
       try {
-        process.stderr.write(`[BOOT_QUARANTINE] step=abandonStaleVoiceSessions id=bulk reason="timeout" elapsedMs=${Date.now() - bulkStart} ts=${ts}\n`);
+        process.stderr.write(`[BOOT_QUARANTINE] step=abandonExpiredVoiceSessions id=bulk reason="timeout" elapsedMs=${Date.now() - bulkStart} ts=${ts}\n`);
       } catch {}
     } else if (orphaned.length > 0) {
       const elapsedMs = Date.now() - bulkStart;
       for (const row of orphaned) {
         try {
-          process.stderr.write(`[BOOT_QUARANTINE] step=abandonStaleVoiceSessions id=${row.sessionId} reason="abandoned" prevBootId=${row.bootId || "null"} elapsedMs=${elapsedMs} ts=${ts}\n`);
+          process.stderr.write(`[BOOT_QUARANTINE] step=abandonExpiredVoiceSessions id=${row.sessionId} reason="expired" ownerBootId=${row.bootId || "null"} elapsedMs=${elapsedMs} ts=${ts}\n`);
         } catch {}
       }
-      voiceLog.warn(`Boot cleanup: marked ${orphaned.length} stale voice session(s) as abandoned: ${orphaned.map(s => s.sessionId).join(", ")}`);
+      voiceLog.warn(`Boot cleanup: marked ${orphaned.length} expired voice session(s) as abandoned: ${orphaned.map(s => s.sessionId).join(", ")}`);
     }
     const { reconcileDbVoiceState } = await import("../voice-llm");
     await reconcileDbVoiceState();
-    voiceLog.log("Boot: DB→memory voice state reconciliation complete");
+    voiceLog.log(`Boot: owner-scoped DB→memory voice state reconciliation complete bootId=${eventBus.bootId}`);
   }).catch((err: unknown) => {
     const msg = err instanceof Error ? err.message : String(err);
-    voiceLog.warn(`Boot cleanup of stale voice sessions failed (non-fatal): ${msg}`);
+    voiceLog.warn(`Boot cleanup of expired voice sessions failed (non-fatal): ${msg}`);
   });
 
   const bootAgentId = getSecretSync("ELEVENLABS_AGENT_ID");
