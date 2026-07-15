@@ -21,6 +21,7 @@ import {
 } from "@shared/schema";
 
 const log = createLogger("Onboarding");
+export const FTUE_AGENT_NAME = "Mantra";
 
 const ROOTS = [
   { key: "notes", title: "Notes", slug: "notes", emoji: "📝", sortOrder: 0 },
@@ -42,7 +43,6 @@ type WorkspaceMetadata = {
 export interface CreateUserWorkspaceInput {
   name?: string;
   preferredName?: string;
-  agentName?: string;
   contextSeed?: string;
   memoryConsent?: boolean;
   markStarted?: boolean;
@@ -76,10 +76,6 @@ function displayNameFor(user: User, input: CreateUserWorkspaceInput): string {
 
 function preferredNameFor(user: User, input: CreateUserWorkspaceInput): string {
   return cleanText(input.preferredName, 80) ?? cleanText(input.name, 120) ?? user.email;
-}
-
-function agentNameFor(input: CreateUserWorkspaceInput): string {
-  return cleanText(input.agentName, 80) ?? "Agent";
 }
 
 function mergeMetadata(existing: unknown, patch: WorkspaceMetadata): WorkspaceMetadata {
@@ -380,72 +376,6 @@ async function seedContextMemory(
     });
 }
 
-/**
- * Generate a short, warm agent name via LLM and update agent_profiles.
- * Called fire-and-forget (void, not awaited) during onboarding completion.
- * Always writes a name: LLM-generated if available, deterministic fallback otherwise.
- */
-const AGENT_NAME_FALLBACKS = [
-  "Sage", "Nova", "Echo", "Lyra", "Kai", "Sol", "Iris", "Milo", "Juno", "Aria",
-  "Orion", "Luna", "Zeph", "Clio", "Rune", "Vega", "Nyx", "Aero", "Pax", "Lux",
-];
-
-const AGENT_NAME_TIMEOUT_MS = 10_000;
-
-function pickFallbackName(userName: string): string {
-  let hash = 0;
-  for (let i = 0; i < userName.length; i++) {
-    hash = ((hash << 5) - hash + userName.charCodeAt(i)) | 0;
-  }
-  return AGENT_NAME_FALLBACKS[Math.abs(hash) % AGENT_NAME_FALLBACKS.length];
-}
-
-async function generateAgentName(principal: Principal & { userId: string; accountId: string }, userName: string): Promise<void> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), AGENT_NAME_TIMEOUT_MS);
-
-  let name: string;
-  try {
-    const { chatCompletion } = await import("./model-client");
-    const { ACTIVITY_FRAMING } = await import("./job-profiles");
-
-    const result = await chatCompletion({
-      activity: ACTIVITY_FRAMING,
-      signal: controller.signal,
-      messages: [
-        {
-          role: "system",
-          content: "You are a naming assistant. Generate exactly one name for an AI companion. The name should be short (1-2 syllables), warm, memorable, and distinctive. Not a common human name, but not robotic either. Think: Sage, Nova, Echo, Lyra, Kai, Sol, Iris, Zara, Milo, Juno. Respond with ONLY the name, nothing else.",
-        },
-        {
-          role: "user",
-          content: `Generate a name for the AI companion of a user named ${userName}. Just the name, no explanation.`,
-        },
-      ],
-      maxTokens: 20,
-      temperature: 1.0,
-      metadata: { source: "onboarding", activity: ACTIVITY_FRAMING },
-    });
-
-    const parsed = result.content.trim().replace(/[^a-zA-Z]/g, "").slice(0, 20);
-    name = (parsed && parsed.length >= 2) ? parsed : pickFallbackName(userName);
-  } catch (err) {
-    log.warn("Agent name LLM failed, using fallback:", err instanceof Error ? err.message : String(err));
-    name = pickFallbackName(userName);
-  } finally {
-    clearTimeout(timer);
-  }
-
-  await db
-    .update(agentProfiles)
-    .set({ agentName: name, updatedAt: sql`CURRENT_TIMESTAMP` })
-    .where(eq(agentProfiles.userId, principal.userId));
-
-  await ensureAgentLibraryRoot(principal, name);
-
-  log.log("Agent name generated", { userId: principal.userId, agentName: name });
-}
-
 export async function createUserWorkspace(
   principal: Principal & { userId: string; accountId: string },
   input: CreateUserWorkspaceInput = {},
@@ -454,7 +384,7 @@ export async function createUserWorkspace(
   const accountId = await ensurePersonalAccount(user, principal);
   const displayName = displayNameFor(user, input);
   const preferredName = preferredNameFor(user, input);
-  const agentName = agentNameFor(input);
+  const agentName = FTUE_AGENT_NAME;
   const roots = await ensurePrivateRoots(principal, preferredName);
   if (agentName !== "Agent") {
     roots.agent = await ensureAgentLibraryRoot(principal, agentName);
@@ -552,12 +482,6 @@ export async function createUserWorkspace(
     log.warn("ensureUserPerson failed (non-fatal):", err instanceof Error ? err.message : String(err)),
   );
 
-  if (input.markCompleted && agentName === "Agent") {
-    void generateAgentName(principal, preferredName).catch((err) =>
-      log.warn("Agent name generation failed (non-fatal):", err instanceof Error ? err.message : String(err)),
-    );
-  }
-
   // Create FTUE welcome session if onboarding just completed
   let ftueSessionId: string | undefined;
   if (input.markCompleted) {
@@ -640,7 +564,6 @@ const startSchema = z.object({}).passthrough();
 const completeSchema = z.object({
   name: z.string().min(1).max(120),
   preferredName: z.string().min(1).max(80).optional(),
-  agentName: z.string().min(1).max(80).default("Agent"),
   contextSeed: z.string().max(4000).optional().default(""),
   memoryConsent: z.boolean().default(false),
   enterDemo: z.boolean().default(true),

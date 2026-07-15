@@ -7,6 +7,7 @@ import { storage } from "../storage";
 import { eventBus } from "../event-bus";
 import { VoiceEvents } from "@shared/event-catalog";
 import { getSecretSync } from "../secrets-store";
+import { FTUE_AGENT_NAME } from "../onboarding";
 
 const voiceLog = createLogger("VoiceSession");
 
@@ -945,24 +946,18 @@ export async function registerVoiceSessionRoutes(app: Express) {
           const { chatFileStorage } = await import("../chat-file-storage");
           const sessionMeta = await chatFileStorage.getSession(chatSessionId);
           if (sessionMeta?.ftueWelcome) {
-            const { userProfiles: userProfilesTable, agentProfiles: agentProfilesTable } = await import("@shared/schema");
+            const { userProfiles: userProfilesTable } = await import("@shared/schema");
             const { getCurrentPrincipal } = await import("../principal-context");
             const principal = getCurrentPrincipal();
             if (principal?.userId) {
-              const [[userProfile], [agentProfile]] = await Promise.all([
-                db.select({ preferredName: userProfilesTable.preferredName, displayName: userProfilesTable.displayName })
-                  .from(userProfilesTable).where(eq(userProfilesTable.userId, principal.userId)).limit(1),
-                db.select({ agentName: agentProfilesTable.agentName })
-                  .from(agentProfilesTable).where(eq(agentProfilesTable.userId, principal.userId)).limit(1),
-              ]);
+              const [userProfile] = await db
+                .select({ preferredName: userProfilesTable.preferredName, displayName: userProfilesTable.displayName })
+                .from(userProfilesTable)
+                .where(eq(userProfilesTable.userId, principal.userId))
+                .limit(1);
               const userName = userProfile?.preferredName || userProfile?.displayName || "there";
-              const agentName = agentProfile?.agentName || "Agent";
-              if (agentName !== "Agent") {
-                firstMessage = `Hey ${userName}! I'm going to go by ${agentName}. Nice to meet you. Does that feel right, or would you rather I go by something else?`;
-              } else {
-                firstMessage = `Hey ${userName}! It's great to meet you. Let's get started.`;
-              }
-              voiceLog.log(`FTUE firstMessage composed for user=${userName} agent=${agentName}`);
+              firstMessage = `Hey ${userName}! I'm ${FTUE_AGENT_NAME}. Nice to meet you.`;
+              voiceLog.log(`FTUE firstMessage composed for user=${userName} agent=${FTUE_AGENT_NAME}`);
             }
           }
         } catch (err: unknown) {
