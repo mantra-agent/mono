@@ -1,7 +1,6 @@
 // Use createLogger for logging ONLY
 import { createContext, useContext, useState, useRef, useCallback, useEffect, useMemo, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { emitSessionListChanged, emitSessionChanged } from "@/hooks/use-data-sync";
 
@@ -9,6 +8,14 @@ import { stripExpressionTags } from "@/components/chat-shared";
 import { Conversation } from "@elevenlabs/client";
 import { createLogger } from "@/lib/logger";
 import { buildDisconnectReason } from "@/lib/ws-close-codes";
+import {
+  createVoiceStartRequestId,
+  fetchVoiceStartFallback,
+  fetchVoiceStartStream,
+  type VoiceStartPhaseEvent,
+  type VoiceStartResponse,
+} from "@/lib/voice-start-transport";
+export type { VoiceStartResponse } from "@/lib/voice-start-transport";
 import { playConnectionChime, playDisconnectionChime } from "@/lib/voice-chime";
 import { isNativeVoiceBridge, sendToNative, onNativeMessage } from "@/lib/native-voice-bridge";
 import {
@@ -61,19 +68,7 @@ export interface ConnectionPhase {
   elapsedMs: number;
 }
 
-interface VoiceStartResponse {
-  signedUrl: string;
-  chatSessionKey?: string;
-  sessionId?: string;
-  chatSessionId?: string;
-  voiceId?: string;
-  agentId?: string;
-  timings?: Record<string, number>;
-  type?: string;
-  serverTranscript?: Array<{ role: string; content: string; timestamp?: string; persona?: { id: number; name: string; icon: string } }>;
-  persona?: { id: number; name: string; icon: string };
-  firstMessage?: string;
-}
+
 
 export type VoiceToolEventAction = "start" | "done" | "clear";
 export interface VoiceToolEventPayload {
@@ -425,116 +420,28 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     }
   }, [finalizeSession, invalidateVoiceRelatedQueries, resetEphemeralVoiceState]);
 
-  const fetchVoiceStartSSE = useCallback(async (
-    abortController: AbortController,
-    isReconnect: boolean,
-  ): Promise<VoiceStartResponse> => {
-    const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    voiceRequestIdRef.current = requestId;
-
-    const sseRes = await fetch("/api/voice/start", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "text/event-stream",
-      },
-      body: JSON.stringify({
-        chatSessionId: chatConversationIdRef.current || undefined,
-        isReconnect: isReconnect || undefined,
-        requestId,
-      }),
-      signal: abortController.signal,
-    });
-
-    if (sseRes.headers.get("content-type")?.includes("text/event-stream") && sseRes.body) {
-      const reader = sseRes.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let serverError: string | null = null;
-      let startData: VoiceStartResponse | null = null;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const event = JSON.parse(line.slice(6));
-              if (event.type === "phase") {
-                log.debug("VOICE:START_SSE:PHASE", { phase: event.phase, status: event.status, elapsedMs: event.elapsedMs || 0 });
-                setConnectionPhases(prev => {
-                  const exists = prev.some(p => p.name === event.phase);
-                  if (!exists) {
-                    const newPhase: ConnectionPhase = {
-                      name: event.phase,
-                      status: event.status === "started" ? "active" as const : event.status as ConnectionPhaseStatus,
-                      elapsedMs: event.elapsedMs || 0,
-                    };
-                    const signedUrlIdx = prev.findIndex(p => p.name === "signed_url");
-                    if (signedUrlIdx >= 0) {
-                      const updated = [...prev];
-                      updated.splice(signedUrlIdx, 0, newPhase);
-                      return updated;
-                    }
-                    return [...prev, newPhase];
-                  }
-                  return prev.map(p => {
-                    if (p.name !== event.phase) return p;
-                    if (p.status === "done") return p;
-                    return { ...p, status: event.status === "started" ? "active" as const : event.status as ConnectionPhaseStatus, elapsedMs: event.elapsedMs || 0 };
-                  });
-                });
-              } else if (event.type === "phase_persisted") {
-                log.debug("VOICE:START_SSE:PHASE_PERSISTED", { persisted: Boolean(event.persisted) });
-                setPhasePersisted(!!event.persisted);
-              } else if (event.type === "complete") {
-                log.debug("VOICE:START_SSE:COMPLETE");
-                startData = event as VoiceStartResponse;
-              } else if (event.type === "error") {
-                log.warn("VOICE:START_SSE:ERROR", { phase: event.phase || "unknown", error: String(event.error || "Voice start failed").slice(0, 300), elapsedMs: event.elapsedMs || 0 });
-                serverError = event.error || "Voice start failed";
-                if (event.phase) {
-                  setConnectionPhases(prev => prev.map(p =>
-                    p.name === event.phase
-                      ? { ...p, status: "error" as const, elapsedMs: event.elapsedMs || 0 }
-                      : p
-                  ));
-                }
-              }
-            } catch (parseErr: unknown) {
-              log.warn("VOICE:START_SSE:PARSE_FAILED", toBoundedLogError(parseErr));
-            }
-          }
+  const applyVoiceStartPhase = useCallback((event: VoiceStartPhaseEvent) => {
+    setConnectionPhases((previous) => {
+      const exists = previous.some((phase) => phase.name === event.phase);
+      const status = event.status === "started" ? "active" : event.status as ConnectionPhaseStatus;
+      if (!exists) {
+        // A dedicated SSE error frame historically only marked an existing
+        // phase. Ordinary phase frames may introduce newly discovered phases.
+        if (event.source === "error") return previous;
+        const newPhase: ConnectionPhase = { name: event.phase, status, elapsedMs: event.elapsedMs };
+        const signedUrlIndex = previous.findIndex((phase) => phase.name === "signed_url");
+        if (signedUrlIndex >= 0) {
+          const updated = [...previous];
+          updated.splice(signedUrlIndex, 0, newPhase);
+          return updated;
         }
+        return [...previous, newPhase];
       }
-
-      if (serverError && !startData) {
-        throw new Error(serverError);
-      }
-      if (!startData) throw new Error("SSE stream ended without complete event");
-      return startData;
-    } else {
-      const data = await sseRes.json();
-      if (!sseRes.ok) throw new Error(data?.error || `HTTP ${sseRes.status}`);
-      return data as VoiceStartResponse;
-    }
-  }, []);
-
-  const fetchVoiceStartFallback = useCallback(async (isReconnect: boolean): Promise<VoiceStartResponse> => {
-    log.warn("VOICE:START_SSE:FALLBACK", { fallback: "non_streaming" });
-    const requestId = voiceRequestIdRef.current || `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    voiceRequestIdRef.current = requestId;
-    const fallbackRes = await apiRequest("POST", "/api/voice/start", {
-      chatSessionId: chatConversationIdRef.current || undefined,
-      isReconnect: isReconnect || undefined,
-      requestId,
+      return previous.map((phase) => {
+        if (phase.name !== event.phase || phase.status === "done") return phase;
+        return { ...phase, status, elapsedMs: event.elapsedMs };
+      });
     });
-    return await fallbackRes.json() as VoiceStartResponse;
   }, []);
 
   const handleUserTranscript = useCallback((message: {
@@ -1073,9 +980,20 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       let startData: VoiceStartResponse | null = null;
       const abortController = new AbortController();
       connectAbortRef.current = abortController;
+      const requestId = createVoiceStartRequestId();
+      voiceRequestIdRef.current = requestId;
+      const startRequest = {
+        chatSessionId: chatConversationIdRef.current,
+        isReconnect,
+        requestId,
+      };
+      const transportCallbacks = {
+        onPhase: applyVoiceStartPhase,
+        onPhasePersisted: setPhasePersisted,
+      };
 
       try {
-        startData = await fetchVoiceStartSSE(abortController, isReconnect);
+        startData = await fetchVoiceStartStream(startRequest, abortController.signal, transportCallbacks);
       } catch (sseErr: unknown) {
         if (startData) { /* already got complete data, proceed */ }
         else {
@@ -1083,7 +1001,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
           if (sseMsg && !sseMsg.includes("Failed to fetch")) {
             throw sseErr;
           }
-          startData = await fetchVoiceStartFallback(isReconnect);
+          startData = await fetchVoiceStartFallback(startRequest);
         }
       }
 
@@ -1216,7 +1134,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     } finally {
       connectAbortRef.current = null;
     }
-  }, [toast, queryClient, phoneDiag, cleanupSession, fetchVoiceStartSSE, fetchVoiceStartFallback, initElevenLabsSession]);
+  }, [toast, queryClient, phoneDiag, cleanupSession, applyVoiceStartPhase, initElevenLabsSession]);
 
   useEffect(() => { connectSessionRef.current = connectSession; }, [connectSession]);
 
