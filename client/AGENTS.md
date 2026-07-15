@@ -220,3 +220,5 @@ Use `ProfileTreeRow` for compact label/value rows with optional progressive disc
 ## Voice
 
 Voice transcript rows use one required lifecycle discriminant: `provisional`, `committed`, or `placeholder`. Only canonical server transcript events may create committed user speech. Local provider/native callbacks may create provisional composer text, and reconnect snapshots contain committed persisted history. Live and replayed voice events must pass through one event-ID-deduplicating reducer and require exact `chatSessionId` identity before mutating state or advancing the cursor.
+
+`client/src/lib/voice-transcript-state.ts` is the canonical pure mutation boundary for user voice transcript rows. It owns cleaning, normalized comparison, sequence ordering, placeholder replacement, provisional-to-committed promotion, and duplicate rejection. React hooks generate timestamps/turn IDs and emit diagnostics, but must not reproduce transcript transition logic.
