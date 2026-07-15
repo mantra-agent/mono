@@ -645,7 +645,7 @@ export type MeetingRecapStatus = "generating" | "ready" | "failed";
 
 /** End-of-meeting recap state stored on the meeting session meta. */
 /** Discriminant for recap email distribution lifecycle. */
-export type MeetingRecapDistributionStatus = "pending" | "drafting" | "ready" | "failed";
+export type MeetingRecapDistributionStatus = "pending" | "drafting" | "ready" | "failed" | "blocked";
 
 export interface MeetingRecapMeta {
   status: MeetingRecapStatus;

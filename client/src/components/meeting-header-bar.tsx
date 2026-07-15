@@ -12,8 +12,8 @@
  * control (human presses Send), read-only recap link.
  */
 import { useEffect, useState, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { queryClient } from "@/lib/queryClient";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   AlertCircle,
   ChevronDown,
@@ -30,6 +30,7 @@ import { Link } from "wouter";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { EmailDraftWidget } from "@/components/email-draft-widget";
+import { useToast } from "@/hooks/use-toast";
 import { createLogger } from "@/lib/logger";
 import type { MeetingSessionMeta, MeetingBotStatus } from "@shared/models/chat";
 
@@ -270,6 +271,30 @@ export function MeetingHeaderBar({
   const elapsed = useElapsed(meeting.startedAt, meeting.endedAt);
   const isLive = meeting.botStatus === "live";
   const banner = STATUS_BANNER[meeting.botStatus];
+  const { toast } = useToast();
+
+  const retryRecap = useMutation({
+    mutationFn: async () => {
+      if (!sessionId) throw new Error("Meeting session unavailable");
+      const response = await apiRequest(
+        "POST",
+        `/api/meetings/${encodeURIComponent(sessionId)}/recap/retry`,
+      );
+      return response.json();
+    },
+    onSuccess: () => {
+      if (!sessionId) return;
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Recap retry failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
 
   // Distribution panel open/close state
   const [distributionOpen, setDistributionOpen] = useState(false);
@@ -277,25 +302,32 @@ export function MeetingHeaderBar({
     () => setDistributionOpen((open) => !open),
     [],
   );
-  const retryDistribution = useCallback(
-    async () => {
-      if (!sessionId) return;
-      try {
-        log.debug("Distribution retry requested", { sessionId });
-        await fetch(`/api/meetings/${sessionId}/recap-distributions/ensure`, {
-          method: "POST",
-          credentials: "include",
-        });
-        // Refetch the distribution panel data
-        queryClient.invalidateQueries({
-          queryKey: ["/api/meetings", sessionId, "recap-distributions"],
-        });
-      } catch (err) {
-        log.error("Distribution retry failed", { sessionId, error: err });
-      }
+  const retryDistribution = useMutation({
+    mutationFn: async () => {
+      if (!sessionId) throw new Error("Meeting session unavailable");
+      const response = await apiRequest(
+        "POST",
+        `/api/meetings/${encodeURIComponent(sessionId)}/recap-distributions/ensure`,
+      );
+      return response.json();
     },
-    [sessionId],
-  );
+    onSuccess: () => {
+      if (!sessionId) return;
+      queryClient.invalidateQueries({
+        queryKey: ["/api/meetings", sessionId, "recap-distributions"],
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+    },
+    onError: (error: Error) => {
+      log.error("Distribution retry failed", { sessionId, error });
+      toast({
+        title: "Draft retry failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
 
   const recap = meeting.recap;
   const draftIds = recap?.draftIds ?? [];
@@ -308,7 +340,8 @@ export function MeetingHeaderBar({
     draftCount > 0 &&
     !!sessionId;
   const showDistributionFailed =
-    recap?.distributionStatus === "failed" && !recap.distributionSkipped;
+    (recap?.distributionStatus === "failed" || recap?.distributionStatus === "blocked")
+    && !recap.distributionSkipped;
 
   return (
     <div className="border-b border-border bg-card/60">
@@ -464,20 +497,27 @@ export function MeetingHeaderBar({
             </Button>
           )}
 
-          {/* Distribution: failed */}
-          
-          {/* Distribution: failed with retry button */}
+          {/* Distribution: failed or blocked with retry button */}
           {showDistributionFailed && (
             <Button
               variant="outline"
               size="sm"
               className="h-7 gap-1.5 text-xs border-destructive/30 text-destructive hover:bg-destructive/10"
-              onClick={retryDistribution}
+              onClick={() => retryDistribution.mutate()}
+              disabled={retryDistribution.isPending}
               data-testid="button-retry-distribution"
               title={recap.distributionError ?? "Retry distribution"}
             >
-              <AlertCircle className="h-3 w-3 shrink-0" />
-              <span>Draft emails failed</span>
+              {retryDistribution.isPending ? (
+                <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+              ) : (
+                <AlertCircle className="h-3 w-3 shrink-0" />
+              )}
+              <span>
+                {recap.distributionStatus === "blocked"
+                  ? "Draft emails blocked"
+                  : "Draft emails failed"}
+              </span>
               <span className="text-xs text-destructive/70">Retry</span>
             </Button>
           )}
@@ -501,9 +541,24 @@ export function MeetingHeaderBar({
           data-testid="banner-meeting-recap-failed"
         >
           <AlertCircle className="h-3 w-3 shrink-0" />
-          <span>
+          <span className="min-w-0 flex-1 truncate" title={recap.error}>
             Recap failed{recap.error ? `: ${recap.error}` : ""}
           </span>
+          {sessionId && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 shrink-0 text-xs border-destructive/30 text-destructive hover:bg-destructive/10"
+              onClick={() => retryRecap.mutate()}
+              disabled={retryRecap.isPending}
+              data-testid="button-retry-recap"
+            >
+              {retryRecap.isPending && (
+                <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+              )}
+              Retry recap
+            </Button>
+          )}
         </div>
       )}
 

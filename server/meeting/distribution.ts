@@ -23,6 +23,7 @@ import {
   combineWithVisibleScope,
   ownedInsertValues,
   visibleScopePredicate,
+  writableScopePredicate,
 } from "../scoped-storage";
 import { emailDraftStorage } from "../email-draft-storage";
 import { sendNotification } from "../notifications";
@@ -65,6 +66,7 @@ export async function distributeRecap(
   meeting: MeetingSessionMeta,
   recap: MeetingRecapMeta,
   principal: Principal,
+  options: { retryFailed?: boolean } = {},
 ): Promise<void> {
   // CHANGE 3: Verify principal context is correct (trap ALS leaks)
   try {
@@ -91,21 +93,40 @@ export async function distributeRecap(
   log.info(`Starting recap distribution for session ${sessionId}`);
 
   try {
-    // Idempotency guard: skip if already drafted or sent.
+    // Idempotency guard: drafted/sent work is immutable. Explicit retry only
+    // clears failed rows so the same canonical path can recreate drafts.
     const existing = await db
-      .select({ id: meetingRecapDistributions.id })
+      .select({
+        id: meetingRecapDistributions.id,
+        status: meetingRecapDistributions.status,
+      })
       .from(meetingRecapDistributions)
       .where(
         and(
           eq(meetingRecapDistributions.sessionId, sessionId),
           visibleScopePredicate(principal, scopeColumns) as SQL,
         ),
-      )
-      .limit(1);
+      );
 
-    if (existing.length > 0) {
+    const hasCompletedOrPending = existing.some((row) => row.status !== "failed");
+    if (hasCompletedOrPending) {
       log.debug(`Distribution already started for session ${sessionId}; skipping`);
       return;
+    }
+    if (existing.length > 0 && !options.retryFailed) {
+      log.debug(`Distribution failed for session ${sessionId}; explicit retry required`);
+      return;
+    }
+    if (existing.length > 0) {
+      await db
+        .delete(meetingRecapDistributions)
+        .where(
+          and(
+            eq(meetingRecapDistributions.sessionId, sessionId),
+            eq(meetingRecapDistributions.status, "failed"),
+            writableScopePredicate(principal, scopeColumns) as SQL,
+          ),
+        );
     }
 
     await runDistribution(sessionId, meeting, recap, principal);

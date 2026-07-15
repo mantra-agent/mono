@@ -11,16 +11,25 @@
  * user is captured structurally on MeetingSessionMeta at session creation and
  * reconstructed here via runWithPrincipal (same pattern as auto-join).
  */
+import { and, eq, sql } from "drizzle-orm";
 import { createLogger } from "../log";
+import { db } from "../db";
+import { libraryPages } from "@shared/models/info";
 import { chatStorage } from "../integrations/chat/storage";
 import { chatCompletion } from "../model-client";
 import { ACTIVITY_RECALL } from "../job-profiles";
-import { createFiledLibraryPage } from "../library-save";
+import {
+  buildLibrarySurfaceSet,
+  createFiledLibraryPage,
+  publishLibraryChanged,
+} from "../library-save";
+import { syncContentFields } from "@shared/markdown-tiptap";
 import { recordSessionArtifact } from "../session-artifacts";
 import { peopleStorage } from "../people-storage";
 import { storage } from "../storage";
 import { createUserPrincipalFromUser } from "../principal";
-import { runWithPrincipal } from "../principal-context";
+import { getCurrentPrincipalOrSystem, runWithPrincipal } from "../principal-context";
+import { combineWithVisibleScope, combineWithWritableScope } from "../scoped-storage";
 import { formatInTimezone, getDateInTimezone } from "../timezone";
 import { eventBus } from "../event-bus";
 import type { MeetingParticipant, MeetingSessionMeta } from "@shared/models/chat";
@@ -39,27 +48,48 @@ interface RecapContent {
   followUps: string[];
 }
 
+export type MeetingRecapFinalizationResult =
+  | { outcome: "ready"; recap: NonNullable<MeetingSessionMeta["recap"]> }
+  | { outcome: "failed"; recap: NonNullable<MeetingSessionMeta["recap"]> }
+  | { outcome: "already_generating"; recap: NonNullable<MeetingSessionMeta["recap"]> }
+  | { outcome: "already_ready"; recap: NonNullable<MeetingSessionMeta["recap"]> }
+  | { outcome: "not_meeting" };
+
+const libraryScopeColumns = {
+  scope: libraryPages.scope,
+  ownerUserId: libraryPages.ownerUserId,
+  accountId: libraryPages.accountId,
+  vaultId: libraryPages.vaultId,
+};
+
 /**
- * Finalize an ended meeting session. Safe to call multiple times — the atomic
- * recap claim makes duplicate calls no-ops. Never throws.
- * 
- * CHANGE 1: Validates that principal can be reconstructed before proceeding.
- * Fails fast if ownerUserId or principalAccountId are missing (distribution
- * will be blocked with a clear error, not silently skipped).
+ * Finalize an ended meeting session. Safe to call multiple times. The atomic
+ * claim prevents duplicate generation, while explicit outcomes let webhook
+ * and authenticated retry callers report the truth.
  */
-export async function finalizeMeetingSession(sessionId: string): Promise<void> {
-  let claimed;
+export async function finalizeMeetingSession(sessionId: string): Promise<MeetingRecapFinalizationResult> {
+  let claim;
   try {
-    claimed = await chatStorage.claimMeetingRecap(sessionId);
+    claim = await chatStorage.claimMeetingRecap(sessionId);
   } catch (err) {
-    log.error(`Recap claim failed for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
-    return;
+    const message = err instanceof Error ? err.message : String(err);
+    log.error(`Recap claim failed for session ${sessionId}: ${message}`);
+    return { outcome: "failed", recap: { status: "failed", error: message.slice(0, 500) } };
   }
-  if (!claimed?.meeting) {
-    log.debug(`Recap claim not won for session ${sessionId} (already generating/ready or not a meeting)`);
-    return;
+  if (claim.outcome !== "claimed") {
+    if (claim.outcome === "not_meeting") {
+      log.debug(`Recap claim rejected for non-meeting session ${sessionId}`);
+      return { outcome: "not_meeting" };
+    }
+    const recap = claim.session.meeting?.recap;
+    if (!recap) {
+      return { outcome: "failed", recap: { status: "failed", error: "Recap state unavailable" } };
+    }
+    log.debug(`Recap claim not won for session ${sessionId}: ${claim.outcome}`);
+    return { outcome: claim.outcome, recap };
   }
-  const meeting = claimed.meeting;
+  const claimed = claim.session;
+  const meeting = claimed.meeting!;
 
   // CHANGE 1: Validate that principal can be reconstructed before proceeding
   if (!meeting.ownerUserId || !meeting.principalAccountId) {
@@ -68,15 +98,14 @@ export async function finalizeMeetingSession(sessionId: string): Promise<void> {
       `missing ownerUserId=${meeting.ownerUserId ?? "none"} or ` +
       `principalAccountId=${meeting.principalAccountId ?? "none"}`
     );
-    await chatStorage.updateMeetingMeta(sessionId, {
-      recap: { 
-        status: "failed", 
-        error: "Missing owner or account context; cannot generate recap" 
-      },
-    }).catch((e) =>
+    const recap = {
+      status: "failed" as const,
+      error: "Missing owner or account context; cannot generate recap",
+    };
+    await chatStorage.updateMeetingMeta(sessionId, { recap }).catch((e) =>
       log.error(`Failed to record failure for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`)
     );
-    return;
+    return { outcome: "failed", recap };
   }
 
   const run = () => generateRecap(sessionId, claimed.title, meeting);
@@ -88,49 +117,60 @@ export async function finalizeMeetingSession(sessionId: string): Promise<void> {
     }
     
     const principal = createUserPrincipalFromUser(user, meeting.principalAccountId);
-    await runWithPrincipal(principal, run);
+    const recap = await runWithPrincipal(principal, run);
+    return { outcome: recap.status === "ready" ? "ready" : "failed", recap };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error(`Meeting recap failed for session ${sessionId}: ${message}`);
-    await chatStorage.updateMeetingMeta(sessionId, {
-      recap: { status: "failed", error: message.slice(0, 500) },
-    }).catch((e) =>
+    const recap = { status: "failed" as const, error: message.slice(0, 500) };
+    await chatStorage.updateMeetingMeta(sessionId, { recap }).catch((e) =>
       log.error(`Failed to record failure for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`)
     );
+    return { outcome: "failed", recap };
   }
 }
 
-async function generateRecap(sessionId: string, sessionTitle: string, meeting: MeetingSessionMeta): Promise<void> {
+async function generateRecap(
+  sessionId: string,
+  sessionTitle: string,
+  meeting: MeetingSessionMeta,
+): Promise<NonNullable<MeetingSessionMeta["recap"]>> {
   const transcript = await buildTranscript(sessionId);
   if (!transcript) {
     log.warn(`Meeting ${sessionId} ended with no transcript; marking recap failed`);
-    await chatStorage.updateMeetingMeta(sessionId, {
-      recap: { status: "failed", error: "No transcript captured" },
-    });
-    return;
+    const recap = { status: "failed" as const, error: "No transcript captured" };
+    await chatStorage.updateMeetingMeta(sessionId, { recap });
+    return recap;
   }
 
   const recap = await generateRecapContent(sessionId, sessionTitle, meeting, transcript);
   const markdown = buildRecapMarkdown(recap, meeting);
 
-  const page = await createFiledLibraryPage({
-    title: recap.title,
-    markdown,
-    purpose: "meeting-notes",
-    contentSummary: recap.summary.slice(0, 500),
-    tags: ["meeting", "recap"],
-    createdBySessionId: sessionId,
-    surface: true,
-    surfaceDurationHours: 48,
-    surfaceReason: `Meeting recap: ${recap.title}`,
-  });
+  const existingPage = await findExistingRecapPage(sessionId);
+  const page = existingPage
+    ? await refreshRecapPage(existingPage.id, recap.title, markdown)
+    : await createFiledLibraryPage({
+        title: recap.title,
+        markdown,
+        purpose: "meeting-notes",
+        contentSummary: recap.summary.slice(0, 500),
+        tags: ["meeting", "recap"],
+        createdBySessionId: sessionId,
+        surface: true,
+        surfaceDurationHours: 48,
+        surfaceReason: `Meeting recap: ${recap.title}`,
+      });
 
   await recordSessionArtifact(sessionId, "library_page", page.slug, {
     title: page.title,
     pageId: page.id,
   });
 
-  const interactionsLogged = await logParticipantInteractions(meeting.participants, recap, page.slug);
+  const interactionsLogged = await logParticipantInteractions(
+    meeting.participants,
+    recap,
+    page.slug,
+  );
 
   const recapMeta = {
     status: "ready" as const,
@@ -153,8 +193,7 @@ async function generateRecap(sessionId: string, sessionTitle: string, meeting: M
       `TRAP: No principal in context when starting distribution for session ${sessionId}. ` +
       `This indicates the recap was generated without a user principal.`
     );
-    // Don't kick off distribution if we don't have a principal
-    return;
+    return recapMeta;
   }
 
   // Kick off distribution with principal context preserved
@@ -173,6 +212,66 @@ async function generateRecap(sessionId: string, sessionTitle: string, meeting: M
         ),
       );
   });
+
+  return recapMeta;
+}
+
+async function findExistingRecapPage(sessionId: string) {
+  const [page] = await db
+    .select()
+    .from(libraryPages)
+    .where(
+      combineWithVisibleScope(
+        getCurrentPrincipalOrSystem(),
+        libraryScopeColumns,
+        and(
+          eq(libraryPages.createdBySessionId, sessionId),
+          sql`${libraryPages.tags} @> ARRAY['meeting', 'recap']::text[]`,
+        ),
+      ),
+    )
+    .limit(1);
+  return page;
+}
+
+async function refreshRecapPage(pageId: string, title: string, markdown: string) {
+  const principal = getCurrentPrincipalOrSystem();
+  const synced = syncContentFields({ markdown });
+  const [page] = await db
+    .update(libraryPages)
+    .set({
+      title,
+      content: synced.content,
+      plainTextContent: synced.plainTextContent,
+      ...buildLibrarySurfaceSet({
+        surface: true,
+        surfaceDurationHours: 48,
+        surfaceReason: `Meeting recap: ${title}`,
+      }),
+      updatedByUserId: principal.userId ?? undefined,
+      updatedAt: new Date(),
+    })
+    .where(
+      combineWithWritableScope(
+        principal,
+        libraryScopeColumns,
+        eq(libraryPages.id, pageId),
+      ),
+    )
+    .returning();
+  if (!page) throw new Error(`Meeting recap page ${pageId} is no longer writable`);
+
+  try {
+    const { upsertLibraryPageMemory } = await import("../routes/library");
+    await upsertLibraryPageMemory(page);
+  } catch (error) {
+    log.warn(
+      `Recap Library memory refresh failed for page ${page.id}: ` +
+      `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  publishLibraryChanged("updated", page);
+  return page;
 }
 
 async function buildTranscript(sessionId: string): Promise<string | null> {
@@ -307,12 +406,21 @@ async function logParticipantInteractions(
     if (!p.personId || seen.has(p.personId)) continue;
     seen.add(p.personId);
     try {
+      const person = await peopleStorage.getPerson(p.personId);
+      const context = `@page:${pageSlug}`;
+      const alreadyLogged = person?.interactions.some(
+        (interaction) => interaction.type === "meeting" && interaction.context === context,
+      );
+      if (alreadyLogged) {
+        logged += 1;
+        continue;
+      }
       await peopleStorage.addInteraction(p.personId, {
         date,
         type: "meeting",
         direction: "mutual",
         summary: `${recap.title}: ${recap.summary}`.slice(0, 1000),
-        context: `@page:${pageSlug}`,
+        context,
       });
       logged += 1;
     } catch (err) {

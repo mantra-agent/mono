@@ -3018,7 +3018,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       participants: resolution.participants,
     });
     chatLog.log(
-      `meeting participation decision sessionId=${sessionId} turnId=${turnId} messageId=${persistedMessage.id} outcome=${participationDecision.outcome} shouldRespond=${participationDecision.shouldRespond} reason=${participationDecision.reason} confidence=${participationDecision.confidence} latencyMs=${participationDecision.latencyMs} classifierFailure=${participationDecision.classifierFailure || "none"}`,
+      `meeting participation decision sessionId=${sessionId} turnId=${turnId} messageId=${persistedMessage.id} outcome=${participationDecision.outcome} shouldRespond=${participationDecision.shouldRespond} reason=${participationDecision.reason} confidence=${participationDecision.confidence} latencyMs=${participationDecision.latencyMs} classifierFailure=${participationDecision.classifierFailure || "none"} invocationKind=${participationDecision.invocationKind || "none"} invocationAlias=${participationDecision.invocationAlias || "none"}`,
     );
 
     const shouldTriggerParticipation =
