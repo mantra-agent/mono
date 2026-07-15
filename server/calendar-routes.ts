@@ -16,7 +16,7 @@ import { eq } from "drizzle-orm";
 import {
   getMetadata, setMetadata, linkTask, unlinkTask, getLinkedTasks, getLinkedPeople, linkArtifact, unlinkArtifact, getLinkedArtifacts,
   autoLogMeetingInteractions, EVENT_TYPES, CAPACITY_TYPES, type EventType, type CapacityType,
-  setAgentJoin,
+  setAgentJoin, setMeetingAgendaPage,
 } from "./calendar-metadata";
 import { extractMeetingUrl } from "./meeting/join";
 import { getMeetingJoinPolicy, shouldJoinMeeting } from "./meeting/join-policy";
@@ -461,7 +461,9 @@ export function registerCalendarRoutes(app: Express): void {
     eventType: z.enum(EVENT_TYPES as [EventType, ...EventType[]]),
     capacityType: z.enum(CAPACITY_TYPES as [CapacityType, ...CapacityType[]]).nullable().optional(),
     notes: z.string().optional(),
+    /** Legacy migration input. New agendas are Library pages. */
     agenda: z.string().max(20000).optional(),
+    agendaLibraryPageId: z.string().min(1).optional(),
     attendeeEmails: z.array(z.string()).optional(),
   });
 
@@ -471,7 +473,7 @@ export function registerCalendarRoutes(app: Express): void {
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
-      const { googleEventId, accountId, calendarId, eventType, notes, capacityType, agenda } = parsed.data;
+      const { googleEventId, accountId, calendarId, eventType, notes, capacityType, agenda, agendaLibraryPageId } = parsed.data;
       let attendeeEmails = parsed.data.attendeeEmails;
       let eventEndTime: string | undefined;
       let eventDate: string | undefined;
@@ -491,7 +493,10 @@ export function registerCalendarRoutes(app: Express): void {
         }
       }
 
-      const meta = await setMetadata(googleEventId, accountId, calendarId, eventType, notes, attendeeEmails, capacityType, agenda);
+      const meta = await setMetadata(googleEventId, accountId, calendarId, eventType, notes, attendeeEmails, capacityType);
+      if (agendaLibraryPageId || agenda !== undefined) {
+        await setMeetingAgendaPage(meta, agendaLibraryPageId, agenda, eventSummary || "Meeting");
+      }
       const [tasks, people, artifacts] = await Promise.all([getLinkedTasks(meta.id), getLinkedPeople(meta.id), getLinkedArtifacts(meta.id)]);
 
       // Auto-log meeting interactions for linked people when the event has ended

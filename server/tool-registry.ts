@@ -708,7 +708,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         googleEventId: { type: "string", description: "Google Calendar event ID (for set_metadata/get_metadata/link_task)" },
         eventType: { type: "string", enum: ["focus_block", "exercise", "meeting", "planning", "admin", "personal"], description: "Event type classification (for set_metadata)" },
         notes: { type: "string", description: "Optional notes for the event metadata (for set_metadata)" },
-        agenda: { type: "string", description: "Private meeting agenda stored in Mantra metadata, not written to the shared calendar event (for set_metadata)" },
+        agendaLibraryPageId: { type: "string", description: "Library page ID or slug to use as the private meeting agenda (for set_metadata)" },
         metadataId: { type: "number", description: "Metadata record ID (for link_task)" },
         taskId: { type: "number", description: "Task ID to link (for link_task)" },
         priorityTitle: { type: "string", description: "Priority title to link instead of a task (for link_task)" },
