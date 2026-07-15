@@ -1189,6 +1189,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                   interaction={interaction}
                   menuContent={renderInteractionOptions(interaction)}
                   testId={`interaction-${item.id}`}
+                  mobileLayout="inline"
                 />
               );
             }
@@ -1264,6 +1265,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                     </div>
                   )}
                   expandedContentClassName="px-2 pb-2 pl-2"
+                  mobileLayout="inline"
                   menuContent={interaction ? renderInteractionOptions(interaction) : !isRelationshipMemory ? (
                     <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
@@ -1277,7 +1279,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                   ) : undefined}
                   testId={`${item.kind}-${item.id}`}
                 >
-                  <div className="flex min-w-0 items-center justify-end gap-1.5">
+                  <div className="flex w-full min-w-0 items-center justify-start gap-1.5 sm:justify-end">
                     <span className={cn("truncate text-xs", interaction?.responseOwed ? "text-foreground" : "text-muted-foreground")} data-testid={`log-preview-${item.id}`}>{preview}</span>
                     {DirectionIcon && <DirectionIcon className="h-3 w-3 shrink-0 text-muted-foreground" aria-label={interaction?.direction || undefined} />}
                   </div>
