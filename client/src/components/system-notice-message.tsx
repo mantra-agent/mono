@@ -20,14 +20,40 @@ export function SystemNoticeMessage({ notice, timestamp }: SystemNoticeMessagePr
   const Icon = isError ? AlertTriangle : AlertCircle;
   const label = ERROR_TYPE_LABELS[notice.errorType] || "Notice";
 
-  // Warning-severity notices (user-stopped, yield) get a minimal treatment
-  if (!isError) {
+  // User-stopped notices are passive. Operational warnings need a visible,
+  // semantic warning treatment so their real stop reason is not lost.
+  if (!isError && notice.errorType === "user_stopped") {
     return (
       <div className="w-full py-2 text-center" data-testid="system-notice-message">
         <p className="text-xs text-muted-foreground/60">
           {notice.description}{" "}
           <span className="text-muted-foreground/40">{notice.actionHint}</span>
         </p>
+      </div>
+    );
+  }
+
+  if (!isError) {
+    return (
+      <div
+        className="w-full rounded-md border-l-2 border-warning bg-warning/10 p-3"
+        data-testid="system-notice-message"
+      >
+        <div className="flex items-start gap-2">
+          <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+          <div className="flex flex-1 flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-warning">{label}</span>
+              {timestamp && (
+                <span className="text-2xs text-muted-foreground/50">
+                  {formatDistanceToNow(new Date(timestamp), { addSuffix: true })}
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-foreground/80">{notice.description}</p>
+            <p className="text-xs text-muted-foreground">{notice.actionHint}</p>
+          </div>
+        </div>
       </div>
     );
   }

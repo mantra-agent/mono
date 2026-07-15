@@ -116,12 +116,12 @@ function toolTransfersExecutionToChild(name: string, args: Record<string, unknow
   return args.action === "execute" || args.action === "resume";
 }
 
-export type AbortReason = "idle_timeout" | "pipeline_timeout" | "cancelled" | "superseded" | "error" | "circuit_breaker" | "zombie_timeout";
+export type AbortReason = "idle_timeout" | "pipeline_timeout" | "run_time_limit" | "cancelled" | "superseded" | "error" | "circuit_breaker" | "zombie_timeout";
 
 /** Runtime set of valid AbortReason values — used to validate signal reasons from AbortController.
  *  Single source of truth: keep in sync with the AbortReason union above. */
 const VALID_ABORT_REASONS: ReadonlySet<string> = new Set<AbortReason>([
-  "idle_timeout", "pipeline_timeout", "cancelled", "superseded", "error", "circuit_breaker", "zombie_timeout",
+  "idle_timeout", "pipeline_timeout", "run_time_limit", "cancelled", "superseded", "error", "circuit_breaker", "zombie_timeout",
 ]);
 
 export interface RepeatedToolFailureDetails {
@@ -838,9 +838,10 @@ export class AgentExecutor extends EventEmitter {
             log.warn(`zombie activeRun still draining runId=${runId} sessionId=${run.sessionId} model=${run.model} activity=${run.activity} ageMs=${ageMs} idleMs=${idleMs} — already aborted, awaiting drain`);
             continue;
           }
-          const reason = idleMs > ZOMBIE_IDLE_THRESHOLD_MS ? "idle" : "hard_cap";
-          log.warn(`zombie activeRun detected runId=${runId} sessionId=${run.sessionId} model=${run.model} activity=${run.activity} ageMs=${ageMs} idleMs=${idleMs} reason=${reason} — issuing abort(zombie_timeout)`);
-          this.abortRun(runId, "zombie_timeout");
+          const exceededIdleLimit = idleMs > ZOMBIE_IDLE_THRESHOLD_MS;
+          const reason: AbortReason = exceededIdleLimit ? "zombie_timeout" : "run_time_limit";
+          log.warn(`activeRun watchdog stopped runId=${runId} sessionId=${run.sessionId} model=${run.model} activity=${run.activity} ageMs=${ageMs} idleMs=${idleMs} reason=${reason}`);
+          this.abortRun(runId, reason);
         }
       }
     }, ZOMBIE_CHECK_INTERVAL_MS);
@@ -2753,6 +2754,35 @@ export class AgentExecutor extends EventEmitter {
       return result;
     } catch (err: unknown) {
       const errorMsg = (err instanceof Error ? err.message : String(err)) || "Executor error";
+
+      // An AbortSignal can make the model adapter throw before the stream loop
+      // observes the signal. Preserve the controller's canonical reason here
+      // instead of misclassifying an intentional watchdog/cancellation stop as
+      // an internal executor error.
+      if (abortController.signal.aborted) {
+        ctx.aborted = true;
+        if (!ctx.abortReason) {
+          const signalReason = abortController.signal.reason;
+          ctx.abortReason =
+            typeof signalReason === "string" && VALID_ABORT_REASONS.has(signalReason)
+              ? (signalReason as AbortReason)
+              : "cancelled";
+        }
+        const terminationReason: TerminationReason =
+          ctx.abortReason === "circuit_breaker" ? "circuit_breaker" : "aborted";
+        const finalContent = mergeIterationResults(iterationResults);
+        log.warn(
+          `run stopped runId=${runId} model=${modelString} abortReason=${ctx.abortReason} durationMs=${Date.now() - startTime}: ${errorMsg}`,
+        );
+        return await this.publishRunResult(
+          ctx,
+          options,
+          startTime,
+          finalContent,
+          terminationReason,
+        );
+      }
+
       log.error(`run ERROR runId=${runId} model=${modelString} abortReason=${ctx.abortReason ?? "none"}: ${errorMsg}`);
       if (!ctx.providerFailure) {
         ctx.publish("error", { error: errorMsg });
