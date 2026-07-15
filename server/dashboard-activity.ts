@@ -2,7 +2,7 @@ import { and, gte, lt } from "drizzle-orm";
 import { tasks, wellnessLogs } from "@shared/schema";
 import { db } from "./db";
 import type { Principal } from "./principal";
-import { queryQualifyingInteractionSeries } from "./interaction-activity";
+import { queryDistinctInteractionPeopleSeries } from "./interaction-activity";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { combineWithSensitiveVisible } from "./sensitive-scope";
 import { userDayBounds } from "./utils/user-time";
@@ -99,7 +99,7 @@ export async function queryActivityDashboard(date: string, principal: Principal)
   const selectedEnd = userDayBounds(date).end;
   const rangeEnd = new Date(selectedEnd.getTime() + 1);
   const [interactions, wellness, completedTasks, shippedPrs] = await Promise.all([
-    queryQualifyingInteractionSeries(dates[0], date),
+    queryDistinctInteractionPeopleSeries(dates[0], date),
     queryWellnessSeries(rangeStart, rangeEnd, principal),
     queryTaskSeries(rangeStart, rangeEnd, principal),
     fetchMergedPrsSince(rangeStart),
