@@ -495,6 +495,8 @@ export function BottomBar({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const prevStatusRef = useRef<SessionStatus>("idle");
   const pendingModelTierUpdateRef = useRef<Promise<void> | null>(null);
+  const turnAdmissionRef = useRef<"text" | "voice" | null>(null);
+  const [turnAdmissionPending, setTurnAdmissionPending] = useState(false);
   const { data: sessions = [] } = useQuery<Session[]>({ queryKey: ["/api/sessions"], enabled: !!focusedSessionId });
   const focusedSession = focusedSessionId ? sessions.find((session) => session.id === focusedSessionId) : undefined;
 
@@ -517,6 +519,19 @@ export function BottomBar({
   const waitForModelTierUpdate = useCallback(async (): Promise<void> => {
     const pending = pendingModelTierUpdateRef.current;
     if (pending) await pending;
+  }, []);
+
+  const acquireTurnAdmission = useCallback((source: "text" | "voice"): boolean => {
+    if (turnAdmissionRef.current) return false;
+    turnAdmissionRef.current = source;
+    setTurnAdmissionPending(true);
+    return true;
+  }, []);
+
+  const releaseTurnAdmission = useCallback((source: "text" | "voice") => {
+    if (turnAdmissionRef.current !== source) return;
+    turnAdmissionRef.current = null;
+    setTurnAdmissionPending(false);
   }, []);
 
   const chatSend = useChatSend({
@@ -607,26 +622,28 @@ export function BottomBar({
 
   const handleSend = useCallback(async () => {
     const text = inputText.trim();
-    if (!text && attachedFiles.length === 0) return;
+    if ((!text && attachedFiles.length === 0) || !acquireTurnAdmission("text")) return;
     try {
       await waitForModelTierUpdate();
-    } catch {
-      return;
-    }
-    setInputText("");
-    mention.dismiss();
-    setAttachedFiles([]);
-    setShowPreview(false);
-    setBarState("idle");
+      setInputText("");
+      mention.dismiss();
+      setAttachedFiles([]);
+      setShowPreview(false);
+      setBarState("idle");
 
-    const success = await chatSend.sendMessage(text);
-    if (!success) {
-      toast({ title: "Failed to send message", variant: "destructive" });
-    } else if (isMobile) {
-      // On mobile, auto-navigate to the session window after sending
-      setWidgetOpen(true);
+      const success = await chatSend.sendMessage(text);
+      if (!success) {
+        toast({ title: "Failed to send message", variant: "destructive" });
+      } else if (isMobile) {
+        // On mobile, auto-navigate to the session window after sending
+        setWidgetOpen(true);
+      }
+    } catch {
+      // The tier mutation owns user-visible error reporting and rollback.
+    } finally {
+      releaseTurnAdmission("text");
     }
-  }, [inputText, attachedFiles, chatSend, toast, isMobile, setWidgetOpen, mention, waitForModelTierUpdate]);
+  }, [inputText, attachedFiles, chatSend, toast, isMobile, setWidgetOpen, mention, waitForModelTierUpdate, acquireTurnAdmission, releaseTurnAdmission]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -655,30 +672,32 @@ export function BottomBar({
 
 
   const handleVoice = useCallback(async () => {
-    if (!voiceSession || voiceSession.status !== "idle") return;
+    if (!voiceSession || voiceSession.status !== "idle" || !acquireTurnAdmission("voice")) return;
     try {
       await waitForModelTierUpdate();
-    } catch {
-      return;
-    }
-    let convId = focusedSessionId;
-    if (!convId) {
-      try {
-        const res = await apiRequest("POST", "/api/sessions", {
-          title: "New Session",
-          ...(draftModelTier !== "auto" ? { modelTier: draftModelTier } : {}),
-        });
-        const newConv: Session = await res.json();
-        convId = newConv.id;
-        setFocusedSessionId(convId);
-      } catch (err) {
-        log.error("VOICE:SESSION_CREATE_FAILED", err);
-        return;
+      let convId = focusedSessionId;
+      if (!convId) {
+        try {
+          const res = await apiRequest("POST", "/api/sessions", {
+            title: "New Session",
+            ...(draftModelTier !== "auto" ? { modelTier: draftModelTier } : {}),
+          });
+          const newConv: Session = await res.json();
+          convId = newConv.id;
+          setFocusedSessionId(convId);
+        } catch (err) {
+          log.error("VOICE:SESSION_CREATE_FAILED", err);
+          return;
+        }
       }
+      voiceSession.setActiveConversationId(convId);
+      await voiceSession.startSession();
+    } catch {
+      // The tier mutation and voice session own user-visible error reporting.
+    } finally {
+      releaseTurnAdmission("voice");
     }
-    voiceSession.setActiveConversationId(convId);
-    voiceSession.startSession();
-  }, [voiceSession, focusedSessionId, setFocusedSessionId, draftModelTier, waitForModelTierUpdate]);
+  }, [voiceSession, focusedSessionId, setFocusedSessionId, draftModelTier, waitForModelTierUpdate, acquireTurnAdmission, releaseTurnAdmission]);
 
   const handleVoiceEnd = useCallback(async () => {
     if (!voiceSession) return;
@@ -817,7 +836,7 @@ export function BottomBar({
             {/* More menu: Attach + Visibility + Session actions */}
             <BottomBarMenu
               onAttach={() => fileInputRef.current?.click()}
-              disabled={!isAgentRunning || voiceActive}
+              disabled={!isAgentRunning || voiceActive || turnAdmissionPending}
               focusedSessionId={focusedSessionId ?? null}
               onClearFocus={() => {
                 setFocusedSessionId(null);
@@ -852,7 +871,7 @@ export function BottomBar({
                 onKeyDown={voiceActive ? undefined : handleKeyDown}
                 onPaste={voiceActive ? undefined : handlePaste}
                 placeholder={voiceInputPlaceholder ?? (isAgentRunning ? "Message Agent…" : "Agent offline")}
-                disabled={!isAgentRunning || voiceActive}
+                disabled={!isAgentRunning || voiceActive || turnAdmissionPending}
                 className={cn(
                   "bg-muted/50 border border-border rounded-[18px] px-3 py-[7px]",
                   voiceActive && "pr-11",
@@ -901,7 +920,7 @@ export function BottomBar({
                 <button
                   type="button"
                   onClick={handleSend}
-                  disabled={!isAgentRunning}
+                  disabled={!isAgentRunning || turnAdmissionPending}
                   className="shrink-0 flex items-center justify-center h-9 w-9 rounded-full border-[1.5px] border-warning text-warning hover:bg-warning/10 transition-colors"
                   aria-label="Interrupt and send"
                 >
@@ -911,7 +930,7 @@ export function BottomBar({
                 <button
                   type="button"
                   onClick={handleSend}
-                  disabled={!isAgentRunning}
+                  disabled={!isAgentRunning || turnAdmissionPending}
                   className={cn(
                     "shrink-0 flex items-center justify-center h-9 w-9 rounded-full border-[1.5px] transition-colors",
                     isAgentRunning

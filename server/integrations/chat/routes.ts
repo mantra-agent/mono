@@ -2502,14 +2502,49 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         const {
           content,
           isGreeting,
+          clientTurnId: rawClientTurnId,
           pageContext: incomingPageContext,
         } = req.body;
+        const clientTurnId = typeof rawClientTurnId === "string" && rawClientTurnId.length <= 120
+          ? rawClientTurnId
+          : undefined;
         chatLog.log(
           `message start sessionId=${sessionId} contentLen=${content?.length || 0} isGreeting=${!!isGreeting}`,
         );
 
         if (!content || typeof content !== "string") {
           return res.status(400).json({ error: "Message content is required" });
+        }
+
+        const session = await chatStorage.getSession(sessionId);
+        if (!session) {
+          chatLog.log(`session not found sessionId=${sessionId}`);
+          return res.status(404).json({ error: "Session not found" });
+        }
+
+        const msgPageContext = incomingPageContext
+          ? (normalizePageContext(incomingPageContext) ?? undefined)
+          : undefined;
+        if (!isGreeting && clientTurnId) {
+          const acceptance = await chatStorage.createUserMessageOnce(
+            sessionId,
+            content,
+            clientTurnId,
+            msgPageContext,
+          );
+          if (acceptance.outcome === "session_not_found") {
+            return res.status(404).json({ error: "Session not found" });
+          }
+          if (acceptance.outcome === "duplicate") {
+            chatLog.warn(`duplicate message replay ignored sessionId=${sessionId} clientTurnId=${clientTurnId}`);
+            return res.status(session.status === "streaming" ? 202 : 200).json({
+              duplicate: true,
+              sessionKey: session.sessionKey || `dashboard:${sessionId}`,
+              sessionId,
+              status: session.status,
+              queued: session.status === "streaming",
+            });
+          }
         }
 
         const wasInFlight =
@@ -2519,13 +2554,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         const abortCount = wasInFlight
           ? agentExecutor.abortByChatSessionId(sessionId, "superseded")
           : 0;
-
-        const session = await chatStorage.getSession(sessionId);
-        if (!session) {
-          chatRunLifecycle.finish(acceptedLease);
-          chatLog.log(`session not found sessionId=${sessionId}`);
-          return res.status(404).json({ error: "Session not found" });
-        }
 
         // Detect voice→text transition for observability
         if (!isGreeting) {
@@ -2551,23 +2579,22 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         // response generation. Persist first; generation ownership gates only
         // preparation and response work.
         if (!isGreeting) {
-          const msgPageContext = incomingPageContext
-            ? (normalizePageContext(incomingPageContext) ?? undefined)
-            : undefined;
-          await chatStorage.createMessage(
-            sessionId,
-            "user",
-            content,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            msgPageContext,
-          );
+          if (!clientTurnId) {
+            await chatStorage.createMessage(
+              sessionId,
+              "user",
+              content,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              msgPageContext,
+            );
+          }
           const principal = getPrincipal(req);
           if (principal?.actorType === "user" && principal.userId && principal.accountId) {
             await completeFtueSayHello(principal as typeof principal & { userId: string; accountId: string });
