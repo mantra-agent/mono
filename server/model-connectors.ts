@@ -128,8 +128,7 @@ function validateOpenAITierConfig(provider: ModelConnectorProvider, surface: Ope
     normalized.verbosity = config.verbosity;
   }
   if (config.serviceTier !== undefined) {
-    if (surface === "subscription" && !["auto", "fast"].includes(config.serviceTier)) throw new Error("OpenAI Subscription service tier must be auto or fast");
-    if (surface === "api" && !["auto", "default", "flex", "priority"].includes(config.serviceTier)) throw new Error("OpenAI API service tier cannot use subscription fast mode");
+    if (surface === "subscription" && config.serviceTier !== "auto") throw new Error("OpenAI Subscription service tier must be auto");
     normalized.serviceTier = config.serviceTier;
   }
   if (config.maxOutputTokens !== undefined) {

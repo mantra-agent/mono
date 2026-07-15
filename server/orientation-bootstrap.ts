@@ -22,6 +22,7 @@ import { createLogger } from "./log";
 import { chatCompletion } from "./model-client";
 import { ACTIVITY_CHAT } from "./job-profiles";
 import { personaStorage, type PersonaEntry } from "./file-storage/persona-storage";
+import { safeParseJSON } from "./utils/json-parse";
 
 const log = createLogger("orientation-bootstrap");
 
@@ -40,8 +41,10 @@ export interface OrientationBootstrapResult {
   topics?: string[];
   personaName?: string;
   fallback?: boolean;
+  fallbackReason?: "classification-unparseable" | "orient-apply-failed" | "bootstrap-failed";
   elapsedMs: number;
   llm?: {
+    personaName: string;
     model: string;
     provider: string;
     tier?: string;
@@ -64,7 +67,7 @@ interface BootstrapClassification {
   persona: string;
 }
 
-function buildBootstrapPrompt(personas: PersonaEntry[]): string {
+function buildBootstrapPrompt(router: PersonaEntry, personas: PersonaEntry[]): string {
   const table = personas
     .filter((p) => !p.isSystem)
     .map((p) => {
@@ -75,10 +78,9 @@ function buildBootstrapPrompt(personas: PersonaEntry[]): string {
     })
     .join("\n");
   return [
-    "You are the session router for Agent, Ray's personal AI. A new conversation is starting.",
-    "Your only job is to classify the opening message and return JSON. Do not answer the message.",
+    router.promptOverlay || "You are the session router. Classify the opening and return only JSON.",
     "",
-    "Available personas:",
+    "Available user-facing personas:",
     table,
     "",
     "Return a JSON object with exactly these fields:",
@@ -89,14 +91,9 @@ function buildBootstrapPrompt(personas: PersonaEntry[]): string {
 }
 
 function parseClassification(raw: string, personas: PersonaEntry[]): BootstrapClassification | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== "object" || parsed === null) return null;
-  const obj = parsed as Record<string, unknown>;
+  const parsed = safeParseJSON<Record<string, unknown>>(raw, "orientation-bootstrap");
+  if (!parsed.ok || typeof parsed.data !== "object" || parsed.data === null) return null;
+  const obj = parsed.data;
   const title = typeof obj.title === "string" ? obj.title.trim().split(/\s+/).slice(0, 3).join(" ") : "";
   if (!title) return null;
   const topics = Array.isArray(obj.topics)
@@ -144,25 +141,30 @@ export async function ensureSessionOriented(options: {
       return { applied: false, skipped: "already-oriented", elapsedMs: Date.now() - startedAt };
     }
 
-    const personas = await personaStorage.list();
+    const [personas, routerPersona] = await Promise.all([
+      personaStorage.list(),
+      personaStorage.getSystemSeedByName("Router"),
+    ]);
+    if (!routerPersona?.semanticTier) throw new Error("Canonical Router persona is missing its semantic tier");
     await onLlmStart?.();
 
     const completion = await chatCompletion({
       activity: ACTIVITY_CHAT,
-      semanticTierOverride: "fast",
-      overrideReason: "orientation-bootstrap: fixed-template classification runs on the fast tier by design",
+      semanticTierOverride: routerPersona.semanticTier,
+      overrideReason: `orientation-bootstrap: Router persona tier=${routerPersona.semanticTier}`,
       jsonMode: true,
       maxTokens: BOOTSTRAP_MAX_TOKENS,
       temperature: 0,
       messages: [
-        { role: "system", content: buildBootstrapPrompt(personas) },
+        { role: "system", content: buildBootstrapPrompt(routerPersona, personas) },
         { role: "user", content: `Opening message:\n${userMessage.slice(0, 4000)}` },
       ],
-      metadata: { source: "orientation-bootstrap", sessionId, sessionKey },
+      metadata: { source: "orientation-bootstrap", sessionId, sessionKey, routerPersonaId: routerPersona.id, routerPersonaName: routerPersona.name },
     });
 
     const routing = (completion.metadata?.routing || {}) as Record<string, unknown>;
     const llm = {
+      personaName: routerPersona.name,
       model: typeof routing.resolvedModel === "string" ? routing.resolvedModel : completion.model,
       provider: typeof routing.connectorProvider === "string" ? routing.connectorProvider : completion.provider,
       tier: typeof routing.requestedTier === "string" ? routing.requestedTier : undefined,
@@ -173,7 +175,10 @@ export async function ensureSessionOriented(options: {
     const classification = parseClassification(completion.content || "", personas);
     if (!classification) {
       log.warn(`bootstrap classification unparseable sessionId=${sessionId} raw=${(completion.content || "").slice(0, 200)}`);
-      return await failClosed(sessionId, sessionKey, startedAt);
+      return await failClosed(sessionId, sessionKey, startedAt, {
+        llm,
+        fallbackReason: "classification-unparseable",
+      });
     }
 
     const applied = await applyOrient(sessionId, sessionKey, {
@@ -187,7 +192,10 @@ export async function ensureSessionOriented(options: {
     });
     if (applied.error) {
       log.warn(`bootstrap orient apply failed sessionId=${sessionId}: ${applied.result}`);
-      return await failClosed(sessionId, sessionKey, startedAt);
+      return await failClosed(sessionId, sessionKey, startedAt, {
+        llm,
+        fallbackReason: "orient-apply-failed",
+      });
     }
 
     log.info(`bootstrap oriented sessionId=${sessionId} title="${classification.title}" persona=${classification.persona} topics=${classification.topics.length} elapsedMs=${Date.now() - startedAt}`);
@@ -202,7 +210,9 @@ export async function ensureSessionOriented(options: {
     };
   } catch (err) {
     log.warn(`bootstrap failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
-    return await failClosed(sessionId, sessionKey, startedAt);
+    return await failClosed(sessionId, sessionKey, startedAt, {
+      fallbackReason: "bootstrap-failed",
+    });
   }
 }
 
@@ -211,6 +221,7 @@ async function failClosed(
   sessionId: string,
   sessionKey: string | undefined,
   startedAt: number,
+  diagnostic: Pick<OrientationBootstrapResult, "llm" | "fallbackReason">,
 ): Promise<OrientationBootstrapResult> {
   try {
     const personas = await personaStorage.list();
@@ -218,10 +229,25 @@ async function failClosed(
     if (fallback) {
       const applied = await applyOrient(sessionId, sessionKey, { persona: fallback.name });
       if (applied.error) log.warn(`bootstrap fail-closed orient failed sessionId=${sessionId}: ${applied.result}`);
-      return { applied: false, skipped: null, personaName: fallback.name, fallback: true, elapsedMs: Date.now() - startedAt };
+      return {
+        applied: false,
+        skipped: null,
+        personaName: fallback.name,
+        fallback: true,
+        fallbackReason: diagnostic.fallbackReason,
+        elapsedMs: Date.now() - startedAt,
+        llm: diagnostic.llm,
+      };
     }
   } catch (fallbackErr) {
     log.error(`bootstrap fail-closed fallback errored sessionId=${sessionId}: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`);
   }
-  return { applied: false, skipped: null, fallback: true, elapsedMs: Date.now() - startedAt };
+  return {
+    applied: false,
+    skipped: null,
+    fallback: true,
+    fallbackReason: diagnostic.fallbackReason,
+    elapsedMs: Date.now() - startedAt,
+    llm: diagnostic.llm,
+  };
 }

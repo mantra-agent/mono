@@ -26,16 +26,16 @@ export const openAIReasoningSummarySchema = z.enum(["auto", "concise", "detailed
 export type OpenAIReasoningSummary = z.infer<typeof openAIReasoningSummarySchema>;
 export const openAIVerbositySchema = z.enum(["low", "medium", "high"]);
 export type OpenAIVerbosity = z.infer<typeof openAIVerbositySchema>;
-export const openAIServiceTierSchema = z.enum(["auto", "default", "flex", "priority", "fast"]);
+export const openAIServiceTierSchema = z.enum(["auto", "default", "flex", "priority"]);
 export type OpenAIServiceTier = z.infer<typeof openAIServiceTierSchema>;
 
-function stripLegacyFastMode(value: unknown): unknown {
+function normalizeLegacyOpenAITierConfig(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const { fastMode: _legacyFastMode, ...rest } = value as Record<string, unknown>;
-  return rest;
+  return rest.serviceTier === "fast" ? { ...rest, serviceTier: "auto" } : rest;
 }
 
-export const openAITierModelConfigSchema = z.preprocess(stripLegacyFastMode, z.object({
+export const openAITierModelConfigSchema = z.preprocess(normalizeLegacyOpenAITierConfig, z.object({
   model: z.string().trim().min(1),
   reasoningEffort: openAIReasoningEffortSchema.optional(),
   reasoningMode: openAIReasoningModeSchema.optional(),

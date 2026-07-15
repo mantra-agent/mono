@@ -5482,7 +5482,7 @@ type OpenAIReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "x
 type OpenAIReasoningMode = "standard" | "pro";
 type OpenAIReasoningSummary = "auto" | "concise" | "detailed" | "none";
 type OpenAIVerbosity = "low" | "medium" | "high";
-type OpenAIServiceTier = "auto" | "default" | "flex" | "priority" | "fast";
+type OpenAIServiceTier = "auto" | "default" | "flex" | "priority";
 type TierModelConfig = string | {
   model: string;
   reasoningEffort?: OpenAIReasoningEffort;
@@ -5519,8 +5519,7 @@ const TIER_COPY: Record<SemanticTier, string> = {
 const REASONING_EFFORTS: readonly OpenAIReasoningEffort[] = ["none", "minimal", "low", "medium", "high", "xhigh"];
 const REASONING_SUMMARIES: readonly OpenAIReasoningSummary[] = ["auto", "concise", "detailed", "none"];
 const VERBOSITIES: readonly OpenAIVerbosity[] = ["low", "medium", "high"];
-const SERVICE_TIERS: readonly OpenAIServiceTier[] = ["auto", "default", "flex", "priority", "fast"];
-const SERVICE_TIERS_SUBSCRIPTION: readonly OpenAIServiceTier[] = ["auto", "fast"];
+const SERVICE_TIERS: readonly OpenAIServiceTier[] = ["auto", "default", "flex", "priority"];
 
 function tierConfigModel(value: TierModelConfig): string {
   return typeof value === "string" ? value : value.model;
@@ -5550,14 +5549,13 @@ function isOpenAIProvider(provider: ModelConnectorDetail["provider"]): provider 
 function supportedOpenAISettings(model?: ModelProviderDetail["models"][number], provider?: ModelConnectorDetail["provider"]) {
   const supportsReasoning = Boolean(model?.reasoning || model?.supportsReasoningEffort);
   const isGpt56 = Boolean(model?.id && /gpt-5\.6/i.test(model.id));
-  const isSubscription = provider === "openai-subscription";
   return {
     reasoningEffort: supportsReasoning,
     reasoningMode: supportsReasoning && isGpt56 && provider === "openai",
     reasoningSummary: supportsReasoning,
     verbosity: Boolean(model?.id && /gpt-5|gpt-5\.|gpt-5-|codex/i.test(model.id)),
-    serviceTier: provider === "openai" || isSubscription,
-    serviceTierOptions: isSubscription ? SERVICE_TIERS_SUBSCRIPTION : SERVICE_TIERS,
+    serviceTier: provider === "openai",
+    serviceTierOptions: SERVICE_TIERS,
     maxOutputTokens: true,
   };
 }
@@ -5608,12 +5606,16 @@ function OpenAIConnectorTree({ connector, models, title }: { connector: ModelCon
     const nextModel = models.find((item) => item.id === nextConfig.model || `${connector.provider}/${item.id}` === nextConfig.model);
     mutation.mutate({ ...mappings, [tier]: sanitizeOpenAITierConfig(connector.provider, nextConfig, nextModel) });
   };
-  const surfaceLabel = connector.provider === "openai-subscription" ? "Subscription" : "API";
+  const isSubscription = connector.provider === "openai-subscription";
+  const surfaceLabel = isSubscription ? "Subscription" : "API";
+  const settingsDescription = isSubscription
+    ? "Subscription connector tiers. Effort controls reasoning depth, summaries expose reasoning output, verbosity controls response detail, and max output tokens is capped by the selected model."
+    : "API connector tiers. Settings follow OpenAI Responses API docs: effort controls reasoning depth, summaries expose reasoning output, verbosity controls response detail, service tier controls latency class, and max output tokens is capped by the selected model.";
 
   return <Card className="overflow-hidden min-w-0">
     <CardHeader className="pb-2">
       <CardTitle className="text-base font-semibold">{title}</CardTitle>
-      <p className="text-sm text-muted-foreground">{surfaceLabel} connector tiers. Settings follow OpenAI Responses API docs: effort controls reasoning depth, summaries expose reasoning output, verbosity controls response detail, service tier controls latency class, and max output tokens is capped by the selected model.</p>
+      <p className="text-sm text-muted-foreground">{settingsDescription}</p>
     </CardHeader>
     <CardContent className="p-0">
       <IntegrationTreeSection label={`${surfaceLabel} connector`} initialOpen testIdPrefix={`openai-${connector.provider}`}>

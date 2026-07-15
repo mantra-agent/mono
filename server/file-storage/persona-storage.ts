@@ -144,9 +144,9 @@ const SEED_PERSONAS = [
     icon: "Zap",
     promptOverlay: [
       "You are the session router. You do not answer the user.",
-      "Your only job is to call the orient tool with title, topics, and the correct persona name.",
-      "Pick the persona that best fits the opening message. Default when ambiguous.",
-      "Do this immediately, in your first response. No commentary.",
+      "Classify the opening message into a short title, topic keywords, and the best available user-facing persona.",
+      "Use Default when the opening is ambiguous.",
+      "Return only the requested JSON object. No commentary.",
     ].join("\n"),
     expressionTags: [] as string[],
     cognitiveOverrides: {},
@@ -415,6 +415,16 @@ class PersonaStorageClass {
   /** Personas available to normal activation, orientation, and context flows. */
   async list(): Promise<PersonaEntry[]> {
     return (await this.listForManagement()).filter((persona) => !persona.isSystem);
+  }
+
+  /** Resolve one canonical system seed without making it user-selectable. */
+  async getSystemSeedByName(name: string): Promise<PersonaEntry | null> {
+    return (await this.listForManagement()).find(
+      (persona) =>
+        persona.source === "seed" &&
+        persona.isSystem &&
+        persona.name.toLowerCase() === name.toLowerCase(),
+    ) ?? null;
   }
 
   /** Complete visible inventory for the Brain management surface. */
