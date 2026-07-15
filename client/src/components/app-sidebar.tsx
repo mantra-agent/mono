@@ -70,6 +70,7 @@ interface NavItem {
   url: string;
   icon: React.ComponentType<{ className?: string }>;
   permission?: string;
+  titleTone?: "default" | "muted";
 }
 
 interface NavSection {
@@ -90,7 +91,7 @@ const navSections: NavSection[] = [
       { title: "Library", url: "/library", icon: BookOpen },
       { title: "Schedule", url: "/schedule", icon: Calendar },
       { title: "Projects", url: "/projects", icon: Briefcase },
-      { title: "Wellness", url: "/wellness", icon: Activity },
+      { title: "Wellness", url: "/wellness", icon: Activity, titleTone: "muted" },
     ],
   },
   {
@@ -106,7 +107,7 @@ const navSections: NavSection[] = [
     label: "Planning",
     defaultOpen: false,
     items: [
-      { title: "Goals", url: "/goals", icon: Target },
+      { title: "Goals", url: "/goals", icon: Target, titleTone: "muted" },
       { title: "Decisions", url: "/decisions", icon: Scale },
       { title: "Strategy", url: "/strategy", icon: Swords },
     ],
@@ -446,7 +447,7 @@ export function NavPage() {
                             <span
                               className={cn(
                                 "flex-1 text-left truncate",
-                                level ? sc.text : "",
+                                item.titleTone === "muted" ? "text-muted-foreground" : level ? sc.text : "",
                                 level === "active" && "animate-pulse"
                               )}
                             >
