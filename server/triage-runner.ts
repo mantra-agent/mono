@@ -5,7 +5,7 @@ import { ACTIVITY_WORK } from "./job-profiles";
 import { triageJob } from "./triage-job-state";
 import { archiveEmail } from "./gmail";
 import { pool, getDbSaturationInfo } from "./db";
-import { DB_POOL_MAX } from "./timeout";
+import { GENERAL_DB_POOL_MAX } from "./timeout";
 import type { EmailMessage } from "@shared/schema";
 
 const log = createLogger("TriageRunner");
@@ -30,7 +30,7 @@ const BODY_TRUNCATE_BYTES = envInt("TRIAGE_BODY_TRUNCATE_BYTES", 2048, 256, 32_7
 // Minimum free DB pool slots required before kicking off the next worker
 // (or starting a new sub-batch). Keeps headroom for chat / context / health
 // queries while triage is running.
-const POOL_HEADROOM = envInt("TRIAGE_POOL_HEADROOM", 6, 0, DB_POOL_MAX - 1);
+const POOL_HEADROOM = envInt("TRIAGE_POOL_HEADROOM", 6, 0, GENERAL_DB_POOL_MAX - 1);
 const VALID_TIERS = new Set(["🔴", "🟡", "🟢", "📋", "🗑️"]);
 const TIER_NORMALIZE: Record<string, string> = {
   respond_now: "🔴",
@@ -189,7 +189,7 @@ function yieldToEventLoop(): Promise<void> {
 async function waitForPoolHeadroom(maxWaitMs = 5_000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
-    const free = (DB_POOL_MAX - pool.totalCount) + pool.idleCount;
+    const free = (GENERAL_DB_POOL_MAX - pool.totalCount) + pool.idleCount;
     const waiting = pool.waitingCount;
     if (free >= POOL_HEADROOM && waiting === 0) return;
     await new Promise((r) => setTimeout(r, 100));

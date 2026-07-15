@@ -9,7 +9,17 @@ import { AsyncLocalStorage } from "async_hooks";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { DB_POOL_MAX, DB_POOL_MIN, DB_IDLE_TIMEOUT_MS, DB_STATEMENT_TIMEOUT_MS } from "./timeout";
+import {
+  DB_POOL_MAX,
+  DB_IDLE_TIMEOUT_MS,
+  DB_STATEMENT_TIMEOUT_MS,
+  GENERAL_DB_POOL_MAX,
+  GENERAL_DB_POOL_MIN,
+  VOICE_DB_ACQUIRE_TIMEOUT_MS,
+  VOICE_DB_POOL_MAX,
+  VOICE_DB_POOL_MIN,
+  VOICE_DB_STATEMENT_TIMEOUT_MS,
+} from "./timeout";
 import { createLogger } from "./log";
 import { safeStringify, safeTruncate } from "./utils/safe-stringify";
 
@@ -82,8 +92,8 @@ export const APP_NAME = `${APP_NAME_PREFIX}-${BOOT_ID}`;
 
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  max: DB_POOL_MAX,
-  min: DB_POOL_MIN,
+  max: GENERAL_DB_POOL_MAX,
+  min: GENERAL_DB_POOL_MIN,
   idleTimeoutMillis: DB_IDLE_TIMEOUT_MS,
   statement_timeout: DB_STATEMENT_TIMEOUT_MS,
   connectionTimeoutMillis: DB_CONNECTION_TIMEOUT_MS,
@@ -92,8 +102,23 @@ export const pool = new Pool({
   application_name: APP_NAME,
 } as any);
 
+export const voicePool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: VOICE_DB_POOL_MAX,
+  min: VOICE_DB_POOL_MIN,
+  idleTimeoutMillis: DB_IDLE_TIMEOUT_MS,
+  statement_timeout: VOICE_DB_STATEMENT_TIMEOUT_MS,
+  connectionTimeoutMillis: VOICE_DB_ACQUIRE_TIMEOUT_MS,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10_000,
+  application_name: `${APP_NAME}-voice`,
+} as any);
+
 pool.on("error", (err) => {
-  log.error("Unexpected connection error:", err.message, err.stack);
+  log.error("Unexpected general connection error:", err.message, err.stack);
+});
+voicePool.on("error", (err) => {
+  log.error("Unexpected voice connection error:", err.message, err.stack);
 });
 
 let _healthInterval: ReturnType<typeof setInterval> | null = null;
@@ -112,15 +137,19 @@ export function getDbSaturationInfo(): {
   total: number;
   idle: number;
   waiting: number;
+  general: { total: number; idle: number; waiting: number; max: number };
+  voice: { total: number; idle: number; waiting: number; max: number };
 } {
   return {
     saturatedSinceMs: _saturatedSinceMs,
     saturatedForMs: _saturatedSinceMs === null ? 0 : Date.now() - _saturatedSinceMs,
     lastSuccessfulProbeAt: _lastSuccessfulProbeAt,
     lastProbeDurationMs: _lastProbeDurationMs,
-    total: pool.totalCount,
-    idle: pool.idleCount,
-    waiting: pool.waitingCount,
+    total: pool.totalCount + voicePool.totalCount,
+    idle: pool.idleCount + voicePool.idleCount,
+    waiting: pool.waitingCount + voicePool.waitingCount,
+    general: { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount, max: GENERAL_DB_POOL_MAX },
+    voice: { total: voicePool.totalCount, idle: voicePool.idleCount, waiting: voicePool.waitingCount, max: VOICE_DB_POOL_MAX },
   };
 }
 
@@ -149,7 +178,7 @@ export async function probeDb(timeoutMs = 2000): Promise<{ ok: boolean; duration
 export function startPoolSaturationMonitor(intervalMs = 1000): void {
   if (_saturationInterval) return;
   _saturationInterval = setInterval(() => {
-    const saturated = pool.idleCount === 0 && pool.totalCount >= DB_POOL_MAX && pool.waitingCount > 0;
+    const saturated = (pool.idleCount === 0 && pool.totalCount >= GENERAL_DB_POOL_MAX && pool.waitingCount > 0) || (voicePool.idleCount === 0 && voicePool.totalCount >= VOICE_DB_POOL_MAX && voicePool.waitingCount > 0);
     if (saturated) {
       if (_saturatedSinceMs === null) _saturatedSinceMs = Date.now();
     } else {
@@ -171,9 +200,9 @@ export async function terminateOrphanBackends(): Promise<number> {
     const res = await pool.query(
       `SELECT pid, application_name FROM pg_stat_activity
        WHERE application_name LIKE $1
-         AND application_name <> $2
+         AND application_name NOT IN ($2, $3)
          AND pid <> pg_backend_pid()`,
-      [`${APP_NAME_PREFIX}-%`, APP_NAME],
+      [`${APP_NAME_PREFIX}-%`, APP_NAME, `${APP_NAME}-voice`],
     );
     const rows = res.rows as Array<{ pid: number; application_name: string }>;
     if (rows.length === 0) {
@@ -220,11 +249,11 @@ export function startPoolHeartbeat(intervalMs = 30_000): void {
     const idle = pool.idleCount;
     const waiting = pool.waitingCount;
     const inFlight = inFlightQueries;
-    const deficit = DB_POOL_MIN - total;
+    const deficit = GENERAL_DB_POOL_MIN - total;
     if (deficit <= 0) return;
 
     log.log(
-      `heartbeat: pool below min total=${total} idle=${idle} waiting=${waiting} in-flight=${inFlight} min=${DB_POOL_MIN} deficit=${deficit}`,
+      `heartbeat: pool below min total=${total} idle=${idle} waiting=${waiting} in-flight=${inFlight} min=${GENERAL_DB_POOL_MIN} deficit=${deficit}`,
     );
 
     // At most one seed connection in flight at a time. We use connect+release
@@ -441,11 +470,11 @@ export function startPoolHealthCheck(intervalMs = 60_000): void {
     const slowestStr = slowest ? `${slowest[0]}(${slowest[1]})` : "none";
 
     log.log(
-      `op-summary boot=${BOOT_ID} pool=total:${pool.totalCount}/idle:${pool.idleCount}/waiting:${pool.waitingCount} saturated=${satFor} top-subsystem=${slowestStr} eventLoop=cur:${Math.round(elLag)}ms/max60s:${Math.round(elMaxRecent)}ms lastProbe=${sinceProbe} probeMs=${_lastProbeDurationMs ?? "-"}${subsystemInfo}`
+      `op-summary boot=${BOOT_ID} general=total:${pool.totalCount}/idle:${pool.idleCount}/waiting:${pool.waitingCount} voice=total:${voicePool.totalCount}/idle:${voicePool.idleCount}/waiting:${voicePool.waitingCount} saturated=${satFor} top-subsystem=${slowestStr} eventLoop=cur:${Math.round(elLag)}ms/max60s:${Math.round(elMaxRecent)}ms lastProbe=${sinceProbe} probeMs=${_lastProbeDurationMs ?? "-"}${subsystemInfo}`
     );
-    if (pool.waitingCount > 5) {
+    if (pool.waitingCount > 5 || voicePool.waitingCount > 0) {
       log.warn(
-        `HIGH WAIT COUNT: ${pool.waitingCount} clients waiting for connections`
+        `HIGH WAIT COUNT: general=${pool.waitingCount} voice=${voicePool.waitingCount}`
       );
     }
   }, intervalMs);
@@ -495,9 +524,15 @@ export function getLongRunningQueries(thresholdMs = LONG_RUNNING_THRESHOLD_MS): 
   return { thresholdMs, rows: rows.slice(0, LONG_RUNNING_MAX_ROWS) };
 }
 
+export type DatabaseLane = "general" | "voice";
+const databaseLaneALS = new AsyncLocalStorage<DatabaseLane>();
 const querySubsystemALS = new AsyncLocalStorage<QuerySubsystem>();
 const queryLabelALS = new AsyncLocalStorage<string>();
 const admissionTierALS = new AsyncLocalStorage<string>();
+
+export function withDatabaseLane<T>(lane: DatabaseLane, fn: () => T): T {
+  return databaseLaneALS.run(lane, fn);
+}
 
 export function withAdmissionTier<T>(tier: string, fn: () => Promise<T>): Promise<T> {
   return admissionTierALS.run(tier, fn);
@@ -510,93 +545,94 @@ export function withQueryAttributionAsync<T>(subsystem: QuerySubsystem, fn: () =
   return querySubsystemALS.run(subsystem, fn);
 }
 
-const origQuery = pool.query.bind(pool);
-(pool as any).query = function (...args: any[]) {
-  const subsystem = querySubsystemALS.getStore() || "general";
-  const label = queryLabelALS.getStore() || null;
+function instrumentPool(targetPool: Pool, lane: DatabaseLane): void {
+  const origQuery = targetPool.query.bind(targetPool);
+  (targetPool as any).query = function (...args: any[]) {
+    const subsystem = lane === "voice" ? "voice" : (querySubsystemALS.getStore() || "general");
+    const label = queryLabelALS.getStore() || null;
 
-  if (subsystem === "context-prewarm") {
-    const tag = label ? `/* context:prewarm:${label} */` : `/* context:prewarm */`;
-    if (typeof args[0] === "string") {
-      args[0] = `${tag} ${args[0]}`;
-    } else if (args[0] && typeof args[0].text === "string") {
-      args[0] = { ...args[0], text: `${tag} ${args[0].text}` };
+    if (subsystem === "context-prewarm" || lane === "voice") {
+      const tag = lane === "voice"
+        ? (label ? `/* lane:voice:${label} */` : `/* lane:voice */`)
+        : (label ? `/* context:prewarm:${label} */` : `/* context:prewarm */`);
+      if (typeof args[0] === "string") args[0] = `${tag} ${args[0]}`;
+      else if (args[0] && typeof args[0].text === "string") args[0] = { ...args[0], text: `${tag} ${args[0].text}` };
     }
-  }
 
-  inFlightQueries++;
-  inFlightBySubsystem[subsystem] = (inFlightBySubsystem[subsystem] || 0) + 1;
-  const entryId = ++_inFlightSeq;
-  _inFlightEntries.set(entryId, { id: entryId, subsystem, label, startedAt: Date.now() });
-
-  if (inFlightQueries > HIGH_IN_FLIGHT_THRESHOLD) {
-    const now = Date.now();
-    const isNewPeak = inFlightQueries > lastHighInFlightWarningPeak;
-    const shouldWarn = isNewPeak || now - lastHighInFlightWarningAt >= HIGH_IN_FLIGHT_LOG_INTERVAL_MS;
-    if (shouldWarn) {
-      lastHighInFlightWarningAt = now;
-      lastHighInFlightWarningPeak = Math.max(lastHighInFlightWarningPeak, inFlightQueries);
-      const breakdown = Object.entries(inFlightBySubsystem)
-        .filter(([, v]) => v > 0)
-        .map(([k, v]) => `${k}=${v}`)
-        .join(" ");
-      log.warn(`HIGH IN-FLIGHT: ${inFlightQueries} queries concurrent [${breakdown}] pool=${pool.totalCount}/${pool.idleCount}/${pool.waitingCount}`);
-    }
-  } else if (lastHighInFlightWarningPeak > 0) {
-    lastHighInFlightWarningPeak = 0;
-  }
-  const start = Date.now();
-  const queryText = typeof args[0] === "string"
-    ? args[0]
-    : args[0]?.text || "(unknown)";
-
-  let result: any;
-  try {
-    result = (origQuery as any)(...args);
-  } catch (err) {
-    inFlightQueries--;
-    inFlightBySubsystem[subsystem] = Math.max(0, (inFlightBySubsystem[subsystem] || 0) - 1);
-    _inFlightEntries.delete(entryId);
-    throw err;
-  }
-
-  if (result && typeof result.then === "function") {
-    result.then(
-      () => {
-        inFlightQueries--;
-        inFlightBySubsystem[subsystem] = Math.max(0, (inFlightBySubsystem[subsystem] || 0) - 1);
-        _inFlightEntries.delete(entryId);
-        const elapsed = Date.now() - start;
-        if (elapsed > SLOW_QUERY_THRESHOLD_MS) {
-          recordSlowQuery(elapsed);
-          // Bound query text via the safe-stringify helper so a multi-MB
-          // generated SQL string cannot become the wedge itself.
-          const truncated = safeTruncate(queryText, 2 * 1024, `db.slowQuery.${subsystem}`);
-          log.warn(`SLOW query (${elapsed}ms) [${subsystem}] pool=${pool.totalCount}/${pool.idleCount}/${pool.waitingCount}: ${truncated}`);
-        }
-      },
-      () => {
-        inFlightQueries--;
-        inFlightBySubsystem[subsystem] = Math.max(0, (inFlightBySubsystem[subsystem] || 0) - 1);
-        _inFlightEntries.delete(entryId);
-        const elapsed = Date.now() - start;
-        if (elapsed > SLOW_QUERY_THRESHOLD_MS) {
-          recordSlowQuery(elapsed);
-          const truncated = safeTruncate(queryText, 2 * 1024, `db.slowQueryFailed.${subsystem}`);
-          log.error(`query contract failed after ${elapsed}ms subsystem=${subsystem} pool=${pool.totalCount}/${pool.idleCount}/${pool.waitingCount}: ${truncated}`);
-        }
+    inFlightQueries++;
+    inFlightBySubsystem[subsystem] = (inFlightBySubsystem[subsystem] || 0) + 1;
+    const entryId = ++_inFlightSeq;
+    _inFlightEntries.set(entryId, { id: entryId, subsystem, label: label ? `${lane}:${label}` : lane, startedAt: Date.now() });
+    if (inFlightQueries > HIGH_IN_FLIGHT_THRESHOLD) {
+      const now = Date.now();
+      const isNewPeak = inFlightQueries > lastHighInFlightWarningPeak;
+      if (isNewPeak || now - lastHighInFlightWarningAt >= HIGH_IN_FLIGHT_LOG_INTERVAL_MS) {
+        lastHighInFlightWarningAt = now;
+        lastHighInFlightWarningPeak = Math.max(lastHighInFlightWarningPeak, inFlightQueries);
+        const breakdown = Object.entries(inFlightBySubsystem)
+          .filter(([, count]) => count > 0)
+          .map(([name, count]) => `${name}=${count}`)
+          .join(" ");
+        log.warn(`HIGH IN-FLIGHT: ${inFlightQueries} queries concurrent [${breakdown}] general=${pool.totalCount}/${pool.idleCount}/${pool.waitingCount} voice=${voicePool.totalCount}/${voicePool.idleCount}/${voicePool.waitingCount}`);
       }
-    );
-  } else {
-    inFlightQueries--;
-    inFlightBySubsystem[subsystem] = Math.max(0, (inFlightBySubsystem[subsystem] || 0) - 1);
-    _inFlightEntries.delete(entryId);
-  }
+    } else if (lastHighInFlightWarningPeak > 0) {
+      lastHighInFlightWarningPeak = 0;
+    }
+    const start = Date.now();
+    const queryText = typeof args[0] === "string" ? args[0] : args[0]?.text || "(unknown)";
 
-  return result;
-};
+    let result: any;
+    try {
+      result = (origQuery as any)(...args);
+    } catch (err) {
+      inFlightQueries--;
+      inFlightBySubsystem[subsystem] = Math.max(0, (inFlightBySubsystem[subsystem] || 0) - 1);
+      _inFlightEntries.delete(entryId);
+      throw err;
+    }
 
-export const db = drizzle(pool, { schema });
+    const settle = (failed: boolean) => {
+      inFlightQueries--;
+      inFlightBySubsystem[subsystem] = Math.max(0, (inFlightBySubsystem[subsystem] || 0) - 1);
+      _inFlightEntries.delete(entryId);
+      const elapsed = Date.now() - start;
+      if (elapsed > SLOW_QUERY_THRESHOLD_MS || failed) {
+        if (elapsed > SLOW_QUERY_THRESHOLD_MS) recordSlowQuery(elapsed);
+        const truncated = safeTruncate(queryText, 2 * 1024, `db.${failed ? "failed" : "slow"}.${subsystem}`);
+        const counts = `${targetPool.totalCount}/${targetPool.idleCount}/${targetPool.waitingCount}`;
+        const message = `${failed ? "query contract failed" : "SLOW query"} after ${elapsed}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} pool=${counts}: ${truncated}`;
+        if (failed) log.error(message); else log.warn(message);
+      }
+    };
+
+    if (result && typeof result.then === "function") result.then(() => settle(false), () => settle(true));
+    else settle(false);
+    return result;
+  };
+}
+
+instrumentPool(pool, "general");
+instrumentPool(voicePool, "voice");
+
+const generalDb = drizzle(pool, { schema });
+const voiceDb = drizzle(voicePool, { schema });
+const databaseProxyTarget = Object.create(null);
+export const db = new Proxy(databaseProxyTarget, {
+  get(_target, property, receiver) {
+    const selected = databaseLaneALS.getStore() === "voice" ? voiceDb : generalDb;
+    const value = Reflect.get(selected as object, property, selected);
+    return typeof value === "function" ? value.bind(selected) : value;
+  },
+}) as typeof generalDb;
+
+export async function closeDatabasePools(): Promise<void> {
+  stopPoolHealthCheck();
+  stopPoolHeartbeat();
+  stopPoolSaturationMonitor();
+  stopPoolWedgeWatchdog();
+  await Promise.allSettled([pool.end(), voicePool.end()]);
+}
+
 
 // ─── Advisory locks for serializing writes per logical key ─────────────────
 // Postgres `pg_advisory_xact_lock(int4, int4)` takes two 32-bit ints. We use
@@ -661,4 +697,4 @@ export function isSerializationConflict(err: unknown): boolean {
 startPoolHealthCheck();
 startPoolHeartbeat();
 startPoolSaturationMonitor();
-log.log(`pool initialized: app=${APP_NAME} max=${DB_POOL_MAX} min=${DB_POOL_MIN}`);
+log.log(`pools initialized: app=${APP_NAME} totalMax=${DB_POOL_MAX} general=${GENERAL_DB_POOL_MAX}/${GENERAL_DB_POOL_MIN} voice=${VOICE_DB_POOL_MAX}/${VOICE_DB_POOL_MIN} voiceAcquireMs=${VOICE_DB_ACQUIRE_TIMEOUT_MS} voiceStatementMs=${VOICE_DB_STATEMENT_TIMEOUT_MS}`);

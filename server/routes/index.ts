@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import type { WebSocketServer } from "ws";
 import { requireAuth } from "../auth";
+import { withDatabaseLane } from "../db";
 
 import { registerSetupRoutes } from "./setup";
 import { registerGatewayRoutes } from "./gateway";
@@ -77,6 +78,10 @@ export async function registerDomainRoutes(
 
   await registerIntegrationsRoutes(app);
   await registerOuraRoutes(app);
+  app.use(
+    ["/api/voice/start", "/api/voice/llm", "/api/voice/sessions/save"],
+    (_req, _res, next) => withDatabaseLane("voice", next),
+  );
   await registerVoiceRoutes(app);
   await registerBrainRoutes(app);
   await registerProjectsRoutes(app);

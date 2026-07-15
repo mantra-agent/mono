@@ -344,6 +344,8 @@ export async function registerGatewayRoutes(app: Express) {
           saturatedForMs: dbInfo.saturatedForMs,
           lastProbeDurationMs: dbInfo.lastProbeDurationMs,
           lastSuccessfulProbeAt: dbInfo.lastSuccessfulProbeAt,
+          general: dbInfo.general,
+          voice: dbInfo.voice,
         },
         inFlight: {
           total: inFlight.total,
