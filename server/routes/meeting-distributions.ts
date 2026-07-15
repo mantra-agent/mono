@@ -75,7 +75,6 @@ export function registerMeetingDistributionRoutes(app: Express): void {
       }
     },
   );
-}
 
   /**
    * POST /api/meetings/:sessionId/recap-distributions/ensure
@@ -139,3 +138,4 @@ export function registerMeetingDistributionRoutes(app: Express): void {
       }
     },
   );
+}
