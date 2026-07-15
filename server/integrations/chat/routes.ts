@@ -1823,7 +1823,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           : orientation.skipped === "already-oriented"
             ? "already oriented"
             : orientation.fallback
-              ? `fallback · ${orientation.personaName || "Default"}`
+              ? `fallback · ${orientation.personaName || "Default"}${orientation.fallbackReason ? ` · ${orientation.fallbackReason}` : ""}`
               : "skipped";
         // NOT emitting end: publishChatStreamEvent(sessionKey, sessionId, {...})
         if (orientation.skipped !== "already-oriented") {
@@ -1840,7 +1840,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           });
           preChronology.push({ s: "system", i: orientationStepIndex });
           if (orientation.llm) {
-            const llmDetail = `${orientation.llm.model} · ${orientation.llm.provider}${orientation.llm.tier ? ` · tier=${orientation.llm.tier}` : ""}`;
+            const llmDetail = `${orientation.llm.personaName} · ${orientation.llm.model} · ${orientation.llm.provider}${orientation.llm.tier ? ` · tier=${orientation.llm.tier}` : ""}`;
             const llmStartedAt = orientationLlmStartedAt ?? orientStartedAt;
             publishChatStreamEvent(sessionKey, sessionId, {
               type: "system_step",

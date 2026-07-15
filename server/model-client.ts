@@ -124,7 +124,6 @@ interface CodexResponsesRequest {
   temperature?: number;
   reasoning?: { effort?: OpenAIReasoningEffort; summary?: "detailed" | "concise" | "auto"; mode?: "standard" | "pro" };
   text?: { verbosity?: "low" | "medium" | "high"; format?: Record<string, unknown> };
-  service_tier?: "auto" | "default" | "flex" | "priority" | "fast";
   tools?: Array<
     | { type: "function"; name: string; description: string; parameters: Record<string, unknown> }
     | { type: "image_generation"; quality?: string; size?: string; background?: string; output_format?: string }
@@ -567,9 +566,7 @@ function applyOpenAIConnectorConfig(params: Record<string, any>, config: OpenAIT
   if (surface === "responses" && config?.verbosity) {
     params.text = { ...(params.text || {}), verbosity: config.verbosity };
   }
-  if (surface === "codex") {
-    if (config?.serviceTier === "fast") params.service_tier = "fast";
-  } else if (config?.serviceTier && config.serviceTier !== "auto" && config.serviceTier !== "fast") {
+  if (surface === "responses" && config?.serviceTier && config.serviceTier !== "auto") {
     params.service_tier = config.serviceTier;
   }
 }

@@ -10,7 +10,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 type SemanticTier = "max" | "high" | "balanced" | "fast";
-type TierModelConfig = string | { model: string; reasoningEffort?: string; reasoningMode?: string; reasoningSummary?: string; verbosity?: string; serviceTier?: string; fastMode?: boolean; maxOutputTokens?: number };
+type TierModelConfig = string | { model: string; reasoningEffort?: string; reasoningMode?: string; reasoningSummary?: string; verbosity?: string; serviceTier?: string; maxOutputTokens?: number };
 interface ModelConnector {
   id: number;
   provider: "anthropic" | "openai" | "openai-subscription" | "claude-cli";
