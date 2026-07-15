@@ -572,7 +572,7 @@ export function EmailDraftWidget({ draftId, isRecapDraft = false }: { draftId: s
             type="text"
             value={merged.subject}
             onChange={(e) => debouncedPatch("subject", e.target.value)}
-            disabled={isBusy || isRecapDraft}
+            disabled={isBusy}
             className="flex-1 bg-transparent text-sm outline-none border-b border-transparent focus:border-border/40 py-0.5"
             placeholder="Subject"
           />
@@ -583,7 +583,7 @@ export function EmailDraftWidget({ draftId, isRecapDraft = false }: { draftId: s
           <textarea
             value={merged.body}
             onChange={(e) => debouncedPatch("body", e.target.value)}
-            disabled={isBusy || isRecapDraft}
+            disabled={isBusy}
             rows={Math.max(3, merged.body.split("\n").length)}
             className="w-full bg-transparent text-sm outline-none resize-none border border-border/30 rounded-sm p-2 focus:border-border/60"
             placeholder="Compose your message..."
@@ -613,7 +613,7 @@ export function EmailDraftWidget({ draftId, isRecapDraft = false }: { draftId: s
           variant="ghost"
           size="sm"
           onClick={() => discardMutation.mutate()}
-          disabled={isBusy || isRecapDraft}
+          disabled={isBusy}
           className="text-muted-foreground"
         >
           {isDiscarding ? (
