@@ -533,6 +533,9 @@ export async function runSchemaBootstrap(
         scope TEXT NOT NULL DEFAULT 'system',
         owner_user_id TEXT,
         account_id TEXT,
+        start_request_id TEXT,
+        start_response JSONB,
+        start_ready_at TIMESTAMPTZ,
         inflight_turn INTEGER DEFAULT 0,
         last_heartbeat TIMESTAMP
       )
@@ -1538,11 +1541,40 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'system'`);
     await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS owner_user_id TEXT`);
     await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS account_id TEXT`);
+    await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS start_request_id TEXT`);
+    await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS start_response JSONB`);
+    await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS start_ready_at TIMESTAMPTZ`);
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_vsa_active_boot ON voice_session_active(boot_id) WHERE status = 'active'`,
     );
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_owner ON voice_session_active(owner_user_id) WHERE status = 'active'`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_account ON voice_session_active(account_id) WHERE status = 'active'`);
+    await pool.query(`
+      WITH ranked AS (
+        SELECT id,
+               row_number() OVER (
+                 PARTITION BY account_id, conversation_id
+                 ORDER BY started_at DESC, id DESC
+               ) AS active_rank
+        FROM voice_session_active
+        WHERE status = 'active' AND scope = 'user' AND conversation_id IS NOT NULL
+      )
+      UPDATE voice_session_active AS lease
+      SET status = 'abandoned', ended_at = NOW(), inflight_turn = 0
+      FROM ranked
+      WHERE lease.id = ranked.id AND ranked.active_rank > 1
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_vsa_active_account_conversation_unique
+      ON voice_session_active(account_id, conversation_id)
+      WHERE status = 'active' AND scope = 'user' AND conversation_id IS NOT NULL
+    `);
+    await pool.query(`DROP INDEX IF EXISTS idx_vsa_active_account_request_unique`);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_vsa_account_request_unique
+      ON voice_session_active(account_id, start_request_id)
+      WHERE scope = 'user' AND start_request_id IS NOT NULL
+    `);
     // The session_id UNIQUE constraint already provides a btree, so the explicit
     // idx_vsa_session_id added in the original migration is redundant.
     await pool.query(`DROP INDEX IF EXISTS idx_vsa_session_id`);
@@ -3502,7 +3534,10 @@ export async function runSchemaBootstrap(
         boot_id TEXT,
         scope TEXT NOT NULL DEFAULT 'system',
         owner_user_id TEXT,
-        account_id TEXT
+        account_id TEXT,
+        start_request_id TEXT,
+        start_response JSONB,
+        start_ready_at TIMESTAMPTZ
       )
     `);
     // Partial index for the only hot read pattern (status='active'). Also created

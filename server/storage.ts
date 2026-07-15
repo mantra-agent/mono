@@ -1,5 +1,5 @@
 // Use createLogger for logging ONLY
-import { db } from "./db";
+import { db, fnv1a32 } from "./db";
 import { createLogger } from "./log";
 import {
   users, skills, skillReferences, skillRuns, skillFailureDismissals, promptModules, promptModuleVersions, systemSettings, insertSkillSchema,
@@ -42,6 +42,11 @@ const connectedAccountScopeColumns = { ownerUserId: connectedAccounts.ownerUserI
 export type VoiceLeaseMutationAuthority =
   | { kind: "process"; bootId: string }
   | { kind: "user"; principal: Principal };
+
+export type VoiceLeaseClaimResult =
+  | { outcome: "claimed"; lease: VoiceSessionActive; replacedSessionId: string | null }
+  | { outcome: "existing"; lease: VoiceSessionActive }
+  | { outcome: "conflict"; lease: VoiceSessionActive };
 
 function voiceLeaseWritablePredicate(sessionId: string, authority: VoiceLeaseMutationAuthority): SQL {
   if (authority.kind === "process") {
@@ -142,7 +147,9 @@ export interface IStorage {
 
 
 
-  createVoiceSessionActive(sessionId: string, chatSessionId: string | null, bootId: string, principal: Principal): Promise<VoiceSessionActive>;
+  claimVoiceSessionActive(input: { sessionId: string; chatSessionId: string; requestId: string; bootId: string; principal: Principal; reconnect: boolean }): Promise<VoiceLeaseClaimResult>;
+  completeVoiceSessionStart(sessionId: string, bootId: string, response: Record<string, unknown>): Promise<VoiceSessionActive | undefined>;
+  getVoiceSessionStartByRequest(requestId: string, principal: Principal): Promise<VoiceSessionActive | undefined>;
   getOwnedActiveVoiceSession(sessionId: string, bootId: string): Promise<VoiceSessionActive | undefined>;
   endVoiceSessionActive(sessionId: string, status: "complete" | "abandoned", authority: VoiceLeaseMutationAuthority): Promise<void>;
   updateVoiceSessionInflight(sessionId: string, inflightTurn: number, bootId: string): Promise<void>;
@@ -715,19 +722,104 @@ export class HybridStorage implements IStorage {
     return row.value as string;
   }
 
-  async createVoiceSessionActive(sessionId: string, chatSessionId: string | null, bootId: string, principal: Principal): Promise<VoiceSessionActive> {
+  async claimVoiceSessionActive(input: {
+    sessionId: string;
+    chatSessionId: string;
+    requestId: string;
+    bootId: string;
+    principal: Principal;
+    reconnect: boolean;
+  }): Promise<VoiceLeaseClaimResult> {
+    const { principal } = input;
     if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
-      throw new Error("Voice lease creation requires an authenticated user principal");
+      throw new Error("Voice lease claim requires an authenticated user principal");
     }
-    const [row] = await db.insert(voiceSessionActive).values({
-      sessionId,
-      chatSessionId: chatSessionId || null,
-      status: "active",
-      bootId,
-      scope: "user",
-      ownerUserId: principal.userId,
-      accountId: principal.accountId,
-    }).returning();
+    if (!input.chatSessionId || !input.requestId) {
+      throw new Error("Voice lease claim requires chatSessionId and requestId");
+    }
+
+    return db.transaction(async (tx) => {
+      const lockKey = fnv1a32(`${principal.accountId}:${input.chatSessionId}`);
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${0x56535452}::int4, ${lockKey}::int4)`);
+
+      const [replayed] = await tx.select()
+        .from(voiceSessionActive)
+        .where(and(
+          eq(voiceSessionActive.accountId, principal.accountId),
+          eq(voiceSessionActive.startRequestId, input.requestId),
+          eq(voiceSessionActive.scope, "user"),
+        ))
+        .limit(1);
+      if (replayed) {
+        if (replayed.chatSessionId !== input.chatSessionId) {
+          throw new Error("Voice start requestId is already bound to another conversation");
+        }
+        return { outcome: "existing", lease: replayed };
+      }
+
+      const [active] = await tx.select()
+        .from(voiceSessionActive)
+        .where(and(
+          eq(voiceSessionActive.accountId, principal.accountId),
+          eq(voiceSessionActive.chatSessionId, input.chatSessionId),
+          eq(voiceSessionActive.status, "active"),
+          eq(voiceSessionActive.scope, "user"),
+        ))
+        .limit(1);
+
+      if (active && !input.reconnect) {
+        return { outcome: "conflict", lease: active };
+      }
+
+      if (active) {
+        await tx.update(voiceSessionActive)
+          .set({ status: "abandoned", endedAt: new Date(), inflightTurn: 0 })
+          .where(and(
+            eq(voiceSessionActive.id, active.id),
+            eq(voiceSessionActive.accountId, principal.accountId),
+            eq(voiceSessionActive.status, "active"),
+          ));
+      }
+
+      const [lease] = await tx.insert(voiceSessionActive).values({
+        sessionId: input.sessionId,
+        chatSessionId: input.chatSessionId,
+        status: "active",
+        bootId: input.bootId,
+        scope: "user",
+        ownerUserId: principal.userId,
+        accountId: principal.accountId,
+        startRequestId: input.requestId,
+      }).returning();
+
+      return { outcome: "claimed", lease, replacedSessionId: active?.sessionId ?? null };
+    });
+  }
+
+
+  async completeVoiceSessionStart(sessionId: string, bootId: string, response: Record<string, unknown>): Promise<VoiceSessionActive | undefined> {
+    const [row] = await db.update(voiceSessionActive)
+      .set({ startResponse: response, startReadyAt: new Date() })
+      .where(and(
+        eq(voiceSessionActive.sessionId, sessionId),
+        eq(voiceSessionActive.bootId, bootId),
+        eq(voiceSessionActive.status, "active"),
+      ))
+      .returning();
+    return row;
+  }
+
+  async getVoiceSessionStartByRequest(requestId: string, principal: Principal): Promise<VoiceSessionActive | undefined> {
+    if (principal.actorType !== "user" || !principal.userId || !principal.accountId) return undefined;
+    const [row] = await db.select()
+      .from(voiceSessionActive)
+      .where(and(
+        eq(voiceSessionActive.startRequestId, requestId),
+        eq(voiceSessionActive.ownerUserId, principal.userId),
+        eq(voiceSessionActive.accountId, principal.accountId),
+        eq(voiceSessionActive.scope, "user"),
+      ))
+      .limit(1);
     return row;
   }
 
