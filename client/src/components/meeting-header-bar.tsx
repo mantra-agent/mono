@@ -13,6 +13,7 @@
  */
 import { useEffect, useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
 import {
   AlertCircle,
   ChevronDown,
@@ -214,7 +215,7 @@ function RecapDistributionPanel({
                     : row.attendeeEmail}
                 </span>
               </div>
-              <EmailDraftWidget draftId={row.draftId} />
+              <EmailDraftWidget draftId={row.draftId} isRecapDraft={true} />
             </div>
           );
         }
@@ -275,6 +276,25 @@ export function MeetingHeaderBar({
   const toggleDistribution = useCallback(
     () => setDistributionOpen((open) => !open),
     [],
+  );
+  const retryDistribution = useCallback(
+    async () => {
+      if (!sessionId) return;
+      try {
+        log.debug("Distribution retry requested", { sessionId });
+        await fetch(`/api/meetings/${sessionId}/recap-distributions/ensure`, {
+          method: "POST",
+          credentials: "include",
+        });
+        // Refetch the distribution panel data
+        queryClient.invalidateQueries({
+          queryKey: ["/api/meetings", sessionId, "recap-distributions"],
+        });
+      } catch (err) {
+        log.error("Distribution retry failed", { sessionId, error: err });
+      }
+    },
+    [sessionId],
   );
 
   const recap = meeting.recap;
@@ -445,15 +465,21 @@ export function MeetingHeaderBar({
           )}
 
           {/* Distribution: failed */}
+          
+          {/* Distribution: failed with retry button */}
           {showDistributionFailed && (
-            <span
-              className="inline-flex items-center gap-1.5 rounded-full border border-destructive/30 bg-destructive/10 px-2 py-0.5 text-xs text-destructive"
-              data-testid="chip-distribution-failed"
-              title={recap.distributionError ?? undefined}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs border-destructive/30 text-destructive hover:bg-destructive/10"
+              onClick={retryDistribution}
+              data-testid="button-retry-distribution"
+              title={recap.distributionError ?? "Retry distribution"}
             >
               <AlertCircle className="h-3 w-3 shrink-0" />
-              Draft emails failed
-            </span>
+              <span>Draft emails failed</span>
+              <span className="text-xs text-destructive/70">Retry</span>
+            </Button>
           )}
         </div>
       )}
