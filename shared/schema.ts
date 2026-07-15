@@ -668,6 +668,9 @@ export const voiceSessionActive = pgTable("voice_session_active", {
   status: text("status").notNull().default("active"),
   endedAt: timestamp("ended_at", { withTimezone: true }),
   bootId: text("boot_id"),
+  scope: text("scope").notNull().default("system"),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
   inflightTurn: integer("inflight_turn").default(0),
   lastHeartbeat: timestamp("last_heartbeat", { withTimezone: true }),
 });

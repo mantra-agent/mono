@@ -27,6 +27,7 @@ import { fileIssueStorage, fileApiCallStorage } from "./file-storage";
 import { peopleStorage } from "./people-storage";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { principalHasPermission } from "./permissions";
+import type { Principal } from "./principal";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwnershipValues } from "./sensitive-scope";
 
@@ -37,6 +38,29 @@ const emailSyncCursorScopeColumns = { ownerUserId: emailSyncCursors.ownerUserId,
 const emailEnrichmentScopeColumns = { ownerUserId: emailEnrichments.ownerUserId, principalAccountId: emailEnrichments.principalAccountId };
 const emailDismissalScopeColumns = { ownerUserId: emailDismissals.ownerUserId, principalAccountId: emailDismissals.principalAccountId };
 const connectedAccountScopeColumns = { ownerUserId: connectedAccounts.ownerUserId, principalAccountId: connectedAccounts.principalAccountId };
+
+export type VoiceLeaseMutationAuthority =
+  | { kind: "process"; bootId: string }
+  | { kind: "user"; principal: Principal };
+
+function voiceLeaseWritablePredicate(sessionId: string, authority: VoiceLeaseMutationAuthority): SQL {
+  if (authority.kind === "process") {
+    return and(
+      eq(voiceSessionActive.sessionId, sessionId),
+      eq(voiceSessionActive.bootId, authority.bootId),
+    )!;
+  }
+  const { principal } = authority;
+  if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+    return sql`FALSE`;
+  }
+  return and(
+    eq(voiceSessionActive.sessionId, sessionId),
+    eq(voiceSessionActive.scope, "user"),
+    eq(voiceSessionActive.ownerUserId, principal.userId),
+    eq(voiceSessionActive.accountId, principal.accountId),
+  )!;
+}
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -118,10 +142,11 @@ export interface IStorage {
 
 
 
-  createVoiceSessionActive(sessionId: string, chatSessionId: string | null, bootId?: string): Promise<VoiceSessionActive>;
-  endVoiceSessionActive(sessionId: string, status: "complete" | "abandoned"): Promise<void>;
-  updateVoiceSessionInflight(sessionId: string, inflightTurn: number): Promise<void>;
-  clearVoiceSessionInflight(sessionId: string): Promise<void>;
+  createVoiceSessionActive(sessionId: string, chatSessionId: string | null, bootId: string, principal: Principal): Promise<VoiceSessionActive>;
+  getOwnedActiveVoiceSession(sessionId: string, bootId: string): Promise<VoiceSessionActive | undefined>;
+  endVoiceSessionActive(sessionId: string, status: "complete" | "abandoned", authority: VoiceLeaseMutationAuthority): Promise<void>;
+  updateVoiceSessionInflight(sessionId: string, inflightTurn: number, bootId: string): Promise<void>;
+  clearVoiceSessionInflight(sessionId: string, bootId: string): Promise<void>;
   abandonExpiredVoiceSessions(staleBefore: Date): Promise<VoiceSessionActive[]>;
   getActiveVoiceSessions(bootId: string): Promise<VoiceSessionActive[]>;
   pruneVoiceSessions(retentionDays: number): Promise<{ deleted: number; remaining: number }>;
@@ -690,32 +715,59 @@ export class HybridStorage implements IStorage {
     return row.value as string;
   }
 
-  async createVoiceSessionActive(sessionId: string, chatSessionId: string | null, bootId?: string): Promise<VoiceSessionActive> {
+  async createVoiceSessionActive(sessionId: string, chatSessionId: string | null, bootId: string, principal: Principal): Promise<VoiceSessionActive> {
+    if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+      throw new Error("Voice lease creation requires an authenticated user principal");
+    }
     const [row] = await db.insert(voiceSessionActive).values({
       sessionId,
       chatSessionId: chatSessionId || null,
       status: "active",
-      bootId: bootId || null,
+      bootId,
+      scope: "user",
+      ownerUserId: principal.userId,
+      accountId: principal.accountId,
     }).returning();
     return row;
   }
 
-  async endVoiceSessionActive(sessionId: string, status: "complete" | "abandoned"): Promise<void> {
+  async getOwnedActiveVoiceSession(sessionId: string, bootId: string): Promise<VoiceSessionActive | undefined> {
+    const [row] = await db.select()
+      .from(voiceSessionActive)
+      .where(and(
+        eq(voiceSessionActive.sessionId, sessionId),
+        eq(voiceSessionActive.status, "active"),
+        eq(voiceSessionActive.bootId, bootId),
+        eq(voiceSessionActive.scope, "user"),
+      ))
+      .limit(1);
+    return row;
+  }
+
+  async endVoiceSessionActive(sessionId: string, status: "complete" | "abandoned", authority: VoiceLeaseMutationAuthority): Promise<void> {
     await db.update(voiceSessionActive)
       .set({ status, endedAt: new Date(), inflightTurn: 0 })
-      .where(eq(voiceSessionActive.sessionId, sessionId));
+      .where(voiceLeaseWritablePredicate(sessionId, authority));
   }
 
-  async updateVoiceSessionInflight(sessionId: string, inflightTurn: number): Promise<void> {
+  async updateVoiceSessionInflight(sessionId: string, inflightTurn: number, bootId: string): Promise<void> {
     await db.update(voiceSessionActive)
       .set({ inflightTurn, lastHeartbeat: new Date() })
-      .where(eq(voiceSessionActive.sessionId, sessionId));
+      .where(and(
+        eq(voiceSessionActive.sessionId, sessionId),
+        eq(voiceSessionActive.bootId, bootId),
+        eq(voiceSessionActive.status, "active"),
+      ));
   }
 
-  async clearVoiceSessionInflight(sessionId: string): Promise<void> {
+  async clearVoiceSessionInflight(sessionId: string, bootId: string): Promise<void> {
     await db.update(voiceSessionActive)
       .set({ inflightTurn: 0, lastHeartbeat: new Date() })
-      .where(eq(voiceSessionActive.sessionId, sessionId));
+      .where(and(
+        eq(voiceSessionActive.sessionId, sessionId),
+        eq(voiceSessionActive.bootId, bootId),
+        eq(voiceSessionActive.status, "active"),
+      ));
   }
 
   async abandonExpiredVoiceSessions(staleBefore: Date): Promise<VoiceSessionActive[]> {

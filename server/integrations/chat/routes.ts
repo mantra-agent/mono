@@ -3632,7 +3632,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
         if (voiceSessionId) {
           storage
-            .endVoiceSessionActive(voiceSessionId, "complete")
+            .endVoiceSessionActive(voiceSessionId, "complete", {
+              kind: "user",
+              principal: req.principal!,
+            })
             .catch((err: unknown) => {
               const msg = err instanceof Error ? err.message : String(err);
               chatLog.warn(
