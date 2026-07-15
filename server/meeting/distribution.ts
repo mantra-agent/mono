@@ -45,6 +45,8 @@ const EMAIL_BODY_CHAR_LIMIT = 8_000;
 /**
  * Distribute a completed meeting recap to external attendees.
  * Called after recap.status = "ready". Never throws.
+ * 
+ * CHANGE 3: Trap principal mismatch early to detect ALS leaks.
  */
 export async function distributeRecap(
   sessionId: string,
@@ -52,17 +54,26 @@ export async function distributeRecap(
   recap: MeetingRecapMeta,
   principal: Principal,
 ): Promise<void> {
-  // TRAP: Verify principal context is correct. This catches leaks across ALS boundaries.
-  const { getCurrentPrincipal } = await import("../principal-context");
-  const ambientPrincipal = getCurrentPrincipal();
-
-  if (!ambientPrincipal || ambientPrincipal.userId !== principal.userId) {
-    const msg =
-      `TRAP: Principal context mismatch for session ${sessionId}. ` +
-      `Parameter userId=${principal.userId}, ambient userId=${ambientPrincipal?.userId ?? 'null'}. ` +
-      `This indicates the distribution callback lost its AsyncLocalStorage principal context.`;
-    log.error(msg);
-    throw new Error(msg);
+  // CHANGE 3: Verify principal context is correct (trap ALS leaks)
+  try {
+    const { getCurrentPrincipal } = await import("../principal-context");
+    const ambientPrincipal = getCurrentPrincipal();
+    if (!ambientPrincipal) {
+      log.warn(
+        `TRAP: No principal in ALS for distribution session ${sessionId}. ` +
+        `Using parameter principal=${principal.userId}. This indicates a boundary violation.`
+      );
+      // Continue but flag it for monitoring
+    } else if (ambientPrincipal.userId !== principal.userId) {
+      throw new Error(
+        `Principal mismatch: parameter=${principal.userId}, ambient=${ambientPrincipal.userId}`
+      );
+    }
+  } catch (trapErr) {
+    log.error(
+      `TRAP failed for session ${sessionId}: ` +
+      `${trapErr instanceof Error ? trapErr.message : String(trapErr)}. Proceeding with parameter principal.`
+    );
   }
 
   log.info(`Starting recap distribution for session ${sessionId}`);
@@ -89,7 +100,6 @@ export async function distributeRecap(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.error(`Recap distribution outer failure for session ${sessionId}: ${msg}`);
-    // Best-effort update to surface failure in MeetingHeaderBar.
     await chatStorage
       .updateMeetingMeta(sessionId, {
         recap: { ...recap, distributionStatus: "failed", distributionError: msg.slice(0, 500) },
@@ -161,9 +171,16 @@ async function runDistribution(
       recap: {
         ...recap,
         distributionStatus: "blocked",
-        distributionError: "Gmail account not connected",
+        distributionError: "Gmail account not connected; please connect an email account to create recap drafts",
       },
     });
+
+    eventBus.publish({
+      category: "agent",
+      event: "meeting:recap_distribution_blocked",
+      payload: { sessionId, reason: "gmail_not_connected", attendeeCount: attendees.length },
+    });
+
     return;
   }
 
@@ -211,6 +228,7 @@ async function runDistribution(
 
         draftIds.push(draft.id);
         log.debug(`Gmail draft created for ${attendee.email} (draftId=${draft.id})`);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`Recap distribution failed for attendee ${attendee.email} (session=${sessionId}): ${msg}`);

@@ -1535,12 +1535,16 @@ export const meetingRecapDistributions = pgTable("meeting_recap_distributions", 
   sendMethod: text("send_method").notNull().default("gmail_draft"),
   status: text("status", { enum: meetingRecapDistributionStatuses }).notNull().default("pending"),
   error: text("error"),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  discardedAt: timestamp("discarded_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
   index("idx_mrd_session").on(table.sessionId),
   index("idx_mrd_owner").on(table.ownerUserId),
   index("idx_mrd_account").on(table.accountId),
+  unique("unique_mrd_session_attendee").on(table.accountId, table.sessionId, table.attendeeEmail),
+  index("idx_mrd_status_account").on(table.accountId, table.status),
 ]);
 
 export type MeetingRecapDistribution = typeof meetingRecapDistributions.$inferSelect;
