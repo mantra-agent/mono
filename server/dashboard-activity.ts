@@ -2,7 +2,7 @@ import { and, gte, lt } from "drizzle-orm";
 import { tasks, wellnessLogs } from "@shared/schema";
 import { db } from "./db";
 import type { Principal } from "./principal";
-import { peopleStorage } from "./people-storage";
+import { queryQualifyingInteractionSeries } from "./interaction-activity";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { combineWithSensitiveVisible } from "./sensitive-scope";
 import { userDayBounds } from "./utils/user-time";
@@ -73,22 +73,6 @@ function localCalendarDate(value: Date): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago" }).format(value);
 }
 
-const OUTBOUND_INTERACTION_TYPES = new Set(["email", "call", "text"]);
-
-async function queryInteractionSeries(startDate: string, endDate: string): Promise<Map<string, number>> {
-  const index = await peopleStorage.listPeople();
-  const people = await peopleStorage.getPeopleByIds(index.map((person) => person.id));
-  const counts = new Map<string, number>();
-  for (const person of people) {
-    for (const interaction of person.interactions) {
-      if (!OUTBOUND_INTERACTION_TYPES.has(interaction.type)) continue;
-      if (interaction.date < startDate || interaction.date > endDate) continue;
-      increment(counts, interaction.date);
-    }
-  }
-  return counts;
-}
-
 async function queryWellnessSeries(start: Date, end: Date, principal: Principal): Promise<Map<string, number>> {
   const rows = await db
     .select({ completedAt: wellnessLogs.completedAt })
@@ -115,7 +99,7 @@ export async function queryActivityDashboard(date: string, principal: Principal)
   const selectedEnd = userDayBounds(date).end;
   const rangeEnd = new Date(selectedEnd.getTime() + 1);
   const [interactions, wellness, completedTasks, shippedPrs] = await Promise.all([
-    queryInteractionSeries(dates[0], date),
+    queryQualifyingInteractionSeries(dates[0], date),
     queryWellnessSeries(rangeStart, rangeEnd, principal),
     queryTaskSeries(rangeStart, rangeEnd, principal),
     fetchMergedPrsSince(rangeStart),
