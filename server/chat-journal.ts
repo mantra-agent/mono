@@ -6,6 +6,7 @@ import { mkdirSync, existsSync } from "fs";
 import { appendFile, readFile } from "fs/promises";
 import { join } from "path";
 import { abortTrace } from "./abort-trace";
+import type { ModelProviderFailureInfo } from "@shared/models/chat";
 
 const log = createLogger("Journal");
 
@@ -42,6 +43,7 @@ export interface JournalEntry {
   narrative?: string;
   result?: unknown;
   error?: string;
+  providerFailure?: ModelProviderFailureInfo;
   runId?: string;
   messageId?: string;
   stopReason?: string;
@@ -416,6 +418,7 @@ export function publishJournalToUI(entry: JournalEntry, category: EventCategory 
       break;
     case "error":
       payload.error = entry.error;
+      if (entry.providerFailure) payload.providerFailure = entry.providerFailure;
       break;
     case "system_notice":
       payload.severity = entry.severity;
