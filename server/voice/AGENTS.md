@@ -41,7 +41,7 @@ Voice turns use `sdk_owned` execution mode. The Claude Agent SDK calls `toolExec
 4. **Journal logger** — Logs tool_call/tool_result with per-turn correlation IDs
 
 ### Session Lifecycle
-Sessions are in-memory (`Map<string, VoiceSession>` in `session.ts`) with a health watchdog. A session maps 1:1 to an ElevenLabs connection and 1:1 to a chat session. Sessions auto-expire after 2 hours max, 10 minutes idle (with turns), or 5 minutes idle (no turns).
+Sessions are in-memory (`Map<string, VoiceSession>` in `session.ts`) with a health watchdog. A session maps 1:1 to an ElevenLabs connection and 1:1 to a chat session. Sessions auto-expire after 2 hours max, 10 minutes idle (with turns), or 5 minutes idle (no turns). `voice_session_active.boot_id` is the durable owner of that process-local Map entry: periodic reconciliation must filter to the current process boot ID, and boot cleanup may only abandon rows older than the global maximum session age. A process must never infer that a foreign boot ID is stale merely because the session is absent from its own Map.
 
 ### Turn Flow
 1. ElevenLabs sends custom-LLM callback with user transcript → `handleCustomLLM` (voice-llm.ts)

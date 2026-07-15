@@ -22,7 +22,7 @@ import {
   type EmailEnrichment, type InsertEmailEnrichment,
   type EmailDismissal, type InsertEmailDismissal,
 } from "@shared/schema";
-import { eq, ne, desc, gte, count, sql, inArray, isNull, or, lte, and, type SQL } from "drizzle-orm";
+import { eq, ne, desc, gte, count, sql, inArray, or, lte, and, type SQL } from "drizzle-orm";
 import { fileIssueStorage, fileApiCallStorage } from "./file-storage";
 import { peopleStorage } from "./people-storage";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
@@ -122,8 +122,8 @@ export interface IStorage {
   endVoiceSessionActive(sessionId: string, status: "complete" | "abandoned"): Promise<void>;
   updateVoiceSessionInflight(sessionId: string, inflightTurn: number): Promise<void>;
   clearVoiceSessionInflight(sessionId: string): Promise<void>;
-  abandonStaleVoiceSessions(currentBootId: string): Promise<VoiceSessionActive[]>;
-  getActiveVoiceSessions(): Promise<VoiceSessionActive[]>;
+  abandonExpiredVoiceSessions(staleBefore: Date): Promise<VoiceSessionActive[]>;
+  getActiveVoiceSessions(bootId: string): Promise<VoiceSessionActive[]>;
   pruneVoiceSessions(retentionDays: number): Promise<{ deleted: number; remaining: number }>;
 
   getTriagedMessageIds(sinceHours?: number): Promise<string[]>;
@@ -718,28 +718,28 @@ export class HybridStorage implements IStorage {
       .where(eq(voiceSessionActive.sessionId, sessionId));
   }
 
-  async abandonStaleVoiceSessions(currentBootId: string): Promise<VoiceSessionActive[]> {
-    // Single statement: filter, mutate, and return in one round-trip. Previously
-    // this issued a SELECT * to fetch every active row, filtered in JS, then
-    // issued a second UPDATE — a pattern that held a pool connection long
-    // enough to contribute to the original wedge. Backed by the partial index
-    // idx_vsa_active_boot ON (boot_id) WHERE status='active'.
-    const orphaned = await db.update(voiceSessionActive)
-      .set({ status: "abandoned", endedAt: new Date() })
+  async abandonExpiredVoiceSessions(staleBefore: Date): Promise<VoiceSessionActive[]> {
+    // Process identity is not a liveness signal. More than one app process may
+    // share this database, so a foreign boot_id can still own a healthy call.
+    // Only the server-wide maximum session age is safe for boot cleanup.
+    return db.update(voiceSessionActive)
+      .set({ status: "abandoned", endedAt: new Date(), inflightTurn: 0 })
       .where(and(
         eq(voiceSessionActive.status, "active"),
-        or(
-          isNull(voiceSessionActive.bootId),
-          sql`${voiceSessionActive.bootId} <> ${currentBootId}`,
-        ),
+        lte(voiceSessionActive.startedAt, staleBefore),
       ))
       .returning();
-    return orphaned;
   }
 
-  async getActiveVoiceSessions(): Promise<VoiceSessionActive[]> {
-    // Backed by partial index idx_vsa_active_boot WHERE status='active'.
-    return db.select().from(voiceSessionActive).where(eq(voiceSessionActive.status, "active"));
+  async getActiveVoiceSessions(bootId: string): Promise<VoiceSessionActive[]> {
+    // boot_id is the durable owner of the process-local voice session Map. A
+    // process must never reconcile another process's leases against its Map.
+    return db.select()
+      .from(voiceSessionActive)
+      .where(and(
+        eq(voiceSessionActive.status, "active"),
+        eq(voiceSessionActive.bootId, bootId),
+      ));
   }
 
   async pruneVoiceSessions(retentionDays: number): Promise<{ deleted: number; remaining: number }> {

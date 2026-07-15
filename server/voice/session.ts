@@ -569,7 +569,8 @@ async function withBootRowTimeout<T>(label: string, id: string, op: () => Promis
 
 export async function reconcileDbVoiceState(): Promise<void> {
   const { storage } = await import("../storage");
-  const dbSessions = await storage.getActiveVoiceSessions();
+  const ownerBootId = eventBus.bootId;
+  const dbSessions = await storage.getActiveVoiceSessions(ownerBootId);
   const dbSessionIds = new Set(dbSessions.map(s => s.sessionId));
 
   const GRACE_PERIOD_MS = 60_000;
@@ -613,7 +614,7 @@ export async function reconcileDbVoiceState(): Promise<void> {
   if (reconcileLevel === "debug") {
     log.debug(`[Reconcile] complete: dbActive=0 memActive=0 completed=${completed} quarantined=${quarantined}`);
   } else {
-    log.log(`[Reconcile] complete: dbActive=${dbSessions.length} memActive=${sessions.size} completed=${completed} quarantined=${quarantined}`);
+    log.log(`[Reconcile] complete: ownerBootId=${ownerBootId} dbActive=${dbSessions.length} memActive=${sessions.size} completed=${completed} quarantined=${quarantined}`);
   }
 }
 
@@ -726,7 +727,7 @@ export async function resolveSession(
   if (!session) {
     try {
       const { storage } = await import("../storage");
-      const activeSessions = await storage.getActiveVoiceSessions();
+      const activeSessions = await storage.getActiveVoiceSessions(eventBus.bootId);
       if (activeSessions.length > 0) {
         const exactMatch = sessionId ? activeSessions.find(s => s.sessionId === sessionId) : undefined;
         const target = exactMatch || activeSessions.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0];
