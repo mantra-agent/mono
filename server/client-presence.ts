@@ -4,7 +4,7 @@ import { WebSocket } from "ws";
 import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { storage } from "./storage";
-import { ensureUserIdentityFoundation } from "./principal";
+import { createUserSessionPrincipal, ensureUserIdentityFoundation, type Principal } from "./principal";
 import { createLogger } from "./log";
 import type { ClientPresenceEntry, ClientPresenceKind, ClientPresenceSnapshot } from "@shared/client-presence";
 
@@ -135,7 +135,7 @@ function unsignCookie(value: string, secret: string): string | null {
   return raw;
 }
 
-async function userIdFromRequest(request: IncomingMessage): Promise<string | null> {
+export async function resolveUserIdForSessionRequest(request: IncomingMessage): Promise<string | null> {
   const secret = process.env.SESSION_SECRET;
   if (!secret) return null;
   const cookies = parseCookies(request.headers.cookie);
@@ -150,13 +150,17 @@ async function userIdFromRequest(request: IncomingMessage): Promise<string | nul
   return typeof sess?.userId === "string" ? sess.userId : null;
 }
 
-export async function resolveAccountIdForRequest(request: IncomingMessage): Promise<string | null> {
-  const userId = await userIdFromRequest(request);
+export async function resolveUserPrincipalForSessionRequest(request: IncomingMessage): Promise<Principal | null> {
+  const userId = await resolveUserIdForSessionRequest(request);
   if (!userId) return null;
   const user = await storage.getUser(userId);
   if (!user) return null;
-  const identity = await ensureUserIdentityFoundation(user);
-  return identity.accountId;
+  return createUserSessionPrincipal(user);
+}
+
+export async function resolveAccountIdForRequest(request: IncomingMessage): Promise<string | null> {
+  const principal = await resolveUserPrincipalForSessionRequest(request);
+  return principal?.accountId ?? null;
 }
 
 export async function resolveAccountIdForUser(userId: string): Promise<string | null> {

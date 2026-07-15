@@ -36,6 +36,8 @@ import { registerAdminRoutes } from "./routes/admin";
 import { registerMeetingDistributionRoutes } from "./routes/meeting-distributions";
 import { requireAuth, requireAdmin } from "./auth";
 import { findOrphanedChildren, cleanupOrphanedChildren } from "./session-tree-cleanup";
+import { resolveUserPrincipalForSessionRequest } from "./client-presence";
+import type { Principal } from "./principal";
 
 const wsLog = createLogger("WS");
 
@@ -58,11 +60,28 @@ export async function registerRoutes(
         wss.emit("connection", ws, request);
       });
     } else if (pathname === "/ws/events") {
-      wsLog.log(`upgrade → eventsWss (chat stream)`);
-      eventsWss.handleUpgrade(request, socket, head, (ws) => {
-        wsLog.log(`eventsWss handleUpgrade complete, emitting connection`);
-        eventsWss.emit("connection", ws, request);
-      });
+      resolveUserPrincipalForSessionRequest(request)
+        .then((principal) => {
+          if (!principal || principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+            wsLog.warn("eventsWss upgrade rejected: authentication required");
+            socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+            socket.destroy();
+            return;
+          }
+          (request as IncomingMessage & { eventPrincipal: Principal }).eventPrincipal = principal;
+          wsLog.log(`upgrade → eventsWss account=${principal.accountId}`);
+          eventsWss.handleUpgrade(request, socket, head, (ws) => {
+            wsLog.log("eventsWss handleUpgrade complete, emitting connection");
+            eventsWss.emit("connection", ws, request);
+          });
+        })
+        .catch((error) => {
+          wsLog.error("eventsWss upgrade authentication failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+        });
     } else if (pathname === "/ws/twilio-media") {
       const handler = app.locals.twilioMediaUpgrade as ((request: IncomingMessage, socket: typeof socket, head: Buffer) => void) | undefined;
       if (!handler) { wsLog.warn("Twilio media upgrade handler unavailable"); socket.destroy(); }

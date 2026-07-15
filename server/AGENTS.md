@@ -176,6 +176,7 @@ Server-authoritative streaming state for chat sessions. The server maintains a `
 - `session.snapshot { sessionId, content: StreamingContent, status }` — Full state snapshot on subscribe or reconnect
 - `session.delta { sessionId, streamingContent, status }` — Incremental state update during streaming
 - `session.unsubscribe { sessionId }` — Client unsubscribes
+- `/ws/events` upgrades require an authenticated user Principal. Generic events carry one audience discriminant (`user`, `system`, or `global`); both live and replay delivery use the same visibility predicate. `session.subscribe` must verify the requested session through principal-scoped storage before touching `SessionManager`.
 
 ### Event Flow
 ```
