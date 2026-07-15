@@ -12,12 +12,17 @@ export const systemEvents = pgTable("system_events", {
   payload: jsonb("payload").default({}),
   runId: text("run_id"),
   sessionKey: text("session_key"),
+  scope: text("scope").notNull().default("system"),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
   createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_sys_events_category").on(table.category),
   index("idx_sys_events_event").on(table.event),
   index("idx_sys_events_created_at").on(table.createdAt),
   index("idx_sys_events_run_id").on(table.runId),
+  index("idx_sys_events_scope_owner").on(table.scope, table.ownerUserId),
+  index("idx_sys_events_account").on(table.accountId),
 ]);
 
 export const systemHooks = pgTable("system_hooks", {

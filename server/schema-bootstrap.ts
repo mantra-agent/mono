@@ -2496,6 +2496,9 @@ export async function runSchemaBootstrap(
         payload JSONB DEFAULT '{}',
         run_id TEXT,
         session_key TEXT,
+        scope TEXT NOT NULL DEFAULT 'system',
+        owner_user_id TEXT,
+        account_id TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -2511,6 +2514,11 @@ export async function runSchemaBootstrap(
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_sys_events_run_id ON system_events(run_id)`,
     );
+    await pool.query(`ALTER TABLE system_events ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'system'`);
+    await pool.query(`ALTER TABLE system_events ADD COLUMN IF NOT EXISTS owner_user_id TEXT`);
+    await pool.query(`ALTER TABLE system_events ADD COLUMN IF NOT EXISTS account_id TEXT`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_sys_events_scope_owner ON system_events(scope, owner_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_sys_events_account ON system_events(account_id)`);
   });
 
   await heal("system_hooks table", async () => {

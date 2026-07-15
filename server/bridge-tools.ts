@@ -11534,7 +11534,9 @@ ${refs}` : ""),
 
         let testEvent: any;
         if (eventId) {
-          const recentEvents = eventBus.getRecentEvents(500);
+          const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+          const eventPrincipal = getCurrentPrincipalOrSystem();
+          const recentEvents = eventBus.getRecentEvents(500, undefined, eventPrincipal);
           testEvent = recentEvents.find(e => e.id === eventId);
           if (!testEvent) {
             const { getEventByEventId, getEventByDbId } = await import("./event-persistence");
@@ -13810,6 +13812,8 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
     }
     if (action === "events") {
       try {
+        const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+        const principal = getCurrentPrincipalOrSystem();
         const { queryEvents } = await import("./event-persistence");
         const limit = (args.limit as number) || 100;
         let payloadQuery: Record<string, any> | undefined;
@@ -13826,21 +13830,24 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           payloadQuery,
           limit,
           offset: (args.offset as number) || 0,
+          principal,
         });
         return { result: JSON.stringify({ total: result.total, events: result.events.map(e => ({ id: e.eventId, dbId: e.id, timestamp: e.createdAt, category: e.category, event: e.event, runId: e.runId || null })) }) };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
+        const { getCurrentPrincipalOrSystem } = await import("./principal-context");
         const fallbackEvents = eventBus.getRecentEvents((args.limit as number) || 100, {
           category: args.category as string | undefined,
           runId: args.runId as string | undefined,
           event: args.event as string | undefined,
-        });
+        }, getCurrentPrincipalOrSystem());
         return { result: JSON.stringify({ total: fallbackEvents.length, source: "in-memory", events: fallbackEvents.map(e => ({ id: e.id, timestamp: new Date(e.timestamp).toISOString(), category: e.category, event: e.event, runId: e.runId || null })) }) };
       }
     }
     if (action === "active_runs") {
       try {
-        const runs = eventBus.getActiveRuns();
+        const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+        const runs = eventBus.getActiveRuns(getCurrentPrincipalOrSystem());
         return { result: JSON.stringify({ total: runs.length, runs: runs.map(r => ({ runId: r.runId, startedAt: new Date(r.startedAt).toISOString(), events: r.events, lastEvent: r.lastEvent })) }) };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -13852,7 +13859,8 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         const runId = String(args.runId || args.id || "").trim();
         if (!runId) return { result: "Missing runId parameter", error: true };
         const reason = String(args.reason || "manual_cleanup").trim() || "manual_cleanup";
-        const result = eventBus.clearActiveRun(runId, reason);
+        const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+        const result = eventBus.clearActiveRun(runId, reason, getCurrentPrincipalOrSystem());
         return { result: JSON.stringify(result), error: !result.cleared };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);

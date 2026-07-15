@@ -1,14 +1,16 @@
 import { pool } from "./db";
 import type { BusEvent } from "./event-bus";
 import { createLogger } from "./log";
+import { getCurrentPrincipalOrSystem } from "./principal-context";
+import type { Principal } from "./principal";
 
 const log = createLogger("EventPersistence");
 
 export async function persistEvent(busEvent: BusEvent): Promise<number | undefined> {
   try {
     const result = await pool.query(
-      `INSERT INTO system_events (event_id, boot_id, category, event, payload, run_id, session_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO system_events (event_id, boot_id, category, event, payload, run_id, session_key, scope, owner_user_id, account_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING id`,
       [
         busEvent.id,
@@ -18,6 +20,9 @@ export async function persistEvent(busEvent: BusEvent): Promise<number | undefin
         JSON.stringify(busEvent.payload || {}),
         busEvent.runId || null,
         busEvent.sessionKey || null,
+        busEvent.audience.scope,
+        busEvent.audience.scope === "user" ? busEvent.audience.ownerUserId : null,
+        busEvent.audience.scope === "user" ? busEvent.audience.accountId : null,
       ]
     );
     return result.rows[0]?.id;
@@ -37,12 +42,27 @@ export interface EventQueryFilters {
   payloadQuery?: Record<string, any>;
   limit?: number;
   offset?: number;
+  principal?: Principal;
+}
+
+function appendVisibleEventScope(conditions: string[], params: unknown[], principal: Principal): void {
+  if (principal.actorType === "system") return;
+  if (principal.actorType !== "user" || !principal.accountId) {
+    conditions.push("FALSE");
+    return;
+  }
+  const accountParam = params.length + 1;
+  params.push(principal.accountId);
+  const canReadSystem = principal.permissions.includes("system:read");
+  conditions.push(`(scope = 'global' OR (scope = 'user' AND account_id = $${accountParam})${canReadSystem ? " OR scope = 'system'" : ""})`);
 }
 
 export async function queryEvents(filters: EventQueryFilters): Promise<{ events: any[]; total: number }> {
   const conditions: string[] = [];
   const params: any[] = [];
-  let paramIdx = 1;
+  const principal = filters.principal ?? getCurrentPrincipalOrSystem();
+  appendVisibleEventScope(conditions, params, principal);
+  let paramIdx = params.length + 1;
 
   if (filters.category) {
     conditions.push(`category = $${paramIdx++}`);
@@ -84,7 +104,7 @@ export async function queryEvents(filters: EventQueryFilters): Promise<{ events:
   const total = countResult.rows[0]?.total || 0;
 
   const dataResult = await pool.query(
-    `SELECT id, event_id, boot_id, category, event, payload, run_id, session_key, created_at
+    `SELECT id, event_id, boot_id, category, event, payload, run_id, session_key, scope, owner_user_id, account_id, created_at
      FROM system_events ${whereClause}
      ORDER BY created_at DESC
      LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
@@ -100,43 +120,32 @@ export async function queryEvents(filters: EventQueryFilters): Promise<{ events:
     payload: row.payload,
     runId: row.run_id,
     sessionKey: row.session_key,
+    audience: row.scope === "user"
+      ? { scope: "user", ownerUserId: row.owner_user_id, accountId: row.account_id }
+      : { scope: row.scope },
     createdAt: row.created_at,
   }));
 
   return { events, total };
 }
 
-export async function getEventByDbId(dbId: number): Promise<any | undefined> {
-  try {
-    const result = await pool.query(
-      `SELECT id, event_id, boot_id, category, event, payload, run_id, session_key, created_at
-       FROM system_events WHERE id = $1`,
-      [dbId]
-    );
-    if (result.rows.length === 0) return undefined;
-    const row = result.rows[0];
-    return {
-      id: row.event_id,
-      timestamp: new Date(row.created_at).getTime(),
-      category: row.category,
-      event: row.event,
-      payload: row.payload || {},
-      runId: row.run_id,
-      sessionKey: row.session_key,
-      bootId: row.boot_id,
-      dbId: row.id,
-    };
-  } catch {
-    return undefined;
-  }
+export async function getEventByDbId(dbId: number, principal: Principal = getCurrentPrincipalOrSystem()): Promise<any | undefined> {
+  return getEventByColumn("id", dbId, principal);
 }
 
-export async function getEventByEventId(eventId: string): Promise<any | undefined> {
+export async function getEventByEventId(eventId: string, principal: Principal = getCurrentPrincipalOrSystem()): Promise<any | undefined> {
+  return getEventByColumn("event_id", eventId, principal);
+}
+
+async function getEventByColumn(column: "id" | "event_id", value: number | string, principal: Principal): Promise<any | undefined> {
   try {
+    const conditions = [`${column} = $1`];
+    const params: unknown[] = [value];
+    appendVisibleEventScope(conditions, params, principal);
     const result = await pool.query(
-      `SELECT id, event_id, boot_id, category, event, payload, run_id, session_key, created_at
-       FROM system_events WHERE event_id = $1 LIMIT 1`,
-      [eventId]
+      `SELECT id, event_id, boot_id, category, event, payload, run_id, session_key, scope, owner_user_id, account_id, created_at
+       FROM system_events WHERE ${conditions.join(" AND ")} LIMIT 1`,
+      params,
     );
     if (result.rows.length === 0) return undefined;
     const row = result.rows[0];
@@ -149,9 +158,16 @@ export async function getEventByEventId(eventId: string): Promise<any | undefine
       runId: row.run_id,
       sessionKey: row.session_key,
       bootId: row.boot_id,
+      audience: row.scope === "user"
+        ? { scope: "user", ownerUserId: row.owner_user_id, accountId: row.account_id }
+        : { scope: row.scope },
       dbId: row.id,
     };
-  } catch {
+  } catch (error) {
+    log.error("event lookup failed", {
+      column,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return undefined;
   }
 }

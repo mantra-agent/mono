@@ -154,6 +154,24 @@ export function createUserPrincipalFromUser(user: User, accountId: string): Prin
   };
 }
 
+export async function createUserSessionPrincipal(user: User): Promise<Principal> {
+  const foundation = await ensureUserIdentityFoundation(user);
+  const isAdmin = user.role === "admin";
+  return {
+    actorType: "user",
+    userId: user.id,
+    accountId: foundation.accountId,
+    role: foundation.role === "owner" && isAdmin ? "admin" : foundation.role,
+    scopes: isAdmin ? ADMIN_DEFAULT_SCOPES : USER_DEFAULT_SCOPES,
+    permissions: await getUserEffectivePermissions(user.id),
+    isAdmin,
+    impersonation: null,
+    source: "session",
+    visibleVaultIds: user.visibleVaultIds ?? [],
+    activeVaultId: user.activeVaultId ?? null,
+  };
+}
+
 export async function ensureUserIdentityFoundation(user: User): Promise<{ accountId: string; role: PrincipalRole }> {
   const existing = await db
     .select({ accountId: accounts.id, role: memberships.role })
@@ -354,22 +372,7 @@ function normalizeRole(role: string | null | undefined): PrincipalRole {
 }
 
 export async function attachUserPrincipal(req: Request, user: User): Promise<Principal> {
-  const foundation = await ensureUserIdentityFoundation(user);
-  const isAdmin = user.role === "admin";
-  const permissions = await getUserEffectivePermissions(user.id);
-  const principal: Principal = {
-    actorType: "user",
-    userId: user.id,
-    accountId: foundation.accountId,
-    role: foundation.role === "owner" && isAdmin ? "admin" : foundation.role,
-    scopes: isAdmin ? ADMIN_DEFAULT_SCOPES : USER_DEFAULT_SCOPES,
-    permissions,
-    isAdmin,
-    impersonation: null,
-    source: "session",
-    visibleVaultIds: user.visibleVaultIds ?? [],
-    activeVaultId: user.activeVaultId ?? null,
-  };
+  const principal = await createUserSessionPrincipal(user);
   req.principal = principal;
   recordPrincipalDiagnosticEvent({
     type: "attach_user",

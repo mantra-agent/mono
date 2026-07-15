@@ -10,7 +10,7 @@ import { writeSync as _bootWriteSync } from "fs";
 import type { Response } from "express";
 import { agentExecutor } from "../agent-executor";
 import { ACTIVITY_VOICE } from "../job-profiles";
-import { eventBus } from "../event-bus";
+import { audienceForPrincipal, eventBus } from "../event-bus";
 import { createLogger } from "../log";
 import { writeJournal, nextSystemStepSeq } from "../chat-journal";
 import { abortTrace } from "../abort-trace";
@@ -92,6 +92,7 @@ export function publishVoiceEvent(
       ...payload,
     },
     sessionKey: session.chatSessionKey,
+    audience: audienceForPrincipal(session.principal),
   });
 }
 

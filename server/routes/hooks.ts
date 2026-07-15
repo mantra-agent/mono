@@ -2,8 +2,11 @@ import type { Express } from "express";
 import * as hookStorage from "../hook-storage";
 import { hookExecutor } from "../hook-executor";
 import { eventBus } from "../event-bus";
+import { requireAuth } from "../auth";
 
 export function registerHooksRoutes(app: Express) {
+  app.use("/api/hooks", requireAuth);
+
   app.get("/api/hooks", async (_req, res) => {
     try {
       const hooks = await hookStorage.listHooks();
@@ -138,7 +141,7 @@ export function registerHooksRoutes(app: Express) {
       let testEvent: any;
 
       if (eventId) {
-        const recentEvents = eventBus.getRecentEvents(500);
+        const recentEvents = eventBus.getRecentEvents(500, undefined, req.principal);
         testEvent = recentEvents.find(e => e.id === eventId);
         if (!testEvent) {
           const { getEventByEventId, getEventByDbId } = await import("../event-persistence");

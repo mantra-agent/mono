@@ -1,13 +1,18 @@
 import type { Express } from "express";
-import { eventBus, type BusEvent } from "../event-bus";
+import type { IncomingMessage } from "http";
+import { eventBus, isEventVisibleToPrincipal, type BusEvent } from "../event-bus";
 import { getCached } from "./shared";
 import { setWsConnectionCount } from "../performance-monitor";
 import { WebSocketServer, WebSocket } from "ws";
 import { createLogger } from "../log";
 import { isClientPresenceKind } from "@shared/client-presence";
-import { registerClientPresence, resolveAccountIdForRequest, subscribeClientPresence, unregisterSocketPresence } from "../client-presence";
+import { registerClientPresence, subscribeClientPresence, unregisterSocketPresence } from "../client-presence";
 import { registerEventSocket, setEventSocketSessionSubscription, unregisterEventSocket } from "../realtime-transport-metrics";
 import { sessionManager } from "../session-manager";
+import type { Principal } from "../principal";
+import { runWithPrincipal } from "../principal-context";
+import { chatFileStorage } from "../chat-file-storage";
+import { requirePermission } from "../permissions";
 
 const eventsLog = createLogger("EventsWS");
 let eventsConnectionCounter = 0;
@@ -16,6 +21,12 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
   const PING_INTERVAL_MS = 30_000;
 
   eventsWss.on("connection", (ws, request) => {
+    const principal = (request as IncomingMessage & { eventPrincipal?: Principal }).eventPrincipal;
+    if (!principal || principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+      eventsLog.error("WS:CONNECTION_WITHOUT_PRINCIPAL");
+      ws.close(1008, "Authentication required");
+      return;
+    }
     const totalClients = eventsWss.clients.size;
     const connectTime = Date.now();
     const connectionId = `events-ws-${++eventsConnectionCounter}`;
@@ -25,10 +36,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
 
     // Server-authoritative session subscriptions (by sessionId).
     const subscribedSessionIds = new Set<string>();
-    const accountIdPromise = resolveAccountIdForRequest(request).catch((err) => {
-      eventsLog.warn("WS:PRESENCE:AUTH_RESOLVE_FAILED", { connectionId, error: err instanceof Error ? err.message : String(err) });
-      return null;
-    });
+    const accountId = principal.accountId;
 
     const pingTimer = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
@@ -49,22 +57,11 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
           return;
         }
         if (msg.type === "client_presence.subscribe") {
-          accountIdPromise.then((accountId) => {
-            if (!accountId) return;
-            subscribeClientPresence(ws, accountId);
-          }).catch((err) => {
-            eventsLog.warn("WS:PRESENCE:SUBSCRIBE_FAILED", { connectionId, error: err instanceof Error ? err.message : String(err) });
-          });
+          subscribeClientPresence(ws, accountId);
           return;
         }
         if (msg.type === "client_presence.register" && isClientPresenceKind(msg.kind)) {
-          const kind = msg.kind;
-          accountIdPromise.then((accountId) => {
-            if (!accountId) return;
-            registerClientPresence(ws, accountId, kind, typeof msg.clientId === "string" ? msg.clientId : undefined);
-          }).catch((err) => {
-            eventsLog.warn("WS:PRESENCE:REGISTER_FAILED", { connectionId, error: err instanceof Error ? err.message : String(err) });
-          });
+          registerClientPresence(ws, accountId, msg.kind, typeof msg.clientId === "string" ? msg.clientId : undefined);
           return;
         }
         // Server-authoritative session subscription (by sessionId)
@@ -77,20 +74,22 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
             owner: typeof msg.owner === "string" ? msg.owner : undefined,
             activeSession: typeof msg.activeSession === "string" ? msg.activeSession : null,
           };
-          const alreadySubscribed = subscribedSessionIds.has(subSessionId);
-          if (!alreadySubscribed) {
-            subscribedSessionIds.add(subSessionId);
-            setEventSocketSessionSubscription(connectionId, subSessionId, true);
-          }
-          eventsLog.debug(alreadySubscribed ? "WS:SESSION:RESUBSCRIBE" : "WS:SESSION:SUBSCRIBE", { sessionId: subSessionId, subscriptions: subscribedSessionIds.size, ...identity });
-          // Subscription mutation is synchronous with the socket lifecycle. A
-          // deferred import here can resolve after close and resurrect a dead socket
-          // in SessionManager after disconnect cleanup has already run.
-          if (ws.readyState !== WebSocket.OPEN) return;
-          const snapshot = sessionManager.subscribe(subSessionId, ws, identity);
-          try {
-            // Always respond — even when the session is not live in memory (cleaned up
-            // after completion). An idle snapshot clears stale streaming state on the client.
+          void runWithPrincipal(principal, async () => {
+            const visibleSession = await chatFileStorage.getSession(subSessionId);
+            if (!visibleSession || ws.readyState !== WebSocket.OPEN) {
+              eventsLog.warn("WS:SESSION:SUBSCRIBE_DENIED", { connectionId, sessionId: subSessionId, accountId });
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "session.subscription_denied", sessionId: subSessionId }));
+              }
+              return;
+            }
+            const alreadySubscribed = subscribedSessionIds.has(subSessionId);
+            if (!alreadySubscribed) {
+              subscribedSessionIds.add(subSessionId);
+              setEventSocketSessionSubscription(connectionId, subSessionId, true);
+            }
+            eventsLog.debug(alreadySubscribed ? "WS:SESSION:RESUBSCRIBE" : "WS:SESSION:SUBSCRIBE", { sessionId: subSessionId, subscriptions: subscribedSessionIds.size, ...identity });
+            const snapshot = sessionManager.subscribe(subSessionId, ws, identity);
             const payload = snapshot ?? {
               sessionId: subSessionId,
               status: "idle" as const,
@@ -98,9 +97,13 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
               subscriberCount: 0,
             };
             ws.send(JSON.stringify({ type: "session.snapshot", ...payload }));
-          } catch (err) {
-            eventsLog.warn(`session.snapshot send failed: ${err instanceof Error ? err.message : String(err)}`);
-          }
+          }).catch((error) => {
+            eventsLog.error("WS:SESSION:SUBSCRIBE_FAILED", {
+              connectionId,
+              sessionId: subSessionId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
           return;
         }
         if (msg.type === "session.unsubscribe" && typeof msg.sessionId === "string") {
@@ -147,7 +150,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
     if (recent.length > 0) {
       // Strip chat.stream events from generic history — those should only flow
       // to subscribed sessions (via the subscribe replay path).
-      const filtered = recent.filter(e => e.event !== "chat.stream");
+      const filtered = recent.filter(e => e.event !== "chat.stream" && isEventVisibleToPrincipal(e, principal));
       if (filtered.length > 0) {
         ws.send(JSON.stringify({ type: "history", events: filtered }));
         eventsLog.debug(`sent ${filtered.length} history events to new client (filtered from ${recent.length})`);
@@ -159,7 +162,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
       // chat.stream events are now handled by server-authoritative session
       // subscriptions (session.subscribe/session.unsubscribe). Skip them
       // from the generic broadcast path to avoid duplicate delivery.
-      if (event.event === "chat.stream") return;
+      if (event.event === "chat.stream" || !isEventVisibleToPrincipal(event, principal)) return;
       try {
         ws.send(JSON.stringify({ type: "event", event }));
       } catch (err) {
@@ -170,6 +173,8 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
     eventBus.on("event", handler);
   });
 
+
+  app.use("/api/events", requirePermission("system:read"));
 
   app.get("/api/events", (_req, res) => {
     try {
@@ -182,7 +187,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
         category: category || undefined,
         runId: runId || undefined,
         event: eventFilter || undefined,
-      });
+      }, _req.principal);
       res.json({ events, total: eventBus.getBufferSize() });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -220,6 +225,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
         payloadQuery,
         limit,
         offset,
+        principal: req.principal,
       });
       res.json(result);
     } catch (error: any) {
@@ -229,7 +235,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
 
   app.get("/api/events/runs", (_req, res) => {
     try {
-      const runs = eventBus.getActiveRuns();
+      const runs = eventBus.getActiveRuns(_req.principal);
       res.json({ runs });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -238,7 +244,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
 
   app.get("/api/events/runs/:runId", (req, res) => {
     try {
-      const events = eventBus.getRunEvents(req.params.runId);
+      const events = eventBus.getRunEvents(req.params.runId, req.principal);
       res.json({ events });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -248,7 +254,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
   app.post("/api/events/runs/:runId/clear", (req, res) => {
     try {
       const reason = typeof req.body?.reason === "string" ? req.body.reason : "manual_cleanup";
-      const result = eventBus.clearActiveRun(req.params.runId, reason);
+      const result = eventBus.clearActiveRun(req.params.runId, reason, req.principal);
       if (!result.cleared) {
         res.status(404).json(result);
         return;
