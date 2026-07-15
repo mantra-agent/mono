@@ -16,6 +16,7 @@ import { SimpleTextFrame } from "./simple-text-frame";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { MeetingAgentToggle } from "./widgets/meeting-agent-toggle";
+import { InlineLibraryPageEditor } from "@/components/library/inline-library-page";
 
 // ─── Helpers ───
 
@@ -170,8 +171,11 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children }: Si
   const action = completeAction(item);
   const reference = primaryReference(item);
   const inlineExpandedContent = expandedContent(item);
+  const isAgendaPage = item.payload?.kind === "meeting_artifact" && item.payload?.artifactKind === "agenda";
+  const agendaPageId = isAgendaPage && typeof item.payload?.pageId === "string" ? item.payload.pageId : null;
+  const agendaPageSlug = isAgendaPage && typeof item.payload?.slug === "string" ? item.payload.slug : null;
   const hasChildren = Boolean(item.children?.length);
-  const canExpand = hasChildren || Boolean(inlineExpandedContent);
+  const canExpand = hasChildren || Boolean(inlineExpandedContent) || Boolean(agendaPageId && agendaPageSlug);
   const entryKind = wellnessEntryKind(item);
   const entryUi = useMemo(() => entryKind ? entryCopy(entryKind) : null, [entryKind]);
 
@@ -395,11 +399,15 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children }: Si
       </div>
 
       {/* Expanded content */}
-      {expanded && inlineExpandedContent && (
+      {expanded && agendaPageId && agendaPageSlug ? (
+        <div className="pb-2 pl-0 pr-1.5">
+          <InlineLibraryPageEditor page={{ id: agendaPageId, title: item.title, slug: agendaPageSlug }} />
+        </div>
+      ) : expanded && inlineExpandedContent ? (
         <div className="pb-2 pl-0 pr-1.5">
           <SimpleTextFrame content={inlineExpandedContent} />
         </div>
-      )}
+      ) : null}
 
       {/* Expanded children */}
       {expanded && hasChildren && (

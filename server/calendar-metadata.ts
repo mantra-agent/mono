@@ -9,7 +9,8 @@ import {
   type CalendarEventPerson,
   type CalendarEventArtifact,
 } from "@shared/schema";
-import { eq, inArray, and, sql, or } from "drizzle-orm";
+import { eq, inArray, and, sql, or, ne } from "drizzle-orm";
+import { libraryPages } from "@shared/models/info";
 import { createLogger } from "./log";
 import { TTLCache } from "./utils/ttl-cache";
 import { eventBus } from "./event-bus";
@@ -503,30 +504,109 @@ export async function getLinkedArtifacts(metadataId: number): Promise<CalendarEv
   });
 }
 
-/** Resolve the meeting agenda from its canonical metadata, falling back to the
- * first linked brief. The explicit agenda always wins. */
+export interface MeetingAgendaPage {
+  id: string;
+  title: string;
+  slug: string;
+  plainTextContent: string;
+}
+
+const libraryScopeColumns = {
+  scope: libraryPages.scope,
+  ownerUserId: libraryPages.ownerUserId,
+  accountId: libraryPages.accountId,
+};
+
+async function getVisibleLibraryPage(idOrSlug: string): Promise<MeetingAgendaPage | null> {
+  const principal = getCurrentPrincipalOrSystem();
+  const baseSelect = {
+    id: libraryPages.id,
+    title: libraryPages.title,
+    slug: libraryPages.slug,
+    plainTextContent: libraryPages.plainTextContent,
+  };
+  const [byId] = await db
+    .select(baseSelect)
+    .from(libraryPages)
+    .where(combineWithVisibleScope(principal, libraryScopeColumns, eq(libraryPages.id, idOrSlug)))
+    .limit(1);
+  if (byId) return byId;
+  const [bySlug] = await db
+    .select(baseSelect)
+    .from(libraryPages)
+    .where(combineWithVisibleScope(principal, libraryScopeColumns, eq(libraryPages.slug, idOrSlug)))
+    .limit(1);
+  return bySlug ?? null;
+}
+
+export async function resolveMeetingAgendaPage(metadata: CalendarEventMetadata): Promise<MeetingAgendaPage | null> {
+  const linkedAgenda = (await getLinkedArtifacts(metadata.id)).find(
+    artifact => artifact.artifactKind === "agenda" && artifact.artifactType === "library_page",
+  );
+  if (!linkedAgenda) return null;
+  return getVisibleLibraryPage(linkedAgenda.libraryPageId);
+}
+
+export async function setMeetingAgendaPage(
+  metadata: CalendarEventMetadata,
+  libraryPageIdOrSlug?: string,
+  legacyAgenda?: string,
+  meetingTitle = "Meeting",
+): Promise<MeetingAgendaPage> {
+  const existingAgendaPage = await resolveMeetingAgendaPage(metadata);
+  if (libraryPageIdOrSlug) {
+    const selectedPage = await getVisibleLibraryPage(libraryPageIdOrSlug);
+    if (!selectedPage) throw new Error(`Library page not found: ${libraryPageIdOrSlug}`);
+    await linkArtifact(metadata.id, selectedPage.id, "agenda", selectedPage.title, "meeting_agenda");
+    await db.delete(calendarEventArtifacts).where(combineWithSensitiveWritable(calendarArtifactOwnerColumns, and(
+      eq(calendarEventArtifacts.metadataId, metadata.id),
+      eq(calendarEventArtifacts.artifactKind, "agenda"),
+      ne(calendarEventArtifacts.libraryPageId, selectedPage.id),
+    )));
+    invalidateCalendarCache();
+    return selectedPage;
+  }
+  if (existingAgendaPage) return existingAgendaPage;
+
+  const { createFiledLibraryPage } = await import("./library-save");
+  const created = await createFiledLibraryPage({
+    title: `${meetingTitle.trim() || "Meeting"} Agenda`,
+    markdown: legacyAgenda?.trim() || "",
+    purpose: "meeting-notes",
+    pageContext: "/calendar",
+    contentSummary: `Private agenda for ${meetingTitle.trim() || "meeting"}`,
+    tags: ["meeting-agenda"],
+  });
+  await linkArtifact(metadata.id, created.id, "agenda", created.title, "meeting_agenda");
+  await db.delete(calendarEventArtifacts).where(combineWithSensitiveWritable(calendarArtifactOwnerColumns, and(
+    eq(calendarEventArtifacts.metadataId, metadata.id),
+    eq(calendarEventArtifacts.artifactKind, "agenda"),
+    ne(calendarEventArtifacts.libraryPageId, created.id),
+  )));
+  invalidateCalendarCache();
+  return {
+    id: created.id,
+    title: created.title,
+    slug: created.slug,
+    plainTextContent: created.plainTextContent,
+  };
+}
+
+/** Resolve agenda text for model context and legacy consumers. The linked
+ * Library page is authoritative; legacy metadata text is migration fallback. */
 export async function resolveMeetingAgenda(metadata: CalendarEventMetadata): Promise<string | undefined> {
-  const explicitAgenda = metadata.agenda?.trim();
-  if (explicitAgenda) return explicitAgenda;
+  const page = await resolveMeetingAgendaPage(metadata);
+  if (page) return page.plainTextContent.trim() || undefined;
+
+  const legacyAgenda = metadata.agenda?.trim();
+  if (legacyAgenda) return legacyAgenda;
 
   const linkedBrief = (await getLinkedArtifacts(metadata.id)).find(
     artifact => artifact.artifactKind === "brief" && artifact.artifactType === "library_page",
   );
   if (!linkedBrief) return undefined;
-
-  const { libraryPages } = await import("@shared/models/info");
-  const principal = getCurrentPrincipalOrSystem();
-  const libraryScope = {
-    scope: libraryPages.scope,
-    ownerUserId: libraryPages.ownerUserId,
-    accountId: libraryPages.accountId,
-  };
-  const [page] = await db
-    .select({ plainTextContent: libraryPages.plainTextContent })
-    .from(libraryPages)
-    .where(combineWithVisibleScope(principal, libraryScope, eq(libraryPages.id, linkedBrief.libraryPageId)))
-    .limit(1);
-  return page?.plainTextContent?.trim() || undefined;
+  const brief = await getVisibleLibraryPage(linkedBrief.libraryPageId);
+  return brief?.plainTextContent?.trim() || undefined;
 }
 
 // ─── getLinkedArtifactsByMetadataIds (bulk) ───

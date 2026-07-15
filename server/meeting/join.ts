@@ -70,6 +70,7 @@ export async function joinMeetingByUrl(opts: {
     botStatus: "dialing",
     meetingUrl: identity.meetingUrl,
     agenda: identity.agenda,
+    agendaPage: identity.agendaPage,
     calendarAccountId: identity.calendarAccountId,
     calendarId: identity.calendarId,
     providerEventId: identity.providerEventId,

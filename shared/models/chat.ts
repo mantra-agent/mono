@@ -614,7 +614,13 @@ export interface MeetingSessionMeta {
   eventStart?: string;
   eventEnd?: string;
   resolutionSource?: MeetingResolutionSource;
-  /** Private agenda copied from user-scoped calendar metadata at join time. */
+  /** Authoritative private agenda Library page linked from calendar metadata. */
+  agendaPage?: {
+    id: string;
+    title: string;
+    slug: string;
+  };
+  /** Derived agenda text retained for model context and legacy sessions. */
   agenda?: string;
   /** Human-readable detail for denied/failed states (e.g. sub_code). */
   statusDetail?: string;

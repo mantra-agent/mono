@@ -20,7 +20,6 @@ import {
   ChevronRight,
   FileText,
   Hourglass,
-  ListChecks,
   Loader2,
   Mail,
   Radio,
@@ -33,6 +32,9 @@ import { EmailDraftWidget } from "@/components/email-draft-widget";
 import { useToast } from "@/hooks/use-toast";
 import { createLogger } from "@/lib/logger";
 import type { MeetingSessionMeta, MeetingBotStatus } from "@shared/models/chat";
+import { createReferenceRef } from "@shared/references";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
 
 const log = createLogger("MeetingHeaderBar");
 
@@ -392,17 +394,25 @@ export function MeetingHeaderBar({
         {meeting.participants.length > 0 && (
           <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
             <Users className="h-3 w-3 shrink-0 text-muted-foreground" />
-            {meeting.participants.map((p) => (
+            {meeting.participants.map((participant) => participant.personId ? (
+              <ReferenceRenderer
+                key={participant.personId}
+                refValue={createReferenceRef({
+                  type: "person",
+                  id: participant.personId,
+                  metadata: { label: participant.label, href: `/people/${participant.personId}` },
+                })}
+                surface="chat-inline"
+                className="max-w-full"
+              />
+            ) : (
               <span
-                key={p.label}
-                className={cn(
-                  "inline-flex items-center rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs",
-                  p.personId ? "text-foreground" : "text-muted-foreground",
-                )}
-                title={p.personId ? `Known person: ${p.label}` : p.label}
-                data-testid={`chip-participant-${p.label.replace(/\s+/g, "-").toLowerCase()}`}
+                key={participant.label}
+                className="inline-flex items-center rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground"
+                title={participant.label}
+                data-testid={`chip-participant-${participant.label.replace(/\s+/g, "-").toLowerCase()}`}
               >
-                {p.label}
+                {participant.label}
               </span>
             ))}
           </div>
@@ -410,15 +420,15 @@ export function MeetingHeaderBar({
       </div>
 
       {/* ── Agenda ── */}
-      {meeting.agenda && (
-        <div className="flex items-start gap-2 border-t border-border/20 px-4 py-2 text-sm text-muted-foreground">
-          <ListChecks className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <div className="min-w-0">
-            <span className="font-medium text-foreground">Agenda</span>
-            <div className="mt-0.5 whitespace-pre-line">{meeting.agenda}</div>
-          </div>
+      {meeting.agendaPage ? (
+        <div className="border-t border-border/20 px-4 py-2">
+          <ExpandableLibraryPage page={meeting.agendaPage} label="Agenda" />
         </div>
-      )}
+      ) : meeting.agenda ? (
+        <div className="border-t border-border/20 px-4 py-2 text-sm text-muted-foreground whitespace-pre-line">
+          {meeting.agenda}
+        </div>
+      ) : null}
 
       {/* ── Recap generating ── */}
       {recap?.status === "generating" && (

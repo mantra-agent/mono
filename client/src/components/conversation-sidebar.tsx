@@ -270,7 +270,8 @@ export function ConversationItem({
   // - Hovering icon area OR pinned (when not live): pin icon (clickable)
   // - Default: Bot or User icon
   const isWaiting = conv.status === "waiting";
-  const isSpinning = !isWaiting && (isLive || !!conv.hasActiveDescendant || !!conv.hasActivePlan);
+  const isActiveMeeting = conv.type === "meeting" && conv.meeting?.botStatus === "live";
+  const isSpinning = !isWaiting && !isActiveMeeting && (isLive || !!conv.hasActiveDescendant || !!conv.hasActivePlan);
   const showPinIcon = (isPinned && !isSpinning && !isWaiting) || iconHovered;
   const isIconInteractive = iconHovered || (isPinned && !isSpinning);
 
@@ -302,7 +303,7 @@ export function ConversationItem({
         <Radio
           className={cn(
             "h-3.5 w-3.5 shrink-0",
-            conv.meeting?.botStatus === "live" ? "text-active" : "text-muted-foreground",
+            isActiveMeeting ? "text-active animate-pulse" : "text-muted-foreground",
           )}
           data-testid={`icon-conversation-meeting-${conv.id}`}
         />

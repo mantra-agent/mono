@@ -1,5 +1,5 @@
 import type { MeetingParticipant, MeetingResolutionSource } from "@shared/models/chat";
-import { getLinkedPeople, getMetadata, resolveMeetingAgenda } from "../calendar-metadata";
+import { getLinkedPeople, getMetadata, resolveMeetingAgenda, resolveMeetingAgendaPage, setMeetingAgendaPage, type MeetingAgendaPage } from "../calendar-metadata";
 import { listAllEvents, type CalendarEvent } from "../google-calendar";
 import { createLogger } from "../log";
 
@@ -24,6 +24,7 @@ export interface ResolvedMeetingIdentity {
   meetingUrl: string;
   title: string;
   agenda?: string;
+  agendaPage?: Pick<MeetingAgendaPage, "id" | "title" | "slug">;
   calendarAccountId?: string;
   calendarId?: string;
   providerEventId?: string;
@@ -116,12 +117,17 @@ async function fromEvent(
   resolutionSource: Exclude<MeetingResolutionSource, "unresolved_url">,
 ): Promise<ResolvedMeetingIdentity> {
   const metadata = await getMetadata(event.id, event.accountId, event.calendarId);
-  const resolvedAgenda = fallbackAgenda || (metadata ? await resolveMeetingAgenda(metadata) : undefined);
+  const existingAgendaPage = metadata ? await resolveMeetingAgendaPage(metadata) : null;
+  const agendaPage = metadata && !existingAgendaPage && metadata.agenda?.trim()
+    ? await setMeetingAgendaPage(metadata, undefined, metadata.agenda, event.summary || fallbackTitle)
+    : existingAgendaPage;
+  const resolvedAgenda = metadata ? await resolveMeetingAgenda(metadata) : fallbackAgenda;
   const participants = await resolveEventParticipants(event.attendees, metadata?.id);
   return {
     meetingUrl,
     title: event.summary?.trim() || fallbackTitle,
-    agenda: resolvedAgenda,
+    agenda: fallbackAgenda || resolvedAgenda,
+    ...(agendaPage ? { agendaPage: { id: agendaPage.id, title: agendaPage.title, slug: agendaPage.slug } } : {}),
     calendarAccountId: event.accountId,
     calendarId: event.calendarId,
     providerEventId: event.id,
@@ -148,10 +154,16 @@ export async function resolveMeetingIdentity(input: ResolveMeetingIdentityInput)
       input.explicitEvent.attendees || [],
       metadata?.id,
     );
+    const existingAgendaPage = metadata ? await resolveMeetingAgendaPage(metadata) : null;
+    const agendaPage = metadata && !existingAgendaPage && metadata.agenda?.trim()
+      ? await setMeetingAgendaPage(metadata, undefined, metadata.agenda, input.explicitEvent.title || title)
+      : existingAgendaPage;
+    const metadataAgenda = metadata ? await resolveMeetingAgenda(metadata) : undefined;
     return {
       meetingUrl,
       title: input.explicitEvent.title?.trim() || title,
-      agenda: explicitAgenda || (metadata ? await resolveMeetingAgenda(metadata) : undefined),
+      agenda: explicitAgenda || metadataAgenda,
+      ...(agendaPage ? { agendaPage: { id: agendaPage.id, title: agendaPage.title, slug: agendaPage.slug } } : {}),
       calendarAccountId: input.explicitEvent.accountId,
       calendarId: input.explicitEvent.calendarId,
       providerEventId: input.explicitEvent.providerEventId,

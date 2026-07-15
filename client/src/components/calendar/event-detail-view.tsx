@@ -53,6 +53,7 @@ import {
   type LinkedPersonRef,
   type LinkedTaskRef,
 } from "@/components/calendar/use-event-metadata";
+import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
 
 // --- Shared types (duplicated from calendar.tsx for now, will extract later) ---
 
@@ -280,8 +281,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   const [showRecurringScopeDialog, setShowRecurringScopeDialog] = useState(false);
   const [showTaskSearch, setShowTaskSearch] = useState(false);
   const [taskSearchQuery, setTaskSearchQuery] = useState("");
-  const [agenda, setAgenda] = useState("");
-  const [agendaInitialized, setAgendaInitialized] = useState(false);
+  const agendaPage = metadataData?.artifacts.find(artifact => artifact.artifactKind === "agenda") ?? null;
   const [initialized, setInitialized] = useState(isCreate);
 
   // Populate form from fetched event data
@@ -299,12 +299,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
     }
   }, [eventData, isCreate, initialized]);
 
-  useEffect(() => {
-    if (!isCreate && metadataData !== undefined && !agendaInitialized) {
-      setAgenda(metadata?.agenda || "");
-      setAgendaInitialized(true);
-    }
-  }, [agendaInitialized, isCreate, metadata?.agenda, metadataData]);
+  // Agenda content is hydrated directly from the linked Library page.
 
   // Set default calendar when calendars load for create mode
   useEffect(() => {
@@ -391,17 +386,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
         event: eventPayload,
       });
 
-      const trimmedAgenda = agenda.trim();
-      const existingAgenda = metadata?.agenda?.trim() || "";
-      if (trimmedAgenda !== existingAgenda) {
-        await apiRequest("POST", "/api/calendar/metadata", {
-          googleEventId: eventId,
-          accountId: accountId || selectedAccountId,
-          calendarId: calendarId || selectedCalendarId,
-          eventType: metadata?.eventType || "meeting",
-          agenda: trimmedAgenda,
-        });
-      }
+      // Agenda edits autosave through the linked Library page editor.
       return null;
     },
     onSuccess: (result) => {
@@ -907,22 +892,37 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
             <div className="space-y-2" data-testid="private-agenda-section">
               <div>
                 <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Private Agenda</h4>
-                <p className="text-xs text-muted-foreground">Visible only in Mantra. The meeting agent receives it when joining.</p>
+                <p className="text-xs text-muted-foreground">A Library page visible only in Mantra. The meeting agent receives its current content when joining.</p>
               </div>
-              {isReadOnly ? (
-                <div className="text-sm whitespace-pre-wrap" data-testid="private-agenda-readonly">
-                  {agenda || "No agenda yet"}
-                </div>
-              ) : (
-                <Textarea
-                  value={agenda}
-                  onChange={event => setAgenda(event.target.value)}
-                  placeholder="Add discussion points, decisions, and desired outcomes"
-                  rows={5}
-                  className="resize-y text-sm"
-                  disabled={metaLoading}
-                  data-testid="input-private-agenda"
+              {agendaPage ? (
+                <ExpandableLibraryPage
+                  page={{ id: agendaPage.libraryPageId, title: agendaPage.title, slug: agendaPage.slug }}
+                  readOnly={Boolean(isReadOnly)}
+                  defaultOpen
                 />
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={metaLoading || !eventData || Boolean(isReadOnly)}
+                  onClick={async () => {
+                    try {
+                      await apiRequest("POST", "/api/calendar/metadata", {
+                        googleEventId: eventId,
+                        accountId: accountId || selectedAccountId,
+                        calendarId: calendarId || selectedCalendarId,
+                        eventType: metadata?.eventType || "meeting",
+                        agenda: metadata?.agenda || "",
+                      });
+                      queryClient.invalidateQueries({ queryKey: metadataQueryKey });
+                    } catch (error) {
+                      toast({ title: "Failed to create agenda", description: String(error), variant: "destructive" });
+                    }
+                  }}
+                >
+                  <Plus className="h-3.5 w-3.5" /> Create agenda page
+                </Button>
               )}
             </div>
           )}

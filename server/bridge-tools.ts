@@ -5217,7 +5217,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         return { result: `Invalid eventType "${eventType}". Valid types: ${EVENT_TYPES.join(", ")}`, error: true };
       }
 
-      const meta = await setMetadata(googleEventId, accountId, calendarId, eventType, args.notes, attendeeEmails, undefined, args.agenda);
+      const meta = await setMetadata(googleEventId, accountId, calendarId, eventType, args.notes, attendeeEmails);
+      if (args.agendaLibraryPageId || args.agenda !== undefined) {
+        const { setMeetingAgendaPage } = await import("./calendar-metadata");
+        await setMeetingAgendaPage(meta, args.agendaLibraryPageId, args.agenda, summary || "Meeting");
+      }
       const linkedPeople = await getLinkedPeople(meta.id);
       const peopleStr = linkedPeople.length > 0
         ? ` Auto-linked people: ${linkedPeople.map(p => p.personName).join(", ")}.`
@@ -5240,7 +5244,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
       }
 
-      return { result: `Metadata set for event ${googleEventId}: type=${eventType}${args.notes ? `, notes recorded` : ""}${args.agenda ? `, agenda recorded` : ""}.${peopleStr}${interactionStr} (metadataId: ${meta.id})` };
+      return { result: `Metadata set for event ${googleEventId}: type=${eventType}${args.notes ? `, notes recorded` : ""}${args.agendaLibraryPageId || args.agenda !== undefined ? `, agenda page linked` : ""}.${peopleStr}${interactionStr} (metadataId: ${meta.id})` };
     } catch (err: any) {
       return { result: `Failed to set metadata: ${err.message}`, error: true };
     }
@@ -5251,7 +5255,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const calPermCheck = await checkGmailPermission(args.accountId, "calendarView", "view calendar event metadata");
       if (calPermCheck.denied) return calPermCheck.result;
 
-      const { getMetadata, getLinkedTasks, getLinkedPeople, getLinkedArtifacts } = await import("./calendar-metadata");
+      const { getMetadata, getLinkedTasks, getLinkedPeople, getLinkedArtifacts, resolveMeetingAgendaPage } = await import("./calendar-metadata");
       const googleEventId = args.googleEventId || args.eventId;
       const accountId = args.accountId;
       const calendarId = args.calendarId || "primary";
@@ -5261,13 +5265,18 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const meta = await getMetadata(googleEventId, accountId, calendarId);
       if (!meta) return { result: `No metadata found for event ${googleEventId}` };
 
-      const [tasks, people, artifacts] = await Promise.all([getLinkedTasks(meta.id), getLinkedPeople(meta.id), getLinkedArtifacts(meta.id)]);
+      const [tasks, people, artifacts, agendaPage] = await Promise.all([
+        getLinkedTasks(meta.id),
+        getLinkedPeople(meta.id),
+        getLinkedArtifacts(meta.id),
+        resolveMeetingAgendaPage(meta),
+      ]);
 
       const lines: string[] = [
         `Event: ${googleEventId}`,
         `Type: ${meta.eventType}`,
         ...(meta.notes ? [`Notes: ${meta.notes}`] : []),
-        ...(meta.agenda ? [`Private agenda:\n${meta.agenda}`] : []),
+        ...(agendaPage ? [`Agenda: @page:${agendaPage.id}`] : meta.agenda ? [`Legacy private agenda:\n${meta.agenda}`] : []),
       ];
 
       if (tasks.length > 0) {
