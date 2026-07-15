@@ -1,18 +1,18 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Search,
   Copy,
@@ -20,8 +20,10 @@ import {
   Pause,
   Play,
   AlertCircle,
-  WrapText,
+  ChevronRight,
   Loader2,
+  SlidersHorizontal,
+  X,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useTimezone } from "@/hooks/use-timezone";
@@ -59,8 +61,9 @@ interface LogFilesResponse {
 const LEVEL_COLORS: Record<string, string> = {
   error: "text-error",
   warn: "text-warning",
-  info: "text-success",
-  debug: "text-info",
+  info: "text-foreground",
+  log: "text-foreground",
+  debug: "text-muted-foreground",
   verbose: "text-muted-foreground/50",
 };
 
@@ -108,47 +111,34 @@ function fetchLogFiles(): Promise<LogFilesResponse> {
 
 function LogRow({ entry, timezone, wrap, isSeen }: { entry: LogEntry; timezone: string; wrap: boolean; isSeen?: boolean }) {
   const levelColor = LEVEL_COLORS[entry.level] || "text-muted-foreground";
-  // Error rows keep red text but lose the red background once scrolled into view
+  // Error rows keep their tint until the entry has appeared in the viewport.
   const rowBg = entry.level === "error" && isSeen ? "" : (LEVEL_BG[entry.level] || "");
   const isClient = entry.source.startsWith("client:");
 
   return (
-    <div
-      className={`border-b border-border/30 ${rowBg}`}
+    <details
+      className={`group border-b border-border/30 ${rowBg}`}
       data-testid={`log-entry-${entry.line}`}
       data-log-level={entry.level}
     >
-      {/* Desktop: single-line row with inline metadata */}
-      <div className={`hidden sm:flex items-start gap-1.5 px-3 py-1 text-xs font-mono hover:bg-muted/30 ${wrap ? "" : "whitespace-nowrap"}`}>
-        <span className="text-muted-foreground/60 w-[85px] shrink-0 text-right tabular-nums">
-          {formatLogTime(entry.ts, timezone)}
+      <summary aria-label={`${entry.level} log: ${entry.message}`} className="flex min-h-7 cursor-pointer list-none items-start gap-1.5 px-2 py-1 font-mono text-xs hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150 group-open:rotate-90" />
+        <span className={`min-w-0 flex-1 ${levelColor} ${wrap ? "break-words" : "truncate whitespace-nowrap"}`}>
+          {entry.message}
         </span>
-        <span className={`w-[38px] shrink-0 uppercase font-semibold text-xs ${levelColor}`}>
-          {entry.level}
-        </span>
-        <Badge variant="outline" className={`text-xs px-1 py-0 shrink-0 ${isClient ? "text-active border-active/30" : "text-neutral border-neutral/30"}`}>
-          {entry.source}
-        </Badge>
-        <span className={`text-foreground/80 min-w-0 flex-1 ${wrap ? "break-words" : "truncate"}`}>{entry.message}</span>
-      </div>
-      {/* Mobile: stacked layout — metadata row then full-width message */}
-      <div className="sm:hidden px-2 py-1 font-mono hover:bg-muted/30">
-        <div className="flex items-center gap-1.5 text-[10px]">
-          <span className="text-muted-foreground/60 tabular-nums">
-            {formatLogTime(entry.ts, timezone)}
-          </span>
-          <span className={`uppercase font-semibold ${levelColor}`}>
-            {entry.level}
-          </span>
-          <Badge variant="outline" className={`text-[10px] px-1 py-0 shrink-0 ${isClient ? "text-active border-active/30" : "text-neutral border-neutral/30"}`}>
+      </summary>
+      <div className="space-y-1 px-7 pb-2 font-mono">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span className="tabular-nums">{formatLogTime(entry.ts, timezone)}</span>
+          <Badge variant="outline" className={`px-1 py-0 text-xs ${isClient ? "border-active/30 text-active" : "border-neutral/30 text-neutral"}`}>
             {entry.source}
           </Badge>
         </div>
-        <div className={`text-[11px] text-foreground/80 mt-0.5 ${wrap ? "break-words" : "overflow-x-auto whitespace-nowrap"}`}>
+        <div className={`text-xs ${levelColor} ${wrap ? "break-words" : "overflow-x-auto whitespace-nowrap"}`}>
           {entry.message}
         </div>
       </div>
-    </div>
+    </details>
   );
 }
 
@@ -166,6 +156,7 @@ function VirtualizedLogList({ entries, timezone, wrap, parentRef, seenErrors, on
     count: entries.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 28,
+    getItemKey: (index) => `${entries[index].line}-${entries[index].ts}-${entries[index].source}`,
     overscan: 30,
   });
 
@@ -214,6 +205,7 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
   const { timezone } = useTimezone();
   const { markSeen: markLogErrorsSeen } = useLogErrors();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [filter, setFilter] = useState("");
   const [levelFilter, setLevelFilter] = useState("info");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -236,12 +228,11 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
         body: JSON.stringify({ enabled }),
       }).then(r => r.json()),
     onSuccess: (data: { enabled: boolean }) => {
-      // Optimistic update via queryClient isn't needed — React Query will refetch
+      queryClient.setQueryData(["/api/logs/verbose"], data);
     },
   });
 
   const [loadedEntries, setLoadedEntries] = useState<LogEntry[]>([]);
-  const [totalEntries, setTotalEntries] = useState(0);
   const [loadedOffset, setLoadedOffset] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [realtimeLogs, setRealtimeLogs] = useState<LogEntry[]>([]);
@@ -262,7 +253,6 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
   useEffect(() => {
     if (initialResult) {
       setLoadedEntries(initialResult.entries);
-      setTotalEntries(initialResult.total);
       setLoadedOffset(initialResult.offset);
     }
   }, [initialResult]);
@@ -337,7 +327,6 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
       const result = await fetchPaginatedLogs(currentFile, newOffset, fetchLimit, levelFilter);
       setLoadedEntries(prev => [...result.entries, ...prev]);
       setLoadedOffset(newOffset);
-      setTotalEntries(result.total);
     } catch (err) {
       log.error("Failed to load more log history", err);
     } finally {
@@ -401,41 +390,83 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
   return (
     <div className="flex flex-col h-full min-w-0 overflow-hidden">
       <div className="flex flex-col gap-1.5 px-3 sm:px-4 py-2 border-b shrink-0">
-        {/* Row 1: Search + filter selects */}
         <div className="flex items-center gap-1.5">
-          <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <Input
-            placeholder="Filter logs..."
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="h-7 text-xs flex-1 min-w-0"
-            data-testid="input-filter-logs"
-          />
-          <Select value={levelFilter} onValueChange={setLevelFilter}>
-            <SelectTrigger className="w-[80px] sm:w-[100px] h-7 text-xs shrink-0" data-testid="select-log-level">
-              <SelectValue placeholder="Level" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Levels</SelectItem>
-              <SelectItem value="error">Error {levelCounts.error ? `(${levelCounts.error})` : ""}</SelectItem>
-              <SelectItem value="warn">Warning {levelCounts.warn ? `(${levelCounts.warn})` : ""}</SelectItem>
-              <SelectItem value="info">Info</SelectItem>
-              <SelectItem value="debug">Debug</SelectItem>
-              <SelectItem value="verbose">Verbose</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={sourceFilter} onValueChange={setSourceFilter}>
-            <SelectTrigger className="w-[80px] sm:w-[120px] h-7 text-xs shrink-0" data-testid="select-log-source">
-              <SelectValue placeholder="Source" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Sources</SelectItem>
-              <SelectItem value="server">Server</SelectItem>
-              <SelectItem value="client">Client</SelectItem>
-            </SelectContent>
-          </Select>
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              className="h-7 w-full rounded-md border border-input bg-background pl-7 pr-7 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              data-testid="input-filter-logs"
+            />
+            {filter && (
+              <button
+                type="button"
+                onClick={() => setFilter("")}
+                className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+                aria-label="Clear log search"
+                data-testid="button-clear-log-search"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-7 gap-1.5 px-2 text-xs" data-testid="button-log-mixer">
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                Mixer
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger data-testid="menu-log-level">Log Level</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuRadioGroup value={levelFilter} onValueChange={setLevelFilter}>
+                    <DropdownMenuRadioItem value="all">All Levels</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="error">Error {levelCounts.error ? `(${levelCounts.error})` : ""}</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="warn">Warning {levelCounts.warn ? `(${levelCounts.warn})` : ""}</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="info">Info</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="debug">Debug</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="verbose">Verbose</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger data-testid="menu-log-sources">Sources</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuRadioGroup value={sourceFilter} onValueChange={setSourceFilter}>
+                    <DropdownMenuRadioItem value="all">All Sources</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="server">Server</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="client">Client</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger data-testid="menu-log-verbose">Verbose</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuRadioGroup
+                    value={verboseEnabled ? "enabled" : "disabled"}
+                    onValueChange={(value) => toggleVerbose.mutate(value === "enabled")}
+                  >
+                    <DropdownMenuRadioItem value="enabled">Enabled</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="disabled">Disabled</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger data-testid="menu-log-wrap">Wrap</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuRadioGroup value={wrap ? "enabled" : "disabled"} onValueChange={(value) => setWrap(value === "enabled")}>
+                    <DropdownMenuRadioItem value="enabled">Enabled</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="disabled">Disabled</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-        {/* Row 2: Badges, count, and action buttons */}
         <div className="flex items-center gap-1.5">
           {errorCount > 0 && (
             <Badge variant="destructive" className="text-xs gap-1" data-testid="badge-level-error">
@@ -448,32 +479,7 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
               {warnCount}
             </Badge>
           )}
-          <span className="text-xs text-muted-foreground/50 tabular-nums">
-            {filteredLogs.length}{totalEntries > displayLogs.length ? ` / ${totalEntries}` : ""}
-          </span>
           <div className="flex items-center gap-1.5 ml-auto">
-            <div className="hidden sm:flex items-center gap-1.5">
-              <Switch
-                id="verbose-toggle"
-                checked={verboseEnabled}
-                onCheckedChange={(checked) => toggleVerbose.mutate(checked)}
-                className="scale-75"
-                data-testid="switch-verbose-logging"
-              />
-              <Label htmlFor="verbose-toggle" className="text-xs text-muted-foreground cursor-pointer">
-                Verbose
-              </Label>
-            </div>
-            <Button
-              size="icon"
-              variant={wrap ? "secondary" : "ghost"}
-              onClick={() => setWrap(!wrap)}
-              className="h-7 w-7"
-              title={wrap ? "Disable text wrap" : "Enable text wrap"}
-              data-testid="button-wrap-logs"
-            >
-              <WrapText className="h-3.5 w-3.5" />
-            </Button>
             <Button
               size="icon"
               variant={paused ? "secondary" : "ghost"}
