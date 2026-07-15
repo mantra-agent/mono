@@ -22,7 +22,7 @@ import { MyelinationProvider } from "@/hooks/use-myelination";
 import { TopBar } from "@/components/top-bar";
 import { VaultProvider } from "@/hooks/use-vaults";
 import { useDataSync } from "@/hooks/use-data-sync";
-import { useClientPresence } from "@/hooks/use-client-presence";
+import { ClientPresenceProvider } from "@/hooks/use-client-presence";
 import { ExecutorStatusProvider } from "@/hooks/use-executor-status";
 import { FocusSessionProvider } from "@/hooks/use-focus-session";
 import { FocusContextProvider } from "@/hooks/use-focus-context";
@@ -407,7 +407,6 @@ function AppLayout({ mobileSurfaceActive, previewRouteOwnsCanvas }: { mobileSurf
 
 function AppShell() {
   useDataSync();
-  useClientPresence();
   const [location] = useLocation();
   const [interfaceMode] = useInterfaceMode();
 
@@ -419,8 +418,9 @@ function AppShell() {
   const mobileSurfaceActive = interfaceMode === "mobile_detail" || interfaceMode === "mobile_simple";
 
   return (
-    <PageHeaderProvider>
-      <VoiceSessionProvider>
+    <ClientPresenceProvider>
+      <PageHeaderProvider>
+        <VoiceSessionProvider>
         <MyelinationProvider>
           <ExecutorStatusProvider>
             <FocusSessionProvider>
@@ -434,8 +434,9 @@ function AppShell() {
             </FocusSessionProvider>
           </ExecutorStatusProvider>
         </MyelinationProvider>
-      </VoiceSessionProvider>
-    </PageHeaderProvider>
+        </VoiceSessionProvider>
+      </PageHeaderProvider>
+    </ClientPresenceProvider>
   );
 }
 

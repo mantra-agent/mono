@@ -178,6 +178,9 @@ Focus Session is the canonical session entry surface. Keep ownership split by ro
 - `client/src/components/session-transcript-panel.tsx` — Transcript/header surface only. It renders messages, stream state, title/actions, linked entities, plan bar, and websocket health. It must not own the normal composer/input path.
 - `client/src/components/bottom-bar/index.tsx` — Single normal composer/input owner for creating/sending session messages. It owns file upload, mention autocomplete, voice input display, and `useChatSend`.
 - `client/src/components/message-list.tsx` — Message rendering with markdown, code blocks, tool calls, images, and entity/reference widgets.
+- `client/src/hooks/use-client-presence.tsx` — One application-level provider owns presence registration and heartbeat. Consumers read its context; they must not instantiate transport side effects independently.
+
+Composer turn admission must use a synchronous ref before any state update or await. React state is display state, not a concurrency lock. Every message POST carries a stable `clientTurnId` so the server can make retries replay-safe.
 
 Do not reintroduce a second embedded session input under the transcript panel. If a new surface needs to send a message, route it through BottomBar ownership or extract a shared hook with one owner of visible composition state.
 

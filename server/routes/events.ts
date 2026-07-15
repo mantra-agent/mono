@@ -58,7 +58,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
           const kind = msg.kind;
           accountIdPromise.then((accountId) => {
             if (!accountId) return;
-            registerClientPresence(ws, accountId, kind);
+            registerClientPresence(ws, accountId, kind, typeof msg.clientId === "string" ? msg.clientId : undefined);
           }).catch((err) => {
             eventsLog.warn("WS:PRESENCE:REGISTER_FAILED", { connectionId, error: err instanceof Error ? err.message : String(err) });
           });

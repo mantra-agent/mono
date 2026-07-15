@@ -16,6 +16,9 @@ type PresenceConnection = {
   kind: ClientPresenceKind;
   connectedAt: Date;
   lastSeenAt: Date;
+  wsRefCount: number;
+  httpLastSeenAt?: Date;
+  external: boolean;
 };
 
 type AccountPresence = {
@@ -25,7 +28,7 @@ type AccountPresence = {
 };
 
 const accounts = new Map<string, AccountPresence>();
-const wsPresenceIds = new WeakMap<WebSocket, string>();
+const wsPresenceIds = new WeakMap<WebSocket, { accountId: string; presenceId: string }>();
 const wsSubscriberAccounts = new WeakMap<WebSocket, string>();
 let connectionCounter = 0;
 const HTTP_CLIENT_TTL_MS = 45_000;
@@ -39,8 +42,10 @@ function getAccount(accountId: string): AccountPresence {
   return account;
 }
 
-function isHttpClientId(id: string): boolean {
-  return id.startsWith("http:");
+function normalizePresenceId(clientId: string | undefined): string | null {
+  if (!clientId) return null;
+  const safeClientId = clientId.replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 120);
+  return safeClientId ? `browser:${safeClientId}` : null;
 }
 
 function pruneHttpClients(accountId: string): void {
@@ -49,9 +54,9 @@ function pruneHttpClients(accountId: string): void {
   const cutoff = Date.now() - HTTP_CLIENT_TTL_MS;
   let changed = false;
   for (const [id, client] of account.clients) {
-    if (!isHttpClientId(id)) continue;
-    if (client.lastSeenAt.getTime() >= cutoff) continue;
-    account.clients.delete(id);
+    if (!client.httpLastSeenAt || client.httpLastSeenAt.getTime() >= cutoff) continue;
+    client.httpLastSeenAt = undefined;
+    if (client.wsRefCount === 0 && !client.external) account.clients.delete(id);
     changed = true;
   }
   if (changed) broadcast(accountId);
@@ -172,36 +177,62 @@ export function subscribeClientPresence(ws: WebSocket, accountId: string): void 
   sendSnapshot(ws, accountId);
 }
 
-export function registerClientPresence(ws: WebSocket, accountId: string, kind: ClientPresenceKind): void {
-  const existingId = wsPresenceIds.get(ws);
-  if (existingId) {
-    const account = getAccount(accountId);
-    const existing = account.clients.get(existingId);
+export function registerClientPresence(
+  ws: WebSocket,
+  accountId: string,
+  kind: ClientPresenceKind,
+  clientId?: string,
+): void {
+  const existingSocketPresence = wsPresenceIds.get(ws);
+  if (existingSocketPresence) {
+    const existing = accounts.get(existingSocketPresence.accountId)?.clients.get(existingSocketPresence.presenceId);
     if (existing) {
       existing.kind = kind;
       existing.lastSeenAt = new Date();
-      broadcast(accountId);
+      broadcast(existingSocketPresence.accountId);
       return;
     }
+    wsPresenceIds.delete(ws);
   }
 
   const now = new Date();
-  const id = `client-${++connectionCounter}`;
-  wsPresenceIds.set(ws, id);
-  getAccount(accountId).clients.set(id, { id, accountId, kind, connectedAt: now, lastSeenAt: now });
+  const id = normalizePresenceId(clientId) ?? `client-${++connectionCounter}`;
+  const account = getAccount(accountId);
+  const existing = account.clients.get(id);
+  if (existing) {
+    existing.kind = kind;
+    existing.lastSeenAt = now;
+    existing.wsRefCount += 1;
+  } else {
+    account.clients.set(id, {
+      id,
+      accountId,
+      kind,
+      connectedAt: now,
+      lastSeenAt: now,
+      wsRefCount: 1,
+      external: false,
+    });
+  }
+  wsPresenceIds.set(ws, { accountId, presenceId: id });
   broadcast(accountId);
 }
 
 export function unregisterSocketPresence(ws: WebSocket): void {
-  const presenceId = wsPresenceIds.get(ws);
-  if (presenceId) {
+  const socketPresence = wsPresenceIds.get(ws);
+  if (socketPresence) {
     wsPresenceIds.delete(ws);
-    for (const [accountId, account] of accounts) {
-      if (account.clients.delete(presenceId)) {
-        broadcast(accountId);
-        maybeDeleteAccount(accountId);
-        break;
+    const account = accounts.get(socketPresence.accountId);
+    const client = account?.clients.get(socketPresence.presenceId);
+    if (account && client) {
+      client.wsRefCount = Math.max(0, client.wsRefCount - 1);
+      client.lastSeenAt = new Date();
+      const httpAlive = !!client.httpLastSeenAt && client.httpLastSeenAt.getTime() >= Date.now() - HTTP_CLIENT_TTL_MS;
+      if (client.wsRefCount === 0 && !httpAlive && !client.external) {
+        account.clients.delete(socketPresence.presenceId);
       }
+      broadcast(socketPresence.accountId);
+      maybeDeleteAccount(socketPresence.accountId);
     }
   }
 
@@ -230,6 +261,8 @@ export function registerExternalPresence(accountId: string, kind: ClientPresence
       kind,
       connectedAt: now,
       lastSeenAt: now,
+      wsRefCount: 0,
+      external: true,
     });
   }
 
@@ -264,15 +297,25 @@ export function getClientPresenceSnapshot(accountId: string): ClientPresenceSnap
 
 export function upsertHttpClientPresence(accountId: string, clientId: string, kind: ClientPresenceKind): ClientPresenceSnapshot {
   const account = getAccount(accountId);
-  const safeClientId = clientId.replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 120);
-  const id = `http:${safeClientId}`;
+  const id = normalizePresenceId(clientId);
+  if (!id) return toSnapshot(accountId);
   const now = new Date();
   const existing = account.clients.get(id);
   if (existing) {
     existing.kind = kind;
     existing.lastSeenAt = now;
+    existing.httpLastSeenAt = now;
   } else {
-    account.clients.set(id, { id, accountId, kind, connectedAt: now, lastSeenAt: now });
+    account.clients.set(id, {
+      id,
+      accountId,
+      kind,
+      connectedAt: now,
+      lastSeenAt: now,
+      wsRefCount: 0,
+      httpLastSeenAt: now,
+      external: false,
+    });
   }
   broadcast(accountId);
   return toSnapshot(accountId);

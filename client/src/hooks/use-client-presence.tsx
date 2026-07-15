@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
 import type { ClientPresenceEntry, ClientPresenceKind } from "@shared/client-presence";
 import { isClientPresenceKind } from "@shared/client-presence";
@@ -9,7 +9,7 @@ type PresenceMessage = {
 };
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
-const CLIENT_ID_STORAGE_KEY = "agent.clientPresenceId";
+const CLIENT_ID_STORAGE_KEY = "agent.clientPresenceTabId";
 
 function isPresenceEntry(value: unknown): value is ClientPresenceEntry {
   const entry = value as Partial<ClientPresenceEntry> | null;
@@ -25,10 +25,10 @@ function isPresenceEntry(value: unknown): value is ClientPresenceEntry {
 function stableClientId(): string {
   if (typeof window === "undefined") return `client-${Math.random().toString(36).slice(2)}`;
   try {
-    const existing = window.localStorage.getItem(CLIENT_ID_STORAGE_KEY);
+    const existing = window.sessionStorage.getItem(CLIENT_ID_STORAGE_KEY);
     if (existing) return existing;
     const next = `client-${crypto.randomUUID()}`;
-    window.localStorage.setItem(CLIENT_ID_STORAGE_KEY, next);
+    window.sessionStorage.setItem(CLIENT_ID_STORAGE_KEY, next);
     return next;
   } catch {
     return `client-${Math.random().toString(36).slice(2)}`;
@@ -57,7 +57,7 @@ function detectClientKind(): ClientPresenceKind {
   return "web";
 }
 
-export function useClientPresence() {
+function useClientPresenceState() {
   const [wsClients, setWsClients] = useState<ClientPresenceEntry[]>([]);
   const [httpClients, setHttpClients] = useState<ClientPresenceEntry[]>([]);
   const hookId = useId();
@@ -71,7 +71,7 @@ export function useClientPresence() {
 
     const register = () => {
       const subscribed = ws.send({ type: "client_presence.subscribe" });
-      const registered = ws.send({ type: "client_presence.register", kind: clientKind });
+      const registered = ws.send({ type: "client_presence.register", clientId, kind: clientKind });
       if (!subscribed || !registered) ws.connect();
     };
 
@@ -98,7 +98,7 @@ export function useClientPresence() {
       ws.removeCloseHandler(handlerId);
       releaseSharedWS("useClientPresence");
     };
-  }, [clientKind, hookId]);
+  }, [clientId, clientKind, hookId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -130,4 +130,20 @@ export function useClientPresence() {
   }, [clientId, clientKind]);
 
   return { clients, clientKind };
+}
+
+
+type ClientPresenceValue = ReturnType<typeof useClientPresenceState>;
+
+const ClientPresenceContext = createContext<ClientPresenceValue | null>(null);
+
+export function ClientPresenceProvider({ children }: { children: ReactNode }) {
+  const value = useClientPresenceState();
+  return <ClientPresenceContext.Provider value={value}>{children}</ClientPresenceContext.Provider>;
+}
+
+export function useClientPresence(): ClientPresenceValue {
+  const value = useContext(ClientPresenceContext);
+  if (!value) throw new Error("useClientPresence must be used within ClientPresenceProvider");
+  return value;
 }

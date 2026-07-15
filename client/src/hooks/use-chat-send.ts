@@ -1,5 +1,5 @@
 // Use createLogger for logging ONLY
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { createLogger } from "@/lib/logger";
 
@@ -45,6 +45,7 @@ export function useChatSend(deps: UseChatSendDeps) {
   } = deps;
 
   const [isSending, setIsSending] = useState(false);
+  const sendInFlightRef = useRef(false);
   const [localPendingTurn, setLocalPendingTurn] = useState<PendingChatTurn | null>(null);
   // Use external state when provided (shared context), otherwise local useState.
   const pendingTurn = externalPendingTurn ? externalPendingTurn[0] : localPendingTurn;
@@ -90,8 +91,12 @@ export function useChatSend(deps: UseChatSendDeps) {
   }, [toast, createSessionPayload]);
 
   const sendMessage = useCallback(async (text: string): Promise<boolean> => {
-    if (!text.trim() || !isAgentRunning || isSending) return false;
+    if (!text.trim() || !isAgentRunning || isSending || sendInFlightRef.current) return false;
 
+    // React state is not a concurrency primitive. Flip the ref before any state
+    // update or await so repeated UI events in the same tick cannot create
+    // multiple logical turns.
+    sendInFlightRef.current = true;
     const submittedAt = new Date().toISOString();
     const clientTurnId = `turn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     log.debug("STREAM:SEND:START", { clientTurnId, sessionId: activeSession, submittedAt, attachedFileCount: attachedFiles.length });
@@ -130,7 +135,7 @@ export function useChatSend(deps: UseChatSendDeps) {
       const response = await fetch(`/api/sessions/${convId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: fullMessage, ...(pageContext ? { pageContext } : {}) }),
+        body: JSON.stringify({ content: fullMessage, clientTurnId, ...(pageContext ? { pageContext } : {}) }),
       });
 
       if (response.status === 409) {
@@ -184,6 +189,7 @@ export function useChatSend(deps: UseChatSendDeps) {
       toast({ title: "Failed to send message", description: err.message, variant: "destructive" });
       return false;
     } finally {
+      sendInFlightRef.current = false;
       setIsSending(false);
       queryClient.invalidateQueries({ queryKey: GATEWAY_STATUS_KEY });
     }

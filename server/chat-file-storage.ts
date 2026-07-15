@@ -214,7 +214,7 @@ export interface FileMessage {
   persona?: PersonaSnapshot;
   /** Speaker attribution for meeting transcript messages. */
   speaker?: MessageSpeakerMeta;
-  /** Canonical per-turn correlation ID for voice turns. Present on both user and assistant messages. */
+  /** Canonical per-turn correlation ID. Used for replay-safe user-message acceptance and voice turn pairing. */
   turnId?: string;
   /** Visibility discriminant — absent or 'chat' = normal; 'diagnostic' = hidden from transcript */
   visibility?: MessageVisibility;
@@ -1033,6 +1033,16 @@ export interface IChatFileStorage {
     turnId?: string,
     persona?: PersonaSnapshot,
   ): Promise<FileMessage | null>;
+  createUserMessageOnce(
+    sessionId: string,
+    content: string,
+    clientTurnId: string,
+    pageContext?: PageContext,
+  ): Promise<
+    | { outcome: "created"; message: FileMessage }
+    | { outcome: "duplicate"; message: FileMessage }
+    | { outcome: "session_not_found" }
+  >;
   upsertVoiceUserMessage(
     sessionId: string,
     content: string,
@@ -1607,6 +1617,47 @@ export const chatFileStorage: IChatFileStorage = {
     });
   },
 
+
+  async createUserMessageOnce(
+    sessionId: string,
+    content: string,
+    clientTurnId: string,
+    pageContext?: PageContext,
+  ) {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data) return { outcome: "session_not_found" as const };
+
+      const existing = data.messages.find(
+        (message) => message.role === "user" && message.turnId === clientTurnId,
+      );
+      if (existing) {
+        log.debug(`[ChatFileStorage] duplicate client turn ignored session=${sessionId} turnId=${clientTurnId}`);
+        return { outcome: "duplicate" as const, message: existing };
+      }
+
+      const now = new Date().toISOString();
+      const message: FileMessage = {
+        id: generateId(),
+        sessionId,
+        role: "user",
+        content,
+        thinking: null,
+        toolCalls: null,
+        systemSteps: null,
+        model: null,
+        createdAt: now,
+        updatedAt: now,
+        turnId: clientTurnId,
+        ...(pageContext ? { pageContext } : {}),
+      };
+      data.messages.push(message);
+      data.updatedAt = now;
+      await writeConv(data);
+      invalidateSessionsCache();
+      return { outcome: "created" as const, message };
+    });
+  },
 
   async createMeetingSession(
     title: string,
