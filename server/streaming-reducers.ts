@@ -268,10 +268,14 @@ export function appendCompacting(state: StreamingContent, content: string, statu
 // addSystemStep
 // ---------------------------------------------------------------------------
 
+export function canonicalSystemStepId(stepName: string, stepId: string): string {
+  return stepId.startsWith("system-") ? stepId : `system-${stepName}-${stepId}`;
+}
+
 export function addSystemStep(
   state: StreamingContent,
   stepName: string,
-  detailOrOpts?: string | { systemStepName?: string; systemStepDetail?: string; systemStepMetadata?: Record<string, unknown>; status?: string; elapsedMs?: number; stepId?: string; parentId?: string; startedAt?: number; endedAt?: number; selfTimeMs?: number },
+  detailOrOpts?: string | { systemStepName?: string; systemStepDetail?: string; systemStepMetadata?: Record<string, unknown>; status?: string; elapsedMs?: number; stepId?: string; parentId?: string; startedAt?: number; endedAt?: number; selfTimeMs?: number; timingKind?: ExecutionStep["timingKind"]; diagnosticVisibility?: ExecutionStep["diagnosticVisibility"]; childMode?: ExecutionStep["childMode"]; occurredAt?: number },
 ): StreamingContent {
   const segments = [...state.segments];
   const lastSeg = segments[segments.length - 1];
@@ -279,6 +283,19 @@ export function addSystemStep(
   const opts = typeof detailOrOpts === "object" ? detailOrOpts : undefined;
   const detail = typeof detailOrOpts === "string" ? detailOrOpts : opts?.systemStepDetail;
   const resolvedName = opts?.systemStepName || stepName;
+  const rawStepId = opts?.stepId;
+  const stepId = rawStepId
+    ? canonicalSystemStepId(stepName, rawStepId)
+    : `system-${stepName}-${Date.now()}`;
+  const timingKind = opts?.timingKind ?? "span";
+  const occurredAt = timingKind === "milestone" ? (opts?.occurredAt ?? opts?.endedAt ?? opts?.startedAt ?? Date.now()) : undefined;
+  const startedAt = timingKind === "milestone" ? occurredAt : (opts?.startedAt ?? Date.now());
+  const endedAt = timingKind === "milestone" ? occurredAt : opts?.endedAt;
+  const elapsedMs = timingKind === "milestone"
+    ? undefined
+    : startedAt != null && endedAt != null
+      ? Math.max(0, endedAt - startedAt)
+      : opts?.elapsedMs;
 
   // No SUPPRESSED_CLIENT_STEPS — server records all steps.
 
@@ -286,28 +303,31 @@ export function addSystemStep(
   const skipDedup = repeatAllowlist.has(resolvedName);
   if (!skipDedup) {
     const existingIdx = lastSeg?.type === "timeline"
-      ? lastSeg.steps.findIndex(s => s.type === "system" && s.systemStepName === resolvedName)
+      ? lastSeg.steps.findIndex(s => s.type === "system" && (rawStepId ? s.id === stepId : s.systemStepName === resolvedName))
       : -1;
     if (existingIdx >= 0 && lastSeg?.type === "timeline") {
       return state;
     }
   }
 
-  const stepId = opts?.stepId;
   const newStep: ExecutionStep = {
-    id: stepId ? (stepId.startsWith("system-") ? stepId : `system-${stepName}-${stepId}`) : `system-${stepName}-${Date.now()}`,
+    id: stepId,
     type: "system",
     timestamp: Date.now(),
     systemStepName: resolvedName,
     systemStepDetail: detail,
     systemStepMetadata: opts?.systemStepMetadata,
     status: (opts?.status as ExecutionStep["status"]) || "active",
-    elapsedMs: opts?.elapsedMs,
+    elapsedMs,
     parentId: opts?.parentId,
-    startedAt: opts?.startedAt ?? Date.now(),
-    endedAt: opts?.endedAt,
+    timingKind,
+    diagnosticVisibility: opts?.diagnosticVisibility,
+    childMode: opts?.childMode,
+    occurredAt,
+    startedAt,
+    endedAt,
     selfTimeMs: opts?.selfTimeMs,
-    toolCallId: stepId,
+    toolCallId: rawStepId,
   };
 
   if (lastSeg?.type === "timeline") {
@@ -341,18 +361,39 @@ export function resolveSystemStep(
   startedAt?: number,
   endedAt?: number,
   selfTimeMs?: number,
+  timingKind?: ExecutionStep["timingKind"],
+  diagnosticVisibility?: ExecutionStep["diagnosticVisibility"],
+  childMode?: ExecutionStep["childMode"],
+  occurredAt?: number,
 ): StreamingContent {
-  const resolveStep = (s: ExecutionStep): ExecutionStep => ({
-    ...s,
-    status,
-    elapsedMs,
-    systemStepDetail: detail ?? s.systemStepDetail,
-    systemStepMetadata: metadata ?? s.systemStepMetadata,
-    parentId: parentId ?? s.parentId,
-    startedAt: startedAt ?? s.startedAt,
-    endedAt: endedAt ?? Date.now(),
-    selfTimeMs: selfTimeMs ?? s.selfTimeMs,
-  });
+  const resolveStep = (s: ExecutionStep): ExecutionStep => {
+    const resolvedTimingKind = timingKind ?? s.timingKind ?? "span";
+    const resolvedOccurredAt = resolvedTimingKind === "milestone"
+      ? (occurredAt ?? endedAt ?? startedAt ?? s.occurredAt ?? Date.now())
+      : undefined;
+    const resolvedStartedAt = resolvedTimingKind === "milestone" ? resolvedOccurredAt : (startedAt ?? s.startedAt);
+    const resolvedEndedAt = resolvedTimingKind === "milestone" ? resolvedOccurredAt : (endedAt ?? Date.now());
+    const resolvedElapsedMs = resolvedTimingKind === "milestone"
+      ? undefined
+      : resolvedStartedAt != null && resolvedEndedAt != null
+        ? Math.max(0, resolvedEndedAt - resolvedStartedAt)
+        : elapsedMs;
+    return {
+      ...s,
+      status,
+      elapsedMs: resolvedElapsedMs,
+      systemStepDetail: detail ?? s.systemStepDetail,
+      systemStepMetadata: metadata ?? s.systemStepMetadata,
+      parentId: parentId ?? s.parentId,
+      timingKind: resolvedTimingKind,
+      diagnosticVisibility: diagnosticVisibility ?? s.diagnosticVisibility,
+      childMode: childMode ?? s.childMode,
+      occurredAt: resolvedOccurredAt,
+      startedAt: resolvedStartedAt,
+      endedAt: resolvedEndedAt,
+      selfTimeMs: selfTimeMs ?? s.selfTimeMs,
+    };
+  };
 
   // Resolve the newest matching active step. A response can contain multiple
   // timeline groups with repeated system step names across model/tool loops;
@@ -362,8 +403,9 @@ export function resolveSystemStep(
     const seg = state.segments[segIdx];
     if (seg.type !== "timeline") continue;
 
+    const canonicalStepId = stepId ? canonicalSystemStepId(stepName, stepId) : undefined;
     const stepIdIdx = stepId
-      ? seg.steps.findIndex(s => s.type === "system" && s.systemStepName === stepName && s.toolCallId === stepId)
+      ? seg.steps.findIndex(s => s.type === "system" && s.systemStepName === stepName && (s.id === canonicalStepId || s.toolCallId === stepId))
       : -1;
     const detailIdx = detail
       ? seg.steps.findLastIndex(s => s.type === "system" && s.systemStepName === stepName && s.status === "active" && s.systemStepDetail === detail)

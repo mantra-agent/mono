@@ -52,6 +52,46 @@ export interface SessionSubscriberIdentity {
   activeSession?: string | null;
 }
 
+export type SessionStreamEvent = {
+  type: string;
+  content?: string;
+  toolName?: string;
+  toolCallId?: string;
+  arguments?: Record<string, unknown>;
+  narrative?: string;
+  result?: unknown;
+  error?: string;
+  model?: string;
+  autoTier?: string;
+  persona?: { id: number; name: string; icon: string };
+  runId?: string;
+  turnId?: string;
+  assistantAttemptId?: string;
+  transcriptRevision?: number;
+  step?: string;
+  status?: string;
+  elapsedMs?: number;
+  detail?: string;
+  stepId?: string;
+  severity?: string;
+  messageId?: string;
+  cost?: number | null;
+  apiCallCount?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  totalTokens?: number | null;
+  ts?: number;
+  parentId?: string;
+  startedAt?: number;
+  endedAt?: number;
+  selfTimeMs?: number;
+  timingKind?: ExecutionStep["timingKind"];
+  diagnosticVisibility?: ExecutionStep["diagnosticVisibility"];
+  childMode?: ExecutionStep["childMode"];
+  occurredAt?: number;
+  metadata?: Record<string, unknown>;
+};
+
 /** Snapshot sent to a newly subscribing client. */
 export interface SessionSnapshot {
   sessionId: string;
@@ -198,36 +238,7 @@ class SessionManager {
    * Maps a journal event to a streaming reducer and broadcasts the delta.
    * Called from publishJournalToUI for chat-category events.
    */
-  applyEvent(sessionId: string, event: {
-    type: string;
-    content?: string;
-    toolName?: string;
-    toolCallId?: string;
-    arguments?: Record<string, unknown>;
-    narrative?: string;
-    result?: unknown;
-    error?: string;
-    model?: string;
-    autoTier?: string;
-    persona?: { id: number; name: string; icon: string };
-    runId?: string;
-    turnId?: string;
-    assistantAttemptId?: string;
-    transcriptRevision?: number;
-    step?: string;
-    status?: string;
-    elapsedMs?: number;
-    detail?: string;
-    stepId?: string;
-    severity?: string;
-    messageId?: string;
-    cost?: number | null;
-    apiCallCount?: number | null;
-    inputTokens?: number | null;
-    outputTokens?: number | null;
-    totalTokens?: number | null;
-    ts?: number;
-  }): void {
+  applyEvent(sessionId: string, event: SessionStreamEvent, broadcast = true): void {
     const session = this.sessions.get(sessionId);
     if (!session) {
       log.debug(`applyEvent: no live session for sessionId=${sessionId} type=${event.type} — ignoring`);
@@ -275,6 +286,10 @@ class SessionManager {
             startedAt: event.startedAt,
             endedAt: event.endedAt,
             selfTimeMs: event.selfTimeMs,
+            timingKind: event.timingKind,
+            diagnosticVisibility: event.diagnosticVisibility,
+            childMode: event.childMode,
+            occurredAt: event.occurredAt,
           });
         } else {
           // Try to resolve first; if no active step exists, add as already-done
@@ -290,6 +305,10 @@ class SessionManager {
             event.startedAt,
             event.endedAt,
             event.selfTimeMs,
+            event.timingKind,
+            event.diagnosticVisibility,
+            event.childMode,
+            event.occurredAt,
           );
           // Check if resolution actually changed anything
           if (resolved === prev) {
@@ -304,6 +323,10 @@ class SessionManager {
               startedAt: event.startedAt,
               endedAt: event.endedAt,
               selfTimeMs: event.selfTimeMs,
+              timingKind: event.timingKind,
+              diagnosticVisibility: event.diagnosticVisibility,
+              childMode: event.childMode,
+              occurredAt: event.occurredAt,
             });
           } else {
             prev = resolved;
@@ -387,9 +410,28 @@ class SessionManager {
       session.streamingContent = prev;
     }
 
+    if (broadcast) {
+      this.broadcastDelta(session, {
+        sessionId,
+        type: event.type,
+        streamingContent: session.streamingContent,
+        status: session.status,
+        ...runtimeProjection(session),
+      });
+    }
+  }
+
+  applyEvents(sessionId: string, events: SessionStreamEvent[]): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      log.debug(`applyEvents: no live session for sessionId=${sessionId} count=${events.length} — ignoring`);
+      return;
+    }
+    if (events.length === 0) return;
+    for (const event of events) this.applyEvent(sessionId, event, false);
     this.broadcastDelta(session, {
       sessionId,
-      type: event.type,
+      type: "event_batch",
       streamingContent: session.streamingContent,
       status: session.status,
       ...runtimeProjection(session),

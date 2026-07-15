@@ -7,6 +7,7 @@ import { appendFile, readFile } from "fs/promises";
 import { join } from "path";
 import { abortTrace } from "./abort-trace";
 import type { ModelProviderFailureInfo } from "@shared/models/chat";
+import type { DiagnosticChildMode, DiagnosticTimingKind, DiagnosticVisibility } from "@shared/streaming-types";
 
 const log = createLogger("Journal");
 
@@ -62,6 +63,11 @@ export interface JournalEntry {
   startedAt?: number;
   endedAt?: number;
   selfTimeMs?: number;
+  timingKind?: DiagnosticTimingKind;
+  diagnosticVisibility?: DiagnosticVisibility;
+  childMode?: DiagnosticChildMode;
+  occurredAt?: number;
+  metadata?: Record<string, unknown>;
   severity?: string;
   seq?: number;
   terminationReason?: string;
@@ -395,6 +401,14 @@ export function publishJournalToUI(entry: JournalEntry, category: EventCategory 
       payload.detail = entry.detail;
       if (entry.metadata) payload.metadata = entry.metadata;
       payload.stepId = entry.stepId;
+      payload.parentId = entry.parentId;
+      payload.startedAt = entry.startedAt;
+      payload.endedAt = entry.endedAt;
+      payload.selfTimeMs = entry.selfTimeMs;
+      payload.timingKind = entry.timingKind;
+      payload.diagnosticVisibility = entry.diagnosticVisibility;
+      payload.childMode = entry.childMode;
+      payload.occurredAt = entry.occurredAt;
       payload.seq = entry.seq;
       break;
     case "run_start":

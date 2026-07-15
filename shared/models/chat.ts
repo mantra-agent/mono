@@ -10,6 +10,7 @@ import {
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
+import type { DiagnosticChildMode, DiagnosticTimingKind, DiagnosticVisibility } from "../streaming-types";
 
 export const chatSessions = pgTable(
   "sessions",
@@ -237,6 +238,23 @@ export interface ModelProviderFailureInfo {
   };
 }
 
+export interface SystemStepRecord {
+  id?: string;
+  name: string;
+  status: "done" | "error";
+  elapsedMs?: number;
+  parentId?: string;
+  selfTimeMs?: number;
+  startedAt?: number;
+  endedAt?: number;
+  detail?: string;
+  metadata?: Record<string, unknown>;
+  timingKind?: DiagnosticTimingKind;
+  diagnosticVisibility?: DiagnosticVisibility;
+  childMode?: DiagnosticChildMode;
+  occurredAt?: number;
+}
+
 export interface ExecutorStreamEvent {
   type: ExecutorStreamEventType;
   content?: string;
@@ -256,6 +274,14 @@ export interface ExecutorStreamEvent {
   detail?: string;
   metadata?: Record<string, unknown>;
   elapsedMs?: number;
+  parentId?: string;
+  startedAt?: number;
+  endedAt?: number;
+  selfTimeMs?: number;
+  timingKind?: DiagnosticTimingKind;
+  diagnosticVisibility?: DiagnosticVisibility;
+  childMode?: DiagnosticChildMode;
+  occurredAt?: number;
   narrative?: string;
   terminationReason?: TerminationReason;
   iterationsUsed?: number;
@@ -332,6 +358,10 @@ export type ChatStreamEvent =
       startedAt?: number;
       endedAt?: number;
       selfTimeMs?: number;
+      timingKind?: DiagnosticTimingKind;
+      diagnosticVisibility?: DiagnosticVisibility;
+      childMode?: DiagnosticChildMode;
+      occurredAt?: number;
       metadata?: Record<string, unknown>;
     })
   | (ChatStreamEventBase & { type: "voice_reconnect"; reason: string })

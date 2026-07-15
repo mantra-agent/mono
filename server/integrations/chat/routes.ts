@@ -4,6 +4,7 @@ import * as fsPromises from "fs/promises";
 import { chatStorage } from "./storage";
 import { storage } from "../../storage";
 import type { SegmentChronologyEntry } from "../../chat-file-storage";
+import type { SessionStreamEvent } from "../../session-manager";
 import { WORKSPACE_DIR } from "../../paths";
 import { ACTIVITY_CHAT } from "../../job-profiles";
 import { resolveModelCandidates, type ModelRoutingDecision } from "../../model-routing";
@@ -36,6 +37,7 @@ import {
 } from "../../chat-journal";
 import { documentStorage } from "../../memory/document-storage";
 import { eventBus } from "../../event-bus";
+import { sessionManager } from "../../session-manager";
 // logApiCall import removed — inference recording is handled at the model-client boundary.
 import { generateToolCallId } from "../../file-storage/utils";
 import { formatMessageTimestamp, nowMessageTimestamp } from "../../timezone";
@@ -1742,7 +1744,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     let runGeneration = registeredRunGeneration;
     if (runGeneration === undefined) {
       try {
-        const { sessionManager } = await import("../../session-manager");
         runGeneration = sessionManager.registerSession(sessionId, sessionKey, "text");
       } catch (regErr) {
         chatLog.warn(
@@ -1764,6 +1765,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       endedAt?: number;
       selfTimeMs?: number;
       metadata?: Record<string, unknown>;
+      timingKind?: "span" | "milestone";
+      diagnosticVisibility?: "default" | "raw" | "hidden";
+      childMode?: "serial" | "parallel";
+      occurredAt?: number;
     }> = [];
     const preChronology: SegmentChronologyEntry[] = [];
 
@@ -1812,14 +1817,15 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       diagnosticTurnSettled = true;
       const turnEndedAt = Date.now();
       const turnElapsedMs = turnEndedAt - turnStartedAt;
-      // The turn step starts at preSteps[0] after pre-executor batch is emitted.
-      // On settlement, emit a delta updating the turn to done status.
-      publishChatStreamEvent(sessionKey, sessionId, {
-        type: "system_step_update",
+      // Resolve the live Turn root through the canonical reducer.
+      sessionManager.applyEvent(sessionId, {
+        type: "system_step",
+        step: "turn",
         stepId: diagnosticTurnId,
         status,
         elapsedMs: turnElapsedMs,
         detail,
+        startedAt: turnStartedAt,
         endedAt: turnEndedAt,
       });
       // Also update the turn step in preSteps in case it's referenced later
@@ -1895,18 +1901,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           if (orientation.llm) {
             const llmDetail = `${orientation.llm.personaName} · ${orientation.llm.model} · ${orientation.llm.provider}${orientation.llm.tier ? ` · tier=${orientation.llm.tier}` : ""}`;
             const llmStartedAt = orientationLlmStartedAt ?? orientStartedAt;
-            publishChatStreamEvent(sessionKey, sessionId, {
-              type: "system_step",
-              step: "orientation_llm_call",
-              stepId: llmStepId,
-              parentId: orientationStepId,
-              status: "done",
-              elapsedMs: orientEndedAt - llmStartedAt,
-              detail: llmDetail,
-              startedAt: llmStartedAt,
-              endedAt: orientEndedAt,
-              metadata: { llm: orientation.llm },
-            });
             const llmStepIndex = preSteps.length;
             preSteps.push({
               id: llmStepId,
@@ -2079,22 +2073,30 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         parentId: diagnosticTurnId,
         startedAt: contextStartedAt,
         endedAt: contextEndedAt,
+        childMode: "parallel",
       });
       preChronology.push({ s: "system", i: contextStepIndex });
 
-      // ===== ATOMIC BATCH EMIT OF PRE-EXECUTOR STEPS =====
-      // After context assembly completes, emit all pre-executor steps
-      // (turn, orientation, model_selection, context_assembly + children)
-      // as one atomic batch. This ensures the tree is complete and coherent
-      // from the first client snapshot, with no out-of-order parent-child issues.
-      publishChatStreamEvent(sessionKey, sessionId, {
-        type: "pre_executor_batch",
-        diagnosticRunId,
-        diagnosticTurnId,
-        turnStartedAt,
-        preSteps,
-        preChronology,
-      });
+      // Apply the complete pre-executor trace through one reducer transaction so
+      // reconnecting and already-connected clients observe the same coherent tree.
+      const preStepEvents: SessionStreamEvent[] = preSteps.map((step) => ({
+        type: "system_step",
+        step: step.name,
+        status: step.status,
+        elapsedMs: step.elapsedMs,
+        detail: step.detail,
+        stepId: step.id,
+        parentId: step.parentId,
+        startedAt: step.startedAt,
+        endedAt: step.endedAt,
+        selfTimeMs: step.selfTimeMs,
+        timingKind: step.timingKind,
+        diagnosticVisibility: step.diagnosticVisibility,
+        childMode: step.childMode,
+        occurredAt: step.occurredAt,
+        metadata: step.metadata,
+      }));
+      sessionManager.applyEvents(sessionId, preStepEvents);
 
       chatLog.log(
         `executor START sessionId=${sessionId} messageCount=${messages.length} toolCount=${toolDefs.length}`,
