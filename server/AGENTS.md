@@ -6,6 +6,8 @@ Root `AGENTS.md` is mandatory and authoritative for Engineering Principles, arch
 
 `runtime-identity.ts` is the single source of truth for deployment identity: canonical Platform Environment, Railway environment/service, serving host (`RAILWAY_PUBLIC_DOMAIN`), canonical hosting-binding public URL, git commit, and DB host. `platform-environment-resolver.ts` is the canonical server boundary for mapping Railway's injected project/environment/service IDs or an explicit Platform Environment ID through the hosting binding, provider connection, encrypted credential, and provider configuration. Runtime identity resolves once at boot, flags unresolved bindings loudly, and is injected into agent context via the `world_model.runtime` spine section. New code that needs the public base URL for external callbacks must await `getRuntimePublicBaseUrl()`.
 
+A Railway runtime may execute only its deployed entrypoint. Never launch `server/index.ts`, `npm run dev`, or another application server from an agent shell, verification command, or acceptance harness inside stage/live. Concurrent processes share the bound database and background services. Startup must never terminate PostgreSQL backends based on `application_name` or boot identity; PostgreSQL owns connection reclamation.
+
 # Server Architecture
 
 The server is a Node.js/Express/TypeScript monolith running all backend logic: API routes, LLM orchestration, autonomous execution, memory management, and integrations. This file covers the server-root subsystems. For deeper dives see:

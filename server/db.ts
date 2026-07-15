@@ -22,6 +22,7 @@ import {
 } from "./timeout";
 import { createLogger } from "./log";
 import { safeStringify, safeTruncate } from "./utils/safe-stringify";
+import { getPostgresErrorCode, isRecoverablePostgresConnectionError } from "./postgres-errors";
 
 const log = createLogger("DB");
 
@@ -114,12 +115,64 @@ export const voicePool = new Pool({
   application_name: `${APP_NAME}-voice`,
 } as any);
 
-pool.on("error", (err) => {
-  log.error("Unexpected general connection error:", err.message, err.stack);
-});
-voicePool.on("error", (err) => {
-  log.error("Unexpected voice connection error:", err.message, err.stack);
-});
+type ConnectionIncidentLane = "general" | "voice";
+
+type RecoverableConnectionIncident = {
+  code: string;
+  message: string;
+  startedAt: number;
+  count: number;
+  lanes: Record<ConnectionIncidentLane, number>;
+  timer: ReturnType<typeof setTimeout>;
+};
+
+let recoverableConnectionIncident: RecoverableConnectionIncident | null = null;
+
+function flushRecoverableConnectionIncident(): void {
+  const incident = recoverableConnectionIncident;
+  recoverableConnectionIncident = null;
+  if (!incident) return;
+  log.warn(
+    `transient connection incident code=${incident.code} affectedConnections=${incident.count} ` +
+      `lanes=general:${incident.lanes.general},voice:${incident.lanes.voice} ` +
+      `durationMs=${Date.now() - incident.startedAt} message=${incident.message} ` +
+      `pool=general:${pool.totalCount}/${pool.idleCount}/${pool.waitingCount},voice:${voicePool.totalCount}/${voicePool.idleCount}/${voicePool.waitingCount}; pools will reconnect`,
+  );
+}
+
+function handlePoolConnectionError(lane: ConnectionIncidentLane, error: Error): void {
+  if (!isRecoverablePostgresConnectionError(error)) {
+    log.error(`unexpected ${lane} connection error:`, error.message, error.stack);
+    return;
+  }
+
+  const code = getPostgresErrorCode(error);
+  const message = error.message;
+  const existing = recoverableConnectionIncident;
+  if (existing && existing.code === code && existing.message === message) {
+    existing.count++;
+    existing.lanes[lane]++;
+    return;
+  }
+  if (existing) {
+    clearTimeout(existing.timer);
+    flushRecoverableConnectionIncident();
+  }
+
+  const timer = setTimeout(flushRecoverableConnectionIncident, 1_000);
+  if (timer.unref) timer.unref();
+  recoverableConnectionIncident = {
+    code,
+    message,
+    startedAt: Date.now(),
+    count: 1,
+    lanes: { general: lane === "general" ? 1 : 0, voice: lane === "voice" ? 1 : 0 },
+    timer,
+  };
+}
+
+pool.on("error", (error) => handlePoolConnectionError("general", error));
+voicePool.on("error", (error) => handlePoolConnectionError("voice", error));
 
 let _healthInterval: ReturnType<typeof setInterval> | null = null;
 let _heartbeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -195,36 +248,11 @@ export function stopPoolSaturationMonitor(): void {
   }
 }
 
-export async function terminateOrphanBackends(): Promise<number> {
-  try {
-    const res = await pool.query(
-      `SELECT pid, application_name FROM pg_stat_activity
-       WHERE application_name LIKE $1
-         AND application_name NOT IN ($2, $3)
-         AND pid <> pg_backend_pid()`,
-      [`${APP_NAME_PREFIX}-%`, APP_NAME, `${APP_NAME}-voice`],
-    );
-    const rows = res.rows as Array<{ pid: number; application_name: string }>;
-    if (rows.length === 0) {
-      log.log(`orphan cleanup: no orphan backends found (app=${APP_NAME})`);
-      return 0;
-    }
-    let terminated = 0;
-    for (const row of rows) {
-      try {
-        await pool.query("SELECT pg_terminate_backend($1)", [row.pid]);
-        terminated++;
-      } catch (err: any) {
-        log.warn(`orphan cleanup: failed to terminate pid=${row.pid} app=${row.application_name}: ${err?.message || err}`);
-      }
-    }
-    log.log(`orphan cleanup: terminated ${terminated}/${rows.length} backend(s) from prior boot(s) (app=${APP_NAME})`);
-    return terminated;
-  } catch (err: any) {
-    log.warn(`orphan cleanup: query failed: ${err?.message || err}`);
-    return 0;
-  }
-}
+// Database connections are owned by PostgreSQL and the process that opened them.
+// A new app process must never infer that another boot is dead from a different
+// application_name and terminate its backends. Hosted verification commands can
+// overlap the serving process, and PostgreSQL already reclaims connections when
+// their real owner exits.
 
 // The heartbeat is the canary: every tick stamps `_lastHeartbeatLogAt`. If
 // this stops moving while real work is in flight, the pool-wedge watchdog

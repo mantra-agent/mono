@@ -1,3 +1,4 @@
+import "./runtime-process-guard";
 // Use createLogger for logging ONLY
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
@@ -18,6 +19,7 @@ import { resolve as resolvePath } from "path";
 import { createLogger } from "./log";
 import { bootTracker, registerBootStatusRoute } from "./boot-tracker";
 import { runSchemaBootstrap } from "./schema-bootstrap";
+import { isRecoverablePostgresConnectionError } from "./postgres-errors";
 
 const serverLog = createLogger("Server");
 
@@ -25,20 +27,23 @@ const timezoneReady = initTimezone().catch(err => {
   serverLog.error("Timezone init failed:", err.message);
 });
 
-const PG_RECOVERABLE_RE = /terminating connection|Connection terminated|server closed the connection unexpectedly|connection reset by peer|ECONNRESET/i;
-
-process.on("uncaughtException", (err, origin) => {
-  const msg = err instanceof Error ? (err.stack || err.message) : String(err);
-  if (err instanceof Error && PG_RECOVERABLE_RE.test(err.message)) {
-    serverLog.warn(`recovered pg connection termination origin=${origin}: ${err.message} — pool will reconnect automatically`);
+process.on("uncaughtException", (error, origin) => {
+  const message = error instanceof Error ? (error.stack || error.message) : String(error);
+  if (isRecoverablePostgresConnectionError(error)) {
+    serverLog.warn(`transient postgres connection exception origin=${origin}: ${error.message}; process remains available`);
     return;
   }
-  serverLog.error(`[FATAL] uncaughtException (origin=${origin}):`, msg);
+  serverLog.error(`[FATAL] uncaughtException (origin=${origin}):`, message);
 });
 
-process.on("unhandledRejection", (reason, promise) => {
-  const msg = reason instanceof Error ? reason.stack || reason.message : String(reason);
-  serverLog.error(`[FATAL] unhandledRejection:`, msg);
+process.on("unhandledRejection", (reason) => {
+  if (isRecoverablePostgresConnectionError(reason)) {
+    const error = reason as Error;
+    serverLog.warn(`transient postgres connection rejection: ${error.message}; process remains available`);
+    return;
+  }
+  const message = reason instanceof Error ? reason.stack || reason.message : String(reason);
+  serverLog.error(`unhandledRejection:`, message);
 });
 
 import { addObjectAclsTable } from "./migrations/add-object-acls";
@@ -324,18 +329,6 @@ app.use((req, res, next) => {
   await timezoneReady;
 
   bootTracker.startPhase("database");
-  const tOrphan0 = Date.now();
-  try {
-    const { terminateOrphanBackends, BOOT_ID, APP_NAME } = await import("./db");
-    log(`[startup] orphan backend cleanup starting (app=${APP_NAME} bootId=${BOOT_ID})`, "boot");
-    const terminated = await terminateOrphanBackends();
-    const orphanMs = Date.now() - tOrphan0;
-    bootPhases.push({ name: "Orphan Backend Cleanup", durationMs: orphanMs });
-    log(`[startup] orphan backend cleanup: terminated=${terminated} in ${orphanMs}ms`, "boot");
-  } catch (err: any) {
-    log(`[startup] orphan backend cleanup failed: ${err?.message || err}`, "boot");
-  }
-
   const tMigrate0 = Date.now();
   await runSchemaBootstrap("boot");
   const { ensurePermissionSchema } = await import("./permissions");
