@@ -8895,6 +8895,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
               eventEnd: ev.end.dateTime || ev.end.date || undefined,
               title: ev.summary || undefined,
               agenda: resolvedAgenda,
+              attendees: ev.attendees,
             };
             break;
           }

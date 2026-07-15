@@ -1,5 +1,5 @@
-import type { MeetingResolutionSource } from "@shared/models/chat";
-import { getMetadata, resolveMeetingAgenda } from "../calendar-metadata";
+import type { MeetingParticipant, MeetingResolutionSource } from "@shared/models/chat";
+import { getLinkedPeople, getMetadata, resolveMeetingAgenda } from "../calendar-metadata";
 import { listAllEvents, type CalendarEvent } from "../google-calendar";
 import { createLogger } from "../log";
 
@@ -17,6 +17,7 @@ export interface ExplicitMeetingEventIdentity {
   eventEnd?: string;
   title?: string;
   agenda?: string;
+  attendees?: CalendarEvent["attendees"];
 }
 
 export interface ResolvedMeetingIdentity {
@@ -29,6 +30,7 @@ export interface ResolvedMeetingIdentity {
   eventStart?: string;
   eventEnd?: string;
   resolutionSource: MeetingResolutionSource;
+  participants: MeetingParticipant[];
 }
 
 export interface ResolveMeetingIdentityInput {
@@ -65,6 +67,47 @@ function eventDateTime(value: CalendarEvent["start"] | CalendarEvent["end"]): st
   return value.dateTime || value.date || undefined;
 }
 
+async function resolveEventParticipants(
+  attendees: CalendarEvent["attendees"],
+  metadataId?: number,
+): Promise<MeetingParticipant[]> {
+  const linkedPeople = metadataId ? await getLinkedPeople(metadataId) : [];
+  const linksByEmail = new Map(
+    linkedPeople
+      .filter((link) => link.attendeeEmail)
+      .map((link) => [link.attendeeEmail!.trim().toLowerCase(), link]),
+  );
+  const participants: MeetingParticipant[] = [];
+  const seenPeople = new Set<string>();
+  const seenLabels = new Set<string>();
+
+  for (const attendee of attendees) {
+    const email = attendee.email.trim().toLowerCase();
+    const link = linksByEmail.get(email);
+    if (attendee.self && !link) continue;
+
+    const label = attendee.displayName?.trim() || link?.personName?.trim() || attendee.email.trim();
+    if (!label) continue;
+    const labelKey = label.toLowerCase();
+    if ((link && seenPeople.has(link.personId)) || seenLabels.has(labelKey)) continue;
+
+    participants.push(link ? { label, personId: link.personId } : { label });
+    seenLabels.add(labelKey);
+    if (link) seenPeople.add(link.personId);
+  }
+
+  for (const link of linkedPeople) {
+    if (seenPeople.has(link.personId)) continue;
+    const label = link.personName.trim();
+    if (!label || seenLabels.has(label.toLowerCase())) continue;
+    participants.push({ label, personId: link.personId });
+    seenPeople.add(link.personId);
+    seenLabels.add(label.toLowerCase());
+  }
+
+  return participants;
+}
+
 async function fromEvent(
   event: CalendarEvent,
   meetingUrl: string,
@@ -72,10 +115,9 @@ async function fromEvent(
   fallbackAgenda: string | undefined,
   resolutionSource: Exclude<MeetingResolutionSource, "unresolved_url">,
 ): Promise<ResolvedMeetingIdentity> {
-  const metadata = fallbackAgenda
-    ? null
-    : await getMetadata(event.id, event.accountId, event.calendarId);
+  const metadata = await getMetadata(event.id, event.accountId, event.calendarId);
   const resolvedAgenda = fallbackAgenda || (metadata ? await resolveMeetingAgenda(metadata) : undefined);
+  const participants = await resolveEventParticipants(event.attendees, metadata?.id);
   return {
     meetingUrl,
     title: event.summary?.trim() || fallbackTitle,
@@ -86,6 +128,7 @@ async function fromEvent(
     eventStart: eventDateTime(event.start),
     eventEnd: eventDateTime(event.end),
     resolutionSource,
+    participants,
   };
 }
 
@@ -96,13 +139,15 @@ export async function resolveMeetingIdentity(input: ResolveMeetingIdentityInput)
 
   if (input.explicitEvent) {
     const explicitAgenda = input.explicitEvent.agenda?.trim() || agenda;
-    const metadata = explicitAgenda
-      ? null
-      : await getMetadata(
-          input.explicitEvent.providerEventId,
-          input.explicitEvent.accountId,
-          input.explicitEvent.calendarId,
-        );
+    const metadata = await getMetadata(
+      input.explicitEvent.providerEventId,
+      input.explicitEvent.accountId,
+      input.explicitEvent.calendarId,
+    );
+    const participants = await resolveEventParticipants(
+      input.explicitEvent.attendees || [],
+      metadata?.id,
+    );
     return {
       meetingUrl,
       title: input.explicitEvent.title?.trim() || title,
@@ -113,6 +158,7 @@ export async function resolveMeetingIdentity(input: ResolveMeetingIdentityInput)
       eventStart: input.explicitEvent.eventStart,
       eventEnd: input.explicitEvent.eventEnd,
       resolutionSource: "calendar_auto_join",
+      participants,
     };
   }
 
@@ -137,5 +183,5 @@ export async function resolveMeetingIdentity(input: ResolveMeetingIdentityInput)
     return fromEvent(event, meetingUrl, title, agenda, "manual_url_match");
   }
 
-  return { meetingUrl, title, agenda, resolutionSource: "unresolved_url" };
+  return { meetingUrl, title, agenda, resolutionSource: "unresolved_url", participants: [] };
 }
