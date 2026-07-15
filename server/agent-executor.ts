@@ -21,9 +21,9 @@ import { STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_TIMEOUT_EXTENDED_MS, COMPACTION_LLM
 import pLimit from "p-limit";
 import { withQueryAttributionAsync } from "./db";
 import { abortTrace } from "./abort-trace";
-import type { ExecutorStreamEvent } from "@shared/models/chat";
+import type { ExecutorStreamEvent, ModelProviderFailureInfo } from "@shared/models/chat";
 import type { SegmentChronologyEntry, SystemStepRecord } from "./chat-file-storage";
-import type { StreamEvent as ModelStreamEvent, StreamMessage } from "./model-client";
+import { ModelProviderError, type StreamEvent as ModelStreamEvent, type StreamMessage } from "./model-client";
 import { maybeOffloadToolOutput } from "./tool-output-artifacts";
 
 function normalizeMcpToolName(name: string | undefined): string | undefined {
@@ -137,6 +137,7 @@ export interface ExecutorRunResult {
   abortReason?: AbortReason;
   abortDetails?: AbortDetails;
   error?: string;
+  providerFailure?: ModelProviderFailureInfo;
   streamDiagnostics?: {
     eventCount: number;
     elapsedMs: number;
@@ -723,6 +724,7 @@ interface RunIterationContext {
   // Captured here so result.error reflects the real underlying message even when
   // an upstream abort or other path bypasses the run's outer catch block.
   lastError?: string;
+  providerFailure?: ModelProviderFailureInfo;
   pendingCostLogs: Promise<void>[];
   // All non-cost-log background work the run launched (CLI iterator-return chains
   // after force-abort, interrupt acks, generator-return on idle timeout, ...).
@@ -1334,8 +1336,11 @@ export class AgentExecutor extends EventEmitter {
 
       case "error":
         ctx.lastError = event.error || ctx.lastError || "Stream error";
-        ctx.publish("error", { error: event.error });
-        throw new Error(event.error || "Stream error");
+        ctx.providerFailure = event.providerFailure || ctx.providerFailure;
+        ctx.publish("error", { error: ctx.lastError, providerFailure: ctx.providerFailure });
+        throw event.providerFailure
+          ? new ModelProviderError(event.providerFailure)
+          : new Error(ctx.lastError);
     }
   }
 
@@ -1718,6 +1723,7 @@ export class AgentExecutor extends EventEmitter {
       abortReason: ctx.abortReason,
       abortDetails: ctx.abortDetails,
       error: ctx.lastError,
+      providerFailure: ctx.providerFailure,
       streamDiagnostics: ctx.lastStreamDiagnostics,
       segmentChronology: ctx.segmentChronology.length > 0 ? ctx.segmentChronology : undefined,
       systemSteps: ctx.systemStepsData.length > 0 ? ctx.systemStepsData : undefined,
@@ -1809,6 +1815,7 @@ export class AgentExecutor extends EventEmitter {
       if (extra?.arguments) event.arguments = extra.arguments;
       if (extra?.result !== undefined) event.result = typeof extra.result === "string" ? extra.result : safeStringify(extra.result, { maxBytes: 64 * 1024, label: "agent-executor.eventExtra.result" });
       if (extra?.error) event.error = extra.error;
+      if (extra?.providerFailure) event.providerFailure = extra.providerFailure;
       if (extra?.status) (event as unknown as Record<string, unknown>).status = extra.status;
       if (extra?.stepId) (event as unknown as Record<string, unknown>).stepId = extra.stepId;
       if (extra?.step) event.step = extra.step;
@@ -2280,6 +2287,14 @@ export class AgentExecutor extends EventEmitter {
         sessionKey: options.sessionKey,
       });
     } catch (streamErr: unknown) {
+      const providerFailure = streamErr instanceof ModelProviderError
+        ? streamErr.providerFailure
+        : undefined;
+      if (providerFailure) {
+        ctx.lastError = providerFailure.userMessage;
+        ctx.providerFailure = providerFailure;
+        ctx.publish("error", { error: providerFailure.userMessage, providerFailure });
+      }
       if (!ctx.firstTokenEmitted && ctx.llmCallStartTime) {
         ctx.firstTokenEmitted = true;
         const now = Date.now();
@@ -2591,7 +2606,9 @@ export class AgentExecutor extends EventEmitter {
     } catch (err: unknown) {
       const errorMsg = (err instanceof Error ? err.message : String(err)) || "Executor error";
       log.error(`run ERROR runId=${runId} model=${modelString} abortReason=${ctx.abortReason ?? "none"}: ${errorMsg}`);
-      ctx.publish("error", { error: errorMsg });
+      if (!ctx.providerFailure) {
+        ctx.publish("error", { error: errorMsg });
+      }
 
       const terminalDecision = {
         runId,
@@ -2608,6 +2625,7 @@ export class AgentExecutor extends EventEmitter {
         assistantTextLength: mergeIterationResults(iterationResults).length,
         lastAssistantTextLength: ctx.diagnosticLastAssistantTextLength,
         error: errorMsg,
+        providerFailure: ctx.providerFailure,
         source: options.activity || "agent",
       };
       log.error(`agent.run.terminal_decision ${safeStringify(terminalDecision, { maxBytes: 4096, label: "agent-executor.terminalDecision.error" })}`);
@@ -2645,6 +2663,7 @@ export class AgentExecutor extends EventEmitter {
         abortReason: ctx.abortReason || "error",
         abortDetails: ctx.abortDetails,
         error: errorMsg,
+        providerFailure: ctx.providerFailure,
         streamDiagnostics: ctx.lastStreamDiagnostics,
         segmentChronology: ctx.segmentChronology.length > 0 ? ctx.segmentChronology : undefined,
         systemSteps: ctx.systemStepsData.length > 0 ? ctx.systemStepsData : undefined,

@@ -204,6 +204,39 @@ export type TerminationReason =
   | "circuit_breaker"
   | "yield_to_interactive";
 
+export interface ModelProviderFailureInfo {
+  kind: string;
+  provider: string;
+  model?: string;
+  runId?: string;
+  sessionId?: string;
+  phase: string;
+  retryable: boolean;
+  status: number;
+  attempts: number;
+  userMessage: string;
+  providerCode?: string;
+  providerType?: string;
+  providerMessage?: string;
+  providerParam?: string | null;
+  eventType?: string;
+  responseId?: string;
+  responseStatus?: string;
+  sequenceNumber?: number;
+  incompleteReason?: string;
+  clientRequestId?: string;
+  providerRequestId?: string;
+  providerEventFields?: string[];
+  providerResponseFields?: string[];
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    cacheReadTokens?: number;
+    reasoningTokens?: number;
+  };
+}
+
 export interface ExecutorStreamEvent {
   type: ExecutorStreamEventType;
   content?: string;
@@ -212,6 +245,7 @@ export interface ExecutorStreamEvent {
   arguments?: Record<string, unknown>;
   result?: string;
   error?: string;
+  providerFailure?: ModelProviderFailureInfo;
   isError?: boolean;
   usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
   model?: string;
@@ -269,7 +303,7 @@ export type ChatStreamEvent =
       terminationReason?: string;
     })
   | (ChatStreamEventBase & { type: "saved"; messageId?: string })
-  | (ChatStreamEventBase & { type: "error"; error: string })
+  | (ChatStreamEventBase & { type: "error"; error: string; providerFailure?: ModelProviderFailureInfo })
   | (ChatStreamEventBase & {
       type: "model_info";
       model?: string;

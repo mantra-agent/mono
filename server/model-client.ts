@@ -10,9 +10,11 @@ import { withTimeout, STREAM_FINAL_MESSAGE_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";
 import { getSecretSync, onSecretChange } from "./secrets-store";
 import type { ToolDefinition } from "@shared/models/tools";
+import type { ModelProviderFailureInfo } from "@shared/models/chat";
 import { createNamedSystemPrincipal } from "./principal";
 import { runWithPrincipal } from "./principal-context";
 import { resolveSessionModelTierOverride } from "./session-model-tier-override";
+import { safeStringify } from "./utils/safe-stringify";
 
 let _openaiClient: OpenAI | null = null;
 let _anthropicClient: Anthropic | null = null;
@@ -140,12 +142,18 @@ interface CodexResponsesChunk {
   output_index?: number;
   content_index?: number;
   delta?: string | { arguments?: string };
+  code?: string;
+  message?: string;
+  param?: string | null;
   output?: Array<{ type: string; id?: string; content?: Array<{ type: string; text?: string }> }>;
   item?: { type?: string; id?: string; name?: string; call_id?: string; arguments?: string };
   usage?: { input_tokens: number; output_tokens: number; total_tokens: number; input_tokens_details?: { cached_tokens?: number }; output_tokens_details?: { reasoning_tokens?: number } };
   response?: {
+    id?: string;
+    status?: string;
     usage?: { input_tokens: number; output_tokens: number; total_tokens: number; input_tokens_details?: { cached_tokens?: number }; output_tokens_details?: { reasoning_tokens?: number } };
     error?: { code?: string; message?: string; type?: string };
+    incomplete_details?: { reason?: string } | null;
   };
   error?: { code?: string; message?: string; type?: string };
 }
@@ -362,21 +370,29 @@ function serializeModelError(err: unknown): Record<string, unknown> {
     name?: string;
     message?: string;
     code?: string;
+    kind?: string;
+    retryable?: boolean;
     status?: number;
     attempts?: number;
     phase?: string;
+    bodySnippet?: string;
     clientRequestId?: string;
     providerRequestId?: string;
+    providerFailure?: ModelProviderFailure;
   } | null;
   return {
     name: e?.name || "Error",
     message: e?.message || String(err),
     code: e?.code,
+    kind: e?.kind,
+    retryable: e?.retryable,
     status: e?.status,
     attempts: e?.attempts,
     phase: e?.phase,
+    bodySnippet: sanitizeProviderDiagnostic(e?.bodySnippet),
     clientRequestId: e?.clientRequestId,
     providerRequestId: e?.providerRequestId,
+    providerFailure: e?.providerFailure,
   };
 }
 
@@ -524,7 +540,16 @@ async function executeChatCompletion(options: ChatCompletionOptions, routing: Mo
     routing.attempts = appendFailedAttempt(routing, err);
     const errorMetadata = serializeModelError(err);
     log.error(`chatCompletion ${status.toUpperCase()} in ${elapsed}ms provider=${provider} model=${model} activity=${routing.activity} tier=${routing.tier} configHash=${routing.configHash}: ${err.message}`);
-    await recordInference({ startTime: start, routing, metadata: options.metadata, status, usage: result?.usage, requestContent, responseContent: result?.content, error: errorMetadata, signal: options.signal });
+    const providerUsage = err instanceof ModelProviderError && err.providerFailure.usage
+      ? {
+          inputTokens: err.providerFailure.usage.inputTokens,
+          outputTokens: err.providerFailure.usage.outputTokens,
+          totalTokens: err.providerFailure.usage.totalTokens,
+          cacheReadTokens: err.providerFailure.usage.cacheReadTokens,
+          reasoningTokens: err.providerFailure.usage.reasoningTokens,
+        }
+      : undefined;
+    await recordInference({ startTime: start, routing, metadata: options.metadata, status, usage: result?.usage || providerUsage, requestContent, responseContent: result?.content, error: errorMetadata, signal: options.signal });
     throw enrichModelError(err, routing, options.metadata);
   }
 }
@@ -603,22 +628,34 @@ async function openaiCompletion(model: string, options: ChatCompletionOptions): 
   if (options.temperature !== undefined) params.temperature = options.temperature;
   if (options.jsonMode) params.response_format = { type: "json_object" };
 
-  const requestOptions: Record<string, any> = {};
-  if (options.signal) requestOptions.signal = options.signal;
+  const clientRequestId = randomUUID();
+  try {
+    const responsePromise = client.chat.completions.create(params, {
+      signal: options.signal,
+      maxRetries: 0,
+      headers: { "X-Client-Request-Id": clientRequestId },
+    });
+    const { data: response } = await responsePromise.withResponse();
+    const content = response.choices[0]?.message?.content || "";
 
-  const response = await client.chat.completions.create(params, requestOptions);
-  const content = response.choices[0]?.message?.content || "";
-
-  return {
-    content,
-    model,
-    provider: "openai",
-    usage: response.usage ? {
-      promptTokens: response.usage.prompt_tokens,
-      completionTokens: response.usage.completion_tokens,
-      totalTokens: response.usage.total_tokens,
-    } : undefined,
-  };
+    return {
+      content,
+      model,
+      provider: "openai",
+      usage: response.usage ? {
+        promptTokens: response.usage.prompt_tokens,
+        completionTokens: response.usage.completion_tokens,
+        totalTokens: response.usage.total_tokens,
+      } : undefined,
+    };
+  } catch (err: unknown) {
+    if (isAbortError(err, options.signal)) throw err;
+    throw modelProviderErrorFromAttempt(
+      openaiSdkAttemptError(err, clientRequestId),
+      1,
+      { provider: "openai", model, metadata: options.metadata },
+    );
+  }
 }
 
 /**
@@ -643,22 +680,44 @@ async function openaiResponsesCompletion(model: string, options: ChatCompletionO
     params.tools = convertToolsToCodexResponses(options.tools);
   }
 
-  const requestOptions: Record<string, any> = {};
-  if (options.signal) requestOptions.signal = options.signal;
+  const clientRequestId = randomUUID();
+  try {
+    const responsePromise = client.responses.create(params as any, {
+      signal: options.signal,
+      maxRetries: 0,
+      headers: { "X-Client-Request-Id": clientRequestId },
+    });
+    const { data: response, request_id: providerRequestId } = await responsePromise.withResponse();
+    if (response.status === "failed") {
+      throw modelProviderErrorFromAttempt(
+        responsesProviderFailure(
+          { type: "response.failed", response } as CodexResponsesChunk,
+          { clientRequestId, providerRequestId: providerRequestId || undefined },
+        ),
+        1,
+        { provider: "openai", model, metadata: options.metadata },
+      );
+    }
+    const content = typeof response.output_text === "string" ? response.output_text : "";
 
-  const response: any = await client.responses.create(params as any, requestOptions);
-  const content = typeof response.output_text === "string" ? response.output_text : "";
-
-  return {
-    content,
-    model,
-    provider: "openai",
-    usage: response.usage ? {
-      promptTokens: response.usage.input_tokens || 0,
-      completionTokens: response.usage.output_tokens || 0,
-      totalTokens: response.usage.total_tokens || 0,
-    } : undefined,
-  };
+    return {
+      content,
+      model,
+      provider: "openai",
+      usage: response.usage ? {
+        promptTokens: response.usage.input_tokens || 0,
+        completionTokens: response.usage.output_tokens || 0,
+        totalTokens: response.usage.total_tokens || 0,
+      } : undefined,
+    };
+  } catch (err: unknown) {
+    if (isAbortError(err, options.signal) || err instanceof ModelProviderError) throw err;
+    throw modelProviderErrorFromAttempt(
+      openaiSdkAttemptError(err, clientRequestId),
+      1,
+      { provider: "openai", model, metadata: options.metadata },
+    );
+  }
 }
 
 /**
@@ -678,29 +737,7 @@ class CodexAbortedError extends Error {
   }
 }
 
-class CodexUnavailableError extends Error {
-  status: number;
-  attempts: number;
-  bodySnippet: string;
-  clientRequestId?: string;
-  providerRequestId?: string;
-
-  constructor(status: number, attempts: number, bodySnippet: string, requestIds?: { clientRequestId?: string; providerRequestId?: string }) {
-    super(
-      status > 0
-        ? `Codex temporarily unavailable after ${attempts} attempts — last status: ${status}: ${bodySnippet.slice(0, 200)}`
-        : `Codex temporarily unavailable after ${attempts} attempts — last error: ${bodySnippet.slice(0, 200)}`,
-    );
-    this.name = "CodexUnavailableError";
-    this.status = status;
-    this.attempts = attempts;
-    this.bodySnippet = bodySnippet;
-    this.clientRequestId = requestIds?.clientRequestId;
-    this.providerRequestId = requestIds?.providerRequestId;
-  }
-}
-
-type CodexFailureKind =
+export type ModelProviderFailureKind =
   | "transport"
   | "http_retryable"
   | "http_permanent"
@@ -710,36 +747,132 @@ type CodexFailureKind =
   | "provider_failed"
   | "protocol_invalid";
 
-type CodexFailurePhase = "fetch" | "first_event" | "stream" | "protocol";
+export type ModelProviderFailurePhase = "fetch" | "first_event" | "stream" | "protocol";
 
-class CodexAttemptError extends Error {
-  kind: CodexFailureKind;
+export interface ModelProviderFailure extends ModelProviderFailureInfo {
+  kind: ModelProviderFailureKind;
+  provider: "openai-subscription" | "openai";
+  phase: ModelProviderFailurePhase;
+}
+
+
+const MAX_PROVIDER_DIAGNOSTIC_CHARS = 2_000;
+
+function sanitizeProviderDiagnostic(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  return value
+    .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+/gi, "Bearer [REDACTED]")
+    .replace(/(["']?(?:access_token|refresh_token|authorization|api[_-]?key)["']?\s*[:=]\s*)["']?[^"'\s,}]+["']?/gi, "$1[REDACTED]")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+    .trim()
+    .slice(0, MAX_PROVIDER_DIAGNOSTIC_CHARS);
+}
+
+function providerFailureReference(failure: Pick<ModelProviderFailure, "providerRequestId" | "responseId" | "clientRequestId">): string | undefined {
+  return failure.providerRequestId || failure.responseId || failure.clientRequestId;
+}
+
+function buildProviderUserMessage(failure: Omit<ModelProviderFailure, "userMessage">): string {
+  const providerName = failure.provider === "openai-subscription" ? "OpenAI Codex" : "OpenAI";
+  const reference = providerFailureReference(failure);
+  const referenceSuffix = reference ? ` Reference: ${reference}.` : "";
+  const providerMessage = sanitizeProviderDiagnostic(failure.providerMessage);
+  const reportedSuffix = providerMessage && providerMessage !== "response.failed"
+    ? ` OpenAI reported: ${providerMessage}`
+    : "";
+
+  if (failure.kind === "rate_limited" || failure.status === 429) {
+    return `${providerName} rate limit reached.${reportedSuffix || " Please wait and retry."}${referenceSuffix}`;
+  }
+  if (failure.providerCode === "authentication_error" || failure.status === 401) {
+    return `${providerName} rejected the connection credentials.${reportedSuffix}${referenceSuffix}`;
+  }
+  if (failure.providerCode === "permission_error" || failure.status === 403) {
+    return `${providerName} rejected this request for insufficient permission.${reportedSuffix}${referenceSuffix}`;
+  }
+  if (failure.providerCode === "context_length_exceeded") {
+    return `${providerName} rejected the request because it exceeded the model context window.${reportedSuffix}${referenceSuffix}`;
+  }
+  if (failure.providerCode === "model_not_found") {
+    return `${providerName} could not find the configured model.${reportedSuffix}${referenceSuffix}`;
+  }
+  if (failure.kind === "time_to_first_event") {
+    return `${providerName} did not begin responding within ${Math.round(CODEX_TIME_TO_FIRST_EVENT_MS / 1000)} seconds.${referenceSuffix}`;
+  }
+  if (failure.kind === "stream_interrupted") {
+    return `The ${providerName} stream ended before the response completed.${reportedSuffix}${referenceSuffix}`;
+  }
+  if (failure.kind === "transport") {
+    return `Mantra could not reach ${providerName}.${reportedSuffix}${referenceSuffix}`;
+  }
+  if (failure.kind === "protocol_invalid") {
+    return `${providerName} returned an invalid streaming response.${reportedSuffix}${referenceSuffix}`;
+  }
+  if (failure.kind === "http_retryable" || failure.kind === "http_permanent") {
+    return `${providerName} returned HTTP ${failure.status}.${reportedSuffix}${referenceSuffix}`;
+  }
+  const codeSuffix = failure.providerCode ? ` (${failure.providerCode})` : "";
+  return `${providerName} failed this request${codeSuffix}.${reportedSuffix || " Retry the request."}${referenceSuffix}`;
+}
+
+export class ModelProviderError extends Error {
+  readonly code = "MODEL_PROVIDER_ERROR";
+  readonly providerFailure: ModelProviderFailure;
+  readonly kind: ModelProviderFailureKind;
+  readonly retryable: boolean;
+  readonly status: number;
+  readonly attempts: number;
+  readonly phase: ModelProviderFailurePhase;
+  readonly bodySnippet?: string;
+  readonly clientRequestId?: string;
+  readonly providerRequestId?: string;
+
+  constructor(providerFailure: ModelProviderFailure, bodySnippet?: string) {
+    super(providerFailure.userMessage);
+    this.name = "ModelProviderError";
+    this.providerFailure = providerFailure;
+    this.kind = providerFailure.kind;
+    this.retryable = providerFailure.retryable;
+    this.status = providerFailure.status;
+    this.attempts = providerFailure.attempts;
+    this.phase = providerFailure.phase;
+    this.bodySnippet = sanitizeProviderDiagnostic(bodySnippet);
+    this.clientRequestId = providerFailure.clientRequestId;
+    this.providerRequestId = providerFailure.providerRequestId;
+  }
+}
+
+class ModelProviderAttemptError extends Error {
+  kind: ModelProviderFailureKind;
   retryable: boolean;
   status: number;
   bodySnippet: string;
   clientRequestId: string;
   providerRequestId?: string;
-  phase: CodexFailurePhase;
+  phase: ModelProviderFailurePhase;
+  diagnostics?: Partial<ModelProviderFailure>;
 
   constructor(params: {
-    kind: CodexFailureKind;
+    kind: ModelProviderFailureKind;
     retryable: boolean;
     message: string;
     status?: number;
     bodySnippet?: string;
     clientRequestId: string;
     providerRequestId?: string;
-    phase: CodexFailurePhase;
+    phase: ModelProviderFailurePhase;
+    diagnostics?: Partial<ModelProviderFailure>;
   }) {
     super(params.message);
-    this.name = "CodexAttemptError";
+    this.name = "ModelProviderAttemptError";
     this.kind = params.kind;
     this.retryable = params.retryable;
     this.status = params.status ?? 0;
-    this.bodySnippet = params.bodySnippet ?? params.message;
+    this.bodySnippet = sanitizeProviderDiagnostic(params.bodySnippet ?? params.message) || params.message;
     this.clientRequestId = params.clientRequestId;
     this.providerRequestId = params.providerRequestId;
     this.phase = params.phase;
+    this.diagnostics = params.diagnostics;
   }
 }
 
@@ -825,7 +958,7 @@ async function fetchCodexAttempt(
     });
   } catch (err: any) {
     if (scope.timedOut()) {
-      throw new CodexAttemptError({
+      throw new ModelProviderAttemptError({
         kind: "time_to_first_event",
         retryable: true,
         message: `time_to_first_event_timeout:${CODEX_TIME_TO_FIRST_EVENT_MS}ms`,
@@ -835,7 +968,7 @@ async function fetchCodexAttempt(
       });
     }
     if (err.name === "AbortError" || err.code === "ERR_CANCELED" || scope.signal.aborted) throw err;
-    throw new CodexAttemptError({
+    throw new ModelProviderAttemptError({
       kind: "transport",
       retryable: true,
       message: err?.message || String(err),
@@ -858,41 +991,182 @@ function isRetryableCodexStatus(status: number): boolean {
   return status === 408 || status === 409 || status === 429 || (status >= 500 && status < 600);
 }
 
-function codexHttpAttemptError(response: Response, bodySnippet: string, scope: CodexAttemptScope): CodexAttemptError {
+function parseProviderErrorBody(body: string): {
+  providerCode?: string;
+  providerType?: string;
+  providerMessage?: string;
+  providerParam?: string | null;
+} {
+  const sanitizedBody = sanitizeProviderDiagnostic(body);
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: { code?: string; type?: string; message?: string; param?: string | null };
+      code?: string;
+      type?: string;
+      message?: string;
+      param?: string | null;
+    };
+    const detail = parsed.error || parsed;
+    return {
+      providerCode: sanitizeProviderDiagnostic(detail.code),
+      providerType: sanitizeProviderDiagnostic(detail.type),
+      providerMessage: sanitizeProviderDiagnostic(detail.message) || sanitizedBody,
+      providerParam: detail.param === null ? null : sanitizeProviderDiagnostic(detail.param),
+    };
+  } catch {
+    // Unstructured bodies stay in the bounded internal bodySnippet. Only a
+    // provider-declared message is safe and stable enough to show users.
+    return {};
+  }
+}
+
+function codexHttpAttemptError(response: Response, bodySnippet: string, scope: CodexAttemptScope): ModelProviderAttemptError {
   const retryable = isRetryableCodexStatus(response.status);
-  return new CodexAttemptError({
+  const detail = parseProviderErrorBody(bodySnippet);
+  return new ModelProviderAttemptError({
     kind: response.status === 429 ? "rate_limited" : retryable ? "http_retryable" : "http_permanent",
     retryable,
-    message: `HTTP ${response.status}`,
+    message: detail.providerMessage || `HTTP ${response.status}`,
     status: response.status,
     bodySnippet,
     clientRequestId: scope.clientRequestId,
     providerRequestId: response.headers.get("x-request-id") || undefined,
     phase: "fetch",
+    diagnostics: {
+      ...detail,
+      eventType: "http_response",
+    },
   });
 }
 
-function codexProviderFailure(chunk: CodexResponsesChunk, scope: CodexAttemptScope, response: Response): CodexAttemptError {
-  const detail = chunk.response?.error || chunk.error;
-  const providerCode = detail?.code || detail?.type;
-  const message = detail?.message || "response.failed";
+function responsesProviderFailure(
+  chunk: CodexResponsesChunk,
+  context: { clientRequestId: string; providerRequestId?: string; status?: number },
+): ModelProviderAttemptError {
+  const topLevelError = chunk.type === "error"
+    ? { code: chunk.code, message: chunk.message, type: "error" }
+    : undefined;
+  const detail = chunk.response?.error || chunk.error || topLevelError;
+  const providerCode = detail?.code || chunk.code;
+  const providerType = detail?.type || (chunk.type === "error" ? "error" : undefined);
+  const providerMessage = sanitizeProviderDiagnostic(detail?.message || chunk.message || chunk.type) || chunk.type;
   const permanentCodes = new Set(["invalid_request_error", "authentication_error", "permission_error", "context_length_exceeded", "model_not_found"]);
-  return new CodexAttemptError({
-    kind: "provider_failed",
+  const usageData = chunk.usage || chunk.response?.usage;
+  const providerParam = sanitizeProviderDiagnostic(chunk.param ?? undefined);
+
+  return new ModelProviderAttemptError({
+    kind: providerCode === "rate_limit_exceeded" ? "rate_limited" : "provider_failed",
     retryable: !providerCode || !permanentCodes.has(providerCode),
-    message,
-    bodySnippet: providerCode ? `${providerCode}: ${message}` : message,
-    clientRequestId: scope.clientRequestId,
-    providerRequestId: response.headers.get("x-request-id") || undefined,
+    status: context.status ?? 0,
+    message: providerMessage,
+    bodySnippet: providerCode ? `${providerCode}: ${providerMessage}` : providerMessage,
+    clientRequestId: context.clientRequestId,
+    providerRequestId: context.providerRequestId,
     phase: "protocol",
+    diagnostics: {
+      providerCode,
+      providerType,
+      providerMessage,
+      providerParam: chunk.param === null ? null : providerParam,
+      eventType: chunk.type,
+      responseId: sanitizeProviderDiagnostic(chunk.response?.id),
+      responseStatus: sanitizeProviderDiagnostic(chunk.response?.status),
+      sequenceNumber: chunk.sequence_number,
+      incompleteReason: sanitizeProviderDiagnostic(chunk.response?.incomplete_details?.reason),
+      providerEventFields: Object.keys(chunk).sort(),
+      providerResponseFields: chunk.response ? Object.keys(chunk.response).sort() : undefined,
+      usage: usageData ? {
+        inputTokens: usageData.input_tokens || 0,
+        outputTokens: usageData.output_tokens || 0,
+        totalTokens: usageData.total_tokens || 0,
+        cacheReadTokens: usageData.input_tokens_details?.cached_tokens ?? 0,
+        reasoningTokens: usageData.output_tokens_details?.reasoning_tokens ?? 0,
+      } : undefined,
+    },
   });
 }
 
-function codexUnavailableFromAttempt(err: CodexAttemptError, attempts: number): CodexUnavailableError {
-  return new CodexUnavailableError(err.status, attempts, err.bodySnippet, {
+function openaiSdkAttemptError(err: unknown, clientRequestId: string): ModelProviderAttemptError {
+  const sdkError = err as {
+    status?: number;
+    code?: string | null;
+    type?: string;
+    param?: string | null;
+    requestID?: string | null;
+    message?: string;
+    error?: { message?: string; code?: string; type?: string; param?: string | null };
+  };
+  const status = typeof sdkError?.status === "number" ? sdkError.status : 0;
+  const detail = sdkError?.error || sdkError;
+  const providerMessage = sanitizeProviderDiagnostic(detail?.message || sdkError?.message);
+  const providerCode = sanitizeProviderDiagnostic(detail?.code || sdkError?.code || undefined);
+  const providerType = sanitizeProviderDiagnostic(detail?.type || sdkError?.type);
+  const providerParam = detail?.param === null || sdkError?.param === null
+    ? null
+    : sanitizeProviderDiagnostic(detail?.param || sdkError?.param || undefined);
+  const retryable = status > 0 ? isRetryableCodexStatus(status) : true;
+  const bodySnippet = safeStringify(sdkError?.error || { message: sdkError?.message }, {
+    maxBytes: MAX_PROVIDER_DIAGNOSTIC_CHARS,
+    maxStrLen: MAX_PROVIDER_DIAGNOSTIC_CHARS,
+    label: "model-client.openaiSdkError",
+  });
+
+  return new ModelProviderAttemptError({
+    kind: status === 429 ? "rate_limited" : status > 0 ? (retryable ? "http_retryable" : "http_permanent") : "transport",
+    retryable,
+    status,
+    message: providerMessage || (status > 0 ? `HTTP ${status}` : "OpenAI SDK transport error"),
+    bodySnippet,
+    clientRequestId,
+    providerRequestId: sanitizeProviderDiagnostic(sdkError?.requestID || undefined),
+    phase: status > 0 ? "fetch" : "stream",
+    diagnostics: {
+      providerCode,
+      providerType,
+      providerMessage,
+      providerParam,
+      eventType: "sdk_error",
+    },
+  });
+}
+
+function modelProviderErrorFromAttempt(
+  err: ModelProviderAttemptError,
+  attempts: number,
+  context?: {
+    provider?: ModelProviderFailure["provider"];
+    model?: string;
+    metadata?: InferenceMetadata;
+  },
+): ModelProviderError {
+  const diagnostic = err.diagnostics || {};
+  const base: Omit<ModelProviderFailure, "userMessage"> = {
+    ...diagnostic,
+    kind: err.kind,
+    provider: context?.provider || "openai-subscription",
+    model: context?.model,
+    runId: context?.metadata?.runId,
+    sessionId: context?.metadata?.sessionId,
+    phase: err.phase,
+    retryable: err.retryable,
+    status: err.status,
+    attempts,
     clientRequestId: err.clientRequestId,
     providerRequestId: err.providerRequestId,
-  });
+  };
+  const providerFailure: ModelProviderFailure = {
+    ...base,
+    userMessage: buildProviderUserMessage(base),
+  };
+  log.error(`model.provider_failure ${safeStringify({
+    ...providerFailure,
+    bodySnippet: sanitizeProviderDiagnostic(err.bodySnippet),
+  }, {
+    maxBytes: 16 * 1024,
+    maxStrLen: MAX_PROVIDER_DIAGNOSTIC_CHARS,
+    label: "model-client.providerFailure",
+  })}`);
+  return new ModelProviderError(providerFailure, err.bodySnippet);
 }
 
 async function openaiSubscriptionCompletion(model: string, options: ChatCompletionOptions): Promise<ChatCompletionResult> {
@@ -912,7 +1186,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
     body: JSON.stringify(body),
   };
   const parentSignal = options.signal as AbortSignal | undefined;
-  let lastAttemptError: CodexAttemptError | undefined;
+  let lastAttemptError: ModelProviderAttemptError | undefined;
 
   for (let attempt = 0; attempt < CODEX_COMPLETION_MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) {
@@ -929,7 +1203,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
       const response = await fetchCodexAttempt(fetchOptions, scope, codexModel, "completion", attempt, CODEX_COMPLETION_MAX_ATTEMPTS);
       if (!response.ok || !response.body) {
         const text = await response.text().catch(() => "unknown error");
-        throw codexHttpAttemptError(response, text.slice(0, 200), scope);
+        throw codexHttpAttemptError(response, text, scope);
       }
 
       let content = "";
@@ -938,7 +1212,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
       const decoder = new TextDecoder();
       let buffer = "";
       let firstEventSeen = false;
-      let protocolFailure: CodexAttemptError | undefined;
+      let protocolFailure: ModelProviderAttemptError | undefined;
       let terminalEventSeen = false;
 
       while (true) {
@@ -947,7 +1221,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
           read = await reader.read();
         } catch (err: any) {
           if (parentSignal?.aborted) throw new CodexAbortedError();
-          throw new CodexAttemptError({
+          throw new ModelProviderAttemptError({
             kind: scope.timedOut() ? "time_to_first_event" : "stream_interrupted",
             retryable: true,
             message: scope.timedOut()
@@ -961,7 +1235,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
         }
         if (read.done) {
           if (!firstEventSeen) {
-            throw new CodexAttemptError({
+            throw new ModelProviderAttemptError({
               kind: "stream_interrupted",
               retryable: true,
               message: "eof_before_first_event",
@@ -985,7 +1259,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
           try {
             chunk = JSON.parse(data);
           } catch {
-            throw new CodexAttemptError({
+            throw new ModelProviderAttemptError({
               kind: "protocol_invalid",
               retryable: true,
               message: "malformed_sse_json",
@@ -1017,7 +1291,11 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
             };
           }
           if (chunk.type === "response.output_text.delta" && typeof chunk.delta === "string") content += chunk.delta;
-          else if (chunk.type === "response.failed") protocolFailure = codexProviderFailure(chunk, scope, response);
+          else if (chunk.type === "response.failed" || chunk.type === "error") protocolFailure = responsesProviderFailure(chunk, {
+            clientRequestId: scope.clientRequestId,
+            providerRequestId: response.headers.get("x-request-id") || undefined,
+            status: response.status,
+          });
           else if (chunk.type === "response.completed" || chunk.type === "response.incomplete") terminalEventSeen = true;
         }
         if (protocolFailure) break;
@@ -1025,7 +1303,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
 
       if (protocolFailure) throw protocolFailure;
       if (!terminalEventSeen) {
-        throw new CodexAttemptError({
+        throw new ModelProviderAttemptError({
           kind: "stream_interrupted",
           retryable: true,
           message: firstEventSeen ? "eof_before_terminal_event" : "eof_before_first_event",
@@ -1051,7 +1329,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
       };
     } catch (err: any) {
       if (parentSignal?.aborted || (isAbortError(err, scope.signal) && !scope.timedOut())) throw new CodexAbortedError();
-      if (!(err instanceof CodexAttemptError)) throw err;
+      if (!(err instanceof ModelProviderAttemptError)) throw err;
       lastAttemptError = err;
       log.warn(
         `codex completion attempt failed attempt=${attempt + 1}/${CODEX_COMPLETION_MAX_ATTEMPTS} model=${codexModel} ` +
@@ -1059,14 +1337,17 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
         `clientRequestId=${err.clientRequestId} providerRequestId=${err.providerRequestId ?? "none"} error=${err.message}`,
       );
       if (!err.retryable || attempt === CODEX_COMPLETION_MAX_ATTEMPTS - 1) {
-        throw codexUnavailableFromAttempt(err, attempt + 1);
+        throw modelProviderErrorFromAttempt(err, attempt + 1, { model: codexModel, metadata: options.metadata });
       }
     } finally {
       scope.cleanup();
     }
   }
 
-  throw new CodexUnavailableError(0, CODEX_COMPLETION_MAX_ATTEMPTS, lastAttemptError?.bodySnippet || "unknown retry exhaustion");
+  if (lastAttemptError) {
+    throw modelProviderErrorFromAttempt(lastAttemptError, CODEX_COMPLETION_MAX_ATTEMPTS, { model: codexModel, metadata: options.metadata });
+  }
+  throw new Error("Codex completion exhausted retries without an attempt error");
 }
 
 async function claudeCliCompletion(model: string, options: ChatCompletionOptions): Promise<ChatCompletionResult> {
@@ -1256,7 +1537,7 @@ export type StreamEvent =
   | { type: "tool_call_resolved"; toolCallId: string; toolName: string; arguments: Record<string, unknown> }
   | { type: "tool_result_resolved"; toolCallId: string; toolName: string; result: string; error?: boolean }
   | { type: "usage"; usage: { inputTokens: number; outputTokens: number; totalTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; reasoningTokens?: number; visibleOutputTokens?: number }; model?: string; stopReason: string; metadata?: Record<string, unknown> }
-  | { type: "error"; error: string }
+  | { type: "error"; error: string; providerFailure?: ModelProviderFailure }
   | { type: "keepalive"; reason: string }
   | { type: "ttft_breakdown"; breakdown: TtftBreakdown }
   | { type: "connected"; metadata?: Record<string, unknown> }
@@ -1381,7 +1662,18 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
     } else if (event.type === "usage") {
       streamUsage = event.usage;
     } else if (event.type === "error") {
-      throw new Error(event.error);
+      if (event.providerFailure?.usage) {
+        streamUsage = {
+          inputTokens: event.providerFailure.usage.inputTokens,
+          outputTokens: event.providerFailure.usage.outputTokens,
+          totalTokens: event.providerFailure.usage.totalTokens,
+          cacheReadTokens: event.providerFailure.usage.cacheReadTokens,
+          reasoningTokens: event.providerFailure.usage.reasoningTokens,
+        };
+      }
+      throw event.providerFailure
+        ? new ModelProviderError(event.providerFailure)
+        : new Error(event.error);
     } else if (event.type === "thinking_delta") {
       if (firstThinkingAt === null) firstThinkingAt = Date.now();
     }
@@ -1526,13 +1818,13 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
         response = await fetchCodexAttempt(fetchOptions, scope, codexModel, "stream", attempt, CODEX_STREAM_MAX_ATTEMPTS);
         if (!response.ok || !response.body) {
           const text = await response.text().catch(() => "unknown error");
-          throw codexHttpAttemptError(response, text.slice(0, 200), scope);
+          throw codexHttpAttemptError(response, text, scope);
         }
       } catch (err: any) {
         if (signal?.aborted || (isAbortError(err, scope.signal) && !scope.timedOut())) {
           throw new CodexAbortedError();
         }
-        if (!(err instanceof CodexAttemptError)) throw err;
+        if (!(err instanceof ModelProviderAttemptError)) throw err;
         lastEarlyReason = `${err.kind}:${err.message}`;
         log.warn(
           `codex stream attempt failed attempt=${attempt + 1}/${CODEX_STREAM_MAX_ATTEMPTS} model=${codexModel} ` +
@@ -1541,7 +1833,8 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
           `providerRequestId=${err.providerRequestId ?? "none"} error=${err.message}`,
         );
         if (err.retryable && attempt < CODEX_STREAM_MAX_ATTEMPTS - 1) continue streamRetryLoop;
-        yield { type: "error", error: codexUnavailableFromAttempt(err, attempt + 1).message };
+        const providerError = modelProviderErrorFromAttempt(err, attempt + 1, { model: codexModel, metadata: options.metadata });
+        yield { type: "error", error: providerError.message, providerFailure: providerError.providerFailure };
         return;
       }
 
@@ -1561,7 +1854,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let attemptFailure: CodexAttemptError | undefined;
+      let attemptFailure: ModelProviderAttemptError | undefined;
       let firstProviderEventSeen = false;
       let terminalEventSeen = false;
 
@@ -1571,7 +1864,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
           read = await reader.read();
         } catch (err: any) {
           if (signal?.aborted && !scope.timedOut()) throw new CodexAbortedError();
-          attemptFailure = new CodexAttemptError({
+          attemptFailure = new ModelProviderAttemptError({
             kind: scope.timedOut() ? "time_to_first_event" : "stream_interrupted",
             retryable: !yieldedRealEvent,
             message: scope.timedOut()
@@ -1587,7 +1880,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
         const { done, value } = read;
         if (done) {
           if (!terminalEventSeen) {
-            attemptFailure = new CodexAttemptError({
+            attemptFailure = new ModelProviderAttemptError({
               kind: "stream_interrupted",
               retryable: !yieldedRealEvent,
               message: firstProviderEventSeen ? "eof_before_terminal_event" : "eof_before_first_event",
@@ -1613,7 +1906,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
           try {
             chunk = JSON.parse(data);
           } catch {
-            attemptFailure = new CodexAttemptError({
+            attemptFailure = new ModelProviderAttemptError({
               kind: "protocol_invalid",
               retryable: !yieldedRealEvent,
               message: "malformed_sse_json",
@@ -1644,14 +1937,6 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
           }
           eventCount++;
 
-          // Handle `response.failed` BEFORE any consumer yields so an early
-          // protocol failure can be retried invisibly.
-          if (chunk.type === "response.failed") {
-            attemptFailure = codexProviderFailure(chunk, scope, response);
-            attemptFailure.retryable = attemptFailure.retryable && !yieldedRealEvent;
-            break sseLoop;
-          }
-
           const usageData = chunk.usage || chunk.response?.usage;
           if (usageData) {
             streamUsage = {
@@ -1662,6 +1947,19 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
               reasoningTokens: usageData.output_tokens_details?.reasoning_tokens ?? 0,
               visibleOutputTokens: (usageData.output_tokens || 0) - (usageData.output_tokens_details?.reasoning_tokens ?? 0),
             };
+          }
+
+          // Both terminal failure shapes are documented provider events. Parse
+          // them at the model boundary before yielding downstream content so a
+          // replay-safe retry remains possible and diagnostics stay structured.
+          if (chunk.type === "response.failed" || chunk.type === "error") {
+            attemptFailure = responsesProviderFailure(chunk, {
+            clientRequestId: scope.clientRequestId,
+            providerRequestId: response.headers.get("x-request-id") || undefined,
+            status: response.status,
+          });
+            attemptFailure.retryable = attemptFailure.retryable && !yieldedRealEvent;
+            break sseLoop;
           }
 
           if (chunk.type === "response.reasoning_summary_text.delta" && typeof chunk.delta === "string") {
@@ -1735,11 +2033,8 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
           `error=${attemptFailure.message}`,
         );
         if (attemptFailure.retryable && attempt < CODEX_STREAM_MAX_ATTEMPTS - 1) continue streamRetryLoop;
-        log.error(
-          `codex stream exhausted attempts=${attempt + 1}/${CODEX_STREAM_MAX_ATTEMPTS} model=${codexModel} ` +
-          `kind=${attemptFailure.kind} phase=${attemptFailure.phase} reason=${attemptFailure.message}`,
-        );
-        yield { type: "error", error: codexUnavailableFromAttempt(attemptFailure, attempt + 1).message };
+        const providerError = modelProviderErrorFromAttempt(attemptFailure, attempt + 1, { model: codexModel, metadata: options.metadata });
+        yield { type: "error", error: providerError.message, providerFailure: providerError.providerFailure };
         return;
       }
 
@@ -2032,6 +2327,8 @@ async function* anthropicStream(model: string, options: ChatCompletionStreamOpti
  */
 async function* openaiResponsesStream(model: string, options: ChatCompletionStreamOptions): AsyncGenerator<StreamEvent> {
   const start = Date.now();
+  const clientRequestId = randomUUID();
+  let providerRequestId: string | undefined;
   let eventCount = 0;
 
   try {
@@ -2058,9 +2355,22 @@ async function* openaiResponsesStream(model: string, options: ChatCompletionStre
     // HTTP dispatch boundary: request build complete, dispatching to OpenAI.
     yield { type: "request_sent", metadata: { buildMs: Date.now() - start } };
     const dispatchAt = Date.now();
-    const stream: any = await client.responses.create(params as any, { signal: options.signal });
+    const responsePromise = client.responses.create(params as any, {
+      signal: options.signal,
+      maxRetries: 0,
+      headers: { "X-Client-Request-Id": clientRequestId },
+    });
+    const { data: stream, request_id: requestId } = await responsePromise.withResponse();
+    providerRequestId = requestId || undefined;
     // responses.create resolves once response headers land — TTFB boundary.
-    yield { type: "headers_received", metadata: { headersMs: Date.now() - dispatchAt } };
+    yield {
+      type: "headers_received",
+      metadata: {
+        headersMs: Date.now() - dispatchAt,
+        clientRequestId,
+        providerRequestId,
+      },
+    };
 
     for await (const chunk of stream) {
       eventCount++;
@@ -2121,10 +2431,17 @@ async function* openaiResponsesStream(model: string, options: ChatCompletionStre
         stopReason = pendingToolCalls.size > 0 ? "tool_use" : "end_turn";
       } else if (chunk.type === "response.incomplete") {
         stopReason = "max_tokens";
-      } else if (chunk.type === "response.failed") {
-        const failMsg = chunk.response?.error?.message || "OpenAI response failed";
-        log.error(`openai responses stream FAILED model=${model}: ${failMsg}`);
-        yield { type: "error", error: failMsg };
+      } else if (chunk.type === "response.failed" || chunk.type === "error") {
+        const providerError = modelProviderErrorFromAttempt(
+          responsesProviderFailure(chunk, { clientRequestId, providerRequestId }),
+          1,
+          { provider: "openai", model, metadata: options.metadata },
+        );
+        yield {
+          type: "error",
+          error: providerError.message,
+          providerFailure: providerError.providerFailure,
+        };
         return;
       }
     }
@@ -2138,17 +2455,23 @@ async function* openaiResponsesStream(model: string, options: ChatCompletionStre
 
     log.debug(`openai responses stream done model=${model} events=${eventCount} elapsed=${Date.now() - start}ms stopReason=${stopReason} effort=${effort ?? "default"}`);
     yield { type: "usage", usage: streamUsage, model, stopReason };
-  } catch (err: any) {
-    if (err?.name === "AbortError" || err?.code === "ERR_CANCELED" || options.signal?.aborted) {
+  } catch (err: unknown) {
+    const error = err as { name?: string; code?: string };
+    if (error?.name === "AbortError" || error?.code === "ERR_CANCELED" || options.signal?.aborted) {
       log.debug(`openai responses stream aborted model=${model}`);
       yield { type: "usage", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, stopReason: "end_turn" };
-    } else if (err?.status === 429 || (err?.message && err.message.includes("rate limit"))) {
-      log.error(`openai responses stream rate limit model=${model}`);
-      yield { type: "error", error: "OpenAI rate limit reached. Please wait and try again." };
-    } else {
-      log.error(`openai responses stream ERROR model=${model}: ${err?.message}`);
-      yield { type: "error", error: err?.message || "OpenAI stream error" };
+      return;
     }
+    const providerError = modelProviderErrorFromAttempt(
+      openaiSdkAttemptError(err, clientRequestId),
+      1,
+      { provider: "openai", model, metadata: options.metadata },
+    );
+    yield {
+      type: "error",
+      error: providerError.message,
+      providerFailure: providerError.providerFailure,
+    };
   }
 }
 
@@ -2163,6 +2486,7 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
 
   const client = getOpenAIClient(options.routingDecision?.credential);
   const buildStart = Date.now();
+  const clientRequestId = randomUUID();
 
   const messages: Array<any> = options.messages.flatMap(m => {
     if (m.role === "tool" || m.role === "tool_result") {
@@ -2222,11 +2546,21 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
     // HTTP dispatch boundary: request build complete, dispatching to OpenAI.
     yield { type: "request_sent", metadata: { buildMs: Date.now() - buildStart } };
     const dispatchAt = Date.now();
-    const stream = await client.chat.completions.create(params, {
+    const responsePromise = client.chat.completions.create(params, {
       signal: options.signal,
+      maxRetries: 0,
+      headers: { "X-Client-Request-Id": clientRequestId },
     });
+    const { data: stream, request_id: providerRequestId } = await responsePromise.withResponse();
     // completions.create resolves once response headers land — TTFB boundary.
-    yield { type: "headers_received", metadata: { headersMs: Date.now() - dispatchAt } };
+    yield {
+      type: "headers_received",
+      metadata: {
+        headersMs: Date.now() - dispatchAt,
+        clientRequestId,
+        providerRequestId: providerRequestId || undefined,
+      },
+    };
 
     let inThinking = false;
     let stopReason: "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" = "end_turn";
@@ -2327,14 +2661,22 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
 
     log.debug(`openai stream done model=${model} toolCalls=${pendingToolCalls.length} stopReason=${stopReason} prompt=${streamUsage.inputTokens} completion=${streamUsage.outputTokens}`);
     yield { type: "usage", usage: streamUsage, model, stopReason };
-  } catch (err: any) {
-    if (err.name === "AbortError" || err.code === "ERR_CANCELED" || options.signal?.aborted) {
+  } catch (err: unknown) {
+    if (isAbortError(err, options.signal)) {
       log.debug(`openai stream aborted model=${model}`);
       yield { type: "usage", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, stopReason: "end_turn" };
-    } else {
-      log.error(`openai stream ERROR model=${model}: ${err.message}`);
-      yield { type: "error", error: err.message || "OpenAI stream error" };
+      return;
     }
+    const providerError = modelProviderErrorFromAttempt(
+      openaiSdkAttemptError(err, clientRequestId),
+      1,
+      { provider: "openai", model, metadata: options.metadata },
+    );
+    yield {
+      type: "error",
+      error: providerError.message,
+      providerFailure: providerError.providerFailure,
+    };
   }
 }
 
@@ -2406,16 +2748,13 @@ export async function generateImageViaSubscription(
       throw err;
     }
 
-    if (response.status === 429) {
-      throw new Error("OpenAI subscription rate limit reached for image generation. Please wait and try again.");
-    }
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => "unknown error");
-      throw new Error(`Codex image generation error ${response.status}: ${text.slice(0, 300)}`);
+      throw modelProviderErrorFromAttempt(codexHttpAttemptError(response, text, scope), attempt + 1, { model: codexModel });
     }
 
     let base64Result = "";
-    let earlyFailure = false;
+    let earlyFailure: ModelProviderAttemptError | undefined;
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -2438,8 +2777,12 @@ export async function generateImageViaSubscription(
         try { chunk = JSON.parse(data); } catch { continue; }
         scope.markFirstEvent();
 
-        if (chunk.type === "response.failed") {
-          earlyFailure = true;
+        if (chunk.type === "response.failed" || chunk.type === "error") {
+          earlyFailure = responsesProviderFailure(chunk, {
+            clientRequestId: scope.clientRequestId,
+            providerRequestId: response.headers.get("x-request-id") || undefined,
+            status: response.status,
+          });
           break outer;
         }
 
@@ -2460,8 +2803,8 @@ export async function generateImageViaSubscription(
 
     if (earlyFailure) {
       scope.cleanup();
-      if (attempt < CODEX_COMPLETION_MAX_ATTEMPTS - 1) continue;
-      throw new CodexUnavailableError(0, CODEX_COMPLETION_MAX_ATTEMPTS, "response.failed during image generation");
+      if (earlyFailure.retryable && attempt < CODEX_COMPLETION_MAX_ATTEMPTS - 1) continue;
+      throw modelProviderErrorFromAttempt(earlyFailure, attempt + 1, { model: codexModel });
     }
 
     if (!base64Result) {
@@ -2477,7 +2820,7 @@ export async function generateImageViaSubscription(
     }
   }
 
-  throw new CodexUnavailableError(0, CODEX_COMPLETION_MAX_ATTEMPTS, "image generation exhausted retries");
+  throw new Error("Codex image generation exhausted retries without a provider failure");
 }
 
 export async function editImageViaSubscription(
@@ -2545,16 +2888,13 @@ export async function editImageViaSubscription(
       throw err;
     }
 
-    if (response.status === 429) {
-      throw new Error("OpenAI subscription rate limit reached for image editing. Please wait and try again.");
-    }
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => "unknown error");
-      throw new Error(`Codex image edit error ${response.status}: ${text.slice(0, 300)}`);
+      throw modelProviderErrorFromAttempt(codexHttpAttemptError(response, text, scope), attempt + 1, { model: codexModel });
     }
 
     let base64Result = "";
-    let earlyFailure = false;
+    let earlyFailure: ModelProviderAttemptError | undefined;
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let sseBuffer = "";
@@ -2577,8 +2917,12 @@ export async function editImageViaSubscription(
         try { chunk = JSON.parse(data); } catch { continue; }
         scope.markFirstEvent();
 
-        if (chunk.type === "response.failed") {
-          earlyFailure = true;
+        if (chunk.type === "response.failed" || chunk.type === "error") {
+          earlyFailure = responsesProviderFailure(chunk, {
+            clientRequestId: scope.clientRequestId,
+            providerRequestId: response.headers.get("x-request-id") || undefined,
+            status: response.status,
+          });
           break outer;
         }
 
@@ -2597,8 +2941,8 @@ export async function editImageViaSubscription(
 
     if (earlyFailure) {
       scope.cleanup();
-      if (attempt < CODEX_COMPLETION_MAX_ATTEMPTS - 1) continue;
-      throw new CodexUnavailableError(0, CODEX_COMPLETION_MAX_ATTEMPTS, "response.failed during image editing");
+      if (earlyFailure.retryable && attempt < CODEX_COMPLETION_MAX_ATTEMPTS - 1) continue;
+      throw modelProviderErrorFromAttempt(earlyFailure, attempt + 1, { model: codexModel });
     }
 
     if (!base64Result) {
@@ -2614,5 +2958,5 @@ export async function editImageViaSubscription(
     }
   }
 
-  throw new CodexUnavailableError(0, CODEX_COMPLETION_MAX_ATTEMPTS, "image editing exhausted retries");
+  throw new Error("Codex image editing exhausted retries without a provider failure");
 }
