@@ -50,6 +50,71 @@ function createTableStatement(table: PgTable): string {
 }
 
 
+const REQUIRED_VOICE_SESSION_ACTIVE_COLUMNS = [
+  "id", "session_id", "conversation_id", "started_at", "status", "ended_at",
+  "boot_id", "scope", "owner_user_id", "account_id", "start_request_id",
+  "start_response", "start_ready_at", "inflight_turn", "last_heartbeat",
+] as const;
+
+async function ensureVoiceSessionActiveSchema(pool: {
+  query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
+}): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS voice_session_active (
+      id SERIAL PRIMARY KEY,
+      session_id TEXT NOT NULL UNIQUE,
+      conversation_id TEXT,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      status TEXT NOT NULL DEFAULT 'active',
+      ended_at TIMESTAMPTZ,
+      boot_id TEXT,
+      scope TEXT NOT NULL DEFAULT 'system',
+      owner_user_id TEXT,
+      account_id TEXT,
+      start_request_id TEXT,
+      start_response JSONB,
+      start_ready_at TIMESTAMPTZ,
+      inflight_turn INTEGER DEFAULT 0,
+      last_heartbeat TIMESTAMPTZ
+    )
+  `);
+  const additiveColumns = [
+    ["inflight_turn", "INTEGER DEFAULT 0"], ["last_heartbeat", "TIMESTAMPTZ"],
+    ["scope", "TEXT NOT NULL DEFAULT 'system'"], ["owner_user_id", "TEXT"],
+    ["account_id", "TEXT"], ["start_request_id", "TEXT"],
+    ["start_response", "JSONB"], ["start_ready_at", "TIMESTAMPTZ"],
+  ] as const;
+  for (const [name, type] of additiveColumns) {
+    await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS ${quoteIdent(name)} ${type}`);
+  }
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_boot ON voice_session_active(boot_id) WHERE status = 'active'`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_owner ON voice_session_active(owner_user_id) WHERE status = 'active'`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_account ON voice_session_active(account_id) WHERE status = 'active'`);
+  await pool.query(`
+    WITH ranked AS (
+      SELECT id, row_number() OVER (PARTITION BY account_id, conversation_id ORDER BY started_at DESC, id DESC) AS active_rank
+      FROM voice_session_active
+      WHERE status = 'active' AND scope = 'user' AND conversation_id IS NOT NULL
+    )
+    UPDATE voice_session_active AS lease
+    SET status = 'abandoned', ended_at = NOW(), inflight_turn = 0
+    FROM ranked
+    WHERE lease.id = ranked.id AND ranked.active_rank > 1
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_vsa_active_account_conversation_unique ON voice_session_active(account_id, conversation_id) WHERE status = 'active' AND scope = 'user' AND conversation_id IS NOT NULL`);
+  await pool.query(`DROP INDEX IF EXISTS idx_vsa_active_account_request_unique`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_vsa_account_request_unique ON voice_session_active(account_id, start_request_id) WHERE scope = 'user' AND start_request_id IS NOT NULL`);
+  await pool.query(`DROP INDEX IF EXISTS idx_vsa_session_id`);
+  await pool.query(`DROP INDEX IF EXISTS idx_vsa_status`);
+
+  const result = await pool.query(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'voice_session_active'`);
+  const existing = new Set(result.rows.map((row) => String(row.column_name)));
+  const missing = REQUIRED_VOICE_SESSION_ACTIVE_COLUMNS.filter((column) => !existing.has(column));
+  if (missing.length > 0) throw new Error(`voice_session_active schema contract incomplete: missing ${missing.join(", ")}`);
+  log(`voice_session_active schema ready columns=${REQUIRED_VOICE_SESSION_ACTIVE_COLUMNS.length}`, "migration");
+}
+
+
 async function ensurePromptModuleTables(pool: { query: (sql: string) => Promise<unknown> }): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS prompt_modules (
@@ -128,6 +193,7 @@ export async function runSchemaBootstrap(
   log(`schema bootstrap started (reason=${reason})`, "migration");
   await ensureBaselineTables(reason, baselineTables);
   const { pool } = await import("./db");
+  await ensureVoiceSessionActiveSchema(pool);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS communication_audiences (
@@ -521,42 +587,7 @@ export async function runSchemaBootstrap(
       )
     `);
 
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS voice_session_active (
-        id SERIAL PRIMARY KEY,
-        session_id TEXT NOT NULL UNIQUE,
-        conversation_id TEXT,
-        started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        status TEXT NOT NULL DEFAULT 'active',
-        ended_at TIMESTAMP,
-        boot_id TEXT,
-        scope TEXT NOT NULL DEFAULT 'system',
-        owner_user_id TEXT,
-        account_id TEXT,
-        start_request_id TEXT,
-        start_response JSONB,
-        start_ready_at TIMESTAMPTZ,
-        inflight_turn INTEGER DEFAULT 0,
-        last_heartbeat TIMESTAMP
-      )
-    `);
-    // CREATE TABLE IF NOT EXISTS does not upgrade an existing partial table.
-    // Ensure every current lease column before creating indexes that depend on
-    // them, otherwise startup aborts before the later full voice auto-heal runs.
-    await ensureColumns("voice_session_active", [
-      { name: "boot_id", type: "TEXT" },
-      { name: "scope", type: "TEXT NOT NULL DEFAULT 'system'" },
-      { name: "owner_user_id", type: "TEXT" },
-      { name: "account_id", type: "TEXT" },
-      { name: "start_request_id", type: "TEXT" },
-      { name: "start_response", type: "JSONB" },
-      { name: "start_ready_at", type: "TIMESTAMPTZ" },
-      { name: "inflight_turn", type: "INTEGER DEFAULT 0" },
-      { name: "last_heartbeat", type: "TIMESTAMP" },
-    ]);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_boot ON voice_session_active(boot_id) WHERE status = 'active'`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_owner ON voice_session_active(owner_user_id) WHERE status = 'active'`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_account ON voice_session_active(account_id) WHERE status = 'active'`);
+
   };
 
   const freshFoundationStart = Date.now();
@@ -1541,59 +1572,7 @@ export async function runSchemaBootstrap(
     `);
   });
 
-  await heal("voice_session_active inflight columns", async () => {
-    await pool.query(
-      `ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS inflight_turn INTEGER DEFAULT 0`,
-    );
-    await pool.query(
-      `ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS last_heartbeat TIMESTAMP`,
-    );
-    // Partial index for the only hot read pattern (status='active'). The previous
-    // idx_vsa_status btree on a low-cardinality column was useless once the table
-    // accumulated abandoned/complete rows; this partial index stays tiny because
-    // the active set is bounded by concurrent voice callers.
-    await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'system'`);
-    await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS owner_user_id TEXT`);
-    await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS account_id TEXT`);
-    await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS start_request_id TEXT`);
-    await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS start_response JSONB`);
-    await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS start_ready_at TIMESTAMPTZ`);
-    await pool.query(
-      `CREATE INDEX IF NOT EXISTS idx_vsa_active_boot ON voice_session_active(boot_id) WHERE status = 'active'`,
-    );
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_owner ON voice_session_active(owner_user_id) WHERE status = 'active'`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_account ON voice_session_active(account_id) WHERE status = 'active'`);
-    await pool.query(`
-      WITH ranked AS (
-        SELECT id,
-               row_number() OVER (
-                 PARTITION BY account_id, conversation_id
-                 ORDER BY started_at DESC, id DESC
-               ) AS active_rank
-        FROM voice_session_active
-        WHERE status = 'active' AND scope = 'user' AND conversation_id IS NOT NULL
-      )
-      UPDATE voice_session_active AS lease
-      SET status = 'abandoned', ended_at = NOW(), inflight_turn = 0
-      FROM ranked
-      WHERE lease.id = ranked.id AND ranked.active_rank > 1
-    `);
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_vsa_active_account_conversation_unique
-      ON voice_session_active(account_id, conversation_id)
-      WHERE status = 'active' AND scope = 'user' AND conversation_id IS NOT NULL
-    `);
-    await pool.query(`DROP INDEX IF EXISTS idx_vsa_active_account_request_unique`);
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_vsa_account_request_unique
-      ON voice_session_active(account_id, start_request_id)
-      WHERE scope = 'user' AND start_request_id IS NOT NULL
-    `);
-    // The session_id UNIQUE constraint already provides a btree, so the explicit
-    // idx_vsa_session_id added in the original migration is redundant.
-    await pool.query(`DROP INDEX IF EXISTS idx_vsa_session_id`);
-    await pool.query(`DROP INDEX IF EXISTS idx_vsa_status`);
-  });
+
 
   await heal("library_pages type+metadata columns", async () => {
     await pool.query(
@@ -3536,33 +3515,7 @@ export async function runSchemaBootstrap(
     await migrateAddNarrativeToEmotionalStates();
   });
 
-  await heal("voice_session_active table", async () => {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS voice_session_active (
-        id SERIAL PRIMARY KEY,
-        session_id TEXT NOT NULL UNIQUE,
-        conversation_id TEXT,
-        started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        status TEXT NOT NULL DEFAULT 'active',
-        ended_at TIMESTAMP,
-        boot_id TEXT,
-        scope TEXT NOT NULL DEFAULT 'system',
-        owner_user_id TEXT,
-        account_id TEXT,
-        start_request_id TEXT,
-        start_response JSONB,
-        start_ready_at TIMESTAMPTZ
-      )
-    `);
-    // Partial index for the only hot read pattern (status='active'). Also created
-    // in the earlier "voice_session_active inflight columns" heal step so existing
-    // environments get it; declared here too so a fresh-DB first boot (where the
-    // earlier ALTER would no-op against a not-yet-created table) still ends up
-    // with the index. CREATE INDEX IF NOT EXISTS is idempotent.
-    await pool.query(
-      `CREATE INDEX IF NOT EXISTS idx_vsa_active_boot ON voice_session_active(boot_id) WHERE status = 'active'`,
-    );
-  });
+
 
 
   await heal("prune old voice_session_active rows", async () => {
