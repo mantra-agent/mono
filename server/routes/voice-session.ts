@@ -251,7 +251,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
           const detail = `Voice session failed to start — ${message || reason || "unknown reason"}`;
           endVoiceSession(sessionIdToEnd, `start_failed:${reason || "unknown"}`);
           try {
-            await storage.endVoiceSessionActive(sessionIdToEnd, "abandoned");
+            await storage.endVoiceSessionActive(sessionIdToEnd, "abandoned", { kind: "process", bootId: eventBus.bootId });
           } catch (dbErr: unknown) {
             voiceLog.warn(`[VoiceSession] start_failed: endVoiceSessionActive(${sessionIdToEnd}) failed (already gone?): ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
           }
@@ -869,8 +869,12 @@ export async function registerVoiceSessionRoutes(app: Express) {
         session = createVoiceSession(chatSessionId || undefined, undefined, sessionId, chatSessionKey || undefined, isReconnect);
       }
 
-      // Store the authenticated principal so voice LLM callbacks run in the correct scope.
-      if (req.principal) session.principal = req.principal;
+      // Voice is user-owned. The durable lease and in-memory session must share
+      // the same exact Principal before the provider can receive a signed URL.
+      if (req.principal?.actorType !== "user" || !req.principal.userId || !req.principal.accountId) {
+        throw new Error("Authenticated user principal required to start voice");
+      }
+      session.principal = req.principal;
 
       if (assembled) {
         session.cachedSystemPrompt = assembled.systemPrompt;
@@ -914,14 +918,8 @@ export async function registerVoiceSessionRoutes(app: Express) {
           });
       }
 
-      storage.createVoiceSessionActive(sessionId, chatSessionId, eventBus.bootId)
-        .then(() => {
-          voiceLog.log(`persisted voice_session_active row sessionId=${sessionId} chatSessionId=${chatSessionId}`);
-        })
-        .catch((err: unknown) => {
-          const msg = err instanceof Error ? err.message : String(err);
-          voiceLog.error(`failed to persist voice_session_active row sessionId=${sessionId}: ${msg}`);
-        });
+      await storage.createVoiceSessionActive(sessionId, chatSessionId, eventBus.bootId, session.principal);
+      voiceLog.log(`persisted owned voice_session_active row sessionId=${sessionId} chatSessionId=${chatSessionId} ownerUserId=${session.principal.userId} accountId=${session.principal.accountId}`);
 
       const timings = {
         context_assembly_voice: contextElapsed,
@@ -1026,6 +1024,9 @@ export async function registerVoiceSessionRoutes(app: Express) {
         try {
           const { endVoiceSession } = await import("../voice-llm");
           endVoiceSession(sessionId, `start_error:${errMsg.slice(0, 100)}`);
+          await storage.endVoiceSessionActive(sessionId, "abandoned", { kind: "process", bootId: eventBus.bootId }).catch((dbError: unknown) => {
+            voiceLog.warn(`start error lease cleanup failed sessionId=${sessionId}: ${dbError instanceof Error ? dbError.message : String(dbError)}`);
+          });
         } catch (cleanupErr: any) { voiceLog.warn(`endVoiceSession cleanup failed sessionId=${sessionId}: ${cleanupErr?.message || String(cleanupErr)}`); }
       }
       if (wantsStream) {

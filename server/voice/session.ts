@@ -595,7 +595,7 @@ export async function reconcileDbVoiceState(): Promise<void> {
     if (!sessions.has(dbRow.sessionId)) {
       log.warn(`[Reconcile] DB session ${dbRow.sessionId} not in memory (inflightTurn=${dbRow.inflightTurn}) — marking abandoned in DB`);
       const r = await withBootRowTimeout("reconcile.endVoiceSessionActive", dbRow.sessionId, () =>
-        storage.endVoiceSessionActive(dbRow.sessionId, "abandoned"));
+        storage.endVoiceSessionActive(dbRow.sessionId, "abandoned", { kind: "process", bootId: ownerBootId }));
       if (r.ok) completed++; else quarantined++;
     } else {
       const memSession = sessions.get(dbRow.sessionId)!;
@@ -603,7 +603,7 @@ export async function reconcileDbVoiceState(): Promise<void> {
       if (dbRow.inflightTurn && dbRow.inflightTurn > 0 && memInflight === 0) {
         log.warn(`[Reconcile] DB says session ${dbRow.sessionId} has inflightTurn=${dbRow.inflightTurn} but memory says 0 — clearing stale DB inflight`);
         const r = await withBootRowTimeout("reconcile.clearVoiceSessionInflight", dbRow.sessionId, () =>
-          storage.clearVoiceSessionInflight(dbRow.sessionId));
+          storage.clearVoiceSessionInflight(dbRow.sessionId, ownerBootId));
         if (r.ok) completed++; else quarantined++;
       } else {
         completed++;
@@ -678,111 +678,68 @@ setInterval(() => {
 
 export async function resolveSession(
   sessionId: string | undefined,
-  body: Record<string, unknown> | undefined,
-  params: Record<string, string> | undefined,
 ): Promise<{ session: VoiceSession | null; sessionId: string | undefined }> {
-  let session: VoiceSession | null = sessionId ? (sessions.get(sessionId) || null) : null;
-
-  if (!session && !sessionId && sessions.size === 1) {
-    const [onlyId, onlySession] = Array.from(sessions.entries())[0];
-    log.debug(`memory-map resolved: only active session ${onlyId} mapSize=1`);
-    session = onlySession;
-    sessionId = onlyId;
+  if (!sessionId) {
+    log.warn("session resolution rejected: exact sessionId is required");
+    return { session: null, sessionId };
   }
 
-  if (!session && !sessionId && sessions.size > 1) {
-    let best: VoiceSession | null = null;
-    let bestId: string | undefined;
-    for (const [id, s] of sessions) {
-      if (!best || s.lastCallbackAt > best.lastCallbackAt) {
-        best = s;
-        bestId = id;
-      }
-    }
-    if (best && bestId) {
-      log.debug(`memory-map resolved: most recent of ${sessions.size} sessions — ${bestId}`);
-      session = best;
-      sessionId = bestId;
-    }
-  }
-
-  if (!session && sessionId) {
-    const paramConvId = typeof params?.chatSessionId === "string" ? params.chatSessionId : undefined;
-    const bodyConvId = typeof body?.chatSessionId === "string" ? body.chatSessionId as string : undefined;
-    const chatSessionId: string | undefined = paramConvId || bodyConvId;
-    if (chatSessionId && chatSessionId !== "_") {
-      log.warn(`session ${sessionId} not found — mapSize=${sessions.size} — reconstructing from chatSessionId=${chatSessionId}`);
-      try {
-        const { chatFileStorage } = await import("../chat-file-storage");
-        const conv = await chatFileStorage.getSession(chatSessionId).catch(() => undefined);
-        if (conv) {
-          session = createVoiceSession(chatSessionId, undefined, sessionId, conv.sessionKey || undefined);
-          log.debug(`session ${sessionId} reconstructed from DB — convId=${chatSessionId} chatSessionKey=${conv.sessionKey}`);
-        }
-      } catch (err: unknown) {
-        log.warn(`session reconstruction failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-  }
-
+  let session = sessions.get(sessionId) || null;
   if (!session) {
     try {
       const { storage } = await import("../storage");
-      const activeSessions = await storage.getActiveVoiceSessions(eventBus.bootId);
-      if (activeSessions.length > 0) {
-        const exactMatch = sessionId ? activeSessions.find(s => s.sessionId === sessionId) : undefined;
-        const target = exactMatch || activeSessions.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0];
-        log.debug(`DB fallback: found ${activeSessions.length} active session(s) in DB, ${exactMatch ? "exact match" : "using most recent"} sessionId=${target.sessionId} convId=${target.chatSessionId}`);
-        session = sessions.get(target.sessionId) || null;
-        if (!session && target.chatSessionId) {
-          const { chatFileStorage } = await import("../chat-file-storage");
-          const conv = await chatFileStorage.getSession(target.chatSessionId).catch(() => undefined);
-          if (conv) {
-            session = createVoiceSession(target.chatSessionId, undefined, target.sessionId, conv.sessionKey || undefined);
-            log.debug(`DB fallback: reconstructed session ${target.sessionId} from DB row convId=${target.chatSessionId}`);
-          }
-        }
-        if (!session) {
-          session = createVoiceSession(target.chatSessionId || undefined, undefined, target.sessionId);
-          log.debug(`DB fallback: created minimal session ${target.sessionId} (no chatSessionId or conversation not found)`);
-        }
-        sessionId = target.sessionId;
+      const lease = await storage.getOwnedActiveVoiceSession(sessionId, eventBus.bootId);
+      if (!lease?.ownerUserId || !lease.accountId || !lease.chatSessionId) {
+        log.warn(`session resolution rejected: no complete owned lease sessionId=${sessionId} bootId=${eventBus.bootId}`);
+        return { session: null, sessionId };
       }
-    } catch (err: unknown) {
-      log.warn(`DB session fallback failed: ${err instanceof Error ? err.message : String(err)}`);
+
+      const user = await storage.getUser(lease.ownerUserId);
+      if (!user) {
+        log.error(`session recovery failed: owner user missing sessionId=${sessionId} ownerUserId=${lease.ownerUserId}`);
+        return { session: null, sessionId };
+      }
+
+      const { createUserSessionPrincipal } = await import("../principal");
+      const principal = await createUserSessionPrincipal(user);
+      if (principal.accountId !== lease.accountId) {
+        log.error(`session recovery rejected: account mismatch sessionId=${sessionId} leaseAccountId=${lease.accountId} principalAccountId=${principal.accountId}`);
+        return { session: null, sessionId };
+      }
+
+      const { runWithPrincipal } = await import("../principal-context");
+      const { chatFileStorage } = await import("../chat-file-storage");
+      const conversation = await runWithPrincipal(principal, () => chatFileStorage.getSession(lease.chatSessionId!));
+      if (!conversation) {
+        log.warn(`session recovery rejected: conversation not visible sessionId=${sessionId} chatSessionId=${lease.chatSessionId}`);
+        return { session: null, sessionId };
+      }
+
+      // A concurrent callback may have recovered the same exact lease while the
+      // durable identity checks were running. Reuse it rather than replacing it.
+      session = sessions.get(sessionId) || null;
+      if (!session) {
+        session = createVoiceSession(lease.chatSessionId, undefined, sessionId, conversation.sessionKey || undefined);
+        session.principal = principal;
+        log.log(`session recovered from exact owned lease sessionId=${sessionId} chatSessionId=${lease.chatSessionId} ownerUserId=${lease.ownerUserId} accountId=${lease.accountId}`);
+      }
+    } catch (error) {
+      log.error("exact voice session recovery failed", {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      session = null;
     }
   }
 
-  if (!session && sessions.size === 1) {
-    const [onlyId, onlySession] = Array.from(sessions.entries())[0];
-    log.debug(`single-session fallback: using only active session ${onlyId} (requested=${sessionId || "none"})`);
-    session = onlySession;
-    sessionId = onlyId;
-  }
-
-  if (!session && sessions.size === 0) {
-    const POLL_INTERVAL = 200;
-    const POLL_MAX = 3000;
-    const pollStart = Date.now();
-    log.debug(`wait-and-retry: no sessions in map, polling up to ${POLL_MAX}ms for session to appear`);
-    while (Date.now() - pollStart < POLL_MAX) {
-      await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
-      if (sessions.size > 0) {
-        const [firstId, firstSession] = Array.from(sessions.entries())[0];
-        log.debug(`wait-and-retry: session appeared after ${Date.now() - pollStart}ms — using ${firstId}`);
-        session = firstSession;
-        sessionId = firstId;
-        break;
-      }
-    }
-    if (!session) {
-      log.warn(`wait-and-retry: no session appeared after ${Date.now() - pollStart}ms`);
-    }
+  if (session && !session.principal) {
+    log.error(`session resolution rejected: principal missing sessionId=${sessionId}`);
+    session = null;
   }
 
   try {
-    const resolvedKey = session?.chatSessionKey || `voice:${sessionId || "unknown"}`;
-    const resolvedId = session?.chatSessionId || sessionId || "unknown";
+    const resolvedKey = session?.chatSessionKey || `voice:${sessionId}`;
+    const resolvedId = session?.chatSessionId || sessionId;
     writeJournal({
       ts: Date.now(),
       type: session ? "tool_use_pause" : "error",
@@ -791,11 +748,11 @@ export async function resolveSession(
       source: "voice",
       content: session
         ? `voice_session_resolved: voiceSessionId=${sessionId} chatSessionId=${session.chatSessionId} mapSize=${sessions.size}`
-        : `voice_session_resolved: FAILED sessionId=${sessionId || "none"} mapSize=${sessions.size}`,
-      error: session ? undefined : `session resolution failed for sessionId=${sessionId || "none"}`,
+        : `voice_session_resolved: FAILED sessionId=${sessionId} mapSize=${sessions.size}`,
+      error: session ? undefined : `exact session resolution failed for sessionId=${sessionId}`,
     });
-  } catch (journalErr: unknown) {
-    log.warn(`voice journal write failed (voice_session_resolved): ${journalErr instanceof Error ? journalErr.message : String(journalErr)}`);
+  } catch (journalError) {
+    log.warn(`voice journal write failed (voice_session_resolved): ${journalError instanceof Error ? journalError.message : String(journalError)}`);
   }
 
   return { session, sessionId };

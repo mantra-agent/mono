@@ -41,11 +41,13 @@ Voice turns use `sdk_owned` execution mode. The Claude Agent SDK calls `toolExec
 4. **Journal logger** — Logs tool_call/tool_result with per-turn correlation IDs
 
 ### Session Lifecycle
-Sessions are in-memory (`Map<string, VoiceSession>` in `session.ts`) with a health watchdog. A session maps 1:1 to an ElevenLabs connection and 1:1 to a chat session. Sessions auto-expire after 2 hours max, 10 minutes idle (with turns), or 5 minutes idle (no turns). `voice_session_active.boot_id` is the durable owner of that process-local Map entry: periodic reconciliation must filter to the current process boot ID, and boot cleanup may only abandon rows older than the global maximum session age. A process must never infer that a foreign boot ID is stale merely because the session is absent from its own Map.
+Sessions are in-memory (`Map<string, VoiceSession>` in `session.ts`) with a health watchdog. A session maps 1:1 to an ElevenLabs connection and 1:1 to a chat session. Sessions auto-expire after 2 hours max, 10 minutes idle (with turns), or 5 minutes idle (no turns). `voice_session_active.boot_id` is the durable owner of that process-local Map entry; `owner_user_id` and `account_id` are the durable user owner. Periodic reconciliation and inflight mutations must filter to the current process boot ID. User-triggered completion must filter to the authenticated user/account. Boot cleanup may only abandon rows older than the global maximum session age. A process must never infer that a foreign boot ID is stale merely because the session is absent from its own Map.
+
+Provider custom-LLM callbacks resolve by one exact app voice session ID. The ID comes from `customLlmExtraBody.sessionId`; route or top-level copies are accepted only when every supplied value agrees. Missing or conflicting identity fails closed. Recovery may use only the exact active lease owned by the current process, must reconstruct its durable user Principal, and must verify the chat session through principal-scoped storage before running a turn.
 
 ### Turn Flow
 1. ElevenLabs sends custom-LLM callback with user transcript → `handleCustomLLM` (voice-llm.ts)
-2. Session resolved via multi-strategy lookup (`session.ts`)
+2. Session resolved by exact app voice session ID, with exact owned-lease recovery only (`session.ts`)
 3. Coalesce/cascade detection handled in `handleCustomLLM`
 4. `executeVoiceTurn` handles abort, locking, circuit breaker, message building
 5. `executeVoiceTurnBody` wires prompt assembly, SSE init, executor, result handling

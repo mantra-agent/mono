@@ -23,6 +23,7 @@ import { agentExecutor } from "./agent-executor";
 import { createLogger } from "./log";
 import { writeJournal } from "./chat-journal";
 import { runWithPrincipal } from "./principal-context";
+import { eventBus } from "./event-bus";
 
 // ── Voice submodules ──────────────────────────────────────────────
 import type { VoiceSession, VoiceMessage, VoiceToolCall, TurnContext } from "./voice/types";
@@ -129,13 +130,25 @@ const PRE_CONTEXT_KEEPALIVE_INTERVAL_MS = 5_000;
 export async function handleCustomLLM(req: Request, res: Response): Promise<void> {
   const body = req.body as Record<string, unknown> | undefined;
   const bodyKeys = body ? Object.keys(body) : [];
+  const extraBody = body?.elevenlabs_extra_body && typeof body.elevenlabs_extra_body === "object"
+    ? body.elevenlabs_extra_body as Record<string, unknown>
+    : undefined;
   const paramSessionId = typeof req.params?.sessionId === "string" ? req.params.sessionId : undefined;
-  const bodySessionId = typeof body?.sessionId === "string" ? body.sessionId as string : undefined;
-  let sessionId: string | undefined = paramSessionId || bodySessionId;
+  const topLevelSessionId = typeof body?.sessionId === "string" ? body.sessionId : undefined;
+  const extraBodySessionId = typeof extraBody?.sessionId === "string" ? extraBody.sessionId : undefined;
+  const suppliedSessionIds = [paramSessionId, topLevelSessionId, extraBodySessionId].filter((value): value is string => !!value);
+  let sessionId: string | undefined = suppliedSessionIds[0];
+  const identityMismatch = suppliedSessionIds.some((value) => value !== sessionId);
 
-  log.debug(`LLM callback entry — path=${req.path} paramSessionId=${paramSessionId || "none"} bodySessionId=${bodySessionId || "none"} bodyKeys=[${bodyKeys.join(",")}] mapSize=${getSessionMap().size}`);
+  log.debug(`LLM callback entry — path=${req.path} paramSessionId=${paramSessionId || "none"} topLevelSessionId=${topLevelSessionId || "none"} extraBodySessionId=${extraBodySessionId || "none"} bodyKeys=[${bodyKeys.join(",")}] mapSize=${getSessionMap().size}`);
 
-  const resolved = await resolveSession(sessionId, body, req.params as Record<string, string>);
+  if (!sessionId || identityMismatch) {
+    log.error(`LLM callback identity rejected path=${req.path} suppliedSessionIds=${JSON.stringify(suppliedSessionIds)}`);
+    sendOrphanResponse(res, sessionId);
+    return;
+  }
+
+  const resolved = await resolveSession(sessionId);
   let session = resolved.session;
   sessionId = resolved.sessionId;
 
@@ -326,9 +339,7 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
   }
 
   const turnRunner = () => executeVoiceTurn(req, res, session, callbackArrivalAt, voiceTurnId, transcriptRevision);
-  const turnPromise = session.principal
-    ? runWithPrincipal(session.principal, turnRunner)
-    : turnRunner();
+  const turnPromise = runWithPrincipal(session.principal!, turnRunner);
   turnPromise.catch((err) => {
     const errMsg = err instanceof Error ? err.message : String(err);
     log.error(`UNCAUGHT_TURN_ERROR session=${sessionId} err=${JSON.stringify(err, Object.getOwnPropertyNames(err))} headersSent=${res.headersSent} writableEnded=${res.writableEnded} destroyed=${res.destroyed}`);
@@ -591,7 +602,7 @@ async function executeVoiceTurnBody(
   let conversationMessages = inputConversationMessages;
   const _pipelineStart = pipelineStart || Date.now();
   import("./storage").then(({ storage }) =>
-    storage.updateVoiceSessionInflight(session.id, currentTurn)
+    storage.updateVoiceSessionInflight(session.id, currentTurn, eventBus.bootId)
       .then(() => log.debug(`turn ${currentTurn} DB_INFLIGHT_SET session=${session.id}`))
       .catch((dbErr: unknown) => log.warn(`turn ${currentTurn} DB_INFLIGHT_SET failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`))
   ).catch((importErr: unknown) => log.warn(`turn ${currentTurn} DB_INFLIGHT_SET import failed: ${importErr instanceof Error ? importErr.message : String(importErr)}`));
@@ -667,7 +678,7 @@ async function executeVoiceTurnBody(
     }
     try {
       const { storage } = await import("./storage");
-      await storage.clearVoiceSessionInflight(session.id);
+      await storage.clearVoiceSessionInflight(session.id, eventBus.bootId);
       log.debug(`turn ${currentTurn} DB_INFLIGHT_CLEAR session=${session.id}`);
     } catch (dbErr: unknown) {
       const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);

@@ -530,11 +530,16 @@ export async function runSchemaBootstrap(
         status TEXT NOT NULL DEFAULT 'active',
         ended_at TIMESTAMP,
         boot_id TEXT,
+        scope TEXT NOT NULL DEFAULT 'system',
+        owner_user_id TEXT,
+        account_id TEXT,
         inflight_turn INTEGER DEFAULT 0,
         last_heartbeat TIMESTAMP
       )
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_boot ON voice_session_active(boot_id) WHERE status = 'active'`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_owner ON voice_session_active(owner_user_id) WHERE status = 'active'`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_account ON voice_session_active(account_id) WHERE status = 'active'`);
   };
 
   const freshFoundationStart = Date.now();
@@ -1530,9 +1535,14 @@ export async function runSchemaBootstrap(
     // idx_vsa_status btree on a low-cardinality column was useless once the table
     // accumulated abandoned/complete rows; this partial index stays tiny because
     // the active set is bounded by concurrent voice callers.
+    await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'system'`);
+    await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS owner_user_id TEXT`);
+    await pool.query(`ALTER TABLE voice_session_active ADD COLUMN IF NOT EXISTS account_id TEXT`);
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_vsa_active_boot ON voice_session_active(boot_id) WHERE status = 'active'`,
     );
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_owner ON voice_session_active(owner_user_id) WHERE status = 'active'`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_vsa_active_account ON voice_session_active(account_id) WHERE status = 'active'`);
     // The session_id UNIQUE constraint already provides a btree, so the explicit
     // idx_vsa_session_id added in the original migration is redundant.
     await pool.query(`DROP INDEX IF EXISTS idx_vsa_session_id`);
@@ -3489,7 +3499,10 @@ export async function runSchemaBootstrap(
         started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         status TEXT NOT NULL DEFAULT 'active',
         ended_at TIMESTAMP,
-        boot_id TEXT
+        boot_id TEXT,
+        scope TEXT NOT NULL DEFAULT 'system',
+        owner_user_id TEXT,
+        account_id TEXT
       )
     `);
     // Partial index for the only hot read pattern (status='active'). Also created
