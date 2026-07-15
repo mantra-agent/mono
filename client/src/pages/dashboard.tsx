@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, BriefcaseBusiness, Code2, Heart, User } from "lucide-react";
 import { ActivityHeatmap, type ActivityHeatmapDay } from "@/components/activity-heatmap";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { usePageHeader } from "@/hooks/use-page-header";
@@ -22,12 +22,28 @@ interface DashboardActivity {
   series: DashboardSeries[];
 }
 
-const SECTION_PRESENTATION: Record<DashboardSeries["key"], { title: string; order: number }> = {
-  wellness_completions: { title: "WELLNESS", order: 0 },
-  opportunity_interactions: { title: "INTERACTIONS", order: 1 },
-  completed_tasks: { title: "TASKS", order: 2 },
-  shipped_prs: { title: "SHIPPED", order: 3 },
-};
+const SECTION_PRESENTATION = {
+  wellness_completions: {
+    title: "WELLNESS",
+    order: 0,
+    marker: { icon: Heart, criterion: "above-80-percent-of-maximum", filled: true },
+  },
+  opportunity_interactions: {
+    title: "INTERACTIONS",
+    order: 1,
+    marker: { icon: User, criterion: "top-decile" },
+  },
+  completed_tasks: {
+    title: "TASKS",
+    order: 2,
+    marker: { icon: BriefcaseBusiness, criterion: "top-decile" },
+  },
+  shipped_prs: {
+    title: "CODE",
+    order: 3,
+    marker: { icon: Code2, criterion: "top-decile" },
+  },
+} as const;
 
 function localDateToday(): string {
   const now = new Date();
@@ -65,6 +81,7 @@ export default function DashboardPage() {
                   >
                     <ActivityHeatmap
                       days={series.days}
+                      marker={SECTION_PRESENTATION[series.key].marker}
                       valueLabel={SECTION_PRESENTATION[series.key].title.toLowerCase()}
                     />
                   </ProfileDetailSection>
