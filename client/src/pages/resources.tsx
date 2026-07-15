@@ -6,6 +6,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AlertTriangle } from "lucide-react";
 import { formatBytes } from "@/lib/format-utils";
 import { usePageHeader } from "@/hooks/use-page-header";
+import {
+  getSharedWSDiagnostics,
+  subscribeSharedWSDiagnostics,
+  type SharedWSDiagnostics,
+} from "@/lib/ws-connection";
 import type { SystemResourcesData } from "@shared/system-resources";
 import {
   RESOURCES_REFRESH_INTERVAL_MS as REFRESH_INTERVAL_MS,
@@ -160,6 +165,24 @@ function divergenceStatus(d: SystemResourcesData["divergence"]): Status {
 
 function executorStatus(e: SystemResourcesData["executor"]): Status {
   return e.activeRuns > 0 ? "amber" : "ok";
+}
+
+function realtimeStatus(r: SystemResourcesData["realtime"]): Status {
+  if (r.staleSessionSocketLinks > 0 || r.subscriptionDivergence > 0) return "red";
+  return "ok";
+}
+
+function sharedWsStatus(d: SharedWSDiagnostics): Status {
+  if (d.duplicateOwnerRefs > 0 || d.refCount !== d.ownerCount) return "red";
+  if (d.refCount > 0 && d.physicalSockets === 0) return "amber";
+  return "ok";
+}
+
+function wsStateLabel(readyState: number): string {
+  if (readyState === WebSocket.CONNECTING) return "connecting";
+  if (readyState === WebSocket.OPEN) return "open";
+  if (readyState === WebSocket.CLOSING) return "closing";
+  return "closed";
 }
 
 // --- Performance diagnostics types & helpers (moved from Build > Performance) ---
@@ -338,7 +361,7 @@ export default function ResourcesPage() {
 }
 
 const HISTORY_CAP = 60;
-type HistoryKey = "dbWaiting" | "inFlight" | "eventLoop" | "executorActive" | "zombies";
+type HistoryKey = "dbWaiting" | "inFlight" | "eventLoop" | "executorActive" | "zombies" | "eventSockets" | "sessionSockets" | "sessionSocketLinks" | "sessionOwnerLinks";
 type Histories = Record<HistoryKey, number[]>;
 const EMPTY_HISTORIES: Histories = {
   dbWaiting: [],
@@ -346,6 +369,10 @@ const EMPTY_HISTORIES: Histories = {
   eventLoop: [],
   executorActive: [],
   zombies: [],
+  eventSockets: [],
+  sessionSockets: [],
+  sessionSocketLinks: [],
+  sessionOwnerLinks: [],
 };
 
 const historyStore = (() => {
@@ -376,6 +403,10 @@ const historyStore = (() => {
         eventLoop: pushCapped(state.eventLoop, sample.eventLoop),
         executorActive: pushCapped(state.executorActive, sample.executorActive),
         zombies: pushCapped(state.zombies, sample.zombies),
+        eventSockets: pushCapped(state.eventSockets, sample.eventSockets),
+        sessionSockets: pushCapped(state.sessionSockets, sample.sessionSockets),
+        sessionSocketLinks: pushCapped(state.sessionSocketLinks, sample.sessionSocketLinks),
+        sessionOwnerLinks: pushCapped(state.sessionOwnerLinks, sample.sessionOwnerLinks),
       };
       listeners.forEach(l => l());
     },
@@ -394,6 +425,11 @@ function ResourcesView({
   isStale: boolean;
 }) {
   const histories = useSyncExternalStore(historyStore.subscribe, historyStore.getSnapshot, historyStore.getSnapshot);
+  const clientWs = useSyncExternalStore(
+    subscribeSharedWSDiagnostics,
+    getSharedWSDiagnostics,
+    getSharedWSDiagnostics,
+  );
 
   // --- Performance diagnostics (CPU, Memory, Event Loop, Ping, Uptime, Req/s) ---
   const [pingMs, setPingMs] = useState<number | null>(null);
@@ -434,8 +470,12 @@ function ResourcesView({
       eventLoop: r.eventLoop.currentMs,
       executorActive: r.executor.activeRuns,
       zombies: r.zombies.active,
+      eventSockets: r.realtime.eventSockets,
+      sessionSockets: r.realtime.sessionSockets,
+      sessionSocketLinks: r.realtime.sessionSocketLinks,
+      sessionOwnerLinks: r.realtime.sessionOwnerLinks,
     });
-  }, [r.generatedAt, r.dbPool.waiting, r.inFlight.total, r.eventLoop.currentMs, r.executor.activeRuns, r.zombies.active]);
+  }, [r.generatedAt, r.dbPool.waiting, r.inFlight.total, r.eventLoop.currentMs, r.executor.activeRuns, r.zombies.active, r.realtime.eventSockets, r.realtime.sessionSockets, r.realtime.sessionSocketLinks, r.realtime.sessionOwnerLinks]);
 
   const inFlightSubs = Object.entries(r.inFlight.bySubsystem)
     .filter(([, v]) => v > 0)
@@ -472,6 +512,106 @@ function ResourcesView({
             </div>
           </>
         )}
+
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold">Realtime Connections</h2>
+            {(realtimeStatus(r.realtime) !== "ok" || sharedWsStatus(clientWs) !== "ok") && (
+              <Badge variant="outline" className="text-xs border-warning/50 text-warning-foreground dark:text-warning">
+                inspect
+              </Badge>
+            )}
+          </div>
+          <div className="text-xs text-muted-foreground">process lifetime + this tab</div>
+        </div>
+
+        <div className="grid grid-cols-2 @md:grid-cols-4 gap-3">
+          <ResourceTile
+            label="Event Sockets"
+            value={String(r.realtime.eventSockets)}
+            sub={`server physical sockets · peak ${r.realtime.peakEventSockets}`}
+            status={realtimeStatus(r.realtime)}
+            testId="tile-event-sockets"
+            history={histories.eventSockets}
+          />
+          <ResourceTile
+            label="Session Sockets"
+            value={String(r.realtime.sessionSockets)}
+            sub={`${r.realtime.sessionSocketLinks} socket↔session links · peak ${r.realtime.peakSessionSockets}`}
+            status={realtimeStatus(r.realtime)}
+            testId="tile-session-sockets"
+            history={histories.sessionSockets}
+          />
+          <ResourceTile
+            label="Session Owners"
+            value={String(r.realtime.sessionOwnerLinks)}
+            sub={`${r.realtime.uniqueSubscribedSessions} sessions · ${r.realtime.pendingSubscribedSessions} retained without live runtime`}
+            status={realtimeStatus(r.realtime)}
+            testId="tile-session-owners"
+            history={histories.sessionOwnerLinks}
+          />
+          <ResourceTile
+            label="Stale / Diverged"
+            value={`${r.realtime.staleSessionSocketLinks} / ${r.realtime.subscriptionDivergence}`}
+            sub={`stale socket links / registry delta · peak links ${r.realtime.peakSessionSocketLinks}`}
+            status={realtimeStatus(r.realtime)}
+            testId="tile-session-divergence"
+            history={histories.sessionSocketLinks}
+          />
+        </div>
+
+        <Card data-testid="card-client-websocket">
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm font-semibold flex items-center justify-between gap-2">
+              <span>This Browser Tab</span>
+              <Badge variant="outline" className="font-normal">{wsStateLabel(clientWs.readyState)}</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 @md:grid-cols-4 gap-3">
+              <ResourceTile
+                label="Physical Socket"
+                value={String(clientWs.physicalSockets)}
+                sub={`${clientWs.reconnects} reconnects · ${clientWs.forcedReconnects} liveness resets`}
+                status={sharedWsStatus(clientWs)}
+                testId="tile-client-physical-socket"
+              />
+              <ResourceTile
+                label="React Owners"
+                value={String(clientWs.ownerCount)}
+                sub={`refs ${clientWs.refCount} · peak ${clientWs.peakOwnerCount} owners / ${clientWs.peakRefCount} refs`}
+                status={sharedWsStatus(clientWs)}
+                testId="tile-client-ws-owners"
+              />
+              <ResourceTile
+                label="Session Owners"
+                value={String(clientWs.streamOwners)}
+                sub="owners with active session subscriptions"
+                status={sharedWsStatus(clientWs)}
+                testId="tile-client-session-owners"
+              />
+              <ResourceTile
+                label="Handlers"
+                value={`${clientWs.messageHandlers} / ${clientWs.lifecycleHandlers}`}
+                sub={`message / lifecycle · duplicate refs ${clientWs.duplicateOwnerRefs}`}
+                status={sharedWsStatus(clientWs)}
+                testId="tile-client-ws-handlers"
+              />
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Server churn since boot: {r.realtime.connectionsOpened} opened / {r.realtime.connectionsClosed} closed / {r.realtime.abnormalDisconnects} abnormal · oldest event socket {formatMs(r.realtime.oldestEventSocketAgeMs)}.
+            </div>
+            {Object.keys(clientWs.ownerRefs).length > 0 && (
+              <div className="flex flex-wrap gap-1.5" data-testid="client-ws-owner-list">
+                {Object.entries(clientWs.ownerRefs).map(([owner, count]) => (
+                  <Badge key={owner} variant="secondary" className="font-mono text-[10px] font-normal">
+                    {owner}{count > 1 ? ` ×${count}` : ""}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">

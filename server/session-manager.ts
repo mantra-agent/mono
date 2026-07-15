@@ -515,6 +515,34 @@ class SessionManager {
     }, 60_000);
   }
 
+  getSubscriptionMetrics() {
+    let socketLinks = 0;
+    let ownerLinks = 0;
+    let staleSocketLinks = 0;
+    let pendingSessions = 0;
+    for (const [sessionId, sockets] of this.subscriptionOwners) {
+      if (!this.sessions.has(sessionId)) pendingSessions++;
+      socketLinks += sockets.size;
+      for (const [ws, owners] of sockets) {
+        ownerLinks += owners.size;
+        if (ws.readyState !== WebSocket.OPEN) staleSocketLinks++;
+      }
+    }
+    let streamingSessions = 0;
+    for (const session of this.sessions.values()) {
+      if (session.status === "streaming") streamingSessions++;
+    }
+    return {
+      subscribedSessions: this.subscriptionOwners.size,
+      socketLinks,
+      ownerLinks,
+      staleSocketLinks,
+      pendingSessions,
+      liveSessions: this.sessions.size,
+      streamingSessions,
+    };
+  }
+
   // ── Snapshot ───────────────────────────────────────────────────────
 
   getSnapshot(sessionId: string): SessionSnapshot | null {

@@ -6,6 +6,8 @@ import { WebSocketServer, WebSocket } from "ws";
 import { createLogger } from "../log";
 import { isClientPresenceKind } from "@shared/client-presence";
 import { registerClientPresence, resolveAccountIdForRequest, subscribeClientPresence, unregisterSocketPresence } from "../client-presence";
+import { registerEventSocket, setEventSocketSessionSubscription, unregisterEventSocket } from "../realtime-transport-metrics";
+import { sessionManager } from "../session-manager";
 
 const eventsLog = createLogger("EventsWS");
 let eventsConnectionCounter = 0;
@@ -17,6 +19,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
     const totalClients = eventsWss.clients.size;
     const connectTime = Date.now();
     const connectionId = `events-ws-${++eventsConnectionCounter}`;
+    registerEventSocket(connectionId);
     setWsConnectionCount(wss.clients.size + totalClients);
     eventsLog.log("WS:CONNECT", { connectionId, eventBusSubscribers: eventBus.listenerCount("event"), eventsWssClients: totalClients });
 
@@ -75,35 +78,29 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
             activeSession: typeof msg.activeSession === "string" ? msg.activeSession : null,
           };
           const alreadySubscribed = subscribedSessionIds.has(subSessionId);
-          if (!alreadySubscribed) subscribedSessionIds.add(subSessionId);
+          if (!alreadySubscribed) {
+            subscribedSessionIds.add(subSessionId);
+            setEventSocketSessionSubscription(connectionId, subSessionId, true);
+          }
           eventsLog.debug(alreadySubscribed ? "WS:SESSION:RESUBSCRIBE" : "WS:SESSION:SUBSCRIBE", { sessionId: subSessionId, subscriptions: subscribedSessionIds.size, ...identity });
-          import("../session-manager").then(({ sessionManager }) => {
-            // SessionManager is the single source of truth for subscription state and
-            // subscribe() is idempotent (Set.add + pending queue for unregistered
-            // sessions). Always attach through it: the live session entry may have been
-            // finalized, cleaned up, and re-registered since this connection last
-            // subscribed, so connection-local bookkeeping must never suppress
-            // re-attachment — that orphans the tab from all stream deltas until a
-            // hard refresh. The local set exists only for disconnect cleanup and logs.
-            const snapshot = sessionManager.subscribe(subSessionId, ws, identity);
-            if (ws.readyState === WebSocket.OPEN) {
-              try {
-                // Always respond — even when the session is not live in memory (cleaned up
-                // after completion). An idle snapshot clears stale streaming state on the client.
-                const payload = snapshot ?? {
-                  sessionId: subSessionId,
-                  status: "idle" as const,
-                  streamingContent: null,
-                  subscriberCount: 0,
-                };
-                ws.send(JSON.stringify({ type: "session.snapshot", ...payload }));
-              } catch (err) {
-                eventsLog.warn(`session.snapshot send failed: ${err instanceof Error ? err.message : String(err)}`);
-              }
-            }
-          }).catch((err) => {
-            eventsLog.debug(`session.subscribe sessionManager error: ${err instanceof Error ? err.message : String(err)}`);
-          });
+          // Subscription mutation is synchronous with the socket lifecycle. A
+          // deferred import here can resolve after close and resurrect a dead socket
+          // in SessionManager after disconnect cleanup has already run.
+          if (ws.readyState !== WebSocket.OPEN) return;
+          const snapshot = sessionManager.subscribe(subSessionId, ws, identity);
+          try {
+            // Always respond — even when the session is not live in memory (cleaned up
+            // after completion). An idle snapshot clears stale streaming state on the client.
+            const payload = snapshot ?? {
+              sessionId: subSessionId,
+              status: "idle" as const,
+              streamingContent: null,
+              subscriberCount: 0,
+            };
+            ws.send(JSON.stringify({ type: "session.snapshot", ...payload }));
+          } catch (err) {
+            eventsLog.warn(`session.snapshot send failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
           return;
         }
         if (msg.type === "session.unsubscribe" && typeof msg.sessionId === "string") {
@@ -117,12 +114,11 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
           };
           const hadSubscription = subscribedSessionIds.has(unsubSessionId);
           eventsLog.debug("WS:SESSION:UNSUBSCRIBE", { sessionId: unsubSessionId, subscriptions: subscribedSessionIds.size, hadSubscription, ...identity });
-          import("../session-manager").then(({ sessionManager }) => {
-            const remainsSubscribed = sessionManager.unsubscribe(unsubSessionId, ws, identity);
-            if (!remainsSubscribed) subscribedSessionIds.delete(unsubSessionId);
-          }).catch((err) => {
-            eventsLog.debug(`session.unsubscribe sessionManager error: ${err instanceof Error ? err.message : String(err)}`);
-          });
+          const remainsSubscribed = sessionManager.unsubscribe(unsubSessionId, ws, identity);
+          if (!remainsSubscribed) {
+            subscribedSessionIds.delete(unsubSessionId);
+            setEventSocketSessionSubscription(connectionId, unsubSessionId, false);
+          }
           return;
         }
       } catch { /* ignore non-JSON client messages */ }
@@ -133,18 +129,14 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
       const duration = Date.now() - connectTime;
       const remaining = eventsWss.clients.size;
       setWsConnectionCount(wss.clients.size + remaining);
+      unregisterEventSocket(connectionId, code);
       eventsLog.log("WS:DISCONNECT", { connectionId, code, reason: reason?.toString() || "none", durationMs: duration, remainingSessionSubscriptions: subscribedSessionIds.size, eventBusSubscribers: eventBus.listenerCount("event"), eventsWssClients: remaining });
       eventBus.removeListener("event", handler);
       unregisterSocketPresence(ws);
 
       // Unsubscribe from all server-authoritative sessions on disconnect
       if (subscribedSessionIds.size > 0) {
-        try {
-          const { sessionManager } = require("../session-manager");
-          sessionManager.unsubscribeAll(ws);
-        } catch (err) {
-          eventsLog.debug(`sessionManager.unsubscribeAll error: ${err instanceof Error ? err.message : String(err)}`);
-        }
+        sessionManager.unsubscribeAll(ws);
         subscribedSessionIds.clear();
       }
     });

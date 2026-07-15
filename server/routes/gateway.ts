@@ -291,12 +291,14 @@ export async function registerGatewayRoutes(app: Express) {
 
     let resources: import("@shared/system-resources").SystemResourcesData | null = null;
     try {
-      const [{ getDbSaturationInfo, getInFlightStats, getSlowQueryStats, getInFlightHighThreshold, getLongRunningQueries }, { agentExecutor }, { admissionController }, { getZombieMetrics }, perfMon] = await Promise.all([
+      const [{ getDbSaturationInfo, getInFlightStats, getSlowQueryStats, getInFlightHighThreshold, getLongRunningQueries }, { agentExecutor }, { admissionController }, { getZombieMetrics }, perfMon, { getRealtimeTransportMetrics }, { sessionManager }] = await Promise.all([
         import("../db"),
         import("../agent-executor"),
         import("../run-admission"),
         import("../cli-sdk-adapter"),
         import("../performance-monitor"),
+        import("../realtime-transport-metrics"),
+        import("../session-manager"),
       ]);
 
       const now = Date.now();
@@ -315,6 +317,8 @@ export async function registerGatewayRoutes(app: Express) {
       const elCurrent = perfMon.getLatestEventLoopLag?.() ?? 0;
       const elMax = diag?.eventLoopLag?.max ?? 0;
       const elAvg = diag?.eventLoopLag?.avg ?? 0;
+      const transportMetrics = getRealtimeTransportMetrics();
+      const sessionMetrics = sessionManager.getSubscriptionMetrics();
 
       const slotRunIds = new Set(slots.map(s => s.runId));
       let divergence = 0;
@@ -376,6 +380,15 @@ export async function registerGatewayRoutes(app: Express) {
           currentMs: Math.round(elCurrent * 100) / 100,
           maxMs: Math.round(elMax * 100) / 100,
           avgMs: Math.round(elAvg * 100) / 100,
+        },
+        realtime: {
+          ...transportMetrics,
+          sessionOwnerLinks: sessionMetrics.ownerLinks,
+          staleSessionSocketLinks: sessionMetrics.staleSocketLinks,
+          pendingSubscribedSessions: sessionMetrics.pendingSessions,
+          liveSessions: sessionMetrics.liveSessions,
+          streamingSessions: sessionMetrics.streamingSessions,
+          subscriptionDivergence: Math.abs(transportMetrics.sessionSocketLinks - sessionMetrics.socketLinks),
         },
         memory: {
           rss: diag?.memoryUsage?.rss ?? process.memoryUsage().rss,

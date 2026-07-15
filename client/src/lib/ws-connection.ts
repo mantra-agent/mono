@@ -26,7 +26,26 @@ interface SharedWebSocket {
   getReadyState(): number;
   wasReconnectOpen(): boolean;
   isAlive(): boolean;
-  setStreamActive(active: boolean): void;
+  setStreamActive(ownerId: string, active: boolean): void;
+  getDiagnostics(): Omit<SharedWSDiagnostics, "refCount" | "peakRefCount" | "ownerCount" | "peakOwnerCount" | "ownerRefs" | "duplicateOwnerRefs">;
+}
+
+export interface SharedWSDiagnostics {
+  readyState: number;
+  physicalSockets: number;
+  refCount: number;
+  peakRefCount: number;
+  ownerCount: number;
+  peakOwnerCount: number;
+  ownerRefs: Record<string, number>;
+  duplicateOwnerRefs: number;
+  messageHandlers: number;
+  lifecycleHandlers: number;
+  streamOwners: number;
+  reconnects: number;
+  forcedReconnects: number;
+  connectedAt: number | null;
+  lastMessageAt: number | null;
 }
 
 let instance: SharedWebSocket | null = null;
@@ -34,6 +53,53 @@ let refCount = 0;
 let hasEverConnected = false;
 let lastOpenWasReconnect = false;
 let closeDelayTimer: ReturnType<typeof setTimeout> | null = null;
+let peakRefCount = 0;
+let peakOwnerCount = 0;
+const ownerRefs = new Map<string, number>();
+const diagnosticListeners = new Set<() => void>();
+
+const EMPTY_DIAGNOSTICS: SharedWSDiagnostics = {
+  readyState: WebSocket.CLOSED,
+  physicalSockets: 0,
+  refCount: 0,
+  peakRefCount: 0,
+  ownerCount: 0,
+  peakOwnerCount: 0,
+  ownerRefs: {},
+  duplicateOwnerRefs: 0,
+  messageHandlers: 0,
+  lifecycleHandlers: 0,
+  streamOwners: 0,
+  reconnects: 0,
+  forcedReconnects: 0,
+  connectedAt: null,
+  lastMessageAt: null,
+};
+let diagnosticSnapshot: SharedWSDiagnostics = EMPTY_DIAGNOSTICS;
+
+function emitDiagnostics(): void {
+  const instanceDiagnostics = instance?.getDiagnostics() ?? EMPTY_DIAGNOSTICS;
+  const ownerEntries = Array.from(ownerRefs.entries()).sort(([a], [b]) => a.localeCompare(b));
+  diagnosticSnapshot = {
+    ...instanceDiagnostics,
+    refCount,
+    peakRefCount,
+    ownerCount: ownerRefs.size,
+    peakOwnerCount,
+    ownerRefs: Object.fromEntries(ownerEntries),
+    duplicateOwnerRefs: ownerEntries.reduce((total, [, count]) => total + Math.max(0, count - 1), 0),
+  };
+  diagnosticListeners.forEach((listener) => listener());
+}
+
+export function subscribeSharedWSDiagnostics(listener: () => void): () => void {
+  diagnosticListeners.add(listener);
+  return () => diagnosticListeners.delete(listener);
+}
+
+export function getSharedWSDiagnostics(): SharedWSDiagnostics {
+  return diagnosticSnapshot;
+}
 
 const LIVENESS_TIMEOUT_MS = 45_000;
 const LIVENESS_CHECK_INTERVAL_MS = 30_000;
@@ -46,7 +112,11 @@ function createSharedWebSocket(): SharedWebSocket {
   let reconnectAttempt = 0;
   let lastMessageTime = Date.now();
   let connectTime = 0;
-  let streamActive = false;
+  const streamOwners = new Set<string>();
+  let reconnects = 0;
+  let forcedReconnects = 0;
+  let connectedAt: number | null = null;
+  let lastMessageAt: number | null = null;
   let livenessTimer: ReturnType<typeof setInterval> | null = null;
   const messageHandlers = new Map<string, MessageHandler>();
   const reconnectHandlers = new Map<string, LifecycleHandler>();
@@ -69,10 +139,14 @@ function createSharedWebSocket(): SharedWebSocket {
       lastOpenWasReconnect = wasReconnect;
       reconnectAttempt = 0;
       connectTime = Date.now();
-      lastMessageTime = Date.now();
+      connectedAt = connectTime;
+      lastMessageTime = connectTime;
+      lastMessageAt = connectTime;
       log.debug(`open wasReconnect=${wasReconnect} refCount=${refCount}`);
       hasEverConnected = true;
+      if (wasReconnect) reconnects++;
       startLivenessTimer();
+      emitDiagnostics();
       for (const [id, handler] of openHandlers) {
         try {
           handler();
@@ -93,6 +167,7 @@ function createSharedWebSocket(): SharedWebSocket {
 
     socket.onmessage = (e) => {
       lastMessageTime = Date.now();
+      lastMessageAt = lastMessageTime;
       let msg: unknown;
       try {
         msg = JSON.parse(e.data);
@@ -125,9 +200,11 @@ function createSharedWebSocket(): SharedWebSocket {
         intentional: intentionalClose,
         durationMs: duration,
         refCount,
-        streamActive,
+        streamActive: streamOwners.size > 0,
       });
       ws = null;
+      connectedAt = null;
+      emitDiagnostics();
       for (const handler of closeHandlers.values()) {
         try {
           handler(ev.code, ev.reason || "none");
@@ -145,6 +222,7 @@ function createSharedWebSocket(): SharedWebSocket {
 
     socket.onerror = () => {
       log.warn(`error refCount=${refCount}`);
+      emitDiagnostics();
       for (const handler of errorHandlers.values()) {
         try {
           handler();
@@ -160,14 +238,16 @@ function createSharedWebSocket(): SharedWebSocket {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const elapsed = Date.now() - lastMessageTime;
     log.warn(`forceReconnect — socket OPEN but dead (no message in ${elapsed}ms), recycling`);
-    chatBeacon("ws_force_reconnect", { elapsedSinceLastMsg: elapsed, streamActive });
+    forcedReconnects++;
+    chatBeacon("ws_force_reconnect", { elapsedSinceLastMsg: elapsed, streamActive: streamOwners.size > 0 });
+    emitDiagnostics();
     ws.close(4000, "liveness-timeout");
   }
 
   function startLivenessTimer() {
     if (livenessTimer) return;
     livenessTimer = setInterval(() => {
-      if (ws && ws.readyState === WebSocket.OPEN && streamActive) {
+      if (ws && ws.readyState === WebSocket.OPEN && streamOwners.size > 0) {
         if ((Date.now() - lastMessageTime) >= LIVENESS_TIMEOUT_MS) {
           forceReconnect();
         }
@@ -209,33 +289,43 @@ function createSharedWebSocket(): SharedWebSocket {
   return {
     addMessageHandler(id, handler) {
       messageHandlers.set(id, handler);
+      emitDiagnostics();
     },
     removeMessageHandler(id) {
       messageHandlers.delete(id);
+      emitDiagnostics();
     },
     addReconnectHandler(id, handler) {
       reconnectHandlers.set(id, handler);
+      emitDiagnostics();
     },
     removeReconnectHandler(id) {
       reconnectHandlers.delete(id);
+      emitDiagnostics();
     },
     addOpenHandler(id, handler) {
       openHandlers.set(id, handler);
+      emitDiagnostics();
     },
     removeOpenHandler(id) {
       openHandlers.delete(id);
+      emitDiagnostics();
     },
     addCloseHandler(id, handler) {
       closeHandlers.set(id, handler);
+      emitDiagnostics();
     },
     removeCloseHandler(id) {
       closeHandlers.delete(id);
+      emitDiagnostics();
     },
     addErrorHandler(id, handler) {
       errorHandlers.set(id, handler);
+      emitDiagnostics();
     },
     removeErrorHandler(id) {
       errorHandlers.delete(id);
+      emitDiagnostics();
     },
     connect: doConnect,
     close: doClose,
@@ -251,14 +341,30 @@ function createSharedWebSocket(): SharedWebSocket {
       if (!ws || ws.readyState !== WebSocket.OPEN) return false;
       return (Date.now() - lastMessageTime) < LIVENESS_TIMEOUT_MS;
     },
-    setStreamActive(active: boolean) {
-      streamActive = active;
+    setStreamActive(ownerId: string, active: boolean) {
+      if (active) streamOwners.add(ownerId);
+      else streamOwners.delete(ownerId);
+      emitDiagnostics();
+    },
+    getDiagnostics() {
+      return {
+        readyState: ws?.readyState ?? WebSocket.CLOSED,
+        physicalSockets: ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ? 1 : 0,
+        messageHandlers: messageHandlers.size,
+        lifecycleHandlers: reconnectHandlers.size + openHandlers.size + closeHandlers.size + errorHandlers.size,
+        streamOwners: streamOwners.size,
+        reconnects,
+        forcedReconnects,
+        connectedAt,
+        lastMessageAt,
+      };
     },
   };
 }
 
 export function acquireSharedWS(caller?: string): SharedWebSocket {
-  const tag = caller ? ` caller=${caller}` : "";
+  const ownerId = caller ?? "anonymous";
+  const tag = ` caller=${ownerId}`;
   if (closeDelayTimer) {
     clearTimeout(closeDelayTimer);
     closeDelayTimer = null;
@@ -272,17 +378,30 @@ export function acquireSharedWS(caller?: string): SharedWebSocket {
     log.debug(`acquire reusing instance refCount=${refCount + 1}${tag}`);
   }
   refCount++;
+  ownerRefs.set(ownerId, (ownerRefs.get(ownerId) ?? 0) + 1);
+  peakRefCount = Math.max(peakRefCount, refCount);
+  peakOwnerCount = Math.max(peakOwnerCount, ownerRefs.size);
+  emitDiagnostics();
   return instance;
 }
 
 export function releaseSharedWS(caller?: string) {
+  const ownerId = caller ?? "anonymous";
+  const ownerRefCount = ownerRefs.get(ownerId) ?? 0;
+  const tag = ` caller=${ownerId}`;
+  if (ownerRefCount === 0) {
+    log.warn(`release ignored for unknown owner refCount=${refCount}${tag}`);
+    return;
+  }
+  if (ownerRefCount === 1) ownerRefs.delete(ownerId);
+  else ownerRefs.set(ownerId, ownerRefCount - 1);
   refCount--;
-  const tag = caller ? ` caller=${caller}` : "";
   log.debug(`release refCount=${refCount}${tag}`);
   if (refCount < 0) {
     log.warn(`release refCount went negative (${refCount}), resetting to 0${tag}`);
     refCount = 0;
   }
+  emitDiagnostics();
   if (refCount <= 0) {
     closeDelayTimer = setTimeout(() => {
       closeDelayTimer = null;
@@ -290,6 +409,7 @@ export function releaseSharedWS(caller?: string) {
         log.debug("delayed close executing — no re-acquire happened");
         instance.close();
         instance = null;
+        emitDiagnostics();
       }
     }, CLOSE_DELAY_MS);
   }
