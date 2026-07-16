@@ -17,6 +17,7 @@ import type {
   MeetingSessionMeta,
   MessageSpeakerMeta,
   PersonaSnapshot,
+  QuestionResponseMeta,
   SystemStepRecord,
 } from "@shared/models/chat";
 
@@ -209,6 +210,8 @@ export interface FileMessage {
   persona?: PersonaSnapshot;
   /** Speaker attribution for meeting transcript messages. */
   speaker?: MessageSpeakerMeta;
+  /** Structured response to an inline question tool call. */
+  questionResponse?: QuestionResponseMeta;
   /** Canonical per-turn correlation ID. Used for replay-safe user-message acceptance and voice turn pairing. */
   turnId?: string;
   /** Visibility discriminant — absent or 'chat' = normal; 'diagnostic' = hidden from transcript */
@@ -1045,9 +1048,11 @@ export interface IChatFileStorage {
     content: string,
     clientTurnId: string,
     pageContext?: PageContext,
+    questionResponse?: QuestionResponseMeta,
   ): Promise<
     | { outcome: "created"; message: FileMessage }
     | { outcome: "duplicate"; message: FileMessage }
+    | { outcome: "question_already_answered"; message: FileMessage }
     | { outcome: "session_not_found" }
   >;
   upsertVoiceUserMessage(
@@ -1633,6 +1638,7 @@ export const chatFileStorage: IChatFileStorage = {
     content: string,
     clientTurnId: string,
     pageContext?: PageContext,
+    questionResponse?: QuestionResponseMeta,
   ) {
     return withConvLock(sessionId, async () => {
       const data = await readConv(sessionId);
@@ -1644,6 +1650,15 @@ export const chatFileStorage: IChatFileStorage = {
       if (existing) {
         log.debug(`[ChatFileStorage] duplicate client turn ignored session=${sessionId} turnId=${clientTurnId}`);
         return { outcome: "duplicate" as const, message: existing };
+      }
+      if (questionResponse) {
+        const priorResponse = data.messages.find(
+          (message) => message.questionResponse?.questionToolCallId === questionResponse.questionToolCallId,
+        );
+        if (priorResponse) {
+          log.warn(`[ChatFileStorage] duplicate question response blocked session=${sessionId} toolCallId=${questionResponse.questionToolCallId}`);
+          return { outcome: "question_already_answered" as const, message: priorResponse };
+        }
       }
 
       const now = new Date().toISOString();
@@ -1660,6 +1675,7 @@ export const chatFileStorage: IChatFileStorage = {
         updatedAt: now,
         turnId: clientTurnId,
         ...(pageContext ? { pageContext } : {}),
+        ...(questionResponse ? { questionResponse } : {}),
       };
       data.messages.push(message);
       data.updatedAt = now;

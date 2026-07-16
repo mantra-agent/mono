@@ -16,6 +16,7 @@ export interface PendingChatTurn {
   submittedAt: string;
   status: "posting" | "streaming";
   content: string;
+  hidden?: boolean;
 }
 
 export interface UseChatSendDeps {

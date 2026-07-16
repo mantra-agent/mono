@@ -58,7 +58,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { AssistantMessageState, ChatStreamEvent, ToolCallInfo, ChildSessionBlockMeta, CrossSessionMeta, CompactionMeta, PageContext, SystemStepRecord } from "@shared/models/chat";
+import type { AssistantMessageState, ChatStreamEvent, ToolCallInfo, ChildSessionBlockMeta, CrossSessionMeta, CompactionMeta, PageContext, SystemStepRecord, QuestionResponseMeta } from "@shared/models/chat";
 import { SYSTEM_STEP_META } from "@shared/event-catalog";
 
 import type { ExecutionStep, MessageSegment, StreamingContent } from "@shared/streaming-types";
@@ -112,6 +112,7 @@ import { useVisibilityLayer } from "@/hooks/use-visibility-layer";
 import { ReferenceText } from "@/components/references/reference-text";
 import type { ReferenceSurface } from "@/components/references/reference-renderer";
 import { EmailDraftWidget } from "@/components/email-draft-widget";
+import { QuestionWidget, questionPromptFromToolCall } from "@/components/question-widget";
 import { parseReferenceText } from "@shared/reference-parser";
 
 const log = createLogger("ChatShared");
@@ -208,6 +209,8 @@ export interface ChatMessage {
   persona?: { id: number; name: string; icon: string } | null;
   /** Speaker attribution for meeting transcript messages. */
   speaker?: { label: string; personId?: string } | null;
+  /** Structured response to an inline question tool call. */
+  questionResponse?: QuestionResponseMeta;
   /** Canonical per-turn correlation ID for voice turns. */
   turnId?: string;
   /** Structural visibility discriminant — 'diagnostic' messages are hidden from chat */
@@ -1481,7 +1484,7 @@ function CompactionBoundary({ message, stripTags }: { message: ChatMessage; stri
   );
 }
 
-export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, sessionKey, compactReferences = false, suppressedEmailDraftIds }: { message: ChatMessage; isLast: boolean; streaming?: StreamingContent; sessionKey?: string | null; compactReferences?: boolean; suppressedEmailDraftIds?: string }) {
+export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, sessionKey, compactReferences = false, suppressedEmailDraftIds, questionResponses, questionSubmissionDisabled, onQuestionSubmit }: { message: ChatMessage; isLast: boolean; streaming?: StreamingContent; sessionKey?: string | null; compactReferences?: boolean; suppressedEmailDraftIds?: string; questionResponses?: ReadonlyMap<string, QuestionResponseMeta>; questionSubmissionDisabled?: boolean; onQuestionSubmit?: (response: QuestionResponseMeta) => Promise<boolean> }) {
   const isUser = message.role === "user";
   const isSystemPrompt = message.role === "system_prompt";
   const isVoiceMessage = message.voice?.source === "elevenlabs-voice";
@@ -1543,6 +1546,15 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
   );
   const unpromotedDraftIds = draftIdsFromToolResults.filter((id) => !draftIdsFromContent.includes(id) && !suppressedDraftIds.has(id));
   const hasUnpromotedDraftWidget = unpromotedDraftIds.length > 0;
+  const questionPrompts = segments.flatMap((segment) =>
+    segment.type === "timeline"
+      ? segment.steps.flatMap((step) => {
+          const prompt = questionPromptFromToolCall(step);
+          return prompt ? [prompt] : [];
+        })
+      : [],
+  );
+
 
   useEffect(() => {
     if (visibleEmailDraftIds.length === 0) return;
@@ -1755,6 +1767,15 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
             )}
             {unpromotedDraftIds.map((id) => (
               <EmailDraftWidget key={`tool-draft-${id}`} draftId={id} />
+            ))}
+            {questionPrompts.map((prompt) => (
+              <QuestionWidget
+                key={prompt.toolCallId}
+                prompt={prompt}
+                response={questionResponses?.get(prompt.toolCallId)}
+                disabled={questionSubmissionDisabled}
+                onSubmit={onQuestionSubmit}
+              />
             ))}
           </SuppressedEmailDraftsContext.Provider>
         </div>
