@@ -125,7 +125,7 @@ export function LibraryPageEditor({
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [bodyFocused, setBodyFocused] = useState(false);
-  const [isTitleEditing, setIsTitleEditing] = useState(false);
+  const [isTitleEditing, setIsTitleEditing] = useState(() => !selectedPage.title && !selectedPage.plainTextContent?.trim());
   const [headerTarget, setHeaderTarget] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -199,21 +199,11 @@ export function LibraryPageEditor({
     invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"], ["/api/info/library", selectedId]],
   });
 
-  const titleInputRef = useRef<HTMLInputElement>(null);
   const isNewUntitledPage = !selectedPage.title && !selectedPage.plainTextContent?.trim();
 
   useEffect(() => {
     setIsTitleEditing(isNewUntitledPage);
   }, [isNewUntitledPage, selectedId]);
-
-  useEffect(() => {
-    if (!isTitleEditing) return;
-    const frame = window.requestAnimationFrame(() => {
-      titleInputRef.current?.focus();
-      titleInputRef.current?.select();
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [isTitleEditing, selectedId]);
 
   return (
     <>
@@ -236,8 +226,9 @@ export function LibraryPageEditor({
         </Popover>
         {isTitleEditing ? (
           <Input
-            ref={titleInputRef}
             value={editTitle}
+            autoFocus
+            onFocus={(e) => e.currentTarget.select()}
             onChange={(e) => handleTitleChange(e.target.value)}
             onBlur={() => setIsTitleEditing(false)}
             onKeyDown={(e) => {
