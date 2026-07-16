@@ -207,6 +207,7 @@ Hosting credentials and environment configuration belong to Platform Environment
 - **No `max-w mx-auto` on page containers**. Full-width is the rule. Content-width only for reading-heavy or form contexts.
 - **shadcn/ui components live in `components/ui/`**. Don't duplicate or create parallel implementations. Extend via composition.
 - **React Query is the data layer**. Don't use `useState` + `useEffect` for server data. Use `useQuery`/`useMutation`.
+- **Email draft provenance is presentation only.** Meeting recap drafts, new-message drafts, and reply drafts share the same `EmailDraftWidget` edit contract. Never disable From, To, CC, BCC, subject, or body because a draft originated from a recap.
 - **Wouter, not React Router**. Routes use `<Route path="..." component={...} />`. No `useNavigate` — use `useLocation` from Wouter.
 - **TailwindCSS only**. No inline styles, no CSS modules, no styled-components. Exception: dynamic values that can't be expressed as Tailwind classes.
 - **Icons are Lucide**. Import from `lucide-react`. Don't mix icon libraries.

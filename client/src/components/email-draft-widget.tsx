@@ -487,10 +487,10 @@ export function EmailDraftWidget({ draftId, isRecapDraft = false }: { draftId: s
 
       {/* Fields */}
 
-      {/* Recap draft indicator */}
+      {/* Recap provenance never changes the draft editing contract. */}
       {isRecapDraft && (
         <div className="px-3 py-1.5 text-xs bg-info/10 text-info border-b border-info/20">
-          <span>📎 Recipients are fixed for this recap email</span>
+          <span>Meeting recap draft · Fully editable before sending</span>
         </div>
       )}
       <div className="px-3 py-2 space-y-1.5">
@@ -501,7 +501,7 @@ export function EmailDraftWidget({ draftId, isRecapDraft = false }: { draftId: s
             <Select
               value={merged.gmailAccountId || ""}
               onValueChange={(val) => immediatePatch("gmailAccountId", val)}
-              disabled={isBusy || isRecapDraft}
+              disabled={isBusy}
             >
               <SelectTrigger className="h-7 text-xs flex-1">
                 <SelectValue placeholder="Select account">
@@ -524,7 +524,7 @@ export function EmailDraftWidget({ draftId, isRecapDraft = false }: { draftId: s
           label="To"
           values={merged.to}
           onChange={(val) => immediatePatch("to", val)}
-          disabled={isBusy || isRecapDraft}
+          disabled={isBusy}
         />
 
         {/* CC / BCC toggles */}
@@ -552,7 +552,7 @@ export function EmailDraftWidget({ draftId, isRecapDraft = false }: { draftId: s
             label="CC"
             values={merged.cc}
             onChange={(val) => immediatePatch("cc", val)}
-            disabled={isBusy || isRecapDraft}
+            disabled={isBusy}
           />
         )}
 
@@ -561,7 +561,7 @@ export function EmailDraftWidget({ draftId, isRecapDraft = false }: { draftId: s
             label="BCC"
             values={merged.bcc}
             onChange={(val) => immediatePatch("bcc", val)}
-            disabled={isBusy || isRecapDraft}
+            disabled={isBusy}
           />
         )}
 
