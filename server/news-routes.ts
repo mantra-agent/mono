@@ -15,6 +15,7 @@ export function registerNewsRoutes(app: Express): void {
       if (typeof req.query.limit === "string") opts.limit = Number(req.query.limit);
       if (typeof req.query.offset === "string") opts.offset = Number(req.query.offset);
       if (typeof req.query.minRelevance === "string") opts.minRelevance = Number(req.query.minRelevance);
+      if (typeof req.query.query === "string" && req.query.query.trim()) opts.query = req.query.query.trim().slice(0, 200);
       const result = await signalStorage.listSignals(opts);
       res.json(result);
     } catch (err) {

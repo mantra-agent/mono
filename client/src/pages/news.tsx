@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useState, type ComponentType, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { createReferenceRef } from "@shared/references";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { Badge } from "@/components/ui/badge";
@@ -16,9 +17,12 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { createLogger } from "@/lib/logger";
 import { cn } from "@/lib/utils";
 import { cleanSignalText, formatTimeAgo, type SignalItem } from "@/components/signal-card";
-import { Bookmark, ChevronDown, ChevronRight, Globe, MessageCircle, MessageSquare, MoreHorizontal, Newspaper, Pin, Plug, Radio, Rss, Sparkles, Trash2, UserCircle, X } from "lucide-react";
+import { Bookmark, ChevronDown, ChevronRight, Globe, MessageCircle, MessageSquare, MoreHorizontal, Newspaper, Pin, Plug, Radio, Rss, Trash2, UserCircle, X } from "lucide-react";
+
+const log = createLogger("NewsPage");
 
 interface NewsSignal extends SignalItem {
   curatedTitle?: string | null;
@@ -57,6 +61,18 @@ const SIGNAL_REF_TYPE: Record<string, string> = { web: "web_article", x: "x_item
 function formatSourceValue(source: ChannelSource): string { if (source.sourceType === "subreddit") return `r/${source.value}`; if (source.sourceType === "x_account") return `@${source.value}`; return CHANNEL_META[source.sourceType]?.label || source.value; }
 function signalReference(signal: NewsSignal, label?: string) { return createReferenceRef({ type: SIGNAL_REF_TYPE[signal.sourceType] || "news", id: signal.url, metadata: { label: label || signal.curatedTitle || signal.title, href: signal.url, sourceType: signal.sourceType } }); }
 function topicBadge(topic: TopicRow) { if (topic.topicSource === "session") return `Session${topic.mentions ? ` · ${topic.mentions}` : ""}`; if (topic.alsoRecent) return "Pinned · Recent"; return "Pinned"; }
+
+function signalListUrl(status: string, limit: number, query: string): string {
+  const params = new URLSearchParams({ status, limit: String(limit) });
+  if (query) params.set("query", query);
+  return `/api/landscape/signals?${params.toString()}`;
+}
+
+async function fetchSignals(status: string, limit: number, query: string): Promise<{ items: NewsSignal[]; total: number }> {
+  const res = await fetch(signalListUrl(status, limit, query));
+  if (!res.ok) throw new Error(`Failed to load ${status} signals`);
+  return res.json();
+}
 
 function SignalRow({ signal, onDismiss, onSave, onConverse }: { signal: NewsSignal; onDismiss: (id: string) => void; onSave: (id: string) => void; onConverse: (signal: NewsSignal) => void; }) {
   const [expanded, setExpanded] = useState(false);
@@ -141,7 +157,14 @@ export default function NewsPage() {
   usePageHeader({ title: "News" });
   const { route, setSessionForRoute, setWidgetOpen } = useFocusSession();
   const [openSections, setOpenSections] = useState<Set<NewsSectionKey>>(() => new Set(["surface"]));
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [newTopic, setNewTopic] = useState(""); const [newSource, setNewSource] = useState("");
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedQuery(searchQuery.trim()), 250);
+    return () => window.clearTimeout(timeout);
+  }, [searchQuery]);
 
   const handleConverse = useCallback(async (signal: NewsSignal) => {
     try {
@@ -158,13 +181,13 @@ export default function NewsPage() {
       setSessionForRoute(route, session.id);
       setWidgetOpen(true);
     } catch (err) {
-      console.error("Failed to start conversation:", err);
+      log.error("Failed to start conversation", { error: String(err) });
     }
   }, [route, setSessionForRoute, setWidgetOpen]);
-  const { data: surfacedData, isLoading: surfacedLoading } = useQuery<{ items: NewsSignal[]; total: number }>({ queryKey: ["/api/landscape/signals", "surfaced"], queryFn: async () => { const res = await fetch("/api/landscape/signals?status=surfaced&limit=20"); if (!res.ok) throw new Error("Failed to load surfaced signals"); return res.json(); } });
-  const { data: feedData, isLoading: feedLoading } = useQuery<{ items: NewsSignal[]; total: number }>({ queryKey: ["/api/landscape/signals", "news-feed"], queryFn: async () => { const res = await fetch("/api/landscape/signals?status=new&limit=30"); if (!res.ok) throw new Error("Failed to load feed signals"); return res.json(); } });
-  const { data: savedData, isLoading: savedLoading } = useQuery<{ items: NewsSignal[]; total: number }>({ queryKey: ["/api/landscape/signals", "saved"], queryFn: async () => { const res = await fetch("/api/landscape/signals?status=saved&limit=100"); if (!res.ok) throw new Error("Failed to load saved signals"); return res.json(); } });
-  const { data: dismissedData, isLoading: dismissedLoading } = useQuery<{ items: NewsSignal[]; total: number }>({ queryKey: ["/api/landscape/signals", "dismissed"], queryFn: async () => { const res = await fetch("/api/landscape/signals?status=dismissed&limit=100"); if (!res.ok) throw new Error("Failed to load dismissed signals"); return res.json(); } });
+  const { data: surfacedData, isLoading: surfacedLoading } = useQuery<{ items: NewsSignal[]; total: number }>({ queryKey: ["/api/landscape/signals", "surfaced", debouncedQuery], queryFn: () => fetchSignals("surfaced", 20, debouncedQuery) });
+  const { data: feedData, isLoading: feedLoading } = useQuery<{ items: NewsSignal[]; total: number }>({ queryKey: ["/api/landscape/signals", "news-feed", debouncedQuery], queryFn: () => fetchSignals("new", 30, debouncedQuery) });
+  const { data: savedData, isLoading: savedLoading } = useQuery<{ items: NewsSignal[]; total: number }>({ queryKey: ["/api/landscape/signals", "saved", debouncedQuery], queryFn: () => fetchSignals("saved", 100, debouncedQuery) });
+  const { data: dismissedData, isLoading: dismissedLoading } = useQuery<{ items: NewsSignal[]; total: number }>({ queryKey: ["/api/landscape/signals", "dismissed", debouncedQuery], queryFn: () => fetchSignals("dismissed", 100, debouncedQuery) });
   const { data: topics, isLoading: topicsLoading } = useQuery<TopicRow[]>({ queryKey: ["/api/landscape/topics"], queryFn: async () => { const res = await fetch("/api/landscape/topics"); if (!res.ok) throw new Error("Failed to load topics"); return res.json(); } });
   const { data: channels, isLoading: channelsLoading } = useQuery<ChannelSource[]>({ queryKey: ["/api/landscape/channels"], queryFn: async () => { const res = await fetch("/api/landscape/channels"); if (!res.ok) throw new Error("Failed to load channels"); return res.json(); } });
   const statusMutation = useMutation({ mutationFn: async ({ id, status }: { id: string; status: string }) => apiRequest("PATCH", `/api/landscape/signals/${id}/status`, { status }), onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/landscape/signals"] }) });
@@ -175,13 +198,16 @@ export default function NewsPage() {
   const deleteSourceMutation = useMutation({ mutationFn: async (id: string) => apiRequest("DELETE", `/api/landscape/sources/${id}`), onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/landscape/channels"] }) });
   const surfaced = surfacedData?.items || []; const feed = feedData?.items || []; const saved = savedData?.items || []; const dismissed = dismissedData?.items || []; const topicRows = topics || []; const channelRows = channels || [];
   const counts = useMemo(() => ({ surface: surfacedData?.total ?? surfaced.length, feed: feedData?.total ?? feed.length, topics: topicRows.length, channels: channelRows.length, saved: savedData?.total ?? saved.length, dismissed: dismissedData?.total ?? dismissed.length }), [surfacedData?.total, surfaced.length, feedData?.total, feed.length, topicRows.length, channelRows.length, savedData?.total, saved.length, dismissedData?.total, dismissed.length]);
+  const isSearching = searchQuery.trim().length > 0;
+  const isSectionOpen = (section: NewsSectionKey) => isSearching && section !== "topics" && section !== "channels" ? true : openSections.has(section);
   const toggleSection = (section: NewsSectionKey) => setOpenSections(prev => { const next = new Set(prev); if (next.has(section)) next.delete(section); else next.add(section); return next; });
   return <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background"><div className="flex-1 overflow-y-auto p-3 scrollbar-thin"><div className="space-y-1">
-    <SectionHeader section="surface" count={counts.surface} open={openSections.has("surface")} onToggle={() => toggleSection("surface")} />{openSections.has("surface") && <div className="space-y-0.5">{surfacedLoading ? <Skeleton className="h-8 rounded-md" /> : surfaced.length === 0 ? <div className="px-2 py-1.5 text-sm text-muted-foreground">No surfaced news yet.</div> : surfaced.map(signal => <SignalRow key={signal.id} signal={signal} onDismiss={id => statusMutation.mutate({ id, status: "dismissed" })} onSave={id => statusMutation.mutate({ id, status: "saved" })} onConverse={handleConverse} />)}</div>}
-    <SectionHeader section="feed" count={counts.feed} open={openSections.has("feed")} onToggle={() => toggleSection("feed")} />{openSections.has("feed") && <div className="space-y-0.5">{feedLoading ? <Skeleton className="h-8 rounded-md" /> : feed.length === 0 ? <div className="px-2 py-1.5 text-sm text-muted-foreground">No new feed signals yet.</div> : feed.map(signal => <SignalRow key={signal.id} signal={signal} onDismiss={id => statusMutation.mutate({ id, status: "dismissed" })} onSave={id => statusMutation.mutate({ id, status: "saved" })} onConverse={handleConverse} />)}</div>}
+    <HierarchySearchInput value={searchQuery} onChange={setSearchQuery} inputTestId="input-search-news" clearTestId="button-clear-news-search" ariaLabel="Search news" />
+    <SectionHeader section="surface" count={counts.surface} open={isSectionOpen("surface")} onToggle={() => toggleSection("surface")} />{isSectionOpen("surface") && <div className="space-y-0.5">{surfacedLoading ? <Skeleton className="h-8 rounded-md" /> : surfaced.length === 0 ? <div className="px-2 py-1.5 text-sm text-muted-foreground">{isSearching ? "No matching surfaced news." : "No surfaced news yet."}</div> : surfaced.map(signal => <SignalRow key={signal.id} signal={signal} onDismiss={id => statusMutation.mutate({ id, status: "dismissed" })} onSave={id => statusMutation.mutate({ id, status: "saved" })} onConverse={handleConverse} />)}</div>}
+    <SectionHeader section="feed" count={counts.feed} open={isSectionOpen("feed")} onToggle={() => toggleSection("feed")} />{isSectionOpen("feed") && <div className="space-y-0.5">{feedLoading ? <Skeleton className="h-8 rounded-md" /> : feed.length === 0 ? <div className="px-2 py-1.5 text-sm text-muted-foreground">{isSearching ? "No matching feed news." : "No new feed signals yet."}</div> : feed.map(signal => <SignalRow key={signal.id} signal={signal} onDismiss={id => statusMutation.mutate({ id, status: "dismissed" })} onSave={id => statusMutation.mutate({ id, status: "saved" })} onConverse={handleConverse} />)}</div>}
     <SectionHeader section="topics" count={counts.topics} open={openSections.has("topics")} onToggle={() => toggleSection("topics")} />{openSections.has("topics") && <div className="space-y-0.5">{topicsLoading ? <Skeleton className="h-8 rounded-md" /> : topicRows.length === 0 ? <div className="px-2 py-1.5 text-sm text-muted-foreground">No topics yet.</div> : topicRows.map(topic => <TreeRow key={topic.id} depth={0} icon={topic.topicSource === "session" ? Radio : Newspaper} title={topic.value} muted={!topic.enabled}><span className="truncate">{topic.value}</span><Badge variant="outline" className="ml-auto px-1.5 py-0 text-xs">{topicBadge(topic)}</Badge>{topic.signalCount > 0 && <Badge variant="outline" className="px-1.5 py-0 text-xs">{topic.signalCount}</Badge>}{topic.topicSource === "session" ? <Button variant="ghost" size="sm" className="h-6 w-6 p-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={event => { event.stopPropagation(); addTopicMutation.mutate(topic.value); }}><Pin className="h-3.5 w-3.5" /></Button> : <Button variant="ghost" size="sm" className="h-6 w-6 p-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={event => { event.stopPropagation(); removeTopicMutation.mutate(topic.id); }}><X className="h-3.5 w-3.5" /></Button>}</TreeRow>)}<div className="flex px-2 pt-1"><Input value={newTopic} onChange={event => setNewTopic(event.target.value)} placeholder="Add topic..." className="h-7 text-xs" onKeyDown={event => { if (event.key === "Enter" && newTopic.trim()) addTopicMutation.mutate(newTopic.trim()); }} /></div></div>}
     <SectionHeader section="channels" count={counts.channels} open={openSections.has("channels")} onToggle={() => toggleSection("channels")} />{openSections.has("channels") && <div className="space-y-0.5">{channelsLoading ? <Skeleton className="h-8 rounded-md" /> : channelRows.length === 0 ? <div className="px-2 py-1.5 text-sm text-muted-foreground">No channels yet.</div> : channelRows.map(source => { const meta = CHANNEL_META[source.sourceType] || { label: source.sourceType, icon: Plug }; return <TreeRow key={source.id} depth={0} icon={meta.icon} title={formatSourceValue(source)} muted={!source.enabled}><span className="truncate">{formatSourceValue(source)}</span><span className="ml-auto shrink-0 text-xs text-muted-foreground">{meta.label}</span>{source.signalCount > 0 && <Badge variant="outline" className="px-1.5 py-0 text-xs">{source.signalCount}</Badge>}<Switch checked={source.enabled} onCheckedChange={enabled => toggleChannelMutation.mutate({ id: source.id, enabled })} className="scale-75" />{!source.sourceType.startsWith("channel_") && <Button variant="ghost" size="sm" className="h-6 w-6 p-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={event => { event.stopPropagation(); deleteSourceMutation.mutate(source.id); }}><Trash2 className="h-3.5 w-3.5" /></Button>}</TreeRow>; })}<div className="flex px-2 pt-1"><Input value={newSource} onChange={event => setNewSource(event.target.value)} placeholder="Add RSS feed..." className="h-7 text-xs" onKeyDown={event => { if (event.key === "Enter" && newSource.trim()) addSourceMutation.mutate(newSource.trim()); }} /></div></div>}
-    <SectionHeader section="saved" count={counts.saved} open={openSections.has("saved")} onToggle={() => toggleSection("saved")} />{openSections.has("saved") && <div className="space-y-0.5">{savedLoading ? <Skeleton className="h-8 rounded-md" /> : saved.length === 0 ? <div className="px-2 py-1.5 text-sm text-muted-foreground">No saved news yet.</div> : saved.map(signal => <SignalRow key={signal.id} signal={signal} onDismiss={id => statusMutation.mutate({ id, status: "dismissed" })} onSave={id => statusMutation.mutate({ id, status: "saved" })} onConverse={handleConverse} />)}</div>}
-    <SectionHeader section="dismissed" count={counts.dismissed} open={openSections.has("dismissed")} onToggle={() => toggleSection("dismissed")} />{openSections.has("dismissed") && <div className="space-y-0.5">{dismissedLoading ? <Skeleton className="h-8 rounded-md" /> : dismissed.length === 0 ? <div className="px-2 py-1.5 text-sm text-muted-foreground">No dismissed news yet.</div> : dismissed.map(signal => <SignalRow key={signal.id} signal={signal} onDismiss={id => statusMutation.mutate({ id, status: "dismissed" })} onSave={id => statusMutation.mutate({ id, status: "saved" })} onConverse={handleConverse} />)}</div>}
+    <SectionHeader section="saved" count={counts.saved} open={isSectionOpen("saved")} onToggle={() => toggleSection("saved")} />{isSectionOpen("saved") && <div className="space-y-0.5">{savedLoading ? <Skeleton className="h-8 rounded-md" /> : saved.length === 0 ? <div className="px-2 py-1.5 text-sm text-muted-foreground">{isSearching ? "No matching saved news." : "No saved news yet."}</div> : saved.map(signal => <SignalRow key={signal.id} signal={signal} onDismiss={id => statusMutation.mutate({ id, status: "dismissed" })} onSave={id => statusMutation.mutate({ id, status: "saved" })} onConverse={handleConverse} />)}</div>}
+    <SectionHeader section="dismissed" count={counts.dismissed} open={isSectionOpen("dismissed")} onToggle={() => toggleSection("dismissed")} />{isSectionOpen("dismissed") && <div className="space-y-0.5">{dismissedLoading ? <Skeleton className="h-8 rounded-md" /> : dismissed.length === 0 ? <div className="px-2 py-1.5 text-sm text-muted-foreground">{isSearching ? "No matching dismissed news." : "No dismissed news yet."}</div> : dismissed.map(signal => <SignalRow key={signal.id} signal={signal} onDismiss={id => statusMutation.mutate({ id, status: "dismissed" })} onSave={id => statusMutation.mutate({ id, status: "saved" })} onConverse={handleConverse} />)}</div>}
   </div></div></div>;
 }

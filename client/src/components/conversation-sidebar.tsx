@@ -28,7 +28,6 @@ import {
   ChevronRight,
   MoreHorizontal,
   Search,
-  X,
   User,
   Pin,
   MessageSquare,
@@ -38,6 +37,7 @@ import {
 import { isDurablyActiveSession, type ChatSession } from "@shared/models/chat";
 import { SessionActionsMenuItems } from "@/components/session-actions-menu";
 import { SessionDetailsModal } from "@/components/session-details-modal";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -840,26 +840,13 @@ export function ConversationSidebar({
 
       <ScrollArea ref={scrollAreaRef} className="flex-1 min-w-0">
         <div className="min-w-0 p-2 space-y-1">
-          {/* Search bar */}
-          <div className="relative min-w-0 mb-1">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full h-7 pl-7 pr-7 rounded-md border border-input bg-background text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              data-testid="input-search-sessions"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 h-4 w-4 flex items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
-                data-testid="button-clear-search"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            )}
-          </div>
+          <HierarchySearchInput
+            value={searchQuery}
+            onChange={setSearchQuery}
+            inputTestId="input-search-sessions"
+            clearTestId="button-clear-search"
+            ariaLabel="Search sessions"
+          />
           {/* + New Session button */}
           <button
             type="button"
