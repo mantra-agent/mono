@@ -31,17 +31,17 @@ const SECTION_PRESENTATION = {
   opportunity_interactions: {
     title: "INTERACTIONS",
     order: 1,
-    marker: { icon: User, criterion: "top-decile" },
+    marker: { icon: User, criterion: "top-decile", filled: true },
   },
   completed_tasks: {
     title: "TASKS",
     order: 2,
-    marker: { icon: BriefcaseBusiness, criterion: "top-decile" },
+    marker: { icon: BriefcaseBusiness, criterion: "top-decile", filled: true },
   },
   shipped_prs: {
     title: "CODE",
     order: 3,
-    marker: { icon: Code2, criterion: "top-decile" },
+    marker: { icon: Code2, criterion: "top-decile", filled: true },
   },
 } as const;
 
