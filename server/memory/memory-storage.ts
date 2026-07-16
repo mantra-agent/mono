@@ -1889,6 +1889,10 @@ export class MemoryStorage {
         relationship,
         strength,
         relationshipType: validType,
+        // Some restored databases have lost the SQL default for this NOT NULL
+        // column. The canonical mutation path sets it explicitly so memory
+        // maintenance does not depend on schema drift repair having already run.
+        createdAt: new Date(),
       })
       .returning();
 

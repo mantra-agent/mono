@@ -1629,6 +1629,15 @@ export async function runSchemaBootstrap(
       `ALTER TABLE memory_transitions ALTER COLUMN transitioned_at SET DEFAULT CURRENT_TIMESTAMP`,
     );
 
+    await pool.query(
+      `UPDATE memory_links SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL`,
+    );
+    await pool.query(`
+      ALTER TABLE memory_links
+        ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP,
+        ALTER COLUMN created_at SET NOT NULL
+    `);
+
     // --- signal_sources defaults ---
     await pool.query(
       `ALTER TABLE signal_sources ALTER COLUMN id SET DEFAULT gen_random_uuid()::text`,
