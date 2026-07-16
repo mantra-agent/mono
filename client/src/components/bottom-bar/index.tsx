@@ -462,11 +462,16 @@ export function BottomBar({
   const { data: agentStatus } = useExecutorStatus();
   const isAgentRunning = agentStatus?.status === "running";
   const voiceSession = useVoiceSessionOptional();
-  const voiceActive = !!(voiceSession && voiceSession.status !== "idle");
   const { toast } = useToast();
 
   const contextSessionId = getSessionForRoute(route);
   const focusedSessionId = controlledSessionId !== undefined ? controlledSessionId : contextSessionId;
+  const voiceActive = !!(
+    voiceSession &&
+    focusedSessionId &&
+    voiceSession.activeConversationId === focusedSessionId &&
+    voiceSession.status !== "idle"
+  );
   const fallbackSessionSub = useSessionSubscription(controlledSessionSub ? null : focusedSessionId);
   const sessionSub = controlledSessionSub ?? fallbackSessionSub;
   const showMobileSessionMenu = useCallback(() => {
@@ -590,9 +595,15 @@ export function BottomBar({
   }, [barState, sessionSub.canStop, sessionSub.status, sessionSub.streamingContent]);
 
   const voiceInputDisplay = useMemo(() => {
-    if (!voiceSession || voiceSession.status === "idle") return { text: "", state: "empty" as const };
+    if (
+      !voiceSession ||
+      voiceSession.status === "idle" ||
+      voiceSession.transcriptSessionId !== focusedSessionId
+    ) {
+      return { text: "", state: "empty" as const };
+    }
     return getVoiceInputDisplay(voiceSession.transcript);
-  }, [voiceSession?.status, voiceSession?.transcript]);
+  }, [focusedSessionId, voiceSession?.status, voiceSession?.transcript, voiceSession?.transcriptSessionId]);
 
   const displayedInputText = voiceActive ? voiceInputDisplay.text : inputText;
   const voiceInputPlaceholder = voiceActive ? getVoiceInputPlaceholder(voiceSession) : undefined;

@@ -94,6 +94,8 @@ export interface VoiceSessionContextValue {
   userSpeaking: boolean;
   isMuted: boolean;
   transcript: VoiceTranscriptEntry[];
+  /** Session identity that owns the ephemeral transcript aggregate. */
+  transcriptSessionId: string | null;
   voiceThinking: boolean;
   startSession: () => Promise<void>;
   endSession: () => Promise<void>;
@@ -193,6 +195,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const [voiceThinking, setVoiceThinking] = useState(false);
   const [userSpeaking, setUserSpeaking] = useState(false);
   const [transcript, setTranscript] = useState<VoiceTranscriptEntry[]>([]);
+  const [transcriptSessionId, setTranscriptSessionId] = useState<string | null>(null);
   const [connectionPhases, setConnectionPhases] = useState<ConnectionPhase[]>([]);
   const [connectionStartTime, setConnectionStartTime] = useState<number | null>(null);
   const [phasePersisted, setPhasePersisted] = useState(false);
@@ -262,8 +265,22 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setActiveConversationId = useCallback((id: string | null) => {
+    const previousId = chatConversationIdRef.current;
     chatConversationIdRef.current = id;
     setActiveConversationIdState(id);
+
+    if (previousId === id) return;
+
+    // Transcript is one session-owned aggregate. Changing its owner and clearing
+    // its entries happen together so delayed cleanup is never the correctness
+    // boundary between two conversations.
+    setTranscriptSessionId(id);
+    transcriptRef.current = [];
+    setTranscript([]);
+    log.debug("VOICE:TRANSCRIPT:OWNER_CHANGED", {
+      previousSessionId: previousId,
+      nextSessionId: id,
+    });
   }, []);
 
   useEffect(() => { transcriptRef.current = transcript; }, [transcript]);
@@ -1619,6 +1636,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     userSpeaking,
     isMuted,
     transcript,
+    transcriptSessionId,
     voiceThinking,
     startSession,
     endSession,
@@ -1635,7 +1653,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     addTranscriptEntry,
     setVoiceToolHandler,
     setVoiceDiagnosticHandler,
-  }), [status, agentMode, userSpeaking, isMuted, transcript, voiceThinking, startSession, endSession, toggleMute, latestMessage, setActiveConversationId, clearTranscript, activeConversationId, chatSessionKey, connectionPhases, connectionStartTime, phasePersisted, setVoiceThinking, addTranscriptEntry, setVoiceToolHandler, setVoiceDiagnosticHandler]);
+  }), [status, agentMode, userSpeaking, isMuted, transcript, transcriptSessionId, voiceThinking, startSession, endSession, toggleMute, latestMessage, setActiveConversationId, clearTranscript, activeConversationId, chatSessionKey, connectionPhases, connectionStartTime, phasePersisted, setVoiceThinking, addTranscriptEntry, setVoiceToolHandler, setVoiceDiagnosticHandler]);
 
   return (
     <VoiceSessionContext.Provider value={value}>
