@@ -58,7 +58,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ChatStreamEvent, ToolCallInfo, ChildSessionBlockMeta, CrossSessionMeta, CompactionMeta, PageContext, SystemStepRecord } from "@shared/models/chat";
+import type { AssistantMessageState, ChatStreamEvent, ToolCallInfo, ChildSessionBlockMeta, CrossSessionMeta, CompactionMeta, PageContext, SystemStepRecord } from "@shared/models/chat";
 import { SYSTEM_STEP_META } from "@shared/event-catalog";
 
 import type { ExecutionStep, MessageSegment, StreamingContent } from "@shared/streaming-types";
@@ -196,6 +196,8 @@ export interface ChatMessage {
   outputTokens?: number | null;
   totalTokens?: number | null;
   segmentChronology?: SegmentChronologyEntry[] | null;
+  assistantState?: AssistantMessageState;
+  assistantRunId?: string;
   isError?: boolean;
   childSession?: ChildSessionBlockMeta | null;
   crossSession?: CrossSessionMeta | null;

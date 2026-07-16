@@ -148,7 +148,7 @@ export function freezeStreamingContent(streaming: StreamingContent): StreamingCo
 }
 
 export function computeStreamingRevision(streaming: StreamingContent): number {
-  if (streaming.source === null || streaming.segments.length === 0) return 0;
+  if (streaming.segments.length === 0) return 0;
   return streaming.segments.reduce((total, segment) => {
     if (segment.type === "content") return total + segment.content.length;
     return total + segment.steps.reduce((stepTotal, step) => {
@@ -199,14 +199,46 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
     subStatus === "streaming" ||
     (subStatus === "idle" && persistedSessionStatus === "streaming");
 
-  const streaming = isSessionActive ? rawStreaming : initialStreamingContent;
-
   // --- Visible pending turn ---
   const visiblePendingTurn = pendingTurn && (
     pendingTurn.sessionId === null ||
     pendingTurn.sessionId === activeSession ||
     activeSession === null
   ) ? pendingTurn : null;
+
+  const terminalStreamAvailable =
+    !isSessionActive &&
+    (subStatus === "saved" || subStatus === "error") &&
+    rawStreaming.source === null &&
+    rawStreaming.segments.length > 0;
+  const terminalLowerBound = visiblePendingTurn
+    ? new Date(visiblePendingTurn.submittedAt).getTime()
+    : frozenStreamHandoff?.lowerBound ?? null;
+  const terminalAssistantNowPersisted = terminalStreamAvailable && persistedMessages.some((message) => {
+    if (message.role !== "assistant" || message.id.startsWith("draft-")) return false;
+    if (!message.assistantState || message.assistantState === "streaming") return false;
+    if (
+      rawStreaming.runId &&
+      message.assistantRunId &&
+      message.assistantRunId !== rawStreaming.runId
+    ) return false;
+    if (
+      rawStreaming.turnId &&
+      message.turnId &&
+      message.turnId !== rawStreaming.turnId
+    ) return false;
+    if (terminalLowerBound !== null && new Date(message.createdAt).getTime() < terminalLowerBound) return false;
+    return (message.content || "").trim().length > 0 || (message.segmentChronology?.length ?? 0) > 0;
+  });
+  // The terminal server payload is the last authoritative live snapshot. Keep
+  // it for the overlap render while the frozen handoff clears, then let the
+  // durably terminal assistant message become the sole source of truth.
+  const hasAuthoritativeTerminalStream = terminalStreamAvailable && (
+    !terminalAssistantNowPersisted || frozenStreamHandoff !== null
+  );
+  const streaming = isSessionActive || hasAuthoritativeTerminalStream
+    ? rawStreaming
+    : initialStreamingContent;
 
   // --- Pending turn persistence check ---
   const pendingTurnPersisted = (() => {
@@ -228,6 +260,7 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
     const pendingSubmittedAt = new Date(visiblePendingTurn.submittedAt).getTime();
     return persistedMessages.some((message) => {
       if (message.role !== "assistant" || message.id.startsWith("draft-")) return false;
+      if (!message.assistantState || message.assistantState === "streaming") return false;
       if (new Date(message.createdAt).getTime() < pendingSubmittedAt) return false;
       return (message.content || "").trim().length > 0 || (message.segmentChronology?.length ?? 0) > 0;
     });
@@ -301,6 +334,12 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
   const frozenAssistantNowPersisted = frozenStreamHandoff
     ? persistedMessages.some((message) => {
         if (message.role !== "assistant" || message.id.startsWith("draft-")) return false;
+        if (!message.assistantState || message.assistantState === "streaming") return false;
+        if (
+          frozenStreamHandoff.streaming.runId &&
+          message.assistantRunId &&
+          message.assistantRunId !== frozenStreamHandoff.streaming.runId
+        ) return false;
         if (frozenStreamHandoff.lowerBound !== null && new Date(message.createdAt).getTime() < frozenStreamHandoff.lowerBound) return false;
         return (message.content || "").trim().length > 0 || (message.segmentChronology?.length ?? 0) > 0;
       })
@@ -322,18 +361,31 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
     ? frozenStreamHandoff
     : null;
 
-  // --- Display streaming (live takes precedence over frozen) ---
+  const terminalRenderId = hasAuthoritativeTerminalStream
+    ? rawStreaming.assistantAttemptId
+      ? `draft-assistant-attempt-${rawStreaming.assistantAttemptId}`
+      : rawStreaming.runId
+        ? `draft-assistant-run-${rawStreaming.runId}`
+        : effectiveFrozenHandoff?.renderId ?? (activeSession ? `draft-assistant-server-${activeSession}` : null)
+    : null;
+
+  // Live state wins first. At terminal settlement, the final server payload wins
+  // over the effect-captured frozen copy, which can be one event behind.
   const displayStreaming = hasLiveStreamingState
     ? currentTurnStreaming
-    : effectiveFrozenHandoff?.sessionId === activeSession
-      ? effectiveFrozenHandoff.streaming
-      : currentTurnStreaming;
+    : hasAuthoritativeTerminalStream
+      ? rawStreaming
+      : effectiveFrozenHandoff?.sessionId === activeSession
+        ? effectiveFrozenHandoff.streaming
+        : currentTurnStreaming;
 
-  const displayLiveStreamRenderId = liveStreamRenderId ?? (
+  const displayLiveStreamRenderId = liveStreamRenderId ?? terminalRenderId ?? (
     effectiveFrozenHandoff?.sessionId === activeSession ? effectiveFrozenHandoff.renderId : null
   );
 
-  const hasFrozenHandoff = !hasLiveStreamingState && effectiveFrozenHandoff?.sessionId === activeSession;
+  const hasFrozenHandoff = !hasLiveStreamingState && (
+    hasAuthoritativeTerminalStream || effectiveFrozenHandoff?.sessionId === activeSession
+  );
   const isStreaming = hasLiveStreamingState || hasFrozenHandoff || postSending || !!renderPendingTurn;
 
   // --- Transcript stabilization ---
