@@ -9,6 +9,7 @@ import {
   type ChildSessionBlockMeta,
   type CrossSessionMeta,
 } from "@/components/chat-shared";
+import type { QuestionResponseMeta } from "@shared/models/chat";
 import type { StreamingContent } from "@shared/streaming-types";
 import type { SessionStreamMap } from "@/hooks/use-session-subscription";
 import type { PendingChatTurn } from "@/hooks/use-chat-send";
@@ -61,6 +62,9 @@ interface MessageListProps {
   optimisticUserTurn?: PendingChatTurn | null;
   liveStreamRenderId?: string | null;
   compactReferences?: boolean;
+  questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
+  questionSubmissionDisabled?: boolean;
+  onQuestionSubmit?: (response: QuestionResponseMeta) => Promise<boolean>;
 }
 
 type ListItem =
@@ -215,6 +219,9 @@ export function MessageList({
   optimisticUserTurn,
   liveStreamRenderId,
   compactReferences = false,
+  questionResponses,
+  questionSubmissionDisabled,
+  onQuestionSubmit,
 }: MessageListProps) {
   const { layer } = useVisibilityLayer();
   const { childBlocks, crossMessages } = useLiveSessionBlocks(activeSession);
@@ -285,6 +292,7 @@ export function MessageList({
 
   const items: ListItem[] = [];
   for (const msg of messages) {
+    if (msg.questionResponse) continue;
     if (msg.role === "assistant" && !msg.id.startsWith("draft-") && !hasRenderableAssistantPayload(msg)) continue;
     if (msg.role === "cross_session" && isOutgoingChildMessage(msg, activeSession)) continue;
     if (msg.role === "cross_session" && layer < 2) continue;
@@ -337,7 +345,7 @@ export function MessageList({
     })
     : false;
   const optimisticUserDraftId = optimisticUserTurn ? `draft-user-${optimisticUserTurn.clientTurnId}` : null;
-  if (optimisticUserTurn && !optimisticUserAlreadyPersisted) {
+  if (optimisticUserTurn && !optimisticUserTurn.hidden && !optimisticUserAlreadyPersisted) {
     // The optimistic user belongs after the existing transcript prefix by
     // causality, even if the client/server clocks disagree. Do not sort this
     // synthetic turn by timestamp; doing so lets the active turn interleave with
@@ -727,6 +735,9 @@ export function MessageList({
         sessionKey={sessionKey ?? undefined}
         compactReferences={compactReferences}
         suppressedEmailDraftIds={suppressed && suppressed.length > 0 ? suppressed.join("|") : undefined}
+        questionResponses={questionResponses}
+        questionSubmissionDisabled={questionSubmissionDisabled}
+        onQuestionSubmit={onQuestionSubmit}
       />
     );
   };

@@ -126,6 +126,7 @@ export class AgentTimerHandler implements TimerHandler {
         result: toolResult.result,
         error: toolResult.error,
         sideEffectOnly: toolResult.sideEffectOnly,
+        continuation: toolResult.continuation,
       };
     };
 

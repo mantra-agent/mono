@@ -203,6 +203,7 @@ export const TOOL_ICON_MAP: Record<string, string> = {
   rules: "ScrollText",
   priorities: "Star",
   session: "MessageSquare",
+  question: "MessageSquare",
   converse: "MessagesSquare",
   intentions: "Crosshair",
   router: "Route",

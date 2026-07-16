@@ -56,11 +56,13 @@ export interface ContentBlock {
 import type { ToolDefinition } from "@shared/models/tools";
 export type { ToolDefinition };
 
+export type ToolContinuation = "persona_switch" | "await_user";
+
 export type ToolExecutorResult = {
   result: string;
   error?: boolean;
   sideEffectOnly?: boolean;
-  continuation?: "persona_switch";
+  continuation?: ToolContinuation;
 };
 
 export type ToolExecutor = (name: string, args: Record<string, unknown>) => Promise<ToolExecutorResult>;
@@ -778,6 +780,7 @@ interface RunIterationContext {
   diagnosticHadToolErrors: boolean;
   diagnosticFailedToolCount: number;
   personaSwitchRequested?: { toolCallId: string };
+  awaitUserRequested?: { toolCallId: string };
   iterationToolCalls: Array<{ id: string; name: string; args: Record<string, unknown>; order: number }>;
 }
 
@@ -1346,6 +1349,9 @@ export class AgentExecutor extends EventEmitter {
         }
         if (event.continuation === "persona_switch" && toolCallId) {
           ctx.personaSwitchRequested = { toolCallId };
+        }
+        if (event.continuation === "await_user" && toolCallId) {
+          ctx.awaitUserRequested = { toolCallId };
         }
         // Chronology: record tool entry pointing to resolvedToolCalls index
         ctx.segmentChronology.push({ s: "tool", i: toolIdx });
@@ -2069,10 +2075,11 @@ export class AgentExecutor extends EventEmitter {
     chatCompletionStream: typeof import("./model-client")["chatCompletionStream"],
     contextLimit: number,
     hasRunStage2: boolean,
-  ): Promise<{ finalContent: string; shouldContinue: boolean; hasRunStage2: boolean; exitCause?: "natural_stop" | "aborted" | "circuit_breaker"; continuationType?: "tool_call" | "max_tokens"; personaSwitchRequested?: boolean }> {
+  ): Promise<{ finalContent: string; shouldContinue: boolean; hasRunStage2: boolean; exitCause?: "natural_stop" | "aborted" | "circuit_breaker"; continuationType?: "tool_call" | "max_tokens"; personaSwitchRequested?: boolean; awaitUserRequested?: boolean }> {
     const iterStartTime = Date.now();
     const resolvedToolCallsBeforeIteration = ctx.resolvedToolCalls.length;
     ctx.personaSwitchRequested = undefined;
+    ctx.awaitUserRequested = undefined;
     ctx.iterationToolCalls = [];
     log.verbose(() => `Iteration ${ctx.iteration + 1} starting, messageCount=${messages.length}, model=${modelString}`);
 
@@ -2449,6 +2456,20 @@ export class AgentExecutor extends EventEmitter {
       }
     }
 
+    if (ctx.awaitUserRequested) {
+      const toolCallId = ctx.awaitUserRequested.toolCallId;
+      ctx.awaitUserRequested = undefined;
+      ctx.publish("tool_use_pause", { content: "" });
+      log.log(`await-user boundary requested runId=${ctx.runId} sessionId=${options.sessionId || "none"} toolCallId=${toolCallId}`);
+      return {
+        finalContent: cleanText,
+        shouldContinue: false,
+        hasRunStage2,
+        exitCause: "natural_stop",
+        awaitUserRequested: true,
+      };
+    }
+
     if (ctx.personaSwitchRequested) {
       const iterationResults = ctx.resolvedToolCalls.slice(resolvedToolCallsBeforeIteration);
       const resultsById = new Map(iterationResults.map((call) => [call.id, call]));
@@ -2532,6 +2553,16 @@ export class AgentExecutor extends EventEmitter {
           hasRunStage2,
           continuationType: "tool_call",
           personaSwitchRequested: true,
+        };
+      }
+      if (continuation === "await_user") {
+        ctx.publish("tool_use_pause", { content: "" });
+        return {
+          finalContent: cleanText,
+          shouldContinue: false,
+          hasRunStage2,
+          exitCause: "natural_stop",
+          awaitUserRequested: true,
         };
       }
 

@@ -45,7 +45,7 @@ export async function registerVoiceRoutes(app: Express) {
       }));
       const toolExecutor = async (name: string, args: Record<string, any>) => {
         const r = await executeTool(name, `query-${Date.now()}`, args);
-        return { result: r.result, error: r.error, sideEffectOnly: r.sideEffectOnly };
+        return { result: r.result, error: r.error, sideEffectOnly: r.sideEffectOnly, continuation: r.continuation };
       };
 
       const result = await agentExecutor.run({

@@ -240,8 +240,8 @@ Tool execution flows through exactly one owner per invocation, determined at run
 ### Unified Tool Executor
 `tool-execution.ts` provides `createToolExecutor(middlewares[], ctx)` — a middleware chain pattern where voice-specific concerns (session.end interception, park_idea source injection, journal logging, correlation IDs) are middleware functions composed at the call site, not a parallel execution path. An always-on idempotency guard keyed by `(runId, toolCallId)` prevents duplicate execution even if the structural fix has a gap.
 
-### Controlled Mid-Turn Persona Handoff
-A successful chat `orient` call that changes persona may request the internal `persona_switch` continuation discriminant. This is the only tool-triggered same-run model boundary. The SDK adapter waits for all observed active tool executions and correlation IDs to settle, records every tool result, obtains the old query's interrupt acknowledgment, closes that iterator, and hands control back to `AgentExecutor`. The chat caller must then reassemble the canonical session context, reroute from the session persona/tier, update the current assistant draft persona, and publish `model_info` before the next executor iteration. The run ID, assistant message, accumulated content, and tool history remain unchanged. Voice does not opt into this discriminant until its context and TTS pipeline can refresh atomically.
+### Controlled Tool Continuations
+Tool handlers may return an internal continuation discriminant when ordinary post-tool model continuation would violate the interaction contract. `persona_switch` interrupts the old provider query, refreshes context/model/persona, and continues the same run. `await_user` interrupts the provider query after persisting the tool call, then ends the run successfully so a later user message starts a new turn. The SDK adapter waits for observed tool executions and correlation IDs to settle before interrupting and closing the iterator. Do not emulate either boundary with prompt instructions, side-effect-only classification, or client state.
 
 ### Tool Output Artifact Layer
 `tool-output-artifacts.ts` enforces the context-budget invariant for tool results. `AgentExecutor` wraps the active `toolExecutor` before SDK handoff and also bounds executor-owned fallback results before they are persisted, streamed, or appended as `tool_result` blocks. Results over the configured inline budget are stored through `indexed_content`/object storage using heuristic indexing, and the transcript receives a compact archived-output reference plus preview. Context reconstruction must treat those references as opaque unless the model explicitly calls `indexed_content` to read a section.
@@ -272,7 +272,7 @@ Git write actions (clone, add, commit, push, create_pr, merge_pr, delete_branch)
 The `gitWriteOverride` field on session metadata is retained as an admin escape hatch for disabling writes on specific sessions.
 
 ### Invocation Paths
-1. **Chat (sdk_owned)** — `AgentExecutor.run()` → SDK calls the route-provided `toolExecutor` → `executeTool()`. A successful persona-changing `orient` may end the provider query at the controlled continuation boundary described above.
+1. **Chat (sdk_owned)** — `AgentExecutor.run()` → SDK calls the route-provided `toolExecutor` → `executeTool()`. Tool-triggered `persona_switch` and `await_user` boundaries use the controlled continuation protocol above.
 2. **Voice (sdk_owned)** — `AgentExecutor.run()` → SDK calls `toolExecutor` → `createToolExecutor(voiceMiddlewares)` → middleware chain → `executeTool()`. No batching, no write-ordering. `pendingToolCalls` stays empty.
 3. **UI/REST** — `POST /api/agent/tools/:toolName` → `executeBridgeTool()`
 

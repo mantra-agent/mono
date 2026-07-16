@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { MessageList } from "@/components/message-list";
 import { MeetingHeaderBar } from "@/components/meeting-header-bar";
 import { WorkflowStickyBar } from "@/components/workflow-sticky-bar";
-import type { MeetingSessionMeta } from "@shared/models/chat";
+import type { MeetingSessionMeta, QuestionResponseMeta } from "@shared/models/chat";
 import type { ChatMessage as Message } from "@/components/chat-shared";
 import type { PendingChatTurn } from "@/hooks/use-chat-send";
 import type { SessionStreamMap } from "@/hooks/use-session-subscription";
@@ -46,6 +46,9 @@ export interface SessionTranscriptSurfaceProps {
   className?: string;
   listClassName?: string;
   compactReferences?: boolean;
+  questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
+  questionSubmissionDisabled?: boolean;
+  onQuestionSubmit?: (response: QuestionResponseMeta) => Promise<boolean>;
 }
 
 const TERMINAL_WORKFLOW_STATUSES = new Set(["completed", "failed", "canceled"]);
@@ -81,6 +84,9 @@ export function SessionTranscriptSurface({
   className,
   listClassName,
   compactReferences = false,
+  questionResponses,
+  questionSubmissionDisabled,
+  onQuestionSubmit,
 }: SessionTranscriptSurfaceProps) {
   const showPlan = false;
   const showWorkflow =
@@ -145,6 +151,9 @@ export function SessionTranscriptSurface({
             liveStreamRenderId={liveStreamRenderId}
             sessionStreams={sessionStreams}
             compactReferences={compactReferences}
+            questionResponses={questionResponses}
+            questionSubmissionDisabled={questionSubmissionDisabled}
+            onQuestionSubmit={onQuestionSubmit}
           />
         </div>
       </div>
