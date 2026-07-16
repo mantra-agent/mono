@@ -84,16 +84,19 @@ function getLastAssistantText(content: StreamingContent | null): string {
   return textSegments.join("").trim();
 }
 
-type VoiceInputDisplay = { text: string; state: "empty" | "active" | "committed" };
+type VoiceInputDisplay = { text: string; state: "empty" | "active" };
 
 function getVoiceInputDisplay(transcript: VoiceTranscriptEntry[]): VoiceInputDisplay {
-  const userEntries = transcript.filter((entry) => entry.source === "user" && entry.status === "provisional" && entry.message.trim().length > 0);
+  const userEntries = transcript.filter((entry) => entry.source === "user" && !entry.isToolCall && entry.message.trim().length > 0);
   if (userEntries.length === 0) return { text: "", state: "empty" };
 
   const latest = userEntries[userEntries.length - 1];
+  if (latest.status !== "provisional") return { text: "", state: "empty" };
+
   const latestTurnKey = latest.turnKey;
   const latestTurnId = latest.turnId;
   const sameTurn = userEntries.filter((entry) => {
+    if (entry.status !== "provisional") return false;
     if (latestTurnKey) return entry.turnKey === latestTurnKey;
     if (latestTurnId) return entry.turnId === latestTurnId;
     return entry === latest;
@@ -105,7 +108,7 @@ function getVoiceInputDisplay(transcript: VoiceTranscriptEntry[]): VoiceInputDis
   const displayEntry = bySequence.at(-1) ?? sameTurn.at(-1) ?? latest;
   return {
     text: displayEntry.message,
-    state: displayEntry.status === "committed" ? "committed" : "active",
+    state: "active",
   };
 }
 
@@ -879,7 +882,7 @@ export function BottomBar({
                   "focus:border-ring focus:ring-1 focus:ring-ring",
                   "disabled:cursor-not-allowed",
                   voiceActive
-                    ? cn("disabled:opacity-100", voiceInputDisplay.state === "committed" ? "text-muted-foreground" : "text-foreground")
+                    ? cn("disabled:opacity-100", voiceInputDisplay.state === "active" ? "text-active" : "text-muted-foreground")
                     : "disabled:opacity-50",
                   "overflow-hidden",
                 )}
