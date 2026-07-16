@@ -87,10 +87,15 @@ export interface ToolResult {
   result: string;
   error?: boolean;
   sideEffectOnly?: boolean;
+  continuation?: import("./agent-executor").ToolContinuation;
   durationMs: number;
 }
 
-export type ToolHandler = (args: Record<string, any>) => Promise<{ result: string; error?: boolean }>;
+export type ToolHandler = (args: Record<string, any>) => Promise<{
+  result: string;
+  error?: boolean;
+  continuation?: import("./agent-executor").ToolContinuation;
+}>;
 type ToolHandlerResult = { result: string; error?: boolean; data?: Record<string, unknown> };
 
 const PEOPLE_AGENDA_SURFACE_LIMIT = 3;
@@ -3873,6 +3878,11 @@ async function buildWarmStartBrief(opts: {
 }
 
 export const bridgeHandlers: Record<string, ToolHandler> = {
+
+  async question(args) {
+    const { handleQuestion } = await import("./tools/question");
+    return handleQuestion(args);
+  },
 
   async plan(args) {
     const { handlePlan } = await import("./tools/plan");

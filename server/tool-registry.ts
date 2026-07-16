@@ -348,6 +348,35 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: ["action"],
     },
   },
+  question: {
+    description: "Ask the user one bounded clarification question as an inline Session Window widget, then stop and wait for their response. Use only when the answer cannot be inferred from available context. This is not a durable Decision record.",
+    category: "communication",
+    parameters: {
+      type: "object",
+      properties: {
+        question: { type: "string", description: "The concise question to present." },
+        options: {
+          type: "array",
+          minItems: 2,
+          maxItems: 8,
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string", description: "Stable short option ID." },
+              label: { type: "string", description: "User-visible answer label." },
+              description: { type: "string", description: "Optional concise supporting detail." },
+            },
+            required: ["id", "label"],
+          },
+          description: "Two to eight discrete choices.",
+        },
+        selectionMode: { type: "string", enum: ["single", "multiple"], description: "single by default; multiple allows more than one choice." },
+        allowOther: { type: "boolean", description: "Allow a free-text Other answer, default false." },
+        reasoning: { type: "string", description: "Why this clarification is necessary right now." },
+      },
+      required: ["question", "options"],
+    },
+  },
   phone_call: {
     description: "Prepare or confirm a user-initiated outbound phone call. Always prepare first to resolve the person and show a confirmation chip. Confirm only after the user presses Call.",
     category: "communication",
