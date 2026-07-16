@@ -2,7 +2,6 @@ import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MessageList } from "@/components/message-list";
 import { MeetingHeaderBar } from "@/components/meeting-header-bar";
-import { PlanStickyBar } from "@/components/plan-sticky-bar";
 import { WorkflowStickyBar } from "@/components/workflow-sticky-bar";
 import type { MeetingSessionMeta } from "@shared/models/chat";
 import type { ChatMessage as Message } from "@/components/chat-shared";
@@ -11,8 +10,10 @@ import type { SessionStreamMap } from "@/hooks/use-session-subscription";
 import type { StreamingContent } from "@shared/streaming-types";
 import type { VoiceTranscriptEntry } from "@/hooks/use-voice-session";
 
-type ActivePlan = React.ComponentProps<typeof PlanStickyBar>["plan"];
-type ActiveWorkflow = React.ComponentProps<typeof WorkflowStickyBar>["workflow"];
+type ActivePlan = { id: string; status: string } & Record<string, unknown>;
+type ActiveWorkflow = React.ComponentProps<
+  typeof WorkflowStickyBar
+>["workflow"];
 
 export interface SessionTranscriptSurfaceProps {
   activeSession: string;
@@ -47,7 +48,6 @@ export interface SessionTranscriptSurfaceProps {
   compactReferences?: boolean;
 }
 
-const TERMINAL_PLAN_STATUSES = new Set(["completed", "completed_with_failures", "failed", "aborted"]);
 const TERMINAL_WORKFLOW_STATUSES = new Set(["completed", "failed", "canceled"]);
 
 export function SessionTranscriptSurface({
@@ -82,13 +82,24 @@ export function SessionTranscriptSurface({
   listClassName,
   compactReferences = false,
 }: SessionTranscriptSurfaceProps) {
-  const showPlan = !!plan && !TERMINAL_PLAN_STATUSES.has(plan.status);
-  const showWorkflow = !!workflow && !TERMINAL_WORKFLOW_STATUSES.has(workflow.run.status);
-  const workflowOwnsPlan = !!showPlan && !!showWorkflow && workflow.linked?.planId === plan.id;
+  const showPlan = false;
+  const showWorkflow =
+    !!workflow && !TERMINAL_WORKFLOW_STATUSES.has(workflow.run.status);
+  const workflowOwnsPlan =
+    !!showPlan && !!showWorkflow && workflow.linked?.planId === plan.id;
 
   return (
-    <div className={cn("flex flex-col flex-1 min-h-0 overflow-hidden", className)} data-testid="session-transcript-surface">
-      {meeting && <MeetingHeaderBar meeting={meeting} sessionId={activeSession} sessionTitle={sessionTitle} />}
+    <div
+      className={cn("flex flex-col flex-1 min-h-0 overflow-hidden", className)}
+      data-testid="session-transcript-surface"
+    >
+      {meeting && (
+        <MeetingHeaderBar
+          meeting={meeting}
+          sessionId={activeSession}
+          sessionTitle={sessionTitle}
+        />
+      )}
       {!wsConnected && sessionStatus === "streaming" && !voiceActive && (
         <div
           className="flex items-center gap-2 px-4 py-2 bg-warning/5 dark:bg-warning/5 border-b border-warning/20 text-warning-foreground text-xs"
@@ -98,9 +109,12 @@ export function SessionTranscriptSurface({
           <span>Real-time connection interrupted — updates may be delayed</span>
         </div>
       )}
-      {showWorkflow && workflowOwnsPlan && <WorkflowStickyBar workflow={workflow} />}
-      {showPlan && <PlanStickyBar plan={plan} sessionId={activeSession} />}
-      {showWorkflow && !workflowOwnsPlan && <WorkflowStickyBar workflow={workflow} />}
+      {showWorkflow && workflowOwnsPlan && (
+        <WorkflowStickyBar workflow={workflow} />
+      )}
+      {showWorkflow && !workflowOwnsPlan && (
+        <WorkflowStickyBar workflow={workflow} />
+      )}
       <div
         ref={scrollContainerRef}
         className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [overflow-anchor:none] scrollbar-thin"
@@ -108,7 +122,9 @@ export function SessionTranscriptSurface({
         onTouchMove={onUserScrollIntent}
         onScroll={onScroll}
       >
-        <div className={cn("space-y-6 p-4 pb-4 overflow-hidden", listClassName)}>
+        <div
+          className={cn("space-y-6 p-4 pb-4 overflow-hidden", listClassName)}
+        >
           <MessageList
             messages={messages}
             streaming={streaming}

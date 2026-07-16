@@ -1,8 +1,21 @@
 // Use createLogger for logging ONLY
 import { createLogger } from "@/lib/logger";
 import { cn } from "@/lib/utils";
-import { formatDiagnosticError, formatDiagnosticValue } from "@/lib/diagnostic-error";
-import { useState, useEffect, useCallback, useRef, useLayoutEffect, useMemo, memo, createContext, useContext } from "react";
+import {
+  formatDiagnosticError,
+  formatDiagnosticValue,
+} from "@/lib/diagnostic-error";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useLayoutEffect,
+  useMemo,
+  memo,
+  createContext,
+  useContext,
+} from "react";
 import { Link } from "wouter";
 import { formatCost, formatTokens } from "@/lib/format-utils";
 import {
@@ -54,24 +67,43 @@ import { resolveToolIcon } from "@/lib/tool-icons";
 import { resolvePersonaIcon } from "@/lib/persona-icons";
 import { Button } from "@/components/ui/button";
 import { apiRequest } from "@/lib/queryClient";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { AssistantMessageState, ChatStreamEvent, ToolCallInfo, ChildSessionBlockMeta, CrossSessionMeta, CompactionMeta, PageContext, SystemStepRecord } from "@shared/models/chat";
+import type {
+  AssistantMessageState,
+  ChatStreamEvent,
+  ToolCallInfo,
+  ChildSessionBlockMeta,
+  CrossSessionMeta,
+  CompactionMeta,
+  PageContext,
+  SystemStepRecord,
+} from "@shared/models/chat";
 import { SYSTEM_STEP_META } from "@shared/event-catalog";
 
-import type { ExecutionStep, MessageSegment, StreamingContent } from "@shared/streaming-types";
+import type {
+  ExecutionStep,
+  MessageSegment,
+  StreamingContent,
+} from "@shared/streaming-types";
 import { initialStreamingContent } from "@shared/streaming-types";
 import { SegmentStream } from "@/components/segment-stream";
 
-
-
 /** Filter execution steps by visibility layer. */
-export function filterStepsByLayer(steps: ExecutionStep[], layer: 1 | 2 | 3 | 4, isActiveSession?: boolean): ExecutionStep[] {
+export function filterStepsByLayer(
+  steps: ExecutionStep[],
+  layer: 1 | 2 | 3 | 4,
+  isActiveSession?: boolean,
+): ExecutionStep[] {
   if (layer === 4) return steps;
 
-  return steps.filter(step => {
+  return steps.filter((step) => {
     if (step.type === "compacting") {
       // Legacy compacting events are still journaled for replay/debugging, but
       // the user-facing signal is the amber working_context_compression system
@@ -80,19 +112,25 @@ export function filterStepsByLayer(steps: ExecutionStep[], layer: 1 | 2 | 3 | 4,
     }
 
     if (step.type === "system") {
-      if (step.systemStepName === "working_context_compression") return layer >= 2;
+      if (step.systemStepName === "working_context_compression")
+        return layer >= 2;
       if (step.systemStepName === "compaction") return layer >= 2;
-      if (step.systemStepName?.startsWith("voice_error") ||
-          step.systemStepName === "voice_disconnect" ||
-          step.systemStepName === "voice_reconnect_attempt" ||
-          step.systemStepName === "voice_reconnect_result" ||
-          step.systemStepName === "voice_reconnect_exhausted") return layer >= 2;
+      if (
+        step.systemStepName?.startsWith("voice_error") ||
+        step.systemStepName === "voice_disconnect" ||
+        step.systemStepName === "voice_reconnect_attempt" ||
+        step.systemStepName === "voice_reconnect_result" ||
+        step.systemStepName === "voice_reconnect_exhausted"
+      )
+        return layer >= 2;
       return layer >= 4;
     }
 
     if (step.type === "thinking") {
       if (layer <= 2) {
-        return isActiveSession && step.status === "active" && !step.thinking?.trim();
+        return (
+          isActiveSession && step.status === "active" && !step.thinking?.trim()
+        );
       }
       return layer >= 3;
     }
@@ -112,13 +150,16 @@ import { useVisibilityLayer } from "@/hooks/use-visibility-layer";
 import { ReferenceText } from "@/components/references/reference-text";
 import type { ReferenceSurface } from "@/components/references/reference-renderer";
 import { EmailDraftWidget } from "@/components/email-draft-widget";
+import { PlanWidget } from "@/components/plan-widget";
+import type { PlanData } from "@/components/plan-shared";
 import { parseReferenceText } from "@shared/reference-parser";
 
 const log = createLogger("ChatShared");
 
 export type { ChatStreamEvent, ToolCallInfo };
 
-const EXPRESSION_TAG_REGEX = /(?:<[a-z][a-z\s,/]*>|(?<!!)\[[a-z][a-z\s,/]*\])/gi;
+const EXPRESSION_TAG_REGEX =
+  /(?:<[a-z][a-z\s,/]*>|(?<!!)\[[a-z][a-z\s,/]*\])/gi;
 const VISIBLE_EXPRESSION_TAGS = new Set([
   "excited",
   "calm",
@@ -136,7 +177,10 @@ export function stripExpressionTags(text: string): string {
   return text.replace(EXPRESSION_TAG_REGEX, "").replace(/  +/g, " ").trim();
 }
 
-function parseLeadingExpressionTags(text: string): { tags: string[]; remaining: string } {
+function parseLeadingExpressionTags(text: string): {
+  tags: string[];
+  remaining: string;
+} {
   const tags: string[] = [];
   let remaining = text;
 
@@ -154,13 +198,12 @@ function parseLeadingExpressionTags(text: string): { tags: string[]; remaining: 
   return { tags, remaining };
 }
 
-const MESSAGE_TIMESTAMP_REGEX = /^\s*\[\d{4}-\d{2}-\d{2} \d{2}:\d{2} [^\]\n]+\]\s*/;
+const MESSAGE_TIMESTAMP_REGEX =
+  /^\s*\[\d{4}-\d{2}-\d{2} \d{2}:\d{2} [^\]\n]+\]\s*/;
 
 export function stripMessageTimestamp(text: string): string {
   return text.replace(MESSAGE_TIMESTAMP_REGEX, "");
 }
-
-
 
 export type SegmentChronologyEntry =
   | { s: "system"; i: number }
@@ -236,11 +279,14 @@ function useModelToTier(): (model: string) => string | null {
     staleTime: 60_000,
   });
 
-  return useCallback((model: string) => {
-    if (!data?.tiers) return null;
-    const tier = data.tiers.find(t => t.model === model);
-    return tier?.id ?? null;
-  }, [data]);
+  return useCallback(
+    (model: string) => {
+      if (!data?.tiers) return null;
+      const tier = data.tiers.find((t) => t.model === model);
+      return tier?.id ?? null;
+    },
+    [data],
+  );
 }
 
 function ModelTierBadge({ model }: { model: string | null }) {
@@ -254,12 +300,17 @@ function ModelTierBadge({ model }: { model: string | null }) {
   const label = TIER_LABEL_MAP[tierId];
   if (!Icon || !label) return null;
 
-  const shortModel = model.includes("/") ? model.split("/").slice(1).join("/") : model;
+  const shortModel = model.includes("/")
+    ? model.split("/").slice(1).join("/")
+    : model;
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span className="inline-flex items-center" data-testid={`badge-model-tier-${tierId}`}>
+        <span
+          className="inline-flex items-center"
+          data-testid={`badge-model-tier-${tierId}`}
+        >
           <Icon className="h-2.5 w-2.5" />
         </span>
       </TooltipTrigger>
@@ -275,28 +326,50 @@ export type { ExecutionStep, MessageSegment } from "@shared/streaming-types";
 export type { StreamingSource } from "@shared/streaming-types";
 export type { ExecutionStepType } from "@shared/streaming-types";
 
-
-
 function getToolSummary(toolName: string, args?: Record<string, any>): string {
   const name = toolName.toLowerCase();
   if (args) {
     if (args.command) {
-      const cmdStr = typeof args.command === "string" ? args.command : String(args.command);
+      const cmdStr =
+        typeof args.command === "string" ? args.command : String(args.command);
       const cmd = cmdStr.slice(0, 60);
       return `Running \`${cmd}${cmdStr.length > 60 ? "..." : ""}\``;
     }
     if (args.action) {
       const action = String(args.action);
       const targetKeys = [
-        "title", "name", "shortName", "query", "file", "path", "fileName",
-        "filePath", "file_path", "filename", "summary", "claim", "key",
-        "subject", "to", "id", "goalId", "actorId", "slug", "target",
-        "symbol_name", "url", "content"
+        "title",
+        "name",
+        "shortName",
+        "query",
+        "file",
+        "path",
+        "fileName",
+        "filePath",
+        "file_path",
+        "filename",
+        "summary",
+        "claim",
+        "key",
+        "subject",
+        "to",
+        "id",
+        "goalId",
+        "actorId",
+        "slug",
+        "target",
+        "symbol_name",
+        "url",
+        "content",
       ];
       let target = "";
       for (const k of targetKeys) {
         const v = args[k];
-        if (v && k !== "action" && (typeof v === "string" || typeof v === "number")) {
+        if (
+          v &&
+          k !== "action" &&
+          (typeof v === "string" || typeof v === "number")
+        ) {
           const val = String(v);
           target = val.length > 60 ? val.slice(0, 57) + "..." : val;
           break;
@@ -307,10 +380,14 @@ function getToolSummary(toolName: string, args?: Record<string, any>): string {
     }
     if (args.path || args.file_path || args.filename) {
       const filePath = args.path || args.file_path || args.filename;
-      if (name.includes("read") || name.includes("view")) return `Reading ${filePath}`;
-      if (name.includes("write") || name.includes("create")) return `Writing ${filePath}`;
-      if (name.includes("edit") || name.includes("update")) return `Editing ${filePath}`;
-      if (name.includes("delete") || name.includes("remove")) return `Deleting ${filePath}`;
+      if (name.includes("read") || name.includes("view"))
+        return `Reading ${filePath}`;
+      if (name.includes("write") || name.includes("create"))
+        return `Writing ${filePath}`;
+      if (name.includes("edit") || name.includes("update"))
+        return `Editing ${filePath}`;
+      if (name.includes("delete") || name.includes("remove"))
+        return `Deleting ${filePath}`;
     }
     if (args.query || args.search || args.pattern) {
       const q = args.query || args.search || args.pattern;
@@ -320,9 +397,24 @@ function getToolSummary(toolName: string, args?: Record<string, any>): string {
       return `Fetching ${args.url}`;
     }
   }
-  const prettyName = toolName.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/\b\w/g, c => c.toUpperCase());
+  const prettyName = toolName
+    .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
   if (args) {
-    const fallbackKeys = ["action", "command", "query", "search", "pattern", "subcommand", "op", "operation", "mode", "kind", "type"];
+    const fallbackKeys = [
+      "action",
+      "command",
+      "query",
+      "search",
+      "pattern",
+      "subcommand",
+      "op",
+      "operation",
+      "mode",
+      "kind",
+      "type",
+    ];
     for (const k of fallbackKeys) {
       const v = args[k];
       if (v && (typeof v === "string" || typeof v === "number")) {
@@ -347,7 +439,9 @@ function truncateResult(result: any, maxLen = 200): string {
   }
 }
 
-function formatArgsAsKeyValue(args: Record<string, any>): { key: string; value: string }[] {
+function formatArgsAsKeyValue(
+  args: Record<string, any>,
+): { key: string; value: string }[] {
   return Object.entries(args).map(([key, value]) => ({
     key,
     value: typeof value === "string" ? value : JSON.stringify(value, null, 2),
@@ -359,21 +453,36 @@ function formatFullResult(result: any): string {
 }
 
 function formatToolError(error: unknown, result: unknown): string {
-  return formatDiagnosticError(error, result, "Tool call failed without an error message.");
+  return formatDiagnosticError(
+    error,
+    result,
+    "Tool call failed without an error message.",
+  );
 }
 
-function getToolErrorText(tool: Pick<ToolCallInfo, "error" | "result">): string | undefined {
+function getToolErrorText(
+  tool: Pick<ToolCallInfo, "error" | "result">,
+): string | undefined {
   if (!tool.error) return undefined;
   return formatToolError(tool.error, tool.result);
 }
 
-function extractToolComment(toolName: string, args?: Record<string, any>): string | null {
+function extractToolComment(
+  toolName: string,
+  args?: Record<string, any>,
+): string | null {
   if (!args) return null;
   if (typeof args.reasoning === "string" && args.reasoning.trim()) {
     return args.reasoning.trim();
   }
   const name = toolName.toLowerCase();
-  if (name === "shell" || name === "bash" || name === "exec" || name === "run_command" || name === "execute_command") {
+  if (
+    name === "shell" ||
+    name === "bash" ||
+    name === "exec" ||
+    name === "run_command" ||
+    name === "execute_command"
+  ) {
     const cmd = args.command;
     if (typeof cmd === "string") {
       const match = cmd.match(/^\s*#\s*(.+)/);
@@ -383,42 +492,123 @@ function extractToolComment(toolName: string, args?: Record<string, any>): strin
   return null;
 }
 
-type PhoneConfirmationResult = { kind: "phone_call_confirmation"; status: "awaiting_confirmation"; confirmationToken: string; personId: string; personName: string; phoneNumber: string; expiresAt: string };
+type PhoneConfirmationResult = {
+  kind: "phone_call_confirmation";
+  status: "awaiting_confirmation";
+  confirmationToken: string;
+  personId: string;
+  personName: string;
+  phoneNumber: string;
+  expiresAt: string;
+};
 
-function parsePhoneConfirmation(result: unknown): PhoneConfirmationResult | null {
+function parsePhoneConfirmation(
+  result: unknown,
+): PhoneConfirmationResult | null {
   try {
     const value = typeof result === "string" ? JSON.parse(result) : result;
-    if (!value || typeof value !== "object" || (value as { kind?: string }).kind !== "phone_call_confirmation") return null;
+    if (
+      !value ||
+      typeof value !== "object" ||
+      (value as { kind?: string }).kind !== "phone_call_confirmation"
+    )
+      return null;
     return value as PhoneConfirmationResult;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
-function PhoneCallConfirmationChip({ confirmation }: { confirmation: PhoneConfirmationResult }) {
-  const [state, setState] = useState<"ready" | "calling" | "called" | "error">("ready");
+function PhoneCallConfirmationChip({
+  confirmation,
+}: {
+  confirmation: PhoneConfirmationResult;
+}) {
+  const [state, setState] = useState<"ready" | "calling" | "called" | "error">(
+    "ready",
+  );
   const [detail, setDetail] = useState("");
   const confirm = async () => {
     setState("calling");
     try {
       const response = await apiRequest("POST", "/api/agent/tools/phone_call", {
-        arguments: { action: "confirm", confirmationToken: confirmation.confirmationToken, reasoning: `User confirmed calling ${confirmation.personName}` },
+        arguments: {
+          action: "confirm",
+          confirmationToken: confirmation.confirmationToken,
+          reasoning: `User confirmed calling ${confirmation.personName}`,
+        },
       });
-      const body = await response.json() as { result?: string; error?: boolean };
+      const body = (await response.json()) as {
+        result?: string;
+        error?: boolean;
+      };
       if (body.error) throw new Error(body.result || "Call failed");
-      const result = body.result ? JSON.parse(body.result) as { status?: string } : {};
+      const result = body.result
+        ? (JSON.parse(body.result) as { status?: string })
+        : {};
       setDetail(result.status ? `Call ${result.status}` : "Call started");
       setState("called");
-    } catch (error) { setDetail(error instanceof Error ? error.message : "Call failed"); setState("error"); }
+    } catch (error) {
+      setDetail(error instanceof Error ? error.message : "Call failed");
+      setState("error");
+    }
   };
   return (
-    <div className="ml-7 my-2 flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2" data-testid="phone-call-confirmation">
-      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-active/10"><Phone className="h-4 w-4 text-active" /></div>
-      <div className="min-w-0 flex-1"><div className="text-sm font-medium">Call {confirmation.personName}?</div><div className="text-xs text-muted-foreground">{confirmation.phoneNumber}</div>{detail && <div className={`text-xs ${state === "error" ? "text-error" : "text-success"}`}>{detail}</div>}</div>
-      <Button size="sm" onClick={confirm} disabled={state !== "ready"} data-testid="button-confirm-phone-call">{state === "calling" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : state === "called" ? "Called" : "Call"}</Button>
+    <div
+      className="ml-7 my-2 flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2"
+      data-testid="phone-call-confirmation"
+    >
+      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-active/10">
+        <Phone className="h-4 w-4 text-active" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium">
+          Call {confirmation.personName}?
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {confirmation.phoneNumber}
+        </div>
+        {detail && (
+          <div
+            className={`text-xs ${state === "error" ? "text-error" : "text-success"}`}
+          >
+            {detail}
+          </div>
+        )}
+      </div>
+      <Button
+        size="sm"
+        onClick={confirm}
+        disabled={state !== "ready"}
+        data-testid="button-confirm-phone-call"
+      >
+        {state === "calling" ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : state === "called" ? (
+          "Called"
+        ) : (
+          "Call"
+        )}
+      </Button>
     </div>
   );
 }
 
-function ToolStepRow({ step, iconOverrides, summaryOnly, layer, children = [], depth = 0 }: { step: ExecutionStep; iconOverrides?: Record<string, string>; summaryOnly?: boolean; layer?: 1 | 2 | 3 | 4; children?: ExecutionStep[]; depth?: number }) {
+function ToolStepRow({
+  step,
+  iconOverrides,
+  summaryOnly,
+  layer,
+  children = [],
+  depth = 0,
+}: {
+  step: ExecutionStep;
+  iconOverrides?: Record<string, string>;
+  summaryOnly?: boolean;
+  layer?: 1 | 2 | 3 | 4;
+  children?: ExecutionStep[];
+  depth?: number;
+}) {
   const [expanded, setExpanded] = useState(false);
   const ToolIcon = resolveToolIcon(step.toolName || "", iconOverrides);
   const isActive = step.status === "active";
@@ -434,47 +624,81 @@ function ToolStepRow({ step, iconOverrides, summaryOnly, layer, children = [], d
   const reasoning = step.arguments?.reasoning;
   const hasReasoning = typeof reasoning === "string" && reasoning.trim();
   const comment = extractToolComment(rawToolName, step.arguments);
-  const toolLabel = (effectiveLayer <= 3 && comment) ? comment : rawToolName;
+  const toolLabel = effectiveLayer <= 3 && comment ? comment : rawToolName;
   const isDetailLayer = effectiveLayer === 2;
 
-  const iconColor = isError ? "text-error" : isDone ? "text-success" : isActive ? "text-active" : "text-info";
-  const bgColor = isError ? "bg-error/10" : isDone ? "bg-success/10" : isActive ? "bg-active/15" : "bg-info/15";
+  const iconColor = isError
+    ? "text-error"
+    : isDone
+      ? "text-success"
+      : isActive
+        ? "text-active"
+        : "text-info";
+  const bgColor = isError
+    ? "bg-error/10"
+    : isDone
+      ? "bg-success/10"
+      : isActive
+        ? "bg-active/15"
+        : "bg-info/15";
   const canExpand = !summaryOnly && (isDone || isError) && !isDetailLayer;
 
-  const phoneConfirmation = rawToolName === "phone_call" && isDone ? parsePhoneConfirmation(step.result) : null;
+  const phoneConfirmation =
+    rawToolName === "phone_call" && isDone
+      ? parsePhoneConfirmation(step.result)
+      : null;
 
   const filteredArgs = step.arguments
-    ? Object.fromEntries(Object.entries(step.arguments).filter(([k]) => k !== "reasoning"))
+    ? Object.fromEntries(
+        Object.entries(step.arguments).filter(([k]) => k !== "reasoning"),
+      )
     : {};
 
   return (
-    <div className="animate-in fade-in slide-in-from-bottom-1 duration-200" data-testid={`timeline-step-${step.id}`}>
+    <div
+      className="animate-in fade-in slide-in-from-bottom-1 duration-200"
+      data-testid={`timeline-step-${step.id}`}
+    >
       <div
-        className={`flex items-center gap-2 text-xs py-1 ${canExpand ? "cursor-pointer rounded-md hover-elevate" : ""}`} style={{ paddingLeft: `${6 + depth * 20}px` }}
+        className={`flex items-center gap-2 text-xs py-1 ${canExpand ? "cursor-pointer rounded-md hover-elevate" : ""}`}
+        style={{ paddingLeft: `${6 + depth * 20}px` }}
         onClick={canExpand ? () => setExpanded(!expanded) : undefined}
         data-testid={`button-expand-tool-${step.id}`}
       >
-        <div className={`relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 ${bgColor}`}>
+        <div
+          className={`relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 ${bgColor}`}
+        >
           <ToolIcon className={`h-3 w-3 ${iconColor}`} />
-          {isActive && <span className="absolute inset-0 rounded-full animate-ping bg-active/20" />}
+          {isActive && (
+            <span className="absolute inset-0 rounded-full animate-ping bg-active/20" />
+          )}
         </div>
         <div className="flex-1 min-w-0">
           {isDetailLayer ? (
             <>
               {hasReasoning ? (
-                <span className={`break-words whitespace-normal block ${isActive ? "text-foreground" : "text-muted-foreground"}`}>
+                <span
+                  className={`break-words whitespace-normal block ${isActive ? "text-foreground" : "text-muted-foreground"}`}
+                >
                   {reasoning}
                 </span>
               ) : (
                 <span className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-xs text-muted-foreground/40 font-mono">{rawToolName}</span>
-                  <span className={`truncate ${isActive ? "text-foreground" : "text-muted-foreground"}`}>
+                  <span className="text-xs text-muted-foreground/40 font-mono">
+                    {rawToolName}
+                  </span>
+                  <span
+                    className={`truncate ${isActive ? "text-foreground" : "text-muted-foreground"}`}
+                  >
                     {summary}
                   </span>
                 </span>
               )}
               {errorPreview && (
-                <span className="text-xs text-error/80 break-words whitespace-normal block" data-testid={`tool-error-${step.id}`}>
+                <span
+                  className="text-xs text-error/80 break-words whitespace-normal block"
+                  data-testid={`tool-error-${step.id}`}
+                >
                   {errorPreview}
                 </span>
               )}
@@ -482,48 +706,78 @@ function ToolStepRow({ step, iconOverrides, summaryOnly, layer, children = [], d
           ) : (
             <>
               <span className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-xs text-muted-foreground/40 font-mono">{toolLabel}</span>
-                <span className={`truncate ${isActive ? "text-foreground" : "text-muted-foreground"}`}>
+                <span className="text-xs text-muted-foreground/40 font-mono">
+                  {toolLabel}
+                </span>
+                <span
+                  className={`truncate ${isActive ? "text-foreground" : "text-muted-foreground"}`}
+                >
                   {summary}
                 </span>
               </span>
               {!expanded && !summaryOnly && resultPreview && (
-                <span className="text-xs text-muted-foreground/50 truncate block" data-testid={`tool-result-${step.id}`}>
+                <span
+                  className="text-xs text-muted-foreground/50 truncate block"
+                  data-testid={`tool-result-${step.id}`}
+                >
                   {resultPreview}
                 </span>
               )}
               {!expanded && errorPreview && (
-                <span className="text-xs text-error/80 break-words whitespace-normal block" data-testid={`tool-error-${step.id}`}>
+                <span
+                  className="text-xs text-error/80 break-words whitespace-normal block"
+                  data-testid={`tool-error-${step.id}`}
+                >
                   {errorPreview}
                 </span>
               )}
             </>
           )}
         </div>
-        {(isDone || isError) && step.elapsedMs != null && <span className="text-xs tabular-nums font-mono text-muted-foreground/50 whitespace-nowrap">{formatStepElapsed(step.selfTimeMs ?? step.elapsedMs)} self · {formatStepElapsed(step.elapsedMs)} total</span>}
+        {(isDone || isError) && step.elapsedMs != null && (
+          <span className="text-xs tabular-nums font-mono text-muted-foreground/50 whitespace-nowrap">
+            {formatStepElapsed(step.selfTimeMs ?? step.elapsedMs)} self ·{" "}
+            {formatStepElapsed(step.elapsedMs)} total
+          </span>
+        )}
         {canExpand && (
-          <ChevronRight className={`h-3 w-3 text-muted-foreground/40 shrink-0 transition-transform duration-150 ${expanded ? "rotate-90" : ""}`} />
+          <ChevronRight
+            className={`h-3 w-3 text-muted-foreground/40 shrink-0 transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
+          />
         )}
       </div>
-      {phoneConfirmation && <PhoneCallConfirmationChip confirmation={phoneConfirmation} />}
+      {phoneConfirmation && (
+        <PhoneCallConfirmationChip confirmation={phoneConfirmation} />
+      )}
       {expanded && (
-        <div className="ml-7 mt-1 mb-2 space-y-2 text-xs" data-testid={`tool-expanded-${step.id}`}>
+        <div
+          className="ml-7 mt-1 mb-2 space-y-2 text-xs"
+          data-testid={`tool-expanded-${step.id}`}
+        >
           {Object.keys(filteredArgs).length > 0 && (
             <div>
-              <span className="text-xs text-muted-foreground/50 font-medium uppercase tracking-wider">Arguments</span>
+              <span className="text-xs text-muted-foreground/50 font-medium uppercase tracking-wider">
+                Arguments
+              </span>
               <div className="mt-0.5 space-y-0.5">
                 {formatArgsAsKeyValue(filteredArgs).map(({ key, value }) => (
                   <div key={key} className="flex gap-2">
-                    <span className="text-muted-foreground/60 font-mono shrink-0">{key}:</span>
-                    <span className="text-muted-foreground break-all whitespace-pre-wrap font-mono">{value}</span>
+                    <span className="text-muted-foreground/60 font-mono shrink-0">
+                      {key}:
+                    </span>
+                    <span className="text-muted-foreground break-all whitespace-pre-wrap font-mono">
+                      {value}
+                    </span>
                   </div>
                 ))}
               </div>
             </div>
           )}
-          {(isDone && step.result != null) && (
+          {isDone && step.result != null && (
             <div>
-              <span className="text-xs text-muted-foreground/50 font-medium uppercase tracking-wider">Result</span>
+              <span className="text-xs text-muted-foreground/50 font-medium uppercase tracking-wider">
+                Result
+              </span>
               <pre className="mt-0.5 text-xs text-muted-foreground bg-muted rounded-md p-2 overflow-x-auto max-h-60 overflow-y-auto whitespace-pre-wrap break-all font-mono">
                 {formatFullResult(step.result)}
               </pre>
@@ -531,7 +785,9 @@ function ToolStepRow({ step, iconOverrides, summaryOnly, layer, children = [], d
           )}
           {isError && errorText && (
             <div>
-              <span className="text-xs text-error/70 font-medium uppercase tracking-wider">Error</span>
+              <span className="text-xs text-error/70 font-medium uppercase tracking-wider">
+                Error
+              </span>
               <pre className="mt-0.5 text-xs text-error/70 bg-error/5 rounded-md p-2 overflow-x-auto max-h-60 overflow-y-auto whitespace-pre-wrap break-all font-mono">
                 {errorText}
               </pre>
@@ -546,22 +802,49 @@ function ToolStepRow({ step, iconOverrides, summaryOnly, layer, children = [], d
 function ThoughtBubble({ step }: { step: ExecutionStep }) {
   const args = step.arguments as Record<string, string> | undefined;
   const thoughtType = args?.type || "pattern";
-  const content = args?.content || (typeof step.result === "string" ? step.result : "");
+  const content =
+    args?.content || (typeof step.result === "string" ? step.result : "");
   const isActive = step.status === "active";
 
-  const badgeConfig: Record<string, { label: string; color: string; bg: string }> = {
-    pattern: { label: "Pattern", color: "text-muted-foreground", bg: "bg-muted/60" },
+  const badgeConfig: Record<
+    string,
+    { label: string; color: string; bg: string }
+  > = {
+    pattern: {
+      label: "Pattern",
+      color: "text-muted-foreground",
+      bg: "bg-muted/60",
+    },
     gap: { label: "Gap", color: "text-muted-foreground", bg: "bg-muted/60" },
-    change: { label: "Change", color: "text-muted-foreground", bg: "bg-muted/60" },
-    connection: { label: "Connection", color: "text-muted-foreground", bg: "bg-muted/60" },
-    opportunity: { label: "Opportunity", color: "text-muted-foreground", bg: "bg-muted/60" },
-    thought: { label: "Thought", color: isActive ? "text-active" : "text-muted-foreground", bg: isActive ? "bg-active/15" : "bg-muted/60" },
+    change: {
+      label: "Change",
+      color: "text-muted-foreground",
+      bg: "bg-muted/60",
+    },
+    connection: {
+      label: "Connection",
+      color: "text-muted-foreground",
+      bg: "bg-muted/60",
+    },
+    opportunity: {
+      label: "Opportunity",
+      color: "text-muted-foreground",
+      bg: "bg-muted/60",
+    },
+    thought: {
+      label: "Thought",
+      color: isActive ? "text-active" : "text-muted-foreground",
+      bg: isActive ? "bg-active/15" : "bg-muted/60",
+    },
   };
   const badge = badgeConfig[thoughtType] || badgeConfig.pattern;
 
   if (!content && isActive) {
     return (
-      <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1" data-testid={`thought-bubble-${step.id}`}>
+      <div
+        className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1"
+        data-testid={`thought-bubble-${step.id}`}
+      >
         <div className="flex items-center gap-1.5">
           <div className="relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 bg-active/15">
             <Eye className="h-3 w-3 text-active" />
@@ -574,11 +857,18 @@ function ThoughtBubble({ step }: { step: ExecutionStep }) {
   }
 
   return (
-    <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1" data-testid={`thought-bubble-${step.id}`}>
+    <div
+      className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1"
+      data-testid={`thought-bubble-${step.id}`}
+    >
       <div className={`rounded-lg ${badge.bg} border border-white/5 px-3 py-2`}>
         <div className="flex items-center gap-1.5 mb-1">
           <Eye className={`h-3 w-3 ${badge.color}`} />
-          <span className={`text-xs font-semibold uppercase tracking-wider ${badge.color}`}>{badge.label}</span>
+          <span
+            className={`text-xs font-semibold uppercase tracking-wider ${badge.color}`}
+          >
+            {badge.label}
+          </span>
         </div>
         <p className="text-xs text-foreground leading-relaxed">{content}</p>
       </div>
@@ -590,9 +880,14 @@ function CompactingStep({ step }: { step: ExecutionStep }) {
   const isDone = step.status === "done";
   const isError = step.status === "error";
   return (
-    <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1" data-testid={`timeline-step-${step.id}`}>
+    <div
+      className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1"
+      data-testid={`timeline-step-${step.id}`}
+    >
       <div className="flex items-center gap-1.5">
-        <div className={`relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 ${isDone ? "bg-success/10" : isError ? "bg-error/10" : "bg-warning/15"}`}>
+        <div
+          className={`relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 ${isDone ? "bg-success/10" : isError ? "bg-error/10" : "bg-warning/15"}`}
+        >
           {isDone ? (
             <Check className="h-3 w-3 text-success" />
           ) : isError ? (
@@ -604,7 +899,11 @@ function CompactingStep({ step }: { step: ExecutionStep }) {
             </>
           )}
         </div>
-        <span className={`text-xs italic ${isError ? "text-error/60" : "text-muted-foreground/60"}`}>{step.thinking || "Compacting context..."}</span>
+        <span
+          className={`text-xs italic ${isError ? "text-error/60" : "text-muted-foreground/60"}`}
+        >
+          {step.thinking || "Compacting context..."}
+        </span>
       </div>
     </div>
   );
@@ -613,7 +912,10 @@ function CompactingStep({ step }: { step: ExecutionStep }) {
 const THINKING_LABEL = "Thinking...";
 function ThinkingWaveText() {
   return (
-    <span className="text-xs italic whitespace-nowrap" aria-label={THINKING_LABEL}>
+    <span
+      className="text-xs italic whitespace-nowrap"
+      aria-label={THINKING_LABEL}
+    >
       {Array.from(THINKING_LABEL).map((char, index) => (
         <span
           key={`${char}-${index}`}
@@ -628,9 +930,20 @@ function ThinkingWaveText() {
   );
 }
 
-export function ActiveThinkingStatus({ startTime, testId, showTimer = true }: { startTime: number; testId?: string; showTimer?: boolean }) {
+export function ActiveThinkingStatus({
+  startTime,
+  testId,
+  showTimer = true,
+}: {
+  startTime: number;
+  testId?: string;
+  showTimer?: boolean;
+}) {
   return (
-    <div className="flex items-center gap-1.5 text-active animate-pulse" data-testid={testId}>
+    <div
+      className="flex items-center gap-1.5 text-active animate-pulse"
+      data-testid={testId}
+    >
       <div className="relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 bg-active/15">
         <Brain className="h-3 w-3" />
         <span className="absolute inset-0 rounded-full animate-ping bg-active/20" />
@@ -654,18 +967,26 @@ function ThinkingNarrative({ step }: { step: ExecutionStep }) {
 
   if (isActive && isGenericThinkingContent(content)) {
     return (
-      <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1" data-testid={`timeline-step-${step.id}`}>
+      <div
+        className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1"
+        data-testid={`timeline-step-${step.id}`}
+      >
         <ActiveThinkingStatus startTime={step.timestamp} />
       </div>
     );
   }
 
   return (
-    <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1" data-testid={`timeline-step-${step.id}`}>
+    <div
+      className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1"
+      data-testid={`timeline-step-${step.id}`}
+    >
       {content ? (
         <div className="text-xs text-muted-foreground/70 italic break-words leading-relaxed prose prose-sm dark:prose-invert max-w-none [&_*]:text-muted-foreground/70 [&_p]:my-0.5 [&_ul]:my-0.5 [&_ol]:my-0.5 [&_li]:my-0 [&_pre]:bg-muted [&_pre]:rounded-md [&_pre]:p-2 [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:text-xs [&_code]:font-mono [&_h1]:text-xs [&_h2]:text-xs [&_h3]:text-xs [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_blockquote]:border-l-muted-foreground/30 [&_a]:text-muted-foreground/70 [&_table]:text-xs">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-          {isActive && <span className="animate-pulse text-active ml-0.5">|</span>}
+          {isActive && (
+            <span className="animate-pulse text-active ml-0.5">|</span>
+          )}
         </div>
       ) : isActive ? (
         <ActiveThinkingStatus startTime={step.timestamp} />
@@ -674,7 +995,13 @@ function ThinkingNarrative({ step }: { step: ExecutionStep }) {
   );
 }
 
-function ThinkingBubble({ step, showTimer = true }: { step: ExecutionStep; showTimer?: boolean }) {
+function ThinkingBubble({
+  step,
+  showTimer = true,
+}: {
+  step: ExecutionStep;
+  showTimer?: boolean;
+}) {
   const content = step.thinking || "";
   const isActive = step.status === "active";
 
@@ -682,25 +1009,44 @@ function ThinkingBubble({ step, showTimer = true }: { step: ExecutionStep; showT
 
   if (isActive && isGenericThinkingContent(content)) {
     return (
-      <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1" data-testid={`thinking-bubble-${step.id}`}>
-        <ActiveThinkingStatus startTime={step.timestamp} showTimer={showTimer} />
+      <div
+        className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1"
+        data-testid={`thinking-bubble-${step.id}`}
+      >
+        <ActiveThinkingStatus
+          startTime={step.timestamp}
+          showTimer={showTimer}
+        />
       </div>
     );
   }
 
   if (!content && isActive) {
     return (
-      <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1" data-testid={`thinking-bubble-${step.id}`}>
-        <ActiveThinkingStatus startTime={step.timestamp} showTimer={showTimer} />
+      <div
+        className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1"
+        data-testid={`thinking-bubble-${step.id}`}
+      >
+        <ActiveThinkingStatus
+          startTime={step.timestamp}
+          showTimer={showTimer}
+        />
       </div>
     );
   }
 
   return (
-    <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1" data-testid={`thinking-bubble-${step.id}`}>
+    <div
+      className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1"
+      data-testid={`thinking-bubble-${step.id}`}
+    >
       <div className="rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-xs italic text-foreground/70 leading-relaxed prose prose-sm dark:prose-invert max-w-none [&_*]:text-foreground/70 [&_p]:my-0.5 [&_ul]:my-0.5 [&_ol]:my-0.5 [&_li]:my-0 [&_pre]:bg-muted [&_pre]:rounded-md [&_pre]:p-2 [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:text-xs [&_code]:font-mono [&_h1]:text-xs [&_h2]:text-xs [&_h3]:text-xs [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-        {isActive && <span className="animate-pulse text-active/70 ml-0.5 not-italic">|</span>}
+        {isActive && (
+          <span className="animate-pulse text-active/70 ml-0.5 not-italic">
+            |
+          </span>
+        )}
       </div>
     </div>
   );
@@ -718,7 +1064,10 @@ function SystemStepTimer({ startTime }: { startTime: number }) {
     return () => clearInterval(interval);
   }, []);
   return (
-    <span className="text-xs tabular-nums font-mono text-muted-foreground/40" data-testid="text-system-step-timer">
+    <span
+      className="text-xs tabular-nums font-mono text-muted-foreground/40"
+      data-testid="text-system-step-timer"
+    >
       {formatStepElapsed(now - startTime)}
     </span>
   );
@@ -784,21 +1133,39 @@ const SYSTEM_STEP_ICONS: Record<string, typeof Brain> = {
   voice_prefix_continuation: RefreshCw,
 };
 
-function getChildren(step: ExecutionStep, allSteps: ExecutionStep[]): ExecutionStep[] {
-  return allSteps.filter(candidate => candidate.parentId === step.id);
+function getChildren(
+  step: ExecutionStep,
+  allSteps: ExecutionStep[],
+): ExecutionStep[] {
+  return allSteps.filter((candidate) => candidate.parentId === step.id);
 }
 
 function getStepDuration(step: ExecutionStep): number | undefined {
   if (step.timingKind === "milestone") return undefined;
-  if (step.startedAt != null && step.endedAt != null) return Math.max(0, step.endedAt - step.startedAt);
+  if (step.startedAt != null && step.endedAt != null)
+    return Math.max(0, step.endedAt - step.startedAt);
   return step.elapsedMs;
 }
 
-function coveredChildDuration(step: ExecutionStep, children: ExecutionStep[]): number {
+function coveredChildDuration(
+  step: ExecutionStep,
+  children: ExecutionStep[],
+): number {
   if (step.startedAt == null || step.endedAt == null) return 0;
   const intervals = children
-    .filter(child => child.timingKind !== "milestone" && child.startedAt != null && child.endedAt != null)
-    .map(child => [Math.max(step.startedAt!, child.startedAt!), Math.min(step.endedAt!, child.endedAt!)] as const)
+    .filter(
+      (child) =>
+        child.timingKind !== "milestone" &&
+        child.startedAt != null &&
+        child.endedAt != null,
+    )
+    .map(
+      (child) =>
+        [
+          Math.max(step.startedAt!, child.startedAt!),
+          Math.min(step.endedAt!, child.endedAt!),
+        ] as const,
+    )
     .filter(([start, end]) => end > start)
     .sort((a, b) => a[0] - b[0]);
   if (intervals.length === 0) return 0;
@@ -806,12 +1173,19 @@ function coveredChildDuration(step: ExecutionStep, children: ExecutionStep[]): n
   let [start, end] = intervals[0];
   for (const [nextStart, nextEnd] of intervals.slice(1)) {
     if (nextStart <= end) end = Math.max(end, nextEnd);
-    else { covered += end - start; start = nextStart; end = nextEnd; }
+    else {
+      covered += end - start;
+      start = nextStart;
+      end = nextEnd;
+    }
   }
   return covered + end - start;
 }
 
-function getStepUnattributedTime(step: ExecutionStep, children: ExecutionStep[]): number | undefined {
+function getStepUnattributedTime(
+  step: ExecutionStep,
+  children: ExecutionStep[],
+): number | undefined {
   const duration = getStepDuration(step);
   if (duration == null || children.length === 0) return undefined;
   if (step.startedAt == null || step.endedAt == null) return step.selfTimeMs;
@@ -820,8 +1194,13 @@ function getStepUnattributedTime(step: ExecutionStep, children: ExecutionStep[])
 
 function hasOverlappingChildren(children: ExecutionStep[]): boolean {
   const intervals = children
-    .filter(child => child.timingKind !== "milestone" && child.startedAt != null && child.endedAt != null)
-    .map(child => [child.startedAt!, child.endedAt!] as const)
+    .filter(
+      (child) =>
+        child.timingKind !== "milestone" &&
+        child.startedAt != null &&
+        child.endedAt != null,
+    )
+    .map((child) => [child.startedAt!, child.endedAt!] as const)
     .sort((a, b) => a[0] - b[0]);
   let latestEnd = Number.NEGATIVE_INFINITY;
   for (const [start, end] of intervals) {
@@ -831,8 +1210,19 @@ function hasOverlappingChildren(children: ExecutionStep[]): boolean {
   return false;
 }
 
-
-function SystemStepRow({ step, layer = 4, children = [], parentStartedAt, depth = 0 }: { step: ExecutionStep; layer?: 1 | 2 | 3 | 4; children?: ExecutionStep[]; parentStartedAt?: number; depth?: number }) {
+function SystemStepRow({
+  step,
+  layer = 4,
+  children = [],
+  parentStartedAt,
+  depth = 0,
+}: {
+  step: ExecutionStep;
+  layer?: 1 | 2 | 3 | 4;
+  children?: ExecutionStep[];
+  parentStartedAt?: number;
+  depth?: number;
+}) {
   const name = step.systemStepName || "unknown";
   const meta = SYSTEM_STEP_META[name];
   const Icon = SYSTEM_STEP_ICONS[name] || Cog;
@@ -840,24 +1230,41 @@ function SystemStepRow({ step, layer = 4, children = [], parentStartedAt, depth 
   const isDone = step.status === "done";
   const isError = step.status === "error";
   const isVoiceDiag = name.startsWith("voice_");
-  const isWorkingCompression = name === "working_context_compression" || step.type === "compacting";
-  const label = isWorkingCompression && layer === 2 ? "Context Compressed" : (meta?.label || name);
-  const showSystemDetail = !!step.systemStepDetail && (!isWorkingCompression || layer >= 3);
+  const isWorkingCompression =
+    name === "working_context_compression" || step.type === "compacting";
+  const label =
+    isWorkingCompression && layer === 2
+      ? "Context Compressed"
+      : meta?.label || name;
+  const showSystemDetail =
+    !!step.systemStepDetail && (!isWorkingCompression || layer >= 3);
   const duration = getStepDuration(step);
   const unattributed = getStepUnattributedTime(step, children);
-  const isParallel = step.childMode === "parallel" || (step.childMode == null && hasOverlappingChildren(children));
-  const displayedUnattributed = unattributed != null && unattributed >= 10 ? Math.min(unattributed, duration ?? unattributed) : undefined;
-  const milestoneOffset = step.timingKind === "milestone" && step.occurredAt != null && parentStartedAt != null
-    ? Math.max(0, step.occurredAt - parentStartedAt)
-    : undefined;
+  const isParallel =
+    step.childMode === "parallel" ||
+    (step.childMode == null && hasOverlappingChildren(children));
+  const displayedUnattributed =
+    unattributed != null && unattributed >= 10
+      ? Math.min(unattributed, duration ?? unattributed)
+      : undefined;
+  const milestoneOffset =
+    step.timingKind === "milestone" &&
+    step.occurredAt != null &&
+    parentStartedAt != null
+      ? Math.max(0, step.occurredAt - parentStartedAt)
+      : undefined;
 
   const bgColor = isError
     ? "bg-error/10"
     : isWorkingCompression
       ? "bg-warning/15"
       : isVoiceDiag
-        ? (isDone ? "bg-info/10" : "bg-info/15")
-        : (isDone ? "bg-success/10" : "bg-primary/15");
+        ? isDone
+          ? "bg-info/10"
+          : "bg-info/15"
+        : isDone
+          ? "bg-success/10"
+          : "bg-primary/15";
 
   const iconColor = isError
     ? "text-error"
@@ -865,18 +1272,28 @@ function SystemStepRow({ step, layer = 4, children = [], parentStartedAt, depth 
       ? "text-warning"
       : isVoiceDiag
         ? "text-info"
-        : (isDone ? "text-success" : "text-primary");
+        : isDone
+          ? "text-success"
+          : "text-primary";
 
   return (
     <div
-      className="animate-in fade-in slide-in-from-bottom-1 duration-200 flex items-center gap-2 py-1" style={{ paddingLeft: `${6 + depth * 20}px` }}
+      className="animate-in fade-in slide-in-from-bottom-1 duration-200 flex items-center gap-2 py-1"
+      style={{ paddingLeft: `${6 + depth * 20}px` }}
       data-testid={`system-step-${name}`}
     >
-      <div className={`relative flex h-5 w-5 items-center justify-center rounded-full shrink-0 ${bgColor}`}>
+      <div
+        className={`relative flex h-5 w-5 items-center justify-center rounded-full shrink-0 ${bgColor}`}
+      >
         {isActive ? (
           <>
             <Icon className={`h-3 w-3 ${iconColor}`} />
-            <span className={cn("absolute inset-0 rounded-full animate-ping", isWorkingCompression ? "bg-warning/25" : "bg-info/20")} />
+            <span
+              className={cn(
+                "absolute inset-0 rounded-full animate-ping",
+                isWorkingCompression ? "bg-warning/25" : "bg-info/20",
+              )}
+            />
           </>
         ) : isError ? (
           <AlertCircle className="h-3 w-3 text-error" />
@@ -888,17 +1305,41 @@ function SystemStepRow({ step, layer = 4, children = [], parentStartedAt, depth 
           <Icon className={`h-3 w-3 ${iconColor}`} />
         )}
       </div>
-      <span className={`text-xs flex-1 ${
-        isWorkingCompression ? "text-warning" : isActive ? "text-foreground" : isDone ? (isVoiceDiag ? "text-info/70" : "text-muted-foreground") : isError ? "text-destructive" : "text-muted-foreground/60"
-      }`}>
+      <span
+        className={`text-xs flex-1 ${
+          isWorkingCompression
+            ? "text-warning"
+            : isActive
+              ? "text-foreground"
+              : isDone
+                ? isVoiceDiag
+                  ? "text-info/70"
+                  : "text-muted-foreground"
+                : isError
+                  ? "text-destructive"
+                  : "text-muted-foreground/60"
+        }`}
+      >
         {label}
       </span>
       {showSystemDetail && (
-        <span className={cn("text-xs font-mono", isWorkingCompression ? "text-warning/80" : "text-muted-foreground/50")}>{step.systemStepDetail}</span>
+        <span
+          className={cn(
+            "text-xs font-mono",
+            isWorkingCompression
+              ? "text-warning/80"
+              : "text-muted-foreground/50",
+          )}
+        >
+          {step.systemStepDetail}
+        </span>
       )}
       {isActive && <SystemStepTimer startTime={step.timestamp} />}
       {(isDone || isError) && !isWorkingCompression && (
-        <span className="text-xs tabular-nums font-mono text-muted-foreground/50 whitespace-nowrap" data-testid={`text-step-time-${name}`}>
+        <span
+          className="text-xs tabular-nums font-mono text-muted-foreground/50 whitespace-nowrap"
+          data-testid={`text-step-time-${name}`}
+        >
           {step.timingKind === "milestone"
             ? `at +${formatStepElapsed(milestoneOffset ?? 0)}`
             : duration != null
@@ -920,22 +1361,41 @@ function ToolIconStrip({
   iconOverrides?: Record<string, string>;
   showThinking?: boolean;
 }) {
-  const toolSteps = steps.filter(s => s.type === "tool_call");
-  const thinkingStartTime = steps.find(s => s.type === "thinking" && s.status === "active")?.timestamp ?? Date.now();
+  const toolSteps = steps.filter((s) => s.type === "tool_call");
+  const thinkingStartTime =
+    steps.find((s) => s.type === "thinking" && s.status === "active")
+      ?.timestamp ?? Date.now();
   if (toolSteps.length === 0 && !showThinking) return null;
 
   return (
-    <div className="flex items-center gap-1.5 px-1.5 py-1 flex-wrap" data-testid="tool-icon-strip">
+    <div
+      className="flex items-center gap-1.5 px-1.5 py-1 flex-wrap"
+      data-testid="tool-icon-strip"
+    >
       {toolSteps.map((step) => {
         const ToolIcon = resolveToolIcon(step.toolName || "", iconOverrides);
         const isActive = step.status === "active";
         const isDone = step.status === "done";
         const isError = step.status === "error";
-        const iconColor = isError ? "text-error" : isDone ? "text-success" : isActive ? "text-active" : "text-info";
-        const bgColor = isError ? "bg-error/10" : isDone ? "bg-success/10" : isActive ? "bg-active/15" : "bg-info/15";
-        const reasoning = typeof step.arguments?.reasoning === "string" && step.arguments.reasoning.trim()
-          ? step.arguments.reasoning
-          : step.toolName || "tool call";
+        const iconColor = isError
+          ? "text-error"
+          : isDone
+            ? "text-success"
+            : isActive
+              ? "text-active"
+              : "text-info";
+        const bgColor = isError
+          ? "bg-error/10"
+          : isDone
+            ? "bg-success/10"
+            : isActive
+              ? "bg-active/15"
+              : "bg-info/15";
+        const reasoning =
+          typeof step.arguments?.reasoning === "string" &&
+          step.arguments.reasoning.trim()
+            ? step.arguments.reasoning
+            : step.toolName || "tool call";
 
         return (
           <Tooltip key={step.id}>
@@ -945,7 +1405,9 @@ function ToolIconStrip({
                 data-testid={`tool-icon-${step.id}`}
               >
                 <ToolIcon className={`h-3 w-3 ${iconColor}`} />
-                {isActive && <span className="absolute inset-0 rounded-full animate-ping bg-active/20" />}
+                {isActive && (
+                  <span className="absolute inset-0 rounded-full animate-ping bg-active/20" />
+                )}
               </div>
             </TooltipTrigger>
             <TooltipContent side="top" className="text-xs max-w-xs">
@@ -954,30 +1416,102 @@ function ToolIconStrip({
           </Tooltip>
         );
       })}
-      {showThinking && <ActiveThinkingStatus startTime={thinkingStartTime} testId="tool-strip-thinking" showTimer={false} />}
+      {showThinking && (
+        <ActiveThinkingStatus
+          startTime={thinkingStartTime}
+          testId="tool-strip-thinking"
+          showTimer={false}
+        />
+      )}
     </div>
   );
 }
 
-function DiagnosticStepTree({ step, allSteps, visibleSteps, layer, iconOverrides, summaryOnly, depth = 0 }: { step: ExecutionStep; allSteps: ExecutionStep[]; visibleSteps: ExecutionStep[]; layer: 1 | 2 | 3 | 4; iconOverrides?: Record<string, string>; summaryOnly?: boolean; depth?: number }) {
+function DiagnosticStepTree({
+  step,
+  allSteps,
+  visibleSteps,
+  layer,
+  iconOverrides,
+  summaryOnly,
+  depth = 0,
+}: {
+  step: ExecutionStep;
+  allSteps: ExecutionStep[];
+  visibleSteps: ExecutionStep[];
+  layer: 1 | 2 | 3 | 4;
+  iconOverrides?: Record<string, string>;
+  summaryOnly?: boolean;
+  depth?: number;
+}) {
   const children = getChildren(step, allSteps);
   const visibleChildren = getChildren(step, visibleSteps);
-  return <>
-    {step.type === "system" ? <SystemStepRow step={step} layer={layer} children={children} parentStartedAt={allSteps.find(candidate => candidate.id === step.parentId)?.startedAt} depth={depth} /> : step.type === "tool_call" ? <ToolStepRow step={step} iconOverrides={iconOverrides} summaryOnly={summaryOnly} layer={layer} children={children} depth={depth} /> : null}
-    {visibleChildren.map(child => <DiagnosticStepTree key={child.id} step={child} allSteps={allSteps} visibleSteps={visibleSteps} layer={layer} iconOverrides={iconOverrides} summaryOnly={summaryOnly} depth={depth + 1} />)}
-  </>;
+  return (
+    <>
+      {step.type === "system" ? (
+        <SystemStepRow
+          step={step}
+          layer={layer}
+          children={children}
+          parentStartedAt={
+            allSteps.find((candidate) => candidate.id === step.parentId)
+              ?.startedAt
+          }
+          depth={depth}
+        />
+      ) : step.type === "tool_call" ? (
+        <ToolStepRow
+          step={step}
+          iconOverrides={iconOverrides}
+          summaryOnly={summaryOnly}
+          layer={layer}
+          children={children}
+          depth={depth}
+        />
+      ) : null}
+      {visibleChildren.map((child) => (
+        <DiagnosticStepTree
+          key={child.id}
+          step={child}
+          allSteps={allSteps}
+          visibleSteps={visibleSteps}
+          layer={layer}
+          iconOverrides={iconOverrides}
+          summaryOnly={summaryOnly}
+          depth={depth + 1}
+        />
+      ))}
+    </>
+  );
 }
 
-export function ExecutionTimeline({ steps, isStreaming, layer = 4 }: { steps: ExecutionStep[]; isStreaming: boolean; autoCollapse?: boolean; model?: string | null; layer?: 1 | 2 | 3 | 4 }) {
+export function ExecutionTimeline({
+  steps,
+  isStreaming,
+  layer = 4,
+}: {
+  steps: ExecutionStep[];
+  isStreaming: boolean;
+  autoCollapse?: boolean;
+  model?: string | null;
+  layer?: 1 | 2 | 3 | 4;
+}) {
   const { data: iconOverrides } = useQuery<Record<string, string>>({
     queryKey: ["/api/tool-icons"],
     staleTime: 60_000,
   });
 
   const layerSteps = filterStepsByLayer(steps, layer, isStreaming);
-  const filteredSteps = layerSteps.filter(step => step.diagnosticVisibility !== "hidden" && step.diagnosticVisibility !== "raw");
+  const filteredSteps = layerSteps.filter(
+    (step) =>
+      step.diagnosticVisibility !== "hidden" &&
+      step.diagnosticVisibility !== "raw",
+  );
 
-  log.verbose(() => `RENDER:TIMELINE steps=${steps.length} filtered=${filteredSteps.length} streaming=${isStreaming} layer=${layer}`);
+  log.verbose(
+    () =>
+      `RENDER:TIMELINE steps=${steps.length} filtered=${filteredSteps.length} streaming=${isStreaming} layer=${layer}`,
+  );
 
   if (filteredSteps.length === 0) return null;
 
@@ -987,21 +1521,31 @@ export function ExecutionTimeline({ steps, isStreaming, layer = 4 }: { steps: Ex
   // Layer 1 ("Words Only"): render tool calls as a compact icon strip,
   // with the active thinking indicator appended to the same row.
   if (statusOnly) {
-    const hasThinking = filteredSteps.some(s => s.type === "thinking");
-    const hasToolCalls = filteredSteps.some(s => s.type === "tool_call");
-    const hasOther = filteredSteps.some(s => s.type !== "thinking" && s.type !== "tool_call");
-    const showThinking = filteredSteps.some(s => s.type === "thinking" && s.status === "active");
+    const hasThinking = filteredSteps.some((s) => s.type === "thinking");
+    const hasToolCalls = filteredSteps.some((s) => s.type === "tool_call");
+    const hasOther = filteredSteps.some(
+      (s) => s.type !== "thinking" && s.type !== "tool_call",
+    );
+    const showThinking = filteredSteps.some(
+      (s) => s.type === "thinking" && s.status === "active",
+    );
     if (!hasThinking && !hasToolCalls && !hasOther) return null;
 
     return (
       <div className="mb-3 space-y-0.5" data-testid="execution-timeline">
-        {filteredSteps.some(s => s.type === "system") &&
-          filteredSteps.filter(s => s.type === "system").map(s => <SystemStepRow key={s.id} step={s} layer={layer} />)
-        }
-        {filteredSteps.some(s => s.type === "compacting") &&
-          filteredSteps.filter(s => s.type === "compacting").map(s => <CompactingStep key={s.id} step={s} />)
-        }
-        <ToolIconStrip steps={filteredSteps} iconOverrides={iconOverrides} showThinking={showThinking} />
+        {filteredSteps.some((s) => s.type === "system") &&
+          filteredSteps
+            .filter((s) => s.type === "system")
+            .map((s) => <SystemStepRow key={s.id} step={s} layer={layer} />)}
+        {filteredSteps.some((s) => s.type === "compacting") &&
+          filteredSteps
+            .filter((s) => s.type === "compacting")
+            .map((s) => <CompactingStep key={s.id} step={s} />)}
+        <ToolIconStrip
+          steps={filteredSteps}
+          iconOverrides={iconOverrides}
+          showThinking={showThinking}
+        />
       </div>
     );
   }
@@ -1009,18 +1553,49 @@ export function ExecutionTimeline({ steps, isStreaming, layer = 4 }: { steps: Ex
   return (
     <div className="mb-3 space-y-0.5" data-testid="execution-timeline">
       {filteredSteps.map((step) => {
-        if (step.parentId && filteredSteps.some(candidate => candidate.id === step.parentId)) return null;
-        if (step.type === "system") return <DiagnosticStepTree key={step.id} step={step} allSteps={steps} visibleSteps={filteredSteps} layer={layer} iconOverrides={iconOverrides} summaryOnly={summaryOnly} />;
+        if (
+          step.parentId &&
+          filteredSteps.some((candidate) => candidate.id === step.parentId)
+        )
+          return null;
+        if (step.type === "system")
+          return (
+            <DiagnosticStepTree
+              key={step.id}
+              step={step}
+              allSteps={steps}
+              visibleSteps={filteredSteps}
+              layer={layer}
+              iconOverrides={iconOverrides}
+              summaryOnly={summaryOnly}
+            />
+          );
         if (step.type === "thinking") {
-          return <ThinkingBubble key={step.id} step={step} showTimer={layer >= 3} />;
+          return (
+            <ThinkingBubble key={step.id} step={step} showTimer={layer >= 3} />
+          );
         }
         if (step.type === "compacting") {
           return <CompactingStep key={step.id} step={step} />;
         }
-        if (step.type === "tool_call" && (step.toolName === "think" || step.toolName === "observe")) {
+        if (
+          step.type === "tool_call" &&
+          (step.toolName === "think" || step.toolName === "observe")
+        ) {
           return <ThoughtBubble key={step.id} step={step} />;
         }
-        if (step.type === "tool_call") return <DiagnosticStepTree key={step.id} step={step} allSteps={steps} visibleSteps={filteredSteps} layer={layer} iconOverrides={iconOverrides} summaryOnly={summaryOnly} />;
+        if (step.type === "tool_call")
+          return (
+            <DiagnosticStepTree
+              key={step.id}
+              step={step}
+              allSteps={steps}
+              visibleSteps={filteredSteps}
+              layer={layer}
+              iconOverrides={iconOverrides}
+              summaryOnly={summaryOnly}
+            />
+          );
         return null;
       })}
     </div>
@@ -1055,12 +1630,19 @@ export function stepsFromSavedMessage(message: ChatMessage): ExecutionStep[] {
         systemStepDetail: step.detail,
         systemStepMetadata: step.metadata,
         elapsedMs: step.elapsedMs,
-        parentId: step.parentId || (step.metadata?.parentId as string | undefined),
-        selfTimeMs: step.selfTimeMs || (typeof step.metadata?.selfTimeMs === "number" ? step.metadata.selfTimeMs : undefined),
+        parentId:
+          step.parentId || (step.metadata?.parentId as string | undefined),
+        selfTimeMs:
+          step.selfTimeMs ||
+          (typeof step.metadata?.selfTimeMs === "number"
+            ? step.metadata.selfTimeMs
+            : undefined),
         startedAt: step.startedAt,
         endedAt: step.endedAt,
         timingKind: step.timingKind,
-        diagnosticVisibility: step.diagnosticVisibility ?? (SUPPRESSED_TIMELINE_STEPS.has(step.name) ? "hidden" : undefined),
+        diagnosticVisibility:
+          step.diagnosticVisibility ??
+          (SUPPRESSED_TIMELINE_STEPS.has(step.name) ? "hidden" : undefined),
         childMode: step.childMode,
         occurredAt: step.occurredAt,
         status: step.status === "error" ? "error" : "done",
@@ -1083,7 +1665,9 @@ export function stepsFromSavedMessage(message: ChatMessage): ExecutionStep[] {
       const isError = !!tool.error || tool.status === "error";
       const errorStr = getToolErrorText(tool);
       steps.push({
-        id: tool.toolCallId ? `tool-${tool.toolCallId}` : `tool-${message.id}-${i}`,
+        id: tool.toolCallId
+          ? `tool-${tool.toolCallId}`
+          : `tool-${message.id}-${i}`,
         type: "tool_call",
         timestamp: Date.now(),
         toolName: tool.toolName,
@@ -1104,25 +1688,46 @@ export function stepsFromSavedMessage(message: ChatMessage): ExecutionStep[] {
  * prose content and from persisted gmail draft/update_draft tool results.
  * Shared by ChatTurn (rendering) and the message list (cross-message dedup).
  */
-export function emailDraftIdsFromSegments(segments: MessageSegment[]): { fromContent: string[]; fromToolResults: string[] } {
+export function emailDraftIdsFromSegments(segments: MessageSegment[]): {
+  fromContent: string[];
+  fromToolResults: string[];
+} {
   const fromContent = segments.flatMap((segment) =>
     segment.type === "content"
       ? parseReferenceText(segment.content)
-          .filter((part) => part.kind === "reference" && part.ref.type === "email_draft")
+          .filter(
+            (part) =>
+              part.kind === "reference" && part.ref.type === "email_draft",
+          )
           .map((part) => part.ref.id)
       : [],
   );
-  const fromToolResults = [...new Set(segments.flatMap((segment) => {
-    if (segment.type !== "timeline") return [];
-    return segment.steps.flatMap((tool) => {
-      const action = typeof tool.arguments?.action === "string" ? tool.arguments.action : null;
-      if (tool.type !== "tool_call" || tool.toolName !== "gmail" || (action !== "draft" && action !== "update_draft")) return [];
-      if (typeof tool.result !== "string") return [];
-      return parseReferenceText(tool.result)
-        .filter((part) => part.kind === "reference" && part.ref.type === "email_draft")
-        .map((part) => part.ref.id);
-    });
-  }))];
+  const fromToolResults = [
+    ...new Set(
+      segments.flatMap((segment) => {
+        if (segment.type !== "timeline") return [];
+        return segment.steps.flatMap((tool) => {
+          const action =
+            typeof tool.arguments?.action === "string"
+              ? tool.arguments.action
+              : null;
+          if (
+            tool.type !== "tool_call" ||
+            tool.toolName !== "gmail" ||
+            (action !== "draft" && action !== "update_draft")
+          )
+            return [];
+          if (typeof tool.result !== "string") return [];
+          return parseReferenceText(tool.result)
+            .filter(
+              (part) =>
+                part.kind === "reference" && part.ref.type === "email_draft",
+            )
+            .map((part) => part.ref.id);
+        });
+      }),
+    ),
+  ];
   return { fromContent, fromToolResults };
 }
 
@@ -1130,9 +1735,13 @@ export function emailDraftIdsFromSegments(segments: MessageSegment[]): { fromCon
  * Draft IDs whose inline widgets are superseded by a later occurrence in the
  * same chat. Latest occurrence wins; earlier inline widgets are hidden.
  */
-export const SuppressedEmailDraftsContext = createContext<ReadonlySet<string>>(new Set());
+export const SuppressedEmailDraftsContext = createContext<ReadonlySet<string>>(
+  new Set(),
+);
 
-export function segmentsFromSavedMessage(message: ChatMessage): MessageSegment[] {
+export function segmentsFromSavedMessage(
+  message: ChatMessage,
+): MessageSegment[] {
   if (message.segmentChronology && message.segmentChronology.length > 0) {
     return segmentsFromChronology(message);
   }
@@ -1167,8 +1776,13 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
   }
 
   let thinkingBlockIndex = 0;
-  const contentEntries = chronology.filter(e => e.s === "content") as Array<{ s: "content"; c: string }>;
-  const finalizedContent = contentEntries.map(entry => entry.c || "").join("");
+  const contentEntries = chronology.filter((e) => e.s === "content") as Array<{
+    s: "content";
+    c: string;
+  }>;
+  const finalizedContent = contentEntries
+    .map((entry) => entry.c || "")
+    .join("");
 
   for (const entry of chronology) {
     switch (entry.s) {
@@ -1183,12 +1797,19 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
             systemStepDetail: step.detail,
             systemStepMetadata: step.metadata,
             elapsedMs: step.elapsedMs,
-            parentId: step.parentId || (step.metadata?.parentId as string | undefined),
-            selfTimeMs: step.selfTimeMs || (typeof step.metadata?.selfTimeMs === "number" ? step.metadata.selfTimeMs : undefined),
+            parentId:
+              step.parentId || (step.metadata?.parentId as string | undefined),
+            selfTimeMs:
+              step.selfTimeMs ||
+              (typeof step.metadata?.selfTimeMs === "number"
+                ? step.metadata.selfTimeMs
+                : undefined),
             startedAt: step.startedAt,
             endedAt: step.endedAt,
             timingKind: step.timingKind,
-            diagnosticVisibility: step.diagnosticVisibility ?? (SUPPRESSED_TIMELINE_STEPS.has(step.name) ? "hidden" : undefined),
+            diagnosticVisibility:
+              step.diagnosticVisibility ??
+              (SUPPRESSED_TIMELINE_STEPS.has(step.name) ? "hidden" : undefined),
             childMode: step.childMode,
             occurredAt: step.occurredAt,
             status: step.status === "error" ? "error" : "done",
@@ -1216,7 +1837,9 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
           const isError = !!tool.error || tool.status === "error";
           const errorStr = getToolErrorText(tool);
           currentTimelineSteps.push({
-            id: tool.toolCallId ? `tool-${tool.toolCallId}` : `tool-${message.id}-${entry.i}`,
+            id: tool.toolCallId
+              ? `tool-${tool.toolCallId}`
+              : `tool-${message.id}-${entry.i}`,
             type: "tool_call",
             timestamp: Date.now(),
             toolName: tool.toolName,
@@ -1250,8 +1873,17 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
   return segments;
 }
 
-const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp"]);
-const ATTACHED_FILE_REGEX = /\n*\[Attached file: (.+?) \(workspace: (.+?)(?:,\s*[\d.]+KB)?\)\]/g;
+const IMAGE_EXTS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".svg",
+  ".bmp",
+]);
+const ATTACHED_FILE_REGEX =
+  /\n*\[Attached file: (.+?) \(workspace: (.+?)(?:,\s*[\d.]+KB)?\)\]/g;
 
 function parseAttachments(content: string) {
   const images: { name: string; path: string }[] = [];
@@ -1268,7 +1900,9 @@ function parseAttachments(content: string) {
       nonImageFiles.push({ name, path: wsPath });
     }
   }
-  const cleanedContent = content.replace(new RegExp(ATTACHED_FILE_REGEX.source, "g"), "").trim();
+  const cleanedContent = content
+    .replace(new RegExp(ATTACHED_FILE_REGEX.source, "g"), "")
+    .trim();
   return { images, nonImageFiles, cleanedContent };
 }
 
@@ -1298,7 +1932,12 @@ const markdownComponents = {
   img: ({ src, alt, ...props }: any) => {
     if (src && src.startsWith("/objects/")) {
       return (
-        <a href={src} target="_blank" rel="noopener noreferrer" className="block my-2">
+        <a
+          href={src}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block my-2"
+        >
           <img
             src={src}
             alt={alt || "Generated image"}
@@ -1309,55 +1948,138 @@ const markdownComponents = {
         </a>
       );
     }
-    return <img src={src} alt={alt} className="max-w-full rounded-md" loading="lazy" {...props} />;
+    return (
+      <img
+        src={src}
+        alt={alt}
+        className="max-w-full rounded-md"
+        loading="lazy"
+        {...props}
+      />
+    );
   },
 };
 
-export function MarkdownContent({ content, stripTags = false, compact = false, referenceSurface = "chat-inline" }: { content: string; stripTags?: boolean; compact?: boolean; referenceSurface?: ReferenceSurface }) {
+export function MarkdownContent({
+  content,
+  stripTags = false,
+  compact = false,
+  referenceSurface = "chat-inline",
+}: {
+  content: string;
+  stripTags?: boolean;
+  compact?: boolean;
+  referenceSurface?: ReferenceSurface;
+}) {
   const timestampStripped = stripMessageTimestamp(content);
-  const strippedContent = stripTags ? stripExpressionTags(timestampStripped) : timestampStripped;
-  const { tags, remaining } = stripTags ? { tags: [], remaining: strippedContent } : parseLeadingExpressionTags(strippedContent);
+  const strippedContent = stripTags
+    ? stripExpressionTags(timestampStripped)
+    : timestampStripped;
+  const { tags, remaining } = stripTags
+    ? { tags: [], remaining: strippedContent }
+    : parseLeadingExpressionTags(strippedContent);
 
-  // Extract email_draft references for block-level widget rendering
+  // Extract references that promote into block-level widgets.
   const suppressedDrafts = useContext(SuppressedEmailDraftsContext);
   const parts = parseReferenceText(remaining);
   const draftIds: string[] = [];
-  const textWithoutDrafts = parts
+  const planIds: string[] = [];
+  const textWithoutWidgets = parts
     .map((part) => {
       if (part.kind === "reference" && part.ref.type === "email_draft") {
         draftIds.push(part.ref.id);
-        return ""; // Strip from inline text — rendered as block widget below
+        return ""; // Strip from inline text — rendered as block widget below.
       }
-      return part.kind === "text" ? part.text : `@${part.ref.type}:${part.ref.id}`;
+      if (part.kind === "reference" && part.ref.type === "plan") {
+        planIds.push(part.ref.id);
+        return ""; // Strip from inline text — rendered as block widget below.
+      }
+      return part.kind === "text"
+        ? part.text
+        : `@${part.ref.type}:${part.ref.id}`;
     })
     .join("")
     .trim();
 
   return (
     <>
-      {textWithoutDrafts && (
-        <div className={cn(
-          "prose prose-sm dark:prose-invert max-w-none break-words overflow-hidden [&_pre]:bg-card/70 [&_pre]:rounded-md [&_pre]:border [&_pre]:border-primary/20 [&_pre]:p-3 [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:text-xs [&_code]:font-mono [&_code]:break-all [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-sm [&_blockquote]:bg-card/70 [&_blockquote]:rounded-md [&_blockquote]:border-l-primary/20 [&_blockquote]:px-3 [&_blockquote]:py-2 [&_a]:text-cta [&_a]:break-all [&_a]:transition-colors [&_a:hover]:text-active",
-          compact ? "[&_p]:my-2 [&_ul]:my-0 [&_ol]:my-0 [&_li]:my-0 [&>:first-child]:mt-0 [&>:last-child]:mb-0" : "[&_p]:my-2 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0",
-          tags.length > 0 && "[&>p:first-of-type]:inline [&>p:first-of-type]:my-0"
-        )}>
+      {textWithoutWidgets && (
+        <div
+          className={cn(
+            "prose prose-sm dark:prose-invert max-w-none break-words overflow-hidden [&_pre]:bg-card/70 [&_pre]:rounded-md [&_pre]:border [&_pre]:border-primary/20 [&_pre]:p-3 [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:text-xs [&_code]:font-mono [&_code]:break-all [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-sm [&_blockquote]:bg-card/70 [&_blockquote]:rounded-md [&_blockquote]:border-l-primary/20 [&_blockquote]:px-3 [&_blockquote]:py-2 [&_a]:text-cta [&_a]:break-all [&_a]:transition-colors [&_a:hover]:text-active",
+            compact
+              ? "[&_p]:my-2 [&_ul]:my-0 [&_ol]:my-0 [&_li]:my-0 [&>:first-child]:mt-0 [&>:last-child]:mb-0"
+              : "[&_p]:my-2 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0",
+            tags.length > 0 &&
+              "[&>p:first-of-type]:inline [&>p:first-of-type]:my-0",
+          )}
+        >
           {tags.length > 0 && (
             <span className="not-prose mr-1.5 inline-flex flex-wrap items-baseline gap-1 align-baseline text-muted-foreground/80">
               {tags.map((tag, index) => (
-                <span key={`${tag}-${index}`} className="inline-flex whitespace-nowrap italic">
+                <span
+                  key={`${tag}-${index}`}
+                  className="inline-flex whitespace-nowrap italic"
+                >
                   [{tag}]
                 </span>
               ))}
             </span>
           )}
-          <ReferenceText content={textWithoutDrafts} markdownComponents={markdownComponents} referenceSurface={referenceSurface} />
+          <ReferenceText
+            content={textWithoutWidgets}
+            markdownComponents={markdownComponents}
+            referenceSurface={referenceSurface}
+          />
         </div>
       )}
-      {draftIds.filter((id) => !suppressedDrafts.has(id)).map((id) => (
-        <EmailDraftWidget key={id} draftId={id} />
+      {draftIds
+        .filter((id) => !suppressedDrafts.has(id))
+        .map((id) => (
+          <EmailDraftWidget key={id} draftId={id} />
+        ))}
+      {[...new Set(planIds)].map((id) => (
+        <InlinePlanWidget key={id} planId={id} />
       ))}
     </>
   );
+}
+
+function InlinePlanWidget({ planId }: { planId: string }) {
+  const {
+    data: plan,
+    isLoading,
+    error,
+  } = useQuery<PlanData>({
+    queryKey: ["/api/plans", planId],
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/plans/${encodeURIComponent(planId)}`,
+      );
+      if (!res.ok) throw new Error("Plan not found");
+      return res.json();
+    },
+    staleTime: 10_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="my-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+        Loading plan…
+      </div>
+    );
+  }
+
+  if (error || !plan) {
+    return (
+      <div className="my-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+        @plan:{planId}
+      </div>
+    );
+  }
+
+  return <PlanWidget plan={plan} variant="card" className="my-2" />;
 }
 
 function formatLocalTime(dateStr: string): string {
@@ -1365,7 +2087,13 @@ function formatLocalTime(dateStr: string): string {
   return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-function StreamingTierBadge({ model, autoTier }: { model?: string | null; autoTier?: string | null }) {
+function StreamingTierBadge({
+  model,
+  autoTier,
+}: {
+  model?: string | null;
+  autoTier?: string | null;
+}) {
   const resolveModelToTier = useModelToTier();
   if (!model) return null;
 
@@ -1376,22 +2104,31 @@ function StreamingTierBadge({ model, autoTier }: { model?: string | null; autoTi
   const label = TIER_LABEL_MAP[tierId];
   if (!Icon || !label) return null;
 
-  const shortModel = model.includes("/") ? model.split("/").slice(1).join("/") : model;
+  const shortModel = model.includes("/")
+    ? model.split("/").slice(1).join("/")
+    : model;
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span className="inline-flex items-center gap-1" data-testid={`badge-streaming-tier-${tierId}`}>
+        <span
+          className="inline-flex items-center gap-1"
+          data-testid={`badge-streaming-tier-${tierId}`}
+        >
           <span className="relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 bg-muted-foreground/10">
             <Icon className="h-3 w-3 text-muted-foreground/70" />
           </span>
           {autoTier && (
-            <span className="text-xs text-muted-foreground/50 font-medium uppercase tracking-wider">Auto</span>
+            <span className="text-xs text-muted-foreground/50 font-medium uppercase tracking-wider">
+              Auto
+            </span>
           )}
         </span>
       </TooltipTrigger>
       <TooltipContent side="top" className="text-xs">
-        {autoTier && <span className="text-muted-foreground mr-1">Auto &rarr;</span>}
+        {autoTier && (
+          <span className="text-muted-foreground mr-1">Auto &rarr;</span>
+        )}
         <span className="font-medium">{label}</span>
         <span className="text-muted-foreground ml-1.5">{shortModel}</span>
       </TooltipContent>
@@ -1405,7 +2142,8 @@ export function findThinkingStartTime(segments: MessageSegment[]): number {
     if (seg.type !== "timeline") continue;
     for (let j = seg.steps.length - 1; j >= 0; j--) {
       const step = seg.steps[j];
-      if (step.type === "thinking" && step.status === "active") return step.timestamp;
+      if (step.type === "thinking" && step.status === "active")
+        return step.timestamp;
     }
   }
   return Date.now();
@@ -1419,12 +2157,14 @@ export function ThinkingTimer({ startTime }: { startTime: number }) {
   }, []);
   const seconds = Math.max(0, (now - startTime) / 1000).toFixed(1);
   return (
-    <span className="text-xs tabular-nums font-mono text-muted-foreground/30" data-testid="text-thinking-timer">
+    <span
+      className="text-xs tabular-nums font-mono text-muted-foreground/30"
+      data-testid="text-thinking-timer"
+    >
       {seconds}s
     </span>
   );
 }
-
 
 function cleanCompactionSummary(content: string): string {
   return content
@@ -1434,7 +2174,13 @@ function cleanCompactionSummary(content: string): string {
     .trim();
 }
 
-function CompactionBoundary({ message, stripTags }: { message: ChatMessage; stripTags: boolean }) {
+function CompactionBoundary({
+  message,
+  stripTags,
+}: {
+  message: ChatMessage;
+  stripTags: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const meta = message.compaction;
   const replaced = meta?.replacedMessageCount;
@@ -1443,7 +2189,10 @@ function CompactionBoundary({ message, stripTags }: { message: ChatMessage; stri
   const tokensSaved = meta?.tokensSaved;
 
   return (
-    <div className="flex justify-center" data-testid={`message-compaction-marker-${message.id}`}>
+    <div
+      className="flex justify-center"
+      data-testid={`message-compaction-marker-${message.id}`}
+    >
       <div className="w-full max-w-3xl rounded-xl border border-border/70 bg-muted/30 px-4 py-3 text-sm shadow-sm">
         <button
           type="button"
@@ -1455,24 +2204,41 @@ function CompactionBoundary({ message, stripTags }: { message: ChatMessage; stri
             <Database className="h-3.5 w-3.5 text-primary" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="font-medium text-foreground">Earlier conversation compacted</div>
+            <div className="font-medium text-foreground">
+              Earlier conversation compacted
+            </div>
             <div className="text-xs text-muted-foreground">
-              {typeof replaced === "number" ? `${replaced} messages summarized` : "Earlier turns summarized"}
-              {typeof kept === "number" ? ` · ${kept} recent messages kept live` : ""}
-              {typeof tokensSaved === "number" && tokensSaved > 0 ? ` · ~${tokensSaved.toLocaleString()} tokens saved` : ""}
+              {typeof replaced === "number"
+                ? `${replaced} messages summarized`
+                : "Earlier turns summarized"}
+              {typeof kept === "number"
+                ? ` · ${kept} recent messages kept live`
+                : ""}
+              {typeof tokensSaved === "number" && tokensSaved > 0
+                ? ` · ~${tokensSaved.toLocaleString()} tokens saved`
+                : ""}
               {meta?.archiveRefId ? " · original archived" : ""}
             </div>
           </div>
-          <ChevronRight className={cn("h-4 w-4 text-muted-foreground transition-transform", expanded && "rotate-90")} />
+          <ChevronRight
+            className={cn(
+              "h-4 w-4 text-muted-foreground transition-transform",
+              expanded && "rotate-90",
+            )}
+          />
         </button>
         {expanded && (
           <div className="mt-3 border-t border-border/60 pt-3">
-            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Compaction summary</div>
+            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Compaction summary
+            </div>
             <div className="prose prose-sm dark:prose-invert max-w-none text-sm">
               <MarkdownContent content={summary} stripTags={stripTags} />
             </div>
             {meta?.archiveRefId && (
-              <div className="mt-2 text-xs text-muted-foreground/70 font-mono">archive ref: {meta.archiveRefId}</div>
+              <div className="mt-2 text-xs text-muted-foreground/70 font-mono">
+                archive ref: {meta.archiveRefId}
+              </div>
             )}
           </div>
         )}
@@ -1481,19 +2247,43 @@ function CompactionBoundary({ message, stripTags }: { message: ChatMessage; stri
   );
 }
 
-export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, sessionKey, compactReferences = false, suppressedEmailDraftIds }: { message: ChatMessage; isLast: boolean; streaming?: StreamingContent; sessionKey?: string | null; compactReferences?: boolean; suppressedEmailDraftIds?: string }) {
+export const ChatTurn = memo(function ChatTurn({
+  message,
+  isLast,
+  streaming,
+  sessionKey,
+  compactReferences = false,
+  suppressedEmailDraftIds,
+}: {
+  message: ChatMessage;
+  isLast: boolean;
+  streaming?: StreamingContent;
+  sessionKey?: string | null;
+  compactReferences?: boolean;
+  suppressedEmailDraftIds?: string;
+}) {
   const isUser = message.role === "user";
   const isSystemPrompt = message.role === "system_prompt";
   const isVoiceMessage = message.voice?.source === "elevenlabs-voice";
-  const effectiveApiCallCount = message.apiCallCount ?? streaming?.apiCallCount ?? null;
+  const effectiveApiCallCount =
+    message.apiCallCount ?? streaming?.apiCallCount ?? null;
   const effectiveCost = message.cost ?? streaming?.cost ?? null;
-  const effectiveInputTokens = message.inputTokens ?? streaming?.inputTokens ?? null;
-  const effectiveOutputTokens = message.outputTokens ?? streaming?.outputTokens ?? null;
-  const effectiveTotalTokens = message.totalTokens ?? streaming?.totalTokens ?? (effectiveInputTokens != null || effectiveOutputTokens != null ? (effectiveInputTokens ?? 0) + (effectiveOutputTokens ?? 0) : null);
-  const effectiveTokenSummary = effectiveTotalTokens != null
-    ? `${formatTokens(effectiveTotalTokens)} tokens total${effectiveInputTokens != null || effectiveOutputTokens != null ? ` · ${formatTokens(effectiveInputTokens ?? 0)} in / ${formatTokens(effectiveOutputTokens ?? 0)} out` : ""}`
-    : null;
-  const hasFinalizedUsage = effectiveApiCallCount != null && effectiveApiCallCount > 0;
+  const effectiveInputTokens =
+    message.inputTokens ?? streaming?.inputTokens ?? null;
+  const effectiveOutputTokens =
+    message.outputTokens ?? streaming?.outputTokens ?? null;
+  const effectiveTotalTokens =
+    message.totalTokens ??
+    streaming?.totalTokens ??
+    (effectiveInputTokens != null || effectiveOutputTokens != null
+      ? (effectiveInputTokens ?? 0) + (effectiveOutputTokens ?? 0)
+      : null);
+  const effectiveTokenSummary =
+    effectiveTotalTokens != null
+      ? `${formatTokens(effectiveTotalTokens)} tokens total${effectiveInputTokens != null || effectiveOutputTokens != null ? ` · ${formatTokens(effectiveInputTokens ?? 0)} in / ${formatTokens(effectiveOutputTokens ?? 0)} out` : ""}`
+      : null;
+  const hasFinalizedUsage =
+    effectiveApiCallCount != null && effectiveApiCallCount > 0;
   const isActiveStreaming = !!streaming?.source && !hasFinalizedUsage;
   // After completion the held segments must keep rendering until the refetched
   // persisted message replaces the draft placeholder. Without this, the bubble
@@ -1525,23 +2315,38 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
     queryKey: ["/api/elevenlabs/agent/show-expression-tags"],
     staleTime: 60_000,
   });
-  const shouldStripTags = !isUser && !isSystemPrompt && (layer === 1 || !(tagPref?.showExpressionTags));
-  const segments: MessageSegment[] = (hasStreamingSegments && streaming)
-    ? streaming.segments
-    : segmentsFromSavedMessage(message);
+  const shouldStripTags =
+    !isUser && !isSystemPrompt && (layer === 1 || !tagPref?.showExpressionTags);
+  const segments: MessageSegment[] =
+    hasStreamingSegments && streaming
+      ? streaming.segments
+      : segmentsFromSavedMessage(message);
 
   if (!isUser && !isSystemPrompt) {
-    log.verbose(() => `TURN:RENDER id=${message.id} segments=${segments.length} streaming=${isActiveStreaming} contentLen=${message.content?.length ?? 0}`);
+    log.verbose(
+      () =>
+        `TURN:RENDER id=${message.id} segments=${segments.length} streaming=${isActiveStreaming} contentLen=${message.content?.length ?? 0}`,
+    );
   }
 
-  const hasContent = segments.some(s => s.type === "content" && s.content);
-  const { fromContent: draftIdsFromContent, fromToolResults: draftIdsFromToolResults } = emailDraftIdsFromSegments(segments);
-  const visibleEmailDraftIds = [...new Set([...draftIdsFromContent, ...draftIdsFromToolResults])];
+  const hasContent = segments.some((s) => s.type === "content" && s.content);
+  const {
+    fromContent: draftIdsFromContent,
+    fromToolResults: draftIdsFromToolResults,
+  } = emailDraftIdsFromSegments(segments);
+  const visibleEmailDraftIds = [
+    ...new Set([...draftIdsFromContent, ...draftIdsFromToolResults]),
+  ];
   const suppressedDraftIds = useMemo(
-    () => new Set<string>(suppressedEmailDraftIds ? suppressedEmailDraftIds.split("|") : []),
+    () =>
+      new Set<string>(
+        suppressedEmailDraftIds ? suppressedEmailDraftIds.split("|") : [],
+      ),
     [suppressedEmailDraftIds],
   );
-  const unpromotedDraftIds = draftIdsFromToolResults.filter((id) => !draftIdsFromContent.includes(id) && !suppressedDraftIds.has(id));
+  const unpromotedDraftIds = draftIdsFromToolResults.filter(
+    (id) => !draftIdsFromContent.includes(id) && !suppressedDraftIds.has(id),
+  );
   const hasUnpromotedDraftWidget = unpromotedDraftIds.length > 0;
 
   useEffect(() => {
@@ -1555,12 +2360,22 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
       suppressedDraftCount: suppressedDraftIds.size,
       isStreaming: isActiveStreaming,
     });
-  }, [message.id, visibleEmailDraftIds.join("|"), draftIdsFromContent.length, draftIdsFromToolResults.length, hasUnpromotedDraftWidget, suppressedDraftIds.size, isActiveStreaming]);
+  }, [
+    message.id,
+    visibleEmailDraftIds.join("|"),
+    draftIdsFromContent.length,
+    draftIdsFromToolResults.length,
+    hasUnpromotedDraftWidget,
+    suppressedDraftIds.size,
+    isActiveStreaming,
+  ]);
 
   const handleCopy = useCallback(() => {
     const allContent = segments
-      .filter((s): s is MessageSegment & { type: "content" } => s.type === "content")
-      .map(s => s.content)
+      .filter(
+        (s): s is MessageSegment & { type: "content" } => s.type === "content",
+      )
+      .map((s) => s.content)
       .join("\n\n");
     const rawText = allContent || message.content || "";
     const textToCopy = shouldStripTags ? stripExpressionTags(rawText) : rawText;
@@ -1575,7 +2390,10 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
     const el = turnRootRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const prev = previousTurnTraceRef.current?.messageId === message.id ? previousTurnTraceRef.current : null;
+    const prev =
+      previousTurnTraceRef.current?.messageId === message.id
+        ? previousTurnTraceRef.current
+        : null;
     const heightChanged = prev ? Math.abs(prev.height - rect.height) > 1 : true;
     const topChanged = prev ? Math.abs(prev.top - rect.top) > 1 : true;
     const contentLen = message.content?.length ?? 0;
@@ -1588,7 +2406,10 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
       prev?.contentLen !== contentLen ||
       prev?.hasStreamingSegments !== hasStreamingSegments;
     if (shouldLog) {
-      log.verbose(() => `TURN_LAYOUT id=${message.id} h=${Math.round(rect.height)} segments=${segments.length} streaming=${isActiveStreaming}`);
+      log.verbose(
+        () =>
+          `TURN_LAYOUT id=${message.id} h=${Math.round(rect.height)} segments=${segments.length} streaming=${isActiveStreaming}`,
+      );
     }
     previousTurnTraceRef.current = {
       messageId: message.id,
@@ -1606,16 +2427,30 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
 
   if (isSystemPrompt) {
     return (
-      <div className="flex gap-3 items-start" data-testid={`message-system-prompt-${message.id}`}>
+      <div
+        className="flex gap-3 items-start"
+        data-testid={`message-system-prompt-${message.id}`}
+      >
         <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cat-system/15 mt-0.5">
           <ScrollText className="h-4 w-4 text-cat-system" />
         </div>
         <div className="min-w-0 flex-1 group">
-          <div className="text-xs font-medium text-cat-system mb-1" data-testid="text-system-prompt-label">Skill Instructions</div>
-          <div className="rounded-lg border border-cat-system/20 bg-cat-system/5 px-4 py-3">
-            <MarkdownContent content={message.content} stripTags={shouldStripTags} />
+          <div
+            className="text-xs font-medium text-cat-system mb-1"
+            data-testid="text-system-prompt-label"
+          >
+            Skill Instructions
           </div>
-          <div className="mt-1 text-xs text-muted-foreground/50" data-testid={`text-message-time-${message.id}`}>
+          <div className="rounded-lg border border-cat-system/20 bg-cat-system/5 px-4 py-3">
+            <MarkdownContent
+              content={message.content}
+              stripTags={shouldStripTags}
+            />
+          </div>
+          <div
+            className="mt-1 text-xs text-muted-foreground/50"
+            data-testid={`text-message-time-${message.id}`}
+          >
             {formatLocalTime(message.updatedAt ?? message.createdAt)}
           </div>
         </div>
@@ -1627,7 +2462,10 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
     const { cleanedContent, images } = parseAttachments(message.content);
     const displayUserContent = stripMessageTimestamp(cleanedContent);
     return (
-      <div className="flex justify-end" data-testid={`message-user-${message.id}`}>
+      <div
+        className="flex justify-end"
+        data-testid={`message-user-${message.id}`}
+      >
         <div className="max-w-[75%]">
           {message.speaker && (
             <div
@@ -1649,13 +2487,22 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
           <div className="bg-muted text-foreground rounded-2xl rounded-br-sm px-4 py-2.5">
             {displayUserContent && (
               <div className="text-sm" data-testid="text-user-message">
-                <MarkdownContent content={displayUserContent} stripTags compact referenceSurface={compactReferences ? "simple-chip" : "chat-inline"} />
+                <MarkdownContent
+                  content={displayUserContent}
+                  stripTags
+                  compact
+                  referenceSurface={
+                    compactReferences ? "simple-chip" : "chat-inline"
+                  }
+                />
               </div>
             )}
             {images.length > 0 && (
-              <div className={`flex flex-wrap gap-2 ${displayUserContent ? "mt-2" : ""}`}>
+              <div
+                className={`flex flex-wrap gap-2 ${displayUserContent ? "mt-2" : ""}`}
+              >
                 {images.map((img, i) => {
-                  const src = img.path.startsWith('/objects/')
+                  const src = img.path.startsWith("/objects/")
                     ? img.path
                     : `/api/workspace/raw?path=${encodeURIComponent(img.path)}`;
                   return (
@@ -1681,7 +2528,10 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
               </div>
             )}
           </div>
-          <div className="mt-1 flex min-h-9 items-center justify-end gap-1 text-xs text-muted-foreground/50 text-right" data-testid={`text-message-time-${message.id}`}>
+          <div
+            className="mt-1 flex min-h-9 items-center justify-end gap-1 text-xs text-muted-foreground/50 text-right"
+            data-testid={`text-message-time-${message.id}`}
+          >
             {isVoiceMessage && (
               <>
                 <Mic className="h-2.5 w-2.5" />
@@ -1697,7 +2547,9 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
                 data-testid={`badge-msg-context-${message.id}`}
               >
                 <MapPin className="h-2.5 w-2.5" />
-                <span className="truncate max-w-[80px]">{message.pageContext.pageTitle || message.pageContext.route}</span>
+                <span className="truncate max-w-[80px]">
+                  {message.pageContext.pageTitle || message.pageContext.route}
+                </span>
               </span>
             )}
           </div>
@@ -1711,7 +2563,11 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
   const personaLabel = message.persona?.name || "Legacy persona unknown";
 
   return (
-    <div ref={turnRootRef} className="flex gap-3 items-start" data-testid={`message-assistant-${message.id}`}>
+    <div
+      ref={turnRootRef}
+      className="flex gap-3 items-start"
+      data-testid={`message-assistant-${message.id}`}
+    >
       {isErrorMessage ? (
         <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-destructive/15">
           <AlertCircle className="h-4 w-4 text-destructive" />
@@ -1727,7 +2583,9 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
               <PersonaIcon className="h-4 w-4 text-primary" />
             </div>
           </TooltipTrigger>
-          <TooltipContent side="right" className="text-xs">{personaLabel}</TooltipContent>
+          <TooltipContent side="right" className="text-xs">
+            {personaLabel}
+          </TooltipContent>
         </Tooltip>
       )}
       <div className="min-w-0 flex-1 group">
@@ -1738,7 +2596,7 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
         )}
         <div className="space-y-2">
           <SuppressedEmailDraftsContext.Provider value={suppressedDraftIds}>
-            {(segments.length > 0 || isActiveStreaming) ? (
+            {segments.length > 0 || isActiveStreaming ? (
               <SegmentStream
                 segments={segments}
                 isStreaming={isActiveStreaming}
@@ -1748,8 +2606,17 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
               />
             ) : (
               message.content && (
-                <div className={cn(isErrorMessage && "rounded-2xl rounded-bl-sm border border-destructive/30 bg-destructive/5 px-4 py-2.5")}>
-                  <MarkdownContent content={message.content} stripTags={shouldStripTags} compact />
+                <div
+                  className={cn(
+                    isErrorMessage &&
+                      "rounded-2xl rounded-bl-sm border border-destructive/30 bg-destructive/5 px-4 py-2.5",
+                  )}
+                >
+                  <MarkdownContent
+                    content={message.content}
+                    stripTags={shouldStripTags}
+                    compact
+                  />
                 </div>
               )
             )}
@@ -1758,36 +2625,79 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
             ))}
           </SuppressedEmailDraftsContext.Provider>
         </div>
-        <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground/50 text-left" data-testid={`text-message-time-${message.id}`}>
-          {layer >= 3 && (isActiveStreaming ? <StreamingTierBadge model={streaming?.model} autoTier={streaming?.autoTier} /> : message.model && <ModelTierBadge model={message.model} />)}
+        <div
+          className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground/50 text-left"
+          data-testid={`text-message-time-${message.id}`}
+        >
+          {layer >= 3 &&
+            (isActiveStreaming ? (
+              <StreamingTierBadge
+                model={streaming?.model}
+                autoTier={streaming?.autoTier}
+              />
+            ) : (
+              message.model && <ModelTierBadge model={message.model} />
+            ))}
           {layer >= 3 && !isErrorMessage && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="inline-flex items-center" data-testid={`badge-agent-persona-${message.id}`}>
+                <span
+                  className="inline-flex items-center"
+                  data-testid={`badge-agent-persona-${message.id}`}
+                >
                   <PersonaIcon className="h-2.5 w-2.5" />
                 </span>
               </TooltipTrigger>
-              <TooltipContent side="top" className="text-xs">{personaLabel}</TooltipContent>
+              <TooltipContent side="top" className="text-xs">
+                {personaLabel}
+              </TooltipContent>
             </Tooltip>
           )}
           {formatLocalTime(message.updatedAt ?? message.createdAt)}
-          {layer >= 3 && !isActiveStreaming && effectiveApiCallCount != null && effectiveApiCallCount > 0 && sessionKey && (
-            <Link
-              href={`/system?tab=inference&session=${encodeURIComponent(sessionKey)}`}
-              className="text-cta underline transition-colors hover:text-active"
-              data-testid={`link-api-calls-${message.id}`}
-            >
-              {effectiveApiCallCount} {effectiveApiCallCount === 1 ? "call" : "calls"}{effectiveTokenSummary != null ? ` · ${effectiveTokenSummary}` : ""}{effectiveCost != null ? ` · ${formatCost(effectiveCost)}` : ""}
-            </Link>
-          )}
-          {layer >= 3 && !isActiveStreaming && effectiveApiCallCount != null && effectiveApiCallCount > 0 && !sessionKey && (
-            <span data-testid={`text-api-calls-${message.id}`}>
-              {effectiveApiCallCount} {effectiveApiCallCount === 1 ? "call" : "calls"}{effectiveTokenSummary != null ? ` · ${effectiveTokenSummary}` : ""}{effectiveCost != null ? ` · ${formatCost(effectiveCost)}` : ""}
-            </span>
-          )}
-          {layer >= 3 && !isActiveStreaming && (effectiveApiCallCount == null || effectiveApiCallCount === 0) && effectiveCost != null && effectiveCost > 0 && (
-            <span data-testid={`text-message-cost-${message.id}`}>{effectiveTokenSummary != null ? `${effectiveTokenSummary} · ` : ""}{formatCost(effectiveCost)}</span>
-          )}
+          {layer >= 3 &&
+            !isActiveStreaming &&
+            effectiveApiCallCount != null &&
+            effectiveApiCallCount > 0 &&
+            sessionKey && (
+              <Link
+                href={`/system?tab=inference&session=${encodeURIComponent(sessionKey)}`}
+                className="text-cta underline transition-colors hover:text-active"
+                data-testid={`link-api-calls-${message.id}`}
+              >
+                {effectiveApiCallCount}{" "}
+                {effectiveApiCallCount === 1 ? "call" : "calls"}
+                {effectiveTokenSummary != null
+                  ? ` · ${effectiveTokenSummary}`
+                  : ""}
+                {effectiveCost != null ? ` · ${formatCost(effectiveCost)}` : ""}
+              </Link>
+            )}
+          {layer >= 3 &&
+            !isActiveStreaming &&
+            effectiveApiCallCount != null &&
+            effectiveApiCallCount > 0 &&
+            !sessionKey && (
+              <span data-testid={`text-api-calls-${message.id}`}>
+                {effectiveApiCallCount}{" "}
+                {effectiveApiCallCount === 1 ? "call" : "calls"}
+                {effectiveTokenSummary != null
+                  ? ` · ${effectiveTokenSummary}`
+                  : ""}
+                {effectiveCost != null ? ` · ${formatCost(effectiveCost)}` : ""}
+              </span>
+            )}
+          {layer >= 3 &&
+            !isActiveStreaming &&
+            (effectiveApiCallCount == null || effectiveApiCallCount === 0) &&
+            effectiveCost != null &&
+            effectiveCost > 0 && (
+              <span data-testid={`text-message-cost-${message.id}`}>
+                {effectiveTokenSummary != null
+                  ? `${effectiveTokenSummary} · `
+                  : ""}
+                {formatCost(effectiveCost)}
+              </span>
+            )}
           {!isActiveStreaming && (hasContent || message.content) && (
             <Button
               className="invisible group-hover:visible"
@@ -1796,7 +2706,11 @@ export const ChatTurn = memo(function ChatTurn({ message, isLast, streaming, ses
               onClick={handleCopy}
               data-testid={`button-copy-message-${message.id}`}
             >
-              {copied ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+              {copied ? (
+                <Check className="h-3.5 w-3.5 text-success" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" />
+              )}
             </Button>
           )}
         </div>
