@@ -40,6 +40,7 @@ interface RichTextEditorProps {
   onChange: (json: JSONContent, plainText: string) => void;
   placeholder?: string;
   className?: string;
+  contentClassName?: string;
   "data-testid"?: string;
   readOnly?: boolean;
   onInsertLink?: () => void;
@@ -159,6 +160,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     onChange,
     placeholder = "Start writing...",
     className,
+    contentClassName,
     "data-testid": testId,
     readOnly = false,
     onInsertLink,
@@ -653,7 +655,10 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
       <div className="flex-1 overflow-y-auto scrollbar-thin">
         <EditorContent
           editor={editor}
-          className="prose prose-sm dark:prose-invert max-w-none px-10 py-4 focus-visible:outline-none [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[45vh] [&_.ProseMirror_p.is-editor-empty:first-child::before]:content-[attr(data-placeholder)] [&_.ProseMirror_p.is-editor-empty:first-child::before]:text-muted-foreground [&_.ProseMirror_p.is-editor-empty:first-child::before]:pointer-events-none [&_.ProseMirror_p.is-editor-empty:first-child::before]:float-left [&_.ProseMirror_p.is-editor-empty:first-child::before]:h-0 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_ul_ul]:my-0.5 [&_ol_ol]:my-0.5 [&_ul_ol]:my-0.5 [&_ol_ul]:my-0.5 [&_li>p]:my-0"
+          className={cn(
+            "prose prose-sm dark:prose-invert max-w-none px-10 py-4 focus-visible:outline-none [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[45vh] [&_.ProseMirror_p.is-editor-empty:first-child::before]:content-[attr(data-placeholder)] [&_.ProseMirror_p.is-editor-empty:first-child::before]:text-muted-foreground [&_.ProseMirror_p.is-editor-empty:first-child::before]:pointer-events-none [&_.ProseMirror_p.is-editor-empty:first-child::before]:float-left [&_.ProseMirror_p.is-editor-empty:first-child::before]:h-0 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_ul_ul]:my-0.5 [&_ol_ol]:my-0.5 [&_ul_ol]:my-0.5 [&_ol_ul]:my-0.5 [&_li>p]:my-0",
+            contentClassName,
+          )}
         />
         {contentFooter}
       </div>

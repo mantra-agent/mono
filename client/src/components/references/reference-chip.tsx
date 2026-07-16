@@ -4,9 +4,20 @@ import { cn } from "@/lib/utils";
 import { useReferenceLabel } from "@/hooks/use-reference-label";
 import { useOptionalTaskModal } from "@/contexts/task-modal-context";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
+import type { LucideIcon } from "lucide-react";
 import type { ClientResolvedReference } from "./reference-registry";
 
-export function ReferenceChip({ resolved, className }: { resolved: ClientResolvedReference; className?: string }) {
+export function ReferenceChip({
+  resolved,
+  className,
+  IconOverride,
+  iconClassName,
+}: {
+  resolved: ClientResolvedReference;
+  className?: string;
+  IconOverride?: LucideIcon;
+  iconClassName?: string;
+}) {
   const [, navigate] = useLocation();
   const taskModal = useOptionalTaskModal();
   // Chips can mount in detached React roots (TipTap reference widgets)
@@ -37,7 +48,7 @@ export function ReferenceChip({ resolved, className }: { resolved: ClientResolve
     [sidebar, isExternal, resolved.href, navigate, resolved.ref.type, resolved.ref.id, taskModal],
   );
 
-  const Icon = resolved.Icon;
+  const Icon = IconOverride ?? resolved.Icon;
 
   const content = (
     <span
@@ -51,7 +62,7 @@ export function ReferenceChip({ resolved, className }: { resolved: ClientResolve
       title={resolved.description || resolved.ref.canonical}
       data-testid={`reference-${resolved.ref.type}-${resolved.ref.id}`}
     >
-      <Icon className="h-3.5 w-3.5 shrink-0 no-underline" aria-hidden="true" strokeWidth={2} />
+      <Icon className={cn("h-3.5 w-3.5 shrink-0 no-underline", iconClassName)} aria-hidden="true" strokeWidth={2} />
       <span className="min-w-0 truncate border-b border-current leading-[inherit]">{label}</span>
     </span>
   );

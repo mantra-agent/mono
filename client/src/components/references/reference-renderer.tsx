@@ -1,4 +1,5 @@
 import type { ReferenceRef } from "@shared/references";
+import type { LucideIcon } from "lucide-react";
 import { ReferenceChip } from "./reference-chip";
 import { resolveReference } from "./reference-registry";
 
@@ -12,6 +13,25 @@ const SURFACE_CLASSES: Record<ReferenceSurface, string | undefined> = {
   "expanded": undefined,
 };
 
-export function ReferenceRenderer({ refValue, surface = "chat-inline", className }: { refValue: ReferenceRef; surface?: ReferenceSurface; className?: string }) {
-  return <ReferenceChip resolved={resolveReference(refValue)} className={[SURFACE_CLASSES[surface], className].filter(Boolean).join(" ")} />;
+export function ReferenceRenderer({
+  refValue,
+  surface = "chat-inline",
+  className,
+  IconOverride,
+  iconClassName,
+}: {
+  refValue: ReferenceRef;
+  surface?: ReferenceSurface;
+  className?: string;
+  IconOverride?: LucideIcon;
+  iconClassName?: string;
+}) {
+  return (
+    <ReferenceChip
+      resolved={resolveReference(refValue)}
+      className={[SURFACE_CLASSES[surface], className].filter(Boolean).join(" ")}
+      IconOverride={IconOverride}
+      iconClassName={iconClassName}
+    />
+  );
 }
