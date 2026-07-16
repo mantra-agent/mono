@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Badge } from "@/components/ui/badge";
@@ -142,6 +142,62 @@ function LogRow({ entry, timezone, wrap, isSeen }: { entry: LogEntry; timezone: 
   );
 }
 
+function MeasuredLogRow({
+  entry,
+  index,
+  start,
+  timezone,
+  wrap,
+  isSeen,
+  resizeItem,
+}: {
+  entry: LogEntry;
+  index: number;
+  start: number;
+  timezone: string;
+  wrap: boolean;
+  isSeen: boolean;
+  resizeItem: (index: number, size: number) => void;
+}) {
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    // TanStack's measureElement resolves ResizeObserver callbacks through mutable list indexes.
+    // Own the observer here so prepended realtime rows cannot orphan surviving row measurements.
+    const element = rowRef.current;
+    if (!element) return;
+
+    let active = true;
+    const measure = () => {
+      if (active) resizeItem(index, element.offsetHeight);
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+
+    return () => {
+      active = false;
+      observer.disconnect();
+    };
+  }, [index, resizeItem]);
+
+  return (
+    <div
+      ref={rowRef}
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        width: "100%",
+        transform: `translateY(${start}px)`,
+      }}
+    >
+      <LogRow entry={entry} timezone={timezone} wrap={wrap} isSeen={isSeen} />
+    </div>
+  );
+}
+
 function VirtualizedLogList({ entries, timezone, wrap, parentRef, seenErrors, onErrorsSeen }: {
   entries: LogEntry[];
   timezone: string;
@@ -180,20 +236,16 @@ function VirtualizedLogList({ entries, timezone, wrap, parentRef, seenErrors, on
       {virtualItems.map((virtualRow) => {
         const entry = entries[virtualRow.index];
         return (
-          <div
+          <MeasuredLogRow
             key={virtualRow.key}
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              width: "100%",
-              transform: `translateY(${virtualRow.start}px)`,
-            }}
-            data-index={virtualRow.index}
-            ref={virtualizer.measureElement}
-          >
-            <LogRow entry={entry} timezone={timezone} wrap={wrap} isSeen={seenErrors.has(entry.line)} />
-          </div>
+            entry={entry}
+            index={virtualRow.index}
+            start={virtualRow.start}
+            timezone={timezone}
+            wrap={wrap}
+            isSeen={seenErrors.has(entry.line)}
+            resizeItem={virtualizer.resizeItem}
+          />
         );
       })}
     </div>
