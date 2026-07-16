@@ -1231,11 +1231,16 @@ export const planExecutions = pgTable("plan_executions", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
+  executionLeaseId: text("execution_lease_id"),
+  executionLeaseOwner: text("execution_lease_owner"),
+  executionLeaseExpiresAt: timestamp("execution_lease_expires_at", { withTimezone: true }),
+  executionClaimedAt: timestamp("execution_claimed_at", { withTimezone: true }),
 }, (table) => [
   index("idx_plan_executions_status").on(table.status),
   index("idx_plan_executions_archived_at").on(table.archivedAt),
   index("idx_plan_executions_owner").on(table.ownerUserId),
   index("idx_plan_executions_account").on(table.accountId),
+  index("idx_plan_executions_lease").on(table.executionLeaseExpiresAt),
 ]);
 
 export const insertPlanExecutionSchema = createInsertSchema(planExecutions).omit({
@@ -1284,6 +1289,65 @@ export const insertPlanStepSchema = createInsertSchema(planSteps).omit({
 });
 
 export type InsertPlanStep = z.infer<typeof insertPlanStepSchema>;
+
+// ---------------------------------------------------------------------------
+// Plan Session Links
+// Durable session associations for inline plan widgets. origin_session_id remains
+// immutable provenance; visibility/placement belongs here.
+// ---------------------------------------------------------------------------
+export const planSessionLinks = pgTable("plan_session_links", {
+  id: serial("id").primaryKey(),
+  planId: text("plan_id").notNull().references(() => planExecutions.id, { onDelete: "cascade" }),
+  sessionId: text("session_id").notNull(),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+  anchorMessageId: text("anchor_message_id"),
+  linkedAt: timestamp("linked_at", { withTimezone: true }).notNull().defaultNow(),
+  unlinkedAt: timestamp("unlinked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("idx_plan_session_links_plan").on(table.planId),
+  index("idx_plan_session_links_session").on(table.sessionId),
+  index("idx_plan_session_links_owner").on(table.ownerUserId),
+  index("idx_plan_session_links_account").on(table.accountId),
+  uniqueIndex("idx_plan_session_links_active_unique").on(table.planId, table.sessionId).where(sql`unlinked_at IS NULL`),
+]);
+
+export type PlanSessionLinkRow = typeof planSessionLinks.$inferSelect;
+export type InsertPlanSessionLink = typeof planSessionLinks.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Plan Step Attempts
+// One durable child-session attempt per plan step execution or retry.
+// ---------------------------------------------------------------------------
+export const planStepAttempts = pgTable("plan_step_attempts", {
+  id: serial("id").primaryKey(),
+  planId: text("plan_id").notNull().references(() => planExecutions.id, { onDelete: "cascade" }),
+  stepId: text("step_id").notNull(),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+  attemptNumber: integer("attempt_number").notNull(),
+  childSessionId: text("child_session_id"),
+  status: text("status").notNull().default("pending"),
+  outcome: text("outcome"),
+  error: text("error"),
+  durationSeconds: integer("duration_seconds"),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("idx_plan_step_attempts_plan").on(table.planId),
+  index("idx_plan_step_attempts_step").on(table.planId, table.stepId),
+  index("idx_plan_step_attempts_child_session").on(table.childSessionId),
+  index("idx_plan_step_attempts_owner").on(table.ownerUserId),
+  index("idx_plan_step_attempts_account").on(table.accountId),
+  uniqueIndex("idx_plan_step_attempts_attempt_unique").on(table.planId, table.stepId, table.attemptNumber),
+]);
+
+export type PlanStepAttemptRow = typeof planStepAttempts.$inferSelect;
+export type InsertPlanStepAttempt = typeof planStepAttempts.$inferInsert;
 
 // ---------------------------------------------------------------------------
 // Workflow System

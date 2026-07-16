@@ -11,7 +11,7 @@ import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { libraryPages } from "@shared/models/info";
 import { wellnessActivities } from "@shared/models/health";
-import { emailMessages } from "@shared/schema";
+import { emailMessages, planExecutions } from "@shared/schema";
 import { decisionsStorage } from "./decisions-storage";
 import { and, desc, eq, or } from "drizzle-orm";
 import { getEvent, listAllEvents } from "./google-calendar";
@@ -92,6 +92,17 @@ export function registerReferenceRoutes(app: Express) {
             case "session": {
               const session = await chatFileStorage.getSession(id);
               if (session) results[key] = session.title || "Untitled session";
+              break;
+            }
+            case "plan": {
+              const planScope = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
+              const rows = await db
+                .select({ pageTitle: libraryPages.title })
+                .from(planExecutions)
+                .leftJoin(libraryPages, eq(planExecutions.pageId, libraryPages.id))
+                .where(combineWithVisibleScope(principal, planScope, or(eq(planExecutions.id, id), eq(planExecutions.pageId, id))))
+                .limit(1);
+              if (rows[0]?.pageTitle) results[key] = rows[0].pageTitle.replace(/^Plan:\s*/, "");
               break;
             }
             case "company": {

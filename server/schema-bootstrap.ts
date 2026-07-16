@@ -4834,12 +4834,17 @@ export async function runSchemaBootstrap(
     await pool.query(
       `ALTER TABLE plan_executions ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ`,
     );
+    await pool.query(`ALTER TABLE plan_executions ADD COLUMN IF NOT EXISTS execution_lease_id TEXT`);
+    await pool.query(`ALTER TABLE plan_executions ADD COLUMN IF NOT EXISTS execution_lease_owner TEXT`);
+    await pool.query(`ALTER TABLE plan_executions ADD COLUMN IF NOT EXISTS execution_lease_expires_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE plan_executions ADD COLUMN IF NOT EXISTS execution_claimed_at TIMESTAMPTZ`);
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_plan_executions_status ON plan_executions(status)`,
     );
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_plan_executions_archived_at ON plan_executions(archived_at)`,
     );
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_executions_lease ON plan_executions(execution_lease_expires_at)`);
   });
 
   await heal("plan_steps table", async () => {
@@ -4867,6 +4872,55 @@ export async function runSchemaBootstrap(
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_plan_steps_plan_id ON plan_steps(plan_id)`,
     );
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_steps_one_running_per_plan ON plan_steps(plan_id) WHERE status = 'running'`);
+  });
+
+  await heal("plan inline architecture tables", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS plan_session_links (
+        id SERIAL PRIMARY KEY,
+        plan_id TEXT NOT NULL REFERENCES plan_executions(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL,
+        owner_user_id TEXT,
+        account_id TEXT,
+        anchor_message_id TEXT,
+        linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        unlinked_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_session_links_plan ON plan_session_links(plan_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_session_links_session ON plan_session_links(session_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_session_links_owner ON plan_session_links(owner_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_session_links_account ON plan_session_links(account_id)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_session_links_active_unique ON plan_session_links(plan_id, session_id) WHERE unlinked_at IS NULL`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS plan_step_attempts (
+        id SERIAL PRIMARY KEY,
+        plan_id TEXT NOT NULL REFERENCES plan_executions(id) ON DELETE CASCADE,
+        step_id TEXT NOT NULL,
+        owner_user_id TEXT,
+        account_id TEXT,
+        attempt_number INTEGER NOT NULL,
+        child_session_id TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        outcome TEXT,
+        error TEXT,
+        duration_seconds INTEGER,
+        started_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_attempts_plan ON plan_step_attempts(plan_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_attempts_step ON plan_step_attempts(plan_id, step_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_attempts_child_session ON plan_step_attempts(child_session_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_attempts_owner ON plan_step_attempts(owner_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_attempts_account ON plan_step_attempts(account_id)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_step_attempts_attempt_unique ON plan_step_attempts(plan_id, step_id, attempt_number)`);
   });
 
 
