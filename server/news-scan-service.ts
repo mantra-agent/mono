@@ -8,11 +8,17 @@ import { eq, or } from "drizzle-orm";
 import * as adapters from "./news-adapters";
 import * as ranking from "./news-ranking";
 import { executeAutonomousSkillRun } from "./autonomous-skill-runner";
+import { getCurrentPrincipal, runWithPrincipal } from "./principal-context";
+import { createUserSessionPrincipal } from "./principal";
+import { storage } from "./storage";
 import { SourceDiagnosticsAccumulator, gateRawSignals } from "./news-quality";
 
 const log = createLogger("LandscapeScanService");
 
+export type LandscapeScanOutcome = "completed" | "already_running" | "failed";
+
 export interface LandscapeScanResult {
+  outcome: LandscapeScanOutcome;
   sourcesScanned: number;
   itemsFound: number;
   itemsSurfaced: number;
@@ -34,10 +40,32 @@ async function loadDomainSkillNames(): Promise<string[]> {
   }
 }
 
+async function resolveNewsScanPrincipal() {
+  const users = await storage.getUsers();
+  const user = users.find(candidate => candidate.role === "admin") ?? users[0];
+  if (!user) {
+    throw new Error("News scan requires an owning user principal");
+  }
+  return createUserSessionPrincipal(user);
+}
+
 export async function runLandscapeScan(): Promise<LandscapeScanResult> {
+  if (!getCurrentPrincipal()) {
+    const principal = await resolveNewsScanPrincipal();
+    return runWithPrincipal(principal, runLandscapeScan);
+  }
+
   const inProgress = await signalStorage.hasInProgressScan();
   if (inProgress) {
-    throw new Error("A scan is already in progress. Try again later.");
+    return {
+      outcome: "already_running",
+      sourcesScanned: 0,
+      itemsFound: 0,
+      itemsSurfaced: 0,
+      itemsDeduped: 0,
+      errors: [],
+      message: "A scan is already in progress. Try again later.",
+    };
   }
 
   const scanRun = await signalStorage.startScanRun();
@@ -65,11 +93,12 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
         error: "No enabled channels or sources configured",
       });
       return {
+        outcome: "failed",
         sourcesScanned: 0,
         itemsFound: 0,
         itemsSurfaced: 0,
         itemsDeduped: 0,
-        errors: [],
+        errors: ["No enabled channels or sources configured"],
         message: "No enabled channels or sources configured. Enable channels on the Channels tab or add direct sources.",
       };
     }
@@ -436,7 +465,15 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
     });
 
     const message = `Scan complete. Sources: ${sourcesScannedCount}, Signals found: ${allSignals.length}, Surfaced: ${actualSurfaced}, Deduped: ${itemsDeduped}${errors.length > 0 ? `. Errors: ${errors.join("; ")}` : ""}`;
-    return { sourcesScanned: sourcesScannedCount, itemsFound: allSignals.length, itemsSurfaced: actualSurfaced, itemsDeduped, errors, message };
+    return {
+      outcome: "completed",
+      sourcesScanned: sourcesScannedCount,
+      itemsFound: allSignals.length,
+      itemsSurfaced: actualSurfaced,
+      itemsDeduped,
+      errors,
+      message,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     try {
@@ -460,14 +497,28 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
     } catch (diagnosticsErr) {
       log.warn(`scan: failed to persist source diagnostics after scan failure (${diagnosticsErr instanceof Error ? diagnosticsErr.message : String(diagnosticsErr)})`);
     }
-    await signalStorage.completeScanRun(scanRun.id, {
+    try {
+      await signalStorage.completeScanRun(scanRun.id, {
+        sourcesScanned: 0,
+        itemsFound: 0,
+        itemsSurfaced: 0,
+        itemsDeduped: 0,
+        error: msg,
+      });
+    } catch (completionErr) {
+      log.error(
+        `scan: failed to finalize failed run ${scanRun.id}: ${completionErr instanceof Error ? completionErr.message : String(completionErr)}`,
+      );
+    }
+    return {
+      outcome: "failed",
       sourcesScanned: 0,
       itemsFound: 0,
       itemsSurfaced: 0,
       itemsDeduped: 0,
-      error: msg,
-    });
-    throw err;
+      errors: [msg],
+      message: `Scan failed: ${msg}`,
+    };
   }
 }
 

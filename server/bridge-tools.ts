@@ -14912,7 +14912,10 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         case "scan": {
           const { runLandscapeScan } = await import("./news-scan-service");
           const result = await runLandscapeScan();
-          return { result: result.message };
+          return {
+            result: JSON.stringify(result),
+            error: result.outcome === "failed",
+          };
         }
 
         case "list_signals": {

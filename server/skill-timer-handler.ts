@@ -44,6 +44,32 @@ export class SkillTimerHandler implements TimerHandler {
 
     log.debug(`Executing skill timer "${timer.name}" skillId=${skillId}`);
 
+    if (skillId === "scan") {
+      const { runLandscapeScan } = await import("./news-scan-service");
+      const result = await runLandscapeScan();
+
+      if (result.outcome === "already_running") {
+        return {
+          outcome: "deferred",
+          reason: "news_scan_already_running",
+          output: result,
+        };
+      }
+
+      if (result.outcome === "failed") {
+        return {
+          outcome: "failed",
+          error: result.message,
+          output: result,
+        };
+      }
+
+      log.log(
+        `Skill timer "${timer.name}" native scan complete: sources=${result.sourcesScanned} found=${result.itemsFound} surfaced=${result.itemsSurfaced} deduped=${result.itemsDeduped}`,
+      );
+      return { outcome: "success", output: result };
+    }
+
     let preContext: string | undefined;
     log.debug(
       `[timer:${timer.name}] phase=pre-context — building preContext for skillId=${skillId}`,
