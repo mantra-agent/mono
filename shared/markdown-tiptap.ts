@@ -149,6 +149,13 @@ export function markdownToTiptap(md: string): JSONContent {
       continue;
     }
 
+    const imageMatch = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (imageMatch) {
+      content.push({ type: "image", attrs: { src: imageMatch[2], alt: imageMatch[1] || null, title: null } });
+      i++;
+      continue;
+    }
+
     if (line.startsWith("> ")) {
       const quoteLines: string[] = [];
       while (i < lines.length && lines[i].startsWith("> ")) {
