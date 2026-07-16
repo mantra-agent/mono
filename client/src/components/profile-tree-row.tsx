@@ -37,6 +37,9 @@ export function ProfileTreeRow({
   if (!hasValue && !showEmpty) return null;
 
   const canExpand = Boolean(expandedContent);
+  const usesSessionMenuControls = mobileLayout === "inline";
+  const sessionDisclosureControlClassName = "h-5 min-h-5 w-5 min-w-5 rounded [&_svg]:size-3";
+  const sessionOverflowControlClassName = "h-6 min-h-6 w-6 min-w-6 rounded-md [&_svg]:size-3.5";
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
@@ -75,22 +78,46 @@ export function ProfileTreeRow({
               <Button
                 variant="ghost"
                 size="icon"
-                className="min-h-11 min-w-11 shrink-0 rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground sm:min-h-5 sm:min-w-5"
+                className={cn(
+                  "shrink-0 text-muted-foreground/60 hover:bg-accent hover:text-foreground",
+                  usesSessionMenuControls
+                    ? sessionDisclosureControlClassName
+                    : "min-h-11 min-w-11 rounded sm:min-h-5 sm:min-w-5",
+                )}
                 aria-label={`${open ? "Collapse" : "Expand"} ${typeof label === "string" ? label : "profile field"}`}
               >
                 <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
               </Button>
             </CollapsibleTrigger>
           ) : actionContent ? (
-            <div className="min-h-11 min-w-11 shrink-0 sm:min-h-5 sm:min-w-5">{actionContent}</div>
+            <div
+              className={cn(
+                "shrink-0",
+                usesSessionMenuControls
+                  ? "h-6 min-h-6 w-6 min-w-6"
+                  : "min-h-11 min-w-11 sm:min-h-5 sm:min-w-5",
+              )}
+            >
+              {actionContent}
+            </div>
           ) : (
             <span className="hidden h-5 w-5 shrink-0 sm:block" />
           )}
           {menuContent ? (
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="min-h-11 min-w-11 shrink-0 rounded text-muted-foreground/60 transition-opacity hover:bg-accent hover:text-foreground sm:min-h-5 sm:min-w-5 sm:opacity-0 sm:group-hover:opacity-100" aria-label="More actions">
-                  <MoreHorizontal className="h-3 w-3" />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    "shrink-0 text-muted-foreground/60 transition-opacity hover:bg-accent hover:text-foreground",
+                    usesSessionMenuControls
+                      ? sessionOverflowControlClassName
+                      : "min-h-11 min-w-11 rounded sm:min-h-5 sm:min-w-5 sm:opacity-0 sm:group-hover:opacity-100",
+                  )}
+                  aria-label="More actions"
+                >
+                  <MoreHorizontal className={usesSessionMenuControls ? "h-3.5 w-3.5" : "h-3 w-3"} />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" onCloseAutoFocus={(e) => e.preventDefault()}>{menuContent}</DropdownMenuContent>
