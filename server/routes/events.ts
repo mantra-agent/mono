@@ -69,8 +69,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
           const category = typeof msg.category === "string" ? msg.category : undefined;
           const chatSessionId = typeof msg.chatSessionId === "string" ? msg.chatSessionId : undefined;
           void runWithPrincipal(principal, async () => {
-            const { replayVisibleEvents } = await import("../event-persistence");
-            const replay = await replayVisibleEvents({
+            const replay = eventBus.replayRecentEvents({
               afterEventId,
               category,
               payloadQuery: chatSessionId ? { chatSessionId } : undefined,
@@ -232,17 +231,9 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
 
   app.get("/api/events/history", async (req, res) => {
     try {
-      const { queryEvents } = await import("../event-persistence");
       const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
       const offset = parseInt(req.query.offset as string) || 0;
-      const category = req.query.category as string | undefined;
-      const event = req.query.event as string | undefined;
-      const startDate = req.query.startDate as string | undefined;
-      const endDate = req.query.endDate as string | undefined;
-      const runId = req.query.runId as string | undefined;
-      const sessionKey = req.query.sessionKey as string | undefined;
-
-      let payloadQuery: Record<string, any> | undefined;
+      let payloadQuery: Record<string, unknown> | undefined;
       if (req.query.payloadQuery) {
         try {
           payloadQuery = JSON.parse(req.query.payloadQuery as string);
@@ -250,20 +241,24 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
           return res.status(400).json({ error: "payloadQuery must be valid JSON" });
         }
       }
-
-      const result = await queryEvents({
-        category: category || undefined,
-        event: event || undefined,
-        startDate: startDate || undefined,
-        endDate: endDate || undefined,
-        runId: runId || undefined,
-        sessionKey: sessionKey || undefined,
-        payloadQuery,
+      const result = eventBus.queryRecentEvents({
         limit,
         offset,
         principal: req.principal,
+        filter: {
+          category: req.query.category as string | undefined,
+          event: req.query.event as string | undefined,
+          runId: req.query.runId as string | undefined,
+          sessionKey: req.query.sessionKey as string | undefined,
+          startTimestamp: req.query.startDate ? new Date(req.query.startDate as string).getTime() : undefined,
+          endTimestamp: req.query.endDate ? new Date(req.query.endDate as string).getTime() : undefined,
+          payloadQuery,
+        },
       });
-      res.json(result);
+      res.json({
+        total: result.total,
+        events: result.events.map((event) => ({ ...event, eventId: event.id, createdAt: new Date(event.timestamp).toISOString() })),
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

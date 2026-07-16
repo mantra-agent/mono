@@ -124,7 +124,7 @@ Every text/chat/streaming LLM call goes through `server/model-client.ts` via `ch
 
 **Database Over Filesystem**
 
-Persistent state belongs in PostgreSQL. Filesystem paths are ephemeral in deployment. Legitimate filesystem uses are scratch workspace and explicit user-facing file actions.
+Persistent state belongs in PostgreSQL. Filesystem paths are ephemeral in deployment. Legitimate filesystem uses are scratch workspace, bounded rotating diagnostic logs, and explicit user-facing file actions. Operational EventBus telemetry is process-local and must never compete with canonical state for database connections.
 
 **Bound Every Database Operation**
 

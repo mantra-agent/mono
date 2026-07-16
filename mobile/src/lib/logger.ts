@@ -34,7 +34,8 @@ let serverUrl: string | null = null;
 
 const FLUSH_INTERVAL_MS = 2_000;
 const MAX_BATCH_SIZE = 50;
-const MAX_PENDING = 500; // prevent unbounded growth if server is unreachable
+const MAX_PENDING = 200;
+const MAX_MESSAGE_CHARS = 16_384;
 
 /** Call once at app startup to enable server-side log shipping. */
 export function initRemoteLogging(url: string) {
@@ -56,6 +57,7 @@ async function flushLogs() {
   try {
     await fetch(`${serverUrl}/api/client-logs`, {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entries: batch }),
     });
@@ -65,12 +67,12 @@ async function flushLogs() {
 }
 
 function ship(level: string, source: string, message: string) {
-  if (!serverUrl) return;
+  if (!serverUrl || (level === 'debug' && !__DEV__)) return;
   if (pendingLogs.length >= MAX_PENDING) {
     // Drop oldest to prevent unbounded growth
     pendingLogs.splice(0, pendingLogs.length - MAX_PENDING + 1);
   }
-  pendingLogs.push({ level, source: `mobile:${source}`, message, ts: Date.now() });
+  pendingLogs.push({ level, source: `mobile:${source}`, message: message.slice(0, MAX_MESSAGE_CHARS), ts: Date.now() });
   scheduleFlush();
 }
 

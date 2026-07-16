@@ -40,6 +40,29 @@ export function isEventVisibleToPrincipal(event: BusEvent, principal: Principal)
 }
 
 const MAX_BUFFER_SIZE = 2000;
+const TRANSIENT_EVENTS = new Set(["chat.stream"]);
+
+export interface EventBufferFilters {
+  category?: string;
+  event?: string;
+  runId?: string;
+  sessionKey?: string;
+  startTimestamp?: number;
+  endTimestamp?: number;
+  payloadQuery?: Record<string, unknown>;
+}
+
+function payloadContains(actual: unknown, expected: unknown): boolean {
+  if (expected === null || typeof expected !== "object") return actual === expected;
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual)) return false;
+    return expected.every((value) => actual.some((candidate) => payloadContains(candidate, value)));
+  }
+  if (actual === null || typeof actual !== "object" || Array.isArray(actual)) return false;
+  return Object.entries(expected as Record<string, unknown>).every(
+    ([key, value]) => payloadContains((actual as Record<string, unknown>)[key], value),
+  );
+}
 
 const TERMINAL_RUN_EVENTS = new Set([
   "agent.run.terminal_decision",
@@ -86,71 +109,79 @@ class EventBus extends EventEmitter {
 
     this.publishCounts[event.category] = (this.publishCounts[event.category] || 0) + 1;
 
-    this.buffer.push(busEvent);
-    if (this.buffer.length > MAX_BUFFER_SIZE) {
-      const trimmed = this.buffer.length - MAX_BUFFER_SIZE;
-      this.buffer = this.buffer.slice(-MAX_BUFFER_SIZE);
-      this.trimDroppedSinceLastLog += trimmed;
-      const now = Date.now();
-      if (trimmed > 10 || now - this.lastTrimLogTime >= this.TRIM_LOG_INTERVAL_MS) {
-        log.log(`buffer trimmed totalDroppedSinceLastLog=${this.trimDroppedSinceLastLog} currentDrop=${trimmed} size=${this.buffer.length}`);
-        this.trimDroppedSinceLastLog = 0;
-        this.lastTrimLogTime = now;
+    // Stream deltas are delivered synchronously to live subscribers and then
+    // discarded. All other events live only in this bounded process-local
+    // buffer. EventBus telemetry never competes with canonical state for DB
+    // connections.
+    if (!TRANSIENT_EVENTS.has(busEvent.event)) {
+      this.buffer.push(busEvent);
+      if (this.buffer.length > MAX_BUFFER_SIZE) {
+        const trimmed = this.buffer.length - MAX_BUFFER_SIZE;
+        this.buffer = this.buffer.slice(-MAX_BUFFER_SIZE);
+        this.trimDroppedSinceLastLog += trimmed;
+        const now = Date.now();
+        if (trimmed > 10 || now - this.lastTrimLogTime >= this.TRIM_LOG_INTERVAL_MS) {
+          log.debug(`buffer trimmed totalDroppedSinceLastLog=${this.trimDroppedSinceLastLog} currentDrop=${trimmed} size=${this.buffer.length}`);
+          this.trimDroppedSinceLastLog = 0;
+          this.lastTrimLogTime = now;
+        }
       }
     }
 
     this.emit("event", busEvent);
-    this.persistAsync(busEvent);
     return busEvent;
-  }
-
-  private _persistFn: ((e: BusEvent) => Promise<number | undefined>) | null = null;
-  private _persistFnLoading = false;
-  private _persistBacklog: BusEvent[] = [];
-  private readonly _MAX_BACKLOG = 2000;
-  private _backlogOverflow = 0;
-
-  private persistAsync(busEvent: BusEvent): void {
-    if (this._persistFn) {
-      this._persistFn(busEvent).catch((error) => log.error("event persistence rejected", { event: busEvent.event, eventId: busEvent.id, error: error instanceof Error ? error.message : String(error) }));
-      return;
-    }
-    if (this._persistBacklog.length < this._MAX_BACKLOG) {
-      this._persistBacklog.push(busEvent);
-    } else {
-      this._backlogOverflow++;
-      if (this._backlogOverflow === 1 || this._backlogOverflow % 100 === 0) {
-        log.warn(`persist backlog overflow: ${this._backlogOverflow} events dropped while waiting for module load`);
-      }
-    }
-    if (!this._persistFnLoading) {
-      this._persistFnLoading = true;
-      import("./event-persistence").then(({ persistEvent }) => {
-        this._persistFn = persistEvent;
-        const backlog = this._persistBacklog;
-        this._persistBacklog = [];
-        for (const evt of backlog) {
-          this._persistFn(evt).catch((error) => log.error("event backlog persistence rejected", { event: evt.event, eventId: evt.id, error: error instanceof Error ? error.message : String(error) }));
-        }
-      }).catch((error) => {
-        this._persistFnLoading = false;
-        log.error("event persistence module failed to load", { error: error instanceof Error ? error.message : String(error) });
-      });
-    }
   }
 
   getPublishCounts(): Record<string, number> {
     return { ...this.publishCounts };
   }
 
-  getRecentEvents(limit = 100, filter?: { category?: string; runId?: string; event?: string }, principal?: Principal): BusEvent[] {
+  private filterBufferedEvents(filter?: EventBufferFilters, principal?: Principal): BusEvent[] {
     let events = principal ? this.buffer.filter((event) => isEventVisibleToPrincipal(event, principal)) : this.buffer;
-    if (filter) {
-      if (filter.category) events = events.filter(e => e.category === filter.category);
-      if (filter.runId) events = events.filter(e => e.runId === filter.runId);
-      if (filter.event) events = events.filter(e => e.event.includes(filter.event!));
-    }
-    return events.slice(-limit);
+    if (!filter) return events;
+    if (filter.category) events = events.filter((event) => event.category === filter.category);
+    if (filter.runId) events = events.filter((event) => event.runId === filter.runId);
+    if (filter.event) events = events.filter((event) => event.event.includes(filter.event!));
+    if (filter.sessionKey) events = events.filter((event) => event.sessionKey === filter.sessionKey);
+    if (filter.startTimestamp) events = events.filter((event) => event.timestamp >= filter.startTimestamp!);
+    if (filter.endTimestamp) events = events.filter((event) => event.timestamp <= filter.endTimestamp!);
+    if (filter.payloadQuery) events = events.filter((event) => payloadContains(event.payload, filter.payloadQuery));
+    return events;
+  }
+
+  getRecentEvents(limit = 100, filter?: EventBufferFilters, principal?: Principal): BusEvent[] {
+    return this.filterBufferedEvents(filter, principal).slice(-Math.max(1, limit));
+  }
+
+  queryRecentEvents(input: {
+    limit?: number;
+    offset?: number;
+    filter?: EventBufferFilters;
+    principal?: Principal;
+  }): { events: BusEvent[]; total: number } {
+    const filtered = this.filterBufferedEvents(input.filter, input.principal);
+    const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
+    const offset = Math.max(input.offset ?? 0, 0);
+    const newestFirst = [...filtered].reverse();
+    return { events: newestFirst.slice(offset, offset + limit), total: filtered.length };
+  }
+
+  replayRecentEvents(input: {
+    afterEventId?: string;
+    category?: string;
+    payloadQuery?: Record<string, unknown>;
+    limit?: number;
+    principal: Principal;
+  }): { events: BusEvent[]; cursorFound: boolean } {
+    const filtered = this.filterBufferedEvents({
+      category: input.category,
+      payloadQuery: input.payloadQuery,
+    }, input.principal);
+    const limit = Math.min(Math.max(input.limit ?? 200, 1), 200);
+    if (!input.afterEventId) return { events: filtered.slice(-limit), cursorFound: true };
+    const cursorIndex = filtered.findIndex((event) => event.id === input.afterEventId);
+    if (cursorIndex < 0) return { events: filtered.slice(-limit), cursorFound: false };
+    return { events: filtered.slice(cursorIndex + 1, cursorIndex + 1 + limit), cursorFound: true };
   }
 
   getRunEvents(runId: string, principal?: Principal): BusEvent[] {

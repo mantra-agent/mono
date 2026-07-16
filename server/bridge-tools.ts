@@ -11465,17 +11465,7 @@ ${refs}` : ""),
           const eventPrincipal = getCurrentPrincipalOrSystem();
           const recentEvents = eventBus.getRecentEvents(500, undefined, eventPrincipal);
           testEvent = recentEvents.find(e => e.id === eventId);
-          if (!testEvent) {
-            const { getEventByEventId, getEventByDbId } = await import("./event-persistence");
-            const dbIdNum = parseInt(eventId, 10);
-            if (!isNaN(dbIdNum)) {
-              testEvent = await getEventByDbId(dbIdNum);
-            }
-            if (!testEvent) {
-              testEvent = await getEventByEventId(eventId);
-            }
-            if (!testEvent) return { result: "Event not found in buffer or durable store", error: true };
-          }
+          if (!testEvent) return { result: "Event not found in current process buffer", error: true };
         } else {
           testEvent = {
             id: "test-event",
@@ -13741,25 +13731,26 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       try {
         const { getCurrentPrincipalOrSystem } = await import("./principal-context");
         const principal = getCurrentPrincipalOrSystem();
-        const { queryEvents } = await import("./event-persistence");
         const limit = (args.limit as number) || 100;
-        let payloadQuery: Record<string, any> | undefined;
+        let payloadQuery: Record<string, unknown> | undefined;
         if (args.payloadQuery) {
           payloadQuery = typeof args.payloadQuery === "string" ? JSON.parse(args.payloadQuery) : args.payloadQuery;
         }
-        const result = await queryEvents({
-          category: args.category as string | undefined,
-          event: args.event as string | undefined,
-          runId: args.runId as string | undefined,
-          sessionKey: args.sessionKey as string | undefined,
-          startDate: args.startDate as string | undefined,
-          endDate: args.endDate as string | undefined,
-          payloadQuery,
+        const result = eventBus.queryRecentEvents({
           limit,
           offset: (args.offset as number) || 0,
           principal,
+          filter: {
+            category: args.category as string | undefined,
+            event: args.event as string | undefined,
+            runId: args.runId as string | undefined,
+            sessionKey: args.sessionKey as string | undefined,
+            startTimestamp: args.startDate ? new Date(args.startDate as string).getTime() : undefined,
+            endTimestamp: args.endDate ? new Date(args.endDate as string).getTime() : undefined,
+            payloadQuery,
+          },
         });
-        return { result: JSON.stringify({ total: result.total, events: result.events.map(e => ({ id: e.eventId, dbId: e.id, timestamp: e.createdAt, category: e.category, event: e.event, runId: e.runId || null })) }) };
+        return { result: JSON.stringify({ total: result.total, source: "in-memory", events: result.events.map(e => ({ id: e.id, timestamp: new Date(e.timestamp).toISOString(), category: e.category, event: e.event, runId: e.runId || null })) }) };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         const { getCurrentPrincipalOrSystem } = await import("./principal-context");

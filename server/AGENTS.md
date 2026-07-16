@@ -182,13 +182,15 @@ Server-authoritative streaming state for chat sessions. The server maintains a `
 - `session.delta { sessionId, streamingContent, status }` — Incremental state update during streaming
 - `session.unsubscribe { sessionId }` — Client unsubscribes
 - `/ws/events` upgrades require an authenticated user Principal. Generic events carry one audience discriminant (`user`, `system`, or `global`); both live and replay delivery use the same visibility predicate. `session.subscribe` must verify the requested session through principal-scoped storage before touching `SessionManager`.
-- Event reconnect uses `events.resume` with a durable event ID cursor. Replay is principal-scoped, bounded to 200 rows, and filtered by the canonical payload identity. Replayed records use the ordinary `type: "event"` envelope so live and replay consumers share one reducer.
+- Event reconnect uses `events.resume` with a process-local event ID cursor. Replay is principal-scoped, bounded to 200 buffered events, and filtered by canonical payload identity. A restart invalidates the cursor; clients then recover from canonical session state. Replayed records use the ordinary `type: "event"` envelope so live and replay consumers share one reducer.
 
 ### Event Flow
 ```
 AgentExecutor stream → publishJournalToUI() → SessionManager.applyEvent()
   → reducer mutates StreamingContent → broadcast delta to WS subscribers
 ```
+
+Generic EventBus events are process-local operational signals. `chat.stream` is delivered synchronously and discarded; other events live in a principal-scoped 2,000-entry memory ring for current-boot history, hook testing, and reconnect replay. EventBus never writes to PostgreSQL. Canonical user state and hook execution records remain durable in their owning stores.
 
 ### When Working Here
 - `SessionManager` is a singleton — one instance per server process

@@ -22,7 +22,7 @@ interface ApiPolicyEvaluation {
 }
 
 const PUBLIC_RULES: ApiPolicyRule[] = [
-  { classification: "public", exact: ["/api/health", "/api/version", "/api/boot-status", "/api/client-error", "/api/client-logs"], reason: "health and safe diagnostics" },
+  { classification: "public", exact: ["/api/health", "/api/version", "/api/boot-status", "/api/client-error"], reason: "health and safe diagnostics" },
   { classification: "public", prefixes: ["/api/auth/login", "/api/auth/logout", "/api/auth/setup", "/api/auth/register", "/api/auth/invite/", "/api/auth/reset"], reason: "authentication and setup flow" },
   { classification: "public", prefixes: ["/api/voice/llm/"], reason: "voice provider callback ingress" },
   { classification: "public", prefixes: ["/api/objects/", "/objects"], methods: ["GET"], reason: "object read path with object ACL checks downstream" },
@@ -42,6 +42,7 @@ const SERVICE_RULES: ApiPolicyRule[] = [
 ];
 
 const PERSONAL_RULES: ApiPolicyRule[] = [
+  { classification: "personal", exact: ["/api/client-logs"], reason: "authenticated bounded client diagnostics ingestion" },
   {
     classification: "personal",
     prefixes: [
