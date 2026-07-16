@@ -18,7 +18,7 @@ import { runWithPrincipal } from "../principal-context";
 import { createNamedSystemPrincipal } from "../principal";
 import { requirePermission } from "../permissions";
 import { listModelConnectors, reorderModelConnectors, updateModelConnector } from "../model-connectors";
-import { modelTierMappingsSchema, openAITierMappingsSchema } from "@shared/model-connectors";
+import { claudeCliTierMappingsSchema, modelTierMappingsSchema, openAITierMappingsSchema } from "@shared/model-connectors";
 
 const INFERENCE_DEBUG_KEY = "system.inference_debug";
 
@@ -921,7 +921,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid connector id" });
       const body = z.object({
         status: z.enum(["active", "inactive"]).optional(),
-        tierMappings: z.union([modelTierMappingsSchema, openAITierMappingsSchema]).optional(),
+        tierMappings: z.union([modelTierMappingsSchema, openAITierMappingsSchema, claudeCliTierMappingsSchema]).optional(),
       }).parse(req.body);
       const connector = await updateModelConnector(id, body);
       if (!connector) return res.status(404).json({ error: "Model connector not found" });

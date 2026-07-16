@@ -560,7 +560,7 @@ function usesMaxCompletionTokens(model: string): boolean {
 
 function resolvedOpenAIConfig(options: Pick<ChatCompletionOptions, "routingDecision">): OpenAITierModelConfig | undefined {
   return options.routingDecision?.provider === "openai" || options.routingDecision?.provider === "openai-subscription"
-    ? options.routingDecision.modelConfig
+    ? options.routingDecision.modelConfig as OpenAITierModelConfig | undefined
     : undefined;
 }
 

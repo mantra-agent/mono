@@ -54,6 +54,28 @@ export const openAITierMappingsSchema = z.object({
 }).strict();
 export type OpenAITierMappings = z.infer<typeof openAITierMappingsSchema>;
 
+export const claudeCliEffortSchema = z.enum(["low", "medium", "high", "max"]);
+export type ClaudeCliEffort = z.infer<typeof claudeCliEffortSchema>;
+export const claudeCliThinkingModeSchema = z.enum(["adaptive", "disabled"]);
+export type ClaudeCliThinkingMode = z.infer<typeof claudeCliThinkingModeSchema>;
+
+export const claudeCliTierModelConfigSchema = z.object({
+  model: z.string().trim().min(1),
+  effort: claudeCliEffortSchema.optional(),
+  thinkingMode: claudeCliThinkingModeSchema.optional(),
+  maxTurns: z.number().int().min(1).max(1000).optional(),
+}).strict();
+export type ClaudeCliTierModelConfig = z.infer<typeof claudeCliTierModelConfigSchema>;
+
+export const claudeCliTierMappingsSchema = z.object({
+  max: claudeCliTierModelConfigSchema,
+  high: claudeCliTierModelConfigSchema,
+  balanced: claudeCliTierModelConfigSchema,
+  fast: claudeCliTierModelConfigSchema,
+}).strict();
+export type ClaudeCliTierMappings = z.infer<typeof claudeCliTierMappingsSchema>;
+export type ConnectorTierModelConfig = OpenAITierModelConfig | ClaudeCliTierModelConfig;
+
 export const legacyModelConnectorConfigSchema = z.object({
   kind: z.literal("model"),
   tierMappings: modelTierMappingsSchema,
@@ -70,10 +92,22 @@ export const openAIConnectorConfigSchema = z.object({
 }).strict();
 export type OpenAIConnectorConfig = z.infer<typeof openAIConnectorConfigSchema>;
 
-export const modelConnectorConfigSchema = z.union([legacyModelConnectorConfigSchema, openAIConnectorConfigSchema]);
+export const claudeCliConnectorConfigSchema = z.object({
+  kind: z.literal("claude-cli-models"),
+  version: z.literal(1),
+  tierMappings: claudeCliTierMappingsSchema,
+  migratedFrom: z.enum(["model_profiles", "manual", "model_connector_v1"]).optional(),
+}).strict();
+export type ClaudeCliConnectorConfig = z.infer<typeof claudeCliConnectorConfigSchema>;
+
+export const modelConnectorConfigSchema = z.union([
+  legacyModelConnectorConfigSchema,
+  openAIConnectorConfigSchema,
+  claudeCliConnectorConfigSchema,
+]);
 export type ModelConnectorConfig = z.infer<typeof modelConnectorConfigSchema>;
 
-export function getConnectorTierModelConfig(config: ModelConnectorConfig, tier: SemanticTier): OpenAITierModelConfig {
+export function getConnectorTierModelConfig(config: ModelConnectorConfig, tier: SemanticTier): ConnectorTierModelConfig {
   const tierConfig = config.tierMappings[tier];
   return typeof tierConfig === "string" ? { model: tierConfig } : tierConfig;
 }
