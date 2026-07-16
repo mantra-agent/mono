@@ -2,7 +2,6 @@ import type { BusEvent } from "./event-bus";
 import { eventBus } from "./event-bus";
 import type { SystemHook } from "@shared/schema";
 import * as hookStorage from "./hook-storage";
-import { persistEvent, cleanupOldEvents } from "./event-persistence";
 import { createLogger } from "./log";
 
 const log = createLogger("HookExecutor");
@@ -56,7 +55,6 @@ class HookExecutor {
   private executionCounts: Map<number, number> = new Map();
   private executionsThisMinute = 0;
   private minuteResetTimer: NodeJS.Timeout | null = null;
-  private cleanupTimer: NodeJS.Timeout | null = null;
   private initialized = false;
 
   async initialize(): Promise<void> {
@@ -90,14 +88,6 @@ class HookExecutor {
       this.executionsThisMinute = 0;
     }, 60_000);
 
-    setTimeout(() => {
-      cleanupOldEvents(7).catch(err => log.warn(`initial event cleanup failed: ${err.message}`));
-    }, 60_000);
-
-    this.cleanupTimer = setInterval(() => {
-      cleanupOldEvents(7).catch(err => log.warn(`event cleanup failed: ${err.message}`));
-    }, 24 * 60 * 60 * 1000);
-
     eventBus.on("event", (busEvent: BusEvent) => {
       this.handleEvent(busEvent).catch(err => {
         log.warn(`hook evaluation failed event=${busEvent.event}: ${err.message}`);
@@ -114,8 +104,9 @@ class HookExecutor {
       return;
     }
 
-    let eventDbId: number | undefined;
-    let eventDbIdResolved = false;
+    // EventBus events are process-local telemetry. Hook execution records
+    // remain durable, but no longer carry a system_events foreign key.
+    const eventDbId: number | undefined = undefined;
 
     const matchingHooks: Array<{ hook: SystemHook }> = [];
 
@@ -147,21 +138,6 @@ class HookExecutor {
     }
 
     if (matchingHooks.length === 0) return;
-
-    if (!eventDbIdResolved) {
-      eventDbIdResolved = true;
-      try {
-        const { getEventByEventId } = await import("./event-persistence");
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const dbEvent = await getEventByEventId(busEvent.id);
-          if (dbEvent) {
-            eventDbId = dbEvent.dbId;
-            break;
-          }
-          await new Promise(r => setTimeout(r, 50));
-        }
-      } catch { }
-    }
 
     const context: Record<string, any> = {
       payload: busEvent.payload || {},

@@ -144,17 +144,7 @@ export function registerHooksRoutes(app: Express) {
         const recentEvents = eventBus.getRecentEvents(500, undefined, req.principal);
         testEvent = recentEvents.find(e => e.id === eventId);
         if (!testEvent) {
-          const { getEventByEventId, getEventByDbId } = await import("../event-persistence");
-          const dbIdNum = parseInt(eventId, 10);
-          if (!isNaN(dbIdNum)) {
-            testEvent = await getEventByDbId(dbIdNum);
-          }
-          if (!testEvent) {
-            testEvent = await getEventByEventId(eventId);
-          }
-          if (!testEvent) {
-            return res.status(404).json({ error: "Event not found in buffer or durable store" });
-          }
+          return res.status(404).json({ error: "Event not found in current process buffer" });
         }
       } else {
         testEvent = {

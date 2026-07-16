@@ -9,22 +9,26 @@ import { readFile, writeFile, stat, access } from "fs/promises";
 import { resolve } from "path";
 import { z } from "zod";
 import { createLogger, listLogFiles, readLogFile, readLogFileAsync, getCurrentLogFile, appendClientLog, resolveLogFilename, isVerboseEnabled, setVerboseEnabled } from "../log";
-import { getSetting, setSetting } from "../system-settings";
 import { storage } from "../storage";
 
 const log = createLogger("system-routes");
+const CLIENT_LOG_MAX_ENTRIES_PER_MINUTE = 500;
+const clientLogBudgets = new Map<string, { windowStartedAt: number; accepted: number }>();
+
+function claimClientLogBudget(key: string, count: number): boolean {
+  const now = Date.now();
+  const current = clientLogBudgets.get(key);
+  if (!current || now - current.windowStartedAt >= 60_000) {
+    clientLogBudgets.set(key, { windowStartedAt: now, accepted: count });
+    return count <= CLIENT_LOG_MAX_ENTRIES_PER_MINUTE;
+  }
+  if (current.accepted + count > CLIENT_LOG_MAX_ENTRIES_PER_MINUTE) return false;
+  current.accepted += count;
+  return true;
+}
 
 export async function registerSystemRoutes(app: Express, serverStartTime: Date) {
-  // Hydrate verbose logging from persisted setting on boot
-  try {
-    const saved = await getSetting<boolean>("system.verboseLogging");
-    if (saved === true) {
-      setVerboseEnabled(true);
-      log.info("Verbose logging enabled from persisted setting");
-    }
-  } catch (err) {
-    log.warn("Failed to load verbose logging setting on boot", err);
-  }
+  // Diagnostic detail is intentionally process-local and defaults off on every boot.
 
   app.use(["/api/logs", "/api/server", "/api/boot-info", "/api/config", "/api/design-doc"], requireAuth, requirePermission("system:read"));
   app.post("/api/config", requirePermission("system:write"));
@@ -118,7 +122,7 @@ export async function registerSystemRoutes(app: Express, serverStartTime: Date) 
     }
   });
 
-  // ── Verbose logging toggle ────────────────────────────────────────────
+  // ── Diagnostic detail toggle (debug + verbose in production) ─────────
   app.get("/api/logs/verbose", requireAuth, requirePermission("system:read"), (_req, res) => {
     res.json({ enabled: isVerboseEnabled() });
   });
@@ -127,19 +131,22 @@ export async function registerSystemRoutes(app: Express, serverStartTime: Date) 
     try {
       const enabled = !!req.body?.enabled;
       setVerboseEnabled(enabled);
-      await setSetting("system.verboseLogging", enabled);
-      log.info(`Verbose logging ${enabled ? "enabled" : "disabled"}`);
+      log.info(`Diagnostic detail logging ${enabled ? "enabled" : "disabled"}`);
       res.json({ enabled });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.post("/api/client-logs", async (req, res) => {
+  app.post("/api/client-logs", requireAuth, async (req, res) => {
     try {
       const { entries } = req.body || {};
-      if (!Array.isArray(entries)) {
-        return res.status(400).json({ error: "entries must be an array" });
+      if (!Array.isArray(entries) || entries.length > 50) {
+        return res.status(400).json({ error: "entries must be an array with at most 50 items" });
+      }
+      const budgetKey = req.principal?.accountId || req.principal?.userId || req.ip || "unknown";
+      if (!claimClientLogBudget(budgetKey, entries.length)) {
+        return res.status(429).json({ error: "client log rate limit exceeded" });
       }
       for (const entry of entries) {
         if (entry && typeof entry.level === "string" && typeof entry.source === "string" && typeof entry.message === "string") {

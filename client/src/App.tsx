@@ -1,5 +1,5 @@
 // Use createLogger for logging ONLY
-import { createLogger } from "@/lib/logger";
+import { createLogger, initializeDiagnosticLogging } from "@/lib/logger";
 import { useState, useEffect, useCallback, Suspense, Component, type ErrorInfo, type ReactNode } from "react";
 import { lazyWithRetry } from "@/lib/lazy-with-retry";
 import { Switch, Route, Redirect, useLocation } from "wouter";
@@ -407,6 +407,9 @@ function AppLayout({ mobileSurfaceActive, previewRouteOwnsCanvas }: { mobileSurf
 
 function AppShell() {
   useDataSync();
+  useEffect(() => {
+    void initializeDiagnosticLogging();
+  }, []);
   const [location] = useLocation();
   const [interfaceMode] = useInterfaceMode();
 

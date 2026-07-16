@@ -1,6 +1,6 @@
 // Use createLogger for logging ONLY — do not use console.log/warn/error directly anywhere in the codebase
 import { mkdirSync, createWriteStream, type WriteStream } from "fs";
-import { readFile, readdir, stat } from "fs/promises";
+import { readFile, readdir, stat, unlink } from "fs/promises";
 import { join, resolve } from "path";
 
 /** Severity ranking for threshold-based filtering: selecting a level shows that level and above. */
@@ -13,12 +13,19 @@ const LOG_LEVEL_RANK: Record<string, number> = { verbose: -1, debug: 0, log: 1, 
 //
 //   log.verbose(() => `per-token detail: ${computeExpensiveThing()}`);
 //
-// Toggle at runtime via the System → Logs UI or the system setting
-// `system.verboseLogging`.
+// Toggle for the current process via System → Logs. The toggle resets off on
+// every boot so a temporary diagnostic window cannot silently become normal.
 let _verboseEnabled = false;
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 export function isVerboseEnabled(): boolean { return _verboseEnabled; }
 export function setVerboseEnabled(enabled: boolean): void { _verboseEnabled = enabled; }
+
+function shouldEmitLevel(level: string): boolean {
+  if (level === "verbose") return _verboseEnabled;
+  if (level === "debug") return !IS_PRODUCTION || _verboseEnabled;
+  return true;
+}
 
 type LogSink = (entry: { level: string; message: string; source: string }) => void;
 
@@ -103,6 +110,10 @@ function formatArgs(args: unknown[]): string {
 }
 
 const LOGS_DIR = join(process.cwd(), "logs");
+const LOG_FILE_MAX_BYTES = 50 * 1024 * 1024;
+const LOG_TOTAL_MAX_BYTES = 100 * 1024 * 1024;
+const LOG_FILE_RETAIN_COUNT = 2;
+const LOG_MESSAGE_MAX_BYTES = 64 * 1024;
 
 function ensureLogsDir() {
   // boot-only sync mkdir — runs once at module load before any traffic.
@@ -111,14 +122,16 @@ function ensureLogsDir() {
   } catch {}
 }
 
-function makeLogFileName(): string {
+function makeLogFileName(part = 0): string {
   const now = new Date();
   const pad2 = (n: number) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}_${pad2(now.getHours())}-${pad2(now.getMinutes())}-${pad2(now.getSeconds())}.log`;
+  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}_${pad2(now.getHours())}-${pad2(now.getMinutes())}-${pad2(now.getSeconds())}-${process.pid}-part-${pad2(part)}.log`;
 }
 
 ensureLogsDir();
-const currentLogFile = join(LOGS_DIR, makeLogFileName());
+let logFilePart = 0;
+let currentLogFile = join(LOGS_DIR, makeLogFileName(logFilePart));
+let currentLogBytes = 0;
 
 // Buffered async log writer (Task #995, Step D). Replaces the per-line
 // blocking append pattern — it was being called from 2,633 sites and was
@@ -133,13 +146,17 @@ function getLogStream(): WriteStream | null {
   if (logStreamErrored) return null;
   if (logStream) return logStream;
   try {
-    logStream = createWriteStream(currentLogFile, { flags: "a", encoding: "utf-8" });
-    logStream.on("error", (err) => {
-      logStreamErrored = true;
+    const stream = createWriteStream(currentLogFile, { flags: "a", encoding: "utf-8" });
+    logStream = stream;
+    stream.on("error", (err) => {
+      if (logStream === stream) {
+        logStreamErrored = true;
+        logStream = null;
+      }
       // best-effort fallback to stderr; never throw from a logger
       try { process.stderr.write(`[log.ts] log stream error: ${(err as any)?.message || err}\n`); } catch {}
     });
-    return logStream;
+    return stream;
   } catch (err) {
     logStreamErrored = true;
     try { process.stderr.write(`[log.ts] log stream open failed: ${(err as any)?.message || err}\n`); } catch {}
@@ -147,8 +164,51 @@ function getLogStream(): WriteStream | null {
   }
 }
 
+let pruningLogFiles = false;
+async function pruneLogFiles(): Promise<void> {
+  if (pruningLogFiles) return;
+  pruningLogFiles = true;
+  try {
+    const files = (await readdir(LOGS_DIR))
+      .filter((file) => file.endsWith(".log"))
+      .sort()
+      .reverse();
+    let retainedBytes = 0;
+    let retainedFiles = 0;
+    for (const filename of files) {
+      const path = join(LOGS_DIR, filename);
+      let size = 0;
+      try { size = (await stat(path)).size; } catch { continue; }
+      const isCurrent = path === currentLogFile;
+      const canRetain = retainedFiles < LOG_FILE_RETAIN_COUNT && retainedBytes + size <= LOG_TOTAL_MAX_BYTES;
+      if (isCurrent || canRetain) {
+        retainedBytes += size;
+        retainedFiles++;
+      } else {
+        try { await unlink(path); } catch {}
+      }
+    }
+  } catch {
+    // Local logs are best-effort diagnostics. Never fail the app over pruning.
+  } finally {
+    pruningLogFiles = false;
+  }
+}
+
+function rotateLogStream(): void {
+  const previous = logStream;
+  logStream = null;
+  logStreamErrored = false;
+  currentLogBytes = 0;
+  currentLogFile = join(LOGS_DIR, makeLogFileName(++logFilePart));
+  try { previous?.end(); } catch {}
+  getLogStream();
+  void pruneLogFiles();
+}
+
 // Open eagerly so a torrent of writes never has to race the open() call.
 getLogStream();
+void pruneLogFiles();
 
 let shutdownRegistered = false;
 function registerShutdownFlush() {
@@ -198,28 +258,42 @@ export function resolveLogFilename(filename: string): string {
   return validateLogFilePath(join(LOGS_DIR, basename));
 }
 
+function boundLogMessage(message: string): string {
+  const bytes = Buffer.from(message, "utf8");
+  if (bytes.byteLength <= LOG_MESSAGE_MAX_BYTES) return message;
+  return `${bytes.subarray(0, LOG_MESSAGE_MAX_BYTES).toString("utf8")}…[truncated]`;
+}
+
 function formatLogLine(level: string, source: string, message: string): string {
   const ts = new Date().toISOString();
   return `[${ts}] [${level.toUpperCase().padEnd(7)}] [${source}] ${message}\n`;
 }
 
-function appendToLogFile(level: string, source: string, message: string) {
+function appendToLogFile(level: string, source: string, message: string): void {
+  if (!shouldEmitLevel(level)) return;
+  const line = formatLogLine(level, source, message);
+  const lineBytes = Buffer.byteLength(line, "utf8");
+  if (currentLogBytes > 0 && currentLogBytes + lineBytes > LOG_FILE_MAX_BYTES) {
+    rotateLogStream();
+  }
   const s = getLogStream();
   if (!s) return;
   try {
-    s.write(formatLogLine(level, source, message));
+    s.write(line);
+    currentLogBytes += lineBytes;
   } catch {
     // Never throw from a logger.
   }
 }
 
 export function appendClientLog(level: string, source: string, message: string) {
-  const s = getLogStream();
-  if (s) {
-    try { s.write(formatLogLine(level, `client:${source}`, message)); } catch {}
-  }
-  bufferLog(level, message, `client:${source}`);
-  sink?.({ level, message, source: `client:${source}` });
+  const normalizedLevel = level === "log" ? "info" : level.toLowerCase();
+  if (!(normalizedLevel in LOG_LEVEL_RANK) || !shouldEmitLevel(normalizedLevel)) return;
+  const clientSource = `client:${source.slice(0, 128)}`;
+  const boundedMessage = boundLogMessage(message);
+  appendToLogFile(normalizedLevel, clientSource, boundedMessage);
+  bufferLog(normalizedLevel, boundedMessage, clientSource);
+  sink?.({ level: normalizedLevel, message: boundedMessage, source: clientSource });
 }
 
 export interface LogFileInfo {
@@ -411,8 +485,9 @@ export async function readLogFileAsync(filePath: string, opts?: {
 export function createLogger(module: string) {
   const prefix = `[${module}]`;
   const write = (consoleWrite: (...args: unknown[]) => void, sinkLevel: string, args: unknown[]) => {
-    consoleWrite(prefix, ...args);
-    const msg = formatArgs(args);
+    if (!shouldEmitLevel(sinkLevel)) return;
+    const msg = boundLogMessage(formatArgs(args));
+    consoleWrite(prefix, msg);
     bufferLog(sinkLevel, msg, module);
     appendToLogFile(sinkLevel, module, msg);
     sink?.({ level: sinkLevel, message: msg, source: module });

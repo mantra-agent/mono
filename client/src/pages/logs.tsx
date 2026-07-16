@@ -28,7 +28,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useTimezone } from "@/hooks/use-timezone";
 import { useLogErrors } from "@/hooks/use-log-errors";
-import { createLogger } from "@/lib/logger";
+import { createLogger, setVerboseEnabled } from "@/lib/logger";
 import { usePageHeader } from "@/hooks/use-page-header";
 
 const log = createLogger("logs-page");
@@ -272,6 +272,9 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
     queryFn: () => fetch("/api/logs/verbose").then(r => r.json()),
   });
   const verboseEnabled = verboseData?.enabled ?? false;
+  useEffect(() => {
+    setVerboseEnabled(verboseEnabled);
+  }, [verboseEnabled]);
   const toggleVerbose = useMutation({
     mutationFn: (enabled: boolean) =>
       fetch("/api/logs/verbose", {
@@ -496,7 +499,7 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
               <DropdownMenuSub>
-                <DropdownMenuSubTrigger data-testid="menu-log-verbose">Verbose</DropdownMenuSubTrigger>
+                <DropdownMenuSubTrigger data-testid="menu-log-verbose">Diagnostic detail</DropdownMenuSubTrigger>
                 <DropdownMenuSubContent>
                   <DropdownMenuRadioGroup
                     value={verboseEnabled ? "enabled" : "disabled"}
