@@ -87,7 +87,7 @@ const navSections: NavSection[] = [
       { title: "Home", url: "/home", icon: Home },
       { title: "Dashboard", url: "/dashboard", icon: Gauge, permission: "system:read" },
       { title: "News", url: "/news", icon: Newspaper },
-      { title: "Email", url: "/email", icon: Mail },
+      { title: "Email", url: "/email", icon: Mail, titleTone: "muted" },
       { title: "Library", url: "/library", icon: BookOpen },
       { title: "Schedule", url: "/schedule", icon: Calendar },
       { title: "Projects", url: "/projects", icon: Briefcase },
