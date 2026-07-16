@@ -9,6 +9,7 @@ import {
   index,
   boolean,
   unique,
+  uniqueIndex,
   vector,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
@@ -94,6 +95,87 @@ export const insertWorkspaceDocumentSchema = createInsertSchema(
 export type WorkspaceDocument = typeof workspaceDocuments.$inferSelect;
 export type InsertWorkspaceDocument = z.infer<
   typeof insertWorkspaceDocumentSchema
+>;
+
+export const documentStoreDocuments = pgTable(
+  "document_store_documents",
+  {
+    id: serial("id").primaryKey(),
+    documentType: text("document_type").notNull(),
+    documentId: text("document_id").notNull(),
+    sourceTable: text("source_table"),
+    sourceRowId: text("source_row_id"),
+    sourceMemoryEntryId: integer("source_memory_entry_id"),
+    sourceId: text("source_id"),
+    path: text("path"),
+    title: text("title"),
+    summary: text("summary"),
+    oneLiner: text("one_liner"),
+    content: text("content").notNull().default(""),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    tags: jsonb("tags").notNull().default(sql`'[]'::jsonb`),
+    sourceContentHash: text("source_content_hash"),
+    sourceMetadataHash: text("source_metadata_hash"),
+    sourceIdentityHash: text("source_identity_hash"),
+    sourceCreatedAt: timestamp("source_created_at", { withTimezone: true, precision: 6 }),
+    sourceProcessedAt: timestamp("source_processed_at", { withTimezone: true, precision: 6 }),
+    migrationKey: text("migration_key"),
+    migratedAt: timestamp("migrated_at", { withTimezone: true, precision: 6 }),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    vaultId: text("vault_id"),
+    createdByUserId: text("created_by_user_id"),
+    updatedByUserId: text("updated_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, precision: 6 })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_document_store_owner_type_id").on(
+      table.scope,
+      table.ownerUserId,
+      table.accountId,
+      table.documentType,
+      table.documentId,
+    ),
+    uniqueIndex("uk_document_store_source_row").on(
+      table.sourceTable,
+      table.sourceRowId,
+    ),
+    uniqueIndex("uk_document_store_source_memory_entry")
+      .on(table.sourceMemoryEntryId)
+      .where(sql`${table.sourceMemoryEntryId} IS NOT NULL`),
+    index("idx_document_store_scope_owner").on(table.scope, table.ownerUserId),
+    index("idx_document_store_account").on(table.accountId),
+    index("idx_document_store_vault").on(table.vaultId),
+    index("idx_document_store_type_id").on(table.documentType, table.documentId),
+    index("idx_document_store_source_row").on(table.sourceTable, table.sourceRowId),
+    index("idx_document_store_path").on(table.path),
+    index("idx_document_store_updated_at").on(table.updatedAt),
+    index("idx_document_store_migration_key").on(table.migrationKey),
+    index("idx_document_store_source_hashes").on(
+      table.sourceContentHash,
+      table.sourceMetadataHash,
+      table.sourceIdentityHash,
+    ),
+  ],
+);
+
+export const insertDocumentStoreDocumentSchema = createInsertSchema(
+  documentStoreDocuments,
+).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type DocumentStoreDocument = typeof documentStoreDocuments.$inferSelect;
+export type InsertDocumentStoreDocument = z.infer<
+  typeof insertDocumentStoreDocumentSchema
 >;
 
 export const memoryLayers = ["short", "mid", "long", "workspace"] as const;
