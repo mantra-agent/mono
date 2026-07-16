@@ -58,6 +58,7 @@ import {
   type MeetingBotStatus,
   type MeetingSessionMeta,
   type MessageSpeakerMeta,
+  type QuestionResponseMeta,
 } from "@shared/models/chat";
 import { db } from "../../db";
 import { and, eq, inArray, isNull, notInArray, sql as drizzleSql, type SQL } from "drizzle-orm";
@@ -67,6 +68,7 @@ import { planExecutions, workflowRuns } from "@shared/schema";
 import { createLogger } from "../../log";
 import { requireAuth } from "../../auth";
 import { getCurrentPrincipalOrSystem } from "../../principal-context";
+import { resolveQuestionResponse } from "../../question-response";
 
 const chatLog = createLogger("ChatStream");
 const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
@@ -1707,7 +1709,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         result: toolResult.result,
         error: toolResult.error,
         sideEffectOnly: toolResult.sideEffectOnly,
-        continuation: personaChanged ? "persona_switch" as const : undefined,
+        continuation: personaChanged ? "persona_switch" as const : toolResult.continuation,
       };
     };
 
@@ -2633,6 +2635,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           isGreeting,
           clientTurnId: rawClientTurnId,
           pageContext: incomingPageContext,
+          questionResponse: incomingQuestionResponse,
         } = req.body;
         const clientTurnId = typeof rawClientTurnId === "string" && rawClientTurnId.length <= 120
           ? rawClientTurnId
@@ -2641,7 +2644,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           `message start sessionId=${sessionId} contentLen=${content?.length || 0} isGreeting=${!!isGreeting}`,
         );
 
-        if (!content || typeof content !== "string") {
+        if ((!content || typeof content !== "string") && !incomingQuestionResponse) {
           return res.status(400).json({ error: "Message content is required" });
         }
 
@@ -2654,15 +2657,36 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         const msgPageContext = incomingPageContext
           ? (normalizePageContext(incomingPageContext) ?? undefined)
           : undefined;
+        let acceptedContent = typeof content === "string" ? content : "";
+        let acceptedQuestionResponse: QuestionResponseMeta | undefined;
+        if (incomingQuestionResponse) {
+          if (isGreeting) {
+            return res.status(400).json({ error: "Greeting messages cannot answer questions." });
+          }
+          if (!clientTurnId) {
+            return res.status(400).json({ error: "clientTurnId is required for question responses." });
+          }
+          const existingMessages = await chatStorage.getMessagesBySession(sessionId);
+          const resolvedResponse = resolveQuestionResponse(existingMessages, incomingQuestionResponse);
+          if (!resolvedResponse.ok) {
+            return res.status(resolvedResponse.status).json({ error: resolvedResponse.error });
+          }
+          acceptedContent = resolvedResponse.content;
+          acceptedQuestionResponse = resolvedResponse.response;
+        }
         if (!isGreeting && clientTurnId) {
           const acceptance = await chatStorage.createUserMessageOnce(
             sessionId,
-            content,
+            acceptedContent,
             clientTurnId,
             msgPageContext,
+            acceptedQuestionResponse,
           );
           if (acceptance.outcome === "session_not_found") {
             return res.status(404).json({ error: "Session not found" });
+          }
+          if (acceptance.outcome === "question_already_answered") {
+            return res.status(409).json({ error: "This question has already been answered." });
           }
           if (acceptance.outcome === "duplicate") {
             chatLog.warn(`duplicate message replay ignored sessionId=${sessionId} clientTurnId=${clientTurnId}`);
@@ -2712,7 +2736,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             await chatStorage.createMessage(
               sessionId,
               "user",
-              content,
+              acceptedContent,
               undefined,
               undefined,
               undefined,
@@ -2730,7 +2754,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           }
           publishChatStreamEvent(sessionKey, sessionId, {
             type: "user_message",
-            content,
+            content: acceptedContent,
             sessionId,
             title: session.title || undefined,
           });
@@ -2782,7 +2806,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         processChatStream(
           sessionKey,
           sessionId,
-          content,
+          acceptedContent,
           undefined,
           undefined,
           undefined,

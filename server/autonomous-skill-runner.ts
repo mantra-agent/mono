@@ -467,7 +467,7 @@ function getSkillTools(activity: ActivityId, sessionKey: string, sessionId: stri
       sessionKey,
       sessionId,
     });
-    return { result: result.result, error: result.error, sideEffectOnly: result.sideEffectOnly };
+    return { result: result.result, error: result.error, sideEffectOnly: result.sideEffectOnly, continuation: result.continuation };
   };
 
   return { tools, toolExecutor: toolExecutor as any };

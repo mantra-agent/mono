@@ -84,6 +84,7 @@ import type {
   CompactionMeta,
   PageContext,
   SystemStepRecord,
+  QuestionResponseMeta,
 } from "@shared/models/chat";
 import { SYSTEM_STEP_META } from "@shared/event-catalog";
 
@@ -150,6 +151,7 @@ import { useVisibilityLayer } from "@/hooks/use-visibility-layer";
 import { ReferenceText } from "@/components/references/reference-text";
 import type { ReferenceSurface } from "@/components/references/reference-renderer";
 import { EmailDraftWidget } from "@/components/email-draft-widget";
+import { QuestionWidget, questionPromptFromToolCall } from "@/components/question-widget";
 import { PlanWidget } from "@/components/plan-widget";
 import type { PlanData } from "@/components/plan-shared";
 import { parseReferenceText } from "@shared/reference-parser";
@@ -251,6 +253,8 @@ export interface ChatMessage {
   persona?: { id: number; name: string; icon: string } | null;
   /** Speaker attribution for meeting transcript messages. */
   speaker?: { label: string; personId?: string } | null;
+  /** Structured response to an inline question tool call. */
+  questionResponse?: QuestionResponseMeta;
   /** Canonical per-turn correlation ID for voice turns. */
   turnId?: string;
   /** Structural visibility discriminant — 'diagnostic' messages are hidden from chat */
@@ -2254,6 +2258,9 @@ export const ChatTurn = memo(function ChatTurn({
   sessionKey,
   compactReferences = false,
   suppressedEmailDraftIds,
+  questionResponses,
+  questionSubmissionDisabled,
+  onQuestionSubmit,
 }: {
   message: ChatMessage;
   isLast: boolean;
@@ -2261,6 +2268,9 @@ export const ChatTurn = memo(function ChatTurn({
   sessionKey?: string | null;
   compactReferences?: boolean;
   suppressedEmailDraftIds?: string;
+  questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
+  questionSubmissionDisabled?: boolean;
+  onQuestionSubmit?: (response: QuestionResponseMeta) => Promise<boolean>;
 }) {
   const isUser = message.role === "user";
   const isSystemPrompt = message.role === "system_prompt";
@@ -2348,6 +2358,14 @@ export const ChatTurn = memo(function ChatTurn({
     (id) => !draftIdsFromContent.includes(id) && !suppressedDraftIds.has(id),
   );
   const hasUnpromotedDraftWidget = unpromotedDraftIds.length > 0;
+  const questionPrompts = segments.flatMap((segment) =>
+    segment.type === "timeline"
+      ? segment.steps.flatMap((step) => {
+          const prompt = questionPromptFromToolCall(step);
+          return prompt ? [prompt] : [];
+        })
+      : [],
+  );
 
   useEffect(() => {
     if (visibleEmailDraftIds.length === 0) return;
@@ -2622,6 +2640,15 @@ export const ChatTurn = memo(function ChatTurn({
             )}
             {unpromotedDraftIds.map((id) => (
               <EmailDraftWidget key={`tool-draft-${id}`} draftId={id} />
+            ))}
+            {questionPrompts.map((prompt) => (
+              <QuestionWidget
+                key={prompt.toolCallId}
+                prompt={prompt}
+                response={questionResponses?.get(prompt.toolCallId)}
+                disabled={questionSubmissionDisabled}
+                onSubmit={onQuestionSubmit}
+              />
             ))}
           </SuppressedEmailDraftsContext.Provider>
         </div>

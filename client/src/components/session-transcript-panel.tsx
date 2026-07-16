@@ -38,6 +38,7 @@ import { deleteSessionTree, getSessionDeletionDescription } from "@/lib/session-
 import {
   type ChatMessage as Message,
 } from "@/components/chat-shared";
+import type { QuestionResponseMeta } from "@shared/models/chat";
 import type { SessionStreamMap, SessionStreamState } from "@/hooks/use-session-subscription";
 import { initialStreamingContent } from "@shared/streaming-types";
 import { useExecutorStatus } from "@/hooks/use-executor-status";
@@ -51,6 +52,7 @@ import { useVoiceSessionOptional } from "@/hooks/use-voice-session";
 import { usePlanForSession } from "@/hooks/use-plan-for-session";
 import { useWorkflowForSession } from "@/hooks/use-workflow-for-session";
 import { usePinnedScroll } from "@/hooks/use-pinned-scroll";
+import { useQuestionResponse } from "@/hooks/use-question-response";
 import { ActiveStatusSpinner } from "@/components/nav-dot";
 import { ChatEmptyState } from "@/components/chat-empty-state";
 import {
@@ -429,6 +431,25 @@ export function SessionTranscriptPanel({
     activeSession === null
   ) ? contextPendingTurn : null;
 
+  const questionResponses = useMemo(() => {
+    const responses = new Map<string, QuestionResponseMeta>();
+    for (const message of messages) {
+      if (message.questionResponse) {
+        responses.set(message.questionResponse.questionToolCallId, message.questionResponse);
+      }
+    }
+    return responses;
+  }, [messages]);
+
+  const submitQuestionResponse = useQuestionResponse({
+    sessionId: activeSession,
+    enabled: isAgentRunning,
+    busy: isSessionActive,
+    pendingTurn: contextPendingTurn,
+    setPendingTurn: focusCtx?.setPendingTurn,
+    toast,
+  });
+
   const autoScrollEnabled = enableAutoScroll && !!activeSession && !msgsLoading;
   const { onScroll: handleScroll, onUserScrollIntent: handleUserScrollIntent, forcePin } = usePinnedScroll({
     containerRef: scrollContainerRef,
@@ -751,6 +772,9 @@ export function SessionTranscriptPanel({
         onUserScrollIntent={handleUserScrollIntent}
         onScroll={handleScroll}
         compactReferences={isWidget}
+        questionResponses={questionResponses}
+        questionSubmissionDisabled={!isAgentRunning || isSessionActive || Boolean(contextPendingTurn)}
+        onQuestionSubmit={submitQuestionResponse}
       />
     </div>
   );

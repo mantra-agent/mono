@@ -790,6 +790,8 @@ export function isDurablyActiveSession(session: Pick<ChatSession, "status" | "ty
 
 export type ToolCallStatus = "running" | "done" | "error";
 
+export type { QuestionResponseMeta } from "../question-prompt";
+
 export interface ToolCallInfo {
   toolName: string;
   status: ToolCallStatus;

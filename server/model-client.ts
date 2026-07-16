@@ -1487,7 +1487,7 @@ export interface ChatCompletionStreamOptions {
   metadata?: InferenceMetadata;
   messages: StreamMessage[];
   tools?: ToolDefinition[];
-  toolExecutor?: (name: string, args: Record<string, unknown>) => Promise<{ result: string; error?: boolean; sideEffectOnly?: boolean; continuation?: "persona_switch" }>;
+  toolExecutor?: (name: string, args: Record<string, unknown>) => Promise<{ result: string; error?: boolean; sideEffectOnly?: boolean; continuation?: import("./agent-executor").ToolContinuation }>;
   maxTokens?: number;
   temperature?: number;
   /** @deprecated Pass `thinking` instead. Kept for back-compat with existing callers. */
@@ -1532,7 +1532,7 @@ export type StreamEvent =
   | { type: "tool_use_update"; toolCallId: string; narrative: string }
   | { type: "tool_use"; toolCallId: string; toolName: string; arguments: Record<string, any> }
   | { type: "tool_call_resolved"; toolCallId: string; toolName: string; arguments: Record<string, unknown> }
-  | { type: "tool_result_resolved"; toolCallId: string; toolName: string; arguments?: Record<string, unknown>; order?: number; result: string; error?: boolean; continuation?: "persona_switch" }
+  | { type: "tool_result_resolved"; toolCallId: string; toolName: string; arguments?: Record<string, unknown>; order?: number; result: string; error?: boolean; continuation?: import("./agent-executor").ToolContinuation }
   | { type: "usage"; usage: { inputTokens: number; outputTokens: number; totalTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; reasoningTokens?: number; visibleOutputTokens?: number }; model?: string; stopReason: string; metadata?: Record<string, unknown> }
   | { type: "error"; error: string; providerFailure?: ModelProviderFailure }
   | { type: "keepalive"; reason: string }

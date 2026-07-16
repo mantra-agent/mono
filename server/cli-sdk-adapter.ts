@@ -706,14 +706,14 @@ function createMcpTools(
   pendingToolCallIdQueue: string[],
   sdkToolFn: typeof import("@anthropic-ai/claude-agent-sdk").tool,
   notifyToolEvent?: () => void,
-  requestContinuationHandoff?: (toolCallId: string, continuation: "persona_switch") => Promise<void>,
+  requestContinuationHandoff?: (toolCallId: string, continuation: import("./agent-executor").ToolContinuation) => Promise<void>,
 ) {
   let toolCallCounter = 0;
   let activeToolExecutions = 0;
   let toolActivityGeneration = 0;
   let pendingContinuation: {
     toolCallId: string;
-    continuation: "persona_switch";
+    continuation: import("./agent-executor").ToolContinuation;
     resolve: () => void;
   } | null = null;
   let continuationHandoffScheduled = false;
@@ -881,10 +881,10 @@ export async function* cliSdkStream(
   };
   let continuationHandoff: {
     toolCallId: string;
-    continuation: "persona_switch";
+    continuation: import("./agent-executor").ToolContinuation;
     resolve: () => void;
   } | null = null;
-  const requestContinuationHandoff = (toolCallId: string, continuation: "persona_switch") =>
+  const requestContinuationHandoff = (toolCallId: string, continuation: import("./agent-executor").ToolContinuation) =>
     new Promise<void>((resolve) => {
       continuationHandoff = { toolCallId, continuation, resolve };
       notifyToolEvent();
