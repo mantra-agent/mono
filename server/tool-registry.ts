@@ -363,13 +363,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   people: {
-    description: "Manage personal contacts — query, search, get details, check outreach agenda, add notes, log interactions, update or delete interactions. Actions: list, query, get_many, get, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, create, update, scan_imports, scan_ignored, list_import_candidates (paginated pending candidates plus queue metadata — totalPending, totalCandidates, decided counts, remainingAfterOffset, and progressPercent — so import progress can be tracked from the response instead of guessed), get/find import candidates, search_import_candidates (search pending import candidates by name, exact or partial email, and candidate ID without loading the entire queue — returns exact candidate IDs, summaries, and supports pagination; use query param for name/email partial match, candidateId for exact lookup, decision to filter by status, limit/offset for pagination), add/merge/skip/undo decisions, and preview/apply/get batches. Use canonical @person:id syntax in messages to link to people. Legacy [person:id] syntax is accepted during migration.",
+    description: "Manage personal contacts — query, search, get details, check outreach agenda, add notes, log interactions, safely merge existing contacts, update or delete interactions. Actions: list, query, get_many, get, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, create, update, scan_imports, scan_ignored, list_import_candidates (paginated pending candidates plus queue metadata — totalPending, totalCandidates, decided counts, remainingAfterOffset, and progressPercent — so import progress can be tracked from the response instead of guessed), get/find import candidates, search_import_candidates (search pending import candidates by name, exact or partial email, and candidate ID without loading the entire queue — returns exact candidate IDs, summaries, and supports pagination; use query param for name/email partial match, candidateId for exact lookup, decision to filter by status, limit/offset for pagination), add/merge/skip/undo decisions, and preview/apply/get batches. Use canonical @person:id syntax in messages to link to people. Legacy [person:id] syntax is accepted during migration.",
     category: "communication",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list", "query", "get_many", "get", "search", "agenda", "add_note", "update_note", "delete_note", "log_interaction", "get_interactions", "update_interaction", "delete_interaction", "create", "update", "scan_imports", "scan_ignored", "search_import_candidates", "list_import_candidates", "get_import_candidate", "find_import_matches", "add_import_candidate", "merge_import_candidate", "skip_import_candidate", "undo_import_decision", "preview_import_batch", "apply_import_batch", "get_import_batch"], description: "The action to perform" },
+        action: { type: "string", enum: ["list", "query", "get_many", "get", "search", "agenda", "add_note", "update_note", "delete_note", "log_interaction", "get_interactions", "update_interaction", "delete_interaction", "create", "update", "merge", "scan_imports", "scan_ignored", "search_import_candidates", "list_import_candidates", "get_import_candidate", "find_import_matches", "add_import_candidate", "merge_import_candidate", "skip_import_candidate", "undo_import_decision", "preview_import_batch", "apply_import_batch", "get_import_batch"], description: "The action to perform" },
         id: { type: "string", description: "Person ID or name (resolved automatically)" },
         query: { type: "string", description: "Person name or search term" },
         ids: { type: "array", items: { type: "string" }, description: "Person IDs for get_many (max 100)" },
@@ -403,8 +403,13 @@ export const TOOLS: Record<string, ToolMeta> = {
         trust: { type: "string", enum: ["ally", "positive", "none", "negative", "enemy"], description: "Trust level (for create)" },
         candidateId: { type: "string", description: "Import candidate ID for candidate actions" },
         personId: { type: "string", description: "Target Person ID for merge_import_candidate" },
+        sourcePersonId: { type: "string", description: "Exact source Person ID to absorb (for merge)" },
+        targetPersonId: { type: "string", description: "Exact prime Person ID to preserve (for merge)" },
+        expectedSourceName: { type: "string", description: "Exact current source name confirmation (for merge)" },
+        expectedTargetName: { type: "string", description: "Exact current target name confirmation (for merge)" },
+        reason: { type: "string", description: "Auditable reason for the merge, minimum 8 characters (for merge)" },
         decisionId: { type: "string", description: "Decision audit ID for undo_import_decision" },
-        idempotencyKey: { type: "string", description: "Required replay-safe key for import mutations and batch apply" },
+        idempotencyKey: { type: "string", description: "Required replay-safe key for merge, import mutations, and batch apply" },
         decisions: { type: "array", items: { type: "object" }, description: "Batch decisions: [{ action: add|merge|skip, input: { candidateId, ... } }]" },
         batchId: { type: "string", description: "Import batch ID" },
         batchToken: { type: "string", description: "Immutable token returned by preview_import_batch" },

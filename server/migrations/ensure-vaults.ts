@@ -101,6 +101,7 @@ export async function ensureVaults(): Promise<void> {
       "calendar_event_artifacts",
       // Phase 2: People
       "persons",
+      "person_merge_aliases",
       "simple_people_surface_state",
       // Phase 2: Finance (user data, NOT plaid_accounts/plaid_sync_cursors plumbing)
       "plaid_transactions",
@@ -158,6 +159,7 @@ export async function ensureVaults(): Promise<void> {
       // Phase 2 indexes
       { table: "calendar_event_metadata", idx: "idx_cal_meta_vault" },
       { table: "persons", idx: "idx_persons_vault" },
+      { table: "person_merge_aliases", idx: "idx_person_merge_aliases_vault" },
       { table: "connected_accounts", idx: "idx_connected_accounts_vault" },
       { table: "email_messages", idx: "idx_email_messages_vault" },
       { table: "email_triage_log", idx: "idx_email_triage_log_vault" },
@@ -221,6 +223,7 @@ export async function ensureVaults(): Promise<void> {
       { table: "calendar_event_artifacts", accountCol: "principal_account_id" },
       // Phase 2: People (use account_id)
       { table: "persons", accountCol: "account_id" },
+      { table: "person_merge_aliases", accountCol: "account_id" },
       { table: "simple_people_surface_state", accountCol: "account_id" },
       // Phase 2: Finance (use principal_account_id — maps to accounts.id)
       { table: "plaid_transactions", accountCol: "principal_account_id" },

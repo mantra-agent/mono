@@ -41,6 +41,7 @@ const OWNER_TABLES_WITH_SCOPE = [
   "tasks",
   "projects",
   "persons",
+  "person_merge_aliases",
   "principles",
 
 ] as const;

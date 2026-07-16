@@ -854,6 +854,57 @@ async function handlePeopleDeleteInteraction(args: Record<string, any>): Promise
   return { result: `Interaction ${interactionId} deleted from ${resolved.name} [person:${resolved.id}]` };
 }
 
+async function handlePeopleMerge(args: Record<string, any>): Promise<ToolHandlerResult> {
+  const sourcePersonId = typeof args.sourcePersonId === "string" ? args.sourcePersonId.trim() : "";
+  const targetPersonId = typeof args.targetPersonId === "string" ? args.targetPersonId.trim() : "";
+  const expectedSourceName = typeof args.expectedSourceName === "string" ? args.expectedSourceName.trim() : "";
+  const expectedTargetName = typeof args.expectedTargetName === "string" ? args.expectedTargetName.trim() : "";
+  const reason = typeof args.reason === "string" ? args.reason.trim() : "";
+  const idempotencyKey = typeof args.idempotencyKey === "string" ? args.idempotencyKey.trim() : "";
+  if (
+    !sourcePersonId ||
+    !targetPersonId ||
+    !expectedSourceName ||
+    !expectedTargetName ||
+    !reason ||
+    !idempotencyKey
+  ) {
+    return {
+      result:
+        "merge requires sourcePersonId, targetPersonId, expectedSourceName, expectedTargetName, reason, and idempotencyKey",
+      error: true,
+    };
+  }
+
+  const { peopleStorage } = await import("./people-storage");
+  const result = await peopleStorage.mergePeople({
+    sourcePersonId,
+    targetPersonId,
+    expectedSourceName,
+    expectedTargetName,
+    reason,
+    idempotencyKey,
+  });
+  const { eventBus } = await import("./event-bus");
+  eventBus.publish({
+    category: "agent",
+    event: "data:people_changed",
+    payload: {
+      source: "people_tool",
+      action: "merge",
+      sourcePersonId: result.sourcePersonId,
+      targetPersonId: result.targetPersonId,
+      personName: result.targetName,
+      alreadyMerged: result.alreadyMerged,
+    },
+  });
+  return {
+    result: result.alreadyMerged
+      ? `Person already merged: @person:${result.sourcePersonId} resolves to @person:${result.targetPersonId} (${result.targetName}).`
+      : `Merged ${result.sourceName} (@person:${result.sourcePersonId}) into ${result.targetName} (@person:${result.targetPersonId}). Profile/history data and structured references were preserved, and the source ID remains a durable alias.`,
+  };
+}
+
 async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandlerResult> {
   const { peopleStorage } = await import("./people-storage");
   const resolved = await resolvePersonId(args);
@@ -1013,6 +1064,7 @@ const peopleSubHandlers: Record<string, (args: Record<string, any>) => Promise<T
   get_relationship_memories: handleGetRelationshipMemories,
   enrichment_prompt: handleEnrichmentPrompt,
   update: handlePeopleUpdate,
+  merge: handlePeopleMerge,
   create: handlePeopleCreate,
   set_daily_contact: handlePeopleSetDailyContact,
   scan_imports: handlePeopleScanImports,
@@ -15313,7 +15365,7 @@ function validateToolArgs(
 const SIDE_EFFECT_ONLY_ACTIONS: Record<string, Set<string>> = {
   session: new Set(["set_status", "end", "send_message"]),
   companies: new Set(["create", "update", "delete", "add_person", "remove_person", "add_opportunity", "remove_opportunity"]),
-  people: new Set(["create", "update", "add_note", "update_note", "delete_note", "log_interaction", "update_interaction", "delete_interaction", "set_daily_contact"]),
+  people: new Set(["create", "update", "merge", "add_note", "update_note", "delete_note", "log_interaction", "update_interaction", "delete_interaction", "set_daily_contact"]),
   calendar: new Set(["create", "update", "delete"]),
   memory: new Set(["write"]),
   priorities: new Set([]),
