@@ -2,13 +2,16 @@ import { randomBytes } from "crypto";
 import { createLogger } from "./log";
 import { db } from "./db";
 import { getSetting, setSetting } from "./system-settings";
-import { personEmails as personEmailsTable, persons } from "@shared/schema";
+import { personEmails as personEmailsTable, personMergeAliases, persons } from "@shared/schema";
 import { eq, inArray } from "drizzle-orm";
 import { TTLCache } from "./utils/ttl-cache";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
+import { mergePersonValues } from "./person-merge-values";
+import { performPersonMerge, type MergePeopleInput, type MergePeopleResult } from "./person-merge-service";
 
 const personScopeColumns = { scope: persons.scope, ownerUserId: persons.ownerUserId, accountId: persons.accountId, vaultId: persons.vaultId };
+const personMergeAliasScopeColumns = { scope: personMergeAliases.scope, ownerUserId: personMergeAliases.ownerUserId, accountId: personMergeAliases.accountId, vaultId: personMergeAliases.vaultId };
 
 export interface ContactInfo {
   type: "email" | "phone" | "social" | "other";
@@ -823,27 +826,63 @@ export class PeopleStorage {
     });
   }
 
+  private async resolvePersonAlias(id: string): Promise<string> {
+    const principal = getCurrentPrincipalOrSystem();
+    let current = id;
+    const seen = new Set<string>();
+    for (let depth = 0; depth < 16; depth++) {
+      if (seen.has(current)) throw new Error(`Person merge alias cycle detected at ${current}`);
+      seen.add(current);
+      const rows = await db
+        .select({ targetId: personMergeAliases.targetId })
+        .from(personMergeAliases)
+        .where(
+          combineWithVisibleScope(
+            principal,
+            personMergeAliasScopeColumns,
+            eq(personMergeAliases.sourceId, current),
+          ),
+        )
+        .limit(1);
+      if (!rows[0]) return current;
+      current = rows[0].targetId;
+    }
+    throw new Error(`Person merge alias depth exceeded for ${id}`);
+  }
+
   async getPerson(id: string): Promise<Person | null> {
+    const resolvedId = await this.resolvePersonAlias(id);
     const rows = await db.select().from(persons).where(
-      combineWithVisibleScope(getCurrentPrincipalOrSystem(), personScopeColumns, eq(persons.id, id))
+      combineWithVisibleScope(
+        getCurrentPrincipalOrSystem(),
+        personScopeColumns,
+        eq(persons.id, resolvedId),
+      )
     );
     if (rows.length === 0) {
-      log.debug(`getPerson id=${id} — not found`);
+      log.debug(`getPerson id=${id} resolvedId=${resolvedId} — not found`);
       return null;
     }
-    log.debug(`getPerson id=${id} name=${rows[0].name}`);
+    log.debug(`getPerson id=${id} resolvedId=${resolvedId} name=${rows[0].name}`);
     return rowToPerson(rows[0]);
   }
 
   async getPeopleByIds(ids: string[]): Promise<Person[]> {
     if (ids.length === 0) return [];
-    const uniqueIds = [...new Set(ids)];
+    const resolvedIds = await Promise.all(ids.map(id => this.resolvePersonAlias(id)));
+    const uniqueIds = [...new Set(resolvedIds)];
     log.debug(`getPeopleByIds count=${ids.length} unique=${uniqueIds.length}`);
     const rows = await db.select().from(persons).where(
-      combineWithVisibleScope(getCurrentPrincipalOrSystem(), personScopeColumns, inArray(persons.id, uniqueIds))
+      combineWithVisibleScope(
+        getCurrentPrincipalOrSystem(),
+        personScopeColumns,
+        inArray(persons.id, uniqueIds),
+      )
     );
     const byId = new Map(rows.map(row => [row.id, rowToPerson(row)]));
-    return ids.map(id => byId.get(id) ?? null).filter((p): p is Person => p !== null);
+    return resolvedIds
+      .map(id => byId.get(id) ?? null)
+      .filter((person): person is Person => person !== null);
   }
 
   async createPerson(data: Omit<Person, "id" | "createdAt" | "updatedAt">): Promise<Person> {
@@ -897,6 +936,49 @@ export class PeopleStorage {
     }
     await this.savePerson(updated);
     return updated;
+  }
+
+  async mergePeople(input: MergePeopleInput): Promise<MergePeopleResult> {
+    const normalizedInput = {
+      sourcePersonId: input.sourcePersonId.trim(),
+      targetPersonId: input.targetPersonId.trim(),
+      expectedSourceName: input.expectedSourceName.trim(),
+      expectedTargetName: input.expectedTargetName.trim(),
+      reason: input.reason.trim(),
+      idempotencyKey: input.idempotencyKey.trim(),
+    };
+    if (!normalizedInput.sourcePersonId || !normalizedInput.targetPersonId) {
+      throw new Error("Source and target Person IDs are required");
+    }
+    if (normalizedInput.sourcePersonId === normalizedInput.targetPersonId) {
+      throw new Error("Source and target Person IDs must differ");
+    }
+    if (!normalizedInput.expectedSourceName || !normalizedInput.expectedTargetName) {
+      throw new Error("Expected source and target names are required");
+    }
+    if (normalizedInput.reason.length < 8) {
+      throw new Error("Merge reason must be at least 8 characters");
+    }
+    if (normalizedInput.idempotencyKey.length < 8) {
+      throw new Error("Idempotency key must be at least 8 characters");
+    }
+
+    const result = await performPersonMerge(
+      getCurrentPrincipalOrSystem(),
+      normalizedInput,
+      (targetRow, sourceRow) => {
+        const merged = mergePersonValues(rowToPerson(targetRow), rowToPerson(sourceRow));
+        merged.person.relationshipProfile = recomputeRelationshipProfile(merged.person);
+        if (!merged.person.networkProfile) merged.person.networkProfile = {};
+        merged.person.networkProfile.mobilization = computeMobilization(merged.person);
+        return merged;
+      },
+    );
+    this.invalidateListCache();
+    log.info(
+      `mergePeople sourceId=${result.sourcePersonId} targetId=${result.targetPersonId} alreadyMerged=${result.alreadyMerged}`,
+    );
+    return result;
   }
 
   async deletePerson(id: string): Promise<void> {

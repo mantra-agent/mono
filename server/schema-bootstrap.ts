@@ -4419,6 +4419,30 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_people_import_decisions_candidate_created ON people_import_decisions (candidate_id, created_at)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_people_import_decisions_owner ON people_import_decisions (owner_user_id, account_id)`);
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS person_merge_aliases (
+        source_id TEXT PRIMARY KEY,
+        target_id TEXT NOT NULL REFERENCES persons(id) ON DELETE RESTRICT,
+        source_name TEXT NOT NULL,
+        target_name TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        source_snapshot JSONB NOT NULL,
+        target_snapshot JSONB NOT NULL,
+        merged_snapshot JSONB NOT NULL,
+        reference_snapshot JSONB NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'user',
+        owner_user_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        vault_id TEXT,
+        merged_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT person_merge_aliases_owner_idempotency_unique UNIQUE (owner_user_id, account_id, idempotency_key)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_person_merge_aliases_target ON person_merge_aliases (target_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_person_merge_aliases_scope_owner ON person_merge_aliases (scope, owner_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_person_merge_aliases_account ON person_merge_aliases (account_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_person_merge_aliases_vault ON person_merge_aliases (vault_id)`);
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS people_import_batches (
         id TEXT PRIMARY KEY,
         proposal_hash TEXT NOT NULL,

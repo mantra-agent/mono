@@ -62,6 +62,7 @@ export const MANAGED_TABLES: string[] = [
   "memory_transitions",
   "merchant_category_overrides",
   "messages",
+  "person_merge_aliases",
   "personas",
   "plaid_accounts",
   "plaid_holdings",

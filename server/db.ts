@@ -674,6 +674,7 @@ export async function closeDatabasePools(): Promise<void> {
 // reorders or with `library` tool writes targeting the same parent.
 export const ADVISORY_LOCK_NS = {
   LIBRARY_PARENT: 0x4c425052, // 'LBPR' — must fit in int32
+  PERSON_MERGE: 0x5052534d, // 'PRSM' — serializes Person merges per account
 } as const;
 
 const LIBRARY_ROOT_SENTINEL = "__LIBRARY_ROOT__";

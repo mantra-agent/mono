@@ -590,6 +590,32 @@ export const persons = pgTable("persons", {
 
 export type PersonRow = typeof persons.$inferSelect;
 
+export const personMergeAliases = pgTable("person_merge_aliases", {
+  sourceId: text("source_id").primaryKey(),
+  targetId: text("target_id").notNull().references(() => persons.id, { onDelete: "restrict" }),
+  sourceName: text("source_name").notNull(),
+  targetName: text("target_name").notNull(),
+  reason: text("reason").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  sourceSnapshot: jsonb("source_snapshot").$type<Record<string, unknown>>().notNull(),
+  targetSnapshot: jsonb("target_snapshot").$type<Record<string, unknown>>().notNull(),
+  mergedSnapshot: jsonb("merged_snapshot").$type<Record<string, unknown>>().notNull(),
+  referenceSnapshot: jsonb("reference_snapshot").$type<Record<string, unknown>>().notNull(),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id").notNull(),
+  accountId: text("account_id").notNull(),
+  vaultId: text("vault_id"),
+  mergedAt: timestamp("merged_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  unique("person_merge_aliases_owner_idempotency_unique").on(table.ownerUserId, table.accountId, table.idempotencyKey),
+  index("idx_person_merge_aliases_target").on(table.targetId),
+  index("idx_person_merge_aliases_scope_owner").on(table.scope, table.ownerUserId),
+  index("idx_person_merge_aliases_account").on(table.accountId),
+  index("idx_person_merge_aliases_vault").on(table.vaultId),
+]);
+
+export type PersonMergeAlias = typeof personMergeAliases.$inferSelect;
+
 export const simplePeopleSurfaceState = pgTable("simple_people_surface_state", {
   id: serial("id").primaryKey(),
   personId: text("person_id").notNull(),
