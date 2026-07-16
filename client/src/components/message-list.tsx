@@ -463,7 +463,7 @@ export function MessageList({
   const hasRenderableStreamForTurn = hasVisibleStreamingPayload || hasActiveAssistantPlaceholder;
   const hasServerAuthoritativeStream =
     !!activeSession &&
-    effectiveStreaming.source !== null &&
+    (effectiveStreaming.source !== null || !!liveStreamRenderId) &&
     (effectiveStreaming.segments.length > 0 || hasActiveAssistantPlaceholder) &&
     ((runActive ?? isSessionStreaming) || !!liveStreamRenderId);
   const activeTurnKey = activeTurn

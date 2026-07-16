@@ -214,12 +214,10 @@ export function useSessionSubscriptions(
     if (msg.type === "session.snapshot") {
       const status = (msg.status as SessionStatus | undefined) || "streaming";
       const serverStreaming = status === "streaming";
-      const content = serverStreaming
-        ? (msg.streamingContent ?? msg.content ?? initialStreamingContent)
-        : initialStreamingContent;
+      const content = msg.streamingContent ?? msg.content ?? initialStreamingContent;
       log.verbose(() => `SNAPSHOT:RECEIVE session=${msg.sessionId} status=${status} segments=${content.segments.length}`);
-      // The server snapshot is authoritative. A non-streaming snapshot clears
-      // any stale local live content left behind by reconnect/resume races.
+      // The server snapshot is authoritative, including its settled terminal
+      // payload. The transcript handoff releases it only after durable finality.
       upsertStream(msg.sessionId, {
         streamingContent: content,
         status,
@@ -235,7 +233,7 @@ export function useSessionSubscriptions(
     if (msg.type === "session.delta") {
       const status = msg.status as SessionStatus | undefined;
       const serverStreaming = status === undefined || status === "streaming";
-      const content = serverStreaming ? msg.streamingContent : initialStreamingContent;
+      const content = msg.streamingContent ?? initialStreamingContent;
       log.verbose(() => `DELTA:RECEIVE session=${msg.sessionId} status=${status ?? "streaming"} segments=${content?.segments.length ?? 0}`);
       const patch: Partial<SessionStreamState> = {};
       if (content) patch.streamingContent = content;

@@ -11,6 +11,7 @@ import { TTLCache } from "./utils/ttl-cache";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { normalizeSessionModelTierOverride } from "./session-model-tier-override";
 import type {
+  AssistantMessageState,
   ChildSessionBlockMeta,
   CompactionMeta,
   MeetingSessionMeta,
@@ -168,12 +169,6 @@ export interface VoiceMessageMeta {
   userOrdinal?: number;
   turnNumber?: number;
 }
-
-export type AssistantMessageState =
-  | "streaming"
-  | "complete"
-  | "interrupted"
-  | "failed";
 
 /**
  * Message visibility discriminant. Stored at creation time so renderers

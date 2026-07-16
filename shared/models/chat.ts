@@ -238,6 +238,12 @@ export interface ModelProviderFailureInfo {
   };
 }
 
+export type AssistantMessageState =
+  | "streaming"
+  | "complete"
+  | "interrupted"
+  | "failed";
+
 export interface SystemStepRecord {
   id?: string;
   name: string;
