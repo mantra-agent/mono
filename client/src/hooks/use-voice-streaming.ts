@@ -32,7 +32,12 @@ export function useVoiceStreaming(
   activeSessionId: string | null,
 ) {
   const queryClient = useQueryClient();
-  const voiceActive = !!(voiceSession && voiceSession.status !== "idle");
+  const voiceActive = !!(
+    voiceSession &&
+    activeSessionId &&
+    voiceSession.activeConversationId === activeSessionId &&
+    voiceSession.status !== "idle"
+  );
   const voiceActiveRef = useRef(false);
   voiceActiveRef.current = voiceActive;
 

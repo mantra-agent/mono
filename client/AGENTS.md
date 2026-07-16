@@ -183,6 +183,7 @@ Focus Session is the canonical session entry surface. Keep ownership split by ro
 - `client/src/components/references/editable-reference-input.tsx` — Controlled rich composer input. Prevent supported `beforeinput` mutations and route them through React state. If WebKit mutates the DOM natively, remount the entire editable root and restore selection; never reconcile or re-key individual descendants after browser mutation.
 - `client/src/hooks/use-client-presence.tsx` — One application-level provider owns presence registration and heartbeat. Consumers read its context; they must not instantiate transport side effects independently.
 - `client/src/lib/ws-connection.ts` — The shared event socket owns a balanced logical-owner registry and exposes a read-only diagnostics snapshot. Every acquisition uses a stable owner ID, every cleanup releases that same ID, and session liveness is reference-counted by owner rather than a process-wide boolean.
+- Session-scoped ephemeral aggregates carry an explicit owner session ID. Render voice transcripts, live drafts, and similar state only when that owner matches the visible session; clearing on navigation is cleanup, not the correctness boundary.
 
 Composer turn admission must use a synchronous ref before any state update or await. React state is display state, not a concurrency lock. Every message POST carries a stable `clientTurnId` so the server can make retries replay-safe.
 

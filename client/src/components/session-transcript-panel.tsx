@@ -234,9 +234,18 @@ export function SessionTranscriptPanel({
     refetchInterval: 5000,
   });
 
-  const persistedMessages = sessionData?.messages || [];
-  const activePlanPageId = (sessionData as any)?.activePlan?.pageId ?? null;
-  const activeWorkflowId = (sessionData as any)?.activeWorkflow?.id ?? null;
+  const ownedSessionData = sessionData?.id === activeSession ? sessionData : undefined;
+  const persistedMessages = ownedSessionData?.messages || [];
+  const activePlanPageId = (ownedSessionData as any)?.activePlan?.pageId ?? null;
+  const activeWorkflowId = (ownedSessionData as any)?.activeWorkflow?.id ?? null;
+
+  useEffect(() => {
+    if (!sessionData || sessionData.id === activeSession) return;
+    log.warn("SESSION_DATA_OWNER_MISMATCH", {
+      activeSession,
+      receivedSessionId: sessionData.id,
+    });
+  }, [activeSession, sessionData]);
   const { plan } = usePlanForSession(persistedMessages, activePlanPageId);
   const { workflow } = useWorkflowForSession(persistedMessages, activeWorkflowId);
 
@@ -358,7 +367,7 @@ export function SessionTranscriptPanel({
       activeSession,
       persistedMessages: messages,
       rawStreaming,
-      persistedSessionStatus: sessionData?.status ?? null,
+      persistedSessionStatus: ownedSessionData?.status ?? null,
       subRunActive: sessionSub.runActive,
       subStatus: sessionSub.status,
       subUpdatedAt: sessionSub.updatedAt ?? null,
@@ -368,7 +377,7 @@ export function SessionTranscriptPanel({
       previousTranscript: transcriptSnapshotRef.current,
       messagesContainCompactionBoundary: hasCompactionBoundary(messages),
     });
-  }, [activeSession, messages, rawStreaming, sessionData?.status, sessionSub.runActive, sessionSub.status, sessionSub.updatedAt, contextPendingTurn, frozenStreamHandoff]);
+  }, [activeSession, messages, rawStreaming, ownedSessionData?.status, sessionSub.runActive, sessionSub.status, sessionSub.updatedAt, contextPendingTurn, frozenStreamHandoff]);
 
   // Update the transcript snapshot ref for next render cycle
   transcriptSnapshotRef.current = projection.transcriptSnapshot;
@@ -397,7 +406,8 @@ export function SessionTranscriptPanel({
   }, [projection.shouldClearPendingTurn, clearPendingTurn]);
 
   // --- Voice revision appended to render revision for scroll pinning ---
-  const voiceRevision = voiceSession
+  const voiceTranscriptOwnsSession = voiceSession?.transcriptSessionId === activeSession;
+  const voiceRevision = voiceSession && voiceTranscriptOwnsSession
     ? `${voiceSession.status}:${voiceSession.transcript.length}:${voiceSession.voiceThinking ? 1 : 0}`
     : "voice:none";
   const renderRevision = `${projection.renderRevision}::${voiceRevision}`;
@@ -712,8 +722,9 @@ export function SessionTranscriptPanel({
         </div>
       </div>
       <SessionTranscriptSurface
+        key={activeSession}
         activeSession={activeSession}
-        sessionKey={sessionData?.sessionKey}
+        sessionKey={ownedSessionData?.sessionKey}
         messages={displayMessages}
         streaming={displayStreaming}
         isSessionStreaming={isStreaming}
@@ -722,20 +733,20 @@ export function SessionTranscriptPanel({
         voiceActive={voiceActive}
         showVoiceTools={showVoiceTools}
         voiceStepsInsertIndex={voiceStepsInsertIndexRef.current}
-        voiceStatus={voiceSession?.status ?? "idle"}
-        voiceTranscript={voiceSession?.transcript ?? []}
-        voiceThinking={voiceSession?.voiceThinking ?? false}
+        voiceStatus={voiceTranscriptOwnsSession ? voiceSession?.status ?? "idle" : "idle"}
+        voiceTranscript={voiceTranscriptOwnsSession ? voiceSession?.transcript ?? [] : []}
+        voiceThinking={voiceTranscriptOwnsSession ? voiceSession?.voiceThinking ?? false : false}
         sessionTitleById={sessionTitleById}
         pendingTurn={renderPendingTurn}
         optimisticUserTurn={visiblePendingTurn}
         liveStreamRenderId={displayLiveStreamRenderId}
         sessionStreams={sessionStreams}
         wsConnected={wsConnected}
-        sessionStatus={sessionData?.status}
+        sessionStatus={ownedSessionData?.status}
         plan={plan}
         workflow={workflow}
-        meeting={sessionData?.meeting}
-        sessionTitle={sessionData?.title}
+        meeting={ownedSessionData?.meeting}
+        sessionTitle={ownedSessionData?.title}
         scrollContainerRef={scrollContainerRef}
         onUserScrollIntent={handleUserScrollIntent}
         onScroll={handleScroll}
