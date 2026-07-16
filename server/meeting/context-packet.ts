@@ -213,6 +213,8 @@ export async function buildMeetingContextPacket(meeting: MeetingSessionMeta): Pr
 
 export function renderMeetingContextPacket(packet: MeetingContextPacket): string {
   const lines = [
+    "Authority: This is the canonical meeting context for this turn. Use it directly; do not call calendar or meeting tools to re-check facts already present here.",
+    "Private agenda and linked Library artifacts below are available context, not references that still need retrieval.",
     `Packet version: ${packet.version}`,
     `Calendar identity: ${packet.identity.accountId} / ${packet.identity.calendarId} / ${packet.identity.providerEventId}`,
     `Title: ${packet.event.title}`,
