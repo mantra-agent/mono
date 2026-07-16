@@ -15,6 +15,7 @@ import { eq, and, type SQL } from "drizzle-orm";
 import { planExecutions, planSteps } from "@shared/schema";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope } from "./scoped-storage";
+import { claimPlanExecution, createPlanStepAttempt, releasePlanExecution, renderPlanProjection, transitionPlanStepStatus, updatePlanStepAttempt, updatePlanStepFields } from "./plan-service";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
 import {
@@ -64,32 +65,7 @@ export function getActivePlanIds(): string[] {
   return [...activePlans.keys()];
 }
 
-// ─── Step state machine (Violation #7) ───────────────────────────────
-
-/** Valid step state transitions. Any transition not in this map is a bug. */
-const VALID_STEP_TRANSITIONS: Record<string, readonly string[]> = {
-  pending: ["running", "blocked", "needs_review"],
-  running: ["completed", "failed", "blocked", "needs_review"],
-  failed: ["pending"],   // only via resumePlan
-  blocked: ["pending"],  // after external dependency is resolved
-  needs_review: ["pending"], // after Ray review/response is supplied
-  completed: [],         // terminal
-  skipped: [],           // terminal
-} as const;
-
-function assertStepTransition(
-  stepId: string,
-  from: string,
-  to: string,
-  context: string,
-): void {
-  const allowed = VALID_STEP_TRANSITIONS[from];
-  if (!allowed || !allowed.includes(to)) {
-    throw new Error(
-      `[state] Invalid step transition ${from} → ${to} for step ${stepId} (${context})`,
-    );
-  }
-}
+// Step state transitions are centralized in plan-service.ts.
 
 // MonitorResult + FailureReason are imported from child-session-monitor.ts
 
@@ -114,25 +90,6 @@ async function updatePlanStatus(planId: string, status: string) {
     .where(writablePlan(eq(planExecutions.id, planId)));
 }
 
-async function updateStepInDb(planId: string, stepId: string, fields: Partial<{
-  status: string;
-  sessionId: string | null;
-  outcome: string | null;
-  error: string | null;
-  durationSeconds: number | null;
-  startedAt: Date | null;
-  completedAt: Date | null;
-  totalAttempts: number;
-}>) {
-  await db.update(planSteps)
-    .set({ ...fields, updatedAt: new Date() })
-    .where(writablePlanStep(and(eq(planSteps.planId, planId), eq(planSteps.id, stepId))));
-}
-
-/**
- * Transition a step's status with validation.
- * Wraps updateStepInDb with state machine enforcement.
- */
 async function transitionStep(
   planId: string,
   stepId: string,
@@ -149,63 +106,13 @@ async function transitionStep(
   }>,
   context: string,
 ): Promise<void> {
-  assertStepTransition(stepId, currentStatus, newStatus, context);
-  await updateStepInDb(planId, stepId, { ...fields, status: newStatus });
+  await transitionPlanStepStatus(planId, stepId, currentStatus, newStatus, fields, context);
 }
 
 // ─── Library page rendering (best-effort side effect) ────────────────
 
 async function renderPlanToLibraryPage(planId: string): Promise<void> {
-  try {
-    const plan = await getPlanFromDb(planId);
-    if (!plan) return;
-    const steps = await getStepsFromDb(planId);
-
-    const meta: PlanMeta = {
-      id: plan.id,
-      status: plan.status as PlanStatus,
-      createdAt: plan.createdAt.toISOString(),
-      updatedAt: plan.updatedAt.toISOString(),
-      originSessionId: plan.originSessionId,
-      goalId: plan.goalId ?? undefined,
-      projectId: plan.projectId ?? undefined,
-      workspace: plan.workspace ?? undefined,
-      workspaceDir: plan.workspaceDir ?? undefined,
-      blocking: plan.blocking,
-      steps: steps.map(s => ({
-        id: s.id,
-        title: s.title,
-        status: s.status as PlanStep["status"],
-        duration: s.durationSeconds ?? undefined,
-        sessionId: s.sessionId ?? undefined,
-        outcome: s.outcome ?? undefined,
-        error: s.error ?? undefined,
-        startedAt: s.startedAt?.toISOString(),
-        completedAt: s.completedAt?.toISOString(),
-      })),
-    };
-
-    const stepInstructions = steps.map(s => ({
-      title: s.title,
-      instructions: s.instructions || `Execute step: ${s.title}`,
-    }));
-
-    const content = buildPlanPageContent(meta, stepInstructions);
-    await updateLibraryPageContent(plan.pageId, content);
-  } catch (err) {
-    log.warn(`Failed to render plan ${planId} to Library page: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-async function updateLibraryPageContent(pageId: string, content: string) {
-  const { libraryPages } = await import("@shared/models/info");
-  const { syncContentFields } = await import("@shared/markdown-tiptap");
-  const synced = syncContentFields({ markdown: content });
-  await db.update(libraryPages).set({
-    content: synced.content,
-    plainTextContent: synced.plainTextContent,
-    updatedAt: new Date(),
-  }).where(eq(libraryPages.id, pageId));
+  await renderPlanProjection(planId);
 }
 
 // ─── WebSocket event helpers ─────────────────────────────────────────
@@ -254,8 +161,18 @@ export async function executePlan(
     return { planId, status: plan.status as PlanStatus, completedSteps: 0, totalSteps: steps.length, totalDuration: 0, error: "Plan is already executing" };
   }
 
+  const lease = await claimPlanExecution(planId, originSessionId || "plan-executor");
+  if (!lease.claimed) {
+    const steps = await getStepsFromDb(planId);
+    return { planId, status: plan.status as PlanStatus, completedSteps: 0, totalSteps: steps.length, totalDuration: 0, error: "Plan execution is already claimed by another worker" };
+  }
+
   const abortController = new AbortController();
   activePlans.set(planId, { abortController, pageId: plan.pageId });
+  const releaseActivePlan = async () => {
+    try { await releasePlanExecution(planId, lease.leaseId); } catch { /* best effort */ }
+    activePlans.delete(planId);
+  };
 
   let steps = await getStepsFromDb(planId);
   const executionId = createExecutionId();
@@ -370,7 +287,7 @@ export async function executePlan(
         await renderPlanToLibraryPage(planId);
         await notifyOriginSession(originSessionId, planId, planTitle, currentStep, stepResult.stepStatus);
         publishPlanEvent(stepResult.stepStatus === "needs_review" ? "plan.needs_review" : "plan.paused", { planId, stepId: currentStep.id, reason: stepResult.stepStatus });
-        activePlans.delete(planId);
+        await releaseActivePlan();
         return {
           planId, status: haltedPlanStatus, completedSteps: completedCount,
           totalSteps: steps.length, totalDuration,
@@ -379,7 +296,7 @@ export async function executePlan(
         // Step exhausted retries — plan is paused
         totalDuration += stepResult.duration;
         await notifyOriginSession(originSessionId, planId, planTitle, currentStep, "failed");
-        activePlans.delete(planId);
+        await releaseActivePlan();
         return {
           planId, status: "paused", completedSteps: completedCount,
           totalSteps: steps.length, totalDuration,
@@ -414,14 +331,14 @@ export async function executePlan(
         : `✅ Plan **${planTitle}** completed — ${completedCount}/${finalSteps.length} steps in ${durationStr}.\n\n${stepSummaryLines}`;
       await notifyPlanProgress(originSessionId, planId, completionMsg);
 
-      activePlans.delete(planId);
+      await releaseActivePlan();
       return {
         planId, status: finalStatus as PlanStatus,
         completedSteps: completedCount, totalSteps: finalSteps.length, totalDuration,
       };
     }
 
-    activePlans.delete(planId);
+    await releaseActivePlan();
     const currentPlan = await getPlanFromDb(planId);
     return {
       planId, status: (currentPlan?.status || "paused") as PlanStatus,
@@ -431,7 +348,7 @@ export async function executePlan(
     log.error(`[${planId}] Executor crashed: ${err instanceof Error ? err.message : String(err)}`);
     try { await updatePlanStatus(planId, "failed"); } catch { /* best effort */ }
     try { await renderPlanToLibraryPage(planId); } catch { /* best effort */ }
-    activePlans.delete(planId);
+    await releaseActivePlan();
     const allSteps = await getStepsFromDb(planId).catch(() => []);
     return {
       planId, status: "failed", completedSteps: completedCount,
@@ -508,6 +425,7 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
 
       const { sessionId: childSessionId } = await spawnResult;
       log.log(`[${planId}] Step ${stepIndex + 1} spawned session ${childSessionId}`);
+      await createPlanStepAttempt({ planId, stepId: step.id, attemptNumber: attemptCount, childSessionId, status: "running", startedAt: new Date(stepStart) });
 
       // A step is not "running" until its child session exists and is persisted.
       // This prevents Resume from seeing a running-with-no-child wedge if spawn fails.
@@ -545,6 +463,7 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
           }
 
           const outcome = truncateOutcome(result.output || "Completed successfully");
+          await updatePlanStepAttempt({ planId, stepId: step.id, attemptNumber: attemptCount, childSessionId, status: "completed", outcome, durationSeconds: lastDuration, completedAt: new Date() });
           await transitionStep(
             planId, step.id, "running", "completed",
             { completedAt: new Date(), durationSeconds: lastDuration, sessionId: childSessionId, outcome },
@@ -570,6 +489,7 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
             // Reset step to pending for retry, but first close the abandoned child
             // session so the retry attempt cannot leave an active duplicate.
             await closeAbandonedChildSessionBlock(originSessionId, childSessionId, errorMsg, lastDuration);
+            await updatePlanStepAttempt({ planId, stepId: step.id, attemptNumber: attemptCount, childSessionId, status: "failed", error: errorMsg, durationSeconds: lastDuration, completedAt: new Date() });
             await transitionStep(planId, step.id, "running", "failed",
               { error: errorMsg, completedAt: new Date(), durationSeconds: lastDuration, sessionId: childSessionId },
               "idle_timeout retry reset",
@@ -603,6 +523,7 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
           if (attempt < maxRetries) {
             log.warn(`[${planId}] Step ${stepIndex + 1} retrying after ${result.reason} (attempt ${attempt}/${maxRetries})`);
             await closeAbandonedChildSessionBlock(originSessionId, childSessionId, result.message, lastDuration);
+            await updatePlanStepAttempt({ planId, stepId: step.id, attemptNumber: attemptCount, childSessionId, status: "failed", error: result.message, durationSeconds: lastDuration, completedAt: new Date() });
             await transitionStep(planId, step.id, "running", "failed",
               { error: result.message, completedAt: new Date(), durationSeconds: lastDuration, sessionId: childSessionId },
               `${result.reason} retry reset`,
@@ -633,7 +554,7 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
         log.warn(`[${planId}] Step ${stepIndex + 1} retrying after crash (attempt ${attempt}/${maxRetries})`);
         // Best-effort: try to reset the step for retry
         try {
-          await updateStepInDb(planId, step.id, {
+          await updatePlanStepFields(planId, step.id, {
             status: "pending", error: null, sessionId: null,
             durationSeconds: null, startedAt: null, completedAt: null,
           });
@@ -718,7 +639,10 @@ async function failStepFinal(
 
   // Step may be in running or pending state after a crash — handle both
   try {
-    await updateStepInDb(planId, step.id, {
+    if (sessionId) {
+      await updatePlanStepAttempt({ planId, stepId: step.id, attemptNumber: attemptCount, childSessionId: sessionId, status: "failed", error, durationSeconds: duration, completedAt: new Date() });
+    }
+    await updatePlanStepFields(planId, step.id, {
       status: "failed",
       completedAt: new Date(),
       durationSeconds: duration,
@@ -876,7 +800,7 @@ async function recoverInterruptedPlan(planId: string): Promise<boolean> {
           const duration = step.startedAt
             ? Math.round((Date.now() - new Date(step.startedAt).getTime()) / 1000)
             : null;
-          await updateStepInDb(plan.id, step.id, {
+          await updatePlanStepFields(plan.id, step.id, {
             status: "completed",
             outcome: output?.slice(0, 500) || "Completed (recovered)",
             completedAt: new Date(),
@@ -886,7 +810,7 @@ async function recoverInterruptedPlan(planId: string): Promise<boolean> {
         } else {
           const error = "Interrupted while marked executing; child did not resolve";
           await closeAbandonedChildSessionBlock(plan.originSessionId, step.sessionId, error, step.durationSeconds);
-          await updateStepInDb(plan.id, step.id, {
+          await updatePlanStepFields(plan.id, step.id, {
             status: "failed",
             error,
             completedAt: new Date(),
@@ -895,14 +819,14 @@ async function recoverInterruptedPlan(planId: string): Promise<boolean> {
       } catch {
         const error = "Interrupted while marked executing; child could not be inspected";
         await closeAbandonedChildSessionBlock(plan.originSessionId, step.sessionId, error, step.durationSeconds);
-        await updateStepInDb(plan.id, step.id, {
+        await updatePlanStepFields(plan.id, step.id, {
           status: "failed",
           error,
           completedAt: new Date(),
         });
       }
     } else {
-      await updateStepInDb(plan.id, step.id, {
+      await updatePlanStepFields(plan.id, step.id, {
         status: "failed",
         error: "Interrupted while marked running before child session was persisted",
         completedAt: new Date(),

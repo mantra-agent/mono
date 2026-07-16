@@ -19,6 +19,7 @@ import {
   Radio,
   Rss,
   Paperclip,
+  Route,
   Scale,
   Target,
   User,
@@ -132,6 +133,11 @@ const registry: Record<string, RegistryEntry> = {
     Icon: MessagesSquare,
     fallbackLabel: ref => metadataString(ref, "label") || `Session ${ref.id}`,
     href: ref => metadataString(ref, "href") || `/session?c=${encodeURIComponent(ref.id)}`,
+  },
+  plan: {
+    Icon: Route,
+    fallbackLabel: ref => metadataString(ref, "label") || `Plan ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/plans/${encodeURIComponent(ref.id)}`,
   },
 
   file: {

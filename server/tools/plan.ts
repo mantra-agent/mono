@@ -9,6 +9,7 @@
 import { db } from "../db";
 import { eq, and, desc, gt, sql, type SQL } from "drizzle-orm";
 import { planExecutions, planSteps } from "@shared/schema";
+import { createPlanSessionLink, renderPlanProjection, unlinkPlanSession } from "../plan-service";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { createLogger } from "../log";
@@ -164,6 +165,8 @@ async function handleCreate(args: Record<string, any>): Promise<ToolHandlerResul
     });
   }
 
+  await createPlanSessionLink(planId, sessionId);
+
   // Record session artifact
   try {
     const { recordSessionArtifact } = await import("../session-artifacts");
@@ -174,7 +177,7 @@ async function handleCreate(args: Record<string, any>): Promise<ToolHandlerResul
 
   const stepList = meta.steps.map((s, i) => `  ${i + 1}. □ ${s.title}`).join("\n");
   return {
-    result: `Plan created: **${title}**\n\nPlan DB ID: ${planId}\nPage ID: ${page.id}\n${stepsInput.length} steps · ${blocking ? "blocking" : "non-blocking"}\n\n${stepList}\n\nCall plan(action: "execute", planId: "${planId}") to start execution, or plan(action: "edit", planId: "${planId}", ...) to revise it. [page:${page.slug}]`,
+    result: `Plan created: **${title}**\n\nPlan DB ID: ${planId}\nPage ID: ${page.id}\n${stepsInput.length} steps · ${blocking ? "blocking" : "non-blocking"}\n\n${stepList}\n\nCall plan(action: "execute", planId: "${planId}") to start execution, or plan(action: "edit", planId: "${planId}", ...) to revise it. @page:${page.slug}`,
   };
 }
 
@@ -203,7 +206,7 @@ async function handleGet(args: Record<string, any>): Promise<ToolHandlerResult> 
     const page = await getLibraryPage(plan.pageId);
     const title = page?.title?.replace(/^Plan:\s*/, "") || "Untitled Plan";
     const summary = formatPlanSummary(meta, title);
-    return { result: `${summary}\n\nPlan DB ID: ${plan.id}\nPage ID: ${page?.id ?? plan.pageId}${page ? ` [page:${page.slug}]` : ""}` };
+    return { result: `${summary}\n\nPlan DB ID: ${plan.id}\nPage ID: ${page?.id ?? plan.pageId}${page ? ` @page:${page.slug}` : ""}` };
   }
 
   // Fallback: try as a Library page ID for legacy YAML plans
@@ -215,7 +218,7 @@ async function handleGet(args: Record<string, any>): Promise<ToolHandlerResult> 
   if (!parsed) return { result: `Page "${planId}" does not contain valid plan data.`, error: true };
 
   const summary = formatPlanSummary(parsed.meta, page.title || "Untitled Plan");
-  return { result: `${summary}\n\n(Legacy YAML plan) Page: ${page.id} [page:${page.slug}]` };
+  return { result: `${summary}\n\n(Legacy YAML plan) Page: ${page.id} @page:${page.slug}` };
 }
 
 async function handleAssociateSession(args: Record<string, any>): Promise<ToolHandlerResult> {
@@ -229,6 +232,7 @@ async function handleAssociateSession(args: Record<string, any>): Promise<ToolHa
   if (!resolved) return planNotFound(planId);
 
   const { plan, page } = resolved;
+  await createPlanSessionLink(plan.id, sessionId);
   const { recordSessionArtifact } = await import("../session-artifacts");
   await recordSessionArtifact(sessionId, "library_page", page.slug, {
     title: page.title,
@@ -239,7 +243,7 @@ async function handleAssociateSession(args: Record<string, any>): Promise<ToolHa
   log.log(`[${plan.id}] Associated page ${page.id} with session ${sessionId}`);
 
   return {
-    result: `Associated plan **${page.title.replace(/^Plan:\s*/, "")}** with this session.\n\nPlan DB ID: ${plan.id}\nPage ID: ${page.id} [page:${page.slug}]`,
+    result: `Associated plan **${page.title.replace(/^Plan:\s*/, "")}** with this session.\n\nPlan DB ID: ${plan.id}\nPage ID: ${page.id} @page:${page.slug}`,
   };
 }
 
@@ -255,20 +259,18 @@ async function handleUnlinkSession(args: Record<string, any>): Promise<ToolHandl
   if (!resolved) return planNotFound(planId);
   const { plan, page } = resolved;
 
-  if (plan.originSessionId !== sessionId) {
-    return { result: `Plan **${page.title.replace(/^Plan:\s*/, "")}** is not linked to session ${sessionId}.`, error: true };
-  }
   if (plan.status === "executing") {
     return { result: "Cannot unlink a running plan from a session — pause it first.", error: true };
   }
 
-  await db.update(planExecutions)
-    .set({ originSessionId: `unlinked:${sessionId}:${plan.id}`, updatedAt: new Date() })
-    .where(writablePlan(eq(planExecutions.id, plan.id)));
+  const unlinked = await unlinkPlanSession(plan.id, sessionId);
+  if (unlinked === 0) {
+    return { result: `Plan **${page.title.replace(/^Plan:\s*/, "")}** is not linked to session ${sessionId}.`, error: true };
+  }
 
   log.log(`[${plan.id}] Unlinked from session ${sessionId}`);
 
-  return { result: `Unlinked plan **${page.title.replace(/^Plan:\s*/, "")}** from this session. The plan page and execution history were preserved.\n\nPlan DB ID: ${plan.id}\nPage ID: ${page.id} [page:${page.slug}]` };
+  return { result: `Unlinked plan **${page.title.replace(/^Plan:\s*/, "")}** from this session. The plan page and execution history were preserved.\n\nPlan DB ID: ${plan.id}\nPage ID: ${page.id} @page:${page.slug}` };
 }
 
 async function handleList(args: Record<string, any>): Promise<ToolHandlerResult> {
@@ -295,7 +297,7 @@ async function handleList(args: Record<string, any>): Promise<ToolHandlerResult>
     const page = await getLibraryPage(p.pageId);
     const title = page?.title || "Untitled";
     const slug = page?.slug || "";
-    lines.push(`${statusIcon[p.status] || "📋"} **${title}** (${p.id}) — ${resolved}/${steps.length} steps · ${p.status}${slug ? ` [page:${slug}]` : ""}`);
+    lines.push(`${statusIcon[p.status] || "📋"} **${title}** (${p.id}) — ${resolved}/${steps.length} steps · ${p.status}${slug ? ` @page:${slug}` : ""}`);
   }
 
   return { result: `**Plans** (${plans.length})\n\n${lines.join("\n")}` };
@@ -326,20 +328,20 @@ async function handleExecute(args: Record<string, any>): Promise<ToolHandlerResu
     executePlan(planId, sessionId, planTitle, false).catch(err => {
       log.error(`[${planId}] Background execution failed: ${err instanceof Error ? err.message : String(err)}`);
     });
-    return { result: `Plan **${planTitle}** started in background. You'll be notified on completion or failure.\n\nPlan DB ID: ${plan.id}\nPage ID: ${plan.pageId}${page ? ` [page:${page.slug}]` : ""}` };
+    return { result: `Plan **${planTitle}** started in background. You'll be notified on completion or failure.\n\nPlan DB ID: ${plan.id}\nPage ID: ${plan.pageId}${page ? ` @page:${page.slug}` : ""}` };
   }
 
   const result = await executePlan(planId, sessionId, planTitle, true);
 
   const isComplete = result.status === "completed" || result.status === ("completed_with_failures" as PlanStatus);
   if (isComplete) {
-    return { result: `✅ Plan **${planTitle}** completed — ${result.completedSteps}/${result.totalSteps} steps in ${formatDuration(result.totalDuration)}.${page ? ` [page:${page.slug}]` : ""}` };
+    return { result: `✅ Plan **${planTitle}** completed — ${result.completedSteps}/${result.totalSteps} steps in ${formatDuration(result.totalDuration)}.${page ? ` @page:${page.slug}` : ""}` };
   } else if (result.status === "needs_review") {
-    return { result: `👀 Plan **${planTitle}** needs review — ${result.completedSteps}/${result.totalSteps} steps executed.${page ? ` [page:${page.slug}]` : ""}` };
+    return { result: `👀 Plan **${planTitle}** needs review — ${result.completedSteps}/${result.totalSteps} steps executed.${page ? ` @page:${page.slug}` : ""}` };
   } else if (result.status === "paused") {
-    return { result: `⚠️ Plan **${planTitle}** paused — ${result.completedSteps}/${result.totalSteps} steps completed. ${result.error || ""}. Use plan(action: "resume", planId: "${planId}") to retry.${page ? ` [page:${page.slug}]` : ""}`, error: true };
+    return { result: `⚠️ Plan **${planTitle}** paused — ${result.completedSteps}/${result.totalSteps} steps completed. ${result.error || ""}. Use plan(action: "resume", planId: "${planId}") to retry.${page ? ` @page:${page.slug}` : ""}`, error: true };
   } else {
-    return { result: `❌ Plan **${planTitle}** failed — ${result.error || "Unknown error"}.${page ? ` [page:${page.slug}]` : ""}`, error: true };
+    return { result: `❌ Plan **${planTitle}** failed — ${result.error || "Unknown error"}.${page ? ` @page:${page.slug}` : ""}`, error: true };
   }
 }
 
@@ -407,13 +409,13 @@ async function handleExecuteLegacy(args: Record<string, any>): Promise<ToolHandl
   const result = await executePlan(meta.id, sessionId, planTitle, true);
   const isLegacyComplete = result.status === "completed" || result.status === "completed_with_failures";
   if (isLegacyComplete) {
-    return { result: `✅ Plan **${planTitle}** completed — ${result.completedSteps}/${result.totalSteps} steps in ${formatDuration(result.totalDuration)}. [page:${page.slug}]` };
+    return { result: `✅ Plan **${planTitle}** completed — ${result.completedSteps}/${result.totalSteps} steps in ${formatDuration(result.totalDuration)}. @page:${page.slug}` };
   } else if (result.status === "needs_review") {
-    return { result: `👀 Plan **${planTitle}** needs review. Use plan(action: "resume", planId: "${meta.id}") to approve and continue. [page:${page.slug}]` };
+    return { result: `👀 Plan **${planTitle}** needs review. Use plan(action: "resume", planId: "${meta.id}") to approve and continue. @page:${page.slug}` };
   } else if (result.status === "paused") {
-    return { result: `⚠️ Plan **${planTitle}** paused — ${result.error || ""}. Use plan(action: "resume", planId: "${meta.id}") to retry. [page:${page.slug}]`, error: true };
+    return { result: `⚠️ Plan **${planTitle}** paused — ${result.error || ""}. Use plan(action: "resume", planId: "${meta.id}") to retry. @page:${page.slug}`, error: true };
   } else {
-    return { result: `❌ Plan **${planTitle}** failed — ${result.error || "Unknown error"}. [page:${page.slug}]`, error: true };
+    return { result: `❌ Plan **${planTitle}** failed — ${result.error || "Unknown error"}. @page:${page.slug}`, error: true };
   }
 }
 
@@ -525,7 +527,7 @@ async function handleEdit(args: Record<string, any>): Promise<ToolHandlerResult>
   }
 
   const bits = [title ? "title" : "", hasPlanFields ? "metadata" : "", editedSteps ? `${editedSteps} step(s)` : ""].filter(Boolean).join(", ");
-  return { result: `Edited plan **${(title || page.title).replace(/^Plan:\s*/, "")}**: ${bits}.\n\nPlan DB ID: ${resolvedPlanId}\nPage ID: ${page.id} [page:${page.slug}]` };
+  return { result: `Edited plan **${(title || page.title).replace(/^Plan:\s*/, "")}**: ${bits}.\n\nPlan DB ID: ${resolvedPlanId}\nPage ID: ${page.id} @page:${page.slug}` };
 }
 
 async function handleAddSteps(args: Record<string, any>): Promise<ToolHandlerResult> {
@@ -632,13 +634,13 @@ async function handleResume(args: Record<string, any>): Promise<ToolHandlerResul
 
   const isResumeComplete = result.status === "completed" || result.status === "completed_with_failures";
   if (isResumeComplete) {
-    return { result: `✅ Plan **${planTitle}** completed — ${result.completedSteps}/${result.totalSteps} steps.${page ? ` [page:${page.slug}]` : ""}` };
+    return { result: `✅ Plan **${planTitle}** completed — ${result.completedSteps}/${result.totalSteps} steps.${page ? ` @page:${page.slug}` : ""}` };
   } else if (result.status === "needs_review") {
-    return { result: `👀 Plan **${planTitle}** still needs review.${page ? ` [page:${page.slug}]` : ""}` };
+    return { result: `👀 Plan **${planTitle}** still needs review.${page ? ` @page:${page.slug}` : ""}` };
   } else if (result.status === "paused") {
-    return { result: `⚠️ Plan **${planTitle}** paused again — ${result.error || ""}.${page ? ` [page:${page.slug}]` : ""}`, error: true };
+    return { result: `⚠️ Plan **${planTitle}** paused again — ${result.error || ""}.${page ? ` @page:${page.slug}` : ""}`, error: true };
   } else {
-    return { result: `❌ Plan **${planTitle}** failed — ${result.error || "Unknown error"}.${page ? ` [page:${page.slug}]` : ""}`, error: true };
+    return { result: `❌ Plan **${planTitle}** failed — ${result.error || "Unknown error"}.${page ? ` @page:${page.slug}` : ""}`, error: true };
   }
 }
 
@@ -671,21 +673,9 @@ function planNotFound(input: string): ToolHandlerResult {
 
 async function refreshPlanPage(
   plan: typeof planExecutions.$inferSelect,
-  page: Awaited<ReturnType<typeof getLibraryPage>>,
+  _page: Awaited<ReturnType<typeof getLibraryPage>>,
 ): Promise<void> {
-  if (!page) return;
-  const steps = await db.select().from(planSteps)
-    .where(visiblePlanStep(eq(planSteps.planId, plan.id)))
-    .orderBy(planSteps.position);
-  const meta = dbRowsToMeta(plan, steps);
-  const stepInstructions = steps.map(s => ({ title: s.title, instructions: s.instructions || "" }));
-  const content = buildPlanPageContent(meta, stepInstructions);
-  const { libraryPages } = await import("@shared/models/info");
-  const { syncContentFields } = await import("@shared/markdown-tiptap");
-  const synced = syncContentFields({ markdown: content });
-  await db.update(libraryPages)
-    .set({ content: synced.content, plainTextContent: synced.plainTextContent, updatedAt: new Date() })
-    .where(combineWithWritableScope(getCurrentPrincipalOrSystem(), libraryScopeColumns(libraryPages), eq(libraryPages.id, page.id)));
+  await renderPlanProjection(plan.id);
 }
 
 function formatDuration(seconds: number): string {
