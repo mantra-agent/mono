@@ -2877,18 +2877,36 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       }
     | { ok: false; status: number; error: string }
   > {
-    const { resolveSpeaker } = await import("../../meeting/speakers");
-
-    // Resolve or create the meeting session
-    let session = event.sessionId
+    const existingSession = event.sessionId
       ? await chatStorage.getSession(event.sessionId)
       : null;
-    if (event.sessionId && !session) {
+    if (event.sessionId && !existingSession) {
       return { ok: false, status: 404, error: "Session not found" };
     }
-    if (session && session.type !== "meeting") {
+    if (existingSession && existingSession.type !== "meeting") {
       return { ok: false, status: 400, error: "Session is not a meeting session" };
     }
+    if (existingSession?.meeting) {
+      const { runWithMeetingOwnerPrincipal } = await import(
+        "../../meeting/owner-principal"
+      );
+      return runWithMeetingOwnerPrincipal(existingSession.meeting, () =>
+        ingestMeetingEventUnderPrincipal(event, existingSession),
+      );
+    }
+
+    return ingestMeetingEventUnderPrincipal(event, null);
+  }
+
+  async function ingestMeetingEventUnderPrincipal(
+    event: Parameters<typeof ingestMeetingEvent>[0],
+    existingSession: Awaited<ReturnType<typeof chatStorage.getSession>>,
+  ): ReturnType<typeof ingestMeetingEvent> {
+    const { resolveSpeaker } = await import("../../meeting/speakers");
+
+    // Existing sessions arrive here only after their durable owner principal
+    // has been restored. New loopback sessions inherit the authenticated request.
+    let session = existingSession;
     if (!session) {
       const meetingTitle = event.create?.title?.trim() || "Meeting";
       session = await chatStorage.createMeetingSession(meetingTitle, {

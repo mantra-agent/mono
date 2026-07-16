@@ -26,9 +26,8 @@ import {
 import { syncContentFields } from "@shared/markdown-tiptap";
 import { recordSessionArtifact } from "../session-artifacts";
 import { peopleStorage } from "../people-storage";
-import { storage } from "../storage";
-import { createUserPrincipalFromUser } from "../principal";
-import { getCurrentPrincipalOrSystem, runWithPrincipal } from "../principal-context";
+import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { runWithMeetingOwnerPrincipal } from "./owner-principal";
 import { combineWithVisibleScope, combineWithWritableScope } from "../scoped-storage";
 import { formatInTimezone, getDateInTimezone } from "../timezone";
 import { eventBus } from "../event-bus";
@@ -108,16 +107,11 @@ export async function finalizeMeetingSession(sessionId: string): Promise<Meeting
     return { outcome: "failed", recap };
   }
 
-  const run = () => generateRecap(sessionId, claimed.title, meeting);
-
   try {
-    const user = await storage.getUser(meeting.ownerUserId);
-    if (!user) {
-      throw new Error(`Owner user ${meeting.ownerUserId} not found`);
-    }
-    
-    const principal = createUserPrincipalFromUser(user, meeting.principalAccountId);
-    const recap = await runWithPrincipal(principal, run);
+    const recap = await runWithMeetingOwnerPrincipal(
+      meeting,
+      () => generateRecap(sessionId, claimed.title, meeting),
+    );
     return { outcome: recap.status === "ready" ? "ready" : "failed", recap };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

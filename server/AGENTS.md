@@ -36,6 +36,7 @@ Access control is server-owned and permission-based. Future code must plug into 
 - `role=admin` only contributes base permissions inside `permissions.ts`. Do not use role checks as route authorization.
 - User-specific grants live in `user_permissions`; do not duplicate permission state in settings, client state, or feature flags. Override updates are replace-set operations: omitted permissions are revoked, not inherited implicitly.
 - System principals may bypass user permissions only for trusted internal jobs. User-triggered paths must preserve the user principal through async boundaries with `runWithPrincipal(...)` when they leave the request stack.
+- Recall and other meeting transports must restore the durable `MeetingSessionMeta` owner through `meeting/owner-principal.ts` before transcript persistence, context assembly, model execution, recap generation, or any user-owned read/write. Provider callbacks never infer ownership.
 - Authorization failures return `401` for missing principals and `403` for missing permissions, and record principal diagnostics through the central permission path.
 - Sensitive/user-owned reads and writes must combine domain predicates with `visibleScopePredicate(...)`, `writableScopePredicate(...)`, `combineWithSensitiveVisible(...)`, `combineWithSensitiveWritable(...)`, `ownedInsertValues(...)`, or `sensitiveOwnershipValues(...)`. Raw `db.select/update/delete` on scoped tables must not be introduced without an explicit principal scope predicate.
 
