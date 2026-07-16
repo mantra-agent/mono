@@ -43,7 +43,6 @@ import {
   Vault,
   Workflow,
   Wrench,
-  X,
   Zap,
 } from "lucide-react";
 import { useLocation } from "wouter";
@@ -59,6 +58,7 @@ import { useOrientationActivity } from "@/hooks/use-orientation-activity";
 import { useEnvActivity } from "@/hooks/use-env-activity";
 import { ActiveStatusSpinner, getStatusClasses, type NavDotLevel } from "./nav-dot";
 import { MantraLogo } from "@/components/mantra-logo";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
   Collapsible,
   CollapsibleContent,
@@ -356,27 +356,13 @@ export function NavPage() {
       data-testid="nav-page"
     >
       <div className="p-2 space-y-1">
-        {/* Search bar */}
-        <div className="relative min-w-0 mb-1">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-          <input
-            type="text"
-            placeholder=""
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full h-7 pl-7 pr-7 rounded-md border border-input bg-background text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            data-testid="input-search-nav"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery("")}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 h-4 w-4 flex items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
-              data-testid="button-clear-nav-search"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          )}
-        </div>
+        <HierarchySearchInput
+          value={searchQuery}
+          onChange={setSearchQuery}
+          inputTestId="input-search-nav"
+          clearTestId="button-clear-nav-search"
+          ariaLabel="Search navigation"
+        />
 
         {/* Nav sections */}
         {filteredSections.length === 0 && searchQuery.trim() ? (
