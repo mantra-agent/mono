@@ -174,8 +174,9 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
   ) {
     const rootRef = useRef<HTMLDivElement>(null);
     const pendingSelectionRef = useRef<number | null>(null);
+    const restoreFocusRef = useRef(false);
     const composingRef = useRef(false);
-    const [domEpoch, setDomEpoch] = useState(0);
+    const [rootEpoch, setRootEpoch] = useState(0);
     const parts = useMemo(() => parseReferenceText(value), [value]);
 
     const commitValue = useCallback((nextValue: string, cursor: number) => {
@@ -184,11 +185,13 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
     }, [onChange]);
 
     const commitFromDOM = useCallback((nextValue: string, cursor: number) => {
-      // The browser mutated contentEditable DOM natively (autocorrect,
-      // composition). Remount the rendered parts so React never reconciles
-      // against nodes it no longer owns — reconciling browser-mutated nodes
-      // desyncs or crashes the commit and permanently locks the input.
-      setDomEpoch((epoch) => epoch + 1);
+      // WebKit mutated the contentEditable subtree natively (autocorrect,
+      // composition, or another unsupported edit). Replace the entire editable
+      // root so React never reconciles descendants it no longer owns. Changing
+      // only descendant keys still makes React remove stale browser-owned nodes
+      // and can throw NotFoundError from removeChild.
+      restoreFocusRef.current = document.activeElement === rootRef.current;
+      setRootEpoch((epoch) => epoch + 1);
       commitValue(nextValue, cursor);
     }, [commitValue]);
 
@@ -210,10 +213,15 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
       const pending = pendingSelectionRef.current;
       if (pending === null) return;
       const root = rootRef.current;
-      if (!root || document.activeElement !== root) return;
+      if (!root) return;
+      if (restoreFocusRef.current) {
+        restoreFocusRef.current = false;
+        root.focus({ preventScroll: true });
+      }
+      if (document.activeElement !== root) return;
       pendingSelectionRef.current = null;
       setSelectionAtOffset(root, pending);
-    }, [value]);
+    }, [value, rootEpoch]);
 
     /** Sync DOM text back to React state after composition or browser-native edits */
     const syncFromDOM = useCallback(() => {
@@ -221,10 +229,10 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
       if (!root) return;
       const domValue = extractValue(root);
       const cursor = selectionOffsetWithin(root);
-      if (domValue !== value) {
-        commitFromDOM(domValue, cursor);
-      }
-    }, [commitFromDOM, value]);
+      // Reclaim ownership even when the browser's edit preserved the same text:
+      // DOM shape can still differ from React's children after spellcheck/IME.
+      commitFromDOM(domValue, cursor);
+    }, [commitFromDOM]);
 
     const handleBeforeInput = useCallback((inputEvent: InputEvent) => {
       if (disabled) return;
@@ -326,7 +334,7 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
       const listener = (event: Event) => handleBeforeInput(event as InputEvent);
       root.addEventListener("beforeinput", listener);
       return () => root.removeEventListener("beforeinput", listener);
-    }, [handleBeforeInput]);
+    }, [handleBeforeInput, rootEpoch]);
 
     /** Track IME composition lifecycle for autocorrect/predictive text support */
     useEffect(() => {
@@ -350,7 +358,7 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
         root.removeEventListener("compositionstart", onCompositionStart);
         root.removeEventListener("compositionend", onCompositionEnd);
       };
-    }, [syncFromDOM]);
+    }, [syncFromDOM, rootEpoch]);
 
     const handleInput = useCallback(() => {
       // During composition, the browser mutates the DOM directly. We don't
@@ -392,6 +400,7 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
 
     return (
       <div
+        key={rootEpoch}
         ref={rootRef}
         role="textbox"
         aria-multiline="true"
@@ -414,10 +423,10 @@ export const EditableReferenceInput = forwardRef<EditableReferenceInputHandle, E
       >
         {parts.map((part, index) =>
           part.kind === "text" ? (
-            <span key={`${domEpoch}-${index}`}>{part.text}</span>
+            <span key={index}>{part.text}</span>
           ) : (
             <span
-              key={`${domEpoch}-${index}`}
+              key={index}
               contentEditable={false}
               data-reference-token={part.ref.canonical}
               className="inline-block align-baseline"
