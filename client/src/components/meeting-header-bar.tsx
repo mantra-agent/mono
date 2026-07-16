@@ -1,15 +1,15 @@
 /**
  * MeetingHeaderBar — sticky header for meeting sessions.
  *
- * Shows meeting title, platform, elapsed time, participant chips, and the
- * bot status pill. Renders above the transcript, mirroring the sticky-bar
- * pattern used by plans/workflows.
+ * Shows the referenced meeting title, elapsed time, participant references,
+ * and linked Agenda/Recap pages. Bot status is encoded on the title icon.
+ * Renders above the transcript, mirroring the sticky-bar pattern used by plans/workflows.
  *
  * When a recap is ready and distribution drafts exist, renders a
  * "Send recap to N attendees" button that expands per-attendee
  * EmailDraftWidget panels (one per draftId). Follows the Sessions Draft
  * widget motif: fixed attendee recipients, editable content, explicit send
- * control (human presses Send), read-only recap link.
+ * control (human presses Send), and a read-only expandable recap page.
  */
 import { useEffect, useState, useCallback } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -18,14 +18,12 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronRight,
-  FileText,
   Hourglass,
   Loader2,
   Mail,
   Radio,
   Users,
 } from "lucide-react";
-import { Link } from "wouter";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { EmailDraftWidget } from "@/components/email-draft-widget";
@@ -41,24 +39,6 @@ const log = createLogger("MeetingHeaderBar");
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-const STATUS_LABEL: Record<MeetingBotStatus, string> = {
-  dialing: "Joining",
-  in_lobby: "In lobby",
-  live: "Live",
-  denied: "Not admitted",
-  failed: "Failed",
-  ended: "Ended",
-};
-
-const STATUS_CLASS: Record<MeetingBotStatus, string> = {
-  dialing: "bg-warning/10 text-warning-foreground border-warning/30",
-  in_lobby: "bg-warning/10 text-warning-foreground border-warning/30",
-  live: "bg-active/10 text-active border-active/30",
-  denied: "bg-destructive/10 text-destructive border-destructive/30",
-  failed: "bg-destructive/10 text-destructive border-destructive/30",
-  ended: "bg-muted text-muted-foreground border-border",
-};
 
 /** Ray-facing explanation per terminal/waiting state. Never a silent fail. */
 const STATUS_BANNER: Partial<Record<MeetingBotStatus, string>> = {
@@ -272,6 +252,19 @@ export function MeetingHeaderBar({
 }) {
   const elapsed = useElapsed(meeting.startedAt, meeting.endedAt);
   const isLive = meeting.botStatus === "live";
+  const title = meeting.title || sessionTitle || "Meeting";
+  const meetingReference = meeting.calendarAccountId && meeting.calendarId && meeting.providerEventId
+    ? createReferenceRef({
+        type: "meeting",
+        id: [meeting.calendarAccountId, meeting.calendarId, meeting.providerEventId]
+          .map(encodeURIComponent)
+          .join("~"),
+        metadata: {
+          label: title,
+          href: `/schedule/${encodeURIComponent(meeting.providerEventId)}?calendarId=${encodeURIComponent(meeting.calendarId)}&accountId=${encodeURIComponent(meeting.calendarAccountId)}`,
+        },
+      })
+    : null;
   const banner = STATUS_BANNER[meeting.botStatus];
   const { toast } = useToast();
 
@@ -352,28 +345,22 @@ export function MeetingHeaderBar({
         className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2"
         data-testid="meeting-header-bar"
       >
-        <div className="flex items-center gap-2 min-w-0">
-          <Radio
-            className={cn(
-              "h-3.5 w-3.5 shrink-0",
-              isLive ? "text-active animate-pulse" : "text-muted-foreground",
-            )}
-          />
-          <span
-            className="text-sm font-medium truncate"
-            data-testid="text-meeting-title"
-          >
-            {meeting.title || sessionTitle || "Meeting"}
-          </span>
+        <div className="flex min-w-0 items-center" data-testid="text-meeting-title">
+          {meetingReference ? (
+            <ReferenceRenderer
+              refValue={meetingReference}
+              surface="card"
+              IconOverride={Radio}
+              className={isLive ? "min-w-0 !text-active hover:!text-active" : "min-w-0 !text-muted-foreground hover:!text-muted-foreground"}
+              iconClassName={isLive ? "text-active animate-pulse" : "text-muted-foreground"}
+            />
+          ) : (
+            <span className={cn("inline-flex min-w-0 items-center gap-1 text-sm font-medium", isLive ? "text-active" : "text-muted-foreground")}>
+              <Radio className={cn("h-3.5 w-3.5 shrink-0", isLive && "animate-pulse")} />
+              <span className="truncate">{title}</span>
+            </span>
+          )}
         </div>
-        {meeting.platform && (
-          <span
-            className="text-xs text-muted-foreground"
-            data-testid="text-meeting-platform"
-          >
-            {meeting.platform}
-          </span>
-        )}
         {elapsed && (
           <span
             className="text-xs tabular-nums text-muted-foreground"
@@ -382,18 +369,8 @@ export function MeetingHeaderBar({
             {elapsed}
           </span>
         )}
-        <span
-          className={cn(
-            "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium",
-            STATUS_CLASS[meeting.botStatus],
-          )}
-          data-testid="badge-meeting-bot-status"
-        >
-          {STATUS_LABEL[meeting.botStatus]}
-        </span>
         {meeting.participants.length > 0 && (
           <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-            <Users className="h-3 w-3 shrink-0 text-muted-foreground" />
             {meeting.participants.map((participant) => participant.personId ? (
               <ReferenceRenderer
                 key={participant.personId}
@@ -422,7 +399,7 @@ export function MeetingHeaderBar({
       {/* ── Agenda ── */}
       {meeting.agendaPage ? (
         <div className="border-t border-border/20 px-4 py-2">
-          <ExpandableLibraryPage page={meeting.agendaPage} label="Agenda" />
+          <ExpandableLibraryPage page={meeting.agendaPage} />
         </div>
       ) : meeting.agenda ? (
         <div className="border-t border-border/20 px-4 py-2 text-sm text-muted-foreground whitespace-pre-line">
@@ -441,29 +418,23 @@ export function MeetingHeaderBar({
         </div>
       )}
 
-      {/* ── Recap ready row: read-only link + distribution controls ── */}
-      {recap?.status === "ready" && recap.pageSlug && (
+      {/* ── Recap ready row: expandable page + distribution controls ── */}
+      {recap?.status === "ready" && recap.pageId && recap.pageSlug && (
         <div
-          className="flex flex-wrap items-center gap-2 px-4 py-2"
+          className="px-4 py-2"
           data-testid="card-meeting-recap-ready"
         >
-          {/* Read-only recap page link */}
-          <Link
-            href={`/info#library?page=${encodeURIComponent(recap.pageSlug)}`}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2.5 py-1 text-xs font-medium hover-elevate"
-            data-testid="link-meeting-recap-page"
-          >
-            <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <span>Recap ready</span>
-            {recap.pageTitle && (
-              <span className="text-muted-foreground truncate max-w-[16rem]">
-                {recap.pageTitle}
-              </span>
-            )}
-          </Link>
-
-          {/* Interaction log chip */}
-          {(recap.interactionsLogged ?? 0) > 0 && (
+          <ExpandableLibraryPage
+            page={{
+              id: recap.pageId,
+              slug: recap.pageSlug,
+              title: recap.pageTitle || "Meeting Recap",
+            }}
+            readOnly
+          />
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {/* Interaction log chip */}
+            {(recap.interactionsLogged ?? 0) > 0 && (
             <span
               className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground"
               data-testid="chip-meeting-recap-interactions"
@@ -531,6 +502,7 @@ export function MeetingHeaderBar({
               <span className="text-xs text-destructive/70">Retry</span>
             </Button>
           )}
+          </div>
         </div>
       )}
 

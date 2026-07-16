@@ -5,6 +5,7 @@ import { ChevronRight, Loader2 } from "lucide-react";
 import { createReferenceRef } from "@shared/references";
 import { isValidTiptapDoc, markdownToTiptap } from "@shared/markdown-tiptap";
 import { RichTextEditor } from "@/components/rich-text-editor";
+import { SIMPLE_TEXT_FRAME_CLASS } from "@/components/home/simple-text-frame";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { useEditableContent } from "@/hooks/use-editable-content";
 import { apiRequest } from "@/lib/queryClient";
@@ -76,11 +77,11 @@ export function InlineLibraryPageEditor({
     return <div className="flex h-20 items-center justify-center text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /></div>;
   }
   if (isError || !data) {
-    return <div className="px-2 py-1.5 text-sm text-destructive">Agenda page could not be loaded.</div>;
+    return <div className="px-2 py-1.5 text-sm text-destructive">Library page could not be loaded.</div>;
   }
 
   return (
-    <div className={cn("relative min-h-28 overflow-hidden rounded-md border border-border/40 bg-card", className)}>
+    <div className={cn("relative", className)}>
       {saveMutation.isPending && <Loader2 className="absolute right-2 top-2 z-10 h-3.5 w-3.5 animate-spin text-muted-foreground" />}
       <RichTextEditor
         key={data.id}
@@ -89,7 +90,11 @@ export function InlineLibraryPageEditor({
         onChange={editable.handleContentChange}
         placeholder="Add discussion points, decisions, and desired outcomes"
         readOnly={readOnly}
-        className="min-h-28"
+        className="h-auto"
+        contentClassName={cn(
+          SIMPLE_TEXT_FRAME_CLASS,
+          "!p-0 [&_.ProseMirror]:!min-h-20 [&_.ProseMirror]:px-3 [&_.ProseMirror]:py-2",
+        )}
         data-testid={`editor-inline-library-page-${data.id}`}
       />
     </div>
@@ -98,13 +103,11 @@ export function InlineLibraryPageEditor({
 
 export function ExpandableLibraryPage({
   page,
-  label,
   readOnly = false,
   defaultOpen = false,
   className,
 }: {
   page: InlineLibraryPageRef;
-  label?: string;
   readOnly?: boolean;
   defaultOpen?: boolean;
   className?: string;
@@ -120,7 +123,6 @@ export function ExpandableLibraryPage({
   return (
     <div className={cn("min-w-0", className)}>
       <div className="flex min-h-8 items-center gap-2">
-        {label && <span className="shrink-0 text-xs font-medium text-muted-foreground">{label}</span>}
         <ReferenceRenderer refValue={reference} surface="simple-row" className="min-w-0" />
         <button
           type="button"
