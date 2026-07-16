@@ -53,12 +53,20 @@ const libraryScopeColumns = {
 // Bound the editable draft body while preserving every recap section.
 const EMAIL_BODY_CHAR_LIMIT = 30_000;
 
+interface RecapDistributionOptions {
+  retryFailed?: boolean;
+  /** Create one owner-addressed draft only when normal recipient resolution is empty. */
+  previewForOwnerWhenNoRecipients?: boolean;
+}
+
 // ─── Public entry point ───────────────────────────────────────────────────────
 
 /**
- * Distribute a completed meeting recap to external attendees.
+ * Create unsent recap drafts through the canonical distribution pipeline.
+ * Normal operation targets eligible external attendees. Explicit preview mode
+ * targets the connected Gmail owner only when no eligible attendee exists.
  * Called after recap.status = "ready". Never throws.
- * 
+ *
  * CHANGE 3: Trap principal mismatch early to detect ALS leaks.
  */
 export async function distributeRecap(
@@ -66,7 +74,7 @@ export async function distributeRecap(
   meeting: MeetingSessionMeta,
   recap: MeetingRecapMeta,
   principal: Principal,
-  options: { retryFailed?: boolean } = {},
+  options: RecapDistributionOptions = {},
 ): Promise<void> {
   // CHANGE 3: Verify principal context is correct (trap ALS leaks)
   try {
@@ -129,7 +137,7 @@ export async function distributeRecap(
         );
     }
 
-    await runDistribution(sessionId, meeting, recap, principal);
+    await runDistribution(sessionId, meeting, recap, principal, options);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.error(`Recap distribution outer failure for session ${sessionId}: ${msg}`);
@@ -150,17 +158,28 @@ async function runDistribution(
   meeting: MeetingSessionMeta,
   recap: MeetingRecapMeta,
   principal: Principal,
+  options: RecapDistributionOptions,
 ): Promise<void> {
   // 1. Mark in-progress so MeetingHeaderBar can show spinner.
   await chatStorage.updateMeetingMeta(sessionId, {
     recap: { ...recap, distributionStatus: "drafting" },
   });
 
-  // 2. Resolve attendees.
-  const ownerEmail = await resolveOwnerEmail(principal);
-  const attendees = await resolveAttendees(meeting, ownerEmail);
+  // 2. Resolve the connected Gmail identity and eligible attendees once.
+  const gmailAccounts = await listGmailAccounts();
+  const gmailAccount = gmailAccounts[0] ?? null;
+  const gmailAccountId = gmailAccount?.id ?? null;
+  const ownerEmail = gmailAccount?.email?.trim().toLowerCase() || null;
+  const resolvedAttendees = await resolveAttendees(meeting, ownerEmail);
+  const isOwnerPreview =
+    resolvedAttendees.length === 0 &&
+    options.previewForOwnerWhenNoRecipients === true &&
+    ownerEmail !== null;
+  const attendees = isOwnerPreview
+    ? [{ email: ownerEmail, name: "Preview" }]
+    : resolvedAttendees;
 
-  if (attendees.length === 0) {
+  if (attendees.length === 0 && !options.previewForOwnerWhenNoRecipients) {
     log.info(`No eligible attendees for session ${sessionId}; skipping distribution`);
     await chatStorage.updateMeetingMeta(sessionId, {
       recap: { ...recap, distributionStatus: "ready", distributionSkipped: true, draftIds: [] },
@@ -168,11 +187,13 @@ async function runDistribution(
     return;
   }
 
-  log.info(`Distributing recap for session ${sessionId} to ${attendees.length} attendee(s)`);
+  if (isOwnerPreview) {
+    log.info(`Creating owner recap preview for session ${sessionId}`);
+  } else {
+    log.info(`Distributing recap for session ${sessionId} to ${attendees.length} attendee(s)`);
+  }
 
   // 3. Require Gmail account. Never fall back to automatic send.
-  const gmailAccounts = await listGmailAccounts();
-  const gmailAccountId = gmailAccounts[0]?.id ?? null;
 
   if (!gmailAccountId) {
     log.warn(`No Gmail account connected for session ${sessionId}; blocking distribution`);
@@ -272,14 +293,24 @@ async function runDistribution(
 
   // 6. Finalize session meta.
   await chatStorage.updateMeetingMeta(sessionId, {
-    recap: { ...recap, distributionStatus: "ready", draftIds },
+    recap: {
+      ...recap,
+      distributionStatus: "ready",
+      distributionSkipped: false,
+      draftIds,
+    },
   });
 
   // 7. Publish event for hooks/listeners.
   eventBus.publish({
     category: "agent",
     event: "meeting:recap_distributed",
-    payload: { sessionId, draftCount: draftIds.length, attendeeCount: attendees.length },
+    payload: {
+      sessionId,
+      draftCount: draftIds.length,
+      attendeeCount: attendees.length,
+      ownerPreview: isOwnerPreview,
+    },
   });
 
   log.info(
@@ -292,19 +323,6 @@ async function runDistribution(
 interface ResolvedAttendee {
   email: string;
   name?: string;
-}
-
-/**
- * Resolve the owner's own email so we can exclude them from the attendee list.
- * Falls back to null if unavailable (we then skip the exclusion filter).
- */
-async function resolveOwnerEmail(principal: Principal): Promise<string | null> {
-  try {
-    const accounts = await listGmailAccounts();
-    return accounts[0]?.email?.toLowerCase() ?? null;
-  } catch {
-    return null;
-  }
 }
 
 /**

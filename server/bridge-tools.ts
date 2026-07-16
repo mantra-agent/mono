@@ -8781,8 +8781,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
   async meeting_bot(args: Record<string, any>): Promise<ToolHandlerResult> {
     const action = typeof args.action === "string" ? args.action : "";
-    if (!["join", "status", "diagnostics", "leave", "recap"].includes(action)) {
-      return { result: `Unknown meeting_bot action: ${action}. Allowed: join, status, diagnostics, leave, recap`, error: true };
+    if (!["join", "status", "diagnostics", "leave", "recap", "draft_recap"].includes(action)) {
+      return { result: `Unknown meeting_bot action: ${action}. Allowed: join, status, diagnostics, leave, recap, draft_recap`, error: true };
     }
 
     if (action === "diagnostics") {
@@ -8793,7 +8793,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
     const { chatStorage } = await import("./integrations/chat/storage");
 
-    if (action === "status" || action === "leave" || action === "recap") {
+    if (action === "status" || action === "leave" || action === "recap" || action === "draft_recap") {
       const sessionId = typeof args.sessionId === "string" ? args.sessionId.trim() : "";
       if (!sessionId) return { result: "Missing sessionId", error: true };
       const session = await chatStorage.getSession(sessionId);
@@ -8815,7 +8815,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           }),
         };
       }
-      if (action === "recap") {
+      if (action === "recap" || action === "draft_recap") {
         const { getCurrentPrincipal } = await import("./principal-context");
         const principal = getCurrentPrincipal();
         if (!principal || principal.actorType !== "user" || !principal.userId || !principal.accountId) {
@@ -8844,7 +8844,10 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
 
         const { distributeRecap } = await import("./meeting/distribution");
-        await distributeRecap(sessionId, meeting, recap, principal, { retryFailed: true });
+        await distributeRecap(sessionId, meeting, recap, principal, {
+          retryFailed: true,
+          previewForOwnerWhenNoRecipients: action === "draft_recap",
+        });
 
         const { db } = await import("./db");
         const { meetingRecapDistributions } = await import("@shared/schema");
