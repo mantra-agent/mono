@@ -178,10 +178,17 @@ function targetIdentity(target: TargetDocumentRow): JsonRecord {
 }
 
 function hashesForTarget(target: TargetDocumentRow): JsonRecord {
+  const tags = Array.isArray(target.tags) ? target.tags : [];
   return {
-    contentHash: target.source_content_hash,
-    metadataHash: target.source_metadata_hash,
-    identityHash: target.source_identity_hash,
+    contentHash: sha256(target.content),
+    metadataHash: sha256({
+      metadata: target.metadata ?? {},
+      title: target.title,
+      summary: target.summary,
+      oneLiner: target.one_liner,
+      tags,
+    }),
+    identityHash: sha256(targetIdentity(target)),
   };
 }
 
@@ -201,9 +208,10 @@ function comparePreparedToTarget(prepared: PreparedDocument, target: TargetDocum
   if (target.title !== prepared.source.title) mismatches.push("title");
   if (target.summary !== prepared.source.summary) mismatches.push("summary");
   if (target.one_liner !== prepared.source.one_liner) mismatches.push("one_liner");
-  if (target.source_content_hash !== prepared.contentHash) mismatches.push("content_hash");
-  if (target.source_metadata_hash !== prepared.metadataHash) mismatches.push("metadata_hash");
-  if (target.source_identity_hash !== prepared.identityHash) mismatches.push("identity_hash");
+  const targetHashes = hashesForTarget(target);
+  if (targetHashes.contentHash !== prepared.contentHash) mismatches.push("content_hash");
+  if (targetHashes.metadataHash !== prepared.metadataHash) mismatches.push("metadata_hash");
+  if (targetHashes.identityHash !== prepared.identityHash) mismatches.push("identity_hash");
   if (normalizeDate(target.source_created_at) !== normalizeDate(prepared.source.created_at)) mismatches.push("source_created_at");
   if (normalizeDate(target.source_processed_at) !== normalizeDate(prepared.source.processed_at)) mismatches.push("source_processed_at");
   return mismatches;

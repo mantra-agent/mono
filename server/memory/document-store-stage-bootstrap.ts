@@ -5,6 +5,7 @@ import {
   reconcileDocumentStoreWorkspaceMigration,
   runDocumentStoreWorkspaceMigration,
 } from "./document-store-workspace-migration";
+import { setStageDocumentStoreReadCutover } from "./document-store-stage-cutover";
 
 const log = createLogger("DocumentStoreStageBootstrap");
 const ADVISORY_LOCK_KEY = "document_store_workspace_migration_v1";
@@ -54,17 +55,30 @@ export async function runStageDocumentStoreWorkspaceMigration(): Promise<void> {
       before.unexplainedMismatchCount === 0 &&
       before.conflictCount === 0
     ) {
-      log.info("stage document migration already reconciled", { reconciliation: before });
+      await setStageDocumentStoreReadCutover(true, before as unknown as Record<string, unknown>);
+      log.info("stage document migration already reconciled; target reads enabled", { reconciliation: before });
       return;
     }
 
     log.info("stage document migration starting", { reconciliation: before });
     const result = await runDocumentStoreWorkspaceMigration(pool);
-    if (result.status === "completed" && result.reconciliation.unexplainedMismatchCount === 0) {
-      log.info("stage document migration completed", result);
+    if (
+      result.status === "completed" &&
+      result.reconciliation.unexplainedMismatchCount === 0 &&
+      result.reconciliation.conflictCount === 0
+    ) {
+      await setStageDocumentStoreReadCutover(
+        true,
+        result.reconciliation as unknown as Record<string, unknown>,
+      );
+      log.info("stage document migration completed; target reads enabled", result);
       return;
     }
 
+    await setStageDocumentStoreReadCutover(
+      false,
+      result.reconciliation as unknown as Record<string, unknown>,
+    );
     log.error("stage document migration stopped without clean reconciliation", result);
   } finally {
     if (lockAcquired) {
