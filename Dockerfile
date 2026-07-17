@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # ── Stage 1: Build ──────────────────────────────────────────────────────────
-FROM node:22-trixie-slim AS builder
+FROM node:20-trixie-slim AS builder
 
 WORKDIR /app
 
@@ -49,7 +49,7 @@ RUN rm -rf dist/tests
 # implement skill sessions — pruning and reinstalling per-session is wasteful.
 
 # ── Stage 2: Runtime ────────────────────────────────────────────────────────
-FROM node:22-trixie-slim
+FROM node:20-trixie-slim
 
 WORKDIR /app
 
