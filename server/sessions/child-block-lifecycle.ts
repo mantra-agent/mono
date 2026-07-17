@@ -54,6 +54,11 @@ export async function onChildSessionSpawned(
     spawnReason?: string;
     title?: string;
     model?: string;
+    planId?: string;
+    stepId?: string;
+    attemptId?: number;
+    attemptNumber?: number;
+    planPageRef?: string;
   },
 ): Promise<void> {
   const { chatFileStorage } = await import("../chat-file-storage");
@@ -74,6 +79,11 @@ export async function onChildSessionSpawned(
     startedAt: now,
     updatedAt: now,
     spawnReason: opts.spawnReason || null,
+    planId: opts.planId || null,
+    planStepId: opts.stepId || null,
+    planAttemptId: opts.attemptId ?? null,
+    planAttemptNumber: opts.attemptNumber ?? null,
+    planPageRef: opts.planPageRef || null,
   };
 
   // Persist to parent session for historical views
@@ -139,6 +149,11 @@ export async function onChildSessionCompleted(
   let role: string = childSessionId;
   let model: string | null = null;
   let startedAt: string = new Date().toISOString();
+  let planId: string | null = null;
+  let planStepId: string | null = null;
+  let planAttemptId: number | null = null;
+  let planAttemptNumber: number | null = null;
+  let planPageRef: string | null = null;
   try {
     const parent = await chatFileStorage.getSession(parentSessionId);
     if (parent?.sessionKey) parentSessionKey = parent.sessionKey;
@@ -157,6 +172,11 @@ export async function onChildSessionCompleted(
         role = existing.childSession.role;
         model = existing.childSession.model || null;
         startedAt = existing.childSession.startedAt;
+        planId = existing.childSession.planId || null;
+        planStepId = existing.childSession.planStepId || null;
+        planAttemptId = typeof existing.childSession.planAttemptId === "number" ? existing.childSession.planAttemptId : null;
+        planAttemptNumber = existing.childSession.planAttemptNumber ?? null;
+        planPageRef = existing.childSession.planPageRef || null;
       }
     }
   } catch { /* best effort */ }
@@ -191,6 +211,11 @@ export async function onChildSessionCompleted(
     summary: result.summary || null,
     error: result.error || null,
     spawnReason,
+    planId,
+    planStepId,
+    planAttemptId,
+    planAttemptNumber,
+    planPageRef,
   };
   publishChildSessionBlockEvent(parentSessionKey, block);
 

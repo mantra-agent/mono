@@ -11,26 +11,23 @@
  * - Each function has a single responsibility
  */
 import { db } from "./db";
-import { eq, and, type SQL } from "drizzle-orm";
+import { eq, type SQL } from "drizzle-orm";
 import { planExecutions, planSteps } from "@shared/schema";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
-import { combineWithVisibleScope, combineWithWritableScope } from "./scoped-storage";
-import { claimPlanExecution, createPlanStepAttempt, releasePlanExecution, renderPlanProjection, transitionPlanStepStatus, updatePlanStepAttempt, updatePlanStepFields } from "./plan-service";
+import { combineWithVisibleScope } from "./scoped-storage";
+import { PLAN_EXECUTION_LEASE_MS, claimPlanExecution, createPlanStepAttempt, getLatestPlanStepAttempt, releasePlanExecution, renewPlanExecution, renderPlanProjection, transitionPlanStepStatus, updatePlanStatus as persistPlanStatus, updatePlanStepAttempt, updatePlanStepFields } from "./plan-service";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
 import {
   buildStepBrief,
-  buildPlanPageContent,
   isStepResolved,
   isPlanDone,
-  type PlanMeta,
   type PlanStep,
   type PlanStatus,
 } from "./lib/plan-utils";
 import {
   monitorChildSession,
   readFinalAssistantOutput,
-  readChildFailureMessage,
   truncateOutput,
 } from "./child-session-monitor";
 
@@ -39,9 +36,7 @@ const log = createLogger("PlanExecutor");
 const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
 const planStepScopeColumns = { ownerUserId: planSteps.ownerUserId, accountId: planSteps.accountId };
 function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
-function writablePlan(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
 function visiblePlanStep(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planStepScopeColumns, predicate); }
-function writablePlanStep(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), planStepScopeColumns, predicate); }
 
 
 // ─── Constants ───────────────────────────────────────────────────────
@@ -85,9 +80,7 @@ async function getStepsFromDb(planId: string) {
 }
 
 async function updatePlanStatus(planId: string, status: string) {
-  await db.update(planExecutions)
-    .set({ status, updatedAt: new Date() })
-    .where(writablePlan(eq(planExecutions.id, planId)));
+  await persistPlanStatus(planId, status);
 }
 
 async function transitionStep(
@@ -169,7 +162,19 @@ export async function executePlan(
 
   const abortController = new AbortController();
   activePlans.set(planId, { abortController, pageId: plan.pageId });
+  const leaseRenewal = setInterval(() => {
+    void renewPlanExecution(planId, lease.leaseId).then((renewed) => {
+      if (renewed) return;
+      log.error(`[${planId}] Execution lease was lost; aborting local executor`);
+      abortController.abort("execution_lease_lost");
+    }).catch((err) => {
+      log.warn(`[${planId}] Execution lease renewal failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }, Math.floor(PLAN_EXECUTION_LEASE_MS / 3));
+  leaseRenewal.unref?.();
+
   const releaseActivePlan = async () => {
+    clearInterval(leaseRenewal);
     try { await releasePlanExecution(planId, lease.leaseId); } catch { /* best effort */ }
     activePlans.delete(planId);
   };
@@ -253,6 +258,7 @@ export async function executePlan(
         stepIndex: i,
         totalSteps: steps.length,
         planTitle,
+        planPageRef: `@page:${plan.pageId}`,
         originSessionId,
         executionId,
         abortSignal: abortController.signal,
@@ -362,11 +368,12 @@ export async function executePlan(
 
 interface ExecuteStepInput {
   planId: string;
-  plan: { workspaceDir: string | null };
+  plan: { workspaceDir: string | null; pageId: string };
   step: { id: string; title: string; status: string; instructions: string | null; timeoutMinutes: number | null; totalAttempts: number | null };
   stepIndex: number;
   totalSteps: number;
   planTitle: string;
+  planPageRef: string;
   originSessionId: string;
   executionId: string;
   abortSignal: AbortSignal;
@@ -383,7 +390,7 @@ type ExecuteStepResult =
  * operations are inside the try/catch. (Violation #1 fix)
  */
 async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> {
-  const { planId, plan, step, stepIndex, totalSteps, planTitle, originSessionId, executionId, abortSignal, priorOutcomes } = input;
+  const { planId, plan, step, stepIndex, totalSteps, planTitle, planPageRef, originSessionId, executionId, abortSignal, priorOutcomes } = input;
   const stepInstructions = step.instructions || `Execute step: ${step.title}`;
   const maxRetries = MAX_STEP_RETRIES;
   let attemptCount = step.totalAttempts ?? 0;
@@ -403,9 +410,22 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
     try {
       log.log(`[${planId}] Step ${stepIndex + 1}/${totalSteps}: ${step.title} (attempt ${attempt}/${maxRetries})`);
 
+      const attemptId = await createPlanStepAttempt({
+        planId,
+        stepId: step.id,
+        attemptNumber: attemptCount,
+        status: "pending",
+        startedAt: new Date(stepStart),
+      });
+      if (attemptId == null) {
+        throw new Error(`Could not create attempt row for ${step.id} attempt ${attemptCount}`);
+      }
+
       const brief = buildStepBrief(
         planTitle, { id: step.id, title: step.title, status: "running" },
         stepIndex, totalSteps, stepInstructions, priorOutcomes, plan.workspaceDir ?? undefined,
+        undefined,
+        { planId, stepId: step.id, attemptId, planPageRef },
       );
 
       const idleTimeoutMs = (step.timeoutMinutes ?? DEFAULT_IDLE_TIMEOUT_MINUTES) * 60 * 1000;
@@ -421,11 +441,16 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
         titleOverride: `Step ${stepIndex + 1}: ${step.title}`,
         admissionTier: "realtime",
         lineageId: originSessionId,
+planId,
+        stepId: step.id,
+        attemptId,
+        attemptNumber: attemptCount,
+        planPageRef,
       });
 
       const { sessionId: childSessionId } = await spawnResult;
       log.log(`[${planId}] Step ${stepIndex + 1} spawned session ${childSessionId}`);
-      await createPlanStepAttempt({ planId, stepId: step.id, attemptNumber: attemptCount, childSessionId, status: "running", startedAt: new Date(stepStart) });
+      await updatePlanStepAttempt({ planId, stepId: step.id, attemptNumber: attemptCount, childSessionId, status: "running", startedAt: new Date(stepStart) });
 
       // A step is not "running" until its child session exists and is persisted.
       // This prevents Resume from seeing a running-with-no-child wedge if spawn fails.
@@ -453,6 +478,17 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
           const persistedStep = (await getStepsFromDb(planId)).find((candidate) => candidate.id === step.id);
           if (persistedStep?.status === "blocked" || persistedStep?.status === "needs_review") {
             log.log(`[${planId}] Step ${stepIndex + 1} ended with externally reported ${persistedStep.status}`);
+            await updatePlanStepAttempt({
+              planId,
+              stepId: step.id,
+              attemptNumber: attemptCount,
+              childSessionId,
+              status: persistedStep.status,
+              outcome: persistedStep.outcome,
+              error: persistedStep.error,
+              durationSeconds: lastDuration,
+              completedAt: new Date(),
+            });
             await renderPlanToLibraryPage(planId);
             return {
               status: "halted",
@@ -549,6 +585,17 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
       lastDuration = Math.round((Date.now() - stepStart) / 1000);
       const errorMsg = err instanceof Error ? err.message : String(err);
       log.error(`[${planId}] Step ${stepIndex + 1} crashed [spawn_or_db_error]: ${errorMsg}`);
+      await updatePlanStepAttempt({
+        planId,
+        stepId: step.id,
+        attemptNumber: attemptCount,
+        status: "failed",
+        error: errorMsg,
+        durationSeconds: lastDuration,
+        completedAt: new Date(),
+      }).catch((attemptErr) => {
+        log.warn(`[${planId}] Failed to persist crashed attempt ${attemptCount}: ${attemptErr instanceof Error ? attemptErr.message : String(attemptErr)}`);
+      });
 
       if (attempt < maxRetries) {
         log.warn(`[${planId}] Step ${stepIndex + 1} retrying after crash (attempt ${attempt}/${maxRetries})`);
@@ -780,73 +827,145 @@ export async function resumePlan(
 // ─── Crash Recovery ──────────────────────────────────────────────────
 
 async function recoverInterruptedPlan(planId: string): Promise<boolean> {
-  const plan = await getPlanFromDb(planId);
-  if (!plan || plan.status !== "executing") return false;
+  const initialPlan = await getPlanFromDb(planId);
+  if (!initialPlan || initialPlan.status !== "executing") return false;
 
-  const steps = await getStepsFromDb(plan.id);
-  let changed = false;
+  const recoveryLease = await claimPlanExecution(
+    initialPlan.id,
+    `recovery:${process.pid}`,
+  );
+  if (!recoveryLease.claimed) return false;
 
-  for (const step of steps) {
-    if (step.status !== "running") continue;
+  try {
+    const plan = await getPlanFromDb(initialPlan.id);
+    if (!plan || plan.status !== "executing") return false;
 
-    if (step.sessionId) {
-      try {
-        const { chatFileStorage } = await import("./chat-file-storage");
-        const session = await chatFileStorage.getSession(step.sessionId);
-        const sessionStatus = (session as { status?: string } | null)?.status;
+    const steps = await getStepsFromDb(plan.id);
 
-        if (sessionStatus === "saved") {
-          const output = await readFinalAssistantOutput(step.sessionId);
-          const duration = step.startedAt
-            ? Math.round((Date.now() - new Date(step.startedAt).getTime()) / 1000)
-            : null;
-          await updatePlanStepFields(plan.id, step.id, {
-            status: "completed",
-            outcome: output?.slice(0, 500) || "Completed (recovered)",
-            completedAt: new Date(),
-            durationSeconds: duration,
-          });
-          log.log(`[recovery] Plan ${plan.id} step ${step.id} — recovered as completed`);
-        } else {
-          const error = "Interrupted while marked executing; child did not resolve";
+    for (const step of steps) {
+      if (step.status !== "running") continue;
+
+      if (step.sessionId) {
+        try {
+          const { chatFileStorage } = await import("./chat-file-storage");
+          const session = await chatFileStorage.getSession(step.sessionId);
+          const sessionStatus = (session as { status?: string } | null)?.status;
+
+          if (sessionStatus === "saved") {
+            const output = await readFinalAssistantOutput(step.sessionId);
+            const duration = step.startedAt
+              ? Math.round((Date.now() - new Date(step.startedAt).getTime()) / 1000)
+              : null;
+            const attempt = await getLatestPlanStepAttempt(plan.id, step.id);
+            if (attempt) {
+              await updatePlanStepAttempt({
+                planId: plan.id,
+                stepId: step.id,
+                attemptNumber: attempt.attemptNumber,
+                childSessionId: step.sessionId,
+                status: "completed",
+                outcome: output?.slice(0, 500) || "Completed (recovered)",
+                durationSeconds: duration,
+                completedAt: new Date(),
+              });
+            }
+            await updatePlanStepFields(plan.id, step.id, {
+              status: "completed",
+              outcome: output?.slice(0, 500) || "Completed (recovered)",
+              completedAt: new Date(),
+              durationSeconds: duration,
+            });
+            log.log(`[recovery] Plan ${plan.id} step ${step.id} — recovered as completed`);
+          } else {
+            const error = "Interrupted while marked executing; child did not resolve";
+            await closeAbandonedChildSessionBlock(plan.originSessionId, step.sessionId, error, step.durationSeconds);
+            const attempt = await getLatestPlanStepAttempt(plan.id, step.id);
+            if (attempt) {
+              await updatePlanStepAttempt({
+                planId: plan.id,
+                stepId: step.id,
+                attemptNumber: attempt.attemptNumber,
+                childSessionId: step.sessionId,
+                status: "failed",
+                error,
+                durationSeconds: step.durationSeconds,
+                completedAt: new Date(),
+              });
+            }
+            await updatePlanStepFields(plan.id, step.id, {
+              status: "failed",
+              error,
+              completedAt: new Date(),
+            });
+          }
+        } catch {
+          const error = "Interrupted while marked executing; child could not be inspected";
           await closeAbandonedChildSessionBlock(plan.originSessionId, step.sessionId, error, step.durationSeconds);
+          const attempt = await getLatestPlanStepAttempt(plan.id, step.id);
+          if (attempt) {
+            await updatePlanStepAttempt({
+              planId: plan.id,
+              stepId: step.id,
+              attemptNumber: attempt.attemptNumber,
+              childSessionId: step.sessionId,
+              status: "failed",
+              error,
+              durationSeconds: step.durationSeconds,
+              completedAt: new Date(),
+            });
+          }
           await updatePlanStepFields(plan.id, step.id, {
             status: "failed",
             error,
             completedAt: new Date(),
           });
         }
-      } catch {
-        const error = "Interrupted while marked executing; child could not be inspected";
-        await closeAbandonedChildSessionBlock(plan.originSessionId, step.sessionId, error, step.durationSeconds);
+      } else {
         await updatePlanStepFields(plan.id, step.id, {
           status: "failed",
-          error,
+          error: "Interrupted while marked running before child session was persisted",
           completedAt: new Date(),
         });
       }
-    } else {
-      await updatePlanStepFields(plan.id, step.id, {
-        status: "failed",
-        error: "Interrupted while marked running before child session was persisted",
-        completedAt: new Date(),
-      });
     }
-    changed = true;
-  }
 
-  const updatedSteps = await getStepsFromDb(plan.id);
-  if (isPlanDone(updatedSteps)) {
-    const anyFailed = updatedSteps.some(s => s.status === "failed");
-    await updatePlanStatus(plan.id, anyFailed ? "completed_with_failures" : "completed");
-    log.log(`[recovery] Plan ${plan.id} — ${anyFailed ? "completed_with_failures" : "completed"}`);
-  } else {
-    await updatePlanStatus(plan.id, "paused");
-    log.log(`[recovery] Plan ${plan.id} — paused after interrupted execution`);
-  }
+    const updatedSteps = await getStepsFromDb(plan.id);
+    if (isPlanDone(updatedSteps)) {
+      const anyFailed = updatedSteps.some(s => s.status === "failed");
+      await updatePlanStatus(plan.id, anyFailed ? "completed_with_failures" : "completed");
+      log.log(`[recovery] Plan ${plan.id} — ${anyFailed ? "completed_with_failures" : "completed"}`);
+    } else {
+      await updatePlanStatus(plan.id, "paused");
+      log.log(`[recovery] Plan ${plan.id} — paused after interrupted execution`);
+    }
 
-  await renderPlanToLibraryPage(plan.id);
-  return changed;
+    await renderPlanToLibraryPage(plan.id);
+    return true;
+  } finally {
+    await releasePlanExecution(initialPlan.id, recoveryLease.leaseId).catch(() => undefined);
+  }
+}
+
+const scheduledRecoveryTimers = new Map<string, NodeJS.Timeout>();
+
+function scheduleInterruptedPlanRecovery(planId: string, expiresAt: Date): void {
+  const existing = scheduledRecoveryTimers.get(planId);
+  if (existing) clearTimeout(existing);
+  const delay = Math.max(1_000, expiresAt.getTime() - Date.now() + 1_000);
+  const timer = setTimeout(async () => {
+    scheduledRecoveryTimers.delete(planId);
+    const recovered = await recoverInterruptedPlan(planId).catch((err) => {
+      log.warn(`[recovery] Deferred recovery failed for ${planId}: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    });
+    if (recovered) return;
+    const current = await getPlanFromDb(planId).catch(() => null);
+    if (current?.status === "executing" && current.executionLeaseExpiresAt) {
+      scheduleInterruptedPlanRecovery(planId, current.executionLeaseExpiresAt);
+    }
+  }, delay);
+  timer.unref?.();
+  scheduledRecoveryTimers.set(planId, timer);
 }
 
 /**
@@ -859,9 +978,11 @@ export async function recoverInterruptedPlans(): Promise<number> {
 
     let recovered = 0;
     for (const plan of executing) {
-      if (await recoverInterruptedPlan(plan.id)) {
-        recovered++;
+      if (plan.executionLeaseExpiresAt && plan.executionLeaseExpiresAt.getTime() > Date.now()) {
+        scheduleInterruptedPlanRecovery(plan.id, plan.executionLeaseExpiresAt);
+        continue;
       }
+      if (await recoverInterruptedPlan(plan.id)) recovered++;
     }
 
     if (recovered > 0) {

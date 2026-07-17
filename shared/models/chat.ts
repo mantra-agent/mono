@@ -129,6 +129,10 @@ export interface ChildSessionBlockMeta {
   childSessionId: string;
   parentSessionId: string;
   role: string;
+  planId?: string | null;
+  planStepId?: string | null;
+  planAttemptId?: string | number | null;
+  planAttemptNumber?: number | null;
   model?: string | null;
   summary?: string | null;
   startedAt: string;
@@ -138,6 +142,7 @@ export interface ChildSessionBlockMeta {
   inputTokens?: number | null;
   outputTokens?: number | null;
   spawnReason?: string | null;
+  planPageRef?: string | null;
   error?: string | null;
 }
 

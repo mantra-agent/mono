@@ -1,6 +1,6 @@
 /**
  * Shared plan types, helpers, and components used by PlanCard
- * and PlanStickyBar.
+ * and inline PlanWidget surfaces.
  */
 import { useState, useEffect } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +32,19 @@ export interface PlanStepSessionLink {
   role?: string;
 }
 
+export interface PlanStepAttempt {
+  id?: string | number;
+  attemptNumber: number;
+  childSessionId?: string | null;
+  status?: string | null;
+  startedAt?: string | null;
+  updatedAt?: string | null;
+  completedAt?: string | null;
+  durationSeconds?: number | null;
+  outcome?: string | null;
+  error?: string | null;
+}
+
 export interface PlanStep {
   id: string;
   title: string;
@@ -41,6 +54,7 @@ export interface PlanStep {
   error?: unknown;
   sessionId?: string;
   sessions?: PlanStepSessionLink[];
+  attempts?: PlanStepAttempt[];
 }
 
 export interface PlanData {

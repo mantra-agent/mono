@@ -78,6 +78,7 @@ export interface SegmentStreamProps {
   suppressTrailingThinking?: boolean;
   contentClassName?: string;
   contentCompact?: boolean;
+  planSessionId?: string;
 }
 
 /**
@@ -85,7 +86,7 @@ export interface SegmentStreamProps {
  * Handles the "Thinking..." indicator and empty-streaming fallback.
  * Extracted from ChatTurn's assistant branch for reuse.
  */
-export function SegmentStream({ segments, isStreaming, layer, stripTags = false, suppressTrailingThinking = false, contentClassName, contentCompact = false }: SegmentStreamProps) {
+export function SegmentStream({ segments, isStreaming, layer, stripTags = false, suppressTrailingThinking = false, contentClassName, contentCompact = false, planSessionId }: SegmentStreamProps) {
   const renderSegments = useMemo(() => normalizeRenderSegments(segments, layer), [segments, layer]);
   const hasContent = renderSegments.some(seg => seg.type === "content" && seg.content.length > 0);
 
@@ -137,7 +138,7 @@ export function SegmentStream({ segments, isStreaming, layer, stripTags = false,
             );
           }
           if (seg.type === "content") {
-            const content = <MarkdownContent content={seg.content} stripTags={stripTags} compact={contentCompact || !!contentClassName} />;
+            const content = <MarkdownContent content={seg.content} stripTags={stripTags} compact={contentCompact || !!contentClassName} planSessionId={planSessionId} />;
             return contentClassName ? (
               <div key={`content-${seg.sourceIndexes.join("-") || i}`} className={contentClassName}>
                 {content}
