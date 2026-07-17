@@ -1,17 +1,18 @@
 // Use createLogger for logging ONLY
 import { createLogger } from "@/lib/logger";
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useMemo, type ReactNode } from "react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getInstanceName, isAgentType } from "@/lib/instance-config";
 import { Card, CardContent } from "@/components/ui/card";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
 import type {
   Schedule,
@@ -22,6 +23,11 @@ import type {
   TimerRun,
   TimerWithNextRun,
 } from "@shared/models/timers";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -55,7 +61,6 @@ import {
   Settings,
   Trash2,
   Pencil,
-  ChevronDown,
   ChevronRight,
   Loader2,
   CheckCircle2,
@@ -64,12 +69,11 @@ import {
   ExternalLink,
   Timer,
   Zap,
-  TrendingUp,
   X,
   Cpu,
   Download,
   Upload,
-  MoreVertical,
+  MoreHorizontal,
   Bell,
 } from "lucide-react";
 import {
@@ -405,65 +409,53 @@ function TimerActions({
 }) {
   const isMobile = useIsMobile();
 
-  if (isMobile) {
-    return (
-      <div className="flex items-center gap-1 shrink-0">
-        <Switch
-          checked={timer.enabled}
-          onCheckedChange={onToggle}
-          className="scale-90"
-          data-testid={`switch-enabled-${timer.id}`}
-        />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-11 w-11" data-testid={`button-timer-menu-${timer.id}`}>
-              <MoreVertical className="h-5 w-5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={onRunNow} disabled={globalPaused} data-testid={`menu-run-now-${timer.id}`}>
-              <Zap className="h-3.5 w-3.5 mr-2" /> Run Now
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onEdit} data-testid={`menu-edit-${timer.id}`}>
-              <Pencil className="h-3.5 w-3.5 mr-2" /> Edit
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onExport} data-testid={`menu-export-${timer.id}`}>
-              <Download className="h-3.5 w-3.5 mr-2" /> Export
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onDelete} className="text-destructive" data-testid={`menu-delete-${timer.id}`}>
-              <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex items-center gap-1 shrink-0">
+    <div
+      className="flex items-center gap-1 shrink-0"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
       <Switch
         checked={timer.enabled}
         onCheckedChange={onToggle}
-        className="scale-75"
+        className={isMobile ? "scale-90" : "scale-75"}
+        aria-label={timer.enabled ? `Disable ${timer.name}` : `Enable ${timer.name}`}
         data-testid={`switch-enabled-${timer.id}`}
       />
-      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onExport} title="Export" data-testid={`button-export-${timer.id}`}>
-        <Download className="h-3.5 w-3.5" />
-      </Button>
-      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onRunNow} disabled={globalPaused} data-testid={`button-run-now-${timer.id}`}>
-        <Zap className="h-3.5 w-3.5" />
-      </Button>
-      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onEdit} data-testid={`button-edit-${timer.id}`}>
-        <Pencil className="h-3.5 w-3.5" />
-      </Button>
-      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onDelete} data-testid={`button-delete-${timer.id}`}>
-        <Trash2 className="h-3.5 w-3.5" />
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              "flex items-center justify-center rounded-md text-muted-foreground opacity-70 transition-colors hover:bg-accent hover:text-foreground group-hover:opacity-100",
+              isMobile ? "h-11 w-11" : "h-7 w-7",
+            )}
+            aria-label={`Actions for ${timer.name}`}
+            data-testid={`button-timer-menu-${timer.id}`}
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={onRunNow} disabled={globalPaused} data-testid={`menu-run-now-${timer.id}`}>
+            <Zap className="h-3.5 w-3.5 mr-2" /> Run Now
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onEdit} data-testid={`menu-edit-${timer.id}`}>
+            <Pencil className="h-3.5 w-3.5 mr-2" /> Edit
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onExport} data-testid={`menu-export-${timer.id}`}>
+            <Download className="h-3.5 w-3.5 mr-2" /> Export
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onDelete} className="text-destructive" data-testid={`menu-delete-${timer.id}`}>
+            <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
 
-function TimerCard({
+function TimerTreeRow({
   timer,
   onEdit,
   onDelete,
@@ -494,118 +486,143 @@ function TimerCard({
   }, [timer.nextRunAt]);
 
   const schedulesSummary = timer.schedules.map(humanizeSchedule).join(" · ") || "No schedule";
-
   const skillLabel = timer.type === "skill" && timer.skillId
     ? (skillNameMap[timer.skillId] || timer.skillId)
     : null;
+  const isMuted = !timer.enabled || globalPaused;
 
   return (
-    <Card className={`group transition-all duration-150 ${!timer.enabled || globalPaused ? "opacity-60" : ""}`} data-testid={`card-timer-${timer.id}`}>
-      <CardContent className="p-3 @sm:p-4">
-        <div className="flex items-start gap-2 @sm:gap-3">
-          <button className="mt-0.5 shrink-0 text-muted-foreground" onClick={() => setExpanded(!expanded)} data-testid={`button-expand-${timer.id}`}>
-            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          </button>
+    <div className="min-w-0" data-testid={`tree-timer-${timer.id}`}>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setExpanded((current) => !current);
+          }
+        }}
+        className={cn(
+          "group flex w-full min-w-0 cursor-pointer select-none items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/70",
+          isMuted && "text-muted-foreground",
+        )}
+        data-testid={`card-timer-${timer.id}`}
+      >
+        <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-90")} />
+        <TypeIcon className={cn("h-3.5 w-3.5 shrink-0", isMuted ? "text-muted-foreground" : typeMeta.color)} />
+        <span className="min-w-0 flex-1 truncate font-medium" data-testid={`text-name-${timer.id}`}>
+          {timer.name}
+        </span>
+        {skillLabel && (
+          <span className="hidden max-w-40 truncate text-xs text-muted-foreground @md:inline">{skillLabel}</span>
+        )}
+        <span className="hidden max-w-[40%] truncate text-xs text-muted-foreground @sm:inline" title={schedulesSummary}>
+          {schedulesSummary}
+        </span>
+        {timer.nextRunAt && timer.enabled && !globalPaused && (
+          <span className="flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground" title={`Next run ${new Date(timer.nextRunAt).toLocaleString()}`}>
+            <Timer className="h-3 w-3" />
+            {humanizeNextRun(timer.nextRunAt)}
+          </span>
+        )}
+        <TimerActions
+          timer={timer}
+          onToggle={onToggle}
+          onExport={onExport}
+          onRunNow={onRunNow}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          globalPaused={globalPaused}
+        />
+      </div>
 
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5 @sm:gap-2 mb-1 flex-wrap">
-              <TypeIcon className={`h-4 w-4 shrink-0 ${typeMeta.color}`} />
-              <span className="font-medium text-sm truncate max-w-[150px] @sm:max-w-none" data-testid={`text-name-${timer.id}`}>{timer.name}</span>
-              <span className="bg-cat-system/15 text-cat-system-foreground border border-cat-system/30 rounded-sm text-xs font-medium px-2 py-0.5">{typeMeta.label}</span>
-              {skillLabel && (
-                <Badge variant="outline" className="text-xs px-1.5 py-0 h-4 text-cat-ai border-cat-ai/30 max-w-[120px] @sm:max-w-[200px] truncate">{skillLabel}</Badge>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2 @sm:gap-3 text-xs text-muted-foreground flex-wrap">
-              <span className="flex items-center gap-1 min-w-0">
-                <Clock className="h-3 w-3 shrink-0" />
-                <span className="truncate">{schedulesSummary}</span>
-              </span>
-              {timer.nextRunAt && timer.enabled && !globalPaused && (
-                <span className="flex items-center gap-1">
-                  <Timer className="h-3 w-3 shrink-0" />
-                  {humanizeNextRun(timer.nextRunAt)}
-                </span>
-              )}
-            </div>
-
-            {timer.stats && timer.stats.totalRuns > 0 && (
-              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                {timer.stats.successCount > 0 && (
-                  <span className="flex items-center gap-0.5 text-xs text-success">
-                    <CheckCircle2 className="h-3 w-3" />{timer.stats.successCount}
-                  </span>
-                )}
-                {timer.stats.errorCount > 0 && (
-                  <span className="flex items-center gap-0.5 text-xs text-error">
-                    <AlertCircle className="h-3 w-3" />{timer.stats.errorCount}
-                  </span>
-                )}
-                {timer.stats.avgDurationMs > 0 && (
-                  <span className="text-xs text-muted-foreground">avg {formatDuration(timer.stats.avgDurationMs)}</span>
-                )}
-                {timer.stats.currentStreak > 1 && (
-                  <Badge variant={timer.stats.streakType === "success" ? "default" : "destructive"} className="text-xs px-1 py-0 h-4">
-                    <TrendingUp className="h-2.5 w-2.5 mr-0.5" />
-                    {timer.stats.currentStreak}x {timer.stats.streakType}
-                  </Badge>
-                )}
-              </div>
-            )}
+      {expanded && (
+        <div className="ml-5 flex min-w-0" data-testid={`tree-timer-details-${timer.id}`}>
+          <div className="relative mr-1 w-5 shrink-0 self-stretch" aria-hidden="true">
+            <div className="absolute bottom-1/2 left-1/2 top-0 -translate-x-px border-l border-border" />
+            <div className="absolute left-1/2 right-0 top-1/2 border-t border-border" />
           </div>
+          <div className="min-w-0 flex-1 space-y-3 px-2 py-2 text-xs">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-muted-foreground">
+              <span>{typeMeta.label}</span>
+              <span>{timer.timezone}</span>
+              {timer.stats && timer.stats.totalRuns > 0 && (
+                <>
+                  <span>{timer.stats.successCount} succeeded</span>
+                  {timer.stats.errorCount > 0 && <span className="text-error">{timer.stats.errorCount} failed</span>}
+                  {timer.stats.avgDurationMs > 0 && <span>avg {formatDuration(timer.stats.avgDurationMs)}</span>}
+                </>
+              )}
+            </div>
 
-          <TimerActions
-            timer={timer}
-            onToggle={onToggle}
-            onExport={onExport}
-            onRunNow={onRunNow}
-            onEdit={onEdit}
-            onDelete={onDelete}
-            globalPaused={globalPaused}
-          />
-        </div>
+            {timer.description && <p className="text-muted-foreground">{timer.description}</p>}
 
-        {expanded && (
-          <div className="mt-3 pl-3 @sm:pl-7 space-y-3">
             {timer.type === "skill" && timer.skillId && (
               <div>
-                <Label className="text-xs text-muted-foreground mb-1 block">Skill</Label>
-                <span className="text-xs font-mono bg-muted/50 rounded px-2 py-1 break-all" data-testid={`text-skillid-${timer.id}`}>{timer.skillId}</span>
+                <Label className="mb-1 block text-xs text-muted-foreground">Skill</Label>
+                <span className="break-all font-mono" data-testid={`text-skillid-${timer.id}`}>{skillLabel}</span>
               </div>
             )}
 
             {timer.prompt && timer.type !== "skill" && (
               <div>
-                <Label className="text-xs text-muted-foreground mb-1 block">Prompt</Label>
-                <pre className="text-xs bg-muted/50 rounded-md p-2 whitespace-pre-wrap max-h-32 overflow-y-auto" data-testid={`text-prompt-${timer.id}`}>
+                <Label className="mb-1 block text-xs text-muted-foreground">Prompt</Label>
+                <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap text-xs text-foreground" data-testid={`text-prompt-${timer.id}`}>
                   {timer.prompt}
                 </pre>
               </div>
             )}
 
-            {timer.description && (
-              <p className="text-xs text-muted-foreground">{timer.description}</p>
-            )}
-
-            {timer.recentRuns && timer.recentRuns.length > 0 && (
-              <div>
-                <Label className="text-xs text-muted-foreground mb-1 block">Recent Runs</Label>
-                <div className="space-y-0.5 max-h-40 overflow-y-auto">
-                  {timer.recentRuns.map((run) => (
-                    <RunHistoryItem key={run.id} run={run} />
-                  ))}
+            <div>
+              <Label className="mb-1 block text-xs text-muted-foreground">Recent Runs</Label>
+              {timer.recentRuns && timer.recentRuns.length > 0 ? (
+                <div className="max-h-40 space-y-0.5 overflow-y-auto">
+                  {timer.recentRuns.map((run) => <RunHistoryItem key={run.id} run={run} />)}
                 </div>
-              </div>
-            )}
-
-            {(!timer.recentRuns || timer.recentRuns.length === 0) && (
-              <p className="text-xs text-muted-foreground italic">No runs yet</p>
-            )}
+              ) : (
+                <div className="px-2 py-1.5 text-sm text-muted-foreground">No runs yet.</div>
+              )}
+            </div>
           </div>
-        )}
-      </CardContent>
-    </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TimerTreeSection({
+  label,
+  timers,
+  emptyLabel,
+  renderTimer,
+}: {
+  label: string;
+  timers: TimerItem[];
+  emptyLabel: string;
+  renderTimer: (timer: TimerItem) => ReactNode;
+}) {
+  const [open, setOpen] = useState(true);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger
+        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate"
+        data-testid={`button-group-${label.toLowerCase()}`}
+      >
+        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
+        <span>{label}</span>
+        <span className="font-normal tabular-nums text-muted-foreground/70">{timers.length}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="mt-0 space-y-0">
+          {timers.length > 0
+            ? timers.map(renderTimer)
+            : <div className="px-2 py-1.5 text-sm text-muted-foreground">{emptyLabel}</div>}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -892,11 +909,11 @@ function CreateEditDialog({
 export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
   usePageHeader({ title: "Timers", skip: !!embedded });
   const { toast } = useToast();
-  const isMobile = useIsMobile();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTimer, setEditingTimer] = useState<TimerItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TimerItem | null>(null);
   const [runNowTarget, setRunNowTarget] = useState<TimerItem | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const { data, isLoading } = useQuery<{ timers: TimerItem[]; globalPaused: boolean }>({
     queryKey: ["/api/timers"],
@@ -930,8 +947,26 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
 
   const allTimers = data?.timers || [];
   const globalPaused = data?.globalPaused || false;
-  const timers = allTimers.filter(t => t.type !== "reminder");
-  const reminders = allTimers.filter(t => t.type === "reminder");
+  const filteredTimers = useMemo(() => {
+    const tokens = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return allTimers;
+
+    return allTimers.filter((timer) => {
+      const skillLabel = timer.skillId ? (skillNameMap[timer.skillId] || timer.skillId) : "";
+      const searchableText = [
+        timer.name,
+        timer.description,
+        timer.prompt,
+        TYPE_META[timer.type]?.label,
+        skillLabel,
+        timer.timezone,
+        ...timer.schedules.map(humanizeSchedule),
+      ].join(" ").toLowerCase();
+      return tokens.every((token) => searchableText.includes(token));
+    });
+  }, [allTimers, searchQuery, skillNameMap]);
+  const timers = filteredTimers.filter((timer) => timer.type !== "reminder");
+  const reminders = filteredTimers.filter((timer) => timer.type === "reminder");
 
   const toggleMutation = useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
@@ -981,6 +1016,32 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
     },
   });
 
+  const handleExportTimer = async (timer: TimerItem) => {
+    try {
+      const res = await fetch(`/api/timers/${timer.id}/export`);
+      if (!res.ok) throw new Error("Export failed");
+      const timerData = await res.json();
+      downloadJson(timerData, `timer-${timer.name.replace(/\s+/g, "-").toLowerCase()}.json`);
+      toast({ title: `Exported "${timer.name}"` });
+    } catch {
+      toast({ title: "Export failed", variant: "destructive" });
+    }
+  };
+
+  const renderTimer = (timer: TimerItem) => (
+    <TimerTreeRow
+      key={timer.id}
+      timer={timer}
+      globalPaused={globalPaused}
+      skillNameMap={skillNameMap}
+      onEdit={() => { setEditingTimer(timer); setDialogOpen(true); }}
+      onDelete={() => setDeleteTarget(timer)}
+      onToggle={(enabled) => toggleMutation.mutate({ id: timer.id, enabled })}
+      onRunNow={() => setRunNowTarget(timer)}
+      onExport={() => handleExportTimer(timer)}
+    />
+  );
+
   const handleExportAll = async () => {
     try {
       const res = await fetch("/api/timers/export");
@@ -1020,145 +1081,92 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
 
   if (isLoading) {
     return (
-      <div className="p-4 @sm:p-6 space-y-4">
-        <Skeleton className="h-10 w-full" />
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-24 w-full" />
+      <div className="p-2">
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        </div>
       </div>
     );
   }
 
+  const hasSearchResults = timers.length > 0 || reminders.length > 0;
+
   return (
-    <div className="p-4 @sm:p-6 space-y-4 overflow-x-hidden">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div>
-          {!embedded && <h1 className="text-lg font-semibold" data-testid="text-page-title">Timers</h1>}
-        </div>
-        <div className="flex items-center gap-2">
+    <div className="min-w-0 overflow-x-hidden bg-background p-2 text-foreground">
+      <div className="min-w-0 space-y-1">
+        <HierarchySearchInput
+          value={searchQuery}
+          onChange={setSearchQuery}
+          inputTestId="input-search-timers"
+          clearTestId="button-clear-timer-search"
+          ariaLabel="Search timers"
+        />
+
+        <div className="flex min-w-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={() => { setEditingTimer(null); setDialogOpen(true); }}
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80"
+            data-testid="button-create"
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            <span>New Timer</span>
+          </button>
           <Button
-            variant={globalPaused ? "default" : "outline"}
+            variant="ghost"
             size="sm"
+            className={cn("h-7 px-2 text-xs", globalPaused && "text-warning")}
             onClick={() => pauseMutation.mutate(!globalPaused)}
             disabled={pauseMutation.isPending}
             data-testid="button-global-pause"
           >
-            {globalPaused ? <Play className="h-3.5 w-3.5 mr-1.5" /> : <Pause className="h-3.5 w-3.5 mr-1.5" />}
+            {globalPaused ? <Play className="mr-1.5 h-3.5 w-3.5" /> : <Pause className="mr-1.5 h-3.5 w-3.5" />}
             {globalPaused ? "Resume All" : "Pause All"}
           </Button>
-          {isMobile ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" variant="outline" data-testid="button-more-actions">
-                  <MoreVertical className="h-3.5 w-3.5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={handleExportAll} data-testid="menu-export-all-timers">
-                  <Download className="h-3.5 w-3.5 mr-2" /> Export All
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleImport} data-testid="menu-import-timers">
-                  <Upload className="h-3.5 w-3.5 mr-2" /> Import
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : (
-            <>
-              <Button size="sm" variant="outline" onClick={handleExportAll} data-testid="button-export-all-timers">
-                <Download className="h-3.5 w-3.5 mr-1.5" /> Export All
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Timer utilities" data-testid="button-more-actions">
+                <MoreHorizontal className="h-4 w-4" />
               </Button>
-              <Button size="sm" variant="outline" onClick={handleImport} data-testid="button-import-timers">
-                <Upload className="h-3.5 w-3.5 mr-1.5" /> Import
-              </Button>
-            </>
-          )}
-          <Button size="sm" onClick={() => { setEditingTimer(null); setDialogOpen(true); }} data-testid="button-create">
-            <Plus className="h-3.5 w-3.5 mr-1.5" /> New
-          </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={handleExportAll} data-testid="menu-export-all-timers">
+                <Download className="mr-2 h-3.5 w-3.5" /> Export All
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleImport} data-testid="menu-import-timers">
+                <Upload className="mr-2 h-3.5 w-3.5" /> Import
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-      </div>
 
-      {globalPaused && (
-        <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 flex items-center gap-2 text-sm text-warning-foreground" data-testid="banner-global-paused">
-          <Pause className="h-4 w-4 shrink-0" />
-          All scheduled timers are paused. Click Resume All to re-enable.
-        </div>
-      )}
-
-      <h2 className="text-md font-semibold flex items-center gap-2" data-testid="text-timers-heading">
-        <Clock className="h-4 w-4 text-info" />
-        Timers
-      </h2>
-
-      {timers.length === 0 && !isLoading && (
-        <div className="px-2 py-1.5 text-sm text-muted-foreground">No timers yet.</div>
-      )}
-
-      <div className="space-y-2">
-        {timers.map((timer) => (
-          <TimerCard
-            key={timer.id}
-            timer={timer}
-            globalPaused={globalPaused}
-            skillNameMap={skillNameMap}
-            onEdit={() => { setEditingTimer(timer); setDialogOpen(true); }}
-            onDelete={() => setDeleteTarget(timer)}
-            onToggle={(enabled) => toggleMutation.mutate({ id: timer.id, enabled })}
-            onRunNow={() => setRunNowTarget(timer)}
-            onExport={async () => {
-              try {
-                const res = await fetch(`/api/timers/${timer.id}/export`);
-                if (!res.ok) throw new Error("Export failed");
-                const data = await res.json();
-                downloadJson(data, `timer-${timer.name.replace(/\s+/g, "-").toLowerCase()}.json`);
-                toast({ title: `Exported "${timer.name}"` });
-              } catch {
-                toast({ title: "Export failed", variant: "destructive" });
-              }
-            }}
-          />
-        ))}
-      </div>
-
-      <div className="pt-4">
-        <h2 className="text-md font-semibold mb-3 flex items-center gap-2" data-testid="text-reminders-heading">
-          <Bell className="h-4 w-4 text-cat-event" />
-          Reminders
-        </h2>
-
-        {reminders.length === 0 && (
-          <Card>
-            <CardContent className="p-6 text-center">
-              <Bell className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
-              <p className="text-sm text-muted-foreground" data-testid="text-reminders-empty">No reminders set</p>
-            </CardContent>
-          </Card>
+        {globalPaused && (
+          <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-warning" data-testid="banner-global-paused">
+            <Pause className="h-3.5 w-3.5 shrink-0" />
+            <span>Scheduled timers are paused.</span>
+          </div>
         )}
 
-        <div className="space-y-2">
-          {reminders.map((timer) => (
-            <TimerCard
-              key={timer.id}
-              timer={timer}
-              globalPaused={globalPaused}
-              skillNameMap={skillNameMap}
-              onEdit={() => { setEditingTimer(timer); setDialogOpen(true); }}
-              onDelete={() => setDeleteTarget(timer)}
-              onToggle={(enabled) => toggleMutation.mutate({ id: timer.id, enabled })}
-              onRunNow={() => setRunNowTarget(timer)}
-              onExport={async () => {
-                try {
-                  const res = await fetch(`/api/timers/${timer.id}/export`);
-                  if (!res.ok) throw new Error("Export failed");
-                  const data = await res.json();
-                  downloadJson(data, `timer-${timer.name.replace(/\s+/g, "-").toLowerCase()}.json`);
-                  toast({ title: `Exported "${timer.name}"` });
-                } catch {
-                  toast({ title: "Export failed", variant: "destructive" });
-                }
-              }}
+        {!hasSearchResults && searchQuery.trim() ? (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">
+            No timers match "{searchQuery.trim()}".
+          </div>
+        ) : (
+          <>
+            <TimerTreeSection
+              label="Timers"
+              timers={timers}
+              emptyLabel="No timers yet."
+              renderTimer={renderTimer}
             />
-          ))}
-        </div>
+            <TimerTreeSection
+              label="Reminders"
+              timers={reminders}
+              emptyLabel="No reminders set."
+              renderTimer={renderTimer}
+            />
+          </>
+        )}
       </div>
 
       <CreateEditDialog
