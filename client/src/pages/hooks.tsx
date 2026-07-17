@@ -1,11 +1,16 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Select,
@@ -51,6 +56,9 @@ import {
   CheckCircle2,
   XCircle,
   Trash2,
+  Pencil,
+  Power,
+  PowerOff,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -118,16 +126,7 @@ function formatCooldown(seconds: number): string {
   return `${Math.floor(seconds / 3600)}h`;
 }
 
-function StatusDot({ enabled }: { enabled: boolean }) {
-  return (
-    <span
-      className={`inline-block h-2 w-2 rounded-full ${enabled ? "bg-success" : "bg-neutral"}`}
-      data-testid={`status-dot-${enabled ? "enabled" : "disabled"}`}
-    />
-  );
-}
-
-function HookCard({
+function HookTreeRow({
   hook,
   onSelect,
   onToggle,
@@ -139,57 +138,78 @@ function HookCard({
   onDelete: () => void;
 }) {
   const ActionIcon = ACTION_TYPE_ICONS[hook.actionType] || Zap;
+  const actionLabel = ACTION_TYPE_LABELS[hook.actionType] || hook.actionType;
+
+  const requestDelete = () => {
+    if (window.confirm(`Delete hook "${hook.name}"?`)) onDelete();
+  };
 
   return (
-    <div
-      className="flex items-center gap-3 px-4 py-3 border-b border-border/50 hover:bg-muted/30 cursor-pointer transition-colors"
-      onClick={onSelect}
-      data-testid={`card-hook-${hook.id}`}
-    >
-      <StatusDot enabled={hook.enabled} />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-semibold text-sm truncate" data-testid={`text-hook-name-${hook.id}`}>
-            {hook.name}
-          </span>
-          <Badge variant="outline" className="font-mono text-xs px-1.5 py-0" data-testid={`badge-hook-pattern-${hook.id}`}>
-            {hook.eventPattern}
-          </Badge>
-          <span className="inline-flex items-center bg-cat-system/15 text-cat-system-foreground border border-cat-system/30 rounded-sm text-xs font-medium px-2 py-0.5 gap-1" data-testid={`badge-hook-action-${hook.id}`}>
-            <ActionIcon className="h-2.5 w-2.5" />
-            {ACTION_TYPE_LABELS[hook.actionType] || hook.actionType}
-          </span>
-        </div>
-        <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1" data-testid={`text-hook-lastfired-${hook.id}`}>
-            <Clock className="h-3 w-3" />
-            {formatRelativeTime(hook.lastFiredAt)}
-          </span>
-          <span data-testid={`text-hook-cooldown-${hook.id}`}>
-            Cooldown: {formatCooldown(hook.cooldownSeconds)}
-          </span>
-        </div>
-      </div>
-      <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+    <ProfileTreeRow
+      label={(
         <button
-          className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (window.confirm(`Delete hook "${hook.name}"?`)) {
-              onDelete();
-            }
-          }}
-          data-testid={`button-hook-delete-${hook.id}`}
+          type="button"
+          className="max-w-full truncate text-left font-medium text-foreground"
+          onClick={onSelect}
+          data-testid={`text-hook-name-${hook.id}`}
         >
-          <Trash2 className="h-3.5 w-3.5" />
+          {hook.name}
         </button>
-        <Switch
-          checked={hook.enabled}
-          onCheckedChange={onToggle}
-          data-testid={`switch-hook-toggle-${hook.id}`}
+      )}
+      icon={(
+        <ActionIcon
+          className={`h-3.5 w-3.5 ${hook.enabled ? "text-active" : "text-muted-foreground"}`}
+          data-testid={`status-icon-${hook.enabled ? "enabled" : "disabled"}-${hook.id}`}
         />
-      </div>
-    </div>
+      )}
+      hasValue
+      showEmpty
+      mobileLayout="inline"
+      testId={`tree-row-hook-${hook.id}`}
+      expandedContentClassName="space-y-1"
+      expandedContent={(
+        <>
+          {hook.description && <p className="text-foreground">{hook.description}</p>}
+          <p className="text-muted-foreground" data-testid={`text-hook-action-${hook.id}`}>
+            {actionLabel}
+          </p>
+          <p className="flex items-center gap-1 text-muted-foreground" data-testid={`text-hook-lastfired-${hook.id}`}>
+            <Clock className="h-3 w-3" />
+            Last fired {formatRelativeTime(hook.lastFiredAt)}
+          </p>
+          <p className="text-muted-foreground" data-testid={`text-hook-cooldown-${hook.id}`}>
+            Cooldown: {formatCooldown(hook.cooldownSeconds)}
+          </p>
+        </>
+      )}
+      menuContent={(
+        <>
+          <DropdownMenuItem onSelect={onSelect} data-testid={`button-hook-edit-${hook.id}`}>
+            <Pencil className="mr-2 h-3.5 w-3.5" />
+            Edit
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onToggle(!hook.enabled)} data-testid={`button-hook-toggle-${hook.id}`}>
+            {hook.enabled ? <PowerOff className="mr-2 h-3.5 w-3.5" /> : <Power className="mr-2 h-3.5 w-3.5" />}
+            {hook.enabled ? "Disable" : "Enable"}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={requestDelete} data-testid={`button-hook-delete-${hook.id}`}>
+            <Trash2 className="mr-2 h-3.5 w-3.5" />
+            Delete
+          </DropdownMenuItem>
+        </>
+      )}
+    >
+      <button
+        type="button"
+        className="max-w-full truncate font-mono text-muted-foreground"
+        onClick={onSelect}
+        title={hook.eventPattern}
+        data-testid={`text-hook-pattern-${hook.id}`}
+      >
+        {hook.eventPattern}
+      </button>
+    </ProfileTreeRow>
   );
 }
 
@@ -846,7 +866,7 @@ export default function HooksPage({ embedded }: { embedded?: boolean }) {
     },
   });
 
-  const cardDeleteMutation = useMutation({
+  const rowDeleteMutation = useMutation({
     mutationFn: async (id: number) => {
       return apiRequest("DELETE", `/api/hooks/${id}`);
     },
@@ -896,15 +916,17 @@ export default function HooksPage({ embedded }: { embedded?: boolean }) {
             No hooks yet.
           </div>
         ) : (
-          hooks.map((hook) => (
-            <HookCard
-              key={hook.id}
-              hook={hook}
-              onSelect={() => handleSelectHook(hook)}
-              onToggle={(enabled) => toggleMutation.mutate({ id: hook.id, enabled })}
-              onDelete={() => cardDeleteMutation.mutate(hook.id)}
-            />
-          ))
+          <div className="space-y-0 px-2 py-1">
+            {hooks.map((hook) => (
+              <HookTreeRow
+                key={hook.id}
+                hook={hook}
+                onSelect={() => handleSelectHook(hook)}
+                onToggle={(enabled) => toggleMutation.mutate({ id: hook.id, enabled })}
+                onDelete={() => rowDeleteMutation.mutate(hook.id)}
+              />
+            ))}
+          </div>
         )}
       </div>
 
