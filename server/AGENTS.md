@@ -310,6 +310,7 @@ Four interacting layers: intention stack (what), timer scheduler (when), skill r
 - Key timers: Consolidate (30min), Sleep (2AM), Brief Daily (7AM), Intention Advance (6h), Email Sync (1h)
 - **Serialized queue** — timers run one at a time with 12s stagger delay
 - **PreContext builders** for skill timers: brief, review, reflect, plan (weekly redirects to monthly on last Friday)
+- **Landscape Scan is native** — `SkillTimerHandler` routes the canonical `scan` timer directly to `runLandscapeScan()`. The LLM skill must not own scan admission, stale-run recovery, or a second curation pass.
 
 ### Admission Controller
 - **4 tiers:** communication (highest, always granted), realtime, request, background (lowest)

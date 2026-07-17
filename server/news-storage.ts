@@ -1,5 +1,5 @@
 import { db, pool } from "./db";
-import { eq, desc, and, sql, lt, ne, inArray, gte, type SQL } from "drizzle-orm";
+import { eq, desc, and, sql, lt, ne, inArray, gte, gt, type SQL } from "drizzle-orm";
 import {
   signalSources,
   signalItems,
@@ -25,6 +25,7 @@ const itemScopeColumns = { scope: signalItems.scope, ownerUserId: signalItems.ow
 const scanScopeColumns = { scope: scanRuns.scope, ownerUserId: scanRuns.ownerUserId, accountId: scanRuns.accountId };
 const sourceDiagnosticScopeColumns = { scope: signalSourceScanDiagnostics.scope, ownerUserId: signalSourceScanDiagnostics.ownerUserId, accountId: signalSourceScanDiagnostics.accountId };
 const INVALID_X_GROK_STORY_URL_PATTERN = "https://x.com/i/articles/%";
+const NEWS_FRESHNESS_TTL_MS = 10 * 60 * 60 * 1000;
 
 function isInvalidXGrokStorySignal(data: Pick<InsertSignalItem, "sourceType" | "url" | "status">): boolean {
   return data.sourceType === "x"
@@ -226,6 +227,11 @@ export class SignalStorage {
 
 
   async getNewsSummary(): Promise<{
+    freshness: {
+      state: "fresh" | "stale" | "never_scanned";
+      asOf: Date | null;
+      ageMs: number | null;
+    };
     scanRuns: ScanRun[];
     countsByStatus: Array<{ status: string; count: number }>;
     countsBySourceType: Array<{ sourceType: string; count: number }>;
@@ -233,7 +239,7 @@ export class SignalStorage {
     latestSurfaced: SignalItem[];
   }> {
     return autoHeal(async () => {
-      const [scanRuns, countsByStatus, countsBySourceType, [curation], latest] = await Promise.all([
+      const [recentScanRuns, countsByStatus, countsBySourceType, [curation], latest, [latestUsefulScan]] = await Promise.all([
         this.listScanRuns(5),
         db.select({ status: signalItems.status, count: sql<number>`count(*)::int` })
           .from(signalItems)
@@ -250,9 +256,31 @@ export class SignalStorage {
           surfacedUncurated: sql<number>`count(*) filter (where ${signalItems.status} = 'surfaced' and (${signalItems.curatedTitle} is null or ${signalItems.curatedReason} is null))::int`,
         }).from(signalItems).where(visibleItems()),
         this.listSignals({ status: "surfaced", limit: 10, hasCuration: true }),
+        db.select({ completedAt: scanRuns.completedAt })
+          .from(scanRuns)
+          .where(visibleScans(and(
+            sql`${scanRuns.completedAt} IS NOT NULL`,
+            gt(scanRuns.sourcesScanned, 0),
+          )))
+          .orderBy(desc(scanRuns.completedAt))
+          .limit(1),
       ]);
+
+      const asOf = latestUsefulScan?.completedAt ?? null;
+      const ageMs = asOf ? Math.max(0, Date.now() - asOf.getTime()) : null;
+      const freshness = {
+        state: !asOf
+          ? "never_scanned" as const
+          : ageMs! <= NEWS_FRESHNESS_TTL_MS
+            ? "fresh" as const
+            : "stale" as const,
+        asOf,
+        ageMs,
+      };
+
       return {
-        scanRuns,
+        freshness,
+        scanRuns: recentScanRuns,
         countsByStatus,
         countsBySourceType,
         curation: curation ?? { curated: 0, uncurated: 0, surfacedCurated: 0, surfacedUncurated: 0 },
