@@ -297,9 +297,8 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     schedules: [
       {
         id: "sys-skill-plan-monthly-1",
-        frequency: "weekly",
-        daysOfWeek: ["fri"],
-        timeOfDay: "14:00",
+        frequency: "custom",
+        cronExpression: "0 14 * * FRI#L",
       },
     ],
     enabled: true,
