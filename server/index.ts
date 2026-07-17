@@ -963,6 +963,17 @@ function startDeferredBackgroundServices(): void {
     bootTracker.completePhase("background_services");
 
     bootTracker.markReady();
+
+    void import("./memory/document-store-stage-bootstrap")
+      .then(({ runStageDocumentStoreWorkspaceMigration }) =>
+        runStageDocumentStoreWorkspaceMigration(),
+      )
+      .catch((error) => {
+        log(
+          `[startup] stage document migration failed to start: ${error instanceof Error ? error.message : String(error)}`,
+          "boot",
+        );
+      });
   });
 }
 
