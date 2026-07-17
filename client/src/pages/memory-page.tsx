@@ -1753,6 +1753,292 @@ function LogTab({ initialEntryId }: { initialEntryId?: number | null }) {
   );
 }
 
+
+function VnextJournalTab() {
+  const { timezone } = useTimezone();
+  const [granularity, setGranularity] = useState<LogGranularity>("month");
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [selectedClaimId, setSelectedClaimId] = useState<number | null>(null);
+  const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
+
+  useFocusContext(
+    selectedClaimId !== null
+      ? { entity: { type: "memory", id: String(selectedClaimId) } }
+      : null
+  );
+
+  const { start, end } = useMemo(() => getDateRange(currentDate, granularity), [currentDate, granularity]);
+  const startISO = start.toISOString();
+  const endISO = end.toISOString();
+
+  const { data: claims = [], isLoading } = useQuery<VnextClaim[]>({
+    queryKey: ["/api/memory/vnext/claims", "journal", startISO, endISO],
+    queryFn: async () => {
+      const pageSize = 100;
+      const collected: VnextClaim[] = [];
+      let offset = 0;
+
+      while (true) {
+        const params = new URLSearchParams({
+          createdAfter: startISO,
+          createdBefore: endISO,
+          limit: String(pageSize),
+          offset: String(offset),
+        });
+        const res = await fetch(`/api/memory/vnext/claims?${params.toString()}`, { credentials: "include" });
+        if (!res.ok) throw new Error("Failed to load vNext memory journal");
+        const page = await res.json() as VnextClaimsResponse;
+        collected.push(...page.claims);
+        if (page.claims.length < pageSize) break;
+        offset += pageSize;
+      }
+
+      return collected;
+    },
+  });
+
+  const { data: selectedClaimResponse, isLoading: selectedClaimLoading } = useQuery<{ claim: VnextClaim }>({
+    queryKey: ["/api/memory/vnext/claims", selectedClaimId],
+    queryFn: async () => {
+      const res = await fetch(`/api/memory/vnext/claims/${selectedClaimId}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load vNext claim");
+      return res.json();
+    },
+    enabled: selectedClaimId !== null,
+  });
+
+  const claimsByDay = useMemo(() => {
+    const grouped = new Map<string, VnextClaim[]>();
+    for (const claim of claims) {
+      if (!claim.createdAt) continue;
+      const day = eventDateKeyInTz(claim.createdAt, timezone);
+      if (!grouped.has(day)) grouped.set(day, []);
+      grouped.get(day)!.push(claim);
+    }
+    return grouped;
+  }, [claims, timezone]);
+
+  const summary = useMemo(() => claims.reduce<Record<string, number>>((counts, claim) => {
+    counts[claim.claimType] = (counts[claim.claimType] ?? 0) + 1;
+    return counts;
+  }, {}), [claims]);
+
+  useEffect(() => {
+    const days = Array.from(claimsByDay.keys()).sort().reverse();
+    setExpandedDays(new Set(days.slice(0, 3)));
+  }, [claimsByDay]);
+
+  const toggleDay = (day: string) => {
+    setExpandedDays(prev => {
+      const next = new Set(prev);
+      if (next.has(day)) next.delete(day);
+      else next.add(day);
+      return next;
+    });
+  };
+
+  const selectedClaim = selectedClaimResponse?.claim;
+
+  return (
+    <div className={cn("flex flex-1", MEMORY_SHELL_CLASS)} data-testid="log-tab">
+      <div className={cn("w-80 shrink-0 border-r flex flex-col overflow-hidden", MEMORY_PANEL_CLASS)}>
+        <div className={cn("flex items-center justify-between", MEMORY_PANEL_HEADER_CLASS)}>
+          <div className="flex items-center gap-2" data-testid="log-granularity-controls">
+            {(["day", "week", "month", "year"] as LogGranularity[]).map(g => (
+              <Button
+                key={g}
+                variant={granularity === g ? "default" : "ghost"}
+                size="sm"
+                className="text-xs capitalize"
+                onClick={() => setGranularity(g)}
+                data-testid={`log-granularity-${g}`}
+              >
+                {g}
+              </Button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1" data-testid="log-nav-controls">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setCurrentDate(navigateDate(currentDate, granularity, -1))}
+              data-testid="log-nav-prev"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <span className="text-sm font-medium min-w-[160px] text-center" data-testid="log-period-label">
+              {formatPeriodLabel(currentDate, granularity, timezone)}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setCurrentDate(navigateDate(currentDate, granularity, 1))}
+              data-testid="log-nav-next"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs ml-2"
+              onClick={() => setCurrentDate(new Date())}
+              data-testid="log-nav-today"
+            >
+              Today
+            </Button>
+          </div>
+        </div>
+
+        {claims.length > 0 && (
+          <div className="flex items-center gap-3 px-4 py-2 border-b border-card-border bg-muted/10 text-xs text-muted-foreground" data-testid="log-summary-bar">
+            <span className="font-medium" data-testid="log-total-events">{claims.length} memories</span>
+            {Object.entries(summary).map(([type, count]) => (
+              <span key={type} className="flex items-center gap-1" data-testid={`log-summary-type-${type}`}>
+                <Badge variant="secondary" className="text-xs px-1.5 py-0">
+                  {claimTypeLabel(type)}
+                </Badge>
+                {count}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto">
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : claimsByDay.size === 0 ? (
+            <div className={MEMORY_EMPTY_CLASS} data-testid="log-empty-state">
+              <Brain className="h-8 w-8 mb-3 opacity-40" />
+              <p className="text-sm font-medium">No memories created in this period</p>
+              <p className="text-xs mt-1">Navigate to a different time range to explore memory history</p>
+            </div>
+          ) : (
+            <div className="px-4 py-2">
+              {Array.from(claimsByDay.entries())
+                .sort(([a], [b]) => b.localeCompare(a))
+                .map(([day, dayClaims]) => {
+                  const isExpanded = expandedDays.has(day);
+                  return (
+                    <div key={day} className="mb-2" data-testid={`log-day-${day}`}>
+                      <button
+                        className="flex items-center gap-2 w-full text-left py-1.5 px-2 rounded hover:bg-accent/50 transition-colors"
+                        onClick={() => toggleDay(day)}
+                        data-testid={`log-day-toggle-${day}`}
+                      >
+                        {isExpanded ? (
+                          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                        ) : (
+                          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                        )}
+                        <span className="text-sm font-medium">{formatDayHeader(day, timezone)}</span>
+                        <Badge variant="secondary" className="text-xs font-mono px-1 py-0 ml-auto">
+                          {dayClaims.length}
+                        </Badge>
+                      </button>
+                      {isExpanded && (
+                        <div className="ml-6 border-l border-card-border pl-3 mt-1 space-y-1">
+                          {dayClaims.map(claim => (
+                            <button
+                              key={claim.id}
+                              className={cn("flex items-start gap-2 w-full text-left py-1.5 px-2", MEMORY_LIST_ROW_CLASS, selectedClaimId === claim.id && MEMORY_SELECTED_ROW_CLASS)}
+                              onClick={() => setSelectedClaimId(claim.id)}
+                              data-testid={`log-claim-${claim.id}`}
+                            >
+                              <span className="text-xs text-muted-foreground mt-0.5 shrink-0 w-12">
+                                {claim.createdAt ? eventTimeInTz(claim.createdAt, timezone) : ""}
+                              </span>
+                              <VnextClaimTypeIcon claimType={claim.claimType} />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-medium truncate" data-testid={`log-claim-title-${claim.id}`}>
+                                  {claim.title || firstLine(claim.content, 70)}
+                                </p>
+                                <p className="text-xs text-muted-foreground truncate">{lifecycleLabel(claim.lifecycleStage)}</p>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {selectedClaimId !== null && (
+        <div className={cn("flex-1 flex flex-col overflow-hidden min-w-0", MEMORY_PANEL_CLASS)} data-testid="log-detail-panel">
+          {selectedClaim ? (
+            <div className="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <VnextClaimTypeIcon claimType={selectedClaim.claimType} />
+                  <h3 className="text-base font-semibold text-foreground truncate" data-testid="log-detail-title">
+                    {selectedClaim.title || firstLine(selectedClaim.content, 80)}
+                  </h3>
+                </div>
+                <Button variant="ghost" size="icon" onClick={() => setSelectedClaimId(null)} data-testid="log-detail-close">
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+                <span className="flex items-center gap-1" data-testid="log-detail-time">
+                  <Clock className="h-2.5 w-2.5" />
+                  {selectedClaim.createdAt
+                    ? new Date(selectedClaim.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
+                    : "Unknown"}
+                </span>
+                <span className="flex items-center gap-1" data-testid="log-detail-id">
+                  <Hash className="h-2.5 w-2.5" />{selectedClaim.id}
+                </span>
+                <Badge variant="outline">{claimTypeLabel(selectedClaim.claimType)}</Badge>
+                <Badge variant="outline">{lifecycleLabel(selectedClaim.lifecycleStage)}</Badge>
+                <span>{Math.round(Number(selectedClaim.confidence ?? 0) * 100)}% confidence</span>
+              </div>
+
+              {(selectedClaim.topics ?? []).length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {(selectedClaim.topics ?? []).map(topic => (
+                    <Badge key={topic} variant="outline" className="text-xs" data-testid={`log-detail-topic-${topic}`}>{topic}</Badge>
+                  ))}
+                </div>
+              )}
+
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
+                  <FileText className="h-3 w-3" />
+                  Memory
+                </p>
+                <SimpleTextFrame content={selectedClaim.content} />
+              </div>
+
+              <VnextSourceRefsSection claimId={selectedClaim.id} />
+
+              {selectedClaim.metadata && Object.keys(selectedClaim.metadata).length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1.5">Metadata</p>
+                  <pre className="text-xs font-mono whitespace-pre-wrap text-foreground/70 bg-muted/20 border border-card-border rounded-md p-3" data-testid="log-detail-metadata">
+                    {JSON.stringify(selectedClaim.metadata, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          ) : selectedClaimLoading ? (
+            <div className="flex-1 flex items-center justify-center">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <div className={MEMORY_EMPTY_CLASS}>Memory not found</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WorkspaceTab() {
   const [currentPath, setCurrentPath] = useState("");
   const [selectedFile, setSelectedFile] = useState<WorkspaceItem | null>(null);
@@ -4106,7 +4392,7 @@ export default function MemoryPageFull() {
             <TabsTrigger value="topics" data-testid="tab-memory-maintenance-topics">Topics</TabsTrigger>
           </TabsList>
           <TabsContent value="events" className="min-h-0 flex-1 mt-3">
-            <LogTab initialEntryId={initialEntryId} />
+            <VnextJournalTab />
           </TabsContent>
           <TabsContent value="topics" className="min-h-0 flex-1 mt-3 overflow-hidden">
             <Suspense fallback={<div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}>
