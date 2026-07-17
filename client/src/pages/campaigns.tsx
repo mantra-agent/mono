@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlignLeft, ArrowLeft, ChevronRight, Eye, FileText, Mail, Plus, Reply, Search, Send, Trash2, Type, Users, X } from "lucide-react";
+import { AlignLeft, ArrowLeft, ChevronRight, Eye, FileText, Loader2, Mail, Plus, Reply, Search, Send, Trash2, Type, Users, X } from "lucide-react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
