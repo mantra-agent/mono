@@ -67,7 +67,7 @@ export interface PlanWidgetPlan extends PlanData {
 
 interface PlanWidgetProps {
   plan: PlanWidgetPlan;
-  variant?: "sticky" | "card";
+  variant?: "sticky" | "card" | "tree";
   showArchiveAction?: boolean;
   sessionId?: string;
   className?: string;
@@ -247,6 +247,7 @@ export function PlanWidget({
   const canResume = !isArchived && (isPaused || needsReview || isCreated || plan.status === "failed");
   const canArchive = showArchiveAction && !isArchived && !isExecuting;
   const canDeleteFromSession = Boolean(sessionId);
+  const hasActions = canPause || canResume || canArchive || canDeleteFromSession;
 
   const progressedCount = plan.steps.filter(isProgressedStep).length;
   const progressPercent = plan.steps.length > 0
@@ -381,33 +382,36 @@ export function PlanWidget({
     );
   }
 
+  const isTree = variant === "tree";
+
   return (
     <>
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
       <div
         className={cn(
-          "border-l-4 border-border bg-card transition-all duration-200",
-          "overflow-hidden rounded-md border border-l-4 border-border/60 bg-muted/20 px-4 py-3",
+          isTree
+            ? "group relative min-w-0 overflow-hidden rounded-md transition-colors hover:bg-accent/70"
+            : "overflow-hidden rounded-md border border-l-4 border-border/60 bg-muted/20 px-4 py-3 transition-all duration-200",
           isFlashing && plan.status === "completed" && "bg-success/10 border-b-success/30",
           isFlashing && (plan.status === "failed" || plan.status === "aborted") && "bg-destructive/10 border-b-destructive/30",
           getBorderColor(plan.status, isFlashing),
           className,
         )}
       >
-        <div className="flex items-start gap-2">
+        <div className={cn("flex items-start gap-2", isTree && "items-center px-2 py-1.5")}>
           <CollapsibleTrigger asChild>
-            <button className="min-w-0 flex-1 cursor-pointer select-none text-left">
-              <div className="flex min-h-[28px] items-center gap-3">
-                {isOpen ? (
+            <button className={cn("min-w-0 flex-1 cursor-pointer select-none text-left", isTree && "pr-8")}>
+              <div className={cn("flex min-h-[28px] items-center gap-3", isTree && "min-h-0 gap-2")}>
+                {!isTree && (isOpen ? (
                   <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
                 ) : (
                   <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                )}
+                ))}
                 {isExecuting ? (
-                  <ActiveStatusSpinner className="h-4 w-4" />
-                ) : (
-                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                )}
+                  <ActiveStatusSpinner className={isTree ? "h-3.5 w-3.5" : "h-4 w-4"} />
+                ) : !plan.pageSlug ? (
+                  <FileText className={cn("shrink-0 text-muted-foreground", isTree ? "h-3.5 w-3.5" : "h-4 w-4")} />
+                ) : null}
                 {plan.pageSlug ? (
                   <ReferenceRenderer
                     refValue={createReferenceRef({
@@ -416,6 +420,8 @@ export function PlanWidget({
                       metadata: { label: title },
                     })}
                     surface="card"
+                    className={isTree ? "mx-0 min-w-0 max-w-full truncate font-normal text-foreground hover:text-foreground [&>span]:border-0" : undefined}
+                    iconClassName={isTree && isExecuting ? "hidden" : undefined}
                   />
                 ) : (
                   <span className={cn("truncate text-sm font-medium", isExecuting && "text-active animate-pulse")}>{title}</span>
@@ -425,17 +431,37 @@ export function PlanWidget({
                     {currentStep.title}
                   </span>
                 )}
+                {isTree && (
+                  <ChevronRight
+                    className={cn(
+                      "absolute top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground/60 transition-transform",
+                      hasActions ? "right-9" : "right-2",
+                      isOpen && "rotate-90",
+                    )}
+                  />
+                )}
               </div>
-              <div className="mt-2 pl-7">
-                <Progress value={progressPercent} className="h-1.5" />
-              </div>
+              {!isTree && (
+                <div className="mt-2 pl-7">
+                  <Progress value={progressPercent} className="h-1.5" />
+                </div>
+              )}
             </button>
           </CollapsibleTrigger>
 
-          {(canPause || canResume || canArchive || canDeleteFromSession) && (
+          {hasActions && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    "shrink-0",
+                    isTree
+                      ? "absolute right-1 top-1/2 h-6 w-6 -translate-y-1/2 rounded-md opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
+                      : "h-8 w-8",
+                  )}
+                >
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -481,7 +507,7 @@ export function PlanWidget({
         </div>
 
         <CollapsibleContent className="overflow-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-200">
-          <div className="space-y-2 pt-3 pl-7">
+          <div className={cn("space-y-2 pt-3 pl-7", isTree && "pb-1 pt-0 pl-4")}>
             <div className="max-h-[28rem] space-y-0.5 overflow-y-auto pr-2 scrollbar-thin">
               {plan.steps.map((step) => (
                 <PlanStepCheckbox

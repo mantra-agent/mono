@@ -3,8 +3,6 @@
  */
 import { useCallback, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Collapsible,
@@ -12,10 +10,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
-  ChevronDown,
   ChevronRight,
-  History,
-  Archive,
 } from "lucide-react";
 import { PlanWidget } from "@/components/plan-widget";
 import type { PlanData, PlanStatus, PlanStep } from "@/components/plan-shared";
@@ -43,18 +38,12 @@ interface PlansListResponse {
 
 function PlansSkeleton() {
   return (
-    <div className="p-4 space-y-3">
-      {[1, 2].map(i => (
-        <Card key={i} className="p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <Skeleton className="h-5 w-48" />
-            <Skeleton className="h-5 w-16" />
-          </div>
-          <div className="flex gap-2">
-            <Skeleton className="h-4 w-20" />
-            <Skeleton className="h-4 w-24" />
-          </div>
-        </Card>
+    <div className="p-2 space-y-1">
+      {[1, 2, 3].map(i => (
+        <div key={i} className="flex items-center gap-2 rounded-md px-2 py-1.5">
+          <Skeleton className="h-3.5 w-3.5 rounded-full" />
+          <Skeleton className="h-4 w-48" />
+        </div>
       ))}
     </div>
   );
@@ -69,18 +58,44 @@ function PlansZeroState() {
 // ─── Plan Row ────────────────────────────────────────────────────────
 
 function PlanRow({ plan }: { plan: PlanSummary }) {
-  const isActive = !plan.archivedAt && (plan.status === "executing" || plan.status === "created" || plan.status === "needs_review");
+  return <PlanWidget plan={plan} variant="tree" showArchiveAction />;
+}
+
+function PlanGroup({
+  label,
+  plans,
+  open,
+  onOpenChange,
+  muted = false,
+}: {
+  label: string;
+  plans: PlanSummary[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  muted?: boolean;
+}) {
+  if (plans.length === 0) return null;
 
   return (
-    <Card className={isActive ? "border-info/20" : undefined}>
-      <PlanWidget plan={plan} variant="card" showArchiveAction />
-    </Card>
+    <Collapsible open={open} onOpenChange={onOpenChange}>
+      <CollapsibleTrigger className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate">
+        <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
+        <span>{label}</span>
+        <span className="font-normal tabular-nums text-muted-foreground/70">({plans.length})</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className={muted ? "space-y-0 opacity-70" : "space-y-0"}>
+          {plans.map(plan => <PlanRow key={plan.id} plan={plan} />)}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
 // ─── Main Export ─────────────────────────────────────────────────────
 
 export function PlansView() {
+  const [activeOpen, setActiveOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [archivedOpen, setArchivedOpen] = useState(false);
 
@@ -109,51 +124,10 @@ export function PlansView() {
   if (!hasAny) return <PlansZeroState />;
 
   return (
-    <div className="p-4 space-y-3 w-full">
-      <span className="text-xs text-muted-foreground">
-        {active.length} active{history.length > 0 ? `, ${history.length} completed` : ""}{archived.length > 0 ? `, ${archived.length} archived` : ""}
-      </span>
-
-      {/* Active plans */}
-      {active.map(p => <PlanRow key={p.id} plan={p} />)}
-
-      {/* History */}
-      {history.length > 0 && (
-        <Collapsible open={historyOpen} onOpenChange={setHistoryOpen}>
-          <CollapsibleTrigger asChild>
-            <Button variant="ghost" size="sm" className="gap-1.5 text-xs text-muted-foreground h-7">
-              <History className="h-3 w-3" />
-              {historyOpen ? "Hide" : "Show"} History ({history.length})
-              {historyOpen
-                ? <ChevronDown className="h-3 w-3" />
-                : <ChevronRight className="h-3 w-3" />
-              }
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent className="space-y-3 pt-2">
-            {history.map(p => <PlanRow key={p.id} plan={p} />)}
-          </CollapsibleContent>
-        </Collapsible>
-      )}
-
-      {/* Archived */}
-      {archived.length > 0 && (
-        <Collapsible open={archivedOpen} onOpenChange={setArchivedOpen}>
-          <CollapsibleTrigger asChild>
-            <Button variant="ghost" size="sm" className="gap-1.5 text-xs text-muted-foreground h-7">
-              <Archive className="h-3 w-3" />
-              {archivedOpen ? "Hide" : "Show"} Archived ({archived.length})
-              {archivedOpen
-                ? <ChevronDown className="h-3 w-3" />
-                : <ChevronRight className="h-3 w-3" />
-              }
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent className="space-y-3 pt-2 opacity-70">
-            {archived.map(p => <PlanRow key={p.id} plan={p} />)}
-          </CollapsibleContent>
-        </Collapsible>
-      )}
+    <div className="w-full min-w-0 p-2 space-y-1">
+      <PlanGroup label="Active" plans={active} open={activeOpen} onOpenChange={setActiveOpen} />
+      <PlanGroup label="History" plans={history} open={historyOpen} onOpenChange={setHistoryOpen} />
+      <PlanGroup label="Archive" plans={archived} open={archivedOpen} onOpenChange={setArchivedOpen} muted />
     </div>
   );
 }
