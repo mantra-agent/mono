@@ -168,7 +168,7 @@ export function registerWaitlistRoutes(app: Express): void {
         VALUES (
           ${email},
           ${parsed.data.role},
-          ${sql.join(parsed.data.needs.map((need) => sql`${need}`), sql`, `)}::text[],
+          ARRAY[${sql.join(parsed.data.needs.map((need) => sql`${need}`), sql`, `)}]::text[],
           ${parsed.data.readiness},
           ${attribution.source || "direct"},
           ${JSON.stringify(attribution)}::jsonb
