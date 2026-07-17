@@ -51,11 +51,13 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { formatDiagnosticValue } from "@/lib/diagnostic-error";
 import { createReferenceRef } from "@shared/references";
 import {
-  getStatusBadge,
   type PlanData,
   type PlanStatus,
   type PlanStep,
+  type PlanStepAttempt,
 } from "./plan-shared";
+import { ChildSessionBlock } from "@/components/inline-session-blocks";
+import type { ChildSessionBlockMeta } from "@shared/models/chat";
 
 export interface PlanWidgetPlan extends PlanData {
   createdAt?: string;
@@ -69,6 +71,8 @@ interface PlanWidgetProps {
   showArchiveAction?: boolean;
   sessionId?: string;
   className?: string;
+  ownedChildBlocks?: Map<string, ChildSessionBlockMeta>;
+  sessionTitleById?: Record<string, string>;
 }
 
 function getBorderColor(status: PlanStatus, isFlashing: boolean): string {
@@ -105,74 +109,123 @@ function isProgressedStep(step: PlanStep): boolean {
   return step.status === "completed" || step.status === "skipped" || step.status === "failed" || step.status === "needs_review";
 }
 
-function PlanStepCheckbox({ step }: { step: PlanStep }) {
+function getAttemptChildSessionId(attempt: PlanStepAttempt): string | null {
+  return attempt.childSessionId || null;
+}
+
+function PlanAttemptChild({ planId, parentSessionId, step, attempt, ownedChildBlocks, sessionTitleById }: { planId: string; parentSessionId?: string; step: PlanStep; attempt: PlanStepAttempt; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string> }) {
+  const childSessionId = getAttemptChildSessionId(attempt);
+  if (!childSessionId) return null;
+  const startedAt = attempt.startedAt || attempt.updatedAt || attempt.completedAt || new Date().toISOString();
+  const meta: ChildSessionBlockMeta = ownedChildBlocks?.get(childSessionId) ?? {
+    childSessionId,
+    parentSessionId: parentSessionId ?? "",
+    role: `Attempt ${attempt.attemptNumber}`,
+    startedAt,
+    updatedAt: attempt.updatedAt ?? attempt.completedAt ?? startedAt,
+    summary: attempt.outcome ?? null,
+    error: attempt.error ?? null,
+    elapsedMs: attempt.durationSeconds != null ? attempt.durationSeconds * 1000 : null,
+    planId,
+    planStepId: step.id,
+    planAttemptId: attempt.id ?? null,
+    planAttemptNumber: attempt.attemptNumber,
+  };
+  return (
+    <div className="ml-10 mt-1">
+      <ChildSessionBlock meta={meta} depth={1} sessionTitleById={sessionTitleById} />
+    </div>
+  );
+}
+
+function PlanStepCheckbox({ step, planId, parentSessionId, ownedChildBlocks, sessionTitleById }: { step: PlanStep; planId: string; parentSessionId?: string; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string> }) {
   const checked = isProgressedStep(step);
   const isRunning = step.status === "running";
   const isBlocked = step.status === "blocked";
   const needsReview = step.status === "needs_review";
   const stepErrorText = formatDiagnosticValue(step.error);
+  const attempts = [...(step.attempts ?? [])].sort((a, b) => a.attemptNumber - b.attemptNumber);
 
   return (
-    <div className="flex min-w-0 items-stretch pl-4">
-      <div className="relative mr-1 w-5 shrink-0 self-stretch" aria-hidden="true">
-        <div className="absolute bottom-1/2 left-1/2 top-0 -translate-x-px border-l border-border/50" />
-        <div className="absolute left-1/2 right-0 top-1/2 border-t border-border/50" />
-      </div>
-      <div
-        className={cn(
-          "group relative flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-foreground",
-          isRunning && "bg-sidebar-accent/50 text-active hover:text-active",
-          needsReview && "text-foreground",
-          (step.status === "failed" || isBlocked) && "text-destructive hover:text-destructive",
-        )}
-      >
-        <span
+    <div className="pl-4">
+      <div className="flex min-w-0 items-stretch">
+        <div className="relative mr-1 w-5 shrink-0 self-stretch" aria-hidden="true">
+          <div className="absolute bottom-1/2 left-1/2 top-0 -translate-x-px border-l border-border/50" />
+          <div className="absolute left-1/2 right-0 top-1/2 border-t border-border/50" />
+        </div>
+        <div
           className={cn(
-            "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center transition-colors",
-            checked && "text-success",
-            isRunning && !checked && "text-active",
-            isBlocked && !checked && "rounded border border-destructive bg-destructive/10 text-destructive",
-            needsReview && !checked && "rounded border border-foreground/70 bg-foreground/10 text-foreground shadow-[0_0_0_1px_hsl(var(--foreground)/0.12)]",
-            !checked && !isRunning && !isBlocked && !needsReview && "text-muted-foreground/50",
+            "group relative flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-foreground",
+            isRunning && "bg-sidebar-accent/50 text-active hover:text-active",
+            needsReview && "text-foreground",
+            (step.status === "failed" || isBlocked) && "text-destructive hover:text-destructive",
           )}
-          aria-hidden="true"
         >
-          {checked && !needsReview && <CircleCheck className="h-3.5 w-3.5" />}
-          {isRunning && !checked && <ActiveStatusSpinner className="h-3.5 w-3.5" />}
-          {isBlocked && !checked && <OctagonAlert className="h-3 w-3" />}
-          {needsReview && checked && <MailOpen className="h-3 w-3" />}
-          {!checked && !isRunning && !isBlocked && !needsReview && <Circle className="h-3.5 w-3.5" />}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span
-              className={cn(
-                "min-w-0 flex-1 truncate",
-                checked && "text-muted-foreground",
-                needsReview && "font-medium text-foreground",
-                isRunning && "font-medium text-active",
-              )}
-            >
-              {step.title}
-            </span>
-            {isBlocked && <span className="shrink-0 rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive">Blocked</span>}
-            {needsReview && <span className="shrink-0 rounded border border-foreground/25 bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground">Needs Review</span>}
+          <span
+            className={cn(
+              "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center transition-colors",
+              checked && "text-success",
+              isRunning && !checked && "text-active",
+              isBlocked && !checked && "rounded border border-destructive bg-destructive/10 text-destructive",
+              needsReview && !checked && "rounded border border-foreground/70 bg-foreground/10 text-foreground shadow-[0_0_0_1px_hsl(var(--foreground)/0.12)]",
+              !checked && !isRunning && !isBlocked && !needsReview && "text-muted-foreground/50",
+            )}
+            aria-hidden="true"
+          >
+            {checked && !needsReview && <CircleCheck className="h-3.5 w-3.5" />}
+            {isRunning && !checked && <ActiveStatusSpinner className="h-3.5 w-3.5" />}
+            {isBlocked && !checked && <OctagonAlert className="h-3 w-3" />}
+            {needsReview && checked && <MailOpen className="h-3 w-3" />}
+            {!checked && !isRunning && !isBlocked && !needsReview && <Circle className="h-3.5 w-3.5" />}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "min-w-0 flex-1 truncate",
+                  checked && "text-muted-foreground",
+                  needsReview && "font-medium text-foreground",
+                  isRunning && "font-medium text-active",
+                )}
+              >
+                {step.title}
+              </span>
+              {isBlocked && <span className="shrink-0 rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive">Blocked</span>}
+              {needsReview && <span className="shrink-0 rounded border border-foreground/25 bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground">Needs Review</span>}
+            </div>
+            {stepErrorText && (
+              <p className="mt-0.5 line-clamp-2 text-xs text-destructive">{stepErrorText}</p>
+            )}
           </div>
-          {stepErrorText && (
-            <p className="mt-0.5 line-clamp-2 text-xs text-destructive">{stepErrorText}</p>
-          )}
         </div>
       </div>
+      {attempts.length > 0 && (
+        <div className="space-y-1 pb-1">
+          {attempts.map((attempt) => (
+            <PlanAttemptChild
+              key={attempt.id ?? `${step.id}-${attempt.attemptNumber}`}
+              planId={planId}
+              parentSessionId={parentSessionId}
+              step={step}
+              attempt={attempt}
+              ownedChildBlocks={ownedChildBlocks}
+              sessionTitleById={sessionTitleById}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 export function PlanWidget({
   plan,
-  variant = "sticky",
+  variant = "card",
   showArchiveAction = false,
   sessionId,
   className,
+  ownedChildBlocks,
+  sessionTitleById,
 }: PlanWidgetProps) {
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
@@ -219,6 +272,7 @@ export function PlanWidget({
 
   const invalidatePlanQueries = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/plans", plan.id] });
     queryClient.invalidateQueries({ queryKey: ["/api/plans", plan.pageId] });
   };
 
@@ -333,7 +387,7 @@ export function PlanWidget({
       <div
         className={cn(
           "border-l-4 border-border bg-card transition-all duration-200",
-          variant === "sticky" ? "shrink-0 border-b px-4 py-2" : "overflow-hidden rounded-lg border border-l-4 px-4 py-3",
+          "overflow-hidden rounded-md border border-l-4 border-border/60 bg-muted/20 px-4 py-3",
           isFlashing && plan.status === "completed" && "bg-success/10 border-b-success/30",
           isFlashing && (plan.status === "failed" || plan.status === "aborted") && "bg-destructive/10 border-b-destructive/30",
           getBorderColor(plan.status, isFlashing),
@@ -354,8 +408,18 @@ export function PlanWidget({
                 ) : (
                   <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
                 )}
-                <span className={cn("truncate text-sm font-medium", isExecuting && "text-active animate-pulse")}>{title}</span>
-                {!isExecuting && getStatusBadge(plan.status)}
+                {plan.pageSlug ? (
+                  <ReferenceRenderer
+                    refValue={createReferenceRef({
+                      type: "page",
+                      id: plan.pageSlug,
+                      metadata: { label: title },
+                    })}
+                    surface="card"
+                  />
+                ) : (
+                  <span className={cn("truncate text-sm font-medium", isExecuting && "text-active animate-pulse")}>{title}</span>
+                )}
                 {isExecuting && currentStep && (
                   <span className="min-w-0 flex-1 truncate text-xs text-active/80">
                     {currentStep.title}
@@ -418,21 +482,16 @@ export function PlanWidget({
 
         <CollapsibleContent className="overflow-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-200">
           <div className="space-y-2 pt-3 pl-7">
-            {plan.pageSlug && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <ReferenceRenderer
-                  refValue={createReferenceRef({
-                    type: "page",
-                    id: plan.pageSlug,
-                    metadata: { label: title },
-                  })}
-                  surface="card"
-                />
-              </div>
-            )}
-            <div className="max-h-[20rem] space-y-0.5 overflow-y-auto pr-2 scrollbar-thin">
+            <div className="max-h-[28rem] space-y-0.5 overflow-y-auto pr-2 scrollbar-thin">
               {plan.steps.map((step) => (
-                <PlanStepCheckbox key={step.id} step={step} />
+                <PlanStepCheckbox
+                  key={step.id}
+                  step={step}
+                  planId={plan.id}
+                  parentSessionId={sessionId}
+                  ownedChildBlocks={ownedChildBlocks}
+                  sessionTitleById={sessionTitleById}
+                />
               ))}
             </div>
           </div>

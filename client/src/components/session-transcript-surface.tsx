@@ -10,7 +10,6 @@ import type { SessionStreamMap } from "@/hooks/use-session-subscription";
 import type { StreamingContent } from "@shared/streaming-types";
 import type { VoiceTranscriptEntry } from "@/hooks/use-voice-session";
 
-type ActivePlan = { id: string; status: string } & Record<string, unknown>;
 type ActiveWorkflow = React.ComponentProps<
   typeof WorkflowStickyBar
 >["workflow"];
@@ -36,7 +35,6 @@ export interface SessionTranscriptSurfaceProps {
   sessionStreams?: SessionStreamMap;
   wsConnected: boolean;
   sessionStatus?: string | null;
-  plan?: ActivePlan | null;
   workflow?: ActiveWorkflow | null;
   meeting?: MeetingSessionMeta | null;
   sessionTitle?: string;
@@ -74,7 +72,6 @@ export function SessionTranscriptSurface({
   sessionStreams,
   wsConnected,
   sessionStatus,
-  plan,
   workflow,
   meeting,
   sessionTitle,
@@ -88,11 +85,8 @@ export function SessionTranscriptSurface({
   questionSubmissionDisabled,
   onQuestionSubmit,
 }: SessionTranscriptSurfaceProps) {
-  const showPlan = false;
   const showWorkflow =
     !!workflow && !TERMINAL_WORKFLOW_STATUSES.has(workflow.run.status);
-  const workflowOwnsPlan =
-    !!showPlan && !!showWorkflow && workflow.linked?.planId === plan.id;
 
   return (
     <div
@@ -115,12 +109,7 @@ export function SessionTranscriptSurface({
           <span>Real-time connection interrupted — updates may be delayed</span>
         </div>
       )}
-      {showWorkflow && workflowOwnsPlan && (
-        <WorkflowStickyBar workflow={workflow} />
-      )}
-      {showWorkflow && !workflowOwnsPlan && (
-        <WorkflowStickyBar workflow={workflow} />
-      )}
+      {showWorkflow && <WorkflowStickyBar workflow={workflow} />}
       <div
         ref={scrollContainerRef}
         className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [overflow-anchor:none] scrollbar-thin"

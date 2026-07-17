@@ -508,6 +508,12 @@ export async function executeAutonomousSkillRun(
     admissionTier?: AdmissionTier;
     /** Stable root session identity shared by this run and all descendants. */
     lineageId?: string;
+    /** Durable plan ownership metadata for plan child attempts. */
+    planId?: string;
+    stepId?: string;
+    attemptId?: number;
+    attemptNumber?: number;
+    planPageRef?: string;
   } = {}
 ): Promise<AutonomousRunResult | null> {
   // ── Ensure user principal context ───────────────────────────────────
@@ -750,6 +756,11 @@ export async function executeAutonomousSkillRun(
         spawnReason: effectiveSpawnReason,
         title: effectiveTitle,
         model: options.modelOverride,
+        planId: options.planId,
+        stepId: options.stepId,
+        attemptId: options.attemptId,
+        attemptNumber: options.attemptNumber,
+        planPageRef: options.planPageRef,
       });
     } catch (lcErr: unknown) {
       logger.warn(`[SkillChat] [${sessionId}] Failed to emit child session block: ${lcErr instanceof Error ? lcErr.message : String(lcErr)}`);

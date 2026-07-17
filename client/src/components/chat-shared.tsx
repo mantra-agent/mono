@@ -1692,6 +1692,42 @@ export function stepsFromSavedMessage(message: ChatMessage): ExecutionStep[] {
  * prose content and from persisted gmail draft/update_draft tool results.
  * Shared by ChatTurn (rendering) and the message list (cross-message dedup).
  */
+export function referenceIdsFromSegments(
+  segments: MessageSegment[],
+  referenceType: string,
+  toolFilter?: (tool: ExecutionStep) => boolean,
+): { fromContent: string[]; fromToolResults: string[] } {
+  const fromContent = segments.flatMap((segment) =>
+    segment.type === "content"
+      ? parseReferenceText(segment.content)
+          .filter(
+            (part) =>
+              part.kind === "reference" && part.ref.type === referenceType,
+          )
+          .map((part) => part.ref.id)
+      : [],
+  );
+  const fromToolResults = [
+    ...new Set(
+      segments.flatMap((segment) => {
+        if (segment.type !== "timeline") return [];
+        return segment.steps.flatMap((tool) => {
+          if (tool.type !== "tool_call") return [];
+          if (toolFilter && !toolFilter(tool)) return [];
+          if (typeof tool.result !== "string") return [];
+          return parseReferenceText(tool.result)
+            .filter(
+              (part) =>
+                part.kind === "reference" && part.ref.type === referenceType,
+            )
+            .map((part) => part.ref.id);
+        });
+      }),
+    ),
+  ];
+  return { fromContent, fromToolResults };
+}
+
 export function emailDraftIdsFromSegments(segments: MessageSegment[]): {
   fromContent: string[];
   fromToolResults: string[];
@@ -1969,11 +2005,13 @@ export function MarkdownContent({
   stripTags = false,
   compact = false,
   referenceSurface = "chat-inline",
+  planSessionId,
 }: {
   content: string;
   stripTags?: boolean;
   compact?: boolean;
   referenceSurface?: ReferenceSurface;
+  planSessionId?: string;
 }) {
   const timestampStripped = stripMessageTimestamp(content);
   const strippedContent = stripTags
@@ -1987,15 +2025,10 @@ export function MarkdownContent({
   const suppressedDrafts = useContext(SuppressedEmailDraftsContext);
   const parts = parseReferenceText(remaining);
   const draftIds: string[] = [];
-  const planIds: string[] = [];
   const textWithoutWidgets = parts
     .map((part) => {
       if (part.kind === "reference" && part.ref.type === "email_draft") {
         draftIds.push(part.ref.id);
-        return ""; // Strip from inline text — rendered as block widget below.
-      }
-      if (part.kind === "reference" && part.ref.type === "plan") {
-        planIds.push(part.ref.id);
         return ""; // Strip from inline text — rendered as block widget below.
       }
       return part.kind === "text"
@@ -2042,14 +2075,11 @@ export function MarkdownContent({
         .map((id) => (
           <EmailDraftWidget key={id} draftId={id} />
         ))}
-      {[...new Set(planIds)].map((id) => (
-        <InlinePlanWidget key={id} planId={id} />
-      ))}
     </>
   );
 }
 
-function InlinePlanWidget({ planId }: { planId: string }) {
+function InlinePlanWidget({ planId, sessionId }: { planId: string; sessionId?: string }) {
   const {
     data: plan,
     isLoading,
@@ -2064,7 +2094,9 @@ function InlinePlanWidget({ planId }: { planId: string }) {
       if (!res.ok) throw new Error("Plan not found");
       return res.json();
     },
-    staleTime: 10_000,
+    staleTime: 2_000,
+    refetchInterval: (query) =>
+      query.state.data?.status === "executing" ? 2_000 : false,
   });
 
   if (isLoading) {
@@ -2083,7 +2115,7 @@ function InlinePlanWidget({ planId }: { planId: string }) {
     );
   }
 
-  return <PlanWidget plan={plan} variant="card" className="my-2" />;
+  return <PlanWidget plan={plan} sessionId={sessionId} className="my-2" />;
 }
 
 function formatLocalTime(dateStr: string): string {
@@ -2366,6 +2398,19 @@ export const ChatTurn = memo(function ChatTurn({
         })
       : [],
   );
+  const {
+    fromContent: planIdsFromContent,
+    fromToolResults: planIdsFromToolResults,
+  } = referenceIdsFromSegments(segments, "plan", (tool) => {
+    const action = typeof tool.arguments?.action === "string"
+      ? tool.arguments.action
+      : null;
+    return tool.toolName === "plan" &&
+      (action === "create" || action === "associate_session");
+  });
+  const unpromotedPlanIds = planIdsFromToolResults.filter(
+    (id) => !planIdsFromContent.includes(id),
+  );
 
   useEffect(() => {
     if (visibleEmailDraftIds.length === 0) return;
@@ -2621,6 +2666,7 @@ export const ChatTurn = memo(function ChatTurn({
                 layer={layer}
                 stripTags={shouldStripTags}
                 contentCompact
+                planSessionId={message.sessionId}
               />
             ) : (
               message.content && (
@@ -2634,6 +2680,7 @@ export const ChatTurn = memo(function ChatTurn({
                     content={message.content}
                     stripTags={shouldStripTags}
                     compact
+                    planSessionId={message.sessionId}
                   />
                 </div>
               )
@@ -2648,6 +2695,13 @@ export const ChatTurn = memo(function ChatTurn({
                 response={questionResponses?.get(prompt.toolCallId)}
                 disabled={questionSubmissionDisabled}
                 onSubmit={onQuestionSubmit}
+              />
+            ))}
+            {unpromotedPlanIds.map((id) => (
+              <InlinePlanWidget
+                key={`tool-plan-${id}`}
+                planId={id}
+                sessionId={message.sessionId}
               />
             ))}
           </SuppressedEmailDraftsContext.Provider>

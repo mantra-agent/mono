@@ -4,7 +4,7 @@ import { db } from "./db";
 import { createLogger } from "./log";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
-import { planExecutions, planSessionLinks, planStepAttempts, planSteps, type PlanExecutionRow, type PlanStepRow } from "@shared/schema";
+import { planExecutions, planSessionLinks, planStepAttempts, planSteps, type PlanExecutionRow, type PlanStepAttemptRow, type PlanStepRow } from "@shared/schema";
 import { buildPlanPageContent, type PlanMeta, type PlanStatus, type PlanStep } from "./lib/plan-utils";
 
 const log = createLogger("PlanService");
@@ -90,10 +90,12 @@ export async function updatePlanStepFields(
   await db.update(planSteps).set({ ...fields, updatedAt: new Date() }).where(writablePlanStep(and(eq(planSteps.planId, planId), eq(planSteps.id, stepId))));
 }
 
+export const PLAN_EXECUTION_LEASE_MS = 2 * 60 * 1000;
+
 export async function claimPlanExecution(
   planId: string,
   owner: string,
-  leaseMs = 30 * 60 * 1000,
+  leaseMs = PLAN_EXECUTION_LEASE_MS,
 ): Promise<{ claimed: true; leaseId: string; expiresAt: Date } | { claimed: false }> {
   const leaseId = randomUUID();
   const now = new Date();
@@ -102,10 +104,27 @@ export async function claimPlanExecution(
     .set({ executionLeaseId: leaseId, executionLeaseOwner: owner, executionLeaseExpiresAt: expiresAt, executionClaimedAt: now, updatedAt: now })
     .where(writablePlan(and(
       eq(planExecutions.id, planId),
-      or(isNull(planExecutions.executionLeaseExpiresAt), lt(planExecutions.executionLeaseExpiresAt, now), eq(planExecutions.executionLeaseOwner, owner)),
+      or(isNull(planExecutions.executionLeaseExpiresAt), lt(planExecutions.executionLeaseExpiresAt, now)),
     )))
     .returning({ id: planExecutions.id });
   return rows.length ? { claimed: true, leaseId, expiresAt } : { claimed: false };
+}
+
+export async function renewPlanExecution(
+  planId: string,
+  leaseId: string,
+  leaseMs = PLAN_EXECUTION_LEASE_MS,
+): Promise<boolean> {
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + leaseMs);
+  const rows = await db.update(planExecutions)
+    .set({ executionLeaseExpiresAt: expiresAt, updatedAt: now })
+    .where(writablePlan(and(
+      eq(planExecutions.id, planId),
+      eq(planExecutions.executionLeaseId, leaseId),
+    )))
+    .returning({ id: planExecutions.id });
+  return rows.length > 0;
 }
 
 export async function releasePlanExecution(planId: string, leaseId: string): Promise<void> {
@@ -171,20 +190,29 @@ export async function updatePlanStepAttempt(params: {
   startedAt?: Date | null;
   completedAt?: Date | null;
 }): Promise<void> {
-  await db.update(planStepAttempts).set({
+  const patch: Partial<typeof planStepAttempts.$inferInsert> = {
     status: params.status,
-    childSessionId: params.childSessionId ?? undefined,
-    outcome: params.outcome ?? undefined,
-    error: params.error ?? undefined,
-    durationSeconds: params.durationSeconds ?? undefined,
-    startedAt: params.startedAt ?? undefined,
-    completedAt: params.completedAt ?? undefined,
     updatedAt: new Date(),
-  }).where(writablePlanAttempt(and(
+  };
+  if (Object.prototype.hasOwnProperty.call(params, "childSessionId")) patch.childSessionId = params.childSessionId ?? null;
+  if (Object.prototype.hasOwnProperty.call(params, "outcome")) patch.outcome = params.outcome ?? null;
+  if (Object.prototype.hasOwnProperty.call(params, "error")) patch.error = params.error ?? null;
+  if (Object.prototype.hasOwnProperty.call(params, "durationSeconds")) patch.durationSeconds = params.durationSeconds ?? null;
+  if (Object.prototype.hasOwnProperty.call(params, "startedAt")) patch.startedAt = params.startedAt ?? null;
+  if (Object.prototype.hasOwnProperty.call(params, "completedAt")) patch.completedAt = params.completedAt ?? null;
+
+  await db.update(planStepAttempts).set(patch).where(writablePlanAttempt(and(
     eq(planStepAttempts.planId, params.planId),
     eq(planStepAttempts.stepId, params.stepId),
     eq(planStepAttempts.attemptNumber, params.attemptNumber),
   )));
+}
+
+export async function getLatestPlanStepAttempt(planId: string, stepId: string): Promise<PlanStepAttemptRow | null> {
+  const rows = await db.select().from(planStepAttempts)
+    .where(visiblePlanAttempt(and(eq(planStepAttempts.planId, planId), eq(planStepAttempts.stepId, stepId))))
+    .orderBy(planStepAttempts.attemptNumber);
+  return rows[rows.length - 1] ?? null;
 }
 
 function planRowsToMeta(plan: PlanExecutionRow, steps: PlanStepRow[]): PlanMeta {
@@ -213,16 +241,25 @@ function planRowsToMeta(plan: PlanExecutionRow, steps: PlanStepRow[]): PlanMeta 
   };
 }
 
-async function getRunHistoryMarkdown(planId: string): Promise<string> {
+function formatAttemptDuration(seconds: number | null): string {
+  if (seconds == null) return "";
+  if (seconds < 60) return ` · ${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remaining = seconds % 60;
+  return ` · ${minutes}m ${remaining}s`;
+}
+
+async function getRunHistoryMarkdown(planId: string, stepTitles: Map<string, string>): Promise<string> {
   const attempts = await db.select().from(planStepAttempts)
     .where(visiblePlanAttempt(eq(planStepAttempts.planId, planId)))
-    .orderBy(planStepAttempts.stepId, planStepAttempts.attemptNumber);
+    .orderBy(planStepAttempts.id);
   if (attempts.length === 0) return "";
   const sections = ["## Run History"];
   for (const attempt of attempts) {
     const sessionRef = attempt.childSessionId ? `@session:${attempt.childSessionId}` : "No child session";
-    const duration = attempt.durationSeconds != null ? ` · ${attempt.durationSeconds}s` : "";
-    sections.push(`\n### ${attempt.stepId} · Attempt ${attempt.attemptNumber}\n${sessionRef} · ${attempt.status}${duration}\n\n${attempt.outcome || attempt.error || "No outcome recorded yet."}`);
+    const duration = formatAttemptDuration(attempt.durationSeconds);
+    const title = stepTitles.get(attempt.stepId) ?? attempt.stepId;
+    sections.push(`\n### ${title} · Attempt ${attempt.attemptNumber}\n${sessionRef} · ${attempt.status}${duration}\n\n${attempt.outcome || attempt.error || "No outcome recorded yet."}`);
   }
   return sections.join("\n");
 }
@@ -233,7 +270,8 @@ export async function renderPlanProjection(planId: string): Promise<void> {
     if (!plan) return;
     const steps = await getPlanSteps(plan.id);
     const stepInstructions = steps.map(s => ({ title: s.title, instructions: s.instructions || `Execute step: ${s.title}` }));
-    const runHistory = await getRunHistoryMarkdown(plan.id);
+    const stepTitles = new Map(steps.map((s, index) => [s.id, `Step ${index + 1}: ${s.title}`]));
+    const runHistory = await getRunHistoryMarkdown(plan.id, stepTitles);
     const content = [buildPlanPageContent(planRowsToMeta(plan, steps), stepInstructions), runHistory].filter(Boolean).join("\n\n");
 
     const { libraryPages } = await import("@shared/models/info");

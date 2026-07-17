@@ -5,6 +5,7 @@ import {
   ChatTurn,
   segmentsFromSavedMessage,
   emailDraftIdsFromSegments,
+  referenceIdsFromSegments,
   type ChatMessage as Message,
   type ChildSessionBlockMeta,
   type CrossSessionMeta,
@@ -276,6 +277,20 @@ export function MessageList({
       .filter(m => m.role === "child_session_block" && hasChildSessionId(m.childSession))
       .map(m => m.childSession.childSessionId)
   );
+  const anchoredPlanIds = new Set(
+    messages.flatMap((msg) => {
+      if (msg.role !== "assistant") return [];
+      const refs = referenceIdsFromSegments(segmentsFromSavedMessage(msg), "plan", (tool) => {
+        const action = typeof tool.arguments?.action === "string"
+          ? tool.arguments.action
+          : null;
+        return tool.toolName === "plan" &&
+          (action === "create" || action === "associate_session");
+      });
+      return [...refs.fromContent, ...refs.fromToolResults];
+    }),
+  );
+  const isPlanOwnedChildBlock = (meta: ChildSessionBlockMeta): boolean => Boolean(meta.planId && anchoredPlanIds.has(meta.planId));
   const persistedCrossKeys = new Set(
     messages
       .filter(m => m.role === "cross_session" && m.crossSession)
@@ -297,6 +312,7 @@ export function MessageList({
     if (msg.role === "cross_session" && isOutgoingChildMessage(msg, activeSession)) continue;
     if (msg.role === "cross_session" && layer < 2) continue;
     if (msg.role === "child_session_block" && hasChildSessionId(msg.childSession)) {
+      if (isPlanOwnedChildBlock(msg.childSession)) continue;
       if (latestPersistedChildMessageId.get(msg.childSession.childSessionId) !== msg.id) continue;
     }
     const childStream = msg.role === "child_session_block" && hasChildSessionId(msg.childSession)
@@ -321,6 +337,7 @@ export function MessageList({
       continue;
     }
     if (persistedChildIds.has(lc.meta.childSessionId)) continue;
+    if (isPlanOwnedChildBlock(lc.meta)) continue;
     items.push({ kind: "live_child", meta: lc.meta, ts: getChildSessionChronologyTs(lc.meta, lc.receivedAt, sessionStreams?.[lc.meta.childSessionId]) });
   }
   if (layer >= 2) {
