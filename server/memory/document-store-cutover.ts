@@ -1,25 +1,35 @@
 import { pool } from "../db";
 import { createLogger } from "../log";
-import { getRuntimeIdentity } from "../runtime-identity";
 
-const log = createLogger("DocumentStoreStageCutover");
+import {
+  documentStoreShadowEnabled,
+  documentStoreTargetReadsRequested,
+  getDocumentStoreMigrationMode,
+} from "./document-store-migration-mode";
+
+const log = createLogger("DocumentStoreCutover");
 export const DOCUMENT_STORE_CUTOVER_KEY = "workspace_v1";
 
-function isStageEnvironment(names: Array<string | null | undefined>): boolean {
-  return names
-    .filter((value): value is string => Boolean(value))
-    .map((value) => value.toLowerCase())
-    .some((value) => value === "stage" || value === "staging");
-}
-
-export function isStageRuntimeSync(): boolean {
-  return isStageEnvironment([process.env.RAILWAY_ENVIRONMENT_NAME]);
-}
-
-/** Install the atomic workspace mirror only on stage. Production is untouched. */
-export async function ensureStageDocumentStoreMirror(): Promise<void> {
-  const identity = await getRuntimeIdentity();
-  if (!isStageEnvironment([identity.platformEnvironmentName, identity.environmentName])) return;
+/** Install the atomic workspace mirror only when shadow or cutover mode is explicit. */
+export async function ensureDocumentStoreMirror(): Promise<void> {
+  const mode = getDocumentStoreMigrationMode();
+  if (!documentStoreShadowEnabled()) {
+    const stateTable = await pool.query<{ exists: string | null }>(
+      "SELECT to_regclass('public.document_store_cutover_state')::text AS exists",
+    );
+    if (stateTable.rows[0]?.exists) {
+      await pool.query(
+        `UPDATE document_store_cutover_state
+         SET shadow_writes_enabled = FALSE,
+             read_enabled = FALSE,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE cutover_key = $1`,
+        [DOCUMENT_STORE_CUTOVER_KEY],
+      );
+    }
+    log.info("document store migration mode is off; mirror and target reads disabled");
+    return;
+  }
 
   const client = await pool.connect();
   try {
@@ -44,6 +54,18 @@ export async function ensureStageDocumentStoreMirror(): Promise<void> {
       CREATE OR REPLACE FUNCTION mirror_workspace_memory_to_document_store()
       RETURNS TRIGGER AS $$
       BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM document_store_cutover_state
+          WHERE cutover_key = 'workspace_v1'
+            AND shadow_writes_enabled = TRUE
+        ) THEN
+          IF TG_OP = 'DELETE' THEN
+            RETURN OLD;
+          END IF;
+          RETURN NEW;
+        END IF;
+
         IF TG_OP = 'DELETE' THEN
           IF OLD.layer = 'workspace' THEN
             DELETE FROM document_store_documents
@@ -136,7 +158,7 @@ export async function ensureStageDocumentStoreMirror(): Promise<void> {
       [DOCUMENT_STORE_CUTOVER_KEY],
     );
     await client.query("COMMIT");
-    log.info("stage workspace mirror installed");
+    log.info("workspace mirror installed", { mode });
   } catch (error) {
     try { await client.query("ROLLBACK"); } catch { /* preserve original error */ }
     throw error;
@@ -145,21 +167,25 @@ export async function ensureStageDocumentStoreMirror(): Promise<void> {
   }
 }
 
-export async function setStageDocumentStoreReadCutover(
+export async function setDocumentStoreReadCutover(
   enabled: boolean,
   reconciliation: Record<string, unknown>,
 ): Promise<void> {
-  const identity = await getRuntimeIdentity();
-  if (!isStageEnvironment([identity.platformEnvironmentName, identity.environmentName])) {
-    throw new Error("Document store read cutover can only change on stage");
+  const mode = getDocumentStoreMigrationMode();
+  const effectiveEnabled = enabled && documentStoreTargetReadsRequested();
+  if (enabled && !effectiveEnabled) {
+    log.info("target reads remain disabled outside cutover mode", { mode });
   }
-  await pool.query(
+  const result = await pool.query(
     `UPDATE document_store_cutover_state
      SET read_enabled = $2,
          last_reconciled_at = CASE WHEN $2 THEN CURRENT_TIMESTAMP ELSE last_reconciled_at END,
          reconciliation = $3::jsonb,
          updated_at = CURRENT_TIMESTAMP
      WHERE cutover_key = $1 AND shadow_writes_enabled = TRUE`,
-    [DOCUMENT_STORE_CUTOVER_KEY, enabled, JSON.stringify(reconciliation)],
+    [DOCUMENT_STORE_CUTOVER_KEY, effectiveEnabled, JSON.stringify(reconciliation)],
   );
+  if (result.rowCount !== 1) {
+    throw new Error("Document-store cutover state is missing or shadow writes are disabled");
+  }
 }
