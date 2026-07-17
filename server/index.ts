@@ -331,6 +331,8 @@ app.use((req, res, next) => {
   bootTracker.startPhase("database");
   const tMigrate0 = Date.now();
   await runSchemaBootstrap("boot");
+  const { ensureStageDocumentStoreMirror } = await import("./memory/document-store-stage-cutover");
+  await ensureStageDocumentStoreMirror();
   const { ensurePermissionSchema } = await import("./permissions");
   await ensurePermissionSchema();
   const migrateMs = Date.now() - tMigrate0;

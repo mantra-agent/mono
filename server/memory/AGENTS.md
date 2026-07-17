@@ -238,6 +238,10 @@ Named markdown files for durable reference knowledge:
 - Examples: `PRINCIPLES.md`, `RELATIONSHIPS.md`, `VOICE.md`
 - These are separate from memory_entries — documents, not graph nodes
 
+## Workspace Document Extraction
+
+`DocumentStorage` is the compatibility boundary for workspace documents while legacy memory retires. On stage, `document_store_documents` receives every `memory_entries(layer='workspace')` insert, update, and delete through one database trigger, preserving atomicity even for older direct-SQL writers. Stage reads move as one contract behind `document_store_cutover_state.read_enabled` only after exact reconciliation. Missing state or target errors fail visibly; never add a silent read fallback. Production remains on legacy reads until a separately approved release.
+
 ## When Working Here
 
 - **Embeddings are 1536-dimensional** (OpenAI text-embedding-3-small). All vector operations use this dimension.

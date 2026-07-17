@@ -1,12 +1,14 @@
 import { db, withQueryAttributionAsync } from "../db";
 import {
   memoryEntries,
+  documentStoreDocuments,
   type MemoryEntry,
+  type DocumentStoreDocument,
   type MemoryLayer,
   type MemorySource,
   type DocType,
 } from "@shared/schema";
-import { eq, and, like, desc, sql, ilike, type SQL } from "drizzle-orm";
+import { eq, and, like, desc, sql, type SQL } from "drizzle-orm";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import {
   combineWithVisibleScope,
@@ -14,6 +16,7 @@ import {
   ownedInsertValues,
 } from "../scoped-storage";
 import { createLogger } from "../log";
+import { isStageRuntimeSync, DOCUMENT_STORE_CUTOVER_KEY } from "./document-store-stage-cutover";
 import {
   executeSemanticSearch,
   mapRawRowToEntry,
@@ -58,6 +61,36 @@ function entryToDoc(entry: MemoryEntry): WorkspaceDocCompat {
   };
 }
 
+function targetToDoc(entry: DocumentStoreDocument): WorkspaceDocCompat {
+  return {
+    id: entry.sourceMemoryEntryId ?? entry.id,
+    docType: entry.documentType,
+    docId: entry.documentId,
+    path: entry.path || "",
+    title: entry.title || null,
+    content: entry.content,
+    metadata: entry.metadata,
+    embedding: null,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+  };
+}
+
+async function targetReadsEnabled(): Promise<boolean> {
+  if (!isStageRuntimeSync()) return false;
+  const result = await db.execute(sql`
+    SELECT read_enabled
+    FROM document_store_cutover_state
+    WHERE cutover_key = ${DOCUMENT_STORE_CUTOVER_KEY}
+    LIMIT 1
+  `);
+  const row = ((result.rows ?? result) as Array<{ read_enabled: boolean }>)[0];
+  if (!row) {
+    throw new Error("Stage document-store cutover state is missing");
+  }
+  return row.read_enabled === true;
+}
+
 const WORKSPACE_LAYER = "workspace";
 const log = createLogger("DocStorage");
 
@@ -66,6 +99,13 @@ const memoryScopeColumns = {
   ownerUserId: memoryEntries.ownerUserId,
   accountId: memoryEntries.accountId,
   vaultId: memoryEntries.vaultId,
+};
+
+const documentScopeColumns = {
+  scope: documentStoreDocuments.scope,
+  ownerUserId: documentStoreDocuments.ownerUserId,
+  accountId: documentStoreDocuments.accountId,
+  vaultId: documentStoreDocuments.vaultId,
 };
 
 export class DocumentStorage {
@@ -201,6 +241,24 @@ export class DocumentStorage {
     docType: DocType,
     docId: string,
   ): Promise<WorkspaceDocCompat | null> {
+    if (await targetReadsEnabled()) {
+      const rows = await db
+        .select()
+        .from(documentStoreDocuments)
+        .where(
+          combineWithVisibleScope(
+            getCurrentPrincipalOrSystem(),
+            documentScopeColumns,
+            and(
+              eq(documentStoreDocuments.documentType, docType),
+              eq(documentStoreDocuments.documentId, docId),
+            ),
+          ),
+        )
+        .limit(1);
+      log.verbose(() => `getDocument target docType=${docType} docId=${docId} found=${rows.length > 0}`);
+      return rows[0] ? targetToDoc(rows[0]) : null;
+    }
     const rows = await db
       .select(memoryEntryLightColumns)
       .from(memoryEntries)
@@ -226,6 +284,30 @@ export class DocumentStorage {
     docType: DocType,
     filters?: Record<string, unknown>,
   ): Promise<WorkspaceDocCompat[]> {
+    if (await targetReadsEnabled()) {
+      const conditions = [eq(documentStoreDocuments.documentType, docType)];
+      if (filters) {
+        for (const [key, value] of Object.entries(filters)) {
+          assertSafeFieldName(key);
+          conditions.push(
+            sql`${documentStoreDocuments.metadata}->>${sql.raw(`'${key}'`)} = ${String(value)}`,
+          );
+        }
+      }
+      const rows = await db
+        .select()
+        .from(documentStoreDocuments)
+        .where(
+          combineWithVisibleScope(
+            getCurrentPrincipalOrSystem(),
+            documentScopeColumns,
+            and(...conditions),
+          ),
+        )
+        .orderBy(desc(documentStoreDocuments.updatedAt));
+      log.verbose(() => `getDocumentsByType target docType=${docType} count=${rows.length}`);
+      return rows.map(targetToDoc);
+    }
     const conditions = [
       eq(memoryEntries.layer, WORKSPACE_LAYER),
       eq(memoryEntries.source, docType),
@@ -259,6 +341,21 @@ export class DocumentStorage {
   }
 
   async getDocumentByPath(path: string): Promise<WorkspaceDocCompat | null> {
+    if (await targetReadsEnabled()) {
+      const rows = await db
+        .select()
+        .from(documentStoreDocuments)
+        .where(
+          combineWithVisibleScope(
+            getCurrentPrincipalOrSystem(),
+            documentScopeColumns,
+            eq(documentStoreDocuments.path, path),
+          ),
+        )
+        .limit(1);
+      log.verbose(() => `getDocumentByPath target path=${path} found=${rows.length > 0}`);
+      return rows[0] ? targetToDoc(rows[0]) : null;
+    }
     const rows = await db
       .select(memoryEntryLightColumns)
       .from(memoryEntries)
@@ -280,6 +377,23 @@ export class DocumentStorage {
   }
 
   async listDirectory(dirPath: string): Promise<WorkspaceDocCompat[]> {
+    if (await targetReadsEnabled()) {
+      const root = !dirPath || dirPath === "" || dirPath === "/";
+      const prefix = root ? null : (dirPath.endsWith("/") ? dirPath : `${dirPath}/`);
+      const rows = await db
+        .select()
+        .from(documentStoreDocuments)
+        .where(
+          combineWithVisibleScope(
+            getCurrentPrincipalOrSystem(),
+            documentScopeColumns,
+            prefix ? like(documentStoreDocuments.path, `${prefix}%`) : sql`TRUE`,
+          ),
+        )
+        .orderBy(documentStoreDocuments.path);
+      log.debug(`listDirectory target path=${dirPath || "/"} count=${rows.length}`);
+      return rows.map(targetToDoc);
+    }
     if (!dirPath || dirPath === "" || dirPath === "/") {
       const rows = await db
         .select(memoryEntryLightColumns)
@@ -336,6 +450,28 @@ export class DocumentStorage {
       return [];
     }
 
+    if (await targetReadsEnabled()) {
+      const conditions: SQL[] = [
+        sql`to_tsvector('english', coalesce(${documentStoreDocuments.title}, '') || ' ' || ${documentStoreDocuments.content}) @@ to_tsquery('english', ${tsQuery})`,
+      ];
+      if (docType) conditions.push(eq(documentStoreDocuments.documentType, docType));
+      const rows = await db
+        .select()
+        .from(documentStoreDocuments)
+        .where(
+          combineWithVisibleScope(
+            getCurrentPrincipalOrSystem(),
+            documentScopeColumns,
+            and(...conditions),
+          ),
+        )
+        .orderBy(
+          sql`ts_rank(to_tsvector('english', coalesce(${documentStoreDocuments.title}, '') || ' ' || ${documentStoreDocuments.content}), to_tsquery('english', ${tsQuery})) DESC`,
+        )
+        .limit(limit);
+      return rows.map(targetToDoc);
+    }
+
     const conditions: SQL[] = [
       eq(memoryEntries.layer, WORKSPACE_LAYER),
       sql`to_tsvector('english', coalesce(${memoryEntries.title}, '') || ' ' || ${memoryEntries.content}) @@ to_tsquery('english', ${tsQuery})`,
@@ -372,6 +508,9 @@ export class DocumentStorage {
     queryEmbedding: number[],
     limit: number = 10,
   ): Promise<(WorkspaceDocCompat & { similarity: number })[]> {
+    if (await targetReadsEnabled()) {
+      throw new Error("Semantic workspace-document search is unavailable after stage document-store read cutover");
+    }
     const results = await executeSemanticSearch(
       queryEmbedding,
       limit,
@@ -445,6 +584,16 @@ export class DocumentStorage {
   }
 
   async getMaxNumericId(docType: DocType): Promise<number> {
+    if (await targetReadsEnabled()) {
+      const rows = await db.execute(sql`
+        SELECT COALESCE(MAX((metadata->>'id')::int), 0)::int AS max_id
+        FROM document_store_documents
+        WHERE ${combineWithVisibleScope(getCurrentPrincipalOrSystem(), documentScopeColumns, sql`TRUE`)}
+          AND document_type = ${docType}
+          AND metadata->>'id' IS NOT NULL
+      `);
+      return Number(((rows.rows ?? rows) as Array<{ max_id: number }>)[0]?.max_id ?? 0);
+    }
     const rows = await db.execute(sql`
       SELECT COALESCE(MAX((metadata->>'id')::int), 0)::int AS max_id
       FROM memory_entries
@@ -466,6 +615,24 @@ export class DocumentStorage {
   ): Promise<{ count: number; sums: Record<string, number> }> {
     assertSafeFieldName(countAlias);
     sumFields.forEach(assertSafeFieldName);
+    if (await targetReadsEnabled()) {
+      const sumExpressions = sumFields.map(
+        (field) =>
+          sql`COALESCE(SUM((${documentStoreDocuments.metadata}->>${sql.raw(`'${field}'`)})::numeric), 0) AS ${sql.raw(field)}`,
+      );
+      const rows = await db.execute(sql`
+        SELECT COUNT(*)::int AS ${sql.raw(countAlias)}, ${sql.join(sumExpressions, sql`, `)}
+        FROM document_store_documents
+        WHERE ${combineWithVisibleScope(getCurrentPrincipalOrSystem(), documentScopeColumns, sql`TRUE`)}
+          AND document_type = ${docType}
+          AND metadata->>'timestamp' LIKE ${dateStr + "%"}
+      `);
+      const row = ((rows.rows ?? rows) as Array<Record<string, unknown>>)[0];
+      return {
+        count: Number(row?.[countAlias] ?? 0),
+        sums: Object.fromEntries(sumFields.map((field) => [field, Number(row?.[field] ?? 0)])),
+      };
+    }
     const sumExpressions = sumFields.map(
       (f) =>
         sql`COALESCE(SUM((${memoryEntries.metadata}->>${sql.raw(`'${f}'`)})::numeric), 0) AS ${sql.raw(f)}`,
@@ -499,6 +666,19 @@ export class DocumentStorage {
     docType: DocType,
     sinceTimestamp?: string,
   ): Promise<number> {
+    if (await targetReadsEnabled()) {
+      const conditions = [
+        sql`document_type = ${docType}`,
+        combineWithVisibleScope(getCurrentPrincipalOrSystem(), documentScopeColumns, sql`TRUE`),
+      ];
+      if (sinceTimestamp) conditions.push(sql`metadata->>'timestamp' >= ${sinceTimestamp}`);
+      const rows = await db.execute(sql`
+        SELECT COUNT(*)::int AS cnt
+        FROM document_store_documents
+        WHERE ${sql.join(conditions, sql` AND `)}
+      `);
+      return Number(((rows.rows ?? rows) as Array<{ cnt: number }>)[0]?.cnt ?? 0);
+    }
     const conditions = [
       sql`layer = ${WORKSPACE_LAYER}`,
       sql`source = ${docType}`,
@@ -532,6 +712,29 @@ export class DocumentStorage {
       metadata: Record<string, unknown>;
     }>
   > {
+    if (await targetReadsEnabled()) {
+      const conditions = [
+        sql`document_type = ${docType}`,
+        combineWithVisibleScope(getCurrentPrincipalOrSystem(), documentScopeColumns, sql`TRUE`),
+      ];
+      if (sinceTimestamp) conditions.push(sql`metadata->>'timestamp' >= ${sinceTimestamp}`);
+      const rows = await db.execute(sql`
+        SELECT source_memory_entry_id, id, document_id, title, created_at, metadata
+        FROM document_store_documents
+        WHERE ${sql.join(conditions, sql` AND `)}
+        ORDER BY updated_at DESC
+      `);
+      return ((rows.rows ?? rows) as Array<{
+        source_memory_entry_id: number | null; id: number; document_id: string; title: string | null;
+        created_at: string | Date | null; metadata: Record<string, unknown>;
+      }>).map((row) => ({
+        id: row.source_memory_entry_id ?? row.id,
+        docId: row.document_id,
+        title: row.title,
+        createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at ? String(row.created_at) : null,
+        metadata: typeof row.metadata === "string" ? JSON.parse(row.metadata) : row.metadata || {},
+      }));
+    }
     const conditions = [
       sql`layer = ${WORKSPACE_LAYER}`,
       sql`source = ${docType}`,
@@ -584,6 +787,28 @@ export class DocumentStorage {
   > {
     assertSafeFieldName(groupByField);
     sumFields.forEach(assertSafeFieldName);
+    if (await targetReadsEnabled()) {
+      const conditions = [
+        sql`document_type = ${docType}`,
+        combineWithVisibleScope(getCurrentPrincipalOrSystem(), documentScopeColumns, sql`TRUE`),
+      ];
+      if (sinceTimestamp) conditions.push(sql`metadata->>'timestamp' >= ${sinceTimestamp}`);
+      const sumExpressions = sumFields.map(
+        (field) => sql`COALESCE(SUM((metadata->>${sql.raw(`'${field}'`)})::numeric), 0) AS ${sql.raw(`sum_${field}`)}`,
+      );
+      const rows = await db.execute(sql`
+        SELECT metadata->>${sql.raw(`'${groupByField}'`)} AS group_key,
+               COUNT(*)::int AS cnt, ${sql.join(sumExpressions, sql`, `)}
+        FROM document_store_documents
+        WHERE ${sql.join(conditions, sql` AND `)}
+        GROUP BY metadata->>${sql.raw(`'${groupByField}'`)}
+      `);
+      return ((rows.rows ?? rows) as Array<Record<string, unknown>>).map((row) => ({
+        groupKey: String(row.group_key ?? ""),
+        count: Number(row.cnt ?? 0),
+        sums: Object.fromEntries(sumFields.map((field) => [field, Number(row[`sum_${field}`] ?? 0)])),
+      }));
+    }
     const conditions = [
       sql`layer = ${WORKSPACE_LAYER}`,
       sql`source = ${docType}`,
@@ -631,6 +856,26 @@ export class DocumentStorage {
     sinceTimestamp?: string,
   ): Promise<{ count: number; sums: Record<string, number> }> {
     sumFields.forEach(assertSafeFieldName);
+    if (await targetReadsEnabled()) {
+      const conditions = [
+        sql`document_type = ${docType}`,
+        combineWithVisibleScope(getCurrentPrincipalOrSystem(), documentScopeColumns, sql`TRUE`),
+      ];
+      if (sinceTimestamp) conditions.push(sql`metadata->>'timestamp' >= ${sinceTimestamp}`);
+      const sumExpressions = sumFields.map(
+        (field) => sql`COALESCE(SUM((metadata->>${sql.raw(`'${field}'`)})::numeric), 0) AS ${sql.raw(`"${field}"`)}`,
+      );
+      const rows = await db.execute(sql`
+        SELECT COUNT(*)::int AS cnt, ${sql.join(sumExpressions, sql`, `)}
+        FROM document_store_documents
+        WHERE ${sql.join(conditions, sql` AND `)}
+      `);
+      const row = ((rows.rows ?? rows) as Array<Record<string, unknown>>)[0];
+      return {
+        count: Number(row?.cnt ?? 0),
+        sums: Object.fromEntries(sumFields.map((field) => [field, Number(row?.[field] ?? 0)])),
+      };
+    }
     const conditions = [
       sql`layer = ${WORKSPACE_LAYER}`,
       sql`source = ${docType}`,
@@ -669,6 +914,20 @@ export class DocumentStorage {
   }
 
   async getStats(): Promise<Record<string, number>> {
+    if (await targetReadsEnabled()) {
+      const rows = await db.execute(sql`
+        SELECT document_type AS doc_type, COUNT(*)::int AS count
+        FROM document_store_documents
+        WHERE ${combineWithVisibleScope(getCurrentPrincipalOrSystem(), documentScopeColumns, sql`TRUE`)}
+        GROUP BY document_type
+        ORDER BY document_type
+      `);
+      const stats: Record<string, number> = {};
+      for (const row of (rows.rows ?? rows) as Array<{ doc_type: string; count: number }>) {
+        stats[row.doc_type] = Number(row.count);
+      }
+      return stats;
+    }
     const rows = await db.execute(sql`
       SELECT source AS doc_type, COUNT(*)::int as count
       FROM memory_entries
