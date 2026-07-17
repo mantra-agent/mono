@@ -154,6 +154,8 @@ export interface CompactionMeta {
   replacedMessageCount: number;
   keptMessageCount: number;
   archiveRefId?: string;
+  archiveFormat?: "compaction.v1";
+  archiveDownloadable?: boolean;
   tokensBefore?: number;
   tokensAfter?: number;
   tokensSaved?: number;
