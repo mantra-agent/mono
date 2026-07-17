@@ -115,7 +115,7 @@ async function ensureVoiceSessionActiveSchema(pool: {
 }
 
 
-async function ensureDocumentStoreDocumentsSchema(pool: { query: (sql: string) => Promise<unknown> }): Promise<void> {
+async function ensureDocumentStoreDocumentsSchema(pool: { query: (sql: string, params?: unknown[]) => Promise<unknown> }): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS document_store_documents (
       id SERIAL PRIMARY KEY,
@@ -146,6 +146,65 @@ async function ensureDocumentStoreDocumentsSchema(pool: { query: (sql: string) =
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_source_row ON document_store_documents(source_table, source_row_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_path ON document_store_documents(path)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_updated_at ON document_store_documents(updated_at)`);
+
+  const additiveColumns = [
+    ["source_memory_entry_id", "INTEGER"],
+    ["source_id", "TEXT"],
+    ["summary", "TEXT"],
+    ["one_liner", "TEXT"],
+    ["tags", "JSONB NOT NULL DEFAULT '[]'::jsonb"],
+    ["source_content_hash", "TEXT"],
+    ["source_metadata_hash", "TEXT"],
+    ["source_identity_hash", "TEXT"],
+    ["source_created_at", "TIMESTAMPTZ(6)"],
+    ["source_processed_at", "TIMESTAMPTZ(6)"],
+    ["migration_key", "TEXT"],
+    ["migrated_at", "TIMESTAMPTZ(6)"],
+  ] as const;
+  for (const [name, type] of additiveColumns) {
+    await pool.query(`ALTER TABLE document_store_documents ADD COLUMN IF NOT EXISTS ${quoteIdent(name)} ${type}`);
+  }
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uk_document_store_source_memory_entry ON document_store_documents(source_memory_entry_id) WHERE source_memory_entry_id IS NOT NULL`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_migration_key ON document_store_documents(migration_key)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_source_hashes ON document_store_documents(source_content_hash, source_metadata_hash, source_identity_hash)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS document_store_migration_runs (
+      id TEXT PRIMARY KEY,
+      migration_key TEXT NOT NULL,
+      status TEXT NOT NULL,
+      batch_size INTEGER NOT NULL,
+      high_water_start INTEGER NOT NULL DEFAULT 0,
+      high_water_end INTEGER NOT NULL DEFAULT 0,
+      source_max_id INTEGER NOT NULL DEFAULT 0,
+      processed_count INTEGER NOT NULL DEFAULT 0,
+      inserted_count INTEGER NOT NULL DEFAULT 0,
+      matched_count INTEGER NOT NULL DEFAULT 0,
+      conflict_count INTEGER NOT NULL DEFAULT 0,
+      reconciliation JSONB NOT NULL DEFAULT '{}'::jsonb,
+      error TEXT,
+      started_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at TIMESTAMPTZ(6)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_migration_runs_key_status ON document_store_migration_runs(migration_key, status, high_water_end)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS document_store_migration_conflicts (
+      id SERIAL PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES document_store_migration_runs(id) ON DELETE CASCADE,
+      migration_key TEXT NOT NULL,
+      source_memory_entry_id INTEGER NOT NULL,
+      target_document_store_id INTEGER,
+      conflict_type TEXT NOT NULL,
+      source_identity JSONB NOT NULL DEFAULT '{}'::jsonb,
+      target_identity JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source_hashes JSONB NOT NULL DEFAULT '{}'::jsonb,
+      target_hashes JSONB NOT NULL DEFAULT '{}'::jsonb,
+      details JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_migration_conflicts_run ON document_store_migration_conflicts(run_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_migration_conflicts_source ON document_store_migration_conflicts(source_memory_entry_id)`);
 }
 
 async function ensurePromptModuleTables(pool: { query: (sql: string) => Promise<unknown> }): Promise<void> {
@@ -1220,7 +1279,6 @@ export async function runSchemaBootstrap(
         IF to_regclass('public.calendar_event_metadata') IS NOT NULL THEN
           ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS capacity_type TEXT;
           ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agenda TEXT;
-          ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS speaker_policy JSONB;
         END IF;
       END $migration$;
     `);
@@ -4869,17 +4927,12 @@ export async function runSchemaBootstrap(
     await pool.query(
       `ALTER TABLE plan_executions ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ`,
     );
-    await pool.query(`ALTER TABLE plan_executions ADD COLUMN IF NOT EXISTS execution_lease_id TEXT`);
-    await pool.query(`ALTER TABLE plan_executions ADD COLUMN IF NOT EXISTS execution_lease_owner TEXT`);
-    await pool.query(`ALTER TABLE plan_executions ADD COLUMN IF NOT EXISTS execution_lease_expires_at TIMESTAMPTZ`);
-    await pool.query(`ALTER TABLE plan_executions ADD COLUMN IF NOT EXISTS execution_claimed_at TIMESTAMPTZ`);
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_plan_executions_status ON plan_executions(status)`,
     );
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_plan_executions_archived_at ON plan_executions(archived_at)`,
     );
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_executions_lease ON plan_executions(execution_lease_expires_at)`);
   });
 
   await heal("plan_steps table", async () => {
@@ -4907,55 +4960,6 @@ export async function runSchemaBootstrap(
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_plan_steps_plan_id ON plan_steps(plan_id)`,
     );
-    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_steps_one_running_per_plan ON plan_steps(plan_id) WHERE status = 'running'`);
-  });
-
-  await heal("plan inline architecture tables", async () => {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS plan_session_links (
-        id SERIAL PRIMARY KEY,
-        plan_id TEXT NOT NULL REFERENCES plan_executions(id) ON DELETE CASCADE,
-        session_id TEXT NOT NULL,
-        owner_user_id TEXT,
-        account_id TEXT,
-        anchor_message_id TEXT,
-        linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        unlinked_at TIMESTAMPTZ,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_session_links_plan ON plan_session_links(plan_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_session_links_session ON plan_session_links(session_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_session_links_owner ON plan_session_links(owner_user_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_session_links_account ON plan_session_links(account_id)`);
-    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_session_links_active_unique ON plan_session_links(plan_id, session_id) WHERE unlinked_at IS NULL`);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS plan_step_attempts (
-        id SERIAL PRIMARY KEY,
-        plan_id TEXT NOT NULL REFERENCES plan_executions(id) ON DELETE CASCADE,
-        step_id TEXT NOT NULL,
-        owner_user_id TEXT,
-        account_id TEXT,
-        attempt_number INTEGER NOT NULL,
-        child_session_id TEXT,
-        status TEXT NOT NULL DEFAULT 'pending',
-        outcome TEXT,
-        error TEXT,
-        duration_seconds INTEGER,
-        started_at TIMESTAMPTZ,
-        completed_at TIMESTAMPTZ,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_attempts_plan ON plan_step_attempts(plan_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_attempts_step ON plan_step_attempts(plan_id, step_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_attempts_child_session ON plan_step_attempts(child_session_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_attempts_owner ON plan_step_attempts(owner_user_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_attempts_account ON plan_step_attempts(account_id)`);
-    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_step_attempts_attempt_unique ON plan_step_attempts(plan_id, step_id, attempt_number)`);
   });
 
 
