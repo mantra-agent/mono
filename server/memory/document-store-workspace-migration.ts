@@ -90,7 +90,12 @@ export type DocumentStoreWorkspaceMigrationResult = MigrationCounters & {
   error?: string;
 };
 
-type ReconciliationReport = {
+export type ReconciliationMismatchSample = {
+  sourceMemoryEntryId: number;
+  fields: string[];
+};
+
+export type ReconciliationReport = {
   sourceCount: number;
   targetCount: number;
   exactMatchCount: number;
@@ -103,6 +108,7 @@ type ReconciliationReport = {
   duplicateDocumentIdentities: JsonRecord[];
   conflictCount: number;
   unexplainedMismatchCount: number;
+  mismatchSamples: ReconciliationMismatchSample[];
 };
 
 function stableJson(value: unknown): string {
@@ -324,6 +330,104 @@ async function loadBatch(client: PoolClient, afterId: number, sourceMaxId: numbe
   return result.rows;
 }
 
+export async function repairDocumentStoreWorkspaceProjection(
+  pool: Pool,
+  batchSize: number = DEFAULT_BATCH_SIZE,
+): Promise<{ repairedCount: number; batches: number }> {
+  const boundedBatchSize = Math.min(Math.max(batchSize, 1), MAX_BATCH_SIZE);
+  const client = await pool.connect();
+  let repairedCount = 0;
+  let batches = 0;
+  try {
+    while (true) {
+      const candidates = await client.query<{ id: number }>(
+        `SELECT m.id
+         FROM memory_entries m
+         JOIN document_store_documents d ON d.source_memory_entry_id = m.id
+         WHERE m.layer = 'workspace'
+           AND d.migration_key = $1
+           AND (
+             d.document_type IS DISTINCT FROM m.source OR
+             d.document_id IS DISTINCT FROM COALESCE(NULLIF(BTRIM(m.source_id), ''), 'memory-entry:' || m.id::text) OR
+             d.source_table IS DISTINCT FROM $2 OR
+             d.source_row_id IS DISTINCT FROM m.id::text OR
+             d.source_id IS DISTINCT FROM m.source_id OR
+             d.path IS DISTINCT FROM m.path OR
+             d.title IS DISTINCT FROM m.title OR
+             d.summary IS DISTINCT FROM m.summary OR
+             d.one_liner IS DISTINCT FROM m.one_liner OR
+             d.content IS DISTINCT FROM m.content OR
+             d.metadata IS DISTINCT FROM COALESCE(m.metadata, '{}'::jsonb) OR
+             d.tags IS DISTINCT FROM COALESCE(to_jsonb(m.tags), '[]'::jsonb) OR
+             d.scope IS DISTINCT FROM m.scope OR
+             d.owner_user_id IS DISTINCT FROM m.owner_user_id OR
+             d.account_id IS DISTINCT FROM m.account_id OR
+             d.vault_id IS DISTINCT FROM m.vault_id OR
+             d.created_by_user_id IS DISTINCT FROM m.created_by_user_id OR
+             d.updated_by_user_id IS DISTINCT FROM m.updated_by_user_id OR
+             d.created_at IS DISTINCT FROM m.created_at OR
+             d.updated_at IS DISTINCT FROM COALESCE(m.processed_at, m.created_at) OR
+             d.source_created_at IS DISTINCT FROM m.created_at OR
+             d.source_processed_at IS DISTINCT FROM m.processed_at
+           )
+         ORDER BY m.id
+         LIMIT $3`,
+        [MIGRATION_KEY, SOURCE_TABLE, boundedBatchSize],
+      );
+      const ids = candidates.rows.map((row) => row.id);
+      if (ids.length === 0) break;
+
+      await client.query("BEGIN");
+      try {
+        const result = await client.query(
+          `UPDATE document_store_documents d
+           SET document_type = m.source,
+               document_id = COALESCE(NULLIF(BTRIM(m.source_id), ''), 'memory-entry:' || m.id::text),
+               source_table = $2,
+               source_row_id = m.id::text,
+               source_id = m.source_id,
+               path = m.path,
+               title = m.title,
+               summary = m.summary,
+               one_liner = m.one_liner,
+               content = m.content,
+               metadata = COALESCE(m.metadata, '{}'::jsonb),
+               tags = COALESCE(to_jsonb(m.tags), '[]'::jsonb),
+               scope = m.scope,
+               owner_user_id = m.owner_user_id,
+               account_id = m.account_id,
+               vault_id = m.vault_id,
+               created_by_user_id = m.created_by_user_id,
+               updated_by_user_id = m.updated_by_user_id,
+               created_at = m.created_at,
+               updated_at = COALESCE(m.processed_at, m.created_at),
+               source_created_at = m.created_at,
+               source_processed_at = m.processed_at,
+               source_content_hash = NULL,
+               source_metadata_hash = NULL,
+               source_identity_hash = NULL,
+               migrated_at = CURRENT_TIMESTAMP
+           FROM memory_entries m
+           WHERE d.source_memory_entry_id = m.id
+             AND d.migration_key = $1
+             AND m.layer = 'workspace'
+             AND m.id = ANY($3::int[])`,
+          [MIGRATION_KEY, SOURCE_TABLE, ids],
+        );
+        await client.query("COMMIT");
+        repairedCount += result.rowCount ?? 0;
+        batches += 1;
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      }
+    }
+    return { repairedCount, batches };
+  } finally {
+    client.release();
+  }
+}
+
 async function getDuplicateSets(client: PoolClient): Promise<Pick<ReconciliationReport, "duplicateSourceIds" | "duplicateDocumentIdentities">> {
   const sourceIds = await client.query<JsonRecord>(
     `SELECT source, source_id, scope, owner_user_id, account_id, COUNT(*)::int AS count, array_agg(id ORDER BY id) AS memory_entry_ids
@@ -359,6 +463,7 @@ export async function reconcileDocumentStoreWorkspaceMigration(pool: Pool): Prom
     let identityMismatchCount = 0;
     let timestampMismatchCount = 0;
     let nullabilityMismatchCount = 0;
+    const mismatchSamples: ReconciliationMismatchSample[] = [];
 
     const targetCountResult = await client.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM document_store_documents WHERE migration_key = $1`,
@@ -378,23 +483,39 @@ export async function reconcileDocumentStoreWorkspaceMigration(pool: Pool): Prom
         [afterId, DEFAULT_BATCH_SIZE],
       );
       if (sources.rows.length === 0) break;
+      const sourceIds = sources.rows.map((source) => source.id);
+      const targets = await client.query<TargetDocumentRow>(
+        `SELECT *
+         FROM document_store_documents
+         WHERE migration_key = $1 AND source_memory_entry_id = ANY($2::int[])`,
+        [MIGRATION_KEY, sourceIds],
+      );
+      const targetsBySourceId = new Map(
+        targets.rows
+          .filter((target): target is TargetDocumentRow & { source_memory_entry_id: number } =>
+            target.source_memory_entry_id !== null,
+          )
+          .map((target) => [target.source_memory_entry_id, target]),
+      );
       for (const source of sources.rows) {
         sourceCount += 1;
         afterId = source.id;
         const prepared = prepareDocument(source);
-        const targetResult = await client.query<TargetDocumentRow>(
-          `SELECT * FROM document_store_documents WHERE migration_key = $1 AND source_memory_entry_id = $2 LIMIT 1`,
-          [MIGRATION_KEY, source.id],
-        );
-        const target = targetResult.rows[0];
+        const target = targetsBySourceId.get(source.id);
         if (!target) {
           missingTargetCount += 1;
+          if (mismatchSamples.length < 20) {
+            mismatchSamples.push({ sourceMemoryEntryId: source.id, fields: ["missing_target"] });
+          }
           continue;
         }
         const mismatches = comparePreparedToTarget(prepared, target);
         if (mismatches.length === 0) {
           exactMatchCount += 1;
           continue;
+        }
+        if (mismatchSamples.length < 20) {
+          mismatchSamples.push({ sourceMemoryEntryId: source.id, fields: mismatches });
         }
         if (mismatches.some((field) => ["content_hash", "metadata_hash", "identity_hash"].includes(field))) {
           hashMismatchCount += 1;
@@ -440,6 +561,7 @@ export async function reconcileDocumentStoreWorkspaceMigration(pool: Pool): Prom
       ...duplicateSets,
       conflictCount,
       unexplainedMismatchCount,
+      mismatchSamples,
     };
   } finally {
     client.release();

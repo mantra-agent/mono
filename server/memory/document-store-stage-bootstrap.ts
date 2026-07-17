@@ -3,6 +3,7 @@ import { createLogger } from "../log";
 import { getRuntimeIdentity } from "../runtime-identity";
 import {
   reconcileDocumentStoreWorkspaceMigration,
+  repairDocumentStoreWorkspaceProjection,
   runDocumentStoreWorkspaceMigration,
 } from "./document-store-workspace-migration";
 import { setStageDocumentStoreReadCutover } from "./document-store-stage-cutover";
@@ -48,6 +49,10 @@ export async function runStageDocumentStoreWorkspaceMigration(): Promise<void> {
       return;
     }
 
+    const repair = await repairDocumentStoreWorkspaceProjection(pool);
+    if (repair.repairedCount > 0) {
+      log.info("stage document projection repaired from authoritative workspace rows", repair);
+    }
     const before = await reconcileDocumentStoreWorkspaceMigration(pool);
     if (
       before.sourceCount === before.exactMatchCount &&
