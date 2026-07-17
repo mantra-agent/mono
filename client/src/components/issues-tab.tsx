@@ -1,8 +1,7 @@
-import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, type ReactNode } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
@@ -10,254 +9,312 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+import { useTimezone, formatDate } from "@/hooks/use-timezone";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { cn } from "@/lib/utils";
 import {
-  Bug,
   ChevronRight,
   Circle,
   CircleCheck,
-  CircleDot,
   CircleDashed,
+  CircleDot,
   Loader2,
   RefreshCw,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import type { Issue, IssueStatus } from "@shared/schema";
-import { useTimezone, formatDate } from "@/hooks/use-timezone";
 
 const STATUS_CYCLE: IssueStatus[] = ["open", "in_progress", "in_review", "resolved"];
+
+const STATUS_LABELS: Record<IssueStatus, string> = {
+  open: "Open",
+  in_progress: "In Progress",
+  in_review: "In Review",
+  resolved: "Resolved",
+};
+
+interface IssueTreeRowProps {
+  issue: Issue;
+  onCycleStatus: (id: number, nextStatus: IssueStatus) => void;
+  isUpdating: boolean;
+}
+
+interface IssueTreeSectionProps {
+  label: string;
+  issues: Issue[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  testId: string;
+  count?: number;
+  loading?: boolean;
+  emptyLabel?: string;
+  renderIssue: (issue: Issue) => ReactNode;
+}
 
 function StatusIcon({ status, className }: { status: IssueStatus; className?: string }) {
   switch (status) {
     case "resolved":
-      return <CircleCheck className={`${className} text-success`} />;
+      return <CircleCheck className={cn(className, "text-success")} />;
     case "in_review":
-      return <CircleDashed className={`${className} text-info`} />;
+      return <CircleDashed className={cn(className, "text-info")} />;
     case "in_progress":
-      return <CircleDot className={`${className} text-warning`} />;
+      return <CircleDot className={cn(className, "text-warning")} />;
     default:
-      return <Circle className={`${className} text-muted-foreground/50`} />;
+      return <Circle className={cn(className, "text-muted-foreground/50")} />;
   }
 }
 
-function formatIssueDate(dateStr: string, timezone: string) {
-  return formatDate(dateStr, timezone, { month: "short", day: "numeric" });
+function formatIssueDate(date: Date, timezone: string) {
+  return formatDate(date.toString(), timezone, { month: "short", day: "numeric" });
 }
 
-function IssueItem({ issue, onCycleStatus, isUpdating }: {
-  issue: Issue;
-  onCycleStatus: (id: number, nextStatus: IssueStatus) => void;
-  isUpdating: boolean;
-}) {
+function IssueTreeRow({ issue, onCycleStatus, isUpdating }: IssueTreeRowProps) {
   const { timezone } = useTimezone();
   const [, setLocation] = useLocation();
-  const nextStatus = STATUS_CYCLE[(STATUS_CYCLE.indexOf(issue.status as IssueStatus) + 1) % STATUS_CYCLE.length];
-  const statusLabel = issue.status === "open" ? "Open" : issue.status === "in_progress" ? "In Progress" : issue.status === "in_review" ? "In Review" : "Resolved";
+  const status = issue.status as IssueStatus;
+  const nextStatus = STATUS_CYCLE[(STATUS_CYCLE.indexOf(status) + 1) % STATUS_CYCLE.length];
+  const openIssue = () => setLocation(`/issues/${issue.id}`);
 
   return (
-    <div className="border rounded-md hover-elevate" data-testid={`issue-item-${issue.id}`}>
-      <div className="flex items-center gap-1 px-3 py-2">
+    <ProfileTreeRow
+      label={(
+        <button
+          type="button"
+          onClick={openIssue}
+          className={cn(
+            "max-w-full truncate text-left font-medium text-foreground",
+            status === "resolved" && "text-muted-foreground line-through",
+          )}
+          data-testid={`button-open-issue-${issue.id}`}
+        >
+          {issue.title}
+        </button>
+      )}
+      icon={(
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              onClick={(e) => { e.stopPropagation(); onCycleStatus(issue.id, nextStatus); }}
-              className="shrink-0 p-0.5"
+              type="button"
+              onClick={() => onCycleStatus(issue.id, nextStatus)}
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               disabled={isUpdating}
+              aria-label={`${STATUS_LABELS[status]}. Change status to ${STATUS_LABELS[nextStatus]}`}
               data-testid={`button-cycle-status-${issue.id}`}
             >
               {isUpdating ? (
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <StatusIcon status={issue.status as IssueStatus} className="h-4 w-4" />
+                <StatusIcon status={status} className="h-3.5 w-3.5" />
               )}
             </button>
           </TooltipTrigger>
           <TooltipContent side="right" className="text-xs">
-            {statusLabel}
+            {STATUS_LABELS[status]}
           </TooltipContent>
         </Tooltip>
+      )}
+      hasValue
+      showEmpty
+      mobileLayout="inline"
+      actionContent={(
         <button
-          onClick={() => setLocation(`/issues/${issue.id}`)}
-          className="flex-1 flex items-center gap-2 text-left min-w-0"
-          data-testid={`button-open-issue-${issue.id}`}
+          type="button"
+          onClick={openIssue}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+          aria-label={`Open ${issue.title}`}
         >
-          <span className={`text-sm truncate ${issue.status === "resolved" ? "line-through text-muted-foreground" : ""}`}>
-            {issue.title}
-          </span>
+          <ChevronRight className="h-3.5 w-3.5" />
         </button>
-        <div className="flex items-center gap-1 shrink-0">
-          {issue.createdAt && (
-            <span className="text-xs text-muted-foreground font-mono mr-1">{formatIssueDate(issue.createdAt.toString(), timezone)}</span>
+      )}
+      testId={`issue-item-${issue.id}`}
+    >
+      {issue.createdAt ? (
+        <button
+          type="button"
+          onClick={openIssue}
+          className="truncate font-mono text-muted-foreground"
+        >
+          {formatIssueDate(issue.createdAt, timezone)}
+        </button>
+      ) : null}
+    </ProfileTreeRow>
+  );
+}
+
+function IssueTreeSection({
+  label,
+  issues,
+  open,
+  onOpenChange,
+  testId,
+  count = issues.length,
+  loading = false,
+  emptyLabel = "No issues.",
+  renderIssue,
+}: IssueTreeSectionProps) {
+  return (
+    <section className="min-w-0">
+      <button
+        type="button"
+        onClick={() => onOpenChange(!open)}
+        className="flex w-full min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+        aria-expanded={open}
+        data-testid={testId}
+      >
+        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
+        <span className="truncate">{label}</span>
+        <span className="ml-auto font-normal tabular-nums text-muted-foreground/70">{count}</span>
+      </button>
+      {open ? (
+        <div className="ml-3 border-l border-border pl-2">
+          {loading ? (
+            <div className="space-y-1 py-1">
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-full" />
+            </div>
+          ) : issues.length > 0 ? (
+            issues.map(renderIssue)
+          ) : (
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">{emptyLabel}</div>
           )}
-          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
         </div>
-      </div>
-    </div>
+      ) : null}
+    </section>
   );
 }
 
 export function IssuesTab() {
   const { toast } = useToast();
   const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const [openOpen, setOpenOpen] = useState(true);
+  const [inProgressOpen, setInProgressOpen] = useState(true);
+  const [inReviewOpen, setInReviewOpen] = useState(true);
+  const [resolvedOpen, setResolvedOpen] = useState(false);
 
-  const { data: activeData, isLoading, refetch } = useQuery<{ issues: Issue[] }>({
+  const { data: activeData, isLoading, isFetching, refetch } = useQuery<{ issues: Issue[] }>({
     queryKey: ["/api/issues", "active"],
     queryFn: async () => {
-      const res = await fetch("/api/issues?lightweight=true&exclude_status=resolved");
-      if (!res.ok) throw new Error(`Failed to fetch issues: ${res.statusText}`);
-      return res.json();
+      const response = await fetch("/api/issues?lightweight=true&exclude_status=resolved");
+      if (!response.ok) throw new Error(`Failed to fetch issues: ${response.statusText}`);
+      return response.json();
     },
     refetchInterval: 10000,
   });
 
-  const [openCollapsed, setOpenCollapsed] = useState(false);
-  const [inProgressCollapsed, setInProgressCollapsed] = useState(false);
-  const [inReviewCollapsed, setInReviewCollapsed] = useState(false);
-  const [resolvedCollapsed, setResolvedCollapsed] = useState(true);
-
   const { data: resolvedData, isLoading: resolvedLoading } = useQuery<{ issues: Issue[] }>({
     queryKey: ["/api/issues", "resolved"],
     queryFn: async () => {
-      const res = await fetch("/api/issues?lightweight=true&status=resolved");
-      if (!res.ok) throw new Error(`Failed to fetch issues: ${res.statusText}`);
-      return res.json();
+      const response = await fetch("/api/issues?lightweight=true&status=resolved");
+      if (!response.ok) throw new Error(`Failed to fetch issues: ${response.statusText}`);
+      return response.json();
     },
-    enabled: !resolvedCollapsed,
+    enabled: resolvedOpen,
   });
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, updates }: { id: number; updates: { status?: IssueStatus } }) => {
       setUpdatingId(id);
-      const res = await apiRequest("PATCH", `/api/issues/${id}`, updates);
-      return res.json();
+      const response = await apiRequest("PATCH", `/api/issues/${id}`, updates);
+      return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/issues"] });
     },
-    onError: (err: Error) => {
-      toast({ title: "Failed to update issue", description: err.message, variant: "destructive" });
+    onError: (error: Error) => {
+      toast({ title: "Failed to update issue", description: error.message, variant: "destructive" });
     },
     onSettled: () => setUpdatingId(null),
   });
 
   const activeIssues = activeData?.issues || [];
-  const openIssues = activeIssues.filter(i => i.status === "open");
-  const inProgressIssues = activeIssues.filter(i => i.status === "in_progress");
-  const inReviewIssues = activeIssues.filter(i => i.status === "in_review");
+  const openIssues = activeIssues.filter((issue) => issue.status === "open");
+  const inProgressIssues = activeIssues.filter((issue) => issue.status === "in_progress");
+  const inReviewIssues = activeIssues.filter((issue) => issue.status === "in_review");
   const resolvedIssues = resolvedData?.issues || [];
-  const activeCount = activeIssues.length;
 
-  const renderGroup = (
-    label: string,
-    issues: Issue[],
-    collapsed: boolean,
-    setCollapsed: (v: boolean) => void,
-    testId: string,
-  ) => {
-    if (issues.length === 0) return null;
+  const renderIssue = (issue: Issue) => (
+    <IssueTreeRow
+      key={issue.id}
+      issue={issue}
+      onCycleStatus={(id, nextStatus) => updateMutation.mutate({ id, updates: { status: nextStatus } })}
+      isUpdating={updatingId === issue.id}
+    />
+  );
+
+  if (isLoading) {
     return (
-      <div>
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="flex items-center gap-2 w-full text-left mb-2"
-          data-testid={testId}
-        >
-          <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${collapsed ? "" : "rotate-90"}`} />
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            {label} ({issues.length})
-          </span>
-        </button>
-        {!collapsed && (
-          <div className="space-y-1.5">
-            {issues.map((issue) => (
-              <IssueItem
-                key={issue.id}
-                issue={issue}
-                onCycleStatus={(id, nextStatus) => updateMutation.mutate({ id, updates: { status: nextStatus } })}
-                isUpdating={updatingId === issue.id}
-              />
-            ))}
-          </div>
-        )}
+      <div className="flex items-center justify-center py-8">
+        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
       </div>
     );
-  };
+  }
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-        <CardTitle className="flex items-center gap-2 text-sm font-medium">
-          <Bug className="h-4 w-4" />
-          Issues
-          {activeCount > 0 && (
-            <Badge variant="secondary" className="text-xs font-mono px-1 py-0" data-testid="badge-open-count">
-              {activeCount} active
-            </Badge>
-          )}
-        </CardTitle>
-        <div className="flex items-center gap-1">
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={() => refetch()}
-            data-testid="button-refresh-issues"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <div className="space-y-2">
-            <Skeleton className="h-8 w-full" />
-            <Skeleton className="h-8 w-full" />
-            <Skeleton className="h-8 w-full" />
-          </div>
-        ) : activeIssues.length > 0 || !resolvedCollapsed ? (
-          <div className="space-y-4">
-            {renderGroup("In Review", inReviewIssues, inReviewCollapsed, setInReviewCollapsed, "button-toggle-inreview-group")}
-            {renderGroup("In Progress", inProgressIssues, inProgressCollapsed, setInProgressCollapsed, "button-toggle-inprogress-group")}
-            {renderGroup("Open", openIssues, openCollapsed, setOpenCollapsed, "button-toggle-open-group")}
-            <div>
-              <button
-                onClick={() => setResolvedCollapsed(!resolvedCollapsed)}
-                className="flex items-center gap-2 w-full text-left mb-2"
-                data-testid="button-toggle-resolved-group"
-              >
-                <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${resolvedCollapsed ? "" : "rotate-90"}`} />
-                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Resolved {resolvedIssues.length > 0 ? `(${resolvedIssues.length})` : ""}
-                </span>
-              </button>
-              {!resolvedCollapsed && (
-                resolvedLoading ? (
-                  <div className="space-y-2 pl-5">
-                    <Skeleton className="h-8 w-full" />
-                    <Skeleton className="h-8 w-full" />
-                  </div>
-                ) : resolvedIssues.length > 0 ? (
-                  <div className="space-y-1.5">
-                    {resolvedIssues.map((issue) => (
-                      <IssueItem
-                        key={issue.id}
-                        issue={issue}
-                        onCycleStatus={(id, nextStatus) => updateMutation.mutate({ id, updates: { status: nextStatus } })}
-                        isUpdating={updatingId === issue.id}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground pl-5">No resolved issues.</p>
-                )
-              )}
-            </div>
-          </div>
+    <div className="min-w-0 overflow-x-hidden bg-background p-2 text-foreground">
+      <div className="mb-1 flex min-w-0 items-center justify-between gap-2 px-2 py-1">
+        <span className="text-xs text-muted-foreground" data-testid="badge-open-count">
+          {activeIssues.length} active
+        </span>
+        <Button
+          size="icon"
+          variant="ghost"
+          className="h-7 w-7"
+          onClick={() => refetch()}
+          disabled={isFetching}
+          aria-label="Refresh issues"
+          data-testid="button-refresh-issues"
+        >
+          <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
+        </Button>
+      </div>
+
+      <div className="min-w-0 space-y-0">
+        {inReviewIssues.length > 0 ? (
+          <IssueTreeSection
+            label="In Review"
+            issues={inReviewIssues}
+            open={inReviewOpen}
+            onOpenChange={setInReviewOpen}
+            testId="button-toggle-inreview-group"
+            renderIssue={renderIssue}
+          />
+        ) : null}
+        {inProgressIssues.length > 0 ? (
+          <IssueTreeSection
+            label="In Progress"
+            issues={inProgressIssues}
+            open={inProgressOpen}
+            onOpenChange={setInProgressOpen}
+            testId="button-toggle-inprogress-group"
+            renderIssue={renderIssue}
+          />
+        ) : null}
+        {openIssues.length > 0 ? (
+          <IssueTreeSection
+            label="Open"
+            issues={openIssues}
+            open={openOpen}
+            onOpenChange={setOpenOpen}
+            testId="button-toggle-open-group"
+            renderIssue={renderIssue}
+          />
         ) : (
-          <p className="text-sm text-muted-foreground" data-testid="text-no-issues">
-            No issues captured yet. Use the bug button at the bottom-left to report issues.
-          </p>
+          <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-no-issues">
+            No active issues.
+          </div>
         )}
-      </CardContent>
-    </Card>
+        <IssueTreeSection
+          label="Resolved"
+          issues={resolvedIssues}
+          open={resolvedOpen}
+          onOpenChange={setResolvedOpen}
+          testId="button-toggle-resolved-group"
+          count={resolvedData ? resolvedIssues.length : 0}
+          loading={resolvedLoading}
+          emptyLabel="No resolved issues."
+          renderIssue={renderIssue}
+        />
+      </div>
+    </div>
   );
 }
