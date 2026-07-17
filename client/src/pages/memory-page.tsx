@@ -111,6 +111,7 @@ import {
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
 import { SimpleTextFrame } from "@/components/home/simple-text-frame";
+import { MemoryGraph3D, type MemoryGraph3DHandle, type MemoryGraph3DLink, type MemoryGraph3DNode } from "@/components/memory/memory-graph-3d";
 
 const SOURCE_REF_TYPE_MAP: Record<string, "session" | "page"> = {
   session: "session",
@@ -2730,325 +2731,25 @@ function LayersTab() {
   );
 }
 
-interface GraphNode {
-  id: number;
-  label: string;
-  icon: string;
-  source: string;
-  x: number;
-  y: number;
-  decayScore?: number;
-  pendingDeletion?: boolean;
-  vx: number;
-  vy: number;
-}
-
-const sourceColorMap: Record<string, { fill: string; stroke: string }> = {
-  chat: { fill: "hsl(215, 55%, 35%)", stroke: "hsl(215, 55%, 25%)" },
-  conversation: { fill: "hsl(215, 55%, 35%)", stroke: "hsl(215, 55%, 25%)" },
-  manual: { fill: "hsl(145, 45%, 30%)", stroke: "hsl(145, 45%, 22%)" },
-  voice: { fill: "hsl(270, 45%, 35%)", stroke: "hsl(270, 45%, 25%)" },
-  insight: { fill: "hsl(38, 60%, 32%)", stroke: "hsl(38, 60%, 24%)" },
-  workspace: { fill: "hsl(175, 40%, 30%)", stroke: "hsl(175, 40%, 22%)" },
-  person: { fill: "hsl(330, 45%, 35%)", stroke: "hsl(330, 45%, 25%)" },
-  project: { fill: "hsl(245, 40%, 35%)", stroke: "hsl(245, 40%, 25%)" },
-  issue: { fill: "hsl(25, 60%, 33%)", stroke: "hsl(25, 60%, 24%)" },
-  web: { fill: "hsl(190, 45%, 30%)", stroke: "hsl(190, 45%, 22%)" },
-  tool: { fill: "hsl(210, 15%, 35%)", stroke: "hsl(210, 15%, 25%)" },
-  identity: { fill: "hsl(50, 50%, 32%)", stroke: "hsl(50, 50%, 24%)" },
-  belief: { fill: "hsl(300, 55%, 40%)", stroke: "hsl(300, 55%, 30%)" },
-  claim: { fill: "hsl(200, 70%, 38%)", stroke: "hsl(200, 70%, 28%)" },
-  state: { fill: "hsl(200, 70%, 38%)", stroke: "hsl(200, 70%, 28%)" },
-  cause: { fill: "hsl(25, 70%, 38%)", stroke: "hsl(25, 70%, 28%)" },
-  action: { fill: "hsl(145, 55%, 35%)", stroke: "hsl(145, 55%, 25%)" },
-  page: { fill: "hsl(145, 45%, 32%)", stroke: "hsl(145, 45%, 23%)" },
-  session: { fill: "hsl(270, 45%, 38%)", stroke: "hsl(270, 45%, 28%)" },
-};
-const defaultNodeColor = { fill: "hsl(210, 10%, 35%)", stroke: "hsl(210, 10%, 25%)" };
-
-const relationshipColorMap: Record<string, string> = {
-  related_to: "hsla(220, 60%, 55%, 1)",
-  mentions: "hsla(180, 55%, 50%, 1)",
-  causes: "hsla(25, 75%, 55%, 1)",
-  supports: "hsla(145, 55%, 45%, 1)",
-  contradicts: "hsla(0, 65%, 55%, 1)",
-  depends_on: "hsla(270, 50%, 55%, 1)",
-  part_of: "hsla(200, 55%, 50%, 1)",
-  derived_from: "hsla(35, 60%, 50%, 1)",
-  similar_to: "hsla(250, 45%, 55%, 1)",
-  opposes: "hsla(350, 60%, 50%, 1)",
-  extends: "hsla(160, 50%, 45%, 1)",
-  references: "hsla(195, 50%, 50%, 1)",
-  elaborates: "hsla(55, 60%, 50%, 1)",
-  summarizes: "hsla(290, 45%, 50%, 1)",
-};
-const defaultLinkColor = "hsla(210, 15%, 50%, 1)";
-
-function getLinkColor(relationship: string, alpha: number): string {
-  const base = relationshipColorMap[relationship] || defaultLinkColor;
-  return base.replace(/,\s*[\d.]+\)$/, `, ${alpha})`);
-}
-
-interface QuadTreeNode {
-  x: number;
-  y: number;
-  mass: number;
-  cx: number;
-  cy: number;
-  width: number;
-  children: (QuadTreeNode | null)[];
-  nodes: GraphNode[];
-  isLeaf: boolean;
-}
-
-function buildQuadTree(nodes: GraphNode[], x: number, y: number, width: number): QuadTreeNode {
-  const tree: QuadTreeNode = {
-    x, y, mass: 0, cx: 0, cy: 0, width,
-    children: [null, null, null, null],
-    nodes: [],
-    isLeaf: true,
-  };
-
-  for (const node of nodes) {
-    insertNode(tree, node);
-  }
-  return tree;
-}
-
-function insertNode(tree: QuadTreeNode, node: GraphNode) {
-  if (tree.mass === 0) {
-    tree.nodes = [node];
-    tree.cx = node.x;
-    tree.cy = node.y;
-    tree.mass = 1;
-    tree.isLeaf = true;
-    return;
-  }
-
-  if (tree.isLeaf && tree.nodes.length === 1 && tree.width > 1) {
-    tree.isLeaf = false;
-    const existing = tree.nodes[0];
-    tree.nodes = [];
-    addToChild(tree, existing);
-  }
-
-  if (!tree.isLeaf) {
-    addToChild(tree, node);
-  } else {
-    tree.nodes.push(node);
-  }
-
-  tree.cx = (tree.cx * tree.mass + node.x) / (tree.mass + 1);
-  tree.cy = (tree.cy * tree.mass + node.y) / (tree.mass + 1);
-  tree.mass += 1;
-}
-
-function addToChild(tree: QuadTreeNode, node: GraphNode) {
-  const halfW = tree.width / 2;
-  const midX = tree.x + halfW;
-  const midY = tree.y + halfW;
-  let qi = 0;
-  if (node.x >= midX) qi += 1;
-  if (node.y >= midY) qi += 2;
-
-  if (!tree.children[qi]) {
-    const cx = qi % 2 === 0 ? tree.x : midX;
-    const cy = qi < 2 ? tree.y : midY;
-    tree.children[qi] = {
-      x: cx, y: cy, mass: 0, cx: 0, cy: 0, width: halfW,
-      children: [null, null, null, null],
-      nodes: [],
-      isLeaf: true,
-    };
-  }
-  insertNode(tree.children[qi]!, node);
-}
-
-function applyBarnesHut(tree: QuadTreeNode, node: GraphNode, theta: number, repForce: number, alpha: number) {
-  if (tree.mass === 0) return;
-
-  const dx = tree.cx - node.x;
-  const dy = tree.cy - node.y;
-  const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-
-  if (tree.isLeaf) {
-    for (const other of tree.nodes) {
-      if (other.id === node.id) continue;
-      const ddx = other.x - node.x;
-      const ddy = other.y - node.y;
-      const dd = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
-      const force = repForce / (dd * dd);
-      const fx = (ddx / dd) * force * alpha;
-      const fy = (ddy / dd) * force * alpha;
-      node.vx -= fx;
-      node.vy -= fy;
-    }
-    return;
-  }
-
-  if (tree.width / dist < theta) {
-    const force = (repForce * tree.mass) / (dist * dist);
-    const fx = (dx / dist) * force * alpha;
-    const fy = (dy / dist) * force * alpha;
-    node.vx -= fx;
-    node.vy -= fy;
-    return;
-  }
-
-  for (const child of tree.children) {
-    if (child) applyBarnesHut(child, node, theta, repForce, alpha);
-  }
-}
-
-function pointToCurveDist(px: number, py: number, x1: number, y1: number, cpx: number, cpy: number, x2: number, y2: number): number {
-  let minDist = Infinity;
-  const steps = 10;
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const mt = 1 - t;
-    const bx = mt * mt * x1 + 2 * mt * t * cpx + t * t * x2;
-    const by = mt * mt * y1 + 2 * mt * t * cpy + t * t * y2;
-    const d = Math.sqrt((px - bx) ** 2 + (py - by) ** 2);
-    if (d < minDist) minDist = d;
-  }
-  return minDist;
-}
-
-function queryQuadTreeNearest(tree: QuadTreeNode, gx: number, gy: number, maxDist: number, radiusMap: Map<number, number>): GraphNode | null {
-  let best: GraphNode | null = null;
-  let bestDist = maxDist;
-
-  function search(node: QuadTreeNode) {
-    const closestX = Math.max(node.x, Math.min(gx, node.x + node.width));
-    const closestY = Math.max(node.y, Math.min(gy, node.y + node.width));
-    const dx = gx - closestX;
-    const dy = gy - closestY;
-    if (Math.sqrt(dx * dx + dy * dy) > bestDist + 60) return;
-
-    if (node.isLeaf) {
-      for (const n of node.nodes) {
-        const r = radiusMap.get(n.id) || 12;
-        const ndx = gx - n.x;
-        const ndy = gy - n.y;
-        const dist = Math.sqrt(ndx * ndx + ndy * ndy);
-        if (dist < r + 5 && dist < bestDist) {
-          bestDist = dist;
-          best = n;
-        }
-      }
-      return;
-    }
-
-    for (const child of node.children) {
-      if (child) search(child);
-    }
-  }
-
-  if (tree.mass > 0) search(tree);
-  return best;
-}
-
-function parseHSL(hslStr: string): [number, number, number] {
-  const m = hslStr.match(/hsl[a]?\(\s*([\d.]+)\s*,\s*([\d.]+)%?\s*,\s*([\d.]+)%?\s*/);
-  if (!m) return [210, 10, 35];
-  return [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3])];
-}
-
-function hslToRgba(h: number, s: number, l: number, a: number): string {
-  s /= 100; l /= 100;
-  const k = (n: number) => (n + h / 30) % 12;
-  const aa = s * Math.min(l, 1 - l);
-  const f = (n: number) => l - aa * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
-  return `rgba(${Math.round(f(0) * 255)},${Math.round(f(8) * 255)},${Math.round(f(4) * 255)},${a})`;
-}
-
 function GraphTab({ inFullscreenModal = false, onOpenFullscreen }: { inFullscreenModal?: boolean; onOpenFullscreen?: () => void } = {}) {
   const { toast } = useToast();
   const { timezone } = useTimezone();
   const isMobile = useIsMobile();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [canvasReady, setCanvasReady] = useState(false);
-  const canvasCallbackRef = useCallback((el: HTMLCanvasElement | null) => {
-    (canvasRef as any).current = el;
-    setCanvasReady(!!el);
-  }, []);
-  const animRef = useRef<number>(0);
-  const simAnimRef = useRef<number>(0);
+  const graphRef = useRef<MemoryGraph3DHandle>(null);
   const [selectedNode, setSelectedNode] = useState<MemoryEntry | null>(null);
   const [graphStorageMode, setGraphStorageMode] = useState<GraphStorageMode>("vnext");
+  const [graphLinkSource, setGraphLinkSource] = useState<"links" | "sources">("links");
   const [removeFromGraphConfirmOpen, setRemoveFromGraphConfirmOpen] = useState(false);
+  const [hoveredNodeId, setHoveredNodeId] = useState<number | null>(null);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+  const isVnextGraph = graphStorageMode === "vnext";
+  const myelination = useMyelination();
 
-  // Publish the selected graph node so the focus widget's pageContext carries it.
   useFocusContext(
     selectedNode
       ? { entity: { type: "memory", id: String(selectedNode.id), label: selectedNode.title || undefined } }
-      : null
+      : null,
   );
-  const nodesRef = useRef<GraphNode[]>([]);
-  const myelination = useMyelination();
-
-  const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
-  const viewBoxRef = useRef({ x: 0, y: 0, w: 800, h: 600 });
-  const baseViewBoxRef = useRef({ x: 0, y: 0, w: 800, h: 600 });
-  const isPanningRef = useRef(false);
-  const panStart = useRef({ x: 0, y: 0, vbX: 0, vbY: 0 });
-  const touchStartRef = useRef({ x: 0, y: 0 });
-  const pinchStartDistRef = useRef(0);
-  const pinchStartVBRef = useRef({ x: 0, y: 0, w: 0, h: 0 });
-  const pinchMidRef = useRef({ x: 0, y: 0 });
-  const needsRedraw = useRef(true);
-  const [, forceRender] = useState(0);
-
-  const hoveredNodeIdRef = useRef<number | null>(null);
-  const hoveredLinkIdRef = useRef<number | null>(null);
-  const [hoveredNodeId, setHoveredNodeId] = useState<number | null>(null);
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-
-  const palaceRef = useRef<PalaceData | null>(null);
-  const nodeRadiusMapRef = useRef(new Map<number, number>());
-  const nodeFontSizeMapRef = useRef(new Map<number, number>());
-  const nodeDegreeRef = useRef(new Map<number, number>());
-  const maxDegreeRef = useRef(1);
-  const selectedNodeRef = useRef<MemoryEntry | null>(null);
-  selectedNodeRef.current = selectedNode;
-  const hitTreeRef = useRef<QuadTreeNode | null>(null);
-  const nodeMapRef = useRef(new Map<number, GraphNode>());
-  const [isPanning, setIsPanning] = useState(false);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        if (width > 0 && height > 0) {
-          setContainerSize({ width, height });
-          needsRedraw.current = true;
-        }
-      }
-    });
-    observer.observe(el);
-    const rect = el.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0) {
-      setContainerSize({ width: rect.width, height: rect.height });
-    }
-    return () => observer.disconnect();
-  }, []);
-
-  const { data: myelinStats } = useQuery<{
-    total: number;
-    withSummary: number;
-    withEmbedding: number;
-    needsSummary: number;
-    needsEmbedding: number;
-    needsProcessing: number;
-  }>({
-    queryKey: ["/api/memory/myelination/stats"],
-  });
-
-  const [graphLinkSource, setGraphLinkSource] = useState<"links" | "sources">("links");
-  const isVnextGraph = graphStorageMode === "vnext";
 
   const { data: palace, isLoading } = useQuery<PalaceData>({
     queryKey: ["/api/memory/graph", graphStorageMode, graphLinkSource],
@@ -3056,762 +2757,58 @@ function GraphTab({ inFullscreenModal = false, onOpenFullscreen }: { inFullscree
       const endpoint = isVnextGraph
         ? "/api/memory/vnext/graph"
         : `/api/memory/palace?linkSource=${graphLinkSource}`;
-      const res = await fetch(endpoint);
-      if (!res.ok) throw new Error(`Failed to fetch ${graphStorageMode} graph`);
-      return res.json();
+      const response = await fetch(endpoint);
+      if (!response.ok) throw new Error(`Failed to fetch ${graphStorageMode} graph`);
+      return response.json();
     },
   });
 
-  useEffect(() => {
-    palaceRef.current = palace || null;
-  }, [palace, graphStorageMode]);
+  const entryMap = useMemo(
+    () => new Map((palace?.entries || []).map((entry) => [entry.id, entry])),
+    [palace?.entries],
+  );
 
-  const entryMapRef = useRef(new Map<number, MemoryEntry>());
-  useEffect(() => {
-    const map = new Map<number, MemoryEntry>();
-    for (const e of (palace?.entries || [])) map.set(e.id, e);
-    entryMapRef.current = map;
-  }, [palace?.entries]);
-
-  useEffect(() => {
-    needsRedraw.current = true;
-  }, [selectedNode, hoveredNodeId]);
-
-  useEffect(() => {
-    if (!palace?.entries?.length) {
-      nodesRef.current = [];
-      needsRedraw.current = true;
-      return;
+  const graphNodes = useMemo<MemoryGraph3DNode[]>(() => {
+    const degree = new Map<number, number>();
+    for (const link of palace?.links || []) {
+      degree.set(link.fromId, (degree.get(link.fromId) || 0) + 1);
+      degree.set(link.toId, (degree.get(link.toId) || 0) + 1);
     }
-
-    const count = palace.entries.length;
-    const cw = containerSize.width || 800;
-    const ch = containerSize.height || 600;
-    const aspect = cw / Math.max(1, ch);
-    const spacingFactor = 2600;
-    const area = count * spacingFactor;
-    const w = Math.max(800, Math.sqrt(area * aspect));
-    const h = Math.max(600, Math.sqrt(area / aspect));
-    const baseRadius = Math.max(6, 18 - count / 20);
-    const baseFontSize = Math.max(5, 9 - count / 40);
-
-    const degreeMap = new Map<number, number>();
-    for (const link of (palace.links || [])) {
-      degreeMap.set(link.fromId, (degreeMap.get(link.fromId) || 0) + 1);
-      degreeMap.set(link.toId, (degreeMap.get(link.toId) || 0) + 1);
-    }
-    nodeDegreeRef.current = degreeMap;
-    let localMaxDegree = 1;
-    for (const d of degreeMap.values()) localMaxDegree = Math.max(localMaxDegree, d);
-    maxDegreeRef.current = localMaxDegree;
-
-    const radiusMap = new Map<number, number>();
-    const fontMap = new Map<number, number>();
-    for (const e of palace.entries) {
-      const d = degreeMap.get(e.id) || 0;
-      const ratio = d / Math.max(1, localMaxDegree);
-      radiusMap.set(e.id, baseRadius * 0.5 + Math.pow(ratio, 0.6) * baseRadius * 3.9);
-      fontMap.set(e.id, baseFontSize * 0.7 + Math.pow(ratio, 0.6) * baseFontSize * 1.95);
-    }
-    nodeRadiusMapRef.current = radiusMap;
-    nodeFontSizeMapRef.current = fontMap;
-
-    const initialNodes: GraphNode[] = palace.entries.map((e) => {
-      const meta = (e.metadata || {}) as Record<string, unknown>;
-      const visual = getGraphNodeVisual(e);
+    return (palace?.entries || []).map((entry) => {
+      const metadata = (entry.metadata || {}) as Record<string, unknown>;
       return {
-        id: e.id,
-        label: e.title || (e.summary || e.content || "").slice(0, 20),
-        icon: visual.icon,
-        source: visual.source,
-        x: w / 2 + (Math.random() - 0.5) * w * 0.8,
-        y: h / 2 + (Math.random() - 0.5) * h * 0.8,
-        vx: 0,
-        vy: 0,
-        decayScore: meta.decay_score != null ? Number(meta.decay_score) : 1.0,
-        pendingDeletion: !!meta.deletionScheduled,
+        id: entry.id,
+        source: getGraphNodeVisual(entry).source,
+        degree: degree.get(entry.id) || 0,
+        decayScore: metadata.decay_score == null ? 1 : Number(metadata.decay_score),
+        pendingDeletion: Boolean(metadata.deletionScheduled),
       };
     });
+  }, [palace]);
 
-    nodesRef.current = initialNodes;
+  const graphLinks = useMemo<MemoryGraph3DLink[]>(
+    () => (palace?.links || []).map((link) => ({ ...link })),
+    [palace?.links],
+  );
 
-    const initVB = { x: 0, y: 0, w, h };
-    viewBoxRef.current = initVB;
-    baseViewBoxRef.current = initVB;
+  const handleNodeSelect = useCallback((nodeId: number) => {
+    const entry = entryMap.get(nodeId);
+    if (entry) setSelectedNode(entry);
+  }, [entryMap]);
 
-    const links = palace.links || [];
-    const nodeMap = new Map(initialNodes.map(n => [n.id, n]));
-
-    let ticks = 0;
-    const maxTicks = 400;
-    const collisionPadding = 45;
-
-    function simulate() {
-      const ns = nodesRef.current;
-      if (ns.length === 0) return;
-      const warmup = Math.min(1, ticks / 40);
-      const cooldown = Math.max(0.01, 1 - ticks / maxTicks);
-      const alpha = warmup * cooldown;
-
-      const allXs = ns.map(n => n.x);
-      const allYs = ns.map(n => n.y);
-      const minX = Math.min(...allXs);
-      const maxX = Math.max(...allXs);
-      const minY = Math.min(...allYs);
-      const maxY = Math.max(...allYs);
-      const treeSize = Math.max(maxX - minX, maxY - minY, 100) * 1.5;
-      const treeCx = (minX + maxX) / 2 - treeSize / 2;
-      const treeCy = (minY + maxY) / 2 - treeSize / 2;
-      const tree = buildQuadTree(ns, treeCx, treeCy, treeSize);
-
-      for (const node of ns) {
-        applyBarnesHut(tree, node, 0.7, 13000, alpha);
-      }
-
-      hitTreeRef.current = tree;
-      nodeMapRef.current = new Map(ns.map(n => [n.id, n]));
-
-      const maxR = 60;
-      const cellSize = maxR * 2 + collisionPadding;
-      const grid = new Map<string, number[]>();
-      for (let i = 0; i < ns.length; i++) {
-        const cx = Math.floor(ns[i].x / cellSize);
-        const cy = Math.floor(ns[i].y / cellSize);
-        const key = `${cx},${cy}`;
-        const arr = grid.get(key);
-        if (arr) arr.push(i); else grid.set(key, [i]);
-      }
-      for (const [key, indices] of grid) {
-        const [cx, cy] = key.split(",").map(Number);
-        for (let ox = -1; ox <= 1; ox++) {
-          for (let oy = -1; oy <= 1; oy++) {
-            const nKey = `${cx + ox},${cy + oy}`;
-            const neighbors = grid.get(nKey);
-            if (!neighbors) continue;
-            for (const i of indices) {
-              for (const j of neighbors) {
-                if (j <= i) continue;
-                const dx = ns[j].x - ns[i].x;
-                const dy = ns[j].y - ns[i].y;
-                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-                const ri = radiusMap.get(ns[i].id) || 12;
-                const rj = radiusMap.get(ns[j].id) || 12;
-                const minSep = ri + rj + collisionPadding;
-                if (dist < minSep) {
-                  const push = ((minSep - dist) / minSep) * 12 * alpha;
-                  const px = (dx / dist) * push;
-                  const py = (dy / dist) * push;
-                  ns[i].vx -= px;
-                  ns[i].vy -= py;
-                  ns[j].vx += px;
-                  ns[j].vy += py;
-                }
-              }
-            }
-          }
-        }
-      }
-
-      for (const link of links) {
-        const a = nodeMap.get(link.fromId);
-        const b = nodeMap.get(link.toId);
-        if (!a || !b) continue;
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const str = Math.max(0.3, link.strength || 0.5);
-        const ra = radiusMap.get(a.id) || 12;
-        const rb = radiusMap.get(b.id) || 12;
-        const targetDist = ra + rb + 65 + (1 - str) * 100;
-        const force = (dist - targetDist) * 0.06 * str * alpha;
-        const fx = (dx / dist) * force;
-        const fy = (dy / dist) * force;
-        a.vx += fx;
-        a.vy += fy;
-        b.vx -= fx;
-        b.vy -= fy;
-      }
-
-      for (const n of ns) {
-        const cx = w / 2 - n.x;
-        const cy = h / 2 - n.y;
-        n.vx += cx * 0.0005 * alpha;
-        n.vy += cy * 0.0005 * alpha;
-      }
-
-      const maxVel = 30;
-      for (const n of ns) {
-        n.vx *= 0.7;
-        n.vy *= 0.7;
-        const speed = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
-        if (speed > maxVel) {
-          n.vx = (n.vx / speed) * maxVel;
-          n.vy = (n.vy / speed) * maxVel;
-        }
-        n.x += n.vx;
-        n.y += n.vy;
-      }
-
-      needsRedraw.current = true;
-      ticks++;
-
-      if (ticks < maxTicks) {
-        simAnimRef.current = requestAnimationFrame(simulate);
-      }
-    }
-
-    simAnimRef.current = requestAnimationFrame(simulate);
-    needsRedraw.current = true;
-    forceRender(r => r + 1);
-    return () => cancelAnimationFrame(simAnimRef.current);
-  }, [palace, graphStorageMode]);
+  const handleNodeHover = useCallback((nodeId: number | null, position?: { x: number; y: number }) => {
+    setHoveredNodeId(nodeId);
+    if (position) setTooltipPos(position);
+  }, []);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    function draw() {
-      animRef.current = requestAnimationFrame(draw);
-      if (!needsRedraw.current) return;
-      needsRedraw.current = false;
-
-      const cvs = canvasRef.current;
-      if (!cvs) return;
-      const context = cvs.getContext("2d");
-      if (!context) return;
-
-      const dpr = window.devicePixelRatio || 1;
-      const el = containerRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const cw = rect.width;
-      const ch = rect.height;
-
-      if (cvs.width !== Math.floor(cw * dpr) || cvs.height !== Math.floor(ch * dpr)) {
-        cvs.width = Math.floor(cw * dpr);
-        cvs.height = Math.floor(ch * dpr);
-        cvs.style.width = `${cw}px`;
-        cvs.style.height = `${ch}px`;
-      }
-
-      context.setTransform(dpr, 0, 0, dpr, 0, 0);
-      context.clearRect(0, 0, cw, ch);
-
-      const vb = viewBoxRef.current;
-      const bvb = baseViewBoxRef.current;
-      const scaleX = cw / vb.w;
-      const scaleY = ch / vb.h;
-      const ns = nodesRef.current;
-      const p = palaceRef.current;
-      const links = p?.links || [];
-      const zoomLevel = bvb.w / Math.max(1, vb.w);
-      const showAnyLabels = zoomLevel > 0.15;
-      const showIcons = zoomLevel > 0.35;
-      const showLinks = zoomLevel > 0.25;
-      const showWeakLinks = zoomLevel > 0.8;
-      const hovNodeId = hoveredNodeIdRef.current;
-      const hovLinkId = hoveredLinkIdRef.current;
-      const selNode = selectedNodeRef.current;
-      const hasInteraction = hovNodeId != null || selNode != null;
-
-      const hoveredNodeLinks = new Set<number>();
-      const selectedNodeLinks = new Set<number>();
-      if (hasInteraction) {
-        for (const link of links) {
-          if (hovNodeId != null && (link.fromId === hovNodeId || link.toId === hovNodeId)) {
-            hoveredNodeLinks.add(link.id);
-          }
-          if (selNode && (link.fromId === selNode.id || link.toId === selNode.id)) {
-            selectedNodeLinks.add(link.id);
-          }
-        }
-      }
-
-      const nodeMapLocal = new Map(ns.map(n => [n.id, n]));
-
-      function toScreen(gx: number, gy: number): [number, number] {
-        return [(gx - vb.x) * scaleX, (gy - vb.y) * scaleY];
-      }
-
-      if (showLinks) {
-        for (const link of links) {
-          if (!showWeakLinks && link.strength < 0.5) continue;
-          const from = nodeMapLocal.get(link.fromId);
-          const to = nodeMapLocal.get(link.toId);
-          if (!from || !to) continue;
-
-          const isHighlighted = hoveredNodeLinks.has(link.id) || selectedNodeLinks.has(link.id);
-          const isHovered = hovLinkId === link.id;
-          const dimmed = hasInteraction && !isHighlighted;
-
-          const str3 = link.strength * link.strength * link.strength;
-          let alpha: number;
-          if (isHovered || isHighlighted) {
-            alpha = 0.85;
-          } else if (dimmed) {
-            alpha = 0.03;
-          } else {
-            alpha = 0.06 + str3 * 0.32;
-          }
-
-          const lineWidth = isHighlighted
-            ? Math.max(1.5, link.strength * 2.5) * scaleX
-            : Math.max(0.3, str3 * 2) * scaleX;
-
-          const [sx1, sy1] = toScreen(from.x, from.y);
-          const [sx2, sy2] = toScreen(to.x, to.y);
-
-          const color = (isHovered || isHighlighted)
-            ? getLinkColor(link.relationship, alpha * 1.3)
-            : getLinkColor(link.relationship, alpha);
-
-          const dx = sx2 - sx1;
-          const dy = sy2 - sy1;
-          const len = Math.sqrt(dx * dx + dy * dy);
-          const curveSeed = ((link.fromId * 7 + link.toId * 13) % 17) / 17;
-          const curveDir = curveSeed > 0.5 ? 1 : -1;
-          const curveMag = 0.12 + curveSeed * 0.1;
-          const offset = Math.min(len * curveMag, 40) * curveDir;
-          const cpx = (sx1 + sx2) / 2 + (-dy / Math.max(1, len)) * offset;
-          const cpy = (sy1 + sy2) / 2 + (dx / Math.max(1, len)) * offset;
-
-          context.beginPath();
-          context.moveTo(sx1, sy1);
-          context.quadraticCurveTo(cpx, cpy, sx2, sy2);
-          context.strokeStyle = color;
-          context.lineWidth = lineWidth;
-          context.stroke();
-
-          if (isHovered && showAnyLabels) {
-            const baseFontSz = Math.max(5, 9 - (ns.length) / 40);
-            const labelFontSize = Math.max(8, (baseFontSz + 2) * scaleX);
-            context.font = `600 ${labelFontSize}px sans-serif`;
-            context.textAlign = "center";
-            context.textBaseline = "middle";
-            context.fillStyle = "rgba(255,255,255,0.95)";
-            context.fillText(link.relationship, cpx, cpy - 6 * scaleY);
-          }
-        }
-      }
-
-      for (const node of ns) {
-        const r = nodeRadiusMapRef.current.get(node.id) || 12;
-        const displayR = showIcons ? r : Math.max(3, r * 0.5);
-        const decayScore = node.decayScore ?? 1.0;
-        const finalR = displayR * Math.max(0.5, decayScore);
-        const isNodeHighlighted = hovNodeId === node.id || selNode?.id === node.id;
-        const nodeColor = sourceColorMap[node.source] || defaultNodeColor;
-        const isPendingDeletion = node.pendingDeletion === true;
-        const deletionDim = isPendingDeletion ? 0.4 : 1;
-        const opacity = (hasInteraction && !isNodeHighlighted ? 0.4 : 1) * Math.max(0.3, decayScore) * deletionDim;
-
-        const [sx, sy] = toScreen(node.x, node.y);
-        const screenR = finalR * scaleX;
-
-        if (sx + screenR < -10 || sx - screenR > cw + 10 || sy + screenR < -10 || sy - screenR > ch + 10) continue;
-
-        const pendingFill = isPendingDeletion && !isNodeHighlighted ? "hsl(0, 60%, 35%)" : null;
-        const pendingStroke = isPendingDeletion && !isNodeHighlighted ? "hsl(0, 70%, 50%)" : null;
-        const [h, s, l] = parseHSL(isNodeHighlighted ? "hsl(217, 91%, 60%)" : (pendingFill || nodeColor.fill));
-        const fillColor = hslToRgba(h, s, l, opacity);
-        const [sh, ss, sl] = parseHSL(isNodeHighlighted ? "hsl(217, 91%, 60%)" : (pendingStroke || nodeColor.stroke));
-        const strokeColor = hslToRgba(sh, ss, sl, opacity);
-
-        context.beginPath();
-        context.arc(sx, sy, screenR, 0, Math.PI * 2);
-        context.fillStyle = fillColor;
-        context.fill();
-        context.strokeStyle = strokeColor;
-        context.lineWidth = isNodeHighlighted ? 2 : (isPendingDeletion ? 2 : 1);
-        context.stroke();
-
-        if (isPendingDeletion && screenR > 4) {
-          context.setLineDash([3 * scaleX, 3 * scaleX]);
-          context.beginPath();
-          context.arc(sx, sy, screenR + 3 * scaleX, 0, Math.PI * 2);
-          context.strokeStyle = hslToRgba(0, 70, 50, opacity * 0.8);
-          context.lineWidth = 1.5;
-          context.stroke();
-          context.setLineDash([]);
-        }
-
-        const degree = nodeDegreeRef.current.get(node.id) || 0;
-        const ratio = degree / Math.max(1, maxDegreeRef.current);
-        const labelThreshold = 0.6 - ratio * 0.45;
-        const showNodeLabel = showAnyLabels && (zoomLevel > labelThreshold || isNodeHighlighted);
-
-        if (showNodeLabel) {
-          const fontSize = nodeFontSizeMapRef.current.get(node.id) || 7;
-          const screenFontSize = fontSize * scaleX;
-          if (screenFontSize < 3) continue;
-          const labelOpacity = hasInteraction && !isNodeHighlighted ? 0.2 : 1;
-          context.textAlign = "center";
-          context.textBaseline = "middle";
-          context.fillStyle = `rgba(255,255,255,${labelOpacity})`;
-          const words = node.label.split(/\s+/);
-          const lineHeight = screenFontSize * 1.15;
-          const totalHeight = words.length * lineHeight;
-          const startY = sy - totalHeight / 2;
-          context.font = `700 ${Math.max(7, screenFontSize * 1.15)}px sans-serif`;
-          context.fillText(node.icon, sx, startY);
-          context.font = `600 ${screenFontSize}px sans-serif`;
-          for (let wi = 0; wi < words.length; wi++) {
-            context.fillText(words[wi], sx, startY + (wi + 1) * lineHeight);
-          }
-        }
-      }
-    }
-
-    animRef.current = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(animRef.current);
-  }, [containerSize, canvasReady]);
-
-  const screenToGraph = useCallback((clientX: number, clientY: number): [number, number] => {
-    const el = containerRef.current;
-    if (!el) return [0, 0];
-    const rect = el.getBoundingClientRect();
-    const vb = viewBoxRef.current;
-    const gx = vb.x + ((clientX - rect.left) / rect.width) * vb.w;
-    const gy = vb.y + ((clientY - rect.top) / rect.height) * vb.h;
-    return [gx, gy];
-  }, []);
-
-  const findNearestNode = useCallback((gx: number, gy: number, maxDist: number): GraphNode | null => {
-    const tree = hitTreeRef.current;
-    if (tree) {
-      return queryQuadTreeNearest(tree, gx, gy, maxDist, nodeRadiusMapRef.current);
-    }
-    const ns = nodesRef.current;
-    let best: GraphNode | null = null;
-    let bestDist = maxDist;
-    for (const n of ns) {
-      const r = nodeRadiusMapRef.current.get(n.id) || 12;
-      const dx = gx - n.x;
-      const dy = gy - n.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < r + 5 && dist < bestDist) {
-        bestDist = dist;
-        best = n;
-      }
-    }
-    return best;
-  }, []);
-
-  const findNearestLink = useCallback((gx: number, gy: number, maxDist: number): MemoryLink | null => {
-    const p = palaceRef.current;
-    if (!p?.links) return null;
-    const nodeMapLocal = nodeMapRef.current;
-    let best: MemoryLink | null = null;
-    let bestDist = maxDist;
-    for (const link of p.links) {
-      const from = nodeMapLocal.get(link.fromId);
-      const to = nodeMapLocal.get(link.toId);
-      if (!from || !to) continue;
-      const dx = to.x - from.x;
-      const dy = to.y - from.y;
-      const len = Math.sqrt(dx * dx + dy * dy);
-      const curveSeed = ((link.fromId * 7 + link.toId * 13) % 17) / 17;
-      const curveDir = curveSeed > 0.5 ? 1 : -1;
-      const curveMag = 0.12 + curveSeed * 0.1;
-      const offset = Math.min(len * curveMag, 40) * curveDir;
-      const cpx = (from.x + to.x) / 2 + (-dy / Math.max(1, len)) * offset;
-      const cpy = (from.y + to.y) / 2 + (dx / Math.max(1, len)) * offset;
-      const d = pointToCurveDist(gx, gy, from.x, from.y, cpx, cpy, to.x, to.y);
-      if (d < bestDist) {
-        bestDist = d;
-        best = link;
-      }
-    }
-    return best;
-  }, []);
-
-  const handleCanvasMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (isPanningRef.current) {
-      const el = containerRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const vb = viewBoxRef.current;
-      const scaleX = vb.w / rect.width;
-      const scaleY = vb.h / rect.height;
-      const dx = (e.clientX - panStart.current.x) * scaleX;
-      const dy = (e.clientY - panStart.current.y) * scaleY;
-      viewBoxRef.current = {
-        ...vb,
-        x: panStart.current.vbX - dx,
-        y: panStart.current.vbY - dy,
-      };
-      needsRedraw.current = true;
-      return;
-    }
-
-    const [gx, gy] = screenToGraph(e.clientX, e.clientY);
-    const el = containerRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const vb = viewBoxRef.current;
-    const hitRadius = vb.w / rect.width * 12;
-
-    const nearNode = findNearestNode(gx, gy, hitRadius * 3);
-    if (nearNode) {
-      if (hoveredNodeIdRef.current !== nearNode.id) {
-        hoveredNodeIdRef.current = nearNode.id;
-        hoveredLinkIdRef.current = null;
-        const screenX = ((nearNode.x - vb.x) / vb.w) * rect.width;
-        const screenY = ((nearNode.y - vb.y) / vb.h) * rect.height;
-        setTooltipPos({ x: screenX + 16, y: screenY - 10 });
-        setHoveredNodeId(nearNode.id);
-        needsRedraw.current = true;
-      }
-      return;
-    }
-
-    const nearLink = findNearestLink(gx, gy, hitRadius * 2);
-    const newLinkId = nearLink?.id ?? null;
-    if (hoveredLinkIdRef.current !== newLinkId || hoveredNodeIdRef.current !== null) {
-      hoveredNodeIdRef.current = null;
-      hoveredLinkIdRef.current = newLinkId;
-      setHoveredNodeId(null);
-      needsRedraw.current = true;
-    }
-  }, [screenToGraph, findNearestNode, findNearestLink]);
-
-  const handleCanvasMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (e.button !== 0) return;
-    isPanningRef.current = true;
-    setIsPanning(true);
-    const vb = viewBoxRef.current;
-    panStart.current = { x: e.clientX, y: e.clientY, vbX: vb.x, vbY: vb.y };
-  }, []);
-
-  const handleCanvasMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const wasPanning = isPanningRef.current;
-    isPanningRef.current = false;
-    setIsPanning(false);
-
-    if (wasPanning) {
-      const dx = Math.abs(e.clientX - panStart.current.x);
-      const dy = Math.abs(e.clientY - panStart.current.y);
-      if (dx < 5 && dy < 5) {
-        const [gx, gy] = screenToGraph(e.clientX, e.clientY);
-        const el = containerRef.current;
-        if (el) {
-          const rect = el.getBoundingClientRect();
-          const vb = viewBoxRef.current;
-          const hitRadius = vb.w / rect.width * 12;
-          const nearNode = findNearestNode(gx, gy, hitRadius * 3);
-          if (nearNode) {
-            const entry = entryMapRef.current.get(nearNode.id);
-            if (entry) setSelectedNode(entry);
-          }
-        }
-      }
-    }
-  }, [screenToGraph, findNearestNode]);
-
-  const handleTouchStart = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
-    if (e.touches.length === 1) {
-      const t = e.touches[0];
-      isPanningRef.current = true;
-      setIsPanning(true);
-      const vb = viewBoxRef.current;
-      panStart.current = { x: t.clientX, y: t.clientY, vbX: vb.x, vbY: vb.y };
-      touchStartRef.current = { x: t.clientX, y: t.clientY };
-    } else if (e.touches.length === 2) {
-      isPanningRef.current = false;
-      setIsPanning(false);
-      const t0 = e.touches[0];
-      const t1 = e.touches[1];
-      const dx = t1.clientX - t0.clientX;
-      const dy = t1.clientY - t0.clientY;
-      pinchStartDistRef.current = Math.sqrt(dx * dx + dy * dy);
-      pinchStartVBRef.current = { ...viewBoxRef.current };
-      const el = containerRef.current;
-      if (el) {
-        const rect = el.getBoundingClientRect();
-        pinchMidRef.current = {
-          x: ((t0.clientX + t1.clientX) / 2 - rect.left) / rect.width,
-          y: ((t0.clientY + t1.clientY) / 2 - rect.top) / rect.height,
-        };
-      }
-    }
-  }, []);
-
-  const handleTouchMove = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
-    if (e.touches.length === 1 && isPanningRef.current) {
-      const t = e.touches[0];
-      const el = containerRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const vb = viewBoxRef.current;
-      const scaleX = vb.w / rect.width;
-      const scaleY = vb.h / rect.height;
-      const dx = (t.clientX - panStart.current.x) * scaleX;
-      const dy = (t.clientY - panStart.current.y) * scaleY;
-      viewBoxRef.current = {
-        ...vb,
-        x: panStart.current.vbX - dx,
-        y: panStart.current.vbY - dy,
-      };
-      needsRedraw.current = true;
-    } else if (e.touches.length === 2) {
-      const t0 = e.touches[0];
-      const t1 = e.touches[1];
-      const dx = t1.clientX - t0.clientX;
-      const dy = t1.clientY - t0.clientY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (pinchStartDistRef.current === 0 || dist <= 0) return;
-      const scaleFactor = pinchStartDistRef.current / dist;
-      const svb = pinchStartVBRef.current;
-      const newW = svb.w * scaleFactor;
-      const newH = svb.h * scaleFactor;
-      viewBoxRef.current = {
-        x: svb.x + (svb.w - newW) * pinchMidRef.current.x,
-        y: svb.y + (svb.h - newH) * pinchMidRef.current.y,
-        w: newW,
-        h: newH,
-      };
-      needsRedraw.current = true;
-    }
-  }, []);
-
-  const handleTouchEnd = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
-    if (e.touches.length === 0) {
-      const wasPanning = isPanningRef.current;
-      isPanningRef.current = false;
-      setIsPanning(false);
-
-      if (wasPanning && e.changedTouches.length > 0) {
-        const t = e.changedTouches[0];
-        const dx = Math.abs(t.clientX - touchStartRef.current.x);
-        const dy = Math.abs(t.clientY - touchStartRef.current.y);
-        if (dx < 10 && dy < 10) {
-          const [gx, gy] = screenToGraph(t.clientX, t.clientY);
-          const el = containerRef.current;
-          if (el) {
-            const rect = el.getBoundingClientRect();
-            const vb = viewBoxRef.current;
-            const hitRadius = vb.w / rect.width * 12;
-            const nearNode = findNearestNode(gx, gy, hitRadius * 3);
-            if (nearNode) {
-              const entry = entryMapRef.current.get(nearNode.id);
-              if (entry) setSelectedNode(entry);
-            }
-          }
-        }
-      }
-    } else if (e.touches.length === 1) {
-      const t = e.touches[0];
-      isPanningRef.current = true;
-      setIsPanning(true);
-      const vb = viewBoxRef.current;
-      panStart.current = { x: t.clientX, y: t.clientY, vbX: vb.x, vbY: vb.y };
-      touchStartRef.current = { x: t.clientX, y: t.clientY };
-    }
-  }, [screenToGraph, findNearestNode]);
-
-  const handleTouchCancel = useCallback(() => {
-    isPanningRef.current = false;
-    setIsPanning(false);
-  }, []);
-
-  const handleCanvasMouseLeave = useCallback(() => {
-    isPanningRef.current = false;
-    setIsPanning(false);
-    if (hoveredNodeIdRef.current !== null || hoveredLinkIdRef.current !== null) {
-      hoveredNodeIdRef.current = null;
-      hoveredLinkIdRef.current = null;
-      setHoveredNodeId(null);
-      needsRedraw.current = true;
-    }
-  }, []);
-
-  const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    const el = containerRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const vb = viewBoxRef.current;
-
-    const mouseXFrac = (e.clientX - rect.left) / rect.width;
-    const mouseYFrac = (e.clientY - rect.top) / rect.height;
-
-    const scaleFactor = e.deltaY > 0 ? 1.1 : 0.9;
-    const newW = vb.w * scaleFactor;
-    const newH = vb.h * scaleFactor;
-
-    viewBoxRef.current = {
-      x: vb.x + (vb.w - newW) * mouseXFrac,
-      y: vb.y + (vb.h - newH) * mouseYFrac,
-      w: newW,
-      h: newH,
-    };
-    needsRedraw.current = true;
-  }, []);
-
-  const handleZoomIn = useCallback(() => {
-    const vb = viewBoxRef.current;
-    const newW = vb.w * 0.8;
-    const newH = vb.h * 0.8;
-    viewBoxRef.current = {
-      x: vb.x + (vb.w - newW) / 2,
-      y: vb.y + (vb.h - newH) / 2,
-      w: newW,
-      h: newH,
-    };
-    needsRedraw.current = true;
-  }, []);
-
-  const handleZoomOut = useCallback(() => {
-    const vb = viewBoxRef.current;
-    const newW = vb.w * 1.25;
-    const newH = vb.h * 1.25;
-    viewBoxRef.current = {
-      x: vb.x + (vb.w - newW) / 2,
-      y: vb.y + (vb.h - newH) / 2,
-      w: newW,
-      h: newH,
-    };
-    needsRedraw.current = true;
-  }, []);
-
-  const handleFitToView = useCallback(() => {
-    const ns = nodesRef.current;
-    if (ns.length === 0) {
-      viewBoxRef.current = baseViewBoxRef.current;
-      needsRedraw.current = true;
-      return;
-    }
-    const xs = ns.map(n => n.x);
-    const ys = ns.map(n => n.y);
-    const minX = Math.min(...xs) - 80;
-    const maxX = Math.max(...xs) + 80;
-    const minY = Math.min(...ys) - 80;
-    const maxY = Math.max(...ys) + 80;
-    const bw = maxX - minX;
-    const bh = maxY - minY;
-    const fitAspect = containerSize.width / Math.max(1, containerSize.height);
-    let fitW = bw;
-    let fitH = bh;
-    if (bw / bh > fitAspect) {
-      fitH = fitW / fitAspect;
-    } else {
-      fitW = fitH * fitAspect;
-    }
-    viewBoxRef.current = {
-      x: (minX + maxX) / 2 - fitW / 2,
-      y: (minY + maxY) / 2 - fitH / 2,
-      w: fitW,
-      h: fitH,
-    };
-    needsRedraw.current = true;
-  }, [containerSize]);
+    if (selectedNode && !entryMap.has(selectedNode.id)) setSelectedNode(null);
+  }, [entryMap, selectedNode]);
 
   const removeFromGraphMutation = useMutation({
     mutationFn: async (id: number) => {
-      const res = await apiRequest("PATCH", `/api/memory/entries/${id}/graph`, { graphed: false });
-      return res.json();
+      const response = await apiRequest("PATCH", `/api/memory/entries/${id}/graph`, { graphed: false });
+      return response.json();
     },
     onSuccess: () => {
       toast({ title: "Removed from graph" });
@@ -3820,34 +2817,28 @@ function GraphTab({ inFullscreenModal = false, onOpenFullscreen }: { inFullscree
       queryClient.invalidateQueries({ queryKey: ["/api/memory/entries"] });
       setSelectedNode(null);
     },
-    onError: (err: Error) => {
-      toast({ title: "Remove failed", description: err.message, variant: "destructive" });
+    onError: (error: Error) => {
+      toast({ title: "Remove failed", description: error.message, variant: "destructive" });
     },
   });
 
   if (isLoading) {
-    return (
-      <div className="p-4">
-        <Skeleton className="h-[400px] w-full" />
-      </div>
-    );
+    return <div className="p-4"><Skeleton className="h-[400px] w-full" /></div>;
   }
 
   if (!palace?.entries?.length) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center py-12 px-6 text-center" data-testid="palace-empty">
-        <Share2 className="h-12 w-12 text-muted-foreground/30 mb-4" />
+        <Share2 className="h-6 w-6 text-muted-foreground/30 mb-4" />
         <h3 className="text-sm font-medium text-foreground mb-1">No memories in graph yet</h3>
-        <p className="text-xs text-muted-foreground/70 max-w-sm">
-{isVnextGraph
+        <p className="text-sm text-muted-foreground/70 max-w-sm">
+          {isVnextGraph
             ? "vNext claims appear here after extraction creates claim links or entity links."
             : "Promote long-term memories to the graph from the Working tab."}
         </p>
       </div>
     );
   }
-
-  const entryMap = entryMapRef.current;
 
   return (
     <div className={cn("flex flex-col", MEMORY_SHELL_CLASS)} data-testid="palace-tab">
@@ -3859,29 +2850,25 @@ function GraphTab({ inFullscreenModal = false, onOpenFullscreen }: { inFullscree
         </div>
       )}
 
-      <div className="flex flex-1 overflow-hidden min-h-0">
-        <div ref={containerRef} className="flex-1 relative p-2 overflow-hidden">
-          <canvas
-            ref={canvasCallbackRef}
-            className="w-full h-full"
-            style={{ cursor: isPanning ? "grabbing" : "grab", touchAction: "none" }}
-            data-testid="palace-graph"
-            onWheel={handleWheel}
-            onMouseDown={handleCanvasMouseDown}
-            onMouseMove={handleCanvasMouseMove}
-            onMouseUp={handleCanvasMouseUp}
-            onMouseLeave={handleCanvasMouseLeave}
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-            onTouchCancel={handleTouchCancel}
+      <div className="relative flex flex-1 overflow-hidden min-h-0">
+        <div className="flex-1 relative overflow-hidden bg-background">
+          <MemoryGraph3D
+            ref={graphRef}
+            nodes={graphNodes}
+            links={graphLinks}
+            selectedNodeId={selectedNode?.id ?? null}
+            onNodeSelect={handleNodeSelect}
+            onNodeHover={handleNodeHover}
           />
+
+          <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-md border border-card-border bg-card/80 px-3 py-2 text-xs text-muted-foreground backdrop-blur-sm">
+            Drag to orbit · Scroll to zoom · Select a node to inspect
+          </div>
 
           {hoveredNodeId !== null && (() => {
             const hovEntry = entryMap.get(hoveredNodeId);
             if (!hovEntry) return null;
             const displayTitle = hovEntry.title || hovEntry.summary?.split('\n')[0]?.slice(0, 60) || `Entry #${hovEntry.id}`;
-            const meta = (hovEntry.metadata || {}) as Record<string, unknown>;
             const visual = getGraphNodeVisual(hovEntry);
             const nodeType = visual.source;
             const referenceType = nodeType === "person" ? "person" : nodeType === "page" ? "page" : nodeType === "session" ? "session" : null;
@@ -3909,7 +2896,7 @@ function GraphTab({ inFullscreenModal = false, onOpenFullscreen }: { inFullscree
             );
           })()}
 
-          <div className="absolute bottom-3 right-3 flex flex-col gap-1" data-testid="palace-zoom-controls">
+          <div className="absolute bottom-3 left-3 z-10 flex flex-col gap-1" data-testid="palace-zoom-controls">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="icon" data-testid="button-graph-menu">
@@ -3931,14 +2918,17 @@ function GraphTab({ inFullscreenModal = false, onOpenFullscreen }: { inFullscree
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
-            <Button variant="outline" size="icon" onClick={handleZoomIn} data-testid="button-zoom-in">
+            <Button variant="outline" size="icon" onClick={() => graphRef.current?.zoomIn()} aria-label="Zoom in" title="Zoom in" data-testid="button-zoom-in">
               <ZoomIn className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="outline" size="icon" onClick={handleZoomOut} data-testid="button-zoom-out">
+            <Button variant="outline" size="icon" onClick={() => graphRef.current?.zoomOut()} aria-label="Zoom out" title="Zoom out" data-testid="button-zoom-out">
               <ZoomOut className="h-3.5 w-3.5" />
             </Button>
+            <Button variant="outline" size="icon" onClick={() => graphRef.current?.fitToView()} aria-label="Fit graph to view" title="Fit graph to view" data-testid="button-graph-fit">
+              <CircleDot className="h-3.5 w-3.5" />
+            </Button>
             {!isMobile && !inFullscreenModal && onOpenFullscreen && (
-              <Button variant="outline" size="icon" onClick={onOpenFullscreen} data-testid="button-graph-fullscreen">
+              <Button variant="outline" size="icon" onClick={onOpenFullscreen} aria-label="Open graph fullscreen" title="Open graph fullscreen" data-testid="button-graph-fullscreen">
                 <Maximize2 className="h-3.5 w-3.5" />
               </Button>
             )}
@@ -3946,7 +2936,7 @@ function GraphTab({ inFullscreenModal = false, onOpenFullscreen }: { inFullscree
         </div>
 
         {selectedNode && (
-          <div className={cn("w-80 shrink-0 border-l overflow-y-auto scrollbar-thin p-4 space-y-4", MEMORY_PANEL_CLASS)} data-testid="palace-detail-panel">
+          <div className={cn("absolute inset-x-2 bottom-2 z-20 max-h-[55%] overflow-y-auto scrollbar-thin border p-4 space-y-4 md:inset-y-2 md:left-auto md:right-2 md:w-80 md:max-h-none", MEMORY_PANEL_CLASS)} data-testid="palace-detail-panel">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
                 <SourceIcon source={selectedNode.source} className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -4050,7 +3040,7 @@ function GraphTab({ inFullscreenModal = false, onOpenFullscreen }: { inFullscree
                   const otherEntry = entryMap.get(otherId);
                   return otherEntry ? { link: l, entry: otherEntry } : null;
                 })
-                .filter(Boolean) as { link: any; entry: MemoryEntry }[];
+                .filter(Boolean) as { link: MemoryLink; entry: MemoryEntry }[];
               if (nodeLinks.length === 0) return null;
               return (
                 <div>
