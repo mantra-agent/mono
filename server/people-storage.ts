@@ -9,6 +9,9 @@ import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { mergePersonValues } from "./person-merge-values";
 import { performPersonMerge, type MergePeopleInput, type MergePeopleResult } from "./person-merge-service";
+import { isCivilDate } from "@shared/civil-date";
+import { toCivilDate } from "./civil-date";
+import { getTimezone } from "./timezone";
 
 const personScopeColumns = { scope: persons.scope, ownerUserId: persons.ownerUserId, accountId: persons.accountId, vaultId: persons.vaultId };
 const personMergeAliasScopeColumns = { scope: personMergeAliases.scope, ownerUserId: personMergeAliases.ownerUserId, accountId: personMergeAliases.accountId, vaultId: personMergeAliases.vaultId };
@@ -395,9 +398,16 @@ function responseDueSortValue(interaction: Interaction): number {
   return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY;
 }
 
-function selectResponseOwedInteraction(interactions: Interaction[]): Interaction | undefined {
+function isResponseOwedDue(interaction: Interaction, today: string): boolean {
+  if (!interaction.responseOwed || !interaction.responseDueBy) return Boolean(interaction.responseOwed);
+  if (!isCivilDate(interaction.responseDueBy)) return true;
+  return interaction.responseDueBy <= today;
+}
+
+function selectResponseOwedInteraction(interactions: Interaction[], now: number): Interaction | undefined {
+  const today = toCivilDate(new Date(now), getTimezone());
   return interactions
-    .filter(ix => ix.responseOwed)
+    .filter(ix => isResponseOwedDue(ix, today))
     .sort((a, b) => {
       const aDue = responseDueSortValue(a);
       const bDue = responseDueSortValue(b);
@@ -425,7 +435,7 @@ export function computeAgendaSignals(
     : 365;
 
   const weight = cabinetWeights[person.cabinetLevel] || 1;
-  const responseOwedIx = selectResponseOwedInteraction(person.interactions);
+  const responseOwedIx = selectResponseOwedInteraction(person.interactions, now);
   const openCommitments = person.networkProfile?.commitments?.filter(c => c.status === "open") || [];
   const temperature = person.relationshipProfile?.state?.temperature;
   const capitalBalance = person.networkProfile?.capital?.balance;
