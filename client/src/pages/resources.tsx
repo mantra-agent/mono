@@ -1,10 +1,18 @@
-import { useState, useEffect, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { useLocation } from "wouter";
+import {
+  AlertTriangle,
+  Gauge,
+  Radio,
+  Server,
+  Workflow,
+} from "lucide-react";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertTriangle } from "lucide-react";
 import { formatBytes } from "@/lib/format-utils";
+import { cn } from "@/lib/utils";
 import { usePageHeader } from "@/hooks/use-page-header";
 import {
   getSharedWSDiagnostics,
@@ -25,167 +33,6 @@ interface ResourcesResponse {
   failures?: string[];
   resources: SystemResourcesData | null;
 }
-
-function statusColor(status: Status): string {
-  if (status === "red") return "border-destructive/50 bg-destructive/5";
-  if (status === "amber") return "border-warning/50 bg-warning/5";
-  return "border-border bg-card";
-}
-
-function statusDot(status: Status): string {
-  if (status === "red") return "bg-destructive";
-  if (status === "amber") return "bg-warning";
-  return "bg-success";
-}
-
-function formatMs(ms: number | null): string {
-  if (ms === null || ms === undefined) return "—";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${Math.round(ms / 60_000)}m`;
-}
-
-function formatRelative(ts: number | null, now: number): string {
-  if (!ts) return "never";
-  const diff = now - ts;
-  if (diff < 1000) return "just now";
-  if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
-  if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
-  return `${Math.round(diff / 3_600_000)}h ago`;
-}
-
-function Sparkline({ values, status, testId }: { values: number[]; status: Status; testId: string }) {
-  if (!values || values.length < 2) return null;
-  const w = 80;
-  const h = 20;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const stepX = values.length > 1 ? w / (values.length - 1) : w;
-  const points = values
-    .map((v, i) => {
-      const x = i * stepX;
-      const y = h - ((v - min) / range) * h;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-  const stroke =
-    status === "red" ? "hsl(var(--destructive))" : status === "amber" ? "rgb(245 158 11)" : "rgb(16 185 129)";
-  return (
-    <svg
-      width={w}
-      height={h}
-      viewBox={`0 0 ${w} ${h}`}
-      preserveAspectRatio="none"
-      className="overflow-visible"
-      data-testid={testId}
-    >
-      <polyline fill="none" stroke={stroke} strokeWidth={1.25} strokeLinejoin="round" strokeLinecap="round" points={points} />
-    </svg>
-  );
-}
-
-function ResourceTile({
-  label,
-  value,
-  sub,
-  status,
-  testId,
-  history,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  status: Status;
-  testId: string;
-  history?: number[];
-}) {
-  return (
-    <div
-      className={`rounded-lg border p-3 ${statusColor(status)}`}
-      data-testid={testId}
-    >
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-xs text-muted-foreground">{label}</span>
-        <span className={`h-2 w-2 rounded-full ${statusDot(status)}`} />
-      </div>
-      <div className="flex items-end justify-between gap-2">
-        <div className="text-2xl font-semibold tabular-nums" data-testid={`${testId}-value`}>
-          {value}
-        </div>
-        {history && history.length >= 2 && (
-          <Sparkline values={history} status={status} testId={`${testId}-sparkline`} />
-        )}
-      </div>
-      {sub && (
-        <div className="text-xs text-muted-foreground mt-1 truncate" title={sub}>
-          {sub}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function dbStatus(d: SystemResourcesData["dbPool"]): Status {
-  if (d.waiting > THRESHOLDS.dbWaitingRed) return "red";
-  if (d.saturatedForMs > THRESHOLDS.dbSaturatedRedMs) return "red";
-  if (d.waiting >= THRESHOLDS.dbWaitingAmber) return "amber";
-  return "ok";
-}
-
-function inFlightStatus(i: SystemResourcesData["inFlight"]): Status {
-  if (i.total > i.highThreshold) return "red";
-  if (i.total > i.highThreshold * THRESHOLDS.inFlightAmberMultiplier) return "amber";
-  return "ok";
-}
-
-function zombieStatus(z: SystemResourcesData["zombies"]): Status {
-  if (z.active >= THRESHOLDS.zombieRed) return "red";
-  if (z.active >= THRESHOLDS.zombieAmber) return "amber";
-  return "ok";
-}
-
-function eventLoopStatus(e: SystemResourcesData["eventLoop"]): Status {
-  if (e.currentMs >= THRESHOLDS.eventLoopRedMs || e.maxMs >= THRESHOLDS.eventLoopRedMs) return "red";
-  if (e.currentMs >= THRESHOLDS.eventLoopAmberMs || e.maxMs >= THRESHOLDS.eventLoopAmberMs) return "amber";
-  return "ok";
-}
-
-function slowQueryStatus(s: SystemResourcesData["slowQueries"]): Status {
-  if (s.lastMinute >= THRESHOLDS.slowQueryRedPerMin) return "red";
-  if (s.lastMinute >= THRESHOLDS.slowQueryAmberPerMin) return "amber";
-  return "ok";
-}
-
-function divergenceStatus(d: SystemResourcesData["divergence"]): Status {
-  if (d.value >= THRESHOLDS.divergenceRed) return "red";
-  if (d.value >= THRESHOLDS.divergenceAmber) return "amber";
-  return "ok";
-}
-
-function executorStatus(e: SystemResourcesData["executor"]): Status {
-  return e.activeRuns > 0 ? "amber" : "ok";
-}
-
-function realtimeStatus(r: SystemResourcesData["realtime"]): Status {
-  if (r.staleSessionSocketLinks > 0 || r.subscriptionDivergence > 0) return "red";
-  return "ok";
-}
-
-function sharedWsStatus(d: SharedWSDiagnostics): Status {
-  if (d.duplicateOwnerRefs > 0 || d.refCount !== d.ownerCount) return "red";
-  if (d.refCount > 0 && d.physicalSockets === 0) return "amber";
-  return "ok";
-}
-
-function wsStateLabel(readyState: number): string {
-  if (readyState === WebSocket.CONNECTING) return "connecting";
-  if (readyState === WebSocket.OPEN) return "open";
-  if (readyState === WebSocket.CLOSING) return "closing";
-  return "closed";
-}
-
-// --- Performance diagnostics types & helpers (moved from Build > Performance) ---
 
 interface DiagnosticData {
   buildMode: string;
@@ -224,7 +71,53 @@ interface DiagnosticData {
   } | null;
 }
 
-function formatUptime(seconds: number) {
+function statusRank(status: Status): number {
+  if (status === "red") return 2;
+  if (status === "amber") return 1;
+  return 0;
+}
+
+function highestStatus(statuses: Status[]): Status {
+  return statuses.reduce<Status>((highest, status) => (
+    statusRank(status) > statusRank(highest) ? status : highest
+  ), "ok");
+}
+
+function statusLabel(status: Status): string {
+  if (status === "red") return "Critical";
+  if (status === "amber") return "Attention";
+  return "Healthy";
+}
+
+function statusDot(status: Status): string {
+  if (status === "red") return "bg-destructive";
+  if (status === "amber") return "bg-warning";
+  return "bg-success";
+}
+
+function statusText(status: Status): string {
+  if (status === "red") return "text-destructive";
+  if (status === "amber") return "text-warning-foreground dark:text-warning";
+  return "text-success";
+}
+
+function formatMs(ms: number | null): string {
+  if (ms === null || ms === undefined) return "—";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms / 60_000)}m`;
+}
+
+function formatRelative(ts: number | null, now: number): string {
+  if (!ts) return "never";
+  const diff = now - ts;
+  if (diff < 1000) return "just now";
+  if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
+  if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
+  return `${Math.round(diff / 3_600_000)}h ago`;
+}
+
+function formatUptime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);
@@ -233,65 +126,186 @@ function formatUptime(seconds: number) {
   return `${s}s`;
 }
 
-function lagSeverity(ms: number): "healthy" | "warning" | "critical" {
-  if (ms < 50) return "healthy";
-  if (ms < 200) return "warning";
-  return "critical";
+function cpuStatus(percent: number): Status {
+  if (percent >= 80) return "red";
+  if (percent >= 50) return "amber";
+  return "ok";
 }
 
-function severityColor(severity: "healthy" | "warning" | "critical") {
-  switch (severity) {
-    case "healthy": return "text-success";
-    case "warning": return "text-warning";
-    case "critical": return "text-error";
-  }
+function memoryStatus(memory: SystemResourcesData["memory"]): Status {
+  if (!memory.maxMemoryBytes) return "amber";
+  const ratio = memory.rss / memory.maxMemoryBytes;
+  if (ratio >= 0.85) return "red";
+  if (ratio >= 0.7) return "amber";
+  return "ok";
 }
 
-function PerfSparkline({ data, color, height = 32, className }: { data: number[]; color: string; height?: number; className?: string }) {
-  if (data.length < 2) return null;
-  const max = Math.max(...data, 1);
-  const min = Math.min(...data, 0);
-  const range = max - min || 1;
-  const w = 120;
-  const points = data.map((v, i) => {
-    const x = (i / (data.length - 1)) * w;
-    const y = height - ((v - min) / range) * (height - 4) - 2;
-    return `${x},${y}`;
-  }).join(" ");
-  const fillPoints = `0,${height} ${points} ${w},${height}`;
+function pingStatus(pingMs: number | null): Status {
+  if (pingMs === null) return "ok";
+  if (pingMs >= 500) return "red";
+  if (pingMs >= 200) return "amber";
+  return "ok";
+}
 
+function dbStatus(db: SystemResourcesData["dbPool"]): Status {
+  if (db.waiting > THRESHOLDS.dbWaitingRed || db.saturatedForMs > THRESHOLDS.dbSaturatedRedMs) return "red";
+  if (db.waiting >= THRESHOLDS.dbWaitingAmber) return "amber";
+  return "ok";
+}
+
+function inFlightStatus(inFlight: SystemResourcesData["inFlight"]): Status {
+  if (inFlight.total > inFlight.highThreshold) return "red";
+  if (inFlight.total > inFlight.highThreshold * THRESHOLDS.inFlightAmberMultiplier) return "amber";
+  return "ok";
+}
+
+function admissionStatus(admission: SystemResourcesData["admission"]): Status {
+  if (admission.queueDepth >= THRESHOLDS.admissionQueueRed) return "red";
+  if (admission.queueDepth >= THRESHOLDS.admissionQueueAmber) return "amber";
+  return "ok";
+}
+
+function zombieStatus(zombies: SystemResourcesData["zombies"]): Status {
+  if (zombies.active >= THRESHOLDS.zombieRed) return "red";
+  if (zombies.active >= THRESHOLDS.zombieAmber) return "amber";
+  return "ok";
+}
+
+function eventLoopStatus(eventLoop: SystemResourcesData["eventLoop"]): Status {
+  if (eventLoop.currentMs >= THRESHOLDS.eventLoopRedMs || eventLoop.maxMs >= THRESHOLDS.eventLoopRedMs) return "red";
+  if (eventLoop.currentMs >= THRESHOLDS.eventLoopAmberMs || eventLoop.maxMs >= THRESHOLDS.eventLoopAmberMs) return "amber";
+  return "ok";
+}
+
+function slowQueryStatus(slowQueries: SystemResourcesData["slowQueries"]): Status {
+  if (slowQueries.lastMinute >= THRESHOLDS.slowQueryRedPerMin) return "red";
+  if (slowQueries.lastMinute >= THRESHOLDS.slowQueryAmberPerMin) return "amber";
+  return "ok";
+}
+
+function divergenceStatus(divergence: SystemResourcesData["divergence"]): Status {
+  if (divergence.value >= THRESHOLDS.divergenceRed) return "red";
+  if (divergence.value >= THRESHOLDS.divergenceAmber) return "amber";
+  return "ok";
+}
+
+function executorStatus(executor: SystemResourcesData["executor"]): Status {
+  return executor.runs.some(run => run.aborted) ? "red" : "ok";
+}
+
+function longRunningStatus(longRunningQueries: SystemResourcesData["longRunningQueries"]): Status {
+  return longRunningQueries.rows.length > 0 ? "amber" : "ok";
+}
+
+function realtimeStatus(realtime: SystemResourcesData["realtime"]): Status {
+  if (realtime.staleSessionSocketLinks > 0 || realtime.subscriptionDivergence > 0) return "red";
+  return "ok";
+}
+
+function sharedWsStatus(diagnostics: SharedWSDiagnostics): Status {
+  if (diagnostics.duplicateOwnerRefs > 0 || diagnostics.refCount !== diagnostics.ownerCount) return "red";
+  if (diagnostics.refCount > 0 && diagnostics.physicalSockets === 0) return "amber";
+  return "ok";
+}
+
+function wsStateLabel(readyState: number): string {
+  if (readyState === WebSocket.CONNECTING) return "connecting";
+  if (readyState === WebSocket.OPEN) return "open";
+  if (readyState === WebSocket.CLOSING) return "closing";
+  return "closed";
+}
+
+function StatusValue({ status, value }: { status: Status; value?: string }) {
   return (
-    <svg viewBox={`0 0 ${w} ${height}`} className={`w-full ${className || ""}`} style={{ height }} preserveAspectRatio="none">
-      <polygon points={fillPoints} fill={color} fillOpacity="0.1" />
-      <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <span className={cn("inline-flex min-w-0 items-center justify-end gap-1.5 tabular-nums", statusText(status))}>
+      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDot(status))} aria-hidden="true" />
+      <span className="truncate">{value ?? statusLabel(status)}</span>
+    </span>
   );
 }
 
-function PerfTile({ label, value, sub, severity, sparkData, sparkColor, testId }: {
-  label: string;
+function NeutralValue({ children }: { children: ReactNode }) {
+  return <span className="truncate text-muted-foreground tabular-nums">{children}</span>;
+}
+
+function TreeChildren({ children }: { children: ReactNode }) {
+  return (
+    <div className="ml-1 border-l border-border pl-3">
+      {children}
+    </div>
+  );
+}
+
+function MetricRow({
+  label,
+  value,
+  status,
+  detail,
+  testId,
+}: {
+  label: ReactNode;
   value: string;
-  sub?: string;
-  severity?: "healthy" | "warning" | "critical";
-  sparkData?: number[];
-  sparkColor?: string;
-  testId: string;
+  status?: Status;
+  detail?: ReactNode;
+  testId?: string;
 }) {
   return (
-    <Card>
-      <CardContent className="pt-3 pb-2 px-3">
-        <span className="text-xs uppercase tracking-wider text-muted-foreground">{label}</span>
-        <div className="flex items-baseline gap-1.5 mt-0.5">
-          <span className={`text-lg font-semibold tabular-nums ${severity ? severityColor(severity) : ""}`} data-testid={testId}>
-            {value}
-          </span>
-        </div>
-        {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
-        {sparkData && sparkData.length > 1 && sparkColor && (
-          <PerfSparkline data={sparkData} color={sparkColor} className="mt-1" />
-        )}
-      </CardContent>
-    </Card>
+    <ProfileTreeRow
+      label={label}
+      hasValue
+      showEmpty
+      expandedContent={detail}
+      testId={testId}
+      mobileLayout="inline"
+    >
+      {status ? <StatusValue status={status} value={value} /> : <NeutralValue>{value}</NeutralValue>}
+    </ProfileTreeRow>
+  );
+}
+
+function BranchRow({
+  label,
+  icon,
+  status,
+  summary,
+  children,
+  defaultOpen = false,
+  testId,
+}: {
+  label: string;
+  icon: ReactNode;
+  status: Status;
+  summary: string;
+  children: ReactNode;
+  defaultOpen?: boolean;
+  testId?: string;
+}) {
+  return (
+    <ProfileTreeRow
+      label={<span className="font-medium text-foreground">{label}</span>}
+      icon={icon}
+      hasValue
+      showEmpty
+      expandedContent={<TreeChildren>{children}</TreeChildren>}
+      expandedContentClassName="pb-1 pl-5"
+      defaultOpen={defaultOpen || status !== "ok"}
+      testId={testId}
+      mobileLayout="inline"
+    >
+      <StatusValue status={status} value={summary} />
+    </ProfileTreeRow>
+  );
+}
+
+function DetailText({ children }: { children: ReactNode }) {
+  return <div className="break-words text-muted-foreground">{children}</div>;
+}
+
+function DetailList({ items }: { items: string[] }) {
+  return (
+    <div className="space-y-1 text-muted-foreground">
+      {items.map(item => <div key={item}>{item}</div>)}
+    </div>
   );
 }
 
@@ -312,17 +326,13 @@ export default function ResourcesPage() {
 
   if (isLoading) {
     return (
-      <div className="flex flex-col h-full min-w-0 overflow-hidden">
-        <div className="flex-1 overflow-y-auto min-h-0">
-          <div className="p-4 @sm:p-6">
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 @md:grid-cols-4 gap-3">
-                {[0, 1, 2, 3, 4, 5, 6, 7].map(i => (
-                  <Skeleton key={i} className="h-24 rounded-lg" />
-                ))}
-              </div>
-              <Skeleton className="h-48 rounded-lg" />
-            </div>
+      <div className="flex h-full min-w-0 flex-col overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 @sm:p-6">
+          <div className="mx-auto max-w-5xl space-y-2">
+            <Skeleton className="h-9 rounded-md" />
+            <Skeleton className="h-9 rounded-md" />
+            <Skeleton className="h-9 rounded-md" />
+            <Skeleton className="h-9 rounded-md" />
           </div>
         </div>
       </div>
@@ -332,20 +342,16 @@ export default function ResourcesPage() {
   if (isError || !data?.resources) {
     const msg = error instanceof Error ? error.message : data?.failures?.join("; ") || "Resources unavailable";
     return (
-      <div className="flex flex-col h-full min-w-0 overflow-hidden">
-        <div className="flex-1 overflow-y-auto min-h-0">
-          <div className="p-4 @sm:p-6">
-            <div
-              className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 flex items-start gap-3"
-              data-testid="resources-error-state"
-            >
-              <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-destructive">Couldn't load system resources</p>
-                <p className="text-xs text-muted-foreground mt-1 break-words" data-testid="text-resources-error">
-                  {msg}
-                </p>
-              </div>
+      <div className="flex h-full min-w-0 flex-col overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 @sm:p-6">
+          <div
+            className="mx-auto flex max-w-5xl items-start gap-3 rounded-lg border border-destructive/50 bg-destructive/5 p-4"
+            data-testid="resources-error-state"
+          >
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-destructive">Couldn't load system resources</p>
+              <p className="mt-1 break-words text-xs text-muted-foreground" data-testid="text-resources-error">{msg}</p>
             </div>
           </div>
         </div>
@@ -353,65 +359,16 @@ export default function ResourcesPage() {
     );
   }
 
-  const r = data.resources;
   const now = Date.now();
-  const isStale = dataUpdatedAt > 0 && now - dataUpdatedAt > STALE_AFTER_MS;
-
-  return <ResourcesView resources={r} failures={data.failures} now={now} isStale={isStale} />;
+  return (
+    <ResourcesView
+      resources={data.resources}
+      failures={data.failures}
+      now={now}
+      isStale={dataUpdatedAt > 0 && now - dataUpdatedAt > STALE_AFTER_MS}
+    />
+  );
 }
-
-const HISTORY_CAP = 60;
-type HistoryKey = "dbWaiting" | "inFlight" | "eventLoop" | "executorActive" | "zombies" | "eventSockets" | "sessionSockets" | "sessionSocketLinks" | "sessionOwnerLinks";
-type Histories = Record<HistoryKey, number[]>;
-const EMPTY_HISTORIES: Histories = {
-  dbWaiting: [],
-  inFlight: [],
-  eventLoop: [],
-  executorActive: [],
-  zombies: [],
-  eventSockets: [],
-  sessionSockets: [],
-  sessionSocketLinks: [],
-  sessionOwnerLinks: [],
-};
-
-const historyStore = (() => {
-  let state: Histories = EMPTY_HISTORIES;
-  let lastGeneratedAt: number | null = null;
-  const listeners = new Set<() => void>();
-  const pushCapped = (arr: number[], v: number) => {
-    const next = arr.length >= HISTORY_CAP ? arr.slice(arr.length - HISTORY_CAP + 1) : arr.slice();
-    next.push(v);
-    return next;
-  };
-  return {
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-    getSnapshot(): Histories {
-      return state;
-    },
-    record(generatedAt: number, sample: Record<HistoryKey, number>) {
-      if (!generatedAt || generatedAt === lastGeneratedAt) return;
-      lastGeneratedAt = generatedAt;
-      state = {
-        dbWaiting: pushCapped(state.dbWaiting, sample.dbWaiting),
-        inFlight: pushCapped(state.inFlight, sample.inFlight),
-        eventLoop: pushCapped(state.eventLoop, sample.eventLoop),
-        executorActive: pushCapped(state.executorActive, sample.executorActive),
-        zombies: pushCapped(state.zombies, sample.zombies),
-        eventSockets: pushCapped(state.eventSockets, sample.eventSockets),
-        sessionSockets: pushCapped(state.sessionSockets, sample.sessionSockets),
-        sessionSocketLinks: pushCapped(state.sessionSocketLinks, sample.sessionSocketLinks),
-        sessionOwnerLinks: pushCapped(state.sessionOwnerLinks, sample.sessionOwnerLinks),
-      };
-      listeners.forEach(l => l());
-    },
-  };
-})();
 
 function ResourcesView({
   resources: r,
@@ -424,16 +381,13 @@ function ResourcesView({
   now: number;
   isStale: boolean;
 }) {
-  const histories = useSyncExternalStore(historyStore.subscribe, historyStore.getSnapshot, historyStore.getSnapshot);
+  const [, setLocation] = useLocation();
   const clientWs = useSyncExternalStore(
     subscribeSharedWSDiagnostics,
     getSharedWSDiagnostics,
     getSharedWSDiagnostics,
   );
-
-  // --- Performance diagnostics (CPU, Memory, Event Loop, Ping, Uptime, Req/s) ---
   const [pingMs, setPingMs] = useState<number | null>(null);
-  const [pingHistory, setPingHistory] = useState<number[]>([]);
 
   const { data: diagData } = useQuery<DiagnosticData>({
     queryKey: ["/api/diagnostics/performance"],
@@ -446,358 +400,332 @@ function ResourcesView({
       try {
         const start = performance.now();
         await fetch("/api/health", { cache: "no-store" });
-        const ms = Math.round(performance.now() - start);
-        if (mounted) {
-          setPingMs(ms);
-          setPingHistory(prev => {
-            const next = [...prev, ms];
-            return next.length > 60 ? next.slice(-60) : next;
-          });
-        }
-      } catch {}
+        if (mounted) setPingMs(Math.round(performance.now() - start));
+      } catch {
+        if (mounted) setPingMs(null);
+      }
     };
     measurePing();
     const id = setInterval(measurePing, 3000);
-    return () => { mounted = false; clearInterval(id); };
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
   }, []);
 
-  const rt = diagData?.realtime;
+  const cpuPercent = diagData?.realtime.cpu.current ?? 0;
+  const serviceStatuses: Status[] = [eventLoopStatus(r.eventLoop), memoryStatus(r.memory)];
+  if (diagData) serviceStatuses.push(cpuStatus(cpuPercent), pingStatus(pingMs));
+  const serviceStatus = highestStatus(serviceStatuses);
 
-  useEffect(() => {
-    historyStore.record(r.generatedAt, {
-      dbWaiting: r.dbPool.waiting,
-      inFlight: r.inFlight.total,
-      eventLoop: r.eventLoop.currentMs,
-      executorActive: r.executor.activeRuns,
-      zombies: r.zombies.active,
-      eventSockets: r.realtime.eventSockets,
-      sessionSockets: r.realtime.sessionSockets,
-      sessionSocketLinks: r.realtime.sessionSocketLinks,
-      sessionOwnerLinks: r.realtime.sessionOwnerLinks,
-    });
-  }, [r.generatedAt, r.dbPool.waiting, r.inFlight.total, r.eventLoop.currentMs, r.executor.activeRuns, r.zombies.active, r.realtime.eventSockets, r.realtime.sessionSockets, r.realtime.sessionSocketLinks, r.realtime.sessionOwnerLinks]);
+  const workStatuses: Status[] = [
+    dbStatus(r.dbPool),
+    inFlightStatus(r.inFlight),
+    admissionStatus(r.admission),
+    slowQueryStatus(r.slowQueries),
+    longRunningStatus(r.longRunningQueries),
+    executorStatus(r.executor),
+    zombieStatus(r.zombies),
+    divergenceStatus(r.divergence),
+  ];
+  const workStatus = highestStatus(workStatuses);
+  const transportStatus = realtimeStatus(r.realtime);
+  const browserStatus = sharedWsStatus(clientWs);
+  const realtimeBranchStatus = highestStatus([transportStatus, browserStatus]);
 
-  const inFlightSubs = Object.entries(r.inFlight.bySubsystem)
-    .filter(([, v]) => v > 0)
+  const collectionStatus: Status = failures?.length ? "amber" : "ok";
+  const freshnessStatus: Status = isStale ? "amber" : "ok";
+  const overallStatus = highestStatus([
+    serviceStatus,
+    workStatus,
+    realtimeBranchStatus,
+    collectionStatus,
+    freshnessStatus,
+  ]);
+  const attentionCount = [
+    ...serviceStatuses,
+    ...workStatuses,
+    transportStatus,
+    browserStatus,
+    collectionStatus,
+    freshnessStatus,
+  ].filter(status => status !== "ok").length;
+
+  const memoryPercent = r.memory.maxMemoryBytes
+    ? r.memory.rssUsedPct ?? Math.round((r.memory.rss / r.memory.maxMemoryBytes) * 1000) / 10
+    : null;
+  const inFlightSubsystems = Object.entries(r.inFlight.bySubsystem)
+    .filter(([, value]) => value > 0)
     .sort((a, b) => b[1] - a[1])
-    .map(([k, v]) => `${k}=${v}`)
-    .join(", ");
+    .map(([name, value]) => `${name}: ${value}`);
+  const admissionTiers = Object.entries(r.admission.tierCounts)
+    .filter(([, value]) => value > 0)
+    .map(([tier, value]) => `${tier}: ${value}`);
+  const queuedTiers = Object.entries(r.admission.queuedByTier)
+    .filter(([, value]) => value > 0)
+    .map(([tier, value]) => `${tier}: ${value} queued`);
+
+  const healthSummary = overallStatus === "ok"
+    ? "No systems need attention"
+    : `${attentionCount} signal${attentionCount === 1 ? "" : "s"} need attention`;
 
   return (
-    <div className="flex flex-col h-full min-w-0 overflow-hidden">
-      <div className="flex-1 overflow-y-auto min-h-0 p-4 @sm:p-6 scrollbar-thin">
-        <div className="space-y-4">
-        {/* Server performance tiles */}
-        {diagData && (
-          <>
-            <div className="grid grid-cols-2 @lg:grid-cols-3 gap-3">
-              <PerfTile label="CPU" value={`${rt?.cpu.current ?? 0}%`} sub={`${diagData.system.cpuCores} cores / load ${diagData.system.loadAvg[0]}`} severity={(rt?.cpu.current ?? 0) < 50 ? "healthy" : (rt?.cpu.current ?? 0) < 80 ? "warning" : "critical"} sparkData={rt?.cpu.history} sparkColor="hsl(var(--primary))" testId="text-cpu-usage" />
-              <PerfTile
-                label="Memory (RSS)"
-                value={formatBytes(diagData.memoryUsage.rss)}
-                sub={diagData.memoryUsage.maxMemoryBytes
-                  ? `${diagData.memoryUsage.rssUsedPct ?? Math.round((diagData.memoryUsage.rss / diagData.memoryUsage.maxMemoryBytes) * 1000) / 10}% of ${formatBytes(diagData.memoryUsage.maxMemoryBytes)} · ${diagData.memoryUsage.limitSource ?? "limit"}`
-                  : `heap ${formatBytes(diagData.memoryUsage.heapUsed)} / ${formatBytes(diagData.memoryUsage.heapTotal)} · limit unavailable`}
-                severity={diagData.memoryUsage.maxMemoryBytes
-                  ? (diagData.memoryUsage.rss / diagData.memoryUsage.maxMemoryBytes) < 0.70 ? "healthy" : (diagData.memoryUsage.rss / diagData.memoryUsage.maxMemoryBytes) < 0.85 ? "warning" : "critical"
-                  : undefined}
-                sparkData={rt?.rss.history}
-                sparkColor="hsl(160, 60%, 45%)"
-                testId="text-memory-usage"
-              />
-              <PerfTile label="Event Loop" value={`${formatMs(diagData.eventLoopLag.current)}`} sub={`avg ${formatMs(diagData.eventLoopLag.avg)} / peak ${formatMs(diagData.eventLoopLag.max)}`} severity={lagSeverity(diagData.eventLoopLag.current)} sparkData={rt?.eventLoop.history} sparkColor="hsl(30, 80%, 55%)" testId="text-event-loop-lag" />
-              <PerfTile label="Ping" value={pingMs !== null ? `${pingMs}ms` : "..."} sub="round-trip to server" severity={pingMs === null ? "healthy" : pingMs < 200 ? "healthy" : pingMs < 500 ? "warning" : "critical"} sparkData={pingHistory} sparkColor="hsl(280, 65%, 60%)" testId="text-ping" />
-              <PerfTile label="Uptime" value={formatUptime(diagData.uptime)} testId="text-uptime" />
-              <PerfTile label="Req/s" value={String(rt?.rps.current ?? 0)} sparkData={rt?.rps.history} sparkColor="hsl(200, 70%, 50%)" testId="text-rps" />
+    <div className="flex h-full min-w-0 flex-col overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-y-auto p-4 scrollbar-thin @sm:p-6">
+        <div className="mx-auto max-w-5xl">
+          <div className="mb-2 flex items-center justify-between gap-3 px-2">
+            <div className="min-w-0 text-xs text-muted-foreground" data-testid="text-resources-updated-at">
+              Updated {formatRelative(r.generatedAt, now)}
+              {isStale ? " · stale" : ""}
             </div>
-          </>
-        )}
-
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold">Realtime Connections</h2>
-            {(realtimeStatus(r.realtime) !== "ok" || sharedWsStatus(clientWs) !== "ok") && (
-              <Badge variant="outline" className="text-xs border-warning/50 text-warning-foreground dark:text-warning">
-                inspect
-              </Badge>
-            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 shrink-0 px-2 text-xs text-muted-foreground"
+              onClick={() => setLocation("/system?tab=logs")}
+            >
+              View logs
+            </Button>
           </div>
-          <div className="text-xs text-muted-foreground">process lifetime + this tab</div>
-        </div>
 
-        <div className="grid grid-cols-2 @md:grid-cols-4 gap-3">
-          <ResourceTile
-            label="Event Sockets"
-            value={String(r.realtime.eventSockets)}
-            sub={`server physical sockets · peak ${r.realtime.peakEventSockets}`}
-            status={realtimeStatus(r.realtime)}
-            testId="tile-event-sockets"
-            history={histories.eventSockets}
-          />
-          <ResourceTile
-            label="Session Sockets"
-            value={String(r.realtime.sessionSockets)}
-            sub={`${r.realtime.sessionSocketLinks} socket↔session links · peak ${r.realtime.peakSessionSockets}`}
-            status={realtimeStatus(r.realtime)}
-            testId="tile-session-sockets"
-            history={histories.sessionSockets}
-          />
-          <ResourceTile
-            label="Session Owners"
-            value={String(r.realtime.sessionOwnerLinks)}
-            sub={`${r.realtime.uniqueSubscribedSessions} sessions · ${r.realtime.pendingSubscribedSessions} retained without live runtime`}
-            status={realtimeStatus(r.realtime)}
-            testId="tile-session-owners"
-            history={histories.sessionOwnerLinks}
-          />
-          <ResourceTile
-            label="Stale / Diverged"
-            value={`${r.realtime.staleSessionSocketLinks} / ${r.realtime.subscriptionDivergence}`}
-            sub={`stale socket links / registry delta · peak links ${r.realtime.peakSessionSocketLinks}`}
-            status={realtimeStatus(r.realtime)}
-            testId="tile-session-divergence"
-            history={histories.sessionSocketLinks}
-          />
-        </div>
+          <ProfileTreeRow
+            label={<span className="font-semibold text-foreground">System health</span>}
+            icon={<Gauge className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            expandedContent={(
+              <TreeChildren>
+                <div className="px-2 pb-2 text-xs text-muted-foreground" data-testid="text-health-summary">
+                  {healthSummary}
+                </div>
 
-        <Card data-testid="card-client-websocket">
-          <CardHeader className="py-3">
-            <CardTitle className="text-sm font-semibold flex items-center justify-between gap-2">
-              <span>This Browser Tab</span>
-              <Badge variant="outline" className="font-normal">{wsStateLabel(clientWs.readyState)}</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid grid-cols-2 @md:grid-cols-4 gap-3">
-              <ResourceTile
-                label="Physical Socket"
-                value={String(clientWs.physicalSockets)}
-                sub={`${clientWs.reconnects} reconnects · ${clientWs.forcedReconnects} liveness resets`}
-                status={sharedWsStatus(clientWs)}
-                testId="tile-client-physical-socket"
-              />
-              <ResourceTile
-                label="React Owners"
-                value={String(clientWs.ownerCount)}
-                sub={`refs ${clientWs.refCount} · peak ${clientWs.peakOwnerCount} owners / ${clientWs.peakRefCount} refs`}
-                status={sharedWsStatus(clientWs)}
-                testId="tile-client-ws-owners"
-              />
-              <ResourceTile
-                label="Session Owners"
-                value={String(clientWs.streamOwners)}
-                sub="owners with active session subscriptions"
-                status={sharedWsStatus(clientWs)}
-                testId="tile-client-session-owners"
-              />
-              <ResourceTile
-                label="Handlers"
-                value={`${clientWs.messageHandlers} / ${clientWs.lifecycleHandlers}`}
-                sub={`message / lifecycle · duplicate refs ${clientWs.duplicateOwnerRefs}`}
-                status={sharedWsStatus(clientWs)}
-                testId="tile-client-ws-handlers"
-              />
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Server churn since boot: {r.realtime.connectionsOpened} opened / {r.realtime.connectionsClosed} closed / {r.realtime.abnormalDisconnects} abnormal · oldest event socket {formatMs(r.realtime.oldestEventSocketAgeMs)}.
-            </div>
-            {Object.keys(clientWs.ownerRefs).length > 0 && (
-              <div className="flex flex-wrap gap-1.5" data-testid="client-ws-owner-list">
-                {Object.entries(clientWs.ownerRefs).map(([owner, count]) => (
-                  <Badge key={owner} variant="secondary" className="font-mono text-[10px] font-normal">
-                    {owner}{count > 1 ? ` ×${count}` : ""}
-                  </Badge>
-                ))}
-              </div>
+                {isStale && (
+                  <MetricRow
+                    label="Data freshness"
+                    value="Stale"
+                    status="amber"
+                    detail={<DetailText>Resource data is older than {Math.round(STALE_AFTER_MS / 1000)} seconds.</DetailText>}
+                    testId="badge-stale"
+                  />
+                )}
+
+                {failures && failures.length > 0 && (
+                  <MetricRow
+                    label="Collection failures"
+                    value={`${failures.length} partial`}
+                    status="amber"
+                    detail={<DetailList items={failures} />}
+                    testId="resources-partial-failure-banner"
+                  />
+                )}
+
+                <BranchRow
+                  label="Service"
+                  icon={<Server className="h-3.5 w-3.5" />}
+                  status={serviceStatus}
+                  summary={statusLabel(serviceStatus)}
+                  testId="branch-service"
+                >
+                  {diagData && (
+                    <MetricRow
+                      label="CPU"
+                      value={`${cpuPercent}%`}
+                      status={cpuStatus(cpuPercent)}
+                      detail={<DetailText>{diagData.system.cpuCores} cores · load {diagData.system.loadAvg.join(" / ")}</DetailText>}
+                      testId="text-cpu-usage"
+                    />
+                  )}
+                  <MetricRow
+                    label="Memory"
+                    value={memoryPercent === null ? formatBytes(r.memory.rss) : `${memoryPercent}%`}
+                    status={memoryStatus(r.memory)}
+                    detail={(
+                      <DetailText>
+                        RSS {formatBytes(r.memory.rss)} · heap {formatBytes(r.memory.heapUsed)} / {formatBytes(r.memory.heapTotal)}
+                        {r.memory.maxMemoryBytes ? ` · limit ${formatBytes(r.memory.maxMemoryBytes)} (${r.memory.limitSource ?? "unknown"})` : " · watchdog limit unavailable"}
+                      </DetailText>
+                    )}
+                    testId="text-memory-usage"
+                  />
+                  <MetricRow
+                    label="Event loop"
+                    value={formatMs(r.eventLoop.currentMs)}
+                    status={eventLoopStatus(r.eventLoop)}
+                    detail={<DetailText>Average {formatMs(r.eventLoop.avgMs)} · peak {formatMs(r.eventLoop.maxMs)}</DetailText>}
+                    testId="text-event-loop-lag"
+                  />
+                  {diagData && (
+                    <>
+                      <MetricRow
+                        label="Requests"
+                        value={`${diagData.realtime.rps.current}/s`}
+                        detail={<DetailText>Current request throughput.</DetailText>}
+                        testId="text-rps"
+                      />
+                      <MetricRow
+                        label="Ping"
+                        value={pingMs === null ? "Measuring" : `${pingMs}ms`}
+                        status={pingStatus(pingMs)}
+                        detail={<DetailText>Round trip from this browser to the service health endpoint.</DetailText>}
+                        testId="text-ping"
+                      />
+                      <MetricRow
+                        label="Uptime"
+                        value={formatUptime(diagData.uptime)}
+                        detail={<DetailText>{diagData.buildMode} · {diagData.system.platform} {diagData.system.arch}</DetailText>}
+                        testId="text-uptime"
+                      />
+                    </>
+                  )}
+                </BranchRow>
+
+                <BranchRow
+                  label="Work"
+                  icon={<Workflow className="h-3.5 w-3.5" />}
+                  status={workStatus}
+                  summary={`${r.executor.activeRuns} running · ${r.admission.queueDepth} queued`}
+                  testId="branch-work"
+                >
+                  <MetricRow
+                    label="Database"
+                    value={`${r.dbPool.waiting} waiting`}
+                    status={dbStatus(r.dbPool)}
+                    detail={(
+                      <DetailText>
+                        {r.dbPool.total} total · {r.dbPool.idle} idle
+                        {r.dbPool.general && r.dbPool.voice ? ` · general ${r.dbPool.general.total}/${r.dbPool.general.idle}/${r.dbPool.general.waiting} · voice ${r.dbPool.voice.total}/${r.dbPool.voice.idle}/${r.dbPool.voice.waiting}` : ""}
+                        {r.dbPool.saturatedForMs > 0 ? ` · saturated ${formatMs(r.dbPool.saturatedForMs)}` : ""}
+                      </DetailText>
+                    )}
+                    testId="tile-db-pool"
+                  />
+                  <MetricRow
+                    label="In-flight queries"
+                    value={String(r.inFlight.total)}
+                    status={inFlightStatus(r.inFlight)}
+                    detail={<DetailList items={[`High threshold: ${r.inFlight.highThreshold}`, ...(inFlightSubsystems.length ? inFlightSubsystems : ["No active query subsystems."])]} />}
+                    testId="tile-in-flight"
+                  />
+                  <MetricRow
+                    label="Admission queue"
+                    value={`${r.admission.queueDepth} queued`}
+                    status={admissionStatus(r.admission)}
+                    detail={(
+                      <DetailList
+                        items={[
+                          `State: ${r.admission.state}`,
+                          ...(admissionTiers.length ? admissionTiers : ["No occupied slots."]),
+                          ...queuedTiers,
+                          ...r.admission.slots.map(slot => `${slot.tier} · ${formatMs(slot.ageMs)} · ${slot.runId}${slot.yieldRequested ? " · yield requested" : ""}`),
+                        ]}
+                      />
+                    )}
+                    testId="tile-admission"
+                  />
+                  <MetricRow
+                    label="Executor runs"
+                    value={String(r.executor.activeRuns)}
+                    status={executorStatus(r.executor)}
+                    detail={(
+                      <DetailList
+                        items={r.executor.runs.length
+                          ? [...r.executor.runs]
+                            .sort((a, b) => b.ageMs - a.ageMs)
+                            .map(run => `${run.activity ?? "Run"} · ${run.model ?? "model unknown"} · ${formatMs(run.ageMs)} · ${run.aborted ? "aborted" : "running"} · ${run.runId}`)
+                          : ["No active runs."]}
+                      />
+                    )}
+                    testId="tile-executor"
+                  />
+                  <MetricRow
+                    label="Slow queries"
+                    value={`${r.slowQueries.lastMinute} / min`}
+                    status={slowQueryStatus(r.slowQueries)}
+                    detail={<DetailText>{r.slowQueries.lastTenMinutes} in 10m · last {r.slowQueries.lastSlowDurationMs ? formatMs(r.slowQueries.lastSlowDurationMs) : "—"} {formatRelative(r.slowQueries.lastSlowAt, now)}</DetailText>}
+                    testId="tile-slow-queries"
+                  />
+                  <MetricRow
+                    label="Long-running queries"
+                    value={String(r.longRunningQueries.rows.length)}
+                    status={longRunningStatus(r.longRunningQueries)}
+                    detail={(
+                      <DetailList
+                        items={r.longRunningQueries.rows.length
+                          ? r.longRunningQueries.rows.map(row => `${row.subsystem} · ${row.label ?? "unlabelled"} · ${formatMs(row.ageMs)}`)
+                          : [`No queries over ${formatMs(r.longRunningQueries.thresholdMs)}.`]}
+                      />
+                    )}
+                    testId="card-long-running-queries"
+                  />
+                  <MetricRow
+                    label="Zombie runs"
+                    value={String(r.zombies.active)}
+                    status={zombieStatus(r.zombies)}
+                    detail={<DetailText>Peak since boot: {r.zombies.peak}</DetailText>}
+                    testId="tile-zombies"
+                  />
+                  <MetricRow
+                    label="Books vs reality"
+                    value={String(r.divergence.value)}
+                    status={divergenceStatus(r.divergence)}
+                    detail={<DetailText>{r.divergence.detail}</DetailText>}
+                    testId="tile-divergence"
+                  />
+                </BranchRow>
+
+                <BranchRow
+                  label="Realtime"
+                  icon={<Radio className="h-3.5 w-3.5" />}
+                  status={realtimeBranchStatus}
+                  summary={`${r.realtime.uniqueSubscribedSessions} sessions · ${r.realtime.staleSessionSocketLinks} stale`}
+                  testId="branch-realtime"
+                >
+                  <MetricRow
+                    label="Server transport"
+                    value={`${r.realtime.eventSockets + r.realtime.sessionSockets} sockets`}
+                    status={transportStatus}
+                    detail={(
+                      <DetailList
+                        items={[
+                          `${r.realtime.eventSockets} event sockets · peak ${r.realtime.peakEventSockets}`,
+                          `${r.realtime.sessionSockets} session sockets · peak ${r.realtime.peakSessionSockets}`,
+                          `${r.realtime.sessionSocketLinks} socket links · ${r.realtime.sessionOwnerLinks} owner links`,
+                          `${r.realtime.liveSessions} live · ${r.realtime.streamingSessions} streaming · ${r.realtime.pendingSubscribedSessions} retained`,
+                          `${r.realtime.staleSessionSocketLinks} stale · ${r.realtime.subscriptionDivergence} diverged`,
+                          `${r.realtime.connectionsOpened} opened · ${r.realtime.connectionsClosed} closed · ${r.realtime.abnormalDisconnects} abnormal`,
+                          `Oldest event socket: ${formatMs(r.realtime.oldestEventSocketAgeMs)}`,
+                        ]}
+                      />
+                    )}
+                    testId="tile-event-sockets"
+                  />
+                  <MetricRow
+                    label="This browser"
+                    value={wsStateLabel(clientWs.readyState)}
+                    status={browserStatus}
+                    detail={(
+                      <DetailList
+                        items={[
+                          `${clientWs.physicalSockets} physical socket · ${clientWs.reconnects} reconnects · ${clientWs.forcedReconnects} liveness resets`,
+                          `${clientWs.ownerCount} owners · ${clientWs.refCount} refs · ${clientWs.duplicateOwnerRefs} duplicate refs`,
+                          `${clientWs.streamOwners} session owners`,
+                          `${clientWs.messageHandlers} message handlers · ${clientWs.lifecycleHandlers} lifecycle handlers`,
+                          ...Object.entries(clientWs.ownerRefs).map(([owner, count]) => `${owner}${count > 1 ? ` ×${count}` : ""}`),
+                        ]}
+                      />
+                    )}
+                    testId="card-client-websocket"
+                  />
+                </BranchRow>
+              </TreeChildren>
             )}
-          </CardContent>
-        </Card>
-
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold">Live Resources</h2>
-            {isStale && (
-              <Badge variant="outline" className="text-xs border-warning/50 text-warning-foreground dark:text-warning" data-testid="badge-stale">
-                stale
-              </Badge>
-            )}
-          </div>
-          <div className="text-xs text-muted-foreground" data-testid="text-resources-updated-at">
-            updated {formatRelative(r.generatedAt, now)}
-          </div>
-        </div>
-
-        {failures && failures.length > 0 && (
-          <div
-            className="flex items-start gap-2 p-2 rounded-md border border-warning/40 bg-warning/5"
-            data-testid="resources-partial-failure-banner"
+            expandedContentClassName="pb-1 pl-5"
+            defaultOpen
+            testId="tree-system-health"
+            mobileLayout="inline"
           >
-            <AlertTriangle className="h-3.5 w-3.5 text-warning-foreground shrink-0 mt-0.5" />
-            <p className="text-xs text-muted-foreground break-words">{failures.join("; ")}</p>
-          </div>
-        )}
-
-        <div className="grid grid-cols-2 @md:grid-cols-4 gap-3">
-          <ResourceTile
-            label="DB Pool"
-            value={`${r.dbPool.total} / ${r.dbPool.idle} / ${r.dbPool.waiting}`}
-            sub={`${r.dbPool.general && r.dbPool.voice ? `general ${r.dbPool.general.total}/${r.dbPool.general.idle}/${r.dbPool.general.waiting} · voice ${r.dbPool.voice.total}/${r.dbPool.voice.idle}/${r.dbPool.voice.waiting}` : "total / idle / waiting"}${r.dbPool.saturatedForMs > 0 ? ` · saturated ${formatMs(r.dbPool.saturatedForMs)}` : ""}`}
-            status={dbStatus(r.dbPool)}
-            testId="tile-db-pool"
-            history={histories.dbWaiting}
-          />
-          <ResourceTile
-            label="In-flight Queries"
-            value={String(r.inFlight.total)}
-            sub={`high at ${r.inFlight.highThreshold}${inFlightSubs ? ` · ${inFlightSubs}` : ""}`}
-            status={inFlightStatus(r.inFlight)}
-            testId="tile-in-flight"
-            history={histories.inFlight}
-          />
-          <ResourceTile
-            label="Slow Queries"
-            value={`${r.slowQueries.lastMinute} / ${r.slowQueries.lastTenMinutes}`}
-            sub={`last 1m / 10m · last ${r.slowQueries.lastSlowDurationMs ? formatMs(r.slowQueries.lastSlowDurationMs) : "—"} ${formatRelative(r.slowQueries.lastSlowAt, now)}`}
-            status={slowQueryStatus(r.slowQueries)}
-            testId="tile-slow-queries"
-          />
-          <ResourceTile
-            label="Event Loop"
-            value={`${r.eventLoop.currentMs.toFixed(1)}ms`}
-            sub={`max ${r.eventLoop.maxMs.toFixed(1)}ms · avg ${r.eventLoop.avgMs.toFixed(1)}ms`}
-            status={eventLoopStatus(r.eventLoop)}
-            testId="tile-event-loop"
-            history={histories.eventLoop}
-          />
-          <ResourceTile
-            label="Memory Limit"
-            value={r.memory.maxMemoryBytes ? formatBytes(r.memory.maxMemoryBytes) : "disabled"}
-            sub={r.memory.maxMemoryBytes
-              ? `RSS ${formatBytes(r.memory.rss)} · ${r.memory.rssUsedPct ?? Math.round((r.memory.rss / r.memory.maxMemoryBytes) * 1000) / 10}% · ${r.memory.limitSource ?? "limit"}`
-              : "watchdog limit unavailable"}
-            status={!r.memory.maxMemoryBytes ? "amber" : (r.memory.rss / r.memory.maxMemoryBytes) >= 0.85 ? "red" : (r.memory.rss / r.memory.maxMemoryBytes) >= 0.70 ? "amber" : "ok"}
-            testId="tile-memory-limit"
-          />
-          <ResourceTile
-            label="Executor"
-            value={String(r.executor.activeRuns)}
-            sub="active runs"
-            status={executorStatus(r.executor)}
-            testId="tile-executor"
-            history={histories.executorActive}
-          />
-          <ResourceTile
-            label="Zombies"
-            value={`${r.zombies.active}`}
-            sub={`peak ${r.zombies.peak}`}
-            status={zombieStatus(r.zombies)}
-            testId="tile-zombies"
-            history={histories.zombies}
-          />
-          <ResourceTile
-            label="Books vs Reality"
-            value={String(r.divergence.value)}
-            sub={r.divergence.detail}
-            status={divergenceStatus(r.divergence)}
-            testId="tile-divergence"
-          />
-        </div>
-
-        <Card data-testid="card-long-running-queries">
-          <CardHeader className="py-3">
-            <CardTitle className="text-sm font-semibold">
-              Long-running Queries{" "}
-              <span className="text-muted-foreground font-normal">
-                ({r.longRunningQueries.rows.length}) · &gt; {formatMs(r.longRunningQueries.thresholdMs)} in-flight
-              </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {r.longRunningQueries.rows.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No queries past threshold.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-left text-muted-foreground border-b border-border">
-                      <th className="py-1.5 pr-3 font-medium">Subsystem</th>
-                      <th className="py-1.5 pr-3 font-medium">Label</th>
-                      <th className="py-1.5 pr-3 font-medium text-right">Age</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {r.longRunningQueries.rows.map((row, idx) => (
-                      <tr
-                        key={`${row.subsystem}-${idx}`}
-                        className="border-b border-border/50"
-                        data-testid={`row-long-running-query-${idx}`}
-                      >
-                        <td className="py-1.5 pr-3">
-                          <Badge variant="outline" className="text-xs px-1.5 py-0" data-testid={`text-long-running-subsystem-${idx}`}>
-                            {row.subsystem}
-                          </Badge>
-                        </td>
-                        <td className="py-1.5 pr-3 text-muted-foreground truncate max-w-[280px]" title={row.label ?? ""} data-testid={`text-long-running-label-${idx}`}>
-                          {row.label ?? "—"}
-                        </td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums" data-testid={`text-long-running-age-${idx}`}>
-                          {formatMs(row.ageMs)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card data-testid="card-executor-runs">
-          <CardHeader className="py-3">
-            <CardTitle className="text-sm font-semibold">
-              Executor Runs <span className="text-muted-foreground font-normal">({r.executor.runs.length})</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {r.executor.runs.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No active runs.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-left text-muted-foreground border-b border-border">
-                      <th className="py-1.5 pr-3 font-medium">Run ID</th>
-                      <th className="py-1.5 pr-3 font-medium">Session</th>
-                      <th className="py-1.5 pr-3 font-medium">Model</th>
-                      <th className="py-1.5 pr-3 font-medium">Activity</th>
-                      <th className="py-1.5 pr-3 font-medium text-right">Age</th>
-                      <th className="py-1.5 pr-3 font-medium">State</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...r.executor.runs].sort((a, b) => b.ageMs - a.ageMs).map(run => (
-                      <tr key={run.runId} className="border-b border-border/50" data-testid={`row-executor-run-${run.runId}`}>
-                        <td className="py-1.5 pr-3 font-mono truncate max-w-[160px]" title={run.runId}>{run.runId}</td>
-                        <td className="py-1.5 pr-3 font-mono text-muted-foreground truncate max-w-[160px]" title={run.sessionId ?? ""}>{run.sessionId ?? "—"}</td>
-                        <td className="py-1.5 pr-3 font-mono">{run.model ?? "—"}</td>
-                        <td className="py-1.5 pr-3">{run.activity ?? "—"}</td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums">{formatMs(run.ageMs)}</td>
-                        <td className="py-1.5 pr-3">
-                          {run.aborted ? (
-                            <Badge variant="destructive" className="text-xs px-1.5 py-0">aborted</Badge>
-                          ) : (
-                            <Badge variant="secondary" className="text-xs px-1.5 py-0">running</Badge>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
+            <StatusValue status={overallStatus} value={statusLabel(overallStatus)} />
+          </ProfileTreeRow>
         </div>
       </div>
     </div>
