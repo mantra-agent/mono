@@ -112,6 +112,7 @@ import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
 import { SimpleTextFrame } from "@/components/home/simple-text-frame";
 import { MemoryGraph3D, type MemoryGraph3DHandle, type MemoryGraph3DLink, type MemoryGraph3DNode } from "@/components/memory/memory-graph-3d";
+import { MemorySourceIcon } from "@/components/memory/memory-source-icon";
 
 const SOURCE_REF_TYPE_MAP: Record<string, "session" | "page"> = {
   session: "session",
@@ -723,31 +724,7 @@ function LayerBadge({ layer }: { layer: string }) {
 }
 
 function SourceIcon({ source, className = "h-2.5 w-2.5" }: { source: string; className?: string }) {
-  switch (source) {
-    case "chat":
-    case "chat_journal":
-    case "conversation":
-      return <MessageSquare className={className} />;
-    case "manual": return <Pencil className={className} />;
-    case "voice": return <Mic className={className} />;
-    case "insight": return <Lightbulb className={className} />;
-    case "workspace":
-    case "file":
-      return <FolderOpen className={className} />;
-    case "library":
-    case "page":
-      return <FileText className={className} />;
-    case "session": return <MessageSquare className={className} />;
-    case "claim": return <Lightbulb className={className} />;
-    case "goal": return <Target className={className} />;
-    case "person": return <User className={className} />;
-    case "project": return <Database className={className} />;
-    case "issue": return <AlertCircle className={className} />;
-    case "web": return <Globe className={className} />;
-    case "belief": return <Sparkles className={className} />;
-    case "tool": return <Wrench className={className} />;
-    default: return <FileText className={className} />;
-  }
+  return <MemorySourceIcon source={source} className={className} />;
 }
 
 function getGraphNodeVisual(entry: MemoryEntry): { icon: string; source: string; label: string; Icon: typeof FileText } {
@@ -2776,9 +2753,12 @@ function GraphTab({ inFullscreenModal = false, onOpenFullscreen }: { inFullscree
     }
     return (palace?.entries || []).map((entry) => {
       const metadata = (entry.metadata || {}) as Record<string, unknown>;
+      const visual = getGraphNodeVisual(entry);
+      const label = entry.title?.trim() || entry.oneLiner?.trim() || entry.content.trim().slice(0, 72) || visual.label;
       return {
         id: entry.id,
-        source: getGraphNodeVisual(entry).source,
+        source: visual.source,
+        label,
         degree: degree.get(entry.id) || 0,
         decayScore: metadata.decay_score == null ? 1 : Number(metadata.decay_score),
         pendingDeletion: Boolean(metadata.deletionScheduled),
