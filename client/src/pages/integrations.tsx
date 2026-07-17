@@ -5483,6 +5483,8 @@ type OpenAIReasoningMode = "standard" | "pro";
 type OpenAIReasoningSummary = "auto" | "concise" | "detailed" | "none";
 type OpenAIVerbosity = "low" | "medium" | "high";
 type OpenAIServiceTier = "auto" | "default" | "flex" | "priority";
+type ClaudeCliEffort = "low" | "medium" | "high" | "max";
+type ClaudeCliThinkingMode = "adaptive" | "disabled";
 type TierModelConfig = string | {
   model: string;
   reasoningEffort?: OpenAIReasoningEffort;
@@ -5491,10 +5493,13 @@ type TierModelConfig = string | {
   verbosity?: OpenAIVerbosity;
   serviceTier?: OpenAIServiceTier;
   maxOutputTokens?: number;
+  effort?: ClaudeCliEffort;
+  thinkingMode?: ClaudeCliThinkingMode;
+  maxTurns?: number;
 };
 interface ModelConnectorDetail {
   id: number; provider: "anthropic" | "openai" | "openai-subscription" | "claude-cli"; label: string; status: string;
-  config: { kind?: "model" | "openai-models"; tierMappings: Record<SemanticTier, TierModelConfig> };
+  config: { kind?: "model" | "openai-models" | "claude-cli-models"; tierMappings: Record<SemanticTier, TierModelConfig> };
 }
 interface ModelProviderDetail {
   id: string;
@@ -5504,6 +5509,7 @@ interface ModelProviderDetail {
     contextWindow?: number;
     maxTokens?: number;
     reasoning?: boolean;
+    thinkingLevel?: "extended" | "basic" | "none";
     thinkingDescription?: string;
     supportsReasoningEffort?: boolean;
   }>;
@@ -5520,6 +5526,8 @@ const REASONING_EFFORTS: readonly OpenAIReasoningEffort[] = ["none", "minimal", 
 const REASONING_SUMMARIES: readonly OpenAIReasoningSummary[] = ["auto", "concise", "detailed", "none"];
 const VERBOSITIES: readonly OpenAIVerbosity[] = ["low", "medium", "high"];
 const SERVICE_TIERS: readonly OpenAIServiceTier[] = ["auto", "default", "flex", "priority"];
+const CLAUDE_EFFORT_OPTIONS = ["activity-default", "low", "medium", "high", "max"] as const;
+const CLAUDE_THINKING_OPTIONS = ["activity-default", "adaptive", "disabled"] as const;
 
 function tierConfigModel(value: TierModelConfig): string {
   return typeof value === "string" ? value : value.model;
@@ -5700,6 +5708,122 @@ function OpenAIConnectorTree({ connector, models, title }: { connector: ModelCon
   </Card>;
 }
 
+function ClaudeConnectorTree({ connector, models, title }: { connector: ModelConnectorDetail; models: ModelProviderDetail["models"]; title: string }) {
+  const { toast } = useToast();
+  const mutation = useMutation({
+    mutationFn: async (tierMappings: Record<SemanticTier, Exclude<TierModelConfig, string>>) => (await apiRequest("PATCH", `/api/models/connectors/${connector.id}`, { tierMappings })).json(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/models/connectors"] }),
+    onError: (error: Error) => toast({ title: "Claude mapping failed", description: error.message, variant: "destructive" }),
+  });
+  const mappings = Object.fromEntries(MODEL_TIERS.map((tier) => [tier, normalizeTierConfig(connector.provider, connector.config.tierMappings[tier])])) as Record<SemanticTier, Exclude<TierModelConfig, string>>;
+  const updateTier = (tier: SemanticTier, patch: Partial<Exclude<TierModelConfig, string>>) => {
+    const next = { ...mappings[tier], ...patch };
+    mutation.mutate({ ...mappings, [tier]: next });
+  };
+
+  return <Card className="overflow-hidden min-w-0">
+    <CardHeader className="pb-2">
+      <CardTitle className="text-base font-semibold">{title}</CardTitle>
+      <p className="text-sm text-muted-foreground">Claude subscription tiers. Configure the model, adaptive reasoning effort, thinking mode, and maximum agent turns. Mantra continues to own prompts, tools, permissions, and sessions.</p>
+    </CardHeader>
+    <CardContent className="p-0">
+      <IntegrationTreeSection label="Subscription connector" initialOpen testIdPrefix="claude-cli">
+        {MODEL_TIERS.map((tier) => {
+          const config = mappings[tier];
+          const model = models.find((item) => item.id === config.model);
+          const supportsThinking = model?.thinkingLevel !== "none" && model !== undefined;
+          return <ProfileTreeRow
+            key={tier}
+            label={<span className="capitalize">{tier}</span>}
+            icon={tier === "fast" ? <Zap className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            defaultOpen={tier === "balanced"}
+            testId={`claude-cli-${tier}-tier`}
+            expandedContentClassName="space-y-3"
+            expandedContent={<div className="space-y-3">
+              <p className="text-xs text-muted-foreground">{TIER_COPY[tier]}</p>
+              <OpenAISettingSelect
+                label="Model"
+                value={config.model}
+                options={models.map((item) => item.id)}
+                description="Required. Moving aliases follow Claude Code updates; versioned choices stay pinned."
+                disabled={mutation.isPending || models.length === 0}
+                onChange={(modelId) => {
+                  const nextModel = models.find((item) => item.id === modelId);
+                  const nextSupportsThinking = nextModel?.thinkingLevel !== "none";
+                  updateTier(tier, {
+                    model: modelId,
+                    effort: nextSupportsThinking ? config.effort : undefined,
+                    thinkingMode: nextSupportsThinking ? config.thinkingMode : "disabled",
+                  });
+                }}
+              />
+              <div className="grid gap-2 @sm:grid-cols-2">
+                <div className="rounded-md border border-border/60 px-3 py-2">
+                  <div className="text-xs font-medium">Subscription</div>
+                  <div className="mt-1 text-xs text-muted-foreground">Usage is governed by the connected Claude plan.</div>
+                </div>
+                <div className="rounded-md border border-border/60 px-3 py-2">
+                  <div className="text-xs font-medium">Context</div>
+                  <div className="mt-1 text-xs text-muted-foreground">{formatTokenCount(model?.contextWindow)} · {model?.thinkingDescription ?? "provider default"}</div>
+                </div>
+              </div>
+              <OpenAISettingSelect
+                label="Effort"
+                value={(config.effort ?? "activity-default") as typeof CLAUDE_EFFORT_OPTIONS[number]}
+                options={CLAUDE_EFFORT_OPTIONS}
+                description="Activity default inherits Mantra's resolved thinking. Higher effort increases reasoning depth and latency."
+                disabled={mutation.isPending || !supportsThinking || config.thinkingMode === "disabled"}
+                onChange={(value) => updateTier(tier, { effort: value === "activity-default" ? undefined : value })}
+              />
+              <OpenAISettingSelect
+                label="Thinking"
+                value={(config.thinkingMode ?? "activity-default") as typeof CLAUDE_THINKING_OPTIONS[number]}
+                options={CLAUDE_THINKING_OPTIONS}
+                description="Activity default inherits Mantra. Adaptive lets Claude choose its reasoning depth."
+                disabled={mutation.isPending || !supportsThinking}
+                onChange={(value) => updateTier(tier, {
+                  thinkingMode: value === "activity-default" ? undefined : value,
+                  effort: value === "disabled" ? undefined : config.effort,
+                })}
+              />
+              <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
+                <div className="min-w-0">
+                  <Label className="text-xs text-muted-foreground">Max turns</Label>
+                  <p className="text-xs text-muted-foreground/80">Optional. Limits total Claude agent turns for one request.</p>
+                </div>
+                <Input
+                  key={`${tier}-${config.maxTurns ?? "default"}`}
+                  type="number"
+                  min={1}
+                  max={1000}
+                  defaultValue={config.maxTurns ?? ""}
+                  placeholder="Activity default"
+                  disabled={mutation.isPending}
+                  onBlur={(event) => {
+                    const raw = event.target.value.trim();
+                    if (!raw) {
+                      if (config.maxTurns !== undefined) updateTier(tier, { maxTurns: undefined });
+                      return;
+                    }
+                    const value = Number.parseInt(raw, 10);
+                    if (Number.isFinite(value) && value >= 1 && value <= 1000 && value !== config.maxTurns) updateTier(tier, { maxTurns: value });
+                  }}
+                  className="h-8 font-mono text-xs"
+                />
+              </div>
+            </div>}
+          >
+            <span className="truncate font-mono">{model?.name ?? config.model}</span>
+          </ProfileTreeRow>;
+        })}
+        {models.length === 0 && <p className="px-2 py-1.5 text-sm text-muted-foreground">No models are currently available for this connector.</p>}
+      </IntegrationTreeSection>
+    </CardContent>
+  </Card>;
+}
+
 function ModelConnectorSection({ provider, title = "Model mapping" }: { provider: "anthropic" | "openai" | "openai-subscription" | "claude-cli"; title?: string }) {
   const { toast } = useToast();
   const { data } = useQuery<{ connectors: ModelConnectorDetail[] }>({ queryKey: ["/api/models/connectors"] });
@@ -5716,6 +5840,7 @@ function ModelConnectorSection({ provider, title = "Model mapping" }: { provider
     <CardContent><p className="text-sm text-muted-foreground">No connector is configured for this provider.</p></CardContent>
   </Card>;
   if (isOpenAIProvider(provider)) return <OpenAIConnectorTree connector={connector} models={models} title={title} />;
+  if (provider === "claude-cli") return <ClaudeConnectorTree connector={connector} models={models} title={title} />;
   return <Card className="overflow-hidden min-w-0">
     <CardHeader><CardTitle className="text-base font-semibold">{title}</CardTitle></CardHeader>
     <CardContent className="space-y-3">

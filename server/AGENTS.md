@@ -84,6 +84,8 @@ Provider failures are normalized once in `model-client.ts` into a sanitized stru
 
 Reasoning effort is capability-gated, not name-matched. OpenAI connector tier mappings are the canonical configured source when present; legacy `model_profiles.tiers[*].thinking` remains compatibility fallback for callers that do not carry connector model config. `thinking-config.ts` resolves fallback thinking and `resolveOpenAIReasoningEffort` maps it to OpenAI effort values. The no-thinking floor is `none`; do not emit legacy `minimal` for GPT-5.6/Codex Responses requests. Models opt in via `thinking.selectableEffort` in `model-registry.ts` (`supportsSelectableEffort`). Effort-capable direct OpenAI models route through the Responses API adapters in `model-client.ts` (reusing the Codex input/tool converters); subscription/Codex requests carry `reasoning.effort`. Do not add a second effort setting or hard-code model IDs.
 
+Claude CLI connector tiers use the provider-specific `claude-cli-models` config as the canonical source for model, effort, thinking mode, and max turns. Legacy string mappings normalize at read time and are persisted in the richer form only after an edit. `cli-sdk-adapter.ts` applies the selected tier config while keeping system prompts, tools, permissions, MCP servers, and session persistence platform-owned. Warm-worker keys and voice prewarming must include the routed Claude config so pooled execution cannot bypass connector settings.
+
 ## Context Assembly & Retrieval
 
 The context system builds the LLM prompt from ~40 dynamically resolved sections. Every chat, voice, and autonomous call gets a structured XML-section prompt.

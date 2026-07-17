@@ -6,9 +6,13 @@ import { combineWithVisibleScope } from "./scoped-storage";
 import { getSetting } from "./system-settings";
 import { providerConnections } from "@shared/models/platforms";
 import {
+  claudeCliTierMappingsSchema,
   modelConnectorConfigSchema,
   modelConnectorProviderSchema,
   modelTierMappingsSchema,
+  type ClaudeCliConnectorConfig,
+  type ClaudeCliTierMappings,
+  type ClaudeCliTierModelConfig,
   type ModelConnectorConfig,
   type ModelConnectorProvider,
   type ModelTierMappings,
@@ -91,6 +95,55 @@ function defaultOpenAITierConfig(provider: ModelConnectorProvider, tier: keyof O
   return config;
 }
 
+function migrateClaudeCliConnectorConfig(legacy: { tierMappings: ModelTierMappings; migratedFrom?: "model_profiles" | "manual" }): ClaudeCliConnectorConfig {
+  const tierConfig = (tier: keyof ModelTierMappings): ClaudeCliTierModelConfig => ({
+    model: validateModelBelongsToProvider("claude-cli", legacy.tierMappings[tier]).id,
+  });
+  return {
+    kind: "claude-cli-models",
+    version: 1,
+    tierMappings: {
+      max: tierConfig("max"),
+      high: tierConfig("high"),
+      balanced: tierConfig("balanced"),
+      fast: tierConfig("fast"),
+    },
+    migratedFrom: legacy.migratedFrom ?? "model_connector_v1",
+  };
+}
+
+function validateClaudeCliTierConfig(config: ClaudeCliTierModelConfig): ClaudeCliTierModelConfig {
+  const model = validateModelBelongsToProvider("claude-cli", config.model);
+  const normalized: ClaudeCliTierModelConfig = { model: model.id };
+  if (config.effort !== undefined) {
+    if (config.thinkingMode === "disabled") throw new Error("Claude effort requires adaptive thinking");
+    if (model.thinking.level === "none") throw new Error(`Model '${config.model}' does not support Claude effort controls`);
+    normalized.effort = config.effort;
+  }
+  if (config.thinkingMode !== undefined) {
+    if (config.thinkingMode === "adaptive" && model.thinking.level === "none") {
+      throw new Error(`Model '${config.model}' does not support adaptive thinking`);
+    }
+    normalized.thinkingMode = config.thinkingMode;
+  }
+  if (config.maxTurns !== undefined) normalized.maxTurns = config.maxTurns;
+  return normalized;
+}
+
+function validateClaudeCliConnectorConfig(provider: ModelConnectorProvider, config: ClaudeCliConnectorConfig): ClaudeCliConnectorConfig {
+  if (provider !== "claude-cli") throw new Error(`Provider '${provider}' does not support Claude CLI connector config`);
+  const tierMappings = claudeCliTierMappingsSchema.parse(config.tierMappings);
+  return {
+    ...config,
+    tierMappings: {
+      max: validateClaudeCliTierConfig(tierMappings.max),
+      high: validateClaudeCliTierConfig(tierMappings.high),
+      balanced: validateClaudeCliTierConfig(tierMappings.balanced),
+      fast: validateClaudeCliTierConfig(tierMappings.fast),
+    },
+  };
+}
+
 function migrateOpenAIConnectorConfig(provider: ModelConnectorProvider, legacy: { tierMappings: ModelTierMappings; migratedFrom?: "model_profiles" | "manual" }): OpenAIConnectorConfig {
   const surface: OpenAIConnectorSurface = provider === "openai-subscription" ? "subscription" : "api";
   return {
@@ -160,8 +213,10 @@ export function parseModelConnectorConfig(provider: string, value: unknown): Mod
   if (parsed.kind === "model") {
     const legacy = { ...parsed, tierMappings: validateMapping(parsedProvider, parsed.tierMappings) };
     if (parsedProvider === "openai" || parsedProvider === "openai-subscription") return validateOpenAIConnectorConfig(parsedProvider, migrateOpenAIConnectorConfig(parsedProvider, legacy));
+    if (parsedProvider === "claude-cli") return validateClaudeCliConnectorConfig(parsedProvider, migrateClaudeCliConnectorConfig(legacy));
     return legacy;
   }
+  if (parsed.kind === "claude-cli-models") return validateClaudeCliConnectorConfig(parsedProvider, parsed);
   return validateOpenAIConnectorConfig(parsedProvider, parsed);
 }
 
@@ -184,7 +239,7 @@ export async function listModelConnectors(): Promise<ModelConnector[]> {
 
 export async function updateModelConnector(
   id: number,
-  input: { status?: "active" | "inactive"; tierMappings?: ModelTierMappings | OpenAITierMappings },
+  input: { status?: "active" | "inactive"; tierMappings?: ModelTierMappings | OpenAITierMappings | ClaudeCliTierMappings },
 ): Promise<ModelConnector | null> {
   const principal = getCurrentPrincipalOrSystem();
   const [existing] = await db.select().from(providerConnections).where(
@@ -209,6 +264,11 @@ export async function updateModelConnector(
     const current = parseModelConnectorConfig(existing.provider, existing.connectorConfig);
     if (current.kind === "openai-models") {
       updates.connectorConfig = validateOpenAIConnectorConfig(provider, { ...current, tierMappings: input.tierMappings as OpenAITierMappings });
+    } else if (current.kind === "claude-cli-models") {
+      const legacyMappings = modelTierMappingsSchema.safeParse(input.tierMappings);
+      updates.connectorConfig = legacyMappings.success
+        ? validateClaudeCliConnectorConfig(provider, migrateClaudeCliConnectorConfig({ tierMappings: validateMapping(provider, legacyMappings.data), migratedFrom: "manual" }))
+        : validateClaudeCliConnectorConfig(provider, { ...current, tierMappings: input.tierMappings as ClaudeCliTierMappings });
     } else {
       const tierMappings = validateMapping(provider, input.tierMappings as ModelTierMappings);
       updates.connectorConfig = { ...current, tierMappings };

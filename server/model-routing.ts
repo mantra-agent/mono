@@ -6,7 +6,7 @@ import { getAccount } from "./connected-accounts";
 import { createNamedSystemPrincipal } from "./principal";
 import { runWithPrincipal } from "./principal-context";
 import { listModelConnectors, type ModelConnector } from "./model-connectors";
-import { getConnectorTierModelConfig, type OpenAITierModelConfig, semanticTierSchema, type SemanticTier } from "@shared/model-connectors";
+import { getConnectorTierModelConfig, type ConnectorTierModelConfig, semanticTierSchema, type SemanticTier } from "@shared/model-connectors";
 import type { ActivityId } from "./job-profiles";
 
 const log = createLogger("ModelRouting");
@@ -21,7 +21,7 @@ export interface ConnectorAttempt {
   provider: string;
   tier: SemanticTier;
   model: string;
-  modelConfig?: OpenAITierModelConfig;
+  modelConfig?: ConnectorTierModelConfig;
   outcome: "selected" | "skipped" | "failed";
   reason?: string;
 }
@@ -32,7 +32,7 @@ export interface ModelRoutingDecision {
   model: string;
   provider: string;
   modelString: string;
-  modelConfig?: OpenAITierModelConfig;
+  modelConfig?: ConnectorTierModelConfig;
   configVersion: string;
   configHash: string;
   explicitOverride: boolean;

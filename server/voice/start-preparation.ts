@@ -122,6 +122,7 @@ export async function assembleVoiceContext(
         model: voiceRouting.model,
         toolDefs: fullToolDefs,
         thinking: voiceThinking,
+        connectorConfig: voiceRouting.modelConfig,
       });
       voiceLog.log(`CLI pre-warm ready for sessionId=${sessionId} model=${voiceRouting.model} tier=${voiceRouting.tier}`);
     } catch (err: unknown) {

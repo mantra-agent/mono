@@ -450,10 +450,9 @@ app.use((req, res, next) => {
       for (const full of candidates) {
         if (!full || !full.startsWith("claude-cli/")) continue;
         const model = full.split("/").slice(1).join("/");
-        // Use the same minimal "no thinking" key that a trivial chat turn produces; the
-        // pool key includes the systemPrompt hash, so prewarming a generic empty prompt
-        // is best-effort — the first real turn's exact prompt may still miss. The win
-        // is correctness for repeat trivial turns and a warm CLI process either way.
+        // Boot prewarming predates connector-specific settings and has no routed connector
+        // decision. Keep it on the provider-default shape; real calls use configuration-keyed
+        // workers so a generic warm process can never bypass persisted Claude settings.
         await prewarmWarmPool({
           model,
           systemPrompt: "",

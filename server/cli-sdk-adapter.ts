@@ -6,12 +6,19 @@ import crypto from "crypto";
 import type { ToolDefinition } from "@shared/models/tools";
 import type { StreamEvent, ChatCompletionStreamOptions, ChatCompletionOptions, ChatCompletionResult } from "./model-client";
 import type { ToolExecutor } from "./agent-executor";
+import type { ClaudeCliTierModelConfig } from "@shared/model-connectors";
 import type { Options as SdkOptions } from "@anthropic-ai/claude-agent-sdk";
 import { createLogger } from "./log";
 import { getModel } from "./model-registry";
 import { getSecretSync } from "./secrets-store";
 
 const log = createLogger("cli-sdk-adapter");
+
+function resolvedClaudeCliConfig(options: Pick<ChatCompletionOptions, "routingDecision">): ClaudeCliTierModelConfig | undefined {
+  return options.routingDecision?.provider === "claude-cli"
+    ? options.routingDecision.modelConfig as ClaudeCliTierModelConfig | undefined
+    : undefined;
+}
 
 // Hoist SDK module load out of the per-call hot path. The dynamic import is fired the first
 // time this module is evaluated; subsequent `cliSdkStream` calls just `await` an already-
@@ -432,9 +439,10 @@ function hashShort(s: string): string {
 function buildPoolKey(
   model: string,
   systemPrompt: string,
-  opts: { thinkingKey: string; maxTokens?: number },
+  opts: { thinkingKey: string; connectorConfig?: ClaudeCliTierModelConfig },
 ): string {
-  return `${model}|sp=${hashShort(systemPrompt)}|th=${opts.thinkingKey}|m=${opts.maxTokens ?? 0}`;
+  const configKey = opts.connectorConfig ? hashShort(JSON.stringify(opts.connectorConfig)) : "default";
+  return `${model}|sp=${hashShort(systemPrompt)}|th=${opts.thinkingKey}|cfg=${configKey}`;
 }
 
 async function spawnWarmWorker(key: string, sdkOptions: SdkOptions, startupFn: SdkStartupFn): Promise<WarmWorker> {
@@ -543,7 +551,7 @@ export async function prewarmWarmPool(opts: {
   model: string;
   systemPrompt: string;
   thinkingKey: string;
-  maxTokens?: number;
+  connectorConfig?: ClaudeCliTierModelConfig;
 }): Promise<void> {
   if (WARM_POOL_SIZE <= 0) return;
   const token = process.env.CLAUDE_CODE_OAUTH_TOKEN;
@@ -556,14 +564,14 @@ export async function prewarmWarmPool(opts: {
   }
   const sdkOptions = buildSdkOptions(
     opts.model,
-    { thinking: undefined, maxTokens: opts.maxTokens },
+    { thinking: undefined, connectorConfig: opts.connectorConfig },
     undefined,
     token,
   );
   sdkOptions.systemPrompt = opts.systemPrompt;
   const key = buildPoolKey(opts.model, opts.systemPrompt, {
     thinkingKey: opts.thinkingKey,
-    maxTokens: opts.maxTokens,
+    connectorConfig: opts.connectorConfig,
   });
   // Fill the entire configured pool at boot, not just one slot, so concurrent
   // first turns after restart all hit warm.
@@ -600,8 +608,8 @@ function buildSdkOptions(
   options: {
     tools?: ToolDefinition[];
     thinkingBudget?: number;
-    maxTokens?: number;
     thinking?: import("./thinking-config").ResolvedThinking;
+    connectorConfig?: ClaudeCliTierModelConfig;
   },
   mcpServer: ReturnType<typeof import("@anthropic-ai/claude-agent-sdk").createSdkMcpServer> | undefined,
   token: string,
@@ -649,28 +657,29 @@ function buildSdkOptions(
     sdkOptions.mcpServers = { "xyz-tools": mcpServer };
   }
 
-  // Always set thinking explicitly: pass the resolved discriminated config 1:1 to the SDK.
-  if (options.thinking) {
+  const connectorConfig = options.connectorConfig;
+  if (connectorConfig?.thinkingMode === "disabled") {
+    sdkOptions.thinking = { type: "disabled" };
+  } else if (connectorConfig?.thinkingMode === "adaptive" || connectorConfig?.effort) {
+    sdkOptions.thinking = { type: "adaptive" };
+    if (connectorConfig.effort) sdkOptions.effort = connectorConfig.effort;
+  } else if (options.thinking) {
     const t = options.thinking.thinking;
     if (t.type === "disabled") {
       sdkOptions.thinking = { type: "disabled" };
     } else if (t.type === "enabled") {
       sdkOptions.thinking = { type: "enabled", budgetTokens: t.budgetTokens };
     } else {
-      // adaptive — `effort` is a top-level SdkOptions field, not part of ThinkingAdaptive.
       sdkOptions.thinking = { type: "adaptive" };
       if (options.thinking.effort) sdkOptions.effort = options.thinking.effort;
     }
   } else if (options.thinkingBudget) {
-    // Legacy fallback (callers should pass `thinking` instead).
     sdkOptions.thinking = { type: "enabled", budgetTokens: options.thinkingBudget };
   } else {
     sdkOptions.thinking = { type: "disabled" };
   }
 
-  if ((options as any).maxTokens) {
-    (sdkOptions as any).maxTokens = (options as any).maxTokens;
-  }
+  if (connectorConfig?.maxTurns !== undefined) sdkOptions.maxTurns = connectorConfig.maxTurns;
 
   return sdkOptions;
 }
@@ -906,7 +915,8 @@ export async function* cliSdkStream(
 
   const { systemPrompt, prompt } = buildPrompt(options.messages);
 
-  const sdkOptions = buildSdkOptions(model, options, mcpServer, token);
+  const connectorConfig = resolvedClaudeCliConfig(options);
+  const sdkOptions = buildSdkOptions(model, { ...options, connectorConfig }, mcpServer, token);
   sdkOptions.systemPrompt = systemPrompt;
 
   const start = ttftStart;
@@ -983,11 +993,13 @@ export async function* cliSdkStream(
   // activity profiles don't collide.
   const poolEligible = WARM_POOL_SIZE > 0 && toolDefs.length === 0 && !toolExecutor;
   const { thinkingConfigKey } = await import("./thinking-config");
-  const thinkingKey = options.thinking
-    ? thinkingConfigKey(options.thinking)
-    : `legacy-budget-${options.thinkingBudget ?? 0}`;
+  const thinkingKey = connectorConfig?.thinkingMode
+    ? `connector-${connectorConfig.thinkingMode}-${connectorConfig.effort ?? "default"}`
+    : options.thinking
+      ? thinkingConfigKey(options.thinking)
+      : `legacy-budget-${options.thinkingBudget ?? 0}`;
   const pKey = poolEligible
-    ? buildPoolKey(model, systemPrompt ?? "", { thinkingKey, maxTokens: options.maxTokens })
+    ? buildPoolKey(model, systemPrompt ?? "", { thinkingKey, connectorConfig })
     : "";
   let pooledWorker: WarmWorker | null = null;
   let pooledHit = false;
@@ -1395,6 +1407,7 @@ export async function* cliSdkStream(
           cacheReadTokens,
           cacheWriteTokens,
         },
+        claudeConnectorConfig: connectorConfig ?? { model },
       },
     };
   } catch (err: unknown) {
@@ -1554,6 +1567,9 @@ export async function cliSdkCompletion(
     maxTokens: options.maxTokens,
     temperature: options.temperature,
     toolExecutor: options.toolExecutor,
+    thinking: options.thinking,
+    routingDecision: options.routingDecision,
+    signal: options.signal,
   };
 
   for await (const event of cliSdkStream(model, streamOptions)) {
@@ -1624,8 +1640,8 @@ export async function preWarmVoiceCli(opts: {
   systemPrompt: string;
   model: string;
   toolDefs: ToolDefinition[];
-  maxTokens?: number;
   thinking?: import("./thinking-config").ResolvedThinking;
+  connectorConfig?: ClaudeCliTierModelConfig;
 }): Promise<void> {
   const sdkMod = await sdkModulePromise;
   const startupFn = (sdkMod as unknown as { startup?: SdkStartupFn }).startup;
@@ -1674,7 +1690,7 @@ export async function preWarmVoiceCli(opts: {
     ? sdkMod.createSdkMcpServer({ name: "xyz-tools", tools: sdkTools })
     : undefined;
 
-  const sdkOptions = buildSdkOptions(opts.model, { maxTokens: opts.maxTokens, thinking: opts.thinking }, mcpServer, token);
+  const sdkOptions = buildSdkOptions(opts.model, { thinking: opts.thinking, connectorConfig: opts.connectorConfig }, mcpServer, token);
   sdkOptions.systemPrompt = opts.systemPrompt;
 
   const spawnStart = Date.now();
