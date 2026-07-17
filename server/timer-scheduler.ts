@@ -8,6 +8,7 @@ import { systemTimerRegistry } from "./system-timer-registry";
 import { timerHandlerRouter } from "./timer-handler-router";
 import { getSetting, setSetting } from "./system-settings";
 import type { TimerHandlerResult } from "./timer-handlers";
+import { Cron } from "croner";
 
 const log = createLogger("TimerScheduler");
 
@@ -837,7 +838,12 @@ export function computeNextRun(
       }
 
       case "custom": {
-        return null;
+        if (!schedule.cronExpression?.trim()) return null;
+        return (
+          new Cron(schedule.cronExpression, { timezone, paused: true })
+            .nextRun(new Date(now))
+            ?.getTime() ?? null
+        );
       }
 
       default:
@@ -910,6 +916,14 @@ export function computePreviousRun(
           timezone,
           before,
         );
+      case "custom": {
+        if (!schedule.cronExpression?.trim()) return null;
+        return (
+          new Cron(schedule.cronExpression, { timezone, paused: true })
+            .previousRuns(1, new Date(before))[0]
+            ?.getTime() ?? null
+        );
+      }
       default:
         return null;
     }
