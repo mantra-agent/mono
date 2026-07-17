@@ -1,14 +1,15 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import ForceGraph2D from "react-force-graph-2d";
 import {
   Loader2, Search, Network, RefreshCcw, AlertTriangle,
-  GitBranch, Activity, X, Eye, EyeOff,
-  LayoutDashboard, ArrowRight, BookOpen, Focus,
-  Check, Clock, Database, Cpu,
+  GitBranch, X, Eye, EyeOff,
+  Code2, Boxes, FileCode2, FolderGit2, Focus,
+  Check, Clock, Database, Cpu, Waypoints,
 } from "lucide-react";
 
 interface GraphNode {
@@ -544,7 +545,6 @@ export function CodeGraphTab() {
   const [status, setStatus] = useState<"checking" | "ready" | "indexing" | "error" | "disabled">("checking");
   const [indexingEnabled, setIndexingEnabledState] = useState<boolean | null>(null);
   const [sourceInfo, setSourceInfo] = useState<any>(null);
-  const [repoInfo, setRepoInfo] = useState<any>(null);
   const [subPhase, setSubPhase] = useState<string>("");
   const [progressMessage, setProgressMessage] = useState<string>("");
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
@@ -558,27 +558,16 @@ export function CodeGraphTab() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [archData, setArchData] = useState<any>(null);
   const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; relationships: GraphEdge[] } | null>(null);
-  const [clusters, setClusters] = useState<any[]>([]);
-  const [processes, setProcesses] = useState<any[]>([]);
-  const [clusterDetail, setClusterDetail] = useState<{ name: string; data: any } | null>(null);
-  const [processDetail, setProcessDetail] = useState<{ name: string; data: any } | null>(null);
   const [loadingArch, setLoadingArch] = useState(false);
   const [loadingGraph, setLoadingGraph] = useState(false);
-  const [loadingClusters, setLoadingClusters] = useState(false);
-  const [loadingProcesses, setLoadingProcesses] = useState(false);
-  const [loadingDetail, setLoadingDetail] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<{ processes: any[]; process_symbols: any[]; definitions: any[] } | null>(null);
   const [searching, setSearching] = useState(false);
-  const [activeView, setActiveView] = useState<"overview" | "graph" | "processes" | "clusters">("overview");
+  const [activeView, setActiveView] = useState<"tree" | "graph">("tree");
   const [inspectedNode, setInspectedNode] = useState<FGNode | null>(null);
 
   const [archError, setArchError] = useState<string | null>(null);
   const [graphError, setGraphError] = useState<string | null>(null);
-  const [clustersError, setClustersError] = useState<string | null>(null);
-  const [processesError, setProcessesError] = useState<string | null>(null);
-  const [detailError, setDetailError] = useState<string | null>(null);
-  const [pendingDetailName, setPendingDetailName] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
 
   const currentStatus = status;
@@ -591,7 +580,6 @@ export function CodeGraphTab() {
       setSourceInfo(data.source || null);
       if (data.ready) {
         setStatus("ready");
-        setRepoInfo(data.repos);
         setErrorDetail(null);
         setLastErrorPhase(null);
         if (pollRef.current) {
@@ -693,82 +681,6 @@ export function CodeGraphTab() {
     }
   }, [currentStatus]);
 
-  const loadClusters = useCallback(async () => {
-    setLoadingClusters(true);
-    setClustersError(null);
-    try {
-      const res = await fetch("/api/gitnexus/clusters");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setClusters(data.clusters || []);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Clusters fetch failed";
-      setClustersError(msg);
-      beaconError("/api/gitnexus/clusters", msg, currentStatus);
-    } finally {
-      setLoadingClusters(false);
-    }
-  }, [currentStatus]);
-
-  const loadProcesses = useCallback(async () => {
-    setLoadingProcesses(true);
-    setProcessesError(null);
-    try {
-      const res = await fetch("/api/gitnexus/processes");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setProcesses(data.processes || []);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Processes fetch failed";
-      setProcessesError(msg);
-      beaconError("/api/gitnexus/processes", msg, currentStatus);
-    } finally {
-      setLoadingProcesses(false);
-    }
-  }, [currentStatus]);
-
-  const loadClusterDetail = useCallback(async (name: string) => {
-    setLoadingDetail(true);
-    setDetailError(null);
-    setPendingDetailName(name);
-    setClusterDetail(null);
-    try {
-      const res = await fetch(`/api/gitnexus/clusters/${encodeURIComponent(name)}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setClusterDetail({ name, data });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Cluster detail fetch failed";
-      setDetailError(msg);
-      beaconError(`/api/gitnexus/clusters/${name}`, msg, currentStatus);
-    } finally {
-      setLoadingDetail(false);
-    }
-  }, [currentStatus]);
-
-  const loadProcessDetail = useCallback(async (name: string) => {
-    setLoadingDetail(true);
-    setDetailError(null);
-    setPendingDetailName(name);
-    setProcessDetail(null);
-    try {
-      const res = await fetch(`/api/gitnexus/processes/${encodeURIComponent(name)}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setProcessDetail({ name, data });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Process detail fetch failed";
-      setDetailError(msg);
-      beaconError(`/api/gitnexus/processes/${name}`, msg, currentStatus);
-    } finally {
-      setLoadingDetail(false);
-    }
-  }, [currentStatus]);
-
   useEffect(() => {
     if (status === "ready" && !archData) {
       loadArchitecture();
@@ -778,14 +690,6 @@ export function CodeGraphTab() {
     }
   }, [status, archData, graphData, activeView, loadArchitecture, loadGraph]);
 
-  useEffect(() => {
-    if (status === "ready" && activeView === "clusters" && clusters.length === 0 && !loadingClusters) {
-      loadClusters();
-    }
-    if (status === "ready" && activeView === "processes" && processes.length === 0 && !loadingProcesses) {
-      loadProcesses();
-    }
-  }, [status, activeView, clusters.length, processes.length, loadingClusters, loadingProcesses, loadClusters, loadProcesses]);
 
   const handleSearch = useCallback(async () => {
     if (!searchQuery.trim()) return;
@@ -1032,518 +936,340 @@ export function CodeGraphTab() {
     );
   }
 
-  return (
-    <div className="flex flex-col gap-4" data-testid="code-graph-tab">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Network className="h-5 w-5 text-primary" />
-          <div>
-            <span className="font-medium">Code Intelligence Graph</span>
-            {repoInfo && (
-              <span className="text-xs text-muted-foreground ml-2">
-                {Array.isArray(repoInfo) ? `${repoInfo.length} repo(s) indexed` : "Indexed"}
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {sourceInfo && (
-            <Badge variant="outline" className="mr-2 max-w-[18rem] truncate" data-testid="text-indexing-source">
-              {sourceInfo.platformName} / {sourceInfo.productName} / {sourceInfo.environmentName} · {sourceInfo.owner}/{sourceInfo.repo}@{sourceInfo.branch}
-            </Badge>
-          )}
-          <Button
-            variant={activeView === "overview" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setActiveView("overview")}
-            data-testid="button-view-overview"
-          >
-            <LayoutDashboard className="h-3.5 w-3.5 mr-1.5" />
-            Overview
-          </Button>
-          <Button
-            variant={activeView === "graph" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setActiveView("graph")}
-            data-testid="button-view-graph"
-          >
-            <Network className="h-3.5 w-3.5 mr-1.5" />
-            Graph
-          </Button>
-          <Button
-            variant={activeView === "clusters" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setActiveView("clusters")}
-            data-testid="button-view-clusters"
-          >
-            <Activity className="h-3.5 w-3.5 mr-1.5" />
-            Modules
-          </Button>
-          <Button
-            variant={activeView === "processes" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setActiveView("processes")}
-            data-testid="button-view-processes"
-          >
-            <GitBranch className="h-3.5 w-3.5 mr-1.5" />
-            Flows
-          </Button>
-        </div>
-      </div>
+  const moduleRows = [...(archData?.clusters || [])].sort(
+    (left: any, right: any) => (right.symbolCount || 0) - (left.symbolCount || 0),
+  );
+  const flowRows = [...(archData?.processes || [])].sort(
+    (left: any, right: any) => (right.stepCount || 0) - (left.stepCount || 0),
+  );
+  const projectName = archData?.context?.projectName
+    || sourceInfo?.repo
+    || "Codebase";
+  const sourceLabel = sourceInfo
+    ? `${sourceInfo.owner}/${sourceInfo.repo}@${sourceInfo.branch}`
+    : "Indexed source";
 
-      <div className="flex gap-2">
-        <input
-          type="text"
-          className="flex-1 h-8 rounded-md border border-input bg-background px-3 py-1 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          placeholder="Search codebase (e.g. 'tool execution', 'memory storage')..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-          data-testid="input-graph-search"
-        />
-        <Button size="sm" onClick={handleSearch} disabled={searching} data-testid="button-graph-search">
-          {searching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+  return (
+    <div className="w-full space-y-4 p-4" data-testid="code-graph-tab">
+      <div className="flex flex-col gap-2 @sm:flex-row">
+        <div className="flex min-w-0 flex-1 gap-2">
+          <input
+            type="text"
+            className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-1 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            placeholder="Search codebase"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => event.key === "Enter" && handleSearch()}
+            data-testid="input-graph-search"
+          />
+          <Button
+            size="sm"
+            className="h-9 shrink-0"
+            onClick={handleSearch}
+            disabled={searching}
+            aria-label="Search codebase"
+            data-testid="button-graph-search"
+          >
+            {searching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+          </Button>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-9 shrink-0"
+          onClick={() => setActiveView(activeView === "graph" ? "tree" : "graph")}
+          data-testid={activeView === "graph" ? "button-view-tree" : "button-view-graph"}
+        >
+          {activeView === "graph" ? <Code2 className="mr-1.5 h-3.5 w-3.5" /> : <Network className="mr-1.5 h-3.5 w-3.5" />}
+          {activeView === "graph" ? "View tree" : "View graph"}
         </Button>
       </div>
 
       {searchError && (
-        <div className="flex items-center gap-2 text-sm text-destructive" data-testid="search-error">
+        <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-error" data-testid="search-error">
           <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span>Search failed: {searchError}</span>
-          <Button variant="ghost" size="sm" className="ml-auto h-6 text-xs" onClick={handleSearch} data-testid="button-retry-search">
+          <span className="min-w-0 flex-1 truncate">Search failed: {searchError}</span>
+          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={handleSearch} data-testid="button-retry-search">
             Retry
           </Button>
         </div>
       )}
 
       {searchResults && (
-        <Card data-testid="card-search-results">
-          <CardHeader className="pb-2 pt-3 px-4 flex flex-row items-start justify-between">
-            <CardTitle className="text-sm font-medium">Search Results</CardTitle>
-            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setSearchResults(null)} data-testid="button-clear-search">
-              <X className="h-3.5 w-3.5" />
-            </Button>
-          </CardHeader>
-          <CardContent className="px-4 pb-3 space-y-3 max-h-80 overflow-y-auto">
-            {searchResults.processes.length === 0 && searchResults.process_symbols.length === 0 && searchResults.definitions.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No results found.</p>
-            ) : null}
-            {searchResults.processes.length > 0 && (
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Processes</p>
-                <div className="space-y-1.5">
-                  {searchResults.processes.map((proc: any, i: number) => (
-                    <div key={proc.id || i} className="rounded-md border border-border bg-muted/30 px-2.5 py-2" data-testid={`search-result-process-${i}`}>
-                      <p className="text-xs font-medium text-foreground">{proc.summary || proc.label || proc.id}</p>
-                      {proc.process_type && <p className="text-xs text-muted-foreground mt-0.5">{proc.process_type}{proc.step_count != null ? ` · ${proc.step_count} steps` : ""}</p>}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {searchResults.process_symbols.length > 0 && (
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Symbols</p>
-                <div className="space-y-1">
-                  {searchResults.process_symbols.map((sym: any, i: number) => (
-                    <div key={sym.id || i} className="flex items-start gap-2" data-testid={`search-result-symbol-${i}`}>
-                      <span className="text-xs font-mono bg-muted text-muted-foreground rounded px-1 py-0.5 shrink-0 mt-0.5">{sym.type || "?"}</span>
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium text-foreground truncate">{sym.name}</p>
-                        {sym.filePath && <p className="text-xs text-muted-foreground truncate">{sym.filePath}{sym.startLine != null ? (sym.endLine != null && sym.endLine !== sym.startLine ? ` line ${sym.startLine}–${sym.endLine}` : ` line ${sym.startLine}`) : ""}</p>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {searchResults.definitions.length > 0 && (
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Files &amp; Definitions</p>
-                <div className="space-y-1">
-                  {searchResults.definitions.map((def: any, i: number) => (
-                    <div key={def.id || def.filePath || i} className="flex items-start gap-2" data-testid={`search-result-def-${i}`}>
-                      <span className="text-xs font-mono bg-muted text-muted-foreground rounded px-1 py-0.5 shrink-0 mt-0.5">{def.type || "File"}</span>
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium text-foreground truncate">{def.name || def.filePath}</p>
-                        {def.filePath && def.name && <p className="text-xs text-muted-foreground truncate">{def.filePath}{def.startLine != null ? (def.endLine != null && def.endLine !== def.startLine ? ` line ${def.startLine}–${def.endLine}` : ` line ${def.startLine}`) : ""}</p>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {activeView === "overview" && (
-        <div data-testid="overview-view">
-          {loadingArch ? (
-            <div className="flex items-center justify-center py-12 gap-2 text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              <span className="text-sm">Loading architecture overview...</span>
-            </div>
-          ) : archError ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-3 text-muted-foreground" data-testid="arch-error">
-              <AlertTriangle className="h-6 w-6 text-destructive" />
-              <p className="text-sm text-center">Architecture overview failed: {archError}</p>
-              <Button variant="outline" size="sm" onClick={loadArchitecture} data-testid="button-retry-arch">
-                <RefreshCcw className="h-3.5 w-3.5 mr-1.5" />
-                Retry
-              </Button>
-            </div>
-          ) : archData ? (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 @sm:grid-cols-4 gap-3">
-                <Card className="p-3" data-testid="overview-stat-symbols">
-                  <div className="text-2xl font-bold">{(stats?.functionCount || 0).toLocaleString()}</div>
-                  <div className="text-xs text-muted-foreground">Symbols</div>
-                </Card>
-                <Card className="p-3" data-testid="overview-stat-files">
-                  <div className="text-2xl font-bold">{(stats?.fileCount || 0).toLocaleString()}</div>
-                  <div className="text-xs text-muted-foreground">Files</div>
-                </Card>
-                <Card className="p-3" data-testid="overview-stat-modules">
-                  <div className="text-2xl font-bold">{(archData.clusters?.length || stats?.communityCount || 0).toLocaleString()}</div>
-                  <div className="text-xs text-muted-foreground">Modules</div>
-                </Card>
-                <Card className="p-3" data-testid="overview-stat-flows">
-                  <div className="text-2xl font-bold">{(stats?.processCount || 0).toLocaleString()}</div>
-                  <div className="text-xs text-muted-foreground">Flows</div>
-                </Card>
-              </div>
-
-              <Card data-testid="overview-modules-table">
-                <CardHeader className="pb-2 pt-3 px-4">
-                  <CardTitle className="text-sm font-medium flex items-center gap-2">
-                    <Activity className="h-4 w-4" />
-                    Modules by Size
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="px-4 pb-3">
-                  {archData.clusters?.length > 0 ? (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs" data-testid="modules-table">
-                        <thead>
-                          <tr className="border-b border-border text-left text-muted-foreground">
-                            <th className="pb-2 pr-3 font-medium">Module</th>
-                            <th className="pb-2 pr-3 font-medium text-right">Symbols</th>
-                            <th className="pb-2 pr-3 font-medium">Cohesion</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {[...archData.clusters]
-                            .sort((a: any, b: any) => (b.symbolCount || 0) - (a.symbolCount || 0))
-                            .map((c: any, i: number) => {
-                              const cohesion = c.cohesion ?? 0;
-                              const pct = Math.round(cohesion * 100);
-                              const barColor = pct >= 90 ? "bg-success" : pct >= 70 ? "bg-info" : pct >= 50 ? "bg-warning" : "bg-error";
-                              return (
-                                <tr
-                                  key={i}
-                                  className="border-b border-border/50 hover:bg-muted/30 cursor-pointer transition-colors"
-                                  onClick={() => { setActiveView("clusters"); loadClusterDetail(c.label || c.heuristicLabel || c.name || c.id); }}
-                                  data-testid={`overview-module-row-${i}`}
-                                >
-                                  <td className="py-1.5 pr-3 font-medium">{c.label || c.heuristicLabel || c.name || c.id}</td>
-                                  <td className="py-1.5 pr-3 text-right text-muted-foreground">{(c.symbolCount || 0).toLocaleString()}</td>
-                                  <td className="py-1.5 pr-3">
-                                    <div className="flex items-center gap-2">
-                                      <div className="flex-1 h-1.5 bg-muted rounded-full max-w-[80px]">
-                                        <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
-                                      </div>
-                                      <span className="text-muted-foreground w-8 text-right">{pct}%</span>
-                                    </div>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No modules detected</p>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card data-testid="overview-flows-table">
-                <CardHeader className="pb-2 pt-3 px-4">
-                  <CardTitle className="text-sm font-medium flex items-center gap-2">
-                    <GitBranch className="h-4 w-4" />
-                    Key Execution Flows
-                    <span className="text-xs font-normal text-muted-foreground ml-1">(top cross-module flows by depth)</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="px-4 pb-3">
-                  {archData.processes?.length > 0 ? (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs" data-testid="flows-table">
-                        <thead>
-                          <tr className="border-b border-border text-left text-muted-foreground">
-                            <th className="pb-2 pr-3 font-medium">Flow</th>
-                            <th className="pb-2 pr-3 font-medium text-right">Steps</th>
-                            <th className="pb-2 pr-3 font-medium">Type</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {[...archData.processes]
-                            .sort((a: any, b: any) => (b.stepCount || 0) - (a.stepCount || 0))
-                            .slice(0, 20)
-                            .map((p: any, i: number) => {
-                              const label = p.label || p.heuristicLabel || p.name || p.id;
-                              return (
-                                <tr
-                                  key={i}
-                                  className="border-b border-border/50 hover:bg-muted/30 cursor-pointer transition-colors"
-                                  onClick={() => { setActiveView("processes"); loadProcessDetail(label); }}
-                                  data-testid={`overview-flow-row-${i}`}
-                                >
-                                  <td className="py-1.5 pr-3">
-                                    <div className="flex items-center gap-1.5">
-                                      <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
-                                      <span className="font-medium">{label}</span>
-                                    </div>
-                                  </td>
-                                  <td className="py-1.5 pr-3 text-right text-muted-foreground">{p.stepCount || 0}</td>
-                                  <td className="py-1.5 pr-3">
-                                    {p.crossCommunity || p.processType === "cross_community" ? (
-                                      <span className="text-info">Cross-module</span>
-                                    ) : (
-                                      <span className="text-muted-foreground">Internal</span>
-                                    )}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No execution flows detected</p>
-                  )}
-                </CardContent>
-              </Card>
-
-              {archData?.context?.projectName && (
-                <div className="text-xs text-muted-foreground flex items-center gap-2">
-                  <BookOpen className="h-3.5 w-3.5" />
-                  Project: {archData.context.projectName}
-                  {repoInfo?.[0]?.indexedAt && (
-                    <span className="ml-2">Last indexed: {new Date(repoInfo[0].indexedAt).toLocaleString()}</span>
-                  )}
-                  <div className="flex-1" />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-6 text-xs"
-                    onClick={() => { setArchData(null); loadArchitecture(); }}
-                    data-testid="button-refresh-overview"
+        <div className="rounded-lg border border-border/40 bg-muted/30 p-1" data-testid="tree-search-results">
+          <ProfileTreeRow
+            label="Search results"
+            icon={<Search className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            defaultOpen
+            expandedContentClassName="pl-8 pr-2"
+            expandedContent={(
+              <div className="rounded-md border border-border/30 bg-background/40 p-1">
+                {searchResults.processes.map((process: any, index: number) => (
+                  <ProfileTreeRow
+                    key={process.id || `process-${index}`}
+                    label={process.summary || process.label || process.id}
+                    icon={<Waypoints className="h-3.5 w-3.5" />}
+                    hasValue
+                    showEmpty
+                    mobileLayout="inline"
+                    testId={`search-result-process-${index}`}
                   >
-                    <RefreshCcw className="h-3 w-3 mr-1" />
-                    Refresh
-                  </Button>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex justify-center py-8">
-              <Button variant="outline" onClick={loadArchitecture} data-testid="button-load-overview">
-                <LayoutDashboard className="h-4 w-4 mr-2" />
-                Load architecture overview
-              </Button>
-            </div>
-          )}
+                    <span className="truncate text-muted-foreground">
+                      {process.step_count != null ? `${process.step_count} steps` : process.process_type || "Flow"}
+                    </span>
+                  </ProfileTreeRow>
+                ))}
+                {searchResults.process_symbols.map((symbol: any, index: number) => (
+                  <ProfileTreeRow
+                    key={symbol.id || `symbol-${index}`}
+                    label={symbol.name}
+                    icon={<Code2 className="h-3.5 w-3.5" />}
+                    hasValue
+                    showEmpty
+                    mobileLayout="inline"
+                    testId={`search-result-symbol-${index}`}
+                  >
+                    <span className="truncate font-mono text-muted-foreground">
+                      {symbol.filePath || symbol.type || "Symbol"}
+                    </span>
+                  </ProfileTreeRow>
+                ))}
+                {searchResults.definitions.map((definition: any, index: number) => (
+                  <ProfileTreeRow
+                    key={definition.id || definition.filePath || `definition-${index}`}
+                    label={definition.name || definition.filePath}
+                    icon={<FileCode2 className="h-3.5 w-3.5" />}
+                    hasValue
+                    showEmpty
+                    mobileLayout="inline"
+                    testId={`search-result-def-${index}`}
+                  >
+                    <span className="truncate font-mono text-muted-foreground">
+                      {definition.filePath || definition.type || "Definition"}
+                    </span>
+                  </ProfileTreeRow>
+                ))}
+                {searchResults.processes.length === 0
+                  && searchResults.process_symbols.length === 0
+                  && searchResults.definitions.length === 0 && (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">No results found.</div>
+                  )}
+              </div>
+            )}
+          >
+            <span className="flex items-center justify-end gap-1 text-muted-foreground">
+              <span>{searchResults.processes.length + searchResults.process_symbols.length + searchResults.definitions.length}</span>
+              <button
+                type="button"
+                className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-accent hover:text-foreground"
+                onClick={() => setSearchResults(null)}
+                aria-label="Clear search results"
+                data-testid="button-clear-search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </span>
+          </ProfileTreeRow>
         </div>
       )}
 
-      {activeView === "graph" && (
-        <div>
+      {activeView === "tree" ? (
+        loadingArch ? (
+          <div className="flex items-center justify-center py-12 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin" />
+          </div>
+        ) : archError ? (
+          <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-error" data-testid="arch-error">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">Code tree failed to load: {archError}</span>
+            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={loadArchitecture} data-testid="button-retry-arch">
+              Retry
+            </Button>
+          </div>
+        ) : archData ? (
+          <div className="rounded-lg border border-border/40 bg-muted/30 p-1" data-testid="code-tree-view">
+            <ProfileTreeRow
+              label={projectName}
+              icon={<Code2 className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              defaultOpen
+              expandedContentClassName="pl-8 pr-2"
+              expandedContent={(
+                <div className="rounded-md border border-border/30 bg-background/40 p-1">
+                  <ProfileTreeRow
+                    label="Source"
+                    icon={<FolderGit2 className="h-3.5 w-3.5" />}
+                    hasValue
+                    showEmpty
+                    mobileLayout="inline"
+                    expandedContent={sourceInfo ? (
+                      <div className="space-y-1 font-mono text-muted-foreground">
+                        <div>{sourceInfo.platformName} / {sourceInfo.productName} / {sourceInfo.environmentName}</div>
+                        <div className="break-all">{sourceLabel}</div>
+                      </div>
+                    ) : undefined}
+                    testId="tree-row-code-source"
+                  >
+                    <span className="truncate font-mono text-muted-foreground">{sourceLabel}</span>
+                  </ProfileTreeRow>
+
+                  <ProfileTreeRow
+                    label="Files"
+                    icon={<FileCode2 className="h-3.5 w-3.5" />}
+                    hasValue
+                    showEmpty
+                    mobileLayout="inline"
+                    testId="tree-row-code-files"
+                  >
+                    <span className="tabular-nums text-muted-foreground">{(stats?.fileCount || 0).toLocaleString()}</span>
+                  </ProfileTreeRow>
+
+                  <ProfileTreeRow
+                    label="Symbols"
+                    icon={<Code2 className="h-3.5 w-3.5" />}
+                    hasValue
+                    showEmpty
+                    mobileLayout="inline"
+                    testId="tree-row-code-symbols"
+                  >
+                    <span className="tabular-nums text-muted-foreground">{(stats?.functionCount || 0).toLocaleString()}</span>
+                  </ProfileTreeRow>
+
+                  <ProfileTreeRow
+                    label="Modules"
+                    icon={<Boxes className="h-3.5 w-3.5" />}
+                    hasValue={moduleRows.length > 0}
+                    showEmpty
+                    mobileLayout="inline"
+                    expandedContentClassName="pl-8 pr-0"
+                    expandedContent={moduleRows.length > 0 ? (
+                      <div className="rounded-md border border-border/30 bg-background/40 p-1">
+                        {moduleRows.map((module: any, index: number) => {
+                          const label = module.label || module.heuristicLabel || module.name || module.id;
+                          const cohesion = module.cohesion == null ? null : Math.round(module.cohesion * 100);
+                          return (
+                            <ProfileTreeRow
+                              key={module.id || `${label}-${index}`}
+                              label={label}
+                              icon={<Boxes className="h-3.5 w-3.5" />}
+                              hasValue
+                              showEmpty
+                              mobileLayout="inline"
+                              expandedContent={(
+                                <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
+                                  <span>{(module.symbolCount || 0).toLocaleString()} symbols</span>
+                                  {cohesion != null && <span>{cohesion}% cohesion</span>}
+                                </div>
+                              )}
+                              testId={`tree-row-code-module-${index}`}
+                            >
+                              <span className="tabular-nums text-muted-foreground">{(module.symbolCount || 0).toLocaleString()}</span>
+                            </ProfileTreeRow>
+                          );
+                        })}
+                      </div>
+                    ) : undefined}
+                    testId="tree-row-code-modules"
+                  >
+                    <span className="tabular-nums text-muted-foreground">{moduleRows.length}</span>
+                  </ProfileTreeRow>
+
+                  <ProfileTreeRow
+                    label="Flows"
+                    icon={<Waypoints className="h-3.5 w-3.5" />}
+                    hasValue={flowRows.length > 0}
+                    showEmpty
+                    mobileLayout="inline"
+                    expandedContentClassName="pl-8 pr-0"
+                    expandedContent={flowRows.length > 0 ? (
+                      <div className="rounded-md border border-border/30 bg-background/40 p-1">
+                        {flowRows.map((flow: any, index: number) => {
+                          const label = flow.label || flow.heuristicLabel || flow.name || flow.id;
+                          const flowType = flow.crossCommunity || flow.processType === "cross_community"
+                            ? "Cross-module"
+                            : flow.processType || "Internal";
+                          return (
+                            <ProfileTreeRow
+                              key={flow.id || `${label}-${index}`}
+                              label={label}
+                              icon={<Waypoints className="h-3.5 w-3.5" />}
+                              hasValue
+                              showEmpty
+                              mobileLayout="inline"
+                              expandedContent={(
+                                <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
+                                  <span>{flow.stepCount || 0} steps</span>
+                                  <span>{flowType}</span>
+                                </div>
+                              )}
+                              testId={`tree-row-code-flow-${index}`}
+                            >
+                              <span className="tabular-nums text-muted-foreground">{flow.stepCount || 0} steps</span>
+                            </ProfileTreeRow>
+                          );
+                        })}
+                      </div>
+                    ) : undefined}
+                    testId="tree-row-code-flows"
+                  >
+                    <span className="tabular-nums text-muted-foreground">{flowRows.length || stats?.processCount || 0}</span>
+                  </ProfileTreeRow>
+                </div>
+              )}
+              testId="tree-row-code-root"
+            >
+              <span className="text-muted-foreground">
+                {(stats?.fileCount || 0).toLocaleString()} files
+              </span>
+            </ProfileTreeRow>
+          </div>
+        ) : (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">
+            <button type="button" className="text-cta hover:underline" onClick={loadArchitecture} data-testid="button-load-overview">
+              Load code tree
+            </button>
+          </div>
+        )
+      ) : (
+        <div data-testid="graph-view">
           {loadingGraph ? (
-            <div className="flex items-center justify-center py-12 gap-2 text-muted-foreground" data-testid="graph-loading">
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin" />
-              <span className="text-sm">Loading graph data...</span>
             </div>
           ) : graphError ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-3 text-muted-foreground" data-testid="graph-error">
-              <AlertTriangle className="h-6 w-6 text-destructive" />
-              <p className="text-sm text-center">Graph failed to load: {graphError}</p>
-              <Button variant="outline" size="sm" onClick={loadGraph} data-testid="button-retry-graph">
-                <RefreshCcw className="h-3.5 w-3.5 mr-1.5" />
+            <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-error" data-testid="graph-error">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">Graph failed to load: {graphError}</span>
+              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={loadGraph} data-testid="button-retry-graph">
                 Retry
               </Button>
             </div>
           ) : graphData ? (
-            <div className="space-y-3" data-testid="graph-view">
-              <div className="flex items-center justify-between">
-                <div className="text-xs text-muted-foreground">
-                  {graphData.nodes.length.toLocaleString()} total nodes, {graphData.relationships.length.toLocaleString()} edges
-                </div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2 px-2 text-xs text-muted-foreground">
+                <span>{graphData.nodes.length.toLocaleString()} nodes · {graphData.relationships.length.toLocaleString()} edges</span>
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
+                  className="h-7 text-xs"
                   onClick={() => { setGraphData(null); loadGraph(); }}
                   data-testid="button-reload-graph"
                 >
-                  <RefreshCcw className="h-3.5 w-3.5 mr-1.5" />
+                  <RefreshCcw className="mr-1 h-3 w-3" />
                   Refresh
                 </Button>
               </div>
-
               <InteractiveGraph graphData={graphData} onNodeSelect={setInspectedNode} />
-
-              {inspectedNode && (
-                <CodeInspector node={inspectedNode} onClose={() => setInspectedNode(null)} />
-              )}
+              {inspectedNode && <CodeInspector node={inspectedNode} onClose={() => setInspectedNode(null)} />}
             </div>
           ) : (
-            <div className="flex justify-center py-8" data-testid="graph-empty">
-              <Button variant="outline" onClick={loadGraph} data-testid="button-load-graph">
-                <Network className="h-4 w-4 mr-2" />
+            <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="graph-empty">
+              <button type="button" className="text-cta hover:underline" onClick={loadGraph} data-testid="button-load-graph">
                 Load graph data
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {activeView === "clusters" && (
-        <div data-testid="clusters-view">
-          {(clusterDetail || (pendingDetailName && (loadingDetail || detailError))) ? (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={() => { setClusterDetail(null); setPendingDetailName(null); setDetailError(null); }} data-testid="button-back-clusters">
-                  &larr; All Modules
-                </Button>
-                <span className="font-medium text-sm">{clusterDetail?.name || pendingDetailName}</span>
-              </div>
-              {loadingDetail ? (
-                <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground">
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                  <span className="text-sm">Loading module details...</span>
-                </div>
-              ) : detailError ? (
-                <div className="flex flex-col items-center justify-center py-8 gap-3 text-muted-foreground" data-testid="cluster-detail-error">
-                  <AlertTriangle className="h-5 w-5 text-destructive" />
-                  <p className="text-sm">Failed to load module: {detailError}</p>
-                  <Button variant="outline" size="sm" onClick={() => loadClusterDetail(clusterDetail?.name || pendingDetailName!)} data-testid="button-retry-cluster-detail">
-                    <RefreshCcw className="h-3.5 w-3.5 mr-1.5" />
-                    Retry
-                  </Button>
-                </div>
-              ) : clusterDetail ? (
-                <pre className="text-xs whitespace-pre-wrap font-mono max-h-[500px] overflow-y-auto bg-muted/30 rounded-lg p-4 text-foreground" data-testid="cluster-detail-content">
-                  {typeof clusterDetail.data === "string" ? clusterDetail.data : JSON.stringify(clusterDetail.data, null, 2)}
-                </pre>
-              ) : null}
-            </div>
-          ) : loadingClusters ? (
-            <div className="flex items-center justify-center py-12 gap-2 text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              <span className="text-sm">Loading modules...</span>
-            </div>
-          ) : clustersError ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-3 text-muted-foreground" data-testid="clusters-error">
-              <AlertTriangle className="h-6 w-6 text-destructive" />
-              <p className="text-sm">Failed to load modules: {clustersError}</p>
-              <Button variant="outline" size="sm" onClick={loadClusters} data-testid="button-retry-clusters">
-                <RefreshCcw className="h-3.5 w-3.5 mr-1.5" />
-                Retry
-              </Button>
-            </div>
-          ) : clusters.length === 0 ? (
-            <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">No modules found</div>
-          ) : (
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">{clusters.length} functional modules detected via Leiden community analysis</p>
-              <div className="grid gap-2 max-h-[500px] overflow-y-auto">
-                {clusters.map((c: any, i: number) => (
-                  <Card
-                    key={i}
-                    className="p-3 cursor-pointer hover:bg-muted/50 transition-colors"
-                    onClick={() => loadClusterDetail(c.label || c.heuristicLabel || c.name || c.id)}
-                    data-testid={`card-cluster-${i}`}
-                  >
-                    <div className="font-medium text-sm">{c.label || c.heuristicLabel || c.name || c.id}</div>
-                    <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                      {c.symbolCount != null && <span>{c.symbolCount} symbols</span>}
-                      {c.cohesion != null && <span>Cohesion: {Math.round(c.cohesion * 100)}%</span>}
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {activeView === "processes" && (
-        <div data-testid="processes-view">
-          {(processDetail || (pendingDetailName && (loadingDetail || detailError))) ? (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={() => { setProcessDetail(null); setPendingDetailName(null); setDetailError(null); }} data-testid="button-back-processes">
-                  &larr; All Flows
-                </Button>
-                <span className="font-medium text-sm">{processDetail?.name || pendingDetailName}</span>
-              </div>
-              {loadingDetail ? (
-                <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground">
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                  <span className="text-sm">Loading flow details...</span>
-                </div>
-              ) : detailError ? (
-                <div className="flex flex-col items-center justify-center py-8 gap-3 text-muted-foreground" data-testid="process-detail-error">
-                  <AlertTriangle className="h-5 w-5 text-destructive" />
-                  <p className="text-sm">Failed to load flow: {detailError}</p>
-                  <Button variant="outline" size="sm" onClick={() => loadProcessDetail(processDetail?.name || pendingDetailName!)} data-testid="button-retry-process-detail">
-                    <RefreshCcw className="h-3.5 w-3.5 mr-1.5" />
-                    Retry
-                  </Button>
-                </div>
-              ) : processDetail ? (
-                <pre className="text-xs whitespace-pre-wrap font-mono max-h-[500px] overflow-y-auto bg-muted/30 rounded-lg p-4 text-foreground" data-testid="process-detail-content">
-                  {typeof processDetail.data === "string" ? processDetail.data : JSON.stringify(processDetail.data, null, 2)}
-                </pre>
-              ) : null}
-            </div>
-          ) : loadingProcesses ? (
-            <div className="flex items-center justify-center py-12 gap-2 text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              <span className="text-sm">Loading execution flows...</span>
-            </div>
-          ) : processesError ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-3 text-muted-foreground" data-testid="processes-error">
-              <AlertTriangle className="h-6 w-6 text-destructive" />
-              <p className="text-sm">Failed to load flows: {processesError}</p>
-              <Button variant="outline" size="sm" onClick={loadProcesses} data-testid="button-retry-processes">
-                <RefreshCcw className="h-3.5 w-3.5 mr-1.5" />
-                Retry
-              </Button>
-            </div>
-          ) : processes.length === 0 ? (
-            <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">No execution flows found</div>
-          ) : (
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">{processes.length} execution flows traced through the codebase</p>
-              <div className="grid gap-2 max-h-[500px] overflow-y-auto">
-                {processes.map((p: any, i: number) => (
-                  <Card
-                    key={i}
-                    className="p-3 cursor-pointer hover:bg-muted/50 transition-colors"
-                    onClick={() => loadProcessDetail(p.label || p.heuristicLabel || p.name || p.id)}
-                    data-testid={`card-process-${i}`}
-                  >
-                    <div className="font-medium text-sm">{p.label || p.heuristicLabel || p.name || p.id}</div>
-                    <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                      {p.stepCount != null && <span>{p.stepCount} steps</span>}
-                      {p.processType && <span>Type: {p.processType}</span>}
-                      {p.crossCommunity && <span className="text-info">Cross-module</span>}
-                    </div>
-                  </Card>
-                ))}
-              </div>
+              </button>
             </div>
           )}
         </div>
