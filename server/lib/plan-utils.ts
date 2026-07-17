@@ -342,6 +342,7 @@ export function buildStepBrief(
   priorOutcomes: Array<{ title: string; outcome: string }>,
   workspaceDir?: string,
   retryContext?: { attempt: number; priorOutput?: string },
+  planContext?: { planId: string; stepId: string; attemptId: number; planPageRef: string },
 ): string {
   const priorSection = priorOutcomes.length > 0
     ? `### Prior Steps\n${priorOutcomes.map(o => `- **${o.title}**: ${o.outcome}`).join("\n")}`
@@ -355,6 +356,10 @@ export function buildStepBrief(
     ? `### Retry Context\nThis is attempt ${retryContext.attempt}. A prior attempt did not complete successfully.${retryContext.priorOutput ? `\n\n**Prior attempt output:**\n${retryContext.priorOutput.slice(0, 1000)}` : ""}\n\nPick up where the previous attempt left off. Check existing progress before redoing work.`
     : "";
 
+  const planContextSection = planContext
+    ? `### Plan Context\nPlan ID: ${planContext.planId}\nStep ID: ${planContext.stepId}\nAttempt ID: ${planContext.attemptId}\nPlan document: ${planContext.planPageRef}\n\nRead the plan document for context if needed. Do not edit the plan document's managed Run History section; the parent executor owns that projection.`
+    : "";
+
   return `## Plan: ${planTitle}
 
 You are executing step ${stepIndex + 1} of ${totalSteps}.
@@ -365,7 +370,7 @@ ${instructions}
 ${priorSection}
 
 ${workspaceSection}
-${retrySection ? `\n${retrySection}\n` : ""}
+${planContextSection ? `\n${planContextSection}\n` : ""}${retrySection ? `\n${retrySection}\n` : ""}
 ### Important
 - Complete your task fully, then end your session.
 - If you discover the plan needs additional steps, call plan(action: "add_steps") with the planId.

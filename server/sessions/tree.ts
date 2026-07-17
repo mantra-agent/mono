@@ -56,6 +56,12 @@ export interface SpawnChildSessionOptions {
   /** Provenance: override trigger type for the spawned session */
   hookTriggerId?: string;
   hookTriggerName?: string;
+  /** Durable plan attempt ownership for plan-spawned children. */
+  planId?: string;
+  stepId?: string;
+  attemptId?: number;
+  attemptNumber?: number;
+  planPageRef?: string;
 }
 
 export interface SpawnChildSessionResult {
@@ -396,7 +402,7 @@ export async function spawnChildSession(
 ): Promise<SpawnChildSessionResult> {
   const model = options.model ?? options.skillId;
   if (!model && !options.preContext) throw new Error("spawnChildSession: either `model` (skill identifier) or `preContext` is required");
-  const { spawnReason, spawnerTool, spawnerSkillRun, preContext, waitForCompletion, modelOverride, sessionKeyOverride, titleOverride, admissionTier, lineageId, hookTriggerId, hookTriggerName } = options;
+  const { spawnReason, spawnerTool, spawnerSkillRun, preContext, waitForCompletion, modelOverride, sessionKeyOverride, titleOverride, admissionTier, lineageId, hookTriggerId, hookTriggerName, planId, stepId, attemptId, attemptNumber, planPageRef } = options;
 
   const { executeAutonomousSkillRun } = await import("../autonomous-skill-runner");
 
@@ -438,6 +444,11 @@ export async function spawnChildSession(
       lineageId: lineageId ?? parentId,
       hookTriggerId,
       hookTriggerName,
+      planId,
+      stepId,
+      attemptId,
+      attemptNumber,
+      planPageRef,
       onSessionCreated: (id: string) => {
         clearTimeout(timer);
         resolveSession(id);
@@ -462,6 +473,11 @@ export async function spawnChildSession(
         spawnReason,
         title: titleOverride,
         model: modelOverride,
+        planId,
+        stepId,
+        attemptId,
+        attemptNumber,
+        planPageRef,
       });
     } catch (err) {
       log.warn(`spawnChildSession: onChildSessionSpawned failed: ${err instanceof Error ? err.message : String(err)}`);

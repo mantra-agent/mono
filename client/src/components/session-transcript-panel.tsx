@@ -48,7 +48,6 @@ import { useVoiceStreaming } from "@/hooks/use-voice-streaming";
 import { SessionTranscriptSurface } from "@/components/session-transcript-surface";
 import type { ChatSession as Session } from "@shared/models/chat";
 import { useVoiceSessionOptional } from "@/hooks/use-voice-session";
-import { usePlanForSession } from "@/hooks/use-plan-for-session";
 import { useWorkflowForSession } from "@/hooks/use-workflow-for-session";
 import { usePinnedScroll } from "@/hooks/use-pinned-scroll";
 import { ActiveStatusSpinner } from "@/components/nav-dot";
@@ -236,7 +235,6 @@ export function SessionTranscriptPanel({
 
   const ownedSessionData = sessionData?.id === activeSession ? sessionData : undefined;
   const persistedMessages = ownedSessionData?.messages || [];
-  const activePlanPageId = (ownedSessionData as any)?.activePlan?.pageId ?? null;
   const activeWorkflowId = (ownedSessionData as any)?.activeWorkflow?.id ?? null;
 
   useEffect(() => {
@@ -246,7 +244,6 @@ export function SessionTranscriptPanel({
       receivedSessionId: sessionData.id,
     });
   }, [activeSession, sessionData]);
-  const { plan } = usePlanForSession(persistedMessages, activePlanPageId);
   const { workflow } = useWorkflowForSession(persistedMessages, activeWorkflowId);
 
   useEffect(() => {
@@ -743,7 +740,6 @@ export function SessionTranscriptPanel({
         sessionStreams={sessionStreams}
         wsConnected={wsConnected}
         sessionStatus={ownedSessionData?.status}
-        plan={plan}
         workflow={workflow}
         meeting={ownedSessionData?.meeting}
         sessionTitle={ownedSessionData?.title}

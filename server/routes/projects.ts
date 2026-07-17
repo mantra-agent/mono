@@ -11,7 +11,7 @@ import { requireAuth } from "../auth";
 import { parsePlanFromContent } from "../lib/plan-utils";
 import { db } from "../db";
 import { libraryPages } from "@shared/models/info";
-import { planExecutions, planSteps } from "@shared/schema";
+import { planExecutions, planStepAttempts, planSteps } from "@shared/schema";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { logPatchClearAudit, sanitizePatch } from "../lib/patch-guard";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
@@ -20,10 +20,12 @@ import { eq, desc, ilike, type SQL } from "drizzle-orm";
 const log = createLogger("WorkRoutes");
 const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
 const planStepScopeColumns = { ownerUserId: planSteps.ownerUserId, accountId: planSteps.accountId };
+const planAttemptScopeColumns = { ownerUserId: planStepAttempts.ownerUserId, accountId: planStepAttempts.accountId };
 const libraryScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
 function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
 function writablePlan(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
 function visiblePlanStep(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planStepScopeColumns, predicate); }
+function visiblePlanAttempt(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planAttemptScopeColumns, predicate); }
 function visibleLibrary(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), libraryScopeColumns, predicate); }
 
 function routeError(error: unknown, operation: string): { message: string; operation: string } {
@@ -449,6 +451,15 @@ export async function registerProjectsRoutes(app: Express) {
         .where(visiblePlanStep(eq(planSteps.planId, dbPlan.id)))
         .orderBy(planSteps.position);
       if (dbSteps.length > 0) {
+        const attempts = await db.select().from(planStepAttempts)
+          .where(visiblePlanAttempt(eq(planStepAttempts.planId, dbPlan.id)))
+          .orderBy(planStepAttempts.stepId, planStepAttempts.attemptNumber);
+        const attemptsByStep = new Map<string, typeof attempts[number][]>();
+        for (const attempt of attempts) {
+          const list = attemptsByStep.get(attempt.stepId) ?? [];
+          list.push(attempt);
+          attemptsByStep.set(attempt.stepId, list);
+        }
         effectiveSteps = dbSteps.map(s => ({
           id: s.id,
           title: s.title,
@@ -457,6 +468,18 @@ export async function registerProjectsRoutes(app: Express) {
           outcome: s.outcome ?? undefined,
           error: s.error ?? undefined,
           sessionId: s.sessionId ?? undefined,
+          attempts: (attemptsByStep.get(s.id) ?? []).map(attempt => ({
+            id: attempt.id,
+            attemptNumber: attempt.attemptNumber,
+            childSessionId: attempt.childSessionId,
+            status: attempt.status,
+            startedAt: attempt.startedAt?.toISOString() ?? null,
+            updatedAt: attempt.updatedAt?.toISOString() ?? null,
+            completedAt: attempt.completedAt?.toISOString() ?? null,
+            durationSeconds: attempt.durationSeconds,
+            outcome: attempt.outcome,
+            error: attempt.error,
+          })),
           startedAt: s.startedAt?.toISOString(),
           completedAt: s.completedAt?.toISOString(),
         }));
