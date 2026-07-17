@@ -16,7 +16,8 @@ import {
   ownedInsertValues,
 } from "../scoped-storage";
 import { createLogger } from "../log";
-import { isStageRuntimeSync, DOCUMENT_STORE_CUTOVER_KEY } from "./document-store-stage-cutover";
+import { DOCUMENT_STORE_CUTOVER_KEY } from "./document-store-cutover";
+import { documentStoreTargetReadsRequested } from "./document-store-migration-mode";
 import {
   executeSemanticSearch,
   mapRawRowToEntry,
@@ -77,7 +78,7 @@ function targetToDoc(entry: DocumentStoreDocument): WorkspaceDocCompat {
 }
 
 async function targetReadsEnabled(): Promise<boolean> {
-  if (!isStageRuntimeSync()) return false;
+  if (!documentStoreTargetReadsRequested()) return false;
   const result = await db.execute(sql`
     SELECT read_enabled
     FROM document_store_cutover_state
@@ -86,9 +87,12 @@ async function targetReadsEnabled(): Promise<boolean> {
   `);
   const row = ((result.rows ?? result) as Array<{ read_enabled: boolean }>)[0];
   if (!row) {
-    throw new Error("Stage document-store cutover state is missing");
+    throw new Error("Document-store cutover state is missing while cutover mode is active");
   }
-  return row.read_enabled === true;
+  if (row.read_enabled !== true) {
+    throw new Error("Document-store cutover is not reconciled; legacy read fallback is disabled");
+  }
+  return true;
 }
 
 const WORKSPACE_LAYER = "workspace";

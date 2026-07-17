@@ -240,7 +240,7 @@ Named markdown files for durable reference knowledge:
 
 ## Workspace Document Extraction
 
-`DocumentStorage` is the compatibility boundary for workspace documents while legacy memory retires. On stage, `document_store_documents` receives every `memory_entries(layer='workspace')` insert, update, and delete through one database trigger, preserving atomicity even for older direct-SQL writers. Stage reads move as one contract behind `document_store_cutover_state.read_enabled` only after exact reconciliation. Missing state or target errors fail visibly; never add a silent read fallback. Production remains on legacy reads until a separately approved release.
+`DocumentStorage` is the compatibility boundary for workspace documents while legacy memory retires. `DOCUMENT_STORE_MIGRATION_MODE` is the single activation discriminant: missing/invalid values resolve to `off`; `shadow` enables the atomic workspace mirror while legacy reads remain authoritative; `cutover` permits target reads only after exact reconciliation. The database trigger preserves atomicity even for older direct-SQL writers and is inert when mode state is off. Missing state or target errors fail visibly in cutover mode; never add a silent read fallback. Production activation requires separate human approval.
 
 ## When Working Here
 
