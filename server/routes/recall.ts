@@ -24,6 +24,13 @@ export type MeetingIngestFn = (event: {
     meetingUrl?: string;
   };
   speakerLabel?: string;
+  speaker?: {
+    key?: string;
+    email?: string;
+    transportParticipantId?: string;
+    providerSpeakerId?: string;
+    source?: "participant_metadata" | "machine_diarization" | "manual";
+  };
   turnId?: string;
   text?: string;
   botStatus?: MeetingBotStatus;

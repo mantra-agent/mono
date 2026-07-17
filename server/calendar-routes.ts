@@ -464,6 +464,19 @@ export function registerCalendarRoutes(app: Express): void {
     agenda: z.string().max(20000).optional(),
     agendaLibraryPageId: z.string().min(1).optional(),
     attendeeEmails: z.array(z.string()).optional(),
+    speakerPolicy: z.discriminatedUnion("mode", [
+      z.object({ mode: z.literal("participant_streams") }),
+      z.object({
+        mode: z.literal("selected_shared_streams"),
+        sharedStreams: z.array(z.object({
+          selector: z.object({
+            attendeeEmail: z.string().email().optional(),
+            participantLabel: z.string().min(1).optional(),
+          }).refine(selector => Boolean(selector.attendeeEmail || selector.participantLabel), "A shared stream selector is required"),
+          expectedPersonIds: z.array(z.string().min(1)).optional(),
+        })).min(1),
+      }),
+    ]).optional(),
   });
 
   app.post("/api/calendar/metadata", async (req, res) => {
@@ -472,7 +485,7 @@ export function registerCalendarRoutes(app: Express): void {
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
-      const { googleEventId, accountId, calendarId, eventType, notes, capacityType, agenda, agendaLibraryPageId } = parsed.data;
+      const { googleEventId, accountId, calendarId, eventType, notes, capacityType, agenda, agendaLibraryPageId, speakerPolicy } = parsed.data;
       let attendeeEmails = parsed.data.attendeeEmails;
       let eventEndTime: string | undefined;
       let eventDate: string | undefined;
@@ -492,7 +505,7 @@ export function registerCalendarRoutes(app: Express): void {
         }
       }
 
-      const meta = await setMetadata(googleEventId, accountId, calendarId, eventType, notes, attendeeEmails, capacityType);
+      const meta = await setMetadata(googleEventId, accountId, calendarId, eventType, notes, attendeeEmails, capacityType, undefined, speakerPolicy);
       if (agendaLibraryPageId || agenda !== undefined) {
         await setMeetingAgendaPage(meta, agendaLibraryPageId, agenda, eventSummary || "Meeting");
       }

@@ -120,6 +120,10 @@ interface CalendarMetadata {
   capacityType: CapacityTypeValue | null;
   notes: string | null;
   agenda: string | null;
+  speakerPolicy: { mode: "participant_streams" } | {
+    mode: "selected_shared_streams";
+    sharedStreams: Array<{ selector: { attendeeEmail?: string; participantLabel?: string } }>;
+  } | null;
   linkedPeople: LinkedPersonRef[];
 }
 
@@ -410,6 +414,25 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   });
 
   // --- Metadata mutations ---
+  const setSpeakerPolicyMutation = useMutation({
+    mutationFn: async (attendeeEmail: string) => {
+      await apiRequest("POST", "/api/calendar/metadata", {
+        googleEventId: eventId,
+        accountId: accountId || selectedAccountId,
+        calendarId: calendarId || selectedCalendarId,
+        eventType: metadata?.eventType || "meeting",
+        speakerPolicy: attendeeEmail === "participant_streams"
+          ? { mode: "participant_streams" }
+          : {
+              mode: "selected_shared_streams",
+              sharedStreams: [{ selector: { attendeeEmail } }],
+            },
+      });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: metadataQueryKey }),
+    onError: (err: any) => toast({ title: "Failed to update shared room audio", description: err.message, variant: "destructive" }),
+  });
+
   const setTypeMutation = useMutation({
     mutationFn: async ({ eventType, capacityType }: { eventType: EventTypeValue; capacityType?: CapacityTypeValue | null }) => {
       await apiRequest("POST", "/api/calendar/metadata", {
@@ -924,6 +947,31 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
                           <SelectItem value="untyped">Untyped</SelectItem>
                           {CAPACITY_TYPES.map(type => (
                             <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  {(metadata?.eventType || "meeting") === "meeting" && (
+                    <div className="grid grid-cols-[92px_1fr] items-center gap-2">
+                      <label className="text-xs text-muted-foreground">Shared Audio</label>
+                      <Select
+                        value={metadata?.speakerPolicy?.mode === "selected_shared_streams"
+                          ? metadata.speakerPolicy.sharedStreams[0]?.selector.attendeeEmail || "participant_streams"
+                          : "participant_streams"}
+                        onValueChange={(value) => setSpeakerPolicyMutation.mutate(value)}
+                        disabled={setSpeakerPolicyMutation.isPending || isReadOnly}
+                      >
+                        <SelectTrigger className="h-8 text-xs" data-testid="select-shared-room-audio">
+                          <SelectValue placeholder="One person per connection" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="participant_streams">One person per connection</SelectItem>
+                          {(eventData?.attendees || []).filter(attendee => attendee.email).map(attendee => (
+                            <SelectItem key={attendee.email} value={attendee.email}>
+                              Multiple speakers via {attendee.displayName || attendee.email}
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>

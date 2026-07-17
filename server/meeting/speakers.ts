@@ -1,81 +1,92 @@
 /**
- * Speaker resolution for meeting sessions.
+ * Canonical meeting speaker resolution.
  *
- * Known speakers resolve to a person (renders as @person downstream);
- * unknown speakers receive a stable per-session "Speaker N" identity.
- * The session's meeting.participants list is the single source of truth
- * for identities already assigned in a meeting.
+ * Stable keys, not display labels, own identity inside a meeting. Exact
+ * transport email outranks names. Diarized clusters remain unknown until a
+ * later explicit identity mapping supplies stronger evidence.
  */
 
 import { peopleStorage } from "../people-storage";
+import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
 import type {
   MeetingParticipant,
+  MeetingSpeakerSource,
   MessageSpeakerMeta,
 } from "@shared/models/chat";
 
 const log = createLogger("MeetingSpeakers");
 
+export interface SpeakerEvidence {
+  speakerKey?: string;
+  label?: string;
+  email?: string;
+  transportParticipantId?: string;
+  providerSpeakerId?: string;
+  source?: MeetingSpeakerSource;
+}
+
 export interface SpeakerResolution {
   speaker: MessageSpeakerMeta;
-  /** Participants list including this speaker (unchanged if already present). */
   participants: MeetingParticipant[];
-  /** True when the speaker was added to the participants list. */
   added: boolean;
 }
 
-/**
- * Resolve a transport-reported speaker label against existing participants
- * and the people directory. Anonymous utterances get "Speaker N" where N is
- * stable for the session (next unused ordinal).
- */
-export async function resolveSpeaker(
-  label: string | undefined,
-  participants: MeetingParticipant[],
-): Promise<SpeakerResolution> {
-  const trimmed = label?.trim();
-
-  if (!trimmed) {
-    const nextOrdinal =
-      participants.filter((p) => /^Speaker \d+$/.test(p.label)).length + 1;
-    const anon: MeetingParticipant = { label: `Speaker ${nextOrdinal}` };
-    return {
-      speaker: anon,
-      participants: [...participants, anon],
-      added: true,
-    };
+async function resolvePerson(evidence: SpeakerEvidence): Promise<{ id: string; name: string } | null> {
+  if (evidence.source === "machine_diarization") return null;
+  const normalizedEmail = evidence.email?.trim().toLowerCase();
+  if (normalizedEmail) {
+    try {
+      const index = await peopleStorage.listPeople();
+      const people = await peopleStorage.getPeopleByIds(index.map((person) => person.id));
+      const exact = people.find((person) =>
+        person.contactInfo.some((item) => item.type === "email" && item.value.trim().toLowerCase() === normalizedEmail),
+      );
+      if (exact) return { id: exact.id, name: exact.name };
+    } catch (error) {
+      log.warn(`person email lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
-
-  const existing = participants.find(
-    (p) => p.label.toLowerCase() === trimmed.toLowerCase(),
-  );
-  if (existing) {
-    return { speaker: existing, participants, added: false };
-  }
-
-  let personId: string | undefined;
+  const label = evidence.label?.trim();
+  if (!label) return null;
   try {
-    const matches = await peopleStorage.searchPeople(trimmed);
+    const matches = await peopleStorage.searchPeople(label);
     const exact = matches.find(
-      (p) =>
-        p.name.toLowerCase() === trimmed.toLowerCase() ||
-        (p.nicknames || []).some(
-          (n) => n.toLowerCase() === trimmed.toLowerCase(),
-        ),
+      (person) =>
+        person.name.toLowerCase() === label.toLowerCase() ||
+        (person.nicknames || []).some((nickname) => nickname.toLowerCase() === label.toLowerCase()),
     );
-    personId = (exact || (matches.length === 1 ? matches[0] : undefined))?.id;
-  } catch (err) {
-    log.warn(
-      `person lookup failed for speaker label="${trimmed}": ${err instanceof Error ? err.message : String(err)}`,
-    );
+    const person = exact || (matches.length === 1 ? matches[0] : undefined);
+    return person ? { id: person.id, name: person.name } : null;
+  } catch (error) {
+    log.warn(`person lookup failed for speaker label="${label}": ${error instanceof Error ? error.message : String(error)}`);
+    return null;
   }
+}
 
-  const participant: MeetingParticipant = personId
-    ? { label: trimmed, personId }
-    : { label: trimmed };
+export async function resolveSpeaker(
+  sessionId: string,
+  evidence: SpeakerEvidence,
+): Promise<SpeakerResolution> {
+  const person = await resolvePerson(evidence);
+  const candidate: MeetingParticipant = {
+    ...(evidence.speakerKey?.trim() ? { key: evidence.speakerKey.trim() } : {}),
+    label: evidence.source === "machine_diarization" ? "" : evidence.label?.trim() || person?.name || "",
+    ...(person ? { personId: person.id } : {}),
+    ...(evidence.source ? { source: evidence.source } : {}),
+    ...(evidence.transportParticipantId ? { transportParticipantId: evidence.transportParticipantId } : {}),
+    ...(evidence.email ? { transportEmail: evidence.email } : {}),
+    ...(evidence.providerSpeakerId ? { providerSpeakerId: evidence.providerSpeakerId } : {}),
+  };
+  const registered = await chatStorage.registerMeetingParticipant(sessionId, candidate);
+  if (!registered) throw new Error(`Meeting session ${sessionId} not found during speaker registration`);
   return {
-    speaker: participant,
-    participants: [...participants, participant],
-    added: true,
+    speaker: {
+      key: registered.participant.key,
+      label: registered.participant.label,
+      personId: registered.participant.personId,
+    },
+    participants: registered.participants,
+    added: registered.added,
   };
 }

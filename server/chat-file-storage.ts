@@ -1070,6 +1070,10 @@ export interface IChatFileStorage {
     patch: Partial<MeetingSessionMeta>,
   ): Promise<FileSession | null>;
   claimMeetingRecap(sessionId: string): Promise<MeetingRecapClaim>;
+  registerMeetingParticipant(
+    sessionId: string,
+    candidate: MeetingParticipant,
+  ): Promise<{ participant: MeetingParticipant; participants: MeetingParticipant[]; added: boolean } | null>;
   createMeetingUserMessage(
     sessionId: string,
     content: string,
@@ -1795,6 +1799,59 @@ export const chatFileStorage: IChatFileStorage = {
       const session = convToMeta(data);
       invalidateSessionsCache({ action: "updated", sessionId, session });
       return { outcome: "claimed", session };
+    });
+  },
+
+  async registerMeetingParticipant(
+    sessionId: string,
+    candidate: MeetingParticipant,
+  ) {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data?.meeting) return null;
+      const participants = data.meeting.participants || [];
+      const keyedIndex = candidate.key
+        ? participants.findIndex((participant) => participant.key === candidate.key)
+        : -1;
+      if (keyedIndex >= 0) {
+        return { participant: participants[keyedIndex]!, participants, added: false };
+      }
+      const legacyIndex = candidate.key
+        ? participants.findIndex((participant) =>
+            (!participant.key && candidate.personId && participant.personId === candidate.personId) ||
+            (!participant.key && candidate.label.trim() && participant.label.toLowerCase() === candidate.label.toLowerCase()),
+          )
+        : participants.findIndex((participant) => participant.label.toLowerCase() === candidate.label.toLowerCase());
+      if (legacyIndex >= 0) {
+        const participant = { ...participants[legacyIndex]!, ...candidate, label: candidate.label || participants[legacyIndex]!.label };
+        const updatedParticipants = [...participants];
+        updatedParticipants[legacyIndex] = participant;
+        data.meeting = { ...data.meeting, participants: updatedParticipants };
+        data.updatedAt = new Date().toISOString();
+        await writeConv(data);
+        const session = convToMeta(data);
+        invalidateSessionsCache({ action: "updated", sessionId, session });
+        return { participant, participants: updatedParticipants, added: false };
+      }
+
+      let participant = candidate;
+      if (!candidate.label.trim()) {
+        const ordinals = new Set(
+          participants
+            .map((entry) => entry.label.match(/^Speaker (\d+)$/)?.[1])
+            .filter(Boolean),
+        );
+        let ordinal = 1;
+        while (ordinals.has(String(ordinal))) ordinal += 1;
+        participant = { ...candidate, label: `Speaker ${ordinal}` };
+      }
+      const updatedParticipants = [...participants, participant];
+      data.meeting = { ...data.meeting, participants: updatedParticipants };
+      data.updatedAt = new Date().toISOString();
+      await writeConv(data);
+      const session = convToMeta(data);
+      invalidateSessionsCache({ action: "updated", sessionId, session });
+      return { participant, participants: updatedParticipants, added: true };
     });
   },
 

@@ -77,6 +77,12 @@ export async function joinMeetingByUrl(opts: {
     eventStart: identity.eventStart,
     eventEnd: identity.eventEnd,
     resolutionSource: identity.resolutionSource,
+    speakerPolicy: identity.speakerPolicy,
+    recognition: {
+      mode: identity.speakerPolicy.mode,
+      status: "waiting",
+      streams: [],
+    },
   });
 
   const failSession = async (message: string): Promise<never> => {
@@ -138,7 +144,12 @@ export async function joinMeetingByUrl(opts: {
     sttStatus: participantAudioUrl ? "inactive" : "fallback",
     sttStatusDetail: participantAudioUrl
       ? "Waiting for Recall participant audio"
-      : "ElevenLabs integration unavailable; Recall transcript webhook fallback active",
+      : "Participant audio STT unavailable; Recall transcript webhook fallback active",
+    recognition: {
+      mode: identity.speakerPolicy.mode,
+      status: participantAudioUrl ? "waiting" : "degraded",
+      streams: [],
+    },
   });
   log.log(`Bot ${botId} dispatched to ${platform} meeting "${title}" (session ${session.id})`);
 
