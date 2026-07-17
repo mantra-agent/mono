@@ -7,6 +7,7 @@ export const indexedContent = pgTable("indexed_content", {
   id: text("id").primaryKey().default(sql`gen_random_uuid()`),
   ownerUserId: text("owner_user_id"),
   principalAccountId: text("principal_account_id"),
+  vaultId: text("vault_id"),
   sourceType: text("source_type").notNull(),
   sourceLabel: text("source_label").notNull(),
   objectStoragePath: text("object_storage_path").notNull(),
@@ -18,6 +19,7 @@ export const indexedContent = pgTable("indexed_content", {
   index("idx_indexed_content_created_at").on(table.createdAt),
   index("idx_indexed_content_owner").on(table.ownerUserId),
   index("idx_indexed_content_principal_account").on(table.principalAccountId),
+  index("idx_indexed_content_vault").on(table.vaultId),
 ]);
 
 export interface IndexSection {

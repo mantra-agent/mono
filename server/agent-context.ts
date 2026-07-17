@@ -109,18 +109,21 @@ type CompactableHistoryMessage = {
   content: string;
   thinking?: string;
   toolCalls?: Array<{ toolName?: string; result?: unknown; error?: boolean }>;
+  publicRole?: "user" | "assistant";
+  archiveRefId?: string;
+  archiveDownloadable?: boolean;
 };
 
-function serializeForCompaction(msg: CompactableHistoryMessage, mode: "archive" | "summary"): string {
+function serializeForCompaction(msg: CompactableHistoryMessage): string {
   const parts = [`[${msg.role}]: ${msg.content}`];
   if (msg.thinking) {
-    const thinking = mode === "summary" && msg.thinking.length > 1000 ? `${msg.thinking.slice(0, 1000)}...` : msg.thinking;
+    const thinking = msg.thinking.length > 1000 ? `${msg.thinking.slice(0, 1000)}...` : msg.thinking;
     parts.push(`[thinking]: ${thinking}`);
   }
   if (Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0) {
     for (const tc of msg.toolCalls) {
       const rawResult = typeof tc.result === "string" ? tc.result : tc.result == null ? "" : JSON.stringify(tc.result);
-      const result = mode === "summary" && rawResult.length > 1500 ? `${rawResult.slice(0, 1500)}...` : rawResult;
+      const result = rawResult.length > 1500 ? `${rawResult.slice(0, 1500)}...` : rawResult;
       parts.push(`[tool:${tc.toolName || "unknown"}${tc.error ? ":error" : ""}]: ${result}`);
     }
   }
@@ -160,7 +163,11 @@ export async function runBetweenTurnCompaction(
   const olderMessages = conversationHistory.slice(0, -keepRecent);
   if (olderMessages.length < 1) return false;
 
-  const serialized = olderMessages.map(m => serializeForCompaction(m, "archive")).join("\n\n");
+  const { encodeCompactionArchive, COMPACTION_ARCHIVE_FORMAT } = await import("./compaction-archive");
+  const serialized = encodeCompactionArchive(sessionId, olderMessages);
+  const archiveDownloadable = olderMessages.every(
+    (message) => !message.archiveRefId || message.archiveDownloadable === true,
+  );
   if (serialized.length < 200) return false;
 
   try {
@@ -178,16 +185,6 @@ export async function runBetweenTurnCompaction(
     const { chatCompletion } = await import("./model-client");
     const { getPromptModulePrompt } = await import("./prompt-modules");
     const { ACTIVITY_FRAMING: activity } = await import("./job-profiles");
-
-    try {
-      const { persistOriginalContent } = await import("./content-summarizer");
-      const persistRef = await persistOriginalContent(serialized, `compaction/${sessionId}`);
-      if (!archiveRef && persistRef) {
-        archiveRef = { id: persistRef, objectPath: persistRef } as any;
-      }
-    } catch (archiveErr: unknown) {
-      log.warn(`betweenTurnCompaction: archive failed sessionId=${sessionId} error=${archiveErr instanceof Error ? archiveErr.message : String(archiveErr)}`);
-    }
 
     const sessionContinuationPrompt = `Write a continuation-grade summary of this session history. This is not always a user-requested conversation: sessions may be user-directed, Agent-directed, skill-directed, plan-step-directed, system/autonomous work, or mixed.
 
@@ -231,7 +228,7 @@ ${prompt}`;
     systemMsg += "\n\nMessages are prefixed with `[YYYY-MM-DD HH:MM TZ]` timestamps — preserve notable time gaps in your summary (e.g. \"user was away ~14h before resuming\", \"thread spans 3 days\").";
 
     const compactInput = olderMessages.map(m => {
-      const serializedMsg = serializeForCompaction(m, "summary");
+      const serializedMsg = serializeForCompaction(m);
       return serializedMsg.length > 4000 ? `${serializedMsg.slice(0, 4000)}...` : serializedMsg;
     }).join("\n\n");
 
@@ -266,6 +263,8 @@ ${prompt}`;
       replacedMessageCount: olderMessages.length,
       keptMessageCount: recentMessages.length,
       archiveRefId: archiveRef?.id,
+      archiveFormat: archiveRef ? COMPACTION_ARCHIVE_FORMAT : undefined,
+      archiveDownloadable: !!archiveRef && archiveDownloadable,
       tokensBefore: totalTokens,
       tokensAfter,
       tokensSaved,

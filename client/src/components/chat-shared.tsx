@@ -148,6 +148,7 @@ export function filterStepsByLayer(
   });
 }
 import { useVisibilityLayer } from "@/hooks/use-visibility-layer";
+import { useToast } from "@/hooks/use-toast";
 import { ReferenceText } from "@/components/references/reference-text";
 import type { ReferenceSurface } from "@/components/references/reference-renderer";
 import { EmailDraftWidget } from "@/components/email-draft-widget";
@@ -2218,11 +2219,49 @@ function CompactionBoundary({
   stripTags: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const { toast } = useToast();
   const meta = message.compaction;
   const replaced = meta?.replacedMessageCount;
   const kept = meta?.keptMessageCount;
   const summary = meta?.summary || cleanCompactionSummary(message.content);
   const tokensSaved = meta?.tokensSaved;
+
+  const downloadOriginalConversation = useCallback(async () => {
+    if (!meta?.archiveRefId || meta.archiveDownloadable !== true || downloading) return;
+    setDownloading(true);
+    try {
+      const response = await apiRequest(
+        "GET",
+        `/api/sessions/${encodeURIComponent(message.sessionId)}/compactions/${encodeURIComponent(message.id)}/download`,
+      );
+      const blob = await response.blob();
+      const disposition = response.headers.get("Content-Disposition") || "";
+      const filename = disposition.match(/filename="([^"]+)"/i)?.[1]
+        || "compacted-conversation.md";
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      log.warn("Compaction conversation download failed", {
+        sessionId: message.sessionId,
+        markerId: message.id,
+        error,
+      });
+      toast({
+        variant: "destructive",
+        title: "Download unavailable",
+        description: "The archived conversation could not be retrieved.",
+      });
+    } finally {
+      setDownloading(false);
+    }
+  }, [downloading, message.id, message.sessionId, meta?.archiveDownloadable, meta?.archiveRefId, toast]);
 
   return (
     <div
@@ -2271,10 +2310,22 @@ function CompactionBoundary({
             <div className="prose prose-sm dark:prose-invert max-w-none text-sm">
               <MarkdownContent content={summary} stripTags={stripTags} />
             </div>
-            {meta?.archiveRefId && (
-              <div className="mt-2 text-xs text-muted-foreground/70 font-mono">
-                archive ref: {meta.archiveRefId}
-              </div>
+            {meta?.archiveRefId && meta.archiveDownloadable === true && (
+              <button
+                type="button"
+                onClick={downloadOriginalConversation}
+                disabled={downloading}
+                className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-cta transition-opacity hover:opacity-80 disabled:cursor-wait disabled:opacity-50"
+                aria-label="Download original conversation"
+                data-testid={`button-download-compaction-${message.id}`}
+              >
+                {downloading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )}
+                {downloading ? "Preparing download…" : "Download original conversation"}
+              </button>
             )}
           </div>
         )}

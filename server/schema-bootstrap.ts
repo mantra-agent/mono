@@ -2746,10 +2746,19 @@ export async function runSchemaBootstrap(
         "object_storage_path" text NOT NULL,
         "byte_count" integer NOT NULL,
         "index" jsonb NOT NULL,
+        "owner_user_id" text,
+        "principal_account_id" text,
+        "vault_id" text,
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+      ALTER TABLE "indexed_content" ADD COLUMN IF NOT EXISTS "owner_user_id" text;
+      ALTER TABLE "indexed_content" ADD COLUMN IF NOT EXISTS "principal_account_id" text;
+      ALTER TABLE "indexed_content" ADD COLUMN IF NOT EXISTS "vault_id" text;
       CREATE INDEX IF NOT EXISTS "idx_indexed_content_source_type" ON "indexed_content" ("source_type");
       CREATE INDEX IF NOT EXISTS "idx_indexed_content_created_at" ON "indexed_content" ("created_at");
+      CREATE INDEX IF NOT EXISTS "idx_indexed_content_owner" ON "indexed_content" ("owner_user_id");
+      CREATE INDEX IF NOT EXISTS "idx_indexed_content_principal_account" ON "indexed_content" ("principal_account_id");
+      CREATE INDEX IF NOT EXISTS "idx_indexed_content_vault" ON "indexed_content" ("vault_id");
     `);
   });
 

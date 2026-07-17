@@ -707,6 +707,92 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }
   });
 
+  app.get(
+    "/api/sessions/:id/compactions/:markerId/download",
+    async (req: Request, res: Response) => {
+      const sessionId = req.params.id as string;
+      const markerId = req.params.markerId as string;
+      try {
+        const principal = getPrincipal(req);
+        if (!principal) {
+          return res.status(401).json({ error: "Authentication required" });
+        }
+        const session = await chatStorage.getSession(sessionId);
+        if (!session) {
+          return res.status(404).json({ error: "Session not found" });
+        }
+        const messages = await chatStorage.getMessagesBySession(sessionId);
+        const marker = messages.find(
+          (message) =>
+            message.id === markerId &&
+            message.model === "compaction-marker" &&
+            message.compaction?.archiveRefId,
+        );
+        if (
+          !marker?.compaction?.archiveRefId ||
+          marker.compaction.archiveDownloadable !== true
+        ) {
+          return res.status(404).json({ error: "Compaction archive not available for download" });
+        }
+        const archiveRefId = marker.compaction.archiveRefId;
+
+        const [{ renderCompactionTranscript }, { readVisibleIndexedContent }] =
+          await Promise.all([
+            import("../../compaction-archive"),
+            import("../../content-indexer"),
+          ]);
+        const transcript = await renderCompactionTranscript(
+          archiveRefId,
+          async (refId) => {
+            const result = await readVisibleIndexedContent({
+              id: refId,
+              sourceType: "compaction",
+            });
+            return result?.content ?? null;
+          },
+        );
+        const safeTitle = (session.title || "session")
+          .normalize("NFKD")
+          .replace(/[^a-zA-Z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .slice(0, 80)
+          .toLowerCase() || "session";
+        const createdAt = marker.compaction?.createdAt || marker.createdAt;
+        const document = [
+          `# ${session.title || "Session conversation"}`,
+          "",
+          `Original conversation preserved before compaction on ${createdAt}.`,
+          "",
+          transcript,
+          "",
+        ].join("\n");
+
+        res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${safeTitle}-compacted-conversation.md"`,
+        );
+        res.setHeader("Cache-Control", "private, no-store");
+        return res.status(200).send(document);
+      } catch (error) {
+        const unavailable =
+          error instanceof Error &&
+          error.name === "CompactionArchiveUnavailableError";
+        if (unavailable) {
+          chatLog.warn(
+            `compaction download unavailable sessionId=${sessionId} markerId=${markerId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return res.status(404).json({ error: "Compaction archive unavailable" });
+        }
+        chatLog.error(
+          `compaction download failed sessionId=${sessionId} markerId=${markerId}:`,
+          error,
+        );
+        return res.status(500).json({ error: "Failed to download conversation" });
+      }
+    },
+  );
+
   app.get("/api/sessions/:id/details", async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
@@ -1202,6 +1288,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     toolCallId?: string;
     toolCalls?: any[];
     thinking?: string;
+    publicRole?: "user" | "assistant";
+    archiveRefId?: string;
+    archiveDownloadable?: boolean;
   };
 
   async function buildChatHistory(
@@ -1307,11 +1396,17 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             content: stamped,
             thinking: msg.thinking || undefined,
             toolCalls: (msg.toolCalls || undefined) as any,
+            publicRole: msg.role as "user" | "assistant",
           });
         } else if (msg.role === "system_prompt") {
           conversationHistory.push({ role: "user", content: stamped });
         } else if (msg.role === "system" && msg.model === "compaction-marker") {
-          conversationHistory.push({ role: "system", content: stamped });
+          conversationHistory.push({
+            role: "system",
+            content: stamped,
+            archiveRefId: msg.compaction?.archiveRefId,
+            archiveDownloadable: msg.compaction?.archiveDownloadable,
+          });
         }
       }
     };

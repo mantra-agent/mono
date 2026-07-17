@@ -1,6 +1,9 @@
 import { createLogger } from "./log";
 import { ACTIVITY_FRAMING } from "./job-profiles";
 import type { IndexData, IndexSection } from "@shared/models/indexed-content";
+import { and, eq } from "drizzle-orm";
+import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { combineWithSensitiveVisible, sensitiveOwnershipValues } from "./sensitive-scope";
 
 const log = createLogger("ContentIndexer");
 
@@ -25,12 +28,28 @@ export interface IndexedReference {
 export async function persistToObjectStorage(content: string, category: string): Promise<string | null> {
   try {
     const { storageBackend, vaultObjectKeyAuto } = await import("./object_storage");
+    const { setObjectAclPolicy } = await import("./object_storage/objectAcl");
     const { randomUUID } = await import("crypto");
     const fileId = randomUUID();
     const filename = `${fileId}.txt`;
     const key = vaultObjectKeyAuto(category, filename);
     const buffer = Buffer.from(content, "utf-8");
     await storageBackend.putObject(key, buffer, { contentType: "text/plain; charset=utf-8" });
+    const principal = getCurrentPrincipalOrSystem();
+    await setObjectAclPolicy(key, principal.userId ? {
+      owner: principal.userId,
+      ownerUserId: principal.userId,
+      accountId: principal.accountId,
+      createdByUserId: principal.userId,
+      scope: "user",
+      visibility: "private",
+      vaultId: principal.activeVaultId ?? undefined,
+    } : {
+      owner: "system",
+      scope: "system",
+      visibility: "private",
+      vaultId: principal.activeVaultId ?? undefined,
+    });
     const objectKey = `/objects/${category}/${filename}`;
     log.log(`persistToObjectStorage: stored ${buffer.length} bytes at ${objectKey} (category=${category})`);
     return objectKey;
@@ -209,6 +228,7 @@ export async function indexAndArchive(opts: IndexAndArchiveOptions): Promise<Ind
 
     await db.insert(indexedContent).values({
       id,
+      ...sensitiveOwnershipValues(),
       sourceType,
       sourceLabel,
       objectStoragePath: objectPath,
@@ -227,15 +247,8 @@ export async function indexAndArchive(opts: IndexAndArchiveOptions): Promise<Ind
       index: indexData,
     };
   } catch (err: any) {
-    log.error(`indexAndArchive DB insert failed sourceType=${sourceType} sourceLabel=${sourceLabel} objectPath=${objectPath}: ${err.message}; returning reference without DB record`);
-    return {
-      id: "ephemeral-" + Date.now(),
-      sourceType,
-      sourceLabel,
-      objectStoragePath: objectPath,
-      byteCount: Buffer.byteLength(content, "utf-8"),
-      index: indexData,
-    };
+    log.error(`indexAndArchive DB insert failed sourceType=${sourceType} sourceLabel=${sourceLabel} objectPath=${objectPath}: ${err.message}; durable indexed reference unavailable`);
+    return null;
   }
 }
 
@@ -291,6 +304,7 @@ export async function indexAndArchiveHeuristic(opts: IndexAndArchiveOptions): Pr
 
     await db.insert(indexedContent).values({
       id,
+      ...sensitiveOwnershipValues(),
       sourceType,
       sourceLabel,
       objectStoragePath: objectPath,
@@ -312,6 +326,68 @@ export async function indexAndArchiveWithFallback(opts: IndexAndArchiveOptions):
     return formatReferenceBlock(ref);
   }
   return heuristicFallbackWithArchive(opts.content, "archive unavailable");
+}
+
+export async function readVisibleIndexedContent(options: {
+  id: string;
+  sourceType?: string;
+  charOffset?: number;
+  charLength?: number;
+}): Promise<{ content: string; sourceLabel: string } | null> {
+  const { db } = await import("./db");
+  const { indexedContent } = await import("@shared/schema");
+  const ownerColumns = {
+    ownerUserId: indexedContent.ownerUserId,
+    principalAccountId: indexedContent.principalAccountId,
+    vaultId: indexedContent.vaultId,
+  };
+  const domainPredicate = options.sourceType
+    ? and(eq(indexedContent.id, options.id), eq(indexedContent.sourceType, options.sourceType))
+    : eq(indexedContent.id, options.id);
+  const rows = await db
+    .select()
+    .from(indexedContent)
+    .where(combineWithSensitiveVisible(ownerColumns, domainPredicate))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  const { objectStorageService } = await import("./object_storage");
+  const { getObjectAclPolicy, setObjectAclPolicy } = await import("./object_storage/objectAcl");
+  const { ObjectPermission } = await import("./object_storage/objectAcl");
+  const principal = getCurrentPrincipalOrSystem();
+  const cleanPath = row.objectStoragePath.startsWith("/objects/")
+    ? row.objectStoragePath
+    : `/objects/${row.objectStoragePath}`;
+  const objectFile = await objectStorageService.getObjectEntityFile(cleanPath, principal);
+  const existingPolicy = await getObjectAclPolicy(objectFile.key);
+  if (!existingPolicy && row.ownerUserId) {
+    await setObjectAclPolicy(objectFile.key, {
+      owner: row.ownerUserId,
+      ownerUserId: row.ownerUserId,
+      accountId: row.principalAccountId,
+      createdByUserId: row.ownerUserId,
+      scope: "user",
+      visibility: "private",
+      vaultId: row.vaultId ?? undefined,
+    });
+  }
+  const allowed = await objectStorageService.canAccessObjectEntity({
+    principal,
+    objectFile,
+    requestedPermission: ObjectPermission.READ,
+  });
+  if (!allowed) return null;
+  const [buffer] = await objectFile.download();
+  const fullContent = buffer.toString("utf-8");
+  const content = options.charOffset === undefined
+    ? fullContent
+    : fullContent.slice(
+        options.charOffset,
+        options.charLength === undefined
+          ? undefined
+          : options.charOffset + options.charLength,
+      );
+  return { content, sourceLabel: row.sourceLabel };
 }
 
 export function heuristicFallbackWithArchive(content: string, reason: string): string {
@@ -355,6 +431,7 @@ export interface IndexAndArchiveFromFileOptions {
 async function persistFileToObjectStorage(filePath: string, category: string): Promise<string | null> {
   try {
     const { storageBackend, vaultObjectKeyAuto } = await import("./object_storage");
+    const { setObjectAclPolicy } = await import("./object_storage/objectAcl");
     const { randomUUID } = await import("crypto");
     const fs = await import("fs");
     const fileId = randomUUID();
@@ -363,6 +440,21 @@ async function persistFileToObjectStorage(filePath: string, category: string): P
     // Stream the file directly from disk so we don't load it into a Buffer.
     const stream = fs.createReadStream(filePath);
     await storageBackend.putObject(key, stream, { contentType: "text/plain; charset=utf-8" });
+    const principal = getCurrentPrincipalOrSystem();
+    await setObjectAclPolicy(key, principal.userId ? {
+      owner: principal.userId,
+      ownerUserId: principal.userId,
+      accountId: principal.accountId,
+      createdByUserId: principal.userId,
+      scope: "user",
+      visibility: "private",
+      vaultId: principal.activeVaultId ?? undefined,
+    } : {
+      owner: "system",
+      scope: "system",
+      visibility: "private",
+      vaultId: principal.activeVaultId ?? undefined,
+    });
     const objectKey = `/objects/${category}/${filename}`;
     log.log(`persistFileToObjectStorage: streamed file from ${filePath} to ${objectKey} (category=${category})`);
     return objectKey;
@@ -398,6 +490,7 @@ export async function indexAndArchiveFromFile(opts: IndexAndArchiveFromFileOptio
 
     await db.insert(indexedContent).values({
       id,
+      ...sensitiveOwnershipValues(),
       sourceType,
       sourceLabel,
       objectStoragePath: objectPath,
@@ -409,15 +502,8 @@ export async function indexAndArchiveFromFile(opts: IndexAndArchiveFromFileOptio
 
     return { id, sourceType, sourceLabel, objectStoragePath: objectPath, byteCount, index: indexData };
   } catch (err: any) {
-    log.error(`indexAndArchiveFromFile DB insert failed sourceType=${sourceType} sourceLabel=${sourceLabel} objectPath=${objectPath}: ${err.message}; returning reference without DB record`);
-    return {
-      id: "ephemeral-" + Date.now(),
-      sourceType,
-      sourceLabel,
-      objectStoragePath: objectPath,
-      byteCount,
-      index: indexData,
-    };
+    log.error(`indexAndArchiveFromFile DB insert failed sourceType=${sourceType} sourceLabel=${sourceLabel} objectPath=${objectPath}: ${err.message}; durable indexed reference unavailable`);
+    return null;
   }
 }
 

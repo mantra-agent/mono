@@ -12300,81 +12300,79 @@ const systemTools: Record<string, ToolHandler> = {
     if (!action) return { result: "Missing action. Available: list, get, read_section", error: true };
 
     try {
+      const { db } = await import("./db");
+      const { indexedContent } = await import("@shared/schema");
+      const { desc, eq } = await import("drizzle-orm");
+      const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+      const { combineWithSensitiveVisible } = await import("./sensitive-scope");
+      const ownerColumns = {
+        ownerUserId: indexedContent.ownerUserId,
+        principalAccountId: indexedContent.principalAccountId,
+        vaultId: indexedContent.vaultId,
+      };
+      const visible = (predicate?: SQL) =>
+        combineWithSensitiveVisible(ownerColumns, predicate, getCurrentPrincipalOrSystem());
+
       switch (action) {
         case "list": {
-          const { db } = await import("./db");
-          const { indexedContent } = await import("@shared/schema");
-          const { desc, eq } = await import("drizzle-orm");
           const limit = Math.min(args.limit || 20, 100);
-          let query = db.select({
+          const predicate = args.sourceType
+            ? eq(indexedContent.sourceType, args.sourceType)
+            : undefined;
+          const rows = await db.select({
             id: indexedContent.id,
             sourceType: indexedContent.sourceType,
             sourceLabel: indexedContent.sourceLabel,
             byteCount: indexedContent.byteCount,
             createdAt: indexedContent.createdAt,
-          }).from(indexedContent).orderBy(desc(indexedContent.createdAt)).limit(limit);
-
-          if (args.sourceType) {
-            query = db.select({
-              id: indexedContent.id,
-              sourceType: indexedContent.sourceType,
-              sourceLabel: indexedContent.sourceLabel,
-              byteCount: indexedContent.byteCount,
-              createdAt: indexedContent.createdAt,
-            }).from(indexedContent).where(eq(indexedContent.sourceType, args.sourceType)).orderBy(desc(indexedContent.createdAt)).limit(limit);
-          }
-
-          const rows = await query;
+          }).from(indexedContent)
+            .where(visible(predicate))
+            .orderBy(desc(indexedContent.createdAt))
+            .limit(limit);
           if (rows.length === 0) return { result: "No indexed content found." };
           const lines = rows.map(r => `- [${r.id}] ${r.sourceType}: ${r.sourceLabel} (${r.byteCount.toLocaleString()} bytes, ${r.createdAt?.toISOString() || "unknown"})`);
-          return { result: `${rows.length} indexed items:\n${lines.join("\n")}` };
+          return { result: `${rows.length} indexed items:
+${lines.join("\n")}` };
         }
         case "get": {
           const id = args.id;
           if (!id) return { result: "Missing id parameter", error: true };
-          const { db } = await import("./db");
-          const { indexedContent } = await import("@shared/schema");
-          const { eq } = await import("drizzle-orm");
-          const rows = await db.select().from(indexedContent).where(eq(indexedContent.id, id)).limit(1);
+          const rows = await db.select().from(indexedContent)
+            .where(visible(eq(indexedContent.id, id)))
+            .limit(1);
           if (rows.length === 0) return { result: `Indexed content "${id}" not found`, error: true };
           const row = rows[0];
           const idx = row.index as any;
           const parts: string[] = [];
           parts.push(`**${row.sourceType}: ${row.sourceLabel}**`);
           parts.push(`ID: ${row.id} | Size: ${row.byteCount.toLocaleString()} bytes | Created: ${row.createdAt?.toISOString() || "unknown"}`);
-          parts.push(`Storage: ${row.objectStoragePath}`);
           if (idx?.keyFacts?.length > 0) {
-            parts.push(`\n**Key Facts:**`);
+            parts.push(`
+**Key Facts:**`);
             for (const f of idx.keyFacts) parts.push(`- ${f}`);
           }
           if (idx?.sections?.length > 0) {
-            parts.push(`\n**Sections:**`);
-            idx.sections.forEach((s: any, i: number) => {
-              parts.push(`  ${i}. ${s.title} (offset: ${s.byteOffset}, length: ${s.byteLength})`);
-              if (s.keyFacts?.length > 0) {
-                for (const f of s.keyFacts) parts.push(`     - ${f}`);
-              }
+            parts.push(`
+**Sections:**`);
+            idx.sections.forEach((section: any, index: number) => {
+              parts.push(`  ${index}. ${section.title} (offset: ${section.byteOffset}, length: ${section.byteLength})`);
+              for (const fact of section.keyFacts || []) parts.push(`     - ${fact}`);
             });
           }
-          if (idx?.identifiers?.length > 0) {
-            parts.push(`\n**Identifiers:** ${idx.identifiers.join(", ")}`);
-          }
+          if (idx?.identifiers?.length > 0) parts.push(`
+**Identifiers:** ${idx.identifiers.join(", ")}`);
           return { result: parts.join("\n") };
         }
         case "read_section": {
           const id = args.id;
           if (!id) return { result: "Missing id parameter", error: true };
-          const { db } = await import("./db");
-          const { indexedContent } = await import("@shared/schema");
-          const { eq } = await import("drizzle-orm");
-          const rows = await db.select().from(indexedContent).where(eq(indexedContent.id, id)).limit(1);
+          const rows = await db.select().from(indexedContent)
+            .where(visible(eq(indexedContent.id, id)))
+            .limit(1);
           if (rows.length === 0) return { result: `Indexed content "${id}" not found`, error: true };
           const row = rows[0];
-          const { readFromObjectStorage } = await import("./content-indexer");
-
           let charOffset = args.charOffset as number | undefined;
           let charLength = args.charLength as number | undefined;
-
           if (args.sectionIndex !== undefined) {
             const idx = row.index as any;
             const section = idx?.sections?.[args.sectionIndex];
@@ -12382,12 +12380,17 @@ const systemTools: Record<string, ToolHandler> = {
             charOffset = section.byteOffset;
             charLength = section.byteLength;
           }
-
-          const content = await readFromObjectStorage(row.objectStoragePath, charOffset, charLength);
-          if (content === null) return { result: `Failed to read content from ${row.objectStoragePath}`, error: true };
+          const { readVisibleIndexedContent } = await import("./content-indexer");
+          const archived = await readVisibleIndexedContent({ id, charOffset, charLength });
+          if (!archived) return { result: `Failed to read indexed content "${id}"`, error: true };
+          const content = archived.content;
           const maxDisplay = 50000;
           if (content.length > maxDisplay) {
-            return { result: `Section content (${content.length} chars, showing first ${maxDisplay}):\n\n${content.slice(0, maxDisplay)}\n\n[Use charOffset/charLength for pagination — total section: ${content.length} chars]` };
+            return { result: `Section content (${content.length} chars, showing first ${maxDisplay}):
+
+${content.slice(0, maxDisplay)}
+
+[Use charOffset/charLength for pagination — total section: ${content.length} chars]` };
           }
           return { result: content };
         }

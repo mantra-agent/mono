@@ -528,3 +528,7 @@ Cloudflare Pages project truth and deployment commands live in `server/platforms
 ## Runtime Architecture
 
 Container deployments use Tini as PID 1. The shell entrypoint must `exec` the Node server as Tini's direct child. Never make Node PID 1 and never replace Tini with route-level or child-specific reaping logic; Tini owns signal forwarding and orphaned descendant reaping for git, esbuild, Chromium, and provider tooling.
+
+### Session Compaction Archives
+
+- Compaction archives remain private indexed content. User-facing retrieval must start from a principal-scoped session and persisted compaction marker, resolve the marker's scoped archive reference, and project a public transcript server-side. Never expose or download the underlying object path directly.
