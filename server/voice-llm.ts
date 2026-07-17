@@ -24,6 +24,7 @@ import { createLogger } from "./log";
 import { writeJournal } from "./chat-journal";
 import { runWithPrincipal } from "./principal-context";
 import { eventBus } from "./event-bus";
+import { extractProviderSystemTools, mergeVoiceTools } from "./voice/provider-system-tools";
 
 // ── Voice submodules ──────────────────────────────────────────────
 import type { VoiceSession, VoiceMessage, VoiceToolCall, TurnContext } from "./voice/types";
@@ -628,7 +629,11 @@ async function executeVoiceTurnBody(
     conversationMessages = resolved.finalMessages;
 
     const executorMessages = buildExecutorMessages(systemPrompt, conversationMessages);
-    const tools = getVoiceTools();
+    const providerSystemTools = extractProviderSystemTools((req.body as Record<string, unknown> | undefined)?.tools);
+    const tools = mergeVoiceTools(getVoiceTools(), providerSystemTools);
+    if (providerSystemTools.length > 0) {
+      log.debug(`turn ${currentTurn} provider system tools merged names=${providerSystemTools.map((tool) => tool.name).join(",")} session=${session.id}`);
+    }
 
     initSSEStream(res, ctx, trackedWrite, _pipelineStart, currentTurn, session.id);
     startKeepaliveTimer();

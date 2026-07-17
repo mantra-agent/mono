@@ -63,5 +63,6 @@ export function createTurnContext(
     toolCallIndex: 0,
     pipelineStagesEmitted: new Set<string>(),
     lastToolCallId: null,
+    providerSystemToolCall: null,
   };
 }
