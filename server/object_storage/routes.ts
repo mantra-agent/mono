@@ -1,12 +1,9 @@
 import type { Express } from "express";
 import multer from "multer";
-import { randomUUID } from "crypto";
 import { extname } from "path";
-import { readFileSync, unlinkSync } from "fs";
+import { readFile, unlink } from "fs/promises";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
-import { ObjectPermission, setObjectAclPolicy } from "./objectAcl";
-import { storageBackend } from "./s3-backend";
-import { vaultObjectKeyFromPrincipal } from "./vault-keys";
+import { ObjectPermission } from "./objectAcl";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
 import { getPrincipal } from "../principal";
@@ -31,35 +28,32 @@ export function registerObjectStorageRoutes(app: Express): void {
       try {
         const principal = getPrincipal(req);
         if (!principal?.userId || !principal.accountId) return res.status(403).json({ error: "User principal required" });
-        const ext = extname(req.file.originalname);
-        const objectId = randomUUID();
-        const suffix = ext ? (ext.startsWith(".") ? ext : `.${ext}`) : "";
-        const category = `users/${principal.userId}/uploads`;
-        const filename = `${objectId}${suffix}`;
-        const key = vaultObjectKeyFromPrincipal(principal, category, filename);
-
-        const fileBuffer = readFileSync(tmpPath);
-        await storageBackend.putObject(key, fileBuffer, {
+        const fileBuffer = await readFile(tmpPath);
+        const uploaded = await objectStorageService.uploadObjectEntity(fileBuffer, {
+          extension: extname(req.file.originalname) || undefined,
           contentType: req.file.mimetype || "application/octet-stream",
+          category: "uploads",
+          principal,
+          acl: {
+            owner: principal.userId,
+            ownerUserId: principal.userId,
+            accountId: principal.accountId,
+            createdByUserId: principal.userId,
+            scope: "user",
+            visibility: "private",
+          },
         });
 
-        await setObjectAclPolicy(key, {
-          owner: principal.userId,
-          ownerUserId: principal.userId,
-          accountId: principal.accountId,
-          createdByUserId: principal.userId,
-          scope: "user",
-          visibility: "private",
-          vaultId: principal.activeVaultId ?? undefined,
-        });
+        try {
+          await unlink(tmpPath);
+        } catch (cleanupError) {
+          log.warn(`[Upload] proxy temp cleanup failed: name="${req.file.originalname}" error=${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+        }
 
-        unlinkSync(tmpPath);
-
-        const objectPath = `/objects/users/${principal.userId}/uploads/${objectId}${suffix}`;
-        log.log(`[Upload] proxy OK: name="${req.file.originalname}" key=${key} objectPath=${objectPath}`);
-        res.json({ objectPath });
+        log.log(`[Upload] proxy OK: name="${req.file.originalname}" objectPath=${uploaded.objectPath}`);
+        res.json({ objectPath: uploaded.objectPath });
       } catch (error) {
-        try { unlinkSync(tmpPath); } catch {}
+        try { await unlink(tmpPath); } catch {}
         const message = error instanceof Error ? error.message : "Upload failed";
         log.error(`[Upload] proxy FAILED: ${message}`);
         res.status(500).json({ error: message });

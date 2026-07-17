@@ -18,6 +18,7 @@ import { useWikiLinks } from "@/hooks/use-wiki-links";
 import { isEditorEmpty } from "@/lib/editor-utils";
 import { tiptapToMarkdown as jsonToMarkdownShared, markdownToTiptap, isValidTiptapDoc } from "@shared/markdown-tiptap";
 import { ReferenceWidgetExtension } from "@/components/references/tiptap-reference-extension";
+import { ImageIcon } from "lucide-react";
 
 const log = createLogger("RichTextEditor");
 
@@ -108,7 +109,7 @@ function handleStandardEditingShortcut(event: React.KeyboardEvent, editor: Edito
   return true;
 }
 
-function buildEditorCommands(onInsertLink?: () => void): EditorCommand[] {
+function buildEditorCommands(onInsertLink?: () => void, onInsertImage?: () => void): EditorCommand[] {
   const commands: EditorCommand[] = [
     { id: "paragraph", label: "Text", hint: "Plain text block", icon: "T", isActive: (editor) => editor.isActive("paragraph"), run: (editor) => editor.chain().focus().setParagraph().run() },
     { id: "heading-1", label: "Heading 1", hint: "Large section heading", shortcut: "#", icon: "H1", isActive: (editor) => editor.isActive("heading", { level: 1 }), run: (editor) => editor.chain().focus().toggleHeading({ level: 1 }).run() },
@@ -120,6 +121,7 @@ function buildEditorCommands(onInsertLink?: () => void): EditorCommand[] {
     { id: "code-block", label: "Code block", hint: "Insert a code block", shortcut: "```", icon: "{}", isActive: (editor) => editor.isActive("codeBlock"), run: (editor) => editor.chain().focus().toggleCodeBlock().run() },
     { id: "divider", label: "Divider", hint: "Separate sections", shortcut: "---", icon: "—", run: (editor) => editor.chain().focus().setHorizontalRule().run() },
     { id: "table", label: "Table", hint: "3 × 3 table with header", icon: "⊞", run: (editor) => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
+    ...(onInsertImage ? [{ id: "image", label: "Image", hint: "Upload an image", icon: <ImageIcon className="h-4 w-4" />, run: () => onInsertImage() }] : []),
     { id: "bold", label: "Bold", hint: "Emphasize selected text", shortcut: "⌘B", icon: <strong>B</strong>, isActive: (editor) => editor.isActive("bold"), run: (editor) => editor.chain().focus().toggleBold().run() },
     { id: "italic", label: "Italic", hint: "Italicize selected text", shortcut: "⌘I", icon: <em>I</em>, isActive: (editor) => editor.isActive("italic"), run: (editor) => editor.chain().focus().toggleItalic().run() },
     { id: "underline", label: "Underline", hint: "Underline selected text", shortcut: "⌘U", icon: <u>U</u>, isActive: (editor) => editor.isActive("underline"), run: (editor) => editor.chain().focus().toggleUnderline().run() },
@@ -136,21 +138,20 @@ function buildEditorCommands(onInsertLink?: () => void): EditorCommand[] {
 }
 
 
-async function uploadImageToBucket(file: File): Promise<string> {
-  const urlRes = await fetch("/api/uploads/request-url", {
+async function uploadImage(file: File): Promise<string> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch("/api/uploads/file", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: file.name, size: file.size, contentType: file.type }),
+    body: formData,
+    credentials: "include",
   });
-  if (!urlRes.ok) throw new Error("Failed to get upload URL");
-  const { uploadURL, objectPath } = (await urlRes.json()) as { uploadURL: string; objectPath: string };
-
-  await fetch(uploadURL, {
-    method: "PUT",
-    headers: { "Content-Type": file.type || "image/jpeg" },
-    body: file,
-  });
-
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { error?: string } | null;
+    throw new Error(body?.error || `Image upload failed with HTTP ${response.status}`);
+  }
+  const { objectPath } = await response.json() as { objectPath?: string };
+  if (!objectPath?.startsWith("/objects/")) throw new Error("Upload did not return a durable object path");
   return objectPath;
 }
 
@@ -177,6 +178,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
   toastRef.current = toast;
 
   const editorContainerRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const plainTextFallbackRef = useRef(plainTextFallback);
   plainTextFallbackRef.current = plainTextFallback;
   const [initFailed, setInitFailed] = useState(false);
@@ -346,12 +348,19 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
       const ed = editorRef.current;
       if (!ed || readOnly) return;
       try {
-        const src = await uploadImageToBucket(file);
-        ed.chain().focus().setImage({ src }).run();
+        if (!file.type.startsWith("image/")) throw new Error("Only image files can be inserted");
+        const src = await uploadImage(file);
+        ed.chain().focus().setImage({ src, alt: file.name }).run();
         const json = ed.getJSON();
         const plainText = ed.getText();
         onChangeRef.current(json, plainText);
-      } catch {
+      } catch (error) {
+        log.error("image upload failed", {
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type || "unknown",
+          error: error instanceof Error ? error.message : String(error),
+        });
         toastRef.current({ title: "Image upload failed", description: "Could not upload image. Please try again.", variant: "destructive" });
       }
     },
@@ -407,7 +416,10 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
   const blockHandleClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [commandQuery, setCommandQuery] = useState("");
   const [selectedCommandIdx, setSelectedCommandIdx] = useState(0);
-  const commands = buildEditorCommands(onInsertLink);
+  const openImagePicker = useCallback(() => {
+    if (!readOnly) imageInputRef.current?.click();
+  }, [readOnly]);
+  const commands = buildEditorCommands(onInsertLink, openImagePicker);
   const filteredCommands = commands.filter((command) => {
     const q = commandQuery.trim().toLowerCase();
     if (!q) return true;
@@ -638,6 +650,22 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
         handleWikiKeyDown(e, editor);
       }}
     >
+      {!readOnly && (
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          tabIndex={-1}
+          aria-hidden="true"
+          data-testid="input-editor-image"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (file) void handleImagePasteOrDrop(file);
+          }}
+        />
+      )}
       {!readOnly && blockHandleAnchor && !isEditorFocused && !menuAnchor && (
         <button
           type="button"
