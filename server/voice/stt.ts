@@ -1,6 +1,11 @@
 import WebSocket from "ws";
 import { getSecretSync } from "../secrets-store";
 import { createLogger } from "../log";
+import {
+  connectDeepgramStreaming,
+  deepgramConfigured,
+  type DeepgramWord,
+} from "../integrations/deepgram/streaming";
 
 const log = createLogger("VoiceSTT");
 
@@ -30,6 +35,8 @@ export interface STTUtterance {
   startedAt?: string;
   endedAt?: string;
   confidence?: number;
+  /** Provider-local acoustic speaker cluster, scoped by streamId. */
+  providerSpeakerId?: string;
   provider: string;
   model: string;
   fallback: boolean;
@@ -211,5 +218,102 @@ export class ScribeRealtimeSTTProvider implements STTProvider {
         if (socket.readyState === WebSocket.OPEN) socket.close(1000, "Audio stream ended");
       },
     };
+  }
+}
+
+
+export const DEEPGRAM_DIARIZATION_POLICY = {
+  provider: "deepgram",
+  model: "nova-3",
+  diarizeModel: "latest",
+  sampleRateHz: 16000,
+  endpointingMs: 400,
+  language: "en-US",
+} as const;
+
+interface SpeakerWordGroup {
+  speakerId: string;
+  words: DeepgramWord[];
+}
+
+function groupWordsBySpeaker(words: DeepgramWord[]): SpeakerWordGroup[] {
+  const groups: SpeakerWordGroup[] = [];
+  for (const word of words) {
+    const speakerId = Number.isInteger(word.speaker) ? String(word.speaker) : "unknown";
+    const current = groups.at(-1);
+    if (!current || current.speakerId !== speakerId) groups.push({ speakerId, words: [word] });
+    else current.words.push(word);
+  }
+  return groups;
+}
+
+function wordGroupText(group: SpeakerWordGroup): string {
+  return group.words
+    .map((word) => word.punctuated_word || word.word || "")
+    .join(" ")
+    .replace(/\s+([,.;!?])/g, "$1")
+    .trim();
+}
+
+/** Deepgram Nova-3 recognition with live acoustic diarization for one shared-room stream. */
+export class DeepgramDiarizingSTTProvider implements STTProvider {
+  readonly provider = DEEPGRAM_DIARIZATION_POLICY.provider;
+  readonly model = DEEPGRAM_DIARIZATION_POLICY.model;
+
+  isConfigured(): boolean {
+    return deepgramConfigured();
+  }
+
+  async connect(
+    stream: STTAudioStream,
+    onUtterance: (utterance: STTUtterance) => void | Promise<void>,
+    onError: (error: Error) => void,
+  ): Promise<STTProviderSession> {
+    if (stream.encoding !== "pcm_s16le" || stream.sampleRateHz !== 16000 || stream.channels !== 1) {
+      throw new Error("Deepgram meeting diarization requires mono PCM S16LE at 16 kHz");
+    }
+    const connectedAtMs = Date.now();
+    let sequence = 0;
+    return connectDeepgramStreaming(
+      {
+        model: this.model,
+        language: DEEPGRAM_DIARIZATION_POLICY.language,
+        encoding: "linear16",
+        sampleRateHz: DEEPGRAM_DIARIZATION_POLICY.sampleRateHz,
+        endpointingMs: DEEPGRAM_DIARIZATION_POLICY.endpointingMs,
+        diarize: true,
+      },
+      async (event) => {
+        if (!event.isFinal) return;
+        const groups = groupWordsBySpeaker(event.words);
+        if (groups.length === 0) groups.push({ speakerId: "unknown", words: [] });
+        for (const group of groups) {
+          const text = group.words.length > 0 ? wordGroupText(group) : event.text;
+          if (!text) continue;
+          const first = group.words[0];
+          const last = group.words.at(-1);
+          const confidences = group.words
+            .map((word) => word.confidence)
+            .filter((value): value is number => Number.isFinite(value));
+          await onUtterance({
+            utteranceId: `deepgram:${event.requestId || stream.streamId}:${group.speakerId}:${++sequence}`,
+            streamId: stream.streamId,
+            participant: stream.participant,
+            text,
+            isFinal: true,
+            startedAt: secondsToIso(connectedAtMs, first?.start),
+            endedAt: secondsToIso(connectedAtMs, last?.end),
+            confidence: confidences.length > 0
+              ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
+              : undefined,
+            providerSpeakerId: group.speakerId,
+            provider: this.provider,
+            model: this.model,
+            fallback: false,
+          });
+        }
+      },
+      onError,
+    );
   }
 }

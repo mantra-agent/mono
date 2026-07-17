@@ -622,10 +622,44 @@ export type MeetingBotStatus =
   | "failed"
   | "ended";
 
-/** A meeting participant. Known speakers carry a personId (renders as @person). */
+export type MeetingSpeakerSource = "participant_metadata" | "machine_diarization" | "manual";
+
+/** A canonical speaker within one meeting. key is stable across display-name corrections. */
 export interface MeetingParticipant {
+  key?: string;
   label: string;
   personId?: string;
+  source?: MeetingSpeakerSource;
+  transportParticipantId?: string;
+  transportEmail?: string;
+  providerSpeakerId?: string;
+}
+
+export type MeetingSpeakerPolicy =
+  | { mode: "participant_streams" }
+  | {
+      mode: "selected_shared_streams";
+      sharedStreams: Array<{
+        selector: { attendeeEmail?: string; participantLabel?: string };
+        expectedPersonIds?: string[];
+      }>;
+    };
+
+export interface MeetingRecognitionStream {
+  streamKey: string;
+  transportParticipantId: string;
+  transportLabel?: string;
+  attribution: "participant" | "diarized";
+  provider: string;
+  model: string;
+  status: "connecting" | "active" | "fallback" | "closed" | "failed";
+  detail?: string;
+}
+
+export interface MeetingRecognitionState {
+  mode: MeetingSpeakerPolicy["mode"];
+  status: "waiting" | "active" | "degraded" | "inactive";
+  streams: MeetingRecognitionStream[];
 }
 
 /**
@@ -678,6 +712,10 @@ export interface MeetingSessionMeta {
   /** Whether finalized utterances that call Mantra by name may trigger a spoken answer. */
   /** Durable replay guard: complete assembled turn id most recently claimed for an addressed response. */
   lastAddressedTurnId?: string;
+  /** Speaker routing policy snapshotted from calendar metadata before bot dispatch. */
+  speakerPolicy?: MeetingSpeakerPolicy;
+  /** Per-stream recognition state for mixed Scribe + Deepgram meetings. */
+  recognition?: MeetingRecognitionState;
   /** Canonical recognition boundary telemetry. Recall transcript webhooks remain the explicit fallback. */
   sttProvider?: string;
   sttModel?: string;
@@ -712,6 +750,7 @@ export interface MeetingRecapMeta {
 
 /** Speaker attribution for inbound meeting transcript messages. */
 export interface MessageSpeakerMeta {
+  key?: string;
   label: string;
   personId?: string;
 }

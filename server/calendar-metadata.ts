@@ -15,6 +15,7 @@ import { eventBus } from "./event-bus";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwnershipValues } from "./sensitive-scope";
+import type { MeetingSpeakerPolicy } from "@shared/models/chat";
 
 const log = createLogger("CalendarMetadata");
 
@@ -173,7 +174,8 @@ export async function setMetadata(
   notes?: string,
   attendeeEmails?: string[],
   capacityType?: CapacityType | null,
-  agenda?: string
+  agenda?: string,
+  speakerPolicy?: MeetingSpeakerPolicy,
 ): Promise<CalendarEventMetadata> {
   // Event type/notes/agenda are series-level: normalize recurring instance
   // IDs to the series master so metadata applies to every occurrence.
@@ -183,11 +185,13 @@ export async function setMetadata(
   const hasNotesPatch = notes !== undefined;
   const hasCapacityPatch = capacityType !== undefined;
   const hasAgendaPatch = agenda !== undefined;
+  const hasSpeakerPolicyPatch = speakerPolicy !== undefined;
   const storedCapacityType = eventType === "focus_block"
     ? (hasCapacityPatch ? capacityType ?? null : existing?.capacityType ?? null)
     : null;
   const storedNotes = hasNotesPatch ? notes ?? null : existing?.notes ?? null;
   const storedAgenda = hasAgendaPatch ? agenda ?? null : existing?.agenda ?? null;
+  const storedSpeakerPolicy = hasSpeakerPolicyPatch ? speakerPolicy : existing?.speakerPolicy ?? null;
 
   const rows = await db
     .insert(calendarEventMetadata)
@@ -199,6 +203,7 @@ export async function setMetadata(
       capacityType: storedCapacityType,
       notes: storedNotes,
       agenda: storedAgenda,
+      speakerPolicy: storedSpeakerPolicy,
       createdAt: sql`CURRENT_TIMESTAMP`,
       updatedAt: sql`CURRENT_TIMESTAMP`,
       ...sensitiveOwnershipValues(),
@@ -210,6 +215,7 @@ export async function setMetadata(
         capacityType: storedCapacityType,
         ...(hasNotesPatch ? { notes: storedNotes } : {}),
         ...(hasAgendaPatch ? { agenda: storedAgenda } : {}),
+        ...(hasSpeakerPolicyPatch ? { speakerPolicy: storedSpeakerPolicy } : {}),
         updatedAt: sql`CURRENT_TIMESTAMP`,
         ...sensitiveOwnershipValues(),
       },
@@ -230,6 +236,7 @@ export async function setMetadata(
       capacityType: storedCapacityType,
       ...(hasNotesPatch ? { notes: storedNotes } : {}),
       ...(hasAgendaPatch ? { agenda: storedAgenda } : {}),
+      ...(hasSpeakerPolicyPatch ? { speakerPolicy: storedSpeakerPolicy } : {}),
       updatedAt: sql`CURRENT_TIMESTAMP`,
     })
     .where(
@@ -303,6 +310,7 @@ export async function setAgentJoin(
       capacityType: existing?.capacityType ?? null,
       notes: existing?.notes ?? null,
       agenda: existing?.agenda ?? null,
+      speakerPolicy: existing?.speakerPolicy ?? null,
       ...joinFields,
       createdAt: sql`CURRENT_TIMESTAMP`,
       updatedAt: sql`CURRENT_TIMESTAMP`,

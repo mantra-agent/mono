@@ -2881,6 +2881,13 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       meetingUrl?: string;
     };
     speakerLabel?: string;
+    speaker?: {
+      key?: string;
+      email?: string;
+      transportParticipantId?: string;
+      providerSpeakerId?: string;
+      source?: "participant_metadata" | "machine_diarization" | "manual";
+    };
     turnId?: string;
     text?: string;
     botStatus?: MeetingBotStatus;
@@ -2954,8 +2961,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
     if (event.stt) {
       const currentSource = meeting.sttSource;
+      const recognition = (await chatStorage.getSession(sessionId))?.meeting?.recognition || meeting.recognition;
       const canonicalAudioActive =
-        currentSource === "recall_participant_audio" && meeting.sttStatus === "active";
+        currentSource === "recall_participant_audio" &&
+        (recognition
+          ? recognition.streams.some((stream) => stream.status === "active")
+          : meeting.sttStatus === "active");
       // A delayed Recall transcript webhook must not overwrite an active
       // participant-audio stream. It remains available as a replay-safe
       // fallback if canonical audio never connected or degraded.
@@ -3031,19 +3042,20 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
     // Speaker attribution against the session's participant roster
     const resolution = await resolveSpeaker(
-      event.speakerLabel,
-      meeting.participants,
+      sessionId,
+      {
+        speakerKey: event.speaker?.key,
+        label: event.speakerLabel,
+        email: event.speaker?.email,
+        transportParticipantId: event.speaker?.transportParticipantId,
+        providerSpeakerId: event.speaker?.providerSpeakerId,
+        source: event.speaker?.source,
+      },
     );
-    if (
-      resolution.added ||
-      (event.botStatus && event.botStatus !== meeting.botStatus)
-    ) {
+    if (event.botStatus && event.botStatus !== meeting.botStatus) {
       const updated = await chatStorage.updateMeetingMeta(sessionId, {
-        participants: resolution.participants,
-        ...(event.botStatus ? { botStatus: event.botStatus } : {}),
-        ...(event.botStatus === "ended"
-          ? { endedAt: new Date().toISOString() }
-          : {}),
+        botStatus: event.botStatus,
+        ...(event.botStatus === "ended" ? { endedAt: new Date().toISOString() } : {}),
       });
       if (updated) session = updated;
     }

@@ -5262,7 +5262,12 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         return { result: `Invalid eventType "${eventType}". Valid types: ${EVENT_TYPES.join(", ")}`, error: true };
       }
 
-      const meta = await setMetadata(googleEventId, accountId, calendarId, eventType, args.notes, attendeeEmails);
+      const speakerPolicy = args.sharedAudioAttendeeEmail
+        ? { mode: "selected_shared_streams" as const, sharedStreams: [{ selector: { attendeeEmail: args.sharedAudioAttendeeEmail } }] }
+        : args.sharedAudioAttendeeEmail === null
+          ? { mode: "participant_streams" as const }
+          : undefined;
+      const meta = await setMetadata(googleEventId, accountId, calendarId, eventType, args.notes, attendeeEmails, undefined, undefined, speakerPolicy);
       if (args.agendaLibraryPageId || args.agenda !== undefined) {
         const { setMeetingAgendaPage } = await import("./calendar-metadata");
         await setMeetingAgendaPage(meta, args.agendaLibraryPageId, args.agenda, summary || "Meeting");

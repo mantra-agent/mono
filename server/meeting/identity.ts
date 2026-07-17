@@ -1,4 +1,4 @@
-import type { MeetingParticipant, MeetingResolutionSource } from "@shared/models/chat";
+import type { MeetingParticipant, MeetingResolutionSource, MeetingSpeakerPolicy } from "@shared/models/chat";
 import { getLinkedPeople, getMetadata, resolveMeetingAgenda, resolveMeetingAgendaPage, setMeetingAgendaPage, type MeetingAgendaPage } from "../calendar-metadata";
 import { listAllEvents, type CalendarEvent } from "../google-calendar";
 import { createLogger } from "../log";
@@ -32,6 +32,7 @@ export interface ResolvedMeetingIdentity {
   eventEnd?: string;
   resolutionSource: MeetingResolutionSource;
   participants: MeetingParticipant[];
+  speakerPolicy: MeetingSpeakerPolicy;
 }
 
 export interface ResolveMeetingIdentityInput {
@@ -123,6 +124,7 @@ async function fromEvent(
     : existingAgendaPage;
   const resolvedAgenda = metadata ? await resolveMeetingAgenda(metadata) : fallbackAgenda;
   const participants = await resolveEventParticipants(event.attendees, metadata?.id);
+  const speakerPolicy = (metadata?.speakerPolicy as MeetingSpeakerPolicy | null) || { mode: "participant_streams" };
   return {
     meetingUrl,
     title: event.summary?.trim() || fallbackTitle,
@@ -135,6 +137,7 @@ async function fromEvent(
     eventEnd: eventDateTime(event.end),
     resolutionSource,
     participants,
+    speakerPolicy,
   };
 }
 
@@ -159,6 +162,7 @@ export async function resolveMeetingIdentity(input: ResolveMeetingIdentityInput)
       ? await setMeetingAgendaPage(metadata, undefined, metadata.agenda, input.explicitEvent.title || title)
       : existingAgendaPage;
     const metadataAgenda = metadata ? await resolveMeetingAgenda(metadata) : undefined;
+    const speakerPolicy = (metadata?.speakerPolicy as MeetingSpeakerPolicy | null) || { mode: "participant_streams" };
     return {
       meetingUrl,
       title: input.explicitEvent.title?.trim() || title,
@@ -171,6 +175,7 @@ export async function resolveMeetingIdentity(input: ResolveMeetingIdentityInput)
       eventEnd: input.explicitEvent.eventEnd,
       resolutionSource: "calendar_auto_join",
       participants,
+      speakerPolicy,
     };
   }
 
@@ -195,5 +200,5 @@ export async function resolveMeetingIdentity(input: ResolveMeetingIdentityInput)
     return fromEvent(event, meetingUrl, title, agenda, "manual_url_match");
   }
 
-  return { meetingUrl, title, agenda, resolutionSource: "unresolved_url", participants: [] };
+  return { meetingUrl, title, agenda, resolutionSource: "unresolved_url", participants: [], speakerPolicy: { mode: "participant_streams" } };
 }

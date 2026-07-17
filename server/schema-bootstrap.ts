@@ -1186,6 +1186,7 @@ export async function runSchemaBootstrap(
         IF to_regclass('public.calendar_event_metadata') IS NOT NULL THEN
           ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS capacity_type TEXT;
           ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agenda TEXT;
+          ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS speaker_policy JSONB;
         END IF;
       END $migration$;
     `);
