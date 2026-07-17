@@ -56,7 +56,7 @@ export interface ContentBlock {
 import type { ToolDefinition } from "@shared/models/tools";
 export type { ToolDefinition };
 
-export type ToolContinuation = "persona_switch" | "await_user";
+export type ToolContinuation = "persona_switch" | "await_user" | "provider_system_tool";
 
 export type ToolExecutorResult = {
   result: string;
@@ -1350,7 +1350,7 @@ export class AgentExecutor extends EventEmitter {
         if (event.continuation === "persona_switch" && toolCallId) {
           ctx.personaSwitchRequested = { toolCallId };
         }
-        if (event.continuation === "await_user" && toolCallId) {
+        if ((event.continuation === "await_user" || event.continuation === "provider_system_tool") && toolCallId) {
           ctx.awaitUserRequested = { toolCallId };
         }
         // Chronology: record tool entry pointing to resolvedToolCalls index
@@ -2555,7 +2555,7 @@ export class AgentExecutor extends EventEmitter {
           personaSwitchRequested: true,
         };
       }
-      if (continuation === "await_user") {
+      if (continuation === "await_user" || continuation === "provider_system_tool") {
         ctx.publish("tool_use_pause", { content: "" });
         return {
           finalContent: cleanText,

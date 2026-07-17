@@ -1,5 +1,6 @@
 import type { Principal } from "../principal";
 import type { PersonaSnapshot } from "@shared/models/chat";
+import type { ProviderSystemToolCall } from "./provider-system-tools";
 
 /**
  * Shared types for the voice pipeline.
@@ -127,4 +128,5 @@ export interface TurnContext {
   toolCallIndex: number;
   pipelineStagesEmitted: Set<string>;
   lastToolCallId: string | null;
+  providerSystemToolCall: ProviderSystemToolCall | null;
 }

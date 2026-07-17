@@ -13,6 +13,45 @@ const log = createLogger("VoiceLlm");
 
 // ── SSE Chunk Building ───────────────────────────────────────────────────
 
+export function buildProviderSystemToolSSEChunks(
+  chatId: string,
+  created: number,
+  toolCall: import("./provider-system-tools").ProviderSystemToolCall,
+): string[] {
+  const toolChunk = {
+    id: chatId,
+    object: "chat.completion.chunk",
+    created,
+    model: "xyz-voice",
+    choices: [{
+      index: 0,
+      delta: {
+        tool_calls: [{
+          index: 0,
+          id: toolCall.callId,
+          type: "function",
+          function: {
+            name: toolCall.name,
+            arguments: JSON.stringify(toolCall.args),
+          },
+        }],
+      },
+      finish_reason: null,
+    }],
+  };
+  const finishChunk = {
+    id: chatId,
+    object: "chat.completion.chunk",
+    created,
+    model: "xyz-voice",
+    choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+  };
+  return [
+    `data: ${JSON.stringify(toolChunk)}\n\n`,
+    `data: ${JSON.stringify(finishChunk)}\n\n`,
+  ];
+}
+
 export function buildSSEChunk(
   chatId: string,
   created: number,

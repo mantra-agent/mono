@@ -2,6 +2,7 @@ import { getPublicBaseUrl } from "./voice-llm";
 import { createLogger } from "./log";
 import { getSecretSync, onSecretChange } from "./secrets-store";
 import { HIGH_QUALITY_SCRIBE_POLICY } from "./voice/stt";
+import { buildLanguagePresets, ELEVENLABS_ADDITIONAL_LANGUAGE_CODES } from "./voice/provider-system-tools";
 
 const log = createLogger("ElevenLabs");
 const ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1";
@@ -34,6 +35,11 @@ export interface AgentPromptConfig {
     cascade_timeout_seconds?: number;
   };
   tool_ids?: string[];
+  tools?: Array<{
+    type: "system";
+    name: "language_detection";
+    description: string;
+  }>;
 }
 
 export interface AgentBaseConfig {
@@ -76,6 +82,9 @@ export interface AgentConversationConfig {
     };
   };
   max_duration_seconds?: number;
+  language_presets?: Record<string, {
+    overrides: { agent: { first_message: string } };
+  }>;
 }
 
 export interface AgentPatchPayload {
@@ -250,10 +259,16 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
             cascade_timeout_seconds: 15,
           },
           tool_ids: [],
+          tools: [{
+            type: "system",
+            name: "language_detection",
+            description: "",
+          }],
         },
         language: "en",
         first_message: "",
       },
+      language_presets: buildLanguagePresets(),
       tts: ttsPayload,
       asr: {
         quality: "high",
@@ -374,6 +389,10 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
       const promptConf = agentConf?.prompt as Record<string, unknown> | undefined;
       const customLlm = promptConf?.custom_llm as Record<string, unknown> | undefined;
       const turnConf = convConfig?.turn as Record<string, unknown> | undefined;
+      const languagePresets = convConfig?.language_presets as Record<string, unknown> | undefined;
+      const promptTools = Array.isArray(promptConf?.tools) ? promptConf.tools as Array<Record<string, unknown>> : [];
+      const hasLanguageDetection = promptTools.some((tool) => tool.type === "system" && tool.name === "language_detection");
+      const configuredLanguageCount = ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.filter((code) => languagePresets?.[code]).length;
 
       const cascadeInCustomLlm = customLlm?.cascade_timeout_seconds;
       const cascadeInTurn = turnConf?.cascade_timeout_seconds;
@@ -391,7 +410,11 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
         }
       }
 
-      log.debug(`setupAgentCallbackUrl: step 6/6 — GET verification done elapsed=${getElapsed}ms custom_llm.url=${effectiveUrl || "(missing)"} custom_llm.cascade_timeout_seconds=${cascadeInCustomLlm ?? "(absent)"} turn.cascade_timeout_seconds=${cascadeInTurn ?? "(absent)"} backup_llms.cascade_timeout_seconds=${cascadeInBackupLlms ?? "(absent)"} soft_timeout_config.timeout_seconds=${softTimeoutConfig?.timeout_seconds ?? "(absent)"} (total=${Date.now() - setupStart}ms)`);
+      log.debug(`setupAgentCallbackUrl: step 6/6 — GET verification done elapsed=${getElapsed}ms custom_llm.url=${effectiveUrl || "(missing)"} custom_llm.cascade_timeout_seconds=${cascadeInCustomLlm ?? "(absent)"} turn.cascade_timeout_seconds=${cascadeInTurn ?? "(absent)"} backup_llms.cascade_timeout_seconds=${cascadeInBackupLlms ?? "(absent)"} soft_timeout_config.timeout_seconds=${softTimeoutConfig?.timeout_seconds ?? "(absent)"} language_presets=${configuredLanguageCount}/${ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length} language_detection=${hasLanguageDetection} (total=${Date.now() - setupStart}ms)`);
+
+      if (!hasLanguageDetection || configuredLanguageCount !== ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length) {
+        log.error(`setupAgentCallbackUrl: MULTILINGUAL CONFIG MISMATCH — language_detection=${hasLanguageDetection} language_presets=${configuredLanguageCount}/${ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length}`);
+      }
 
       const rawCascade = cascadeInCustomLlm ?? cascadeInTurn ?? cascadeInBackupLlms;
       const effectiveCascade = rawCascade != null ? Number(rawCascade) : undefined;

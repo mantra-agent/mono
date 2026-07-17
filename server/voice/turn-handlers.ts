@@ -10,7 +10,7 @@ import { createToolExecutor } from "../tool-execution";
 import { createVoiceMiddlewareStack, type VoiceToolContext } from "./tool-middleware";
 import { ACTIVITY_VOICE } from "../job-profiles";
 import { createThinkingFilter, createPassthroughThinkingFilter } from "./thinking-filter";
-import { buildSSEChunk, isResponseAlive, sendSSEComment, sendErrorResponse } from "./sse";
+import { buildProviderSystemToolSSEChunks, buildSSEChunk, isResponseAlive, sendSSEComment, sendErrorResponse } from "./sse";
 import {
   writeVoiceJournal, publishVoiceEvent, publishVoiceDiagnostic, publishVoiceLifecycleEvent,
   voiceSessionKey, getActiveVoiceRunCount, acquireSessionTurnLock,
@@ -21,6 +21,7 @@ import { logPipelineStage, logTurnForensics, logTurnSummary } from "./pipeline-l
 import { getCascadeTimeoutMs } from "./turn-io";
 import { CIRCUIT_BREAKER_WINDOW_MS } from "./circuit-breaker";
 import { createLogger } from "../log";
+import { createLanguageDetectionCall } from "./provider-system-tools";
 
 const log = createLogger("VoiceTurn");
 
@@ -53,7 +54,13 @@ export async function handleSuccessfulTurn(
   ctx.thinkingSuppressedMs = stats.ms;
 
   flushCoalesceBuffer("turn_end", true);
-  trackedWrite(buildSSEChunk(ctx.chatId, ctx.created, "", "stop"), "final_chunk");
+  if (ctx.providerSystemToolCall) {
+    const chunks = buildProviderSystemToolSSEChunks(ctx.chatId, ctx.created, ctx.providerSystemToolCall);
+    trackedWrite(chunks[0], "provider_system_tool");
+    trackedWrite(chunks[1], "provider_system_tool_finish");
+  } else {
+    trackedWrite(buildSSEChunk(ctx.chatId, ctx.created, "", "stop"), "final_chunk");
+  }
   trackedWrite("data: [DONE]\n\n", "done");
 
   logTurnSummary(ctx, session, result, systemPromptBytes);
@@ -239,8 +246,24 @@ export async function runExecutorPhase(
       }
     },
   };
+  const providerSystemToolMiddleware: import("../tool-execution").ToolMiddleware = async (name, args, _toolCtx, next) => {
+    if (name !== "language_detection") return next();
+    const call = createLanguageDetectionCall(session.id, currentTurn, args);
+    if (!call) {
+      log.warn(`turn ${currentTurn} invalid language_detection args session=${session.id}`);
+      return { result: "Invalid language_detection arguments.", error: true };
+    }
+    ctx.providerSystemToolCall = call;
+    log.log(`turn ${currentTurn} provider language switch requested language=${call.args.language} session=${session.id}`);
+    return {
+      result: `Switching conversation language to ${call.args.language}.`,
+      sideEffectOnly: true,
+      continuation: "provider_system_tool",
+    };
+  };
+
   const voiceToolExecutor = createToolExecutor(
-    createVoiceMiddlewareStack(voiceToolCtx),
+    [providerSystemToolMiddleware, ...createVoiceMiddlewareStack(voiceToolCtx)],
     {
       sessionKey: voiceSessionKey(session),
       sessionId: session.chatSessionId || undefined,

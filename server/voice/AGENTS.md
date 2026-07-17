@@ -73,3 +73,6 @@ Normal voice configuration is the sole source of truth for voice identity, model
 ## Start Flow
 
 `start-preparation.ts` owns start-domain preparation: chat session-key resolution, context and signed-URL prefetch, CLI pre-warm, default persona readiness, FTUE pre-orientation, exact reconnect preparation, and exceptional system-step persistence. HTTP/SSE transport, lease claiming, provider handoff, and response completion remain in `routes/voice-session.ts`. Do not pass Express request or response objects into the preparation module.
+
+### Provider-Owned System Tools
+ElevenLabs system tools arrive on each custom-LLM request as OpenAI-format tool definitions. `provider-system-tools.ts` is the allowlist and validation boundary. Merge only recognized provider tools into the voice executor, intercept them before ordinary bridge-tool dispatch, then return the selected call to ElevenLabs as OpenAI-format SSE so ElevenLabs remains the sole owner of conversation language and other provider state.

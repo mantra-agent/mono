@@ -24,6 +24,7 @@ export interface ToolResult {
   result: string;
   error?: boolean;
   sideEffectOnly?: boolean;
+  continuation?: import("./agent-executor").ToolContinuation;
 }
 
 export type ToolMiddleware = (
