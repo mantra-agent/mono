@@ -584,6 +584,35 @@ async function executeVoiceTurn(
         releaseLock();
       }
 
+      // Orientation bootstrap — same pre-routing stage text sessions run. An
+      // unoriented session (placeholder title) gets one fast-tier classification
+      // applied through the canonical orient path before the persona snapshot
+      // resolves, so this turn routes on the correct tier. Memoized per process;
+      // fallback outcomes do not memoize so the next turn retries, mirroring text.
+      if (session.chatSessionId && !session.orientationEnsured && lastUserContentFull !== "(none)") {
+        const bootstrapStart = Date.now();
+        log.debug(`turn ${currentTurn} TURN_PIPELINE stage=orientation_bootstrap_start elapsed=${bootstrapStart - pipelineStart}ms session=${session.id}`);
+        const { ensureSessionOriented } = await import("./orientation-bootstrap");
+        const orientation = await ensureSessionOriented({
+          sessionId: session.chatSessionId,
+          sessionKey: session.chatSessionKey || undefined,
+          userMessage: lastUserContentFull,
+        });
+        if (orientation.applied || orientation.skipped === "already-oriented") session.orientationEnsured = true;
+        if (orientation.applied) {
+          // The start-of-call system prompt was assembled under the pre-orientation
+          // persona and context flags. Invalidate the cache so this turn reassembles
+          // through the normal cached-prompt path under the oriented persona.
+          session.cachedSystemPrompt = null;
+          session.cachedSystemPromptFocusKey = null;
+          session.cachedAt = 0;
+          publishVoiceDiagnostic(session, "orientation_bootstrap", `Oriented "${orientation.title}" → ${orientation.personaName}`, { turn: currentTurn, elapsedMs: orientation.elapsedMs });
+        } else if (orientation.fallback) {
+          publishVoiceDiagnostic(session, "orientation_bootstrap", `Orientation fell back (${orientation.fallbackReason})`, { turn: currentTurn, status: "error", elapsedMs: orientation.elapsedMs });
+        }
+        log.debug(`turn ${currentTurn} TURN_PIPELINE stage=orientation_bootstrap_done elapsed=${Date.now() - pipelineStart}ms bootstrapMs=${Date.now() - bootstrapStart} session=${session.id}`);
+      }
+
       if (session.chatSessionId) {
         const { resolveSessionPersonaSnapshot } = await import("./session-persona");
         ctx!.persona = await resolveSessionPersonaSnapshot(session.chatSessionId);

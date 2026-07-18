@@ -52,7 +52,8 @@ Provider custom-LLM callbacks resolve by one exact app voice session ID. The ID 
 2. Session resolved by exact app voice session ID, with exact owned-lease recovery only (`session.ts`)
 3. Coalesce/cascade detection handled in `handleCustomLLM`
 4. `executeVoiceTurn` handles abort, locking, circuit breaker, message building
-5. `executeVoiceTurnBody` wires prompt assembly, SSE init, executor, result handling
+5. Unoriented sessions (placeholder title) run the shared orientation bootstrap (`orientation-bootstrap.ts`) serially before persona snapshot resolution — one fast-tier classification through the canonical orient path; on apply, the cached system prompt is invalidated so the turn reassembles under the oriented persona. Memoized on `VoiceSession.orientationEnsured`; fallback outcomes retry next turn. FTUE preorient short-circuits via its real title.
+6. `executeVoiceTurnBody` wires prompt assembly, SSE init, executor, result handling
 6. Content streamed through SSE to ElevenLabs for TTS
 7. Turn data persisted (`persistence.ts`), diagnostics emitted
 
