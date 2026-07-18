@@ -509,7 +509,7 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 
 ### Database Pressure Reporting
 - Pool instrumentation distinguishes submitted, waiting, and executing operations. `total` remains a compatibility alias for submitted work.
-- Saturation is one incident state: emit one `DB SATURATION START`, periodic `SUMMARY` lines no faster than every 10 seconds, and one `RECOVERED` line. Never log each new queue peak.
+- Saturation is sampled only by the periodic monitor. A lane is saturated only when it has waiters, zero idle connections, has reached its configured maximum, and remains exhausted for at least two seconds. Emit one `DB SATURATION START`, periodic `SUMMARY` lines no faster than every 10 seconds, and one `RECOVERED` line. Never detect or log from query submission/settlement transitions.
 - Query duration still includes pool acquisition plus execution; use the waiting/executing split when diagnosing whether SQL itself is slow.
 
 ### File-Storage Abstraction

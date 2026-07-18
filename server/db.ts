@@ -514,16 +514,22 @@ interface InFlightEntry {
 }
 const _inFlightEntries = new Map<number, InFlightEntry>();
 let _inFlightSeq = 0;
+const QUERY_PRESSURE_DEBOUNCE_MS = 2_000;
 const QUERY_PRESSURE_SUMMARY_INTERVAL_MS = 10_000;
 
-type QueryPressureIncident = {
-  startedAt: number;
-  lastSummaryAt: number;
+type QueryPressureSnapshot = {
+  observedAt: number;
   peakSubmitted: number;
   peakWaiting: number;
   peakExecuting: number;
 };
 
+type QueryPressureIncident = QueryPressureSnapshot & {
+  startedAt: number;
+  lastSummaryAt: number;
+};
+
+let queryPressureCandidate: QueryPressureSnapshot | null = null;
 let queryPressureIncident: QueryPressureIncident | null = null;
 
 export type QuerySubsystem = "context-build" | "context-prewarm" | "chat-stream" | "ooda" | "tool-exec" | "memory" | "memory-write" | "log-sink" | "timer-scheduler" | "voice" | "autonomous" | "general";
@@ -552,25 +558,44 @@ function queryPressureDescription(pressure: ReturnType<typeof currentQueryPressu
     `voice=${voicePool.totalCount}/${voicePool.idleCount}/${voicePool.waitingCount}`;
 }
 
+function isLaneExhausted(targetPool: Pool, maxConnections: number): boolean {
+  return targetPool.waitingCount > 0 && targetPool.idleCount === 0 && targetPool.totalCount >= maxConnections;
+}
+
+function isDatabaseLaneExhausted(): boolean {
+  return isLaneExhausted(pool, GENERAL_DB_POOL_MAX) || isLaneExhausted(voicePool, VOICE_DB_POOL_MAX);
+}
+
+function updatePressurePeaks(snapshot: QueryPressureSnapshot, pressure: ReturnType<typeof currentQueryPressure>): void {
+  snapshot.peakSubmitted = Math.max(snapshot.peakSubmitted, pressure.submitted);
+  snapshot.peakWaiting = Math.max(snapshot.peakWaiting, pressure.waiting);
+  snapshot.peakExecuting = Math.max(snapshot.peakExecuting, pressure.executing);
+}
+
 function updateQueryPressureIncident(): void {
   const now = Date.now();
   const pressure = currentQueryPressure();
-  if (pressure.waiting > 0) {
+  const exhausted = isDatabaseLaneExhausted();
+
+  if (!exhausted) {
+    queryPressureCandidate = null;
     if (!queryPressureIncident) {
-      queryPressureIncident = {
-        startedAt: now,
-        lastSummaryAt: now,
-        peakSubmitted: pressure.submitted,
-        peakWaiting: pressure.waiting,
-        peakExecuting: pressure.executing,
-      };
-      _saturatedSinceMs = now;
-      log.warn(`DB SATURATION START ${queryPressureDescription(pressure)}`);
+      _saturatedSinceMs = null;
       return;
     }
-    queryPressureIncident.peakSubmitted = Math.max(queryPressureIncident.peakSubmitted, pressure.submitted);
-    queryPressureIncident.peakWaiting = Math.max(queryPressureIncident.peakWaiting, pressure.waiting);
-    queryPressureIncident.peakExecuting = Math.max(queryPressureIncident.peakExecuting, pressure.executing);
+    const incident = queryPressureIncident;
+    queryPressureIncident = null;
+    _saturatedSinceMs = null;
+    log.info(
+      `DB SATURATION RECOVERED durationMs=${now - incident.startedAt} ` +
+      `peaks=submitted:${incident.peakSubmitted},executing:${incident.peakExecuting},waiting:${incident.peakWaiting} ` +
+      queryPressureDescription(pressure),
+    );
+    return;
+  }
+
+  if (queryPressureIncident) {
+    updatePressurePeaks(queryPressureIncident, pressure);
     if (now - queryPressureIncident.lastSummaryAt >= QUERY_PRESSURE_SUMMARY_INTERVAL_MS) {
       queryPressureIncident.lastSummaryAt = now;
       log.warn(
@@ -581,16 +606,30 @@ function updateQueryPressureIncident(): void {
     }
     return;
   }
-  if (!queryPressureIncident) {
-    _saturatedSinceMs = null;
+
+  if (!queryPressureCandidate) {
+    queryPressureCandidate = {
+      observedAt: now,
+      peakSubmitted: pressure.submitted,
+      peakWaiting: pressure.waiting,
+      peakExecuting: pressure.executing,
+    };
     return;
   }
-  const incident = queryPressureIncident;
-  queryPressureIncident = null;
-  _saturatedSinceMs = null;
-  log.info(
-    `DB SATURATION RECOVERED durationMs=${now - incident.startedAt} ` +
-    `peaks=submitted:${incident.peakSubmitted},executing:${incident.peakExecuting},waiting:${incident.peakWaiting} ` +
+
+  updatePressurePeaks(queryPressureCandidate, pressure);
+  if (now - queryPressureCandidate.observedAt < QUERY_PRESSURE_DEBOUNCE_MS) return;
+
+  queryPressureIncident = {
+    ...queryPressureCandidate,
+    startedAt: queryPressureCandidate.observedAt,
+    lastSummaryAt: now,
+  };
+  queryPressureCandidate = null;
+  _saturatedSinceMs = queryPressureIncident.startedAt;
+  log.warn(
+    `DB SATURATION START durationMs=${now - queryPressureIncident.startedAt} ` +
+    `peaks=submitted:${queryPressureIncident.peakSubmitted},executing:${queryPressureIncident.peakExecuting},waiting:${queryPressureIncident.peakWaiting} ` +
     queryPressureDescription(pressure),
   );
 }
@@ -671,16 +710,13 @@ function instrumentPool(targetPool: Pool, lane: DatabaseLane): void {
       inFlightQueries--;
       inFlightBySubsystem[subsystem] = Math.max(0, (inFlightBySubsystem[subsystem] || 0) - 1);
       _inFlightEntries.delete(entryId);
-      updateQueryPressureIncident();
       throw err;
     }
-    updateQueryPressureIncident();
 
     const settle = (failed: boolean) => {
       inFlightQueries--;
       inFlightBySubsystem[subsystem] = Math.max(0, (inFlightBySubsystem[subsystem] || 0) - 1);
       _inFlightEntries.delete(entryId);
-      updateQueryPressureIncident();
       const elapsed = Date.now() - start;
       if (elapsed > SLOW_QUERY_THRESHOLD_MS || failed) {
         if (elapsed > SLOW_QUERY_THRESHOLD_MS) recordSlowQuery(elapsed);
