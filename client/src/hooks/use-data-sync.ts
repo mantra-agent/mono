@@ -128,18 +128,20 @@ function maybeToastGoalChange(payload: Record<string, unknown> | undefined): voi
   const title = typeof change.title === "string" ? change.title.trim() : "";
   const source = typeof change.source === "string" ? change.source : "";
 
+  const goalId = typeof change.goalId === "string" ? change.goalId : undefined;
+
   if (action === "mark_status") {
     toast({
-      title: "Goal completed",
-      description: title || undefined,
+      title: goalId ? `Goal completed: @goal:${goalId}` : "Goal completed",
+      description: !goalId && title ? title : undefined,
     });
     return;
   }
 
   if (action === "add" && source === "ftue") {
     toast({
-      title: "Goal added",
-      description: title || undefined,
+      title: goalId ? `Goal added: @goal:${goalId}` : "Goal added",
+      description: !goalId && title ? title : undefined,
     });
   }
 }
@@ -167,7 +169,8 @@ function maybeToastLibrarySurface(payload: Record<string, unknown> | undefined):
   const title = typeof payload.title === "string" ? payload.title : undefined;
   if (!title) return;
 
-  toast({ title: `Page surfaced: ${title}` });
+  const pageId = typeof payload.pageId === "string" ? payload.pageId : undefined;
+  toast({ title: pageId ? `Page surfaced: @page:${pageId}` : `Page surfaced: ${title}` });
 }
 
 export function onAutonomousStarted(cb: AutonomousStartedCallback | null) {

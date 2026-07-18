@@ -92,9 +92,8 @@ function formatToastDateTime(date: Date): string {
   });
 }
 
-function buildReminderToastTitle(sessionTitle: string | null | undefined, timeLabel: string): string {
-  const reminderName = sessionTitle?.trim() || "this chat";
-  return `Reminder set '${reminderName}' ${timeLabel}`;
+function buildReminderToastTitle(sessionId: string, timeLabel: string): string {
+  return `Reminder set for @session:${sessionId} ${timeLabel}`;
 }
 
 interface SetReminderInput {
@@ -127,7 +126,7 @@ export function SessionReminderPopover({ sessionId, sessionTitle, onOpenChange, 
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId, "reminder"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
-      toast({ title: buildReminderToastTitle(sessionTitle, variables.toastTimeLabel) });
+      toast({ title: buildReminderToastTitle(sessionId, variables.toastTimeLabel) });
       setOpen(false);
       setShowCustom(false);
       onReminderSet?.(sessionId);

@@ -17,7 +17,7 @@ function today(): string {
   return getDateInTimezone(getTimezone());
 }
 
-async function publishGoalMutation(action: string, title: string): Promise<void> {
+async function publishGoalMutation(action: string, title: string, goalId?: string): Promise<void> {
   try {
     const { invalidateSimpleFeedCache } = await import("./simple/generate-feed");
     invalidateSimpleFeedCache();
@@ -27,7 +27,7 @@ async function publishGoalMutation(action: string, title: string): Promise<void>
       payload: {
         date: today(),
         sessionType: "daily",
-        change: { domain: "priority", action, title, periodLabel: "Daily", source: "ftue" },
+        change: { domain: "priority", action, title, periodLabel: "Daily", source: "ftue", goalId: goalId ?? null },
       },
     });
   } catch (err) {
@@ -58,7 +58,7 @@ export async function completeFtueSayHello(principal: UserPrincipal): Promise<vo
     const date = today();
     const result = await goalsService.markPriorityStatus(FTUE_SAY_HELLO_TITLE, "completed", "today", date);
     if ("updated" in result && !result.alreadySet) {
-      await publishGoalMutation("mark_status", FTUE_SAY_HELLO_TITLE);
+      await publishGoalMutation("mark_status", FTUE_SAY_HELLO_TITLE, result.updated.id);
       log.log("completed FTUE Say hello", { userId: principal.userId, date });
     }
   });
@@ -73,8 +73,8 @@ export async function completeFtueFirstGoalAndAddGoalPriority(principal: UserPri
     // Without this gate, every user-created goal spawns a duplicate child.
     const markResult = await goalsService.markPriorityStatus(FTUE_ADD_FIRST_GOAL_TITLE, "completed", "today", date);
     const ftueJustCompleted = "updated" in markResult && !markResult.alreadySet;
-    if (ftueJustCompleted) {
-      await publishGoalMutation("mark_status", FTUE_ADD_FIRST_GOAL_TITLE);
+    if (ftueJustCompleted && "updated" in markResult) {
+      await publishGoalMutation("mark_status", FTUE_ADD_FIRST_GOAL_TITLE, markResult.updated.id);
     }
 
     // Only create the linked daily goal when we actually just completed the FTUE step
@@ -88,7 +88,7 @@ export async function completeFtueFirstGoalAndAddGoalPriority(principal: UserPri
           } catch (err) {
             log.warn(`Failed to link FTUE goal parent: ${err instanceof Error ? err.message : String(err)}`);
           }
-          await publishGoalMutation("add", goalTitle);
+          await publishGoalMutation("add", goalTitle, createResult.goal.id);
         }
       }
     }
