@@ -45,8 +45,7 @@ export interface SessionTranscriptSurfaceProps {
   listClassName?: string;
   compactReferences?: boolean;
   questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
-  questionSubmissionDisabled?: boolean;
-  onQuestionSubmit?: (response: QuestionResponseMeta) => Promise<boolean>;
+  onQuestionSubmit: (response: QuestionResponseMeta) => Promise<boolean>;
 }
 
 const TERMINAL_WORKFLOW_STATUSES = new Set(["completed", "failed", "canceled"]);
@@ -82,7 +81,6 @@ export function SessionTranscriptSurface({
   listClassName,
   compactReferences = false,
   questionResponses,
-  questionSubmissionDisabled,
   onQuestionSubmit,
 }: SessionTranscriptSurfaceProps) {
   const showWorkflow =
@@ -141,7 +139,6 @@ export function SessionTranscriptSurface({
             sessionStreams={sessionStreams}
             compactReferences={compactReferences}
             questionResponses={questionResponses}
-            questionSubmissionDisabled={questionSubmissionDisabled}
             onQuestionSubmit={onQuestionSubmit}
           />
         </div>
