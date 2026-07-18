@@ -7,7 +7,7 @@ const log = createLogger("ChatSend");
 import type { ChatSession, PageContext } from "@shared/models/chat";
 import { apiRequest } from "@/lib/queryClient";
 import { GATEWAY_STATUS_KEY } from "@/hooks/use-executor-status";
-import { emitSessionChanged } from "@/hooks/use-data-sync";
+import { applySessionStatusToCache, emitSessionChanged } from "@/hooks/use-data-sync";
 import type { useToast } from "@/hooks/use-toast";
 
 export interface PendingChatTurn {
@@ -107,6 +107,7 @@ export function useChatSend(deps: UseChatSendDeps) {
     voiceSession?.clearTranscript();
     const filesToUpload = [...attachedFiles];
     setAttachedFiles(() => []);
+    let admittedSessionId: string | null = null;
 
     try {
       const fullMessage = await uploadAttachedFiles(messageText, filesToUpload);
@@ -133,6 +134,9 @@ export function useChatSend(deps: UseChatSendDeps) {
       }
 
       const pageContext = getMessagePageContext?.();
+      admittedSessionId = convId;
+      applySessionStatusToCache(convId, "streaming");
+      log.debug("STREAM:SEND:STATUS_ADMITTED", { clientTurnId, sessionId: convId });
       const response = await fetch(`/api/sessions/${convId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -186,6 +190,10 @@ export function useChatSend(deps: UseChatSendDeps) {
       return true;
     } catch (err: any) {
       setPendingTurn(null);
+      if (admittedSessionId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/sessions", admittedSessionId] });
+        queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+      }
       log.error("sendMessage failed:", err);
       toast({ title: "Failed to send message", description: err.message, variant: "destructive" });
       return false;

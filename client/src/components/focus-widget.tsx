@@ -507,10 +507,10 @@ function FocusWidgetPanel({ isAgentRunning }: FocusWidgetPanelProps) {
     lastPatchedContextRef.current = "";
   }, [activeSession]);
 
-  // Sessions list (used by SessionTranscriptPanel header for title/topics/pin badges).
+  // Sessions list is synchronized by local admission plus persisted realtime
+  // events. Window focus and WebSocket reconnect invalidation are recovery paths.
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery<Session[]>({
     queryKey: ["/api/sessions"],
-    refetchInterval: 5000,
     refetchOnWindowFocus: true,
   });
 
