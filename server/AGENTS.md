@@ -480,10 +480,10 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 - Key files: `routes/info.ts` (1,238 lines, 30 endpoints), `library-index.ts` (177 lines)
 
 ### People & Relationships
-- **Document-backed** in `workspace_documents` (type: person). `PeopleStorage` class (1,141 lines)
-- **Full-load-then-filter** pattern — all queries load all people into memory
-- **Computed fields:** rollup (contact frequency), due status (cadence-based), outreach priority, mobilization readiness
-- Key files: `people-storage.ts` (1,141 lines), `import-queue.ts` (405 lines)
+- **PostgreSQL-backed** in `persons`, with merge redirects in `person_merge_aliases`.
+- **Bulk identity resolution:** `PeopleStorage.getPeopleByIds()` loads the principal-scoped alias graph once, resolves chains in memory with cycle/depth guards, then fetches People with one scoped `IN` query. Bulk size must not determine query count.
+- **Computed fields:** rollup (contact frequency), due status (cadence-based), outreach priority, mobilization readiness.
+- Key files: `people-storage.ts`, `person-merge-service.ts`, `import-queue.ts`.
 
 ### Finance
 - **26 Plaid-connected tables** in `shared/models/finance.ts`
@@ -507,7 +507,13 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 ### Capabilities & Stories
 - Removed legacy story/capability table registry entries; capability state is derived from current tools, skills, code graph, and reports rather than the removed capability cache table.
 
+### Database Pressure Reporting
+- Pool instrumentation distinguishes submitted, waiting, and executing operations. `total` remains a compatibility alias for submitted work.
+- Saturation is one incident state: emit one `DB SATURATION START`, periodic `SUMMARY` lines no faster than every 10 seconds, and one `RECOVERED` line. Never log each new queue peak.
+- Query duration still includes pool acquisition plus execution; use the waiting/executing split when diagnosing whether SQL itself is slow.
+
 ### File-Storage Abstraction
+- `TTLCache` coalesces same-key reads and generation-guards cache writes so a fetch completed after invalidation cannot repopulate stale state.
 - **16 modules** (3,713 lines) using `BaseDocumentStore<T>` pattern over `workspace_documents`
 - Covers: projects, priorities, personas, principles, predictions, beliefs, preferences, check-ins, issues, emotional state
 - **Common pattern:** documentStorage backend → TTLCache(Infinity) → invalidate on write → JSON serialization

@@ -33,7 +33,6 @@ if (!process.env.DATABASE_URL) {
 const DB_CONNECTION_TIMEOUT_MS = 5000;
 const SLOW_QUERY_THRESHOLD_MS = 1000;
 const HIGH_IN_FLIGHT_THRESHOLD = 10;
-const HIGH_IN_FLIGHT_LOG_INTERVAL_MS = 10_000;
 const LONG_RUNNING_THRESHOLD_MS = 500;
 const LONG_RUNNING_MAX_ROWS = 20;
 
@@ -230,14 +229,7 @@ export async function probeDb(timeoutMs = 2000): Promise<{ ok: boolean; duration
 
 export function startPoolSaturationMonitor(intervalMs = 1000): void {
   if (_saturationInterval) return;
-  _saturationInterval = setInterval(() => {
-    const saturated = (pool.idleCount === 0 && pool.totalCount >= GENERAL_DB_POOL_MAX && pool.waitingCount > 0) || (voicePool.idleCount === 0 && voicePool.totalCount >= VOICE_DB_POOL_MAX && voicePool.waitingCount > 0);
-    if (saturated) {
-      if (_saturatedSinceMs === null) _saturatedSinceMs = Date.now();
-    } else {
-      _saturatedSinceMs = null;
-    }
-  }, intervalMs);
+  _saturationInterval = setInterval(updateQueryPressureIncident, intervalMs);
   if (_saturationInterval.unref) _saturationInterval.unref();
 }
 
@@ -500,11 +492,6 @@ export function startPoolHealthCheck(intervalMs = 60_000): void {
     log.log(
       `op-summary boot=${BOOT_ID} general=total:${pool.totalCount}/idle:${pool.idleCount}/waiting:${pool.waitingCount} voice=total:${voicePool.totalCount}/idle:${voicePool.idleCount}/waiting:${voicePool.waitingCount} saturated=${satFor} top-subsystem=${slowestStr} eventLoop=cur:${Math.round(elLag)}ms/max60s:${Math.round(elMaxRecent)}ms lastProbe=${sinceProbe} probeMs=${_lastProbeDurationMs ?? "-"}${subsystemInfo}`
     );
-    if (pool.waitingCount > 5 || voicePool.waitingCount > 0) {
-      log.warn(
-        `HIGH WAIT COUNT: general=${pool.waitingCount} voice=${voicePool.waitingCount}`
-      );
-    }
   }, intervalMs);
   if (_healthInterval.unref) _healthInterval.unref();
 }
@@ -527,13 +514,96 @@ interface InFlightEntry {
 }
 const _inFlightEntries = new Map<number, InFlightEntry>();
 let _inFlightSeq = 0;
-let lastHighInFlightWarningAt = 0;
-let lastHighInFlightWarningPeak = 0;
+const QUERY_PRESSURE_SUMMARY_INTERVAL_MS = 10_000;
+
+type QueryPressureIncident = {
+  startedAt: number;
+  lastSummaryAt: number;
+  peakSubmitted: number;
+  peakWaiting: number;
+  peakExecuting: number;
+};
+
+let queryPressureIncident: QueryPressureIncident | null = null;
 
 export type QuerySubsystem = "context-build" | "context-prewarm" | "chat-stream" | "ooda" | "tool-exec" | "memory" | "memory-write" | "log-sink" | "timer-scheduler" | "voice" | "autonomous" | "general";
 
-export function getInFlightStats(): { total: number; bySubsystem: Record<string, number> } {
-  return { total: inFlightQueries, bySubsystem: { ...inFlightBySubsystem } };
+function currentQueryPressure(): { submitted: number; waiting: number; executing: number } {
+  const waiting = pool.waitingCount + voicePool.waitingCount;
+  return {
+    submitted: inFlightQueries,
+    waiting,
+    executing: Math.max(0, inFlightQueries - waiting),
+  };
+}
+
+function activeSubsystemBreakdown(): string {
+  return Object.entries(inFlightBySubsystem)
+    .filter(([, count]) => count > 0)
+    .map(([name, count]) => `${name}=${count}`)
+    .join(" ");
+}
+
+function queryPressureDescription(pressure: ReturnType<typeof currentQueryPressure>): string {
+  const breakdown = activeSubsystemBreakdown();
+  return `submitted=${pressure.submitted} executing=${pressure.executing} waiting=${pressure.waiting}` +
+    `${breakdown ? ` [${breakdown}]` : ""} ` +
+    `general=${pool.totalCount}/${pool.idleCount}/${pool.waitingCount} ` +
+    `voice=${voicePool.totalCount}/${voicePool.idleCount}/${voicePool.waitingCount}`;
+}
+
+function updateQueryPressureIncident(): void {
+  const now = Date.now();
+  const pressure = currentQueryPressure();
+  if (pressure.waiting > 0) {
+    if (!queryPressureIncident) {
+      queryPressureIncident = {
+        startedAt: now,
+        lastSummaryAt: now,
+        peakSubmitted: pressure.submitted,
+        peakWaiting: pressure.waiting,
+        peakExecuting: pressure.executing,
+      };
+      _saturatedSinceMs = now;
+      log.warn(`DB SATURATION START ${queryPressureDescription(pressure)}`);
+      return;
+    }
+    queryPressureIncident.peakSubmitted = Math.max(queryPressureIncident.peakSubmitted, pressure.submitted);
+    queryPressureIncident.peakWaiting = Math.max(queryPressureIncident.peakWaiting, pressure.waiting);
+    queryPressureIncident.peakExecuting = Math.max(queryPressureIncident.peakExecuting, pressure.executing);
+    if (now - queryPressureIncident.lastSummaryAt >= QUERY_PRESSURE_SUMMARY_INTERVAL_MS) {
+      queryPressureIncident.lastSummaryAt = now;
+      log.warn(
+        `DB SATURATION SUMMARY durationMs=${now - queryPressureIncident.startedAt} ` +
+        `peaks=submitted:${queryPressureIncident.peakSubmitted},executing:${queryPressureIncident.peakExecuting},waiting:${queryPressureIncident.peakWaiting} ` +
+        queryPressureDescription(pressure),
+      );
+    }
+    return;
+  }
+  if (!queryPressureIncident) {
+    _saturatedSinceMs = null;
+    return;
+  }
+  const incident = queryPressureIncident;
+  queryPressureIncident = null;
+  _saturatedSinceMs = null;
+  log.info(
+    `DB SATURATION RECOVERED durationMs=${now - incident.startedAt} ` +
+    `peaks=submitted:${incident.peakSubmitted},executing:${incident.peakExecuting},waiting:${incident.peakWaiting} ` +
+    queryPressureDescription(pressure),
+  );
+}
+
+export function getInFlightStats(): {
+  total: number;
+  submitted: number;
+  waiting: number;
+  executing: number;
+  bySubsystem: Record<string, number>;
+} {
+  const pressure = currentQueryPressure();
+  return { total: pressure.submitted, ...pressure, bySubsystem: { ...inFlightBySubsystem } };
 }
 
 export function getLongRunningQueries(thresholdMs = LONG_RUNNING_THRESHOLD_MS): {
@@ -591,21 +661,6 @@ function instrumentPool(targetPool: Pool, lane: DatabaseLane): void {
     inFlightBySubsystem[subsystem] = (inFlightBySubsystem[subsystem] || 0) + 1;
     const entryId = ++_inFlightSeq;
     _inFlightEntries.set(entryId, { id: entryId, subsystem, label: label ? `${lane}:${label}` : lane, startedAt: Date.now() });
-    if (inFlightQueries > HIGH_IN_FLIGHT_THRESHOLD) {
-      const now = Date.now();
-      const isNewPeak = inFlightQueries > lastHighInFlightWarningPeak;
-      if (isNewPeak || now - lastHighInFlightWarningAt >= HIGH_IN_FLIGHT_LOG_INTERVAL_MS) {
-        lastHighInFlightWarningAt = now;
-        lastHighInFlightWarningPeak = Math.max(lastHighInFlightWarningPeak, inFlightQueries);
-        const breakdown = Object.entries(inFlightBySubsystem)
-          .filter(([, count]) => count > 0)
-          .map(([name, count]) => `${name}=${count}`)
-          .join(" ");
-        log.warn(`HIGH IN-FLIGHT: ${inFlightQueries} queries concurrent [${breakdown}] general=${pool.totalCount}/${pool.idleCount}/${pool.waitingCount} voice=${voicePool.totalCount}/${voicePool.idleCount}/${voicePool.waitingCount}`);
-      }
-    } else if (lastHighInFlightWarningPeak > 0) {
-      lastHighInFlightWarningPeak = 0;
-    }
     const start = Date.now();
     const queryText = typeof args[0] === "string" ? args[0] : args[0]?.text || "(unknown)";
 
@@ -616,13 +671,16 @@ function instrumentPool(targetPool: Pool, lane: DatabaseLane): void {
       inFlightQueries--;
       inFlightBySubsystem[subsystem] = Math.max(0, (inFlightBySubsystem[subsystem] || 0) - 1);
       _inFlightEntries.delete(entryId);
+      updateQueryPressureIncident();
       throw err;
     }
+    updateQueryPressureIncident();
 
     const settle = (failed: boolean) => {
       inFlightQueries--;
       inFlightBySubsystem[subsystem] = Math.max(0, (inFlightBySubsystem[subsystem] || 0) - 1);
       _inFlightEntries.delete(entryId);
+      updateQueryPressureIncident();
       const elapsed = Date.now() - start;
       if (elapsed > SLOW_QUERY_THRESHOLD_MS || failed) {
         if (elapsed > SLOW_QUERY_THRESHOLD_MS) recordSlowQuery(elapsed);

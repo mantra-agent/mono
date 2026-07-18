@@ -9,6 +9,8 @@ interface CacheEntry<T> {
 export class TTLCache<T> {
   private readonly cache = new Map<string, CacheEntry<T>>();
   private readonly inFlight = new Map<string, Promise<T>>();
+  private readonly keyGenerations = new Map<string, number>();
+  private globalGeneration = 0;
   private readonly log;
   private readonly name: string;
 
@@ -45,13 +47,19 @@ export class TTLCache<T> {
     }
 
     const effectiveTtl = ttlMs ?? this.defaultTtlMs;
+    const globalGeneration = this.globalGeneration;
+    const keyGeneration = this.keyGenerations.get(key) || 0;
     const promise = fetcher().then(data => {
-      this.set(key, data, effectiveTtl);
-      this.inFlight.delete(key);
-      this.log.verbose(() => `MISS key=${key} — fetched and cached ttl=${Math.round(effectiveTtl / 1000)}s`);
+      if (this.globalGeneration === globalGeneration && (this.keyGenerations.get(key) || 0) === keyGeneration) {
+        this.set(key, data, effectiveTtl);
+        this.log.verbose(() => `MISS key=${key} — fetched and cached ttl=${Math.round(effectiveTtl / 1000)}s`);
+      } else {
+        this.log.verbose(() => `STALE key=${key} — fetch completed after invalidation; result not cached`);
+      }
+      if (this.inFlight.get(key) === promise) this.inFlight.delete(key);
       return data;
     }).catch(err => {
-      this.inFlight.delete(key);
+      if (this.inFlight.get(key) === promise) this.inFlight.delete(key);
       throw err;
     });
 
@@ -61,14 +69,19 @@ export class TTLCache<T> {
 
   invalidate(key: string): void {
     const had = this.cache.delete(key);
-    if (had) {
+    const hadInFlight = this.inFlight.delete(key);
+    this.keyGenerations.set(key, (this.keyGenerations.get(key) || 0) + 1);
+    if (had || hadInFlight) {
       this.log.verbose(() => `INVALIDATED key=${key}`);
     }
   }
 
   invalidateAll(): void {
     const count = this.cache.size;
+    this.globalGeneration++;
     this.cache.clear();
+    this.inFlight.clear();
+    this.keyGenerations.clear();
     if (count > 0) {
       this.log.verbose(() => `INVALIDATED_ALL count=${count}`);
     }

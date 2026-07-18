@@ -349,6 +349,9 @@ export async function registerGatewayRoutes(app: Express) {
         },
         inFlight: {
           total: inFlight.total,
+          submitted: inFlight.submitted,
+          waiting: inFlight.waiting,
+          executing: inFlight.executing,
           highThreshold: getInFlightHighThreshold(),
           bySubsystem: inFlight.bySubsystem,
         },

@@ -1645,7 +1645,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           }
           const tcId = tc.toolCallId || generateToolCallId("hist");
           if (seenToolCallIds.has(tcId)) {
-            chatLog.log(
+            chatLog.debug(
               `skipping already-emitted toolCallId=${tcId} name=${tc.toolName} msgId=${msgId} sessionId=${sessionId}`,
             );
             continue;
@@ -1685,7 +1685,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             content: resultContent,
             is_error: !!source.error,
           });
-          chatLog.log(
+          chatLog.debug(
             `reconstructed tool_use name=${source.toolName} id=${tcId} msgId=${msgId} inputKeys=${Object.keys(safeInput).join(",")} resultLen=${rawResultContent.length}->${resultContent.length}${merged ? " (merged)" : ""}`,
           );
         }
@@ -2499,7 +2499,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           parentId: tc.parentId,
         }));
         for (const tc of persistedToolCalls) {
-          chatLog.log(
+          chatLog.debug(
             `preSave toolCall id=${tc.toolCallId} name=${tc.toolName} hasArgs=${!!(tc.arguments && Object.keys(tc.arguments).length > 0)} hasResult=${!!tc.result} status=${tc.status} sessionId=${sessionId}`,
           );
         }
