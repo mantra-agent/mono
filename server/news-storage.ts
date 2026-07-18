@@ -614,6 +614,50 @@ export class SignalStorage {
     });
   }
 
+  /**
+   * Atomically claim a scan slot: in one serializable transaction, check for any
+   * non-stale open scan, auto-expire a stale one if found, and insert a new row.
+   * Returns the new ScanRun, or null if a non-stale scan is already running.
+   * Use this instead of hasInProgressScan() + startScanRun() to eliminate TOCTOU.
+   */
+  async atomicClaimScanSlot(): Promise<ScanRun | null> {
+    const STALE_SCAN_TTL_MS = 10 * 60 * 1000; // 10 minutes
+    return autoHeal(async () => {
+      return db.transaction(async (tx) => {
+        // Lock any open scan owned by this user — prevents concurrent inserts
+        const [existing] = await tx
+          .select({ id: scanRuns.id, startedAt: scanRuns.startedAt })
+          .from(scanRuns)
+          .where(visibleScans(sql`${scanRuns.completedAt} IS NULL`))
+          .limit(1)
+          .for("update");
+
+        if (existing) {
+          const age = Date.now() - new Date(existing.startedAt).getTime();
+          if (age <= STALE_SCAN_TTL_MS) {
+            return null; // still running — caller should return already_running
+          }
+          // Stale — expire inside the same transaction so the insert is safe
+          await tx
+            .update(scanRuns)
+            .set({
+              completedAt: new Date(),
+              error: `Auto-expired: scan exceeded ${STALE_SCAN_TTL_MS / 60_000}-minute TTL`,
+            })
+            .where(writableScans(eq(scanRuns.id, existing.id)));
+          log.warn(`atomicClaimScanSlot: auto-expired stale scan id=${existing.id} age=${Math.round(age / 1000)}s`);
+        }
+
+        const [row] = await tx
+          .insert(scanRuns)
+          .values(ownedInsertValues(getCurrentPrincipalOrSystem(), scanScopeColumns))
+          .returning();
+        log.debug(`atomicClaimScanSlot: claimed slot id=${row.id}`);
+        return row;
+      });
+    });
+  }
+
   async cancelScanRun(id: string): Promise<ScanRun | undefined> {
     return autoHeal(async () => {
       const [row] = await db.update(scanRuns).set({

@@ -55,8 +55,9 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
     return runWithPrincipal(principal, runLandscapeScan);
   }
 
-  const inProgress = await signalStorage.hasInProgressScan();
-  if (inProgress) {
+  // Atomic: check + expire-stale + insert in one transaction — no TOCTOU gap
+  const scanRun = await signalStorage.atomicClaimScanSlot();
+  if (!scanRun) {
     return {
       outcome: "already_running",
       sourcesScanned: 0,
@@ -67,8 +68,6 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
       message: "A scan is already in progress. Try again later.",
     };
   }
-
-  const scanRun = await signalStorage.startScanRun();
   const scanStartedAt = scanRun.startedAt ?? new Date();
   const diagnostics = new SourceDiagnosticsAccumulator(scanRun.id);
 
@@ -532,18 +531,24 @@ export interface CurationDecision {
   summary?: string;
 }
 
-const CURATION_RESULTS_KEY = "skill.news-curation.lastResults";
+/** User-scoped key for the curation mailbox — prevents cross-user bleed in multi-user deployments. */
+function curationResultsKey(userId: string): string {
+  return `skill.news-curation.lastResults.${userId}`;
+}
 
 /**
  * Reads and clears the skill curation results written by the news-curation skill
- * via the batch_curate tool action.
+ * via the batch_curate tool action. Scoped to the current principal's userId.
  */
 export async function readCurationResults(): Promise<CurationDecision[] | null> {
+  const principal = getCurrentPrincipal();
+  if (!principal?.userId) return null;
+  const key = curationResultsKey(principal.userId);
   try {
-    const results = await getSetting<CurationDecision[]>(CURATION_RESULTS_KEY);
+    const results = await getSetting<CurationDecision[]>(key);
     if (!results || !Array.isArray(results)) return null;
     // Clear after reading so stale results aren't reused
-    await setSetting(CURATION_RESULTS_KEY, null);
+    await setSetting(key, null);
     return results;
   } catch {
     return null;
