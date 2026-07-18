@@ -41,14 +41,12 @@ function OptionRow({
   checked,
   disabled,
   label,
-  description,
   testId,
   onSelect,
 }: {
   checked: boolean;
   disabled: boolean;
   label: string;
-  description?: string;
   testId: string;
   onSelect: () => void;
 }) {
@@ -67,10 +65,7 @@ function OptionRow({
       data-testid={testId}
     >
       <SimpleCheckCircle checked={checked} interactive={false} className="mt-0.5 shrink-0" />
-      <span className="min-w-0 text-sm">
-        <span className="block text-foreground">{label}</span>
-        {description && <span className="mt-0.5 block text-xs text-muted-foreground">{description}</span>}
-      </span>
+      <span className="min-w-0 text-sm text-foreground">{label}</span>
     </button>
   );
 }
@@ -164,7 +159,7 @@ export function QuestionWidget({
 
   if (response) {
     return (
-      <div className="border rounded-md border-success/40 bg-success/5 my-1" data-testid={`question-widget-${prompt.toolCallId}`}>
+      <div className="-ml-10 border rounded-md border-success/40 bg-success/5 my-1" data-testid={`question-widget-${prompt.toolCallId}`}>
         <div className="flex items-start gap-2.5 px-3 py-2">
           <SimpleCheckCircle checked interactive={false} className="mt-0.5 shrink-0" />
           <div className="min-w-0 flex-1">
@@ -178,7 +173,7 @@ export function QuestionWidget({
 
   const controlsDisabled = Boolean(disabled) || submitting;
   return (
-    <div className="border rounded-md border-border/60 bg-muted/20 my-1" data-testid={`question-widget-${prompt.toolCallId}`}>
+    <div className="-ml-10 border rounded-md border-border/60 bg-muted/20 my-1" data-testid={`question-widget-${prompt.toolCallId}`}>
       <div className="flex items-start gap-2 px-3 py-2 border-b border-border/40">
         <MessageCircleQuestion className="mt-0.5 h-4 w-4 shrink-0 text-active" />
         <p className="min-w-0 text-sm font-medium text-foreground">{prompt.question}</p>
@@ -190,7 +185,6 @@ export function QuestionWidget({
             checked={selected.includes(option.id)}
             disabled={controlsDisabled}
             label={option.label}
-            description={option.description}
             testId={`question-option-${prompt.toolCallId}-${option.id}`}
             onSelect={() => selectOption(option.id)}
           />
@@ -219,10 +213,11 @@ export function QuestionWidget({
           </div>
         )}
       </div>
-      <div className="flex items-center justify-between gap-3 border-t border-border/40 px-3 py-2">
-        <p className={cn("text-xs", error ? "text-error" : "text-muted-foreground")}>
-          {error ?? (prompt.selectionMode === "multiple" ? "Choose all that apply." : "Choose one.")}
-        </p>
+      <div className={cn(
+        "flex items-center gap-3 border-t border-border/40 px-3 py-2",
+        error ? "justify-between" : "justify-end",
+      )}>
+        {error && <p className="text-xs text-error">{error}</p>}
         <Button
           type="button"
           size="sm"
