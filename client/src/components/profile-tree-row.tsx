@@ -48,14 +48,14 @@ export function ProfileTreeRow({
           className={cn(
             "group relative grid w-full items-center gap-x-2 rounded-md px-2 py-1.5 text-left text-sm select-none transition-colors hover:bg-accent/70",
             mobileLayout === "inline"
-              ? "grid-cols-[auto_minmax(0,1fr)_auto_auto] gap-y-0"
+              ? "grid-cols-[auto_minmax(0,1fr)_minmax(0,auto)_auto] gap-y-0"
               : "grid-cols-[minmax(0,1fr)_auto] gap-y-1",
             "sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] sm:gap-y-1",
           )}
         >
           <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
             <span className="flex shrink-0 items-center justify-center text-muted-foreground">{icon}</span>
-            <span className="min-w-0 break-words">{label}</span>
+            <span className={cn("min-w-0", mobileLayout === "inline" ? "truncate" : "break-words")}>{label}</span>
           </div>
           <div
             className={cn(
