@@ -179,6 +179,8 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
 
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const dragCounterRef = useRef(0);
+  const [isDraggingImage, setIsDraggingImage] = useState(false);
   const plainTextFallbackRef = useRef(plainTextFallback);
   plainTextFallbackRef.current = plainTextFallback;
   const [initFailed, setInitFailed] = useState(false);
@@ -245,7 +247,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     extensions: [
       StarterKit,
       Placeholder.configure({ placeholder }),
-      Image.configure({ inline: false, allowBase64: false }),
+      Image.configure({ inline: false, allowBase64: false, resize: { enabled: true } }),
       Link.configure({ openOnClick: false }),
       Table.configure({ resizable: true }),
       TableRow,
@@ -597,11 +599,38 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
   return (
     <div
       ref={editorContainerRef}
-      className={cn("group flex flex-col h-full relative", className)}
+      className={cn("group flex flex-col h-full relative", isDraggingImage && "ring-2 ring-primary/50 bg-primary/5 rounded-md", className)}
       data-testid={testId}
       onPaste={handlePaste}
-      onDrop={handleDrop}
-      onDragOver={(e) => { if (!readOnly) e.preventDefault(); }}
+      onDrop={(e) => {
+        dragCounterRef.current = 0;
+        setIsDraggingImage(false);
+        handleDrop(e);
+      }}
+      onDragOver={(e) => {
+        if (readOnly) return;
+        const hasFiles = Array.from(e.dataTransfer.types).includes("Files");
+        if (hasFiles) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        }
+      }}
+      onDragEnter={(e) => {
+        if (readOnly) return;
+        dragCounterRef.current += 1;
+        const hasFiles = Array.from(e.dataTransfer.types).includes("Files");
+        if (hasFiles && dragCounterRef.current === 1) {
+          setIsDraggingImage(true);
+        }
+      }}
+      onDragLeave={() => {
+        if (readOnly) return;
+        dragCounterRef.current -= 1;
+        if (dragCounterRef.current <= 0) {
+          dragCounterRef.current = 0;
+          setIsDraggingImage(false);
+        }
+      }}
       onMouseMove={(e) => updateBlockHandleFromMouse(e.target, e.clientX, e.clientY)}
       onMouseLeave={() => {
         if (blockHandleClearTimer.current) { clearTimeout(blockHandleClearTimer.current); blockHandleClearTimer.current = null; }

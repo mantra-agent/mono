@@ -402,6 +402,41 @@ html {
   }
 }
 
+
+
+/* ── TipTap image resize handles ── */
+.ProseMirror [data-resize-container] {
+  max-width: 100%;
+}
+
+.ProseMirror [data-resize-container] img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 4px;
+}
+
+.ProseMirror [data-resize-container]:hover [data-resize-handle],
+.ProseMirror [data-resize-container][data-resize-state="true"] [data-resize-handle] {
+  opacity: 1;
+}
+
+.ProseMirror [data-resize-handle] {
+  width: 10px;
+  height: 10px;
+  background: hsl(var(--primary));
+  border: 1.5px solid hsl(var(--background));
+  border-radius: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 10;
+}
+
+.ProseMirror [data-resize-handle="bottom-right"] { cursor: nwse-resize; }
+.ProseMirror [data-resize-handle="bottom-left"] { cursor: nesw-resize; }
+.ProseMirror [data-resize-handle="top-right"] { cursor: nesw-resize; }
+.ProseMirror [data-resize-handle="top-left"] { cursor: nwse-resize; }
+
 .ProseMirror .reference-source-hidden {
   display: none;
 }
