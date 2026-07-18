@@ -219,7 +219,7 @@ function rowToCandidate(row: typeof peopleImportCandidates.$inferSelect): Stored
     source: candidate.source || row.source || undefined,
     decision: (row.decision as CandidateDecision) || candidate.decision || "pending",
     decidedAt: candidate.decidedAt || row.decidedAt?.toISOString(),
-    mergedPersonId: candidate.mergedPersonId || row.mergedPersonId || undefined,
+    mergedPersonId: row.mergedPersonId || candidate.mergedPersonId || undefined,
   };
 }
 
@@ -232,12 +232,13 @@ function candidateToRow(candidate: StoredImportCandidate) {
     sampleSubjects: candidate.sampleSubjects || [],
     interactions: candidate.interactions || [],
   };
+  const { mergedPersonId, ...candidatePayload } = normalized;
   return {
     email,
-    candidate: normalized,
+    candidate: candidatePayload,
     decision: normalized.decision,
     decidedAt: parseDate(normalized.decidedAt),
-    mergedPersonId: normalized.mergedPersonId || null,
+    mergedPersonId: mergedPersonId || null,
     source: normalized.source || null,
     accountId: normalized.accountId || null,
     firstInteractionAt: parseDate(normalized.firstInteraction),
