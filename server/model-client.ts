@@ -318,6 +318,8 @@ export interface ChatCompletionOptions {
    * provider default behavior (no effort sent).
    */
   thinking?: import("./thinking-config").ResolvedThinking;
+  /** Dedicated one-shot Claude CLI lane. Only named latency-critical calls may opt in. */
+  warmPoolLane?: "orientation";
 }
 
 export type InferenceStatus = "success" | "error" | "aborted" | "partial";
@@ -1493,6 +1495,8 @@ export interface ChatCompletionStreamOptions {
   /** @deprecated Pass `thinking` instead. Kept for back-compat with existing callers. */
   thinkingBudget?: number;
   thinking?: import("./thinking-config").ResolvedThinking;
+  /** Dedicated one-shot Claude CLI lane. Only named latency-critical calls may opt in. */
+  warmPoolLane?: "orientation";
   routingTier?: string;
   signal?: AbortSignal;
   // Optional callback the adapter uses to hand the executor any background promises

@@ -20,6 +20,8 @@
 // session stays untitled so the next turn retries.
 import { createLogger } from "./log";
 import { chatCompletion } from "./model-client";
+import { resolveModelCandidates, type ModelRoutingDecision } from "./model-routing";
+import type { ClaudeCliTierModelConfig } from "@shared/model-connectors";
 import { ACTIVITY_CHAT } from "./job-profiles";
 import { personaStorage, type PersonaEntry } from "./file-storage/persona-storage";
 import { safeParseJSON } from "./utils/json-parse";
@@ -32,6 +34,27 @@ const PLACEHOLDER_TITLES = new Set(["New Session", "New Chat"]);
 /** True when the session carries a real (non-placeholder) title, meaning orientation already happened. */
 export function hasRealSessionTitle(title: string | null | undefined): boolean {
   return !!title && !PLACEHOLDER_TITLES.has(title);
+}
+
+export interface OrientationLlmTiming {
+  providerStartedAt?: number;
+  requestSentAt?: number | null;
+  firstEventAt?: number | null;
+  firstTextAt?: number | null;
+  providerEndedAt?: number;
+  sdkImportMs?: number;
+  preSdkMs?: number;
+  poolAcquireMs?: number;
+  sdkToFirstEventMs?: number | null;
+  firstEventToFirstTextMs?: number | null;
+  totalTtftMs?: number | null;
+  totalMs?: number;
+  afterFirstTextMs?: number | null;
+  firstEventType?: string | null;
+  poolKey?: string;
+  poolEligible?: boolean;
+  poolHit?: boolean;
+  voiceWarmHit?: boolean;
 }
 
 export interface OrientationBootstrapResult {
@@ -58,6 +81,10 @@ export interface OrientationBootstrapResult {
       reasoningTokens?: number;
       visibleOutputTokens?: number;
     };
+    startedAt: number;
+    endedAt: number;
+    elapsedMs: number;
+    timing?: OrientationLlmTiming;
   };
 }
 
@@ -67,7 +94,18 @@ interface BootstrapClassification {
   persona: string;
 }
 
-function buildBootstrapPrompt(router: PersonaEntry, personas: PersonaEntry[]): string {
+export function buildBootstrapSystemPrompt(router: PersonaEntry): string {
+  return [
+    router.promptOverlay || "You are the session router. Classify the opening and return only JSON.",
+    "",
+    "Return a JSON object with exactly these fields:",
+    '- "title": 1-3 word session title',
+    '- "topics": array of up to 8 short topic keywords',
+    '- "persona": the persona name that best fits the opening (use "Default" when ambiguous)',
+  ].join("\n");
+}
+
+function buildBootstrapUserPrompt(personas: PersonaEntry[], userMessage: string): string {
   const table = personas
     .filter((p) => !p.isSystem)
     .map((p) => {
@@ -78,15 +116,10 @@ function buildBootstrapPrompt(router: PersonaEntry, personas: PersonaEntry[]): s
     })
     .join("\n");
   return [
-    router.promptOverlay || "You are the session router. Classify the opening and return only JSON.",
-    "",
     "Available user-facing personas:",
     table,
     "",
-    "Return a JSON object with exactly these fields:",
-    '- "title": 1-3 word session title',
-    '- "topics": array of up to 8 short topic keywords',
-    '- "persona": the persona name that best fits the opening (use "Default" when ambiguous)',
+    `Opening message:\n${userMessage.slice(0, 4000)}`,
   ].join("\n");
 }
 
@@ -118,6 +151,53 @@ async function applyOrient(
   return executeTool("orient", toolCallId, { ...args, reasoning: "Orientation bootstrap routed this session before model selection." }, { sessionId, sessionKey });
 }
 
+async function loadOrientationInputs(userMessage: string): Promise<{
+  personas: PersonaEntry[];
+  routerPersona: PersonaEntry;
+  systemPrompt: string;
+  userPrompt: string;
+}> {
+  const [personas, routerPersona] = await Promise.all([
+    personaStorage.list(),
+    personaStorage.getSystemSeedByName("Router"),
+  ]);
+  if (!routerPersona?.semanticTier) throw new Error("Canonical Router persona is missing its semantic tier");
+  return {
+    personas,
+    routerPersona,
+    systemPrompt: buildBootstrapSystemPrompt(routerPersona),
+    userPrompt: buildBootstrapUserPrompt(personas, userMessage),
+  };
+}
+
+async function resolveOrientationRouting(routerPersona: PersonaEntry): Promise<ModelRoutingDecision> {
+  return (await resolveModelCandidates(ACTIVITY_CHAT, {
+    semanticTierOverride: routerPersona.semanticTier,
+    overrideReason: `orientation-bootstrap: Router persona tier=${routerPersona.semanticTier}`,
+  }))[0];
+}
+
+/** Ensure the exact tool-free classifier process is ready before routes accept first turns. */
+export async function prewarmOrientationClassifier(): Promise<void> {
+  const { isWarmPoolEnabled, prewarmWarmPool } = await import("./cli-sdk-adapter");
+  if (!isWarmPoolEnabled()) return;
+  const routerPersona = await personaStorage.getSystemSeedByName("Router");
+  if (!routerPersona?.semanticTier) throw new Error("Canonical Router persona is missing its semantic tier");
+  const systemPrompt = buildBootstrapSystemPrompt(routerPersona);
+  const routing = await resolveOrientationRouting(routerPersona);
+  if (routing.provider !== "claude-cli") {
+    log.info(`orientation prewarm skipped provider=${routing.provider} model=${routing.model}`);
+    return;
+  }
+  await prewarmWarmPool({
+    lane: "orientation",
+    model: routing.model,
+    systemPrompt,
+    connectorConfig: routing.modelConfig as ClaudeCliTierModelConfig | undefined,
+  });
+  log.info(`orientation prewarm ready model=${routing.model} tier=${routing.tier} connector=${routing.connectorLabel ?? routing.connectorId ?? "unknown"}`);
+}
+
 /**
  * Ensure the session is oriented before model routing resolves.
  * Runs a single fixed-template fast-tier classification for unoriented
@@ -127,10 +207,9 @@ export async function ensureSessionOriented(options: {
   sessionId: string;
   sessionKey?: string;
   userMessage: string;
-  onLlmStart?: () => void | Promise<void>;
 }): Promise<OrientationBootstrapResult> {
   const startedAt = Date.now();
-  const { sessionId, sessionKey, userMessage, onLlmStart } = options;
+  const { sessionId, sessionKey, userMessage } = options;
   try {
     const { chatFileStorage } = await import("./chat-file-storage");
     const session = await chatFileStorage.getSession(sessionId);
@@ -141,28 +220,26 @@ export async function ensureSessionOriented(options: {
       return { applied: false, skipped: "already-oriented", elapsedMs: Date.now() - startedAt };
     }
 
-    const [personas, routerPersona] = await Promise.all([
-      personaStorage.list(),
-      personaStorage.getSystemSeedByName("Router"),
-    ]);
-    if (!routerPersona?.semanticTier) throw new Error("Canonical Router persona is missing its semantic tier");
-    await onLlmStart?.();
-
+    const { personas, routerPersona, systemPrompt, userPrompt } = await loadOrientationInputs(userMessage);
+    const routingDecision = await resolveOrientationRouting(routerPersona);
+    const llmStartedAt = Date.now();
     const completion = await chatCompletion({
       activity: ACTIVITY_CHAT,
-      semanticTierOverride: routerPersona.semanticTier,
-      overrideReason: `orientation-bootstrap: Router persona tier=${routerPersona.semanticTier}`,
+      routingDecision,
+      warmPoolLane: "orientation",
       jsonMode: true,
       maxTokens: BOOTSTRAP_MAX_TOKENS,
       temperature: 0,
       messages: [
-        { role: "system", content: buildBootstrapPrompt(routerPersona, personas) },
-        { role: "user", content: `Opening message:\n${userMessage.slice(0, 4000)}` },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
       ],
       metadata: { source: "orientation-bootstrap", sessionId, sessionKey, routerPersonaId: routerPersona.id, routerPersonaName: routerPersona.name },
     });
 
+    const llmEndedAt = Date.now();
     const routing = (completion.metadata?.routing || {}) as Record<string, unknown>;
+    const timing = completion.metadata?.cliTiming as OrientationLlmTiming | undefined;
     const llm = {
       personaName: routerPersona.name,
       model: typeof routing.resolvedModel === "string" ? routing.resolvedModel : completion.model,
@@ -170,6 +247,10 @@ export async function ensureSessionOriented(options: {
       tier: typeof routing.requestedTier === "string" ? routing.requestedTier : undefined,
       connectorLabel: typeof routing.connectorLabel === "string" ? routing.connectorLabel : undefined,
       usage: completion.usage,
+      startedAt: llmStartedAt,
+      endedAt: llmEndedAt,
+      elapsedMs: llmEndedAt - llmStartedAt,
+      timing,
     };
 
     const classification = parseClassification(completion.content || "", personas);

@@ -166,7 +166,10 @@ Real-time voice database work uses the reserved `voice` lane. Install it before 
 - `preWarmVoiceCli(opts)` — spawns CLI subprocess with delegating tool handlers during voice start
 - `claimVoiceWarmHandle(sessionId, toolExecutor)` — claimed on first custom-LLM callback, binds real tool executor
 - `cleanupVoiceWarmHandle(sessionId)` — cleanup on session end
-- Warm handles expire after 60s; background sweep every 30s
+- Voice warm handles expire after 60s; background sweep every 30s
+- Orientation owns a separate tool-free one-shot warm lane. `prewarmOrientationClassifier()` resolves the canonical Router tier and exact connector config, then blocks route startup until the matching `startup()` handles are ready.
+- The orientation lane defaults to two workers: one active lease plus one ready reserve. `CLAUDE_CLI_WARM_POOL_SIZE=0` explicitly disables it; `1-8` tunes capacity.
+- Warm keys include lane, model, stable system prompt, thinking mode, and connector config. Per-user persona definitions and opening text stay in the user prompt, so the ready process is reusable without sharing conversational context. Every handle serves one query with `persistSession=false`, is evicted, and is replenished immediately.
 
 ---
 
