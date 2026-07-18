@@ -22,6 +22,8 @@ interface ReminderState {
 
 interface ReminderPopoverProps {
   title?: string | null;
+  /** Canonical @type:id reference to render as a clickable chip in the toast (e.g. "@page:my-slug") */
+  toastReference?: string;
   queryKey?: unknown[];
   getUrl?: string;
   postUrl?: string;
@@ -101,7 +103,8 @@ function formatToastDateTime(date: Date): string {
   return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-function buildReminderToastTitle(title: string | null | undefined, timeLabel: string): string {
+function buildReminderToastTitle(title: string | null | undefined, timeLabel: string, toastReference?: string): string {
+  if (toastReference) return `Reminder set for ${toastReference} ${timeLabel}`;
   const reminderName = title?.trim() || "this item";
   return `Reminder set '${reminderName}' ${timeLabel}`;
 }
@@ -112,7 +115,7 @@ interface SetReminderInput {
   toastTimeLabel: string;
 }
 
-export function ReminderPopover({ title, queryKey, getUrl, postUrl, postMethod = "POST", deleteUrl, buildPayload, invalidateKeys = [], allowNextBuild = true, onOpenChange, onReminderSet, onSelect }: ReminderPopoverProps) {
+export function ReminderPopover({ title, toastReference, queryKey, getUrl, postUrl, postMethod = "POST", deleteUrl, buildPayload, invalidateKeys = [], allowNextBuild = true, onOpenChange, onReminderSet, onSelect }: ReminderPopoverProps) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [showCustom, setShowCustom] = useState(false);
@@ -138,7 +141,7 @@ export function ReminderPopover({ title, queryKey, getUrl, postUrl, postMethod =
     onSuccess: (_data, variables) => {
       for (const key of invalidateKeys) queryClient.invalidateQueries({ queryKey: key });
       if (queryKey) queryClient.invalidateQueries({ queryKey });
-      toast({ title: buildReminderToastTitle(title, variables.toastTimeLabel) });
+      toast({ title: buildReminderToastTitle(title, variables.toastTimeLabel, toastReference) });
       setOpen(false);
       setShowCustom(false);
       onReminderSet?.();
@@ -246,6 +249,7 @@ export function LibraryReminderPopover({ pageId, pageTitle, onOpenChange, onRemi
   return (
     <ReminderPopover
       title={pageTitle}
+      toastReference={`@page:${pageId}`}
       queryKey={["/api/info/library", pageId, "reminder"]}
       getUrl={`/api/info/library/${pageId}/reminder`}
       postUrl={`/api/info/library/${pageId}/reminder`}
