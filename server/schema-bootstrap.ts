@@ -3510,6 +3510,12 @@ export async function runSchemaBootstrap(
     );
   });
 
+  await heal("skills persona_id column", async () => {
+    await pool.query(
+      `ALTER TABLE skills ADD COLUMN IF NOT EXISTS persona_id INTEGER`,
+    );
+  });
+
   await heal("skill_scores table", async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS skill_scores (
