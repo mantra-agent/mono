@@ -557,8 +557,14 @@ const DEFAULT_CONTEXT_WINDOW = 200000;
 import { createLogger } from "./log";
 const log = createLogger("ModelRegistry");
 
+/** Strip provider prefix from composite model IDs (e.g. "claude-cli/claude-sonnet-sub" → "claude-sonnet-sub"). */
+function bareId(modelId: string): string {
+  return modelId.includes("/") ? modelId.split("/").slice(1).join("/") : modelId;
+}
+
 export function getModel(modelId: string): ModelInfo | undefined {
-  const entry = REGISTRY[modelId];
+  const id = bareId(modelId);
+  const entry = REGISTRY[id];
   if (!entry) {
     log.debug(`getModel id=${modelId} found=false`);
   }
@@ -566,7 +572,7 @@ export function getModel(modelId: string): ModelInfo | undefined {
 }
 
 export function getModelCost(modelId: string): ModelCost {
-  return REGISTRY[modelId]?.cost ?? DEFAULT_COST;
+  return REGISTRY[bareId(modelId)]?.cost ?? DEFAULT_COST;
 }
 
 export function getModelCostPerMillion(modelId: string): { input: number; output: number; cacheRead: number; cacheWrite: number } {
@@ -580,20 +586,22 @@ export function getModelCostPerMillion(modelId: string): { input: number; output
 }
 
 export function getContextWindow(modelId: string): number {
-  if (REGISTRY[modelId]) return REGISTRY[modelId].contextWindow;
-  const fallback = modelId.includes("claude-fable") ? 1000000 : modelId.includes("claude") ? 200000 : modelId.includes("gpt-5") ? 1000000 : modelId.includes("gpt-4") ? 128000 : DEFAULT_CONTEXT_WINDOW;
+  const id = bareId(modelId);
+  if (REGISTRY[id]) return REGISTRY[id].contextWindow;
+  const fallback = id.includes("claude-fable") ? 1000000 : id.includes("claude") ? 200000 : id.includes("gpt-5") ? 1000000 : id.includes("gpt-4") ? 128000 : DEFAULT_CONTEXT_WINDOW;
   log.warn(`getContextWindow fallback for unregistered model id="${modelId}" window=${fallback}`);
   return fallback;
 }
 
 export function getMaxOutputTokens(modelId: string): number {
-  return REGISTRY[modelId]?.maxOutputTokens ?? 8192;
+  return REGISTRY[bareId(modelId)]?.maxOutputTokens ?? 8192;
 }
 
 export function isThinkingModel(modelId: string): boolean {
-  const entry = REGISTRY[modelId];
+  const id = bareId(modelId);
+  const entry = REGISTRY[id];
   if (entry) return entry.thinking.level === "extended";
-  const inferred = modelId.includes("claude-sonnet-4") || modelId.includes("claude-opus-4") || modelId.includes("claude-fable");
+  const inferred = id.includes("claude-sonnet-4") || id.includes("claude-opus-4") || id.includes("claude-fable");
   if (inferred) {
     log.debug(`isThinkingModel id=${modelId} inferred=true (not in registry)`);
   }
@@ -601,11 +609,12 @@ export function isThinkingModel(modelId: string): boolean {
 }
 
 export function getThinkingInfo(modelId: string): ModelThinking {
-  if (REGISTRY[modelId]) return REGISTRY[modelId].thinking;
-  if (modelId.includes("o3") || modelId.includes("o4")) return { level: "basic", description: "Built-in chain-of-thought reasoning" };
-  if (modelId.includes("fable")) return { level: "extended", description: "Mythos-class adaptive thinking", adaptiveOnly: true };
-  if (modelId.includes("opus") || modelId.includes("sonnet")) return { level: "extended", description: "Extended thinking with visible reasoning" };
-  if (modelId.includes("deepseek-r1")) return { level: "extended", description: "Extended chain-of-thought reasoning" };
+  const id = bareId(modelId);
+  if (REGISTRY[id]) return REGISTRY[id].thinking;
+  if (id.includes("o3") || id.includes("o4")) return { level: "basic", description: "Built-in chain-of-thought reasoning" };
+  if (id.includes("fable")) return { level: "extended", description: "Mythos-class adaptive thinking", adaptiveOnly: true };
+  if (id.includes("opus") || id.includes("sonnet")) return { level: "extended", description: "Extended thinking with visible reasoning" };
+  if (id.includes("deepseek-r1")) return { level: "extended", description: "Extended chain-of-thought reasoning" };
   return DEFAULT_THINKING;
 }
 
@@ -615,7 +624,8 @@ export function supportsSelectableEffort(modelId: string): boolean {
 }
 
 export function getModelName(modelId: string): string {
-  return REGISTRY[modelId]?.name ?? modelId;
+  const id = bareId(modelId);
+  return REGISTRY[id]?.name ?? modelId;
 }
 
 export function getAllModelsForProvider(providerId: string): ModelInfo[] {
