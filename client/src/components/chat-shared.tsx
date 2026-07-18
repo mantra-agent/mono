@@ -2449,18 +2449,18 @@ export const ChatTurn = memo(function ChatTurn({
         })
       : [],
   );
-  const {
-    fromContent: planIdsFromContent,
-    fromToolResults: planIdsFromToolResults,
-  } = referenceIdsFromSegments(segments, "plan", (tool) => {
-    const action = typeof tool.arguments?.action === "string"
-      ? tool.arguments.action
-      : null;
-    return tool.toolName === "plan" &&
-      (action === "create" || action === "associate_session");
-  });
-  const unpromotedPlanIds = planIdsFromToolResults.filter(
-    (id) => !planIdsFromContent.includes(id),
+  // Content @plan refs render as plain chips only, never as widgets, so a
+  // content mention must not suppress the tool-result widget promotion.
+  const { fromToolResults: planWidgetIds } = referenceIdsFromSegments(
+    segments,
+    "plan",
+    (tool) => {
+      const action = typeof tool.arguments?.action === "string"
+        ? tool.arguments.action
+        : null;
+      return tool.toolName === "plan" &&
+        (action === "create" || action === "associate_session");
+    },
   );
 
   useEffect(() => {
@@ -2748,7 +2748,7 @@ export const ChatTurn = memo(function ChatTurn({
                 onSubmit={onQuestionSubmit}
               />
             ))}
-            {unpromotedPlanIds.map((id) => (
+            {planWidgetIds.map((id) => (
               <InlinePlanWidget
                 key={`tool-plan-${id}`}
                 planId={id}
