@@ -2334,6 +2334,64 @@ function CompactionBoundary({
   );
 }
 
+function SystemPromptBlock({
+  message,
+  stripTags,
+}: {
+  message: ChatMessage;
+  stripTags: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const content = message.content || "";
+  const firstLineMatch = content.match(/^\[SKILL — (.+?)\]/);
+  const skillLabel = firstLineMatch?.[1] ?? null;
+  const body = firstLineMatch
+    ? content.slice(firstLineMatch[0].length).replace(/^\s+/, "")
+    : content;
+
+  return (
+    <div
+      className="border border-border/60 bg-muted/20 rounded-md my-1"
+      data-testid={`message-system-prompt-${message.id}`}
+    >
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+        onClick={() => setExpanded(!expanded)}
+        data-testid={`button-toggle-system-prompt-${message.id}`}
+      >
+        <ChevronRight
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+            expanded && "rotate-90",
+          )}
+        />
+        <ScrollText className="h-3.5 w-3.5 shrink-0 text-cat-system" />
+        <span
+          className="min-w-0 flex-1 truncate text-sm text-foreground/90"
+          data-testid="text-system-prompt-label"
+        >
+          Skill Instructions{skillLabel ? ` — ${skillLabel}` : ""}
+        </span>
+        <span className="shrink-0 text-xs text-muted-foreground/70">
+          {body.length.toLocaleString()} chars
+        </span>
+      </button>
+      {expanded && (
+        <div className="max-h-96 overflow-y-auto border-t border-border/60 px-4 py-3">
+          <MarkdownContent content={body} stripTags={stripTags} />
+          <div
+            className="mt-2 text-xs text-muted-foreground/50"
+            data-testid={`text-message-time-${message.id}`}
+          >
+            {formatLocalTime(message.updatedAt ?? message.createdAt)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export const ChatTurn = memo(function ChatTurn({
   message,
   isLast,
@@ -2540,36 +2598,7 @@ export const ChatTurn = memo(function ChatTurn({
   }
 
   if (isSystemPrompt) {
-    return (
-      <div
-        className="flex gap-3 items-start"
-        data-testid={`message-system-prompt-${message.id}`}
-      >
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cat-system/15 mt-0.5">
-          <ScrollText className="h-4 w-4 text-cat-system" />
-        </div>
-        <div className="min-w-0 flex-1 group">
-          <div
-            className="text-xs font-medium text-cat-system mb-1"
-            data-testid="text-system-prompt-label"
-          >
-            Skill Instructions
-          </div>
-          <div className="rounded-lg border border-cat-system/20 bg-cat-system/5 px-4 py-3">
-            <MarkdownContent
-              content={message.content}
-              stripTags={shouldStripTags}
-            />
-          </div>
-          <div
-            className="mt-1 text-xs text-muted-foreground/50"
-            data-testid={`text-message-time-${message.id}`}
-          >
-            {formatLocalTime(message.updatedAt ?? message.createdAt)}
-          </div>
-        </div>
-      </div>
-    );
+    return <SystemPromptBlock message={message} stripTags={shouldStripTags} />;
   }
 
   if (isUser) {
