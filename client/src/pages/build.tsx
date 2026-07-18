@@ -9,7 +9,6 @@ import {
   ChevronRight,
   Circle,
   CircleDot,
-  Code,
   Container,
   Database,
   LayoutGrid,
@@ -115,7 +114,6 @@ import { createLogger } from "@/lib/logger";
 import { DatabaseDataBrowser } from "@/pages/dev/database-data-browser";
 import InternalPromptsTab from "@/pages/internal-prompts";
 import VersionTimeline from "./version-timeline";
-import { CodeGraphTab } from "@/components/code-graph";
 import { IssuesTab } from "@/components/issues-tab";
 import {
   BuildStatusPanel,
@@ -5068,7 +5066,6 @@ export function DesignTab() {
 
 const VALID_TABS = [
   "history",
-  "code",
   "issues",
   "prompts",
 ] as const;
@@ -5078,7 +5075,6 @@ function normalizeTab(raw: string | null | undefined): DevTab {
   if (!raw) return "history";
   // Legacy tab redirects
   if (raw === "deployments" || raw === "logs" || raw === "version") return "history";
-  if (raw === "codegraph") return "code";
   if ((VALID_TABS as readonly string[]).includes(raw)) return raw as DevTab;
   return "history";
 }
@@ -5244,12 +5240,6 @@ export default function DevPage() {
         testId: "tab-history",
       },
       {
-        value: "code",
-        label: "Code",
-        icon: <Code className="h-4 w-4" />,
-        testId: "tab-code",
-      },
-      {
         value: "issues",
         label: "Issues",
         icon: <CircleDot className="h-4 w-4" />,
@@ -5343,14 +5333,6 @@ export default function DevPage() {
               <h2 className="text-base font-semibold mb-3">Deployments</h2>
               <DeploymentsTable status={okStatus} />
             </div>
-          </div>
-        )}
-        {activeTab === "code" && (
-          <div
-            className="flex-1 min-h-0 flex flex-col p-4 overflow-auto"
-            data-testid="tab-content-code"
-          >
-            <CodeGraphTab />
           </div>
         )}
         {activeTab === "issues" && (

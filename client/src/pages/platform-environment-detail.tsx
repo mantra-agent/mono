@@ -26,6 +26,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { CodeGraphTab } from "@/components/code-graph";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -754,11 +755,7 @@ function SourceBindingCard({
         icon={<Code2 className="h-3.5 w-3.5" />}
         hasValue
         showEmpty
-        expandedContent={
-          <p className="text-xs text-muted-foreground">
-            Enable GitNexus for this environment. Turn this on only for the canonical repo/branch you want indexed. Duplicate live/main environments and small repos can stay off.
-          </p>
-        }
+        expandedContent={<CodeGraphTab hideSearch />}
       >
         <Switch
           checked={Boolean(binding.codeIndexingEnabled)}
