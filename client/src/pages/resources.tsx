@@ -230,7 +230,7 @@ function NeutralValue({ children }: { children: ReactNode }) {
 
 function TreeChildren({ children }: { children: ReactNode }) {
   return (
-    <div className="ml-1 border-l border-border pl-3">
+    <div className="ml-0.5 border-l border-border pl-2 @sm:ml-1 @sm:pl-3">
       {children}
     </div>
   );
@@ -287,7 +287,7 @@ function BranchRow({
       hasValue
       showEmpty
       expandedContent={<TreeChildren>{children}</TreeChildren>}
-      expandedContentClassName="pb-1 pl-5"
+      expandedContentClassName="pb-1 pl-2 @sm:pl-5"
       defaultOpen={defaultOpen || status !== "ok"}
       testId={testId}
       mobileLayout="inline"
@@ -719,7 +719,7 @@ function ResourcesView({
                 </BranchRow>
               </TreeChildren>
             )}
-            expandedContentClassName="pb-1 pl-5"
+            expandedContentClassName="pb-1 pl-2 @sm:pl-5"
             defaultOpen
             testId="tree-system-health"
             mobileLayout="inline"
