@@ -644,9 +644,38 @@ function principalCacheKey(): string {
 
 export class PeopleStorage {
   private readonly _listCache = new TTLCache<PersonIndexEntry[]>("PeopleList", 30_000);
+  private readonly _aliasGraphCache = new TTLCache<Map<string, string>>("PersonAliasGraph", 30_000);
 
   private invalidateListCache(): void {
     this._listCache.invalidateAll();
+  }
+
+  private invalidateAliasGraphCache(): void {
+    this._aliasGraphCache.invalidateAll();
+  }
+
+  private async getAliasGraph(): Promise<Map<string, string>> {
+    const principal = getCurrentPrincipalOrSystem();
+    return this._aliasGraphCache.getOrFetch(principalCacheKey(), async () => {
+      const aliases = await db
+        .select({ sourceId: personMergeAliases.sourceId, targetId: personMergeAliases.targetId })
+        .from(personMergeAliases)
+        .where(combineWithVisibleScope(principal, personMergeAliasScopeColumns));
+      return new Map(aliases.map(alias => [alias.sourceId, alias.targetId]));
+    });
+  }
+
+  private resolvePersonAliasFromGraph(id: string, aliasBySource: ReadonlyMap<string, string>): string {
+    let current = id;
+    const seen = new Set<string>();
+    for (let depth = 0; depth < 16; depth++) {
+      if (seen.has(current)) throw new Error(`Person merge alias cycle detected at ${current}`);
+      seen.add(current);
+      const target = aliasBySource.get(current);
+      if (!target) return current;
+      current = target;
+    }
+    throw new Error(`Person merge alias depth exceeded for ${id}`);
   }
 
   private async syncPersonEmails(person: Person): Promise<void> {
@@ -837,27 +866,7 @@ export class PeopleStorage {
   }
 
   private async resolvePersonAlias(id: string): Promise<string> {
-    const principal = getCurrentPrincipalOrSystem();
-    let current = id;
-    const seen = new Set<string>();
-    for (let depth = 0; depth < 16; depth++) {
-      if (seen.has(current)) throw new Error(`Person merge alias cycle detected at ${current}`);
-      seen.add(current);
-      const rows = await db
-        .select({ targetId: personMergeAliases.targetId })
-        .from(personMergeAliases)
-        .where(
-          combineWithVisibleScope(
-            principal,
-            personMergeAliasScopeColumns,
-            eq(personMergeAliases.sourceId, current),
-          ),
-        )
-        .limit(1);
-      if (!rows[0]) return current;
-      current = rows[0].targetId;
-    }
-    throw new Error(`Person merge alias depth exceeded for ${id}`);
+    return this.resolvePersonAliasFromGraph(id, await this.getAliasGraph());
   }
 
   async getPerson(id: string): Promise<Person | null> {
@@ -879,12 +888,14 @@ export class PeopleStorage {
 
   async getPeopleByIds(ids: string[]): Promise<Person[]> {
     if (ids.length === 0) return [];
-    const resolvedIds = await Promise.all(ids.map(id => this.resolvePersonAlias(id)));
+    const principal = getCurrentPrincipalOrSystem();
+    const aliasBySource = await this.getAliasGraph();
+    const resolvedIds = ids.map(id => this.resolvePersonAliasFromGraph(id, aliasBySource));
     const uniqueIds = [...new Set(resolvedIds)];
-    log.debug(`getPeopleByIds count=${ids.length} unique=${uniqueIds.length}`);
+    log.debug(`getPeopleByIds count=${ids.length} unique=${uniqueIds.length} aliases=${aliasBySource.size}`);
     const rows = await db.select().from(persons).where(
       combineWithVisibleScope(
-        getCurrentPrincipalOrSystem(),
+        principal,
         personScopeColumns,
         inArray(persons.id, uniqueIds),
       )
@@ -985,6 +996,7 @@ export class PeopleStorage {
       },
     );
     this.invalidateListCache();
+    this.invalidateAliasGraphCache();
     log.info(
       `mergePeople sourceId=${result.sourcePersonId} targetId=${result.targetPersonId} alreadyMerged=${result.alreadyMerged}`,
     );

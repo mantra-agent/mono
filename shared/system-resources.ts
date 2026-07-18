@@ -11,6 +11,9 @@ export interface DbPoolResource {
 
 export interface InFlightResource {
   total: number;
+  submitted: number;
+  waiting: number;
+  executing: number;
   highThreshold: number;
   bySubsystem: Record<string, number>;
 }
