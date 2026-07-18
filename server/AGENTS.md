@@ -315,6 +315,13 @@ Four interacting layers: intention stack (what), timer scheduler (when), skill r
 - Execution modes: `gift` (tier-1 internal-write only), `supervised` (creates session, flags for attention), `campaign` (chunked work plan from Library page)
 - Attempts tracked per intention with outcome, tokens, session ID
 
+### Timer Ownership
+- Timers have one explicit execution authority: `user`, `system`, or disabled `quarantine`. User Timers require owner + account; system Timers require `type=system` + `system_key`; unresolved legacy rows are disabled.
+- User Timer CRUD, search, export, manual trigger, cache, and run history are principal-scoped. Scheduler enumeration is a separate explicit cross-account API.
+- Before any user Timer handler executes, the scheduler restores the Timer owner through `runWithPrincipal`. Platform commands use a named system principal. Missing ownership fails closed.
+- `system_key` is management identity, not execution authority. Managed skill Timers are provisioned per completed-onboarding user at explicit identity/login boundaries; platform command Timers are system-scoped. Scheduler rescheduling never reconciles or creates Timers.
+- Timer ownership migration is provenance-only and durable. Ambiguous rows are quarantined, never assigned to the first or primary user.
+
 ### Timer Scheduler
 - **18 system timer seeds** hardcoded and reconciled on every boot
 - Key timers: Consolidate (30min), Sleep (2AM), Brief Daily (7AM), Intention Advance (6h), Email Sync (1h)

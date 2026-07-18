@@ -7,7 +7,6 @@ import { accounts, memberships, userProfiles, agentProfiles, privilegedAccessAud
 import { getUserEffectivePermissions, type Permission } from "./permissions";
 
 const log = createLogger("principal");
-const ownershipRepairCompleted = new Set<string>();
 
 export type ActorType = "user" | "service" | "system";
 export type PrincipalRole = "owner" | "admin" | "member" | "viewer" | "service" | "system";
@@ -155,7 +154,7 @@ export function createUserPrincipalFromUser(user: User, accountId: string): Prin
 }
 
 export async function createUserSessionPrincipal(user: User): Promise<Principal> {
-  const foundation = await ensureUserIdentityFoundation(user);
+  const foundation = await resolveUserIdentityFoundation(user.id);
   const isAdmin = user.role === "admin";
   return {
     actorType: "user",
@@ -172,6 +171,19 @@ export async function createUserSessionPrincipal(user: User): Promise<Principal>
   };
 }
 
+export async function resolveUserIdentityFoundation(userId: string): Promise<{ accountId: string; role: PrincipalRole }> {
+  const existing = await db
+    .select({ accountId: accounts.id, role: memberships.role })
+    .from(accounts)
+    .innerJoin(memberships, eq(memberships.accountId, accounts.id))
+    .where(and(eq(accounts.kind, "personal"), eq(accounts.ownerUserId, userId), eq(memberships.userId, userId)))
+    .limit(1);
+  if (!existing[0]?.accountId) {
+    throw new Error(`Identity foundation missing for user ${userId}`);
+  }
+  return { accountId: existing[0].accountId, role: normalizeRole(existing[0].role) };
+}
+
 export async function ensureUserIdentityFoundation(user: User): Promise<{ accountId: string; role: PrincipalRole }> {
   const existing = await db
     .select({ accountId: accounts.id, role: memberships.role })
@@ -181,8 +193,6 @@ export async function ensureUserIdentityFoundation(user: User): Promise<{ accoun
     .limit(1);
 
   if (existing[0]?.accountId) {
-    await ensureProfileRows(user, existing[0].accountId);
-    await repairLegacyPersonalOwnership(user.id, existing[0].accountId);
     return { accountId: existing[0].accountId, role: normalizeRole(existing[0].role) };
   }
 
@@ -214,132 +224,7 @@ export async function ensureUserIdentityFoundation(user: User): Promise<{ accoun
     });
 
   await ensureProfileRows(user, accountId);
-  await repairLegacyPersonalOwnership(user.id, accountId);
   return { accountId, role: normalizeRole(membershipRole) };
-}
-
-async function repairLegacyPersonalOwnership(userId: string, accountId: string): Promise<void> {
-  const repairKey = `${userId}:${accountId}`;
-  if (ownershipRepairCompleted.has(repairKey)) return;
-  ownershipRepairCompleted.add(repairKey);
-
-  try {
-    // ── Tables with scope + owner_user_id columns ───────────────────
-    // Repair rows where owner_user_id is NULL — these were written by
-    // autonomous runs (timers, hooks, email enrichment) that executed
-    // without a user principal in AsyncLocalStorage.  Two patterns:
-    //   1. scope='user' but owner_user_id NULL  (legacy pre-multi-tenant)
-    //   2. scope='system' with owner_user_id NULL  (autonomous writes)
-    // Both should be owned by the primary user.
-    const scopedTables = [
-      "sessions",
-      "messages",
-      "workspace_documents",
-      "memory_entries",
-      "memory_entity_links",
-      "info_notes",
-      "library_pages",
-      "library_page_links",
-      "library_annotations",
-      "library_page_views",
-      "emotional_states",
-      "theses",
-      "signal_sources",
-      "signal_items",
-      "scan_runs",
-      "thoughts",
-
-      "media_items",
-      "indexed_content",
-      "content_queue",
-      "decisions",
-      "render_jobs",
-      "strategy_goals",
-    ];
-
-    for (const table of scopedTables) {
-      try {
-        await db.execute(sql.raw(`
-          UPDATE ${table}
-          SET owner_user_id = COALESCE(owner_user_id, '${userId.replace(/'/g, "''")}'),
-              account_id = COALESCE(account_id, '${accountId.replace(/'/g, "''")}'),
-              scope = CASE WHEN scope = 'system' THEN 'user' ELSE scope END
-          WHERE scope IN ('user', 'system')
-            AND (owner_user_id IS NULL OR account_id IS NULL)
-        `));
-      } catch {
-        // Table may not have scope/owner_user_id/account_id columns yet — skip
-      }
-      try {
-        await db.execute(sql.raw(`
-          UPDATE ${table}
-          SET created_by_user_id = COALESCE(created_by_user_id, '${userId.replace(/'/g, "''")}')
-          WHERE created_by_user_id IS NULL
-        `));
-      } catch {
-        // Table may not have created_by_user_id column — skip
-      }
-    }
-
-    // ── Tables with owner_user_id but no scope column ───────────────
-    // These tables use owner_user_id for filtering but have no scope.
-    const unscopedTables = [
-      "skill_runs",
-      "skill_failure_dismissals",
-      "system_hooks",
-      "calendar_event_metadata",
-      "calendar_event_people",
-      "calendar_event_artifacts",
-      "email_messages",
-      "email_enrichments",
-      "email_dismissals",
-      "email_triage_log",
-      "email_sync_log",
-      "email_sync_cursors",
-      "session_output_buffer",
-    ];
-
-    for (const table of unscopedTables) {
-      try {
-        await db.execute(sql.raw(`
-          UPDATE ${table}
-          SET owner_user_id = COALESCE(owner_user_id, '${userId.replace(/'/g, "''")}'),
-              account_id = COALESCE(account_id, '${accountId.replace(/'/g, "''")}')
-          WHERE owner_user_id IS NULL OR account_id IS NULL
-        `));
-      } catch {
-        // Some tables may not have account_id — update just owner
-        try {
-          await db.execute(sql.raw(`
-            UPDATE ${table}
-            SET owner_user_id = COALESCE(owner_user_id, '${userId.replace(/'/g, "''")}')
-            WHERE owner_user_id IS NULL
-          `));
-        } catch {
-          // Table may not exist yet — skip
-        }
-      }
-    }
-
-    // Persona templates are reconciled once at boot by personaStorage.seedDefaults().
-    // Per-user identity repair must never mutate global template scope.
-
-    // ── Skills: system-defined skills should be global ──────────────
-    await db.execute(sql.raw(`
-      UPDATE skills
-      SET scope = 'global'
-      WHERE scope = 'system' AND owner_user_id IS NULL
-    `));
-
-    log.log("legacy personal ownership repaired", { userId, accountId, scopedTableCount: scopedTables.length, unscopedTableCount: unscopedTables.length });
-  } catch (error) {
-    ownershipRepairCompleted.delete(repairKey);
-    log.warn("legacy personal ownership repair failed", {
-      userId,
-      accountId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
 }
 
 async function ensureProfileRows(user: User, accountId: string): Promise<void> {

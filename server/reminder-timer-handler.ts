@@ -31,6 +31,8 @@ export class ReminderTimerHandler implements TimerHandler {
       const { db } = await import("./db");
       const { libraryPages } = await import("@shared/schema");
       const { eq } = await import("drizzle-orm");
+      const { requireCurrentUserPrincipal } = await import("./principal-context");
+      const { combineWithWritableScope } = await import("./scoped-storage");
       await db
         .update(libraryPages)
         .set({
@@ -40,7 +42,12 @@ export class ReminderTimerHandler implements TimerHandler {
           surfaceSection: "inbox",
           updatedAt: new Date(),
         })
-        .where(eq(libraryPages.id, libraryPageId));
+        .where(combineWithWritableScope(requireCurrentUserPrincipal(), {
+          scope: libraryPages.scope,
+          ownerUserId: libraryPages.ownerUserId,
+          accountId: libraryPages.accountId,
+          vaultId: libraryPages.vaultId,
+        }, eq(libraryPages.id, libraryPageId)));
       log.debug(`library reminder fired for page=${libraryPageId}`);
       return {
         outcome: "success",

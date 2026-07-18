@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export const timerTypes = ["agent", "system", "me", "skill", "reminder"] as const;
 export type TimerType = typeof timerTypes[number];
+export const timerScopes = ["user", "system", "quarantine"] as const;
+export type TimerScope = typeof timerScopes[number];
 
 export const responsibilityTypes = timerTypes;
 export type ResponsibilityType = TimerType;
@@ -51,6 +53,9 @@ export const timerSchema = z.object({
   schedules: z.array(scheduleSchema).default([]),
   enabled: z.boolean().default(true),
   timezone: z.string().default("America/New_York"),
+  scope: z.enum(timerScopes),
+  ownerUserId: z.string().optional(),
+  accountId: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -61,10 +66,15 @@ export type Responsibility = Timer;
 
 export const insertTimerSchema = timerSchema.omit({
   id: true,
+  systemKey: true,
+  scope: true,
+  ownerUserId: true,
+  accountId: true,
   createdAt: true,
   updatedAt: true,
 });
 export type InsertTimer = z.infer<typeof insertTimerSchema>;
+export type InsertSystemTimer = InsertTimer & { systemKey: string; type: "system" };
 
 export const insertResponsibilitySchema = insertTimerSchema;
 export type InsertResponsibility = InsertTimer;

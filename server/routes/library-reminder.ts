@@ -6,6 +6,8 @@ import { requireAuth } from "../auth";
 import { db } from "../db";
 import { libraryPages } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { requireCurrentUserPrincipal } from "../principal-context";
+import { combineWithVisibleScope, combineWithWritableScope } from "../scoped-storage";
 
 const log = createLogger("LibraryReminder");
 
@@ -40,7 +42,12 @@ export function registerLibraryReminderRoutes(app: Express): void {
       const [page] = await db
         .select({ id: libraryPages.id })
         .from(libraryPages)
-        .where(eq(libraryPages.id, pageId));
+        .where(combineWithVisibleScope(requireCurrentUserPrincipal(), {
+          scope: libraryPages.scope,
+          ownerUserId: libraryPages.ownerUserId,
+          accountId: libraryPages.accountId,
+          vaultId: libraryPages.vaultId,
+        }, eq(libraryPages.id, pageId)));
       if (!page) {
         res.status(404).json({ error: "Library page not found" });
         return;
@@ -74,7 +81,12 @@ export function registerLibraryReminderRoutes(app: Express): void {
       const [page] = await db
         .select({ id: libraryPages.id, title: libraryPages.title })
         .from(libraryPages)
-        .where(eq(libraryPages.id, pageId));
+        .where(combineWithVisibleScope(requireCurrentUserPrincipal(), {
+          scope: libraryPages.scope,
+          ownerUserId: libraryPages.ownerUserId,
+          accountId: libraryPages.accountId,
+          vaultId: libraryPages.vaultId,
+        }, eq(libraryPages.id, pageId)));
       if (!page) {
         res.status(404).json({ error: "Library page not found" });
         return;
@@ -145,7 +157,12 @@ export function registerLibraryReminderRoutes(app: Express): void {
             surfaceSection: "snoozed",
             updatedAt: new Date(),
           })
-          .where(eq(libraryPages.id, pageId));
+          .where(combineWithWritableScope(requireCurrentUserPrincipal(), {
+            scope: libraryPages.scope,
+            ownerUserId: libraryPages.ownerUserId,
+            accountId: libraryPages.accountId,
+            vaultId: libraryPages.vaultId,
+          }, eq(libraryPages.id, pageId)));
       }
 
       log.log(`Created library reminder timerId=${timer.id} page=${pageId} ${nextBuild ? "nextBuild=true" : nextBoot ? "nextBoot=true" : `fireAt=${fireAtIso}`}`);
@@ -171,7 +188,12 @@ export function registerLibraryReminderRoutes(app: Express): void {
       const [page] = await db
         .select({ id: libraryPages.id })
         .from(libraryPages)
-        .where(eq(libraryPages.id, pageId));
+        .where(combineWithVisibleScope(requireCurrentUserPrincipal(), {
+          scope: libraryPages.scope,
+          ownerUserId: libraryPages.ownerUserId,
+          accountId: libraryPages.accountId,
+          vaultId: libraryPages.vaultId,
+        }, eq(libraryPages.id, pageId)));
       if (!page) {
         res.status(404).json({ error: "Library page not found" });
         return;

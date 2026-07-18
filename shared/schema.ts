@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, real, boolean, timestamp, jsonb, unique, index, uniqueIndex, primaryKey, uuid } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, real, boolean, timestamp, jsonb, unique, index, uniqueIndex, primaryKey, uuid, check } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { libraryPages } from "./models/info";
@@ -391,7 +391,13 @@ export const timers = pgTable("timers", {
   index("idx_timers_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_timers_account").on(table.accountId),
   index("idx_timers_type").on(table.type),
-  uniqueIndex("idx_timers_system_key_unique").on(table.systemKey),
+  uniqueIndex("idx_timers_system_key_system_unique").on(table.systemKey).where(sql`${table.scope} = 'system' AND ${table.systemKey} IS NOT NULL`),
+  uniqueIndex("idx_timers_system_key_user_unique").on(table.ownerUserId, table.systemKey).where(sql`${table.scope} = 'user' AND ${table.systemKey} IS NOT NULL`),
+  check("timers_ownership_contract", sql`
+    (${table.scope} = 'user' AND ${table.type} <> 'system' AND ${table.ownerUserId} IS NOT NULL AND ${table.accountId} IS NOT NULL)
+    OR (${table.scope} = 'system' AND ${table.systemKey} IS NOT NULL AND ${table.ownerUserId} IS NULL AND ${table.accountId} IS NULL)
+    OR (${table.scope} = 'quarantine' AND ${table.enabled} = false AND ${table.ownerUserId} IS NULL AND ${table.accountId} IS NULL)
+  `),
 ]);
 
 export const insertTimerTableSchema = createInsertSchema(timers).omit({
@@ -418,7 +424,16 @@ export const responsibilityRuns = pgTable("responsibility_runs", {
   scheduledSlotEnd: timestamp("scheduled_slot_end", { withTimezone: true, precision: 6 }),
   error: text("error"),
   metadata: jsonb("metadata"),
+  scope: text("scope").notNull().default("quarantine"),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
 }, (table) => [
+  index("idx_responsibility_runs_scope_owner").on(table.scope, table.ownerUserId),
+  index("idx_responsibility_runs_account").on(table.accountId),
+  check("responsibility_runs_ownership_contract", sql`
+    (${table.scope} = 'user' AND ${table.type} <> 'system' AND ${table.ownerUserId} IS NOT NULL AND ${table.accountId} IS NOT NULL)
+    OR (${table.scope} IN ('system', 'quarantine') AND ${table.ownerUserId} IS NULL AND ${table.accountId} IS NULL)
+  `),
   uniqueIndex("idx_responsibility_runs_successful_scheduled_slot_unique")
     .on(table.responsibilityId, table.scheduleId, table.scheduledSlotStart, table.scheduledSlotEnd)
     .where(sql`${table.trigger} = 'scheduled' AND ${table.status} = 'success' AND ${table.scheduledSlotStart} IS NOT NULL AND ${table.scheduledSlotEnd} IS NOT NULL`),

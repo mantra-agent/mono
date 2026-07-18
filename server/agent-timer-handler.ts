@@ -226,7 +226,7 @@ export class AgentTimerHandler implements TimerHandler {
     }
 
     await withQueryAttributionAsync("timer-scheduler", () =>
-      timerStorage.updateRun(timer.id, run.id, {
+      timerStorage.updateRun(timer, run.id, {
         sessionId: String(sessionId),
       }),
     );

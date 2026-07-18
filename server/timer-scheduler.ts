@@ -9,6 +9,10 @@ import { timerHandlerRouter } from "./timer-handler-router";
 import { getSetting, setSetting } from "./system-settings";
 import type { TimerHandlerResult } from "./timer-handlers";
 import { Cron } from "croner";
+import { runWithPrincipal, getCurrentPrincipal } from "./principal-context";
+import { createNamedSystemPrincipal, createUserPrincipalFromUser, type Principal } from "./principal";
+import { getUserEffectivePermissions } from "./permissions";
+import { storage } from "./storage";
 
 const log = createLogger("TimerScheduler");
 
@@ -231,10 +235,8 @@ class TimerScheduler {
   }
 
   async rescheduleAll(): Promise<void> {
-    await systemTimerRegistry.healMissingTimers();
-
     const allTimers = await withQueryAttributionAsync("timer-scheduler", () =>
-      timerStorage.getAll(),
+      timerStorage.getAllForScheduler(),
     );
     const activeKeys = new Set<string>();
 
@@ -367,7 +369,7 @@ class TimerScheduler {
       }
 
       const allTimers = await withQueryAttributionAsync("timer-scheduler", () =>
-        timerStorage.getAll(),
+        timerStorage.getAllForScheduler(),
       );
       const bootReminders = allTimers.filter(
         (t) =>
@@ -450,11 +452,25 @@ class TimerScheduler {
     intendedFireAt?: number,
   ): Promise<TimerRun | null> {
     const timer = await withQueryAttributionAsync("timer-scheduler", () =>
-      timerStorage.get(timerId),
+      timerStorage.getForScheduler(timerId),
     );
     if (!timer) {
       log.error(`timer not found: ${timerId}`);
       return null;
+    }
+
+    if (trigger === "manual") {
+      const requester = getCurrentPrincipal();
+      if (
+        requester?.actorType !== "user" ||
+        !requester.userId ||
+        !requester.accountId ||
+        timer.scope !== "user" ||
+        timer.ownerUserId !== requester.userId ||
+        timer.accountId !== requester.accountId
+      ) {
+        throw Object.assign(new Error("Timer not found or not visible"), { status: 404 });
+      }
     }
 
     if (!timer.enabled && trigger === "scheduled") {
@@ -509,7 +525,7 @@ class TimerScheduler {
     if (trigger === "scheduled" && scheduledSlot) {
       const recentRuns = await withQueryAttributionAsync(
         "timer-scheduler",
-        () => timerStorage.getRuns(timerId, 100),
+        () => timerStorage.getRunsForScheduler(timer, 100),
       );
       if (
         this.hasSuccessfulScheduledRunForSlot(
@@ -552,48 +568,47 @@ class TimerScheduler {
           : { requestedAt: now },
     };
 
-    await withQueryAttributionAsync("timer-scheduler", () =>
-      timerStorage.appendRun(run),
-    );
+    const executionPrincipal = await this.resolveExecutionPrincipal(timer);
+    await runWithPrincipal(executionPrincipal, async () => {
+      await withQueryAttributionAsync("timer-scheduler", () =>
+        timerStorage.appendRun(timer, run),
+      );
 
-    eventBus.publish({
-      category: "timer",
-      event: "timer.run.start",
-      payload: {
-        runId,
-        timerId,
-        name: timer.name,
-        type: timer.type,
-        trigger,
-        metadata: run.metadata,
-      },
+      eventBus.publish({
+        category: "timer",
+        event: "timer.run.start",
+        payload: {
+          runId,
+          timerId,
+          name: timer.name,
+          type: timer.type,
+          trigger,
+          metadata: run.metadata,
+        },
+      });
+
+      log.log(
+        `executing "${timer.name}" (${timer.type}) runId=${runId} trigger=${trigger} scope=${timer.scope}`,
+      );
+
+      try {
+        const handlerResult = await this.executeTimerHandler(timer, run);
+        await this.finalizeTimerRun(timer, run, now, handlerResult);
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorStack = error instanceof Error ? error.stack : undefined;
+        const fullError = errorStack || errorMessage;
+        const handlerResult: TimerHandlerResult =
+          errorMessage === "admission_timeout"
+            ? {
+                outcome: "deferred",
+                reason: "admission_timeout",
+                output: { error: "admission_timeout: another autonomous run is active" },
+              }
+            : { outcome: "failed", error: fullError };
+        await this.finalizeTimerRun(timer, run, now, handlerResult);
+      }
     });
-
-    log.log(
-      `executing "${timer.name}" (${timer.type}) runId=${runId} trigger=${trigger}`,
-    );
-
-    try {
-      const handlerResult = await this.executeTimerHandler(timer, run);
-      await this.finalizeTimerRun(timer, run, now, handlerResult);
-    } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      const fullError = errorStack || errorMessage;
-      const handlerResult: TimerHandlerResult =
-        errorMessage === "admission_timeout"
-          ? {
-              outcome: "deferred",
-              reason: "admission_timeout",
-              output: {
-                error: "admission_timeout: another autonomous run is active",
-              },
-            }
-          : { outcome: "failed", error: fullError };
-
-      await this.finalizeTimerRun(timer, run, now, handlerResult);
-    }
 
     if (trigger === "scheduled") {
       setTimeout(() => {
@@ -603,10 +618,24 @@ class TimerScheduler {
 
     const updatedRun = (
       await withQueryAttributionAsync("timer-scheduler", () =>
-        timerStorage.getRuns(timerId, 1),
+        timerStorage.getRunsForScheduler(timer, 1),
       )
     )[0];
     return updatedRun || run;
+  }
+
+  private async resolveExecutionPrincipal(timer: Timer): Promise<Principal> {
+    if (timer.scope === "system" && timer.type === "system" && timer.systemKey) {
+      return createNamedSystemPrincipal(`timer:${timer.systemKey}`);
+    }
+    if (timer.scope !== "user" || !timer.ownerUserId || !timer.accountId) {
+      throw new Error(`Timer ${timer.id} is not executable because ownership is unresolved`);
+    }
+    const user = await storage.getUser(timer.ownerUserId);
+    if (!user) throw new Error(`Timer owner user missing: ${timer.ownerUserId}`);
+    const principal = createUserPrincipalFromUser(user, timer.accountId);
+    principal.permissions = await getUserEffectivePermissions(user.id);
+    return principal;
   }
 
   private async executeTimerHandler(
@@ -660,12 +689,12 @@ class TimerScheduler {
     }
 
     await withQueryAttributionAsync("timer-scheduler", () =>
-      timerStorage.updateRun(timer.id, run.id, update),
+      timerStorage.updateRun(timer, run.id, update),
     );
 
     if (handlerOutput?.disableTimer === true) {
       await withQueryAttributionAsync("timer-scheduler", () =>
-        timerStorage.update(timer.id, { enabled: false }),
+        timerStorage.updateForScheduler(timer, { enabled: false }),
       );
       log.debug(`disabled timer "${timer.name}" after handler request`);
     }

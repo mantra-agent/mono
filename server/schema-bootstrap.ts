@@ -207,6 +207,162 @@ async function ensureDocumentStoreDocumentsSchema(pool: { query: (sql: string, p
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_migration_conflicts_source ON document_store_migration_conflicts(source_memory_entry_id)`);
 }
 
+const TIMER_OWNERSHIP_MIGRATION_KEY = "migration.timer-ownership.v1";
+
+async function assertTimerOwnershipContract(client: {
+  query: (sql: string, params?: unknown[]) => Promise<{ rows?: Array<Record<string, unknown>> }>;
+}): Promise<void> {
+  const result = await client.query(`
+    SELECT
+      count(*) FILTER (WHERE scope = 'user' AND (type = 'system' OR owner_user_id IS NULL OR account_id IS NULL))::int AS invalid_user_timers,
+      count(*) FILTER (WHERE scope = 'system' AND (type <> 'system' OR system_key IS NULL OR owner_user_id IS NOT NULL OR account_id IS NOT NULL))::int AS invalid_system_timers,
+      count(*) FILTER (WHERE scope = 'quarantine' AND enabled)::int AS enabled_quarantined_timers
+    FROM timers
+  `);
+  const runResult = await client.query(`
+    SELECT count(*) FILTER (
+      WHERE (scope = 'user' AND (owner_user_id IS NULL OR account_id IS NULL))
+         OR (scope IN ('system', 'quarantine') AND (owner_user_id IS NOT NULL OR account_id IS NOT NULL))
+         OR scope NOT IN ('user', 'system', 'quarantine')
+    )::int AS invalid_runs
+    FROM responsibility_runs
+  `);
+  const row = result.rows?.[0] ?? {};
+  const invalid = Number(row.invalid_user_timers ?? 0) + Number(row.invalid_system_timers ?? 0) + Number(row.enabled_quarantined_timers ?? 0) + Number(runResult.rows?.[0]?.invalid_runs ?? 0);
+  if (invalid > 0) throw new Error(`Timer ownership contract violated: ${JSON.stringify(row)}`);
+}
+
+async function ensureTimerOwnershipSchema(pool: {
+  connect: () => Promise<{
+    query: (sql: string, params?: unknown[]) => Promise<{ rows?: Array<Record<string, unknown>> }>;
+    release: () => void;
+  }>;
+}): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext('${TIMER_OWNERSHIP_MIGRATION_KEY}'))`);
+    const state = await client.query(`SELECT value FROM system_settings WHERE key = $1 LIMIT 1`, [TIMER_OWNERSHIP_MIGRATION_KEY]);
+    if (state.rows?.[0]?.value === true) {
+      await client.query("COMMIT");
+      await assertTimerOwnershipContract(client);
+      return;
+    }
+    await client.query(`
+    ALTER TABLE responsibility_runs ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'quarantine';
+    ALTER TABLE responsibility_runs ADD COLUMN IF NOT EXISTS owner_user_id TEXT;
+    ALTER TABLE responsibility_runs ADD COLUMN IF NOT EXISTS account_id TEXT;
+
+    DROP INDEX IF EXISTS idx_timers_system_key_unique;
+
+    UPDATE timers
+    SET scope = 'system', owner_user_id = NULL, account_id = NULL
+    WHERE type = 'system' AND system_key IS NOT NULL;
+
+    WITH source_ownership AS (
+      SELECT document_id, min(owner_user_id) AS owner_user_id, min(account_id) AS account_id,
+             count(DISTINCT (owner_user_id, account_id)) AS ownership_count
+      FROM document_store_documents
+      WHERE document_type = 'chat' AND owner_user_id IS NOT NULL AND account_id IS NOT NULL
+      GROUP BY document_id
+    )
+    UPDATE timers AS timer
+    SET scope = 'user', owner_user_id = source.owner_user_id, account_id = source.account_id
+    FROM source_ownership AS source
+    WHERE timer.description LIKE 'session-reminder:%'
+      AND source.document_id = substring(timer.description FROM length('session-reminder:') + 1)
+      AND source.ownership_count = 1;
+
+    UPDATE timers AS timer
+    SET scope = 'user', owner_user_id = source.owner_user_id, account_id = source.account_id
+    FROM library_pages AS source
+    WHERE timer.description LIKE 'library-reminder:%'
+      AND source.id::text = substring(timer.description FROM length('library-reminder:') + 1)
+      AND source.owner_user_id IS NOT NULL
+      AND source.account_id IS NOT NULL;
+
+    WITH provenance AS (
+      SELECT
+        runs.responsibility_id,
+        min(source.owner_user_id) AS owner_user_id,
+        min(source.account_id) AS account_id,
+        count(DISTINCT (source.owner_user_id, source.account_id)) AS ownership_count
+      FROM responsibility_runs AS runs
+      JOIN document_store_documents AS source
+        ON source.document_type = 'chat'
+       AND source.document_id = runs.conversation_id
+      WHERE source.owner_user_id IS NOT NULL AND source.account_id IS NOT NULL
+      GROUP BY runs.responsibility_id
+    )
+    UPDATE timers AS timer
+    SET scope = 'user', owner_user_id = provenance.owner_user_id, account_id = provenance.account_id
+    FROM provenance
+    WHERE timer.id = provenance.responsibility_id
+      AND provenance.ownership_count = 1
+      AND timer.type <> 'system'
+      AND (timer.owner_user_id IS NULL OR timer.account_id IS NULL);
+
+    UPDATE timers
+    SET scope = 'quarantine', enabled = false, owner_user_id = NULL, account_id = NULL
+    WHERE NOT (
+      (scope = 'user' AND type <> 'system' AND owner_user_id IS NOT NULL AND account_id IS NOT NULL)
+      OR (scope = 'system' AND type = 'system' AND system_key IS NOT NULL AND owner_user_id IS NULL AND account_id IS NULL)
+    );
+
+    UPDATE responsibility_runs AS run
+    SET
+      scope = timer.scope,
+      owner_user_id = CASE WHEN timer.scope = 'user' THEN timer.owner_user_id ELSE NULL END,
+      account_id = CASE WHEN timer.scope = 'user' THEN timer.account_id ELSE NULL END
+    FROM timers AS timer
+    WHERE run.responsibility_id = timer.id;
+
+    UPDATE responsibility_runs
+    SET scope = 'quarantine', owner_user_id = NULL, account_id = NULL
+    WHERE scope NOT IN ('user', 'system', 'quarantine')
+       OR (scope = 'user' AND (owner_user_id IS NULL OR account_id IS NULL))
+       OR (scope IN ('system', 'quarantine') AND (owner_user_id IS NOT NULL OR account_id IS NOT NULL));
+
+    CREATE INDEX IF NOT EXISTS idx_responsibility_runs_scope_owner ON responsibility_runs(scope, owner_user_id);
+    CREATE INDEX IF NOT EXISTS idx_responsibility_runs_account ON responsibility_runs(account_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_timers_system_key_system_unique
+      ON timers(system_key) WHERE scope = 'system' AND system_key IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_timers_system_key_user_unique
+      ON timers(owner_user_id, system_key) WHERE scope = 'user' AND system_key IS NOT NULL;
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'timers_ownership_contract') THEN
+        ALTER TABLE timers ADD CONSTRAINT timers_ownership_contract CHECK (
+          (scope = 'user' AND type <> 'system' AND owner_user_id IS NOT NULL AND account_id IS NOT NULL)
+          OR (scope = 'system' AND type = 'system' AND system_key IS NOT NULL AND owner_user_id IS NULL AND account_id IS NULL)
+          OR (scope = 'quarantine' AND enabled = false AND owner_user_id IS NULL AND account_id IS NULL)
+        );
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'responsibility_runs_ownership_contract') THEN
+        ALTER TABLE responsibility_runs ADD CONSTRAINT responsibility_runs_ownership_contract CHECK (
+          (scope = 'user' AND owner_user_id IS NOT NULL AND account_id IS NOT NULL)
+          OR (scope IN ('system', 'quarantine') AND owner_user_id IS NULL AND account_id IS NULL)
+        );
+      END IF;
+    END $$;
+
+    INSERT INTO system_settings(key, value, updated_at)
+    VALUES ('${TIMER_OWNERSHIP_MIGRATION_KEY}', 'true'::jsonb, CURRENT_TIMESTAMP)
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
+
+    `);
+    await client.query("COMMIT");
+    await assertTimerOwnershipContract(client);
+    log("timer ownership migration complete", "migration");
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function ensurePromptModuleTables(pool: { query: (sql: string) => Promise<unknown> }): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS prompt_modules (
@@ -287,6 +443,7 @@ export async function runSchemaBootstrap(
   const { pool } = await import("./db");
   await ensureVoiceSessionActiveSchema(pool);
   await ensureDocumentStoreDocumentsSchema(pool);
+  await ensureTimerOwnershipSchema(pool);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS communication_audiences (

@@ -20,6 +20,7 @@ import {
   attachUserPrincipal,
   createServicePrincipal,
   ensureUserIdentityFoundation,
+  resolveUserIdentityFoundation,
   getPrincipal,
   recordPrivilegedAccess,
   requirePrincipal,
@@ -246,9 +247,14 @@ function userResponse(user: User, principal?: Principal | null) {
 }
 
 async function completeUserAuth(req: Request, res: Response, user: User, context: string) {
+  await ensureUserIdentityFoundation(user);
   delete req.session.servicePrincipal;
   req.session.userId = user.id;
   const principal = await attachUserPrincipal(req, user);
+  const { systemTimerRegistry } = await import("./system-timer-registry");
+  await runWithPrincipal(principal, () => systemTimerRegistry.reconcileUserTimers(principal));
+  const { timerScheduler } = await import("./timer-scheduler");
+  if (timerScheduler.isRunning()) await timerScheduler.rescheduleAll();
   authTrace(req, `${context}:user-session-established`, {
     userId: user.id,
     accountId: principal.accountId,
@@ -581,6 +587,7 @@ export function setupAuth(app: Express) {
           email,
           password: hashedPlaceholder,
         });
+        await ensureUserIdentityFoundation(user);
         await setUserPermissionOverrides(user.id, []);
         await storage.updateUser(user.id, {
           inviteToken: token,
@@ -895,7 +902,7 @@ export function setupAuth(app: Express) {
           getWaitlistApplications(),
         ]);
         const rows = await Promise.all(allUsers.map(async (u) => {
-          const identity = await ensureUserIdentityFoundation(u);
+          const identity = await resolveUserIdentityFoundation(u.id);
           return {
             id: u.id,
             email: u.email,
