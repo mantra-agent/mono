@@ -609,7 +609,11 @@ async function repointReferences(
       ),
     );
   await tx.update(peopleImportCandidates)
-    .set({ mergedPersonId: target.id, updatedAt: new Date() })
+    .set({
+      mergedPersonId: target.id,
+      candidate: sql`${peopleImportCandidates.candidate} - 'mergedPersonId'`,
+      updatedAt: new Date(),
+    })
     .where(
       combineWithWritableScope(
         principal,

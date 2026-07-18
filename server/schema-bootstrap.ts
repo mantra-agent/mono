@@ -4822,6 +4822,36 @@ export async function runSchemaBootstrap(
     );
   });
 
+  await heal("people_import_candidates canonical person link", async () => {
+    const migrationName = "people_import_candidates_person_link_ssot_v1";
+    const exists = await pool.query(
+      `SELECT 1 FROM app_migrations WHERE name = $1`,
+      [migrationName],
+    );
+    if (exists.rowCount && exists.rowCount > 0) return;
+
+    const result = await pool.query(`
+      UPDATE people_import_candidates
+      SET
+        merged_person_id = COALESCE(
+          merged_person_id,
+          NULLIF(candidate->>'mergedPersonId', '')
+        ),
+        candidate = candidate - 'mergedPersonId',
+        updated_at = CURRENT_TIMESTAMP
+      WHERE candidate ? 'mergedPersonId'
+    `);
+
+    await pool.query(
+      `INSERT INTO app_migrations (name, metadata) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING`,
+      [migrationName, JSON.stringify({ rowsReconciled: result.rowCount ?? 0 })],
+    );
+    log(
+      `[boot] people import candidate Person link reconciliation: rowsReconciled=${result.rowCount ?? 0}`,
+      "migration",
+    );
+  });
+
   await heal("people_import_candidates ownership backfill", async () => {
     const migrationName = "people_import_candidates_ownership_v1";
     const exists = await pool.query(
