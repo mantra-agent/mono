@@ -1801,6 +1801,7 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
   const chronology = message.segmentChronology!;
   const segments: MessageSegment[] = [];
   let currentTimelineSteps: ExecutionStep[] = [];
+  let chronologyContent = "";
 
   const flushTimeline = () => {
     if (currentTimelineSteps.length > 0) {
@@ -1809,21 +1810,7 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
     }
   };
 
-  let chronologyContentLength = 0;
-  for (const entry of chronology) {
-    if (entry.s === "content" && entry.c) {
-      chronologyContentLength += entry.c.length;
-    }
-  }
-
   let thinkingBlockIndex = 0;
-  const contentEntries = chronology.filter((e) => e.s === "content") as Array<{
-    s: "content";
-    c: string;
-  }>;
-  const finalizedContent = contentEntries
-    .map((entry) => entry.c || "")
-    .join("");
 
   for (const entry of chronology) {
     switch (entry.s) {
@@ -1895,8 +1882,11 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
         break;
       }
       case "content": {
-        // Keep the finalized Diagnostic trace in one timeline. Splitting at content
-        // boundaries strands response parents and children in different arrays.
+        flushTimeline();
+        if (entry.c) {
+          chronologyContent += entry.c;
+          segments.push({ type: "content", content: entry.c });
+        }
         break;
       }
     }
@@ -1904,14 +1894,80 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
 
   flushTimeline();
 
-  let content = finalizedContent;
-  if (message.content && message.content.length > chronologyContentLength) {
-    content += message.content.slice(chronologyContentLength);
+  // The executor normally persists exactly the content emitted through the
+  // chronology. A terminal/crash path can append a suffix after the final
+  // chronology flush, so preserve the established boundaries and add only that
+  // missing suffix. A genuinely different finalized body remains authoritative.
+  const persistedContent = message.content || "";
+  if (persistedContent.startsWith(chronologyContent)) {
+    const suffix = persistedContent.slice(chronologyContent.length);
+    if (suffix) {
+      const lastContentIndex = segments.findLastIndex(
+        (segment) => segment.type === "content",
+      );
+      if (lastContentIndex >= 0) {
+        const lastContent = segments[lastContentIndex];
+        if (lastContent.type === "content") {
+          segments[lastContentIndex] = {
+            type: "content",
+            content: lastContent.content + suffix,
+          };
+        }
+      } else {
+        segments.push({ type: "content", content: suffix });
+      }
+    }
+  } else if (persistedContent !== chronologyContent) {
+    const firstContentIndex = segments.findIndex(
+      (segment) => segment.type === "content",
+    );
+    const withoutChronologyContent = segments.filter(
+      (segment) => segment.type !== "content",
+    );
+    withoutChronologyContent.splice(
+      firstContentIndex >= 0 ? firstContentIndex : withoutChronologyContent.length,
+      0,
+      { type: "content", content: persistedContent },
+    );
+    return withoutChronologyContent;
   }
-  if (!content) content = message.content || "";
-  if (content) segments.push({ type: "content", content });
 
   return segments;
+}
+
+function finalizedSegmentSignature(segments: MessageSegment[]): {
+  content: string;
+  toolOrder: string[];
+} {
+  let content = "";
+  const toolOrder: string[] = [];
+  for (const segment of segments) {
+    if (segment.type === "content") {
+      content += segment.content;
+      continue;
+    }
+    for (const step of segment.steps) {
+      if (step.type === "tool_call") {
+        toolOrder.push(step.toolCallId || step.toolName || step.id);
+      }
+    }
+  }
+  return { content, toolOrder };
+}
+
+function finalizedSegmentsAreEquivalent(
+  streamed: MessageSegment[],
+  persisted: MessageSegment[],
+): boolean {
+  const streamedSignature = finalizedSegmentSignature(streamed);
+  const persistedSignature = finalizedSegmentSignature(persisted);
+  return (
+    streamedSignature.content === persistedSignature.content &&
+    streamedSignature.toolOrder.length === persistedSignature.toolOrder.length &&
+    streamedSignature.toolOrder.every(
+      (toolId, index) => toolId === persistedSignature.toolOrder[index],
+    )
+  );
 }
 
 const IMAGE_EXTS = new Set([
@@ -2440,15 +2496,12 @@ export const ChatTurn = memo(function ChatTurn({
   // persisted message replaces the draft placeholder. Without this, the bubble
   // briefly falls back to the empty draft and goes blank between `done` and
   // `saved`-poll completion.
-  const messageHasNoVisibleContent =
-    (!message.content || message.content.trim() === "") &&
-    (!message.segmentChronology || message.segmentChronology.length === 0);
   const hasStreamingSegments =
     !isUser &&
     !isSystemPrompt &&
     !!streaming &&
-    streaming.segments.length > 0 &&
-    (streaming.source !== null || messageHasNoVisibleContent);
+    streaming.segments.length > 0;
+  const settledStreamingSegmentsRef = useRef<MessageSegment[] | null>(null);
   const [copied, setCopied] = useState(false);
   const turnRootRef = useRef<HTMLDivElement>(null);
   const previousTurnTraceRef = useRef<{
@@ -2468,10 +2521,28 @@ export const ChatTurn = memo(function ChatTurn({
   });
   const shouldStripTags =
     !isUser && !isSystemPrompt && (layer === 1 || !tagPref?.showExpressionTags);
+  const savedSegments = segmentsFromSavedMessage(message);
+  if (hasStreamingSegments && streaming?.source === null) {
+    settledStreamingSegmentsRef.current = streaming.segments;
+  }
+  const settledStreamingSegments = settledStreamingSegmentsRef.current;
+  const canPreserveSettledSegments =
+    !hasStreamingSegments &&
+    !!settledStreamingSegments &&
+    finalizedSegmentsAreEquivalent(settledStreamingSegments, savedSegments);
+  if (
+    !hasStreamingSegments &&
+    settledStreamingSegments &&
+    !canPreserveSettledSegments
+  ) {
+    settledStreamingSegmentsRef.current = null;
+  }
   const segments: MessageSegment[] =
     hasStreamingSegments && streaming
       ? streaming.segments
-      : segmentsFromSavedMessage(message);
+      : canPreserveSettledSegments && settledStreamingSegments
+        ? settledStreamingSegments
+        : savedSegments;
 
   if (!isUser && !isSystemPrompt) {
     log.verbose(
