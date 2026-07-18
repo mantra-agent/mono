@@ -4,7 +4,7 @@ import { WebSocket } from "ws";
 import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { storage } from "./storage";
-import { createUserSessionPrincipal, ensureUserIdentityFoundation, type Principal } from "./principal";
+import { createUserSessionPrincipal, resolveUserIdentityFoundation, type Principal } from "./principal";
 import { createLogger } from "./log";
 import type { ClientPresenceEntry, ClientPresenceKind, ClientPresenceSnapshot } from "@shared/client-presence";
 
@@ -166,7 +166,7 @@ export async function resolveAccountIdForRequest(request: IncomingMessage): Prom
 export async function resolveAccountIdForUser(userId: string): Promise<string | null> {
   const user = await storage.getUser(userId);
   if (!user) return null;
-  const identity = await ensureUserIdentityFoundation(user);
+  const identity = await resolveUserIdentityFoundation(user.id);
   return identity.accountId;
 }
 

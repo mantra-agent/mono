@@ -33,7 +33,7 @@ let _cachedAutonomousPrincipal: Principal | null = null;
 async function resolveAutonomousPrincipal(): Promise<Principal> {
   if (_cachedAutonomousPrincipal) return _cachedAutonomousPrincipal;
   try {
-    const { ensureUserIdentityFoundation } = await import("./principal");
+    const { resolveUserIdentityFoundation } = await import("./principal");
     const { getUserEffectivePermissions } = await import("./permissions");
     const users = await storage.getUsers();
     const user = users.find(u => u.role === "admin") || users[0];
@@ -42,7 +42,7 @@ async function resolveAutonomousPrincipal(): Promise<Principal> {
       const { createNamedSystemPrincipal } = await import("./principal");
       return createNamedSystemPrincipal("autonomous-skill-runner");
     }
-    const foundation = await ensureUserIdentityFoundation(user);
+    const foundation = await resolveUserIdentityFoundation(user.id);
     const permissions = await getUserEffectivePermissions(user.id);
     _cachedAutonomousPrincipal = {
       actorType: "user",

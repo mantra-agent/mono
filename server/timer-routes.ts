@@ -7,6 +7,7 @@ import type { Timer, TimerWithNextRun } from "@shared/models/timers";
 import { ZodError } from "zod";
 import type { BusEvent } from "./event-bus";
 import { createLogger } from "./log";
+import { requirePermission } from "./permissions";
 
 const log = createLogger("TimerRoutes");
 
@@ -30,9 +31,9 @@ async function buildEnrichedTimers(): Promise<{ timers: TimerWithNextRun[]; glob
   const nextRunTimes = timerScheduler.getNextRunTimes();
   const globalPaused = timerScheduler.isGlobalPaused();
 
-  const enriched: TimerWithNextRun[] = await Promise.all(
-    timers.map(async (r) => {
-      const recentRuns = await timerStorage.getRuns(r.id, 10);
+  const recentRunsByTimer = await timerStorage.getRunsForTimers(timers.map((timer) => timer.id), 10);
+  const enriched: TimerWithNextRun[] = timers.map((r) => {
+      const recentRuns = recentRunsByTimer.get(r.id) ?? [];
       const nextRunAt = nextRunTimes[r.id];
 
       const successCount = recentRuns.filter((run) => run.status === "success").length;
@@ -70,8 +71,7 @@ async function buildEnrichedTimers(): Promise<{ timers: TimerWithNextRun[]; glob
           streakType,
         },
       };
-    })
-  );
+    });
 
   return { timers: enriched, globalPaused };
 }
@@ -209,15 +209,15 @@ async function handleRunNow(req: Request, res: Response): Promise<void> {
 }
 
 function stripTimerForExport(timer: Timer) {
-  const { id, createdAt, updatedAt, ...rest } = timer;
+  const { id, createdAt, updatedAt, scope, ownerUserId, accountId, systemKey, ...rest } = timer;
   return rest;
 }
 
 function registerRouteSet(app: Express, prefix: string, listKey: string): void {
   app.get(`${prefix}`, (req, res) => handleListTimers(req, res, listKey));
-  app.get(`${prefix}/scheduler/status`, handleSchedulerStatus);
-  app.post(`${prefix}/scheduler/pause`, handleSchedulerPause);
-  app.post(`${prefix}/scheduler/resume`, handleSchedulerResume);
+  app.get(`${prefix}/scheduler/status`, requirePermission("system:read"), handleSchedulerStatus);
+  app.post(`${prefix}/scheduler/pause`, requirePermission("system:write"), handleSchedulerPause);
+  app.post(`${prefix}/scheduler/resume`, requirePermission("system:write"), handleSchedulerResume);
 
   app.get(`${prefix}/export`, async (_req: Request, res: Response) => {
     try {
@@ -267,12 +267,17 @@ function registerRouteSet(app: Express, prefix: string, listKey: string): void {
           const existingId = (parsed.data.skillId ? skillKeyToId.get(`${parsed.data.type}:${parsed.data.skillId}`) : undefined)
             || nameToId.get(parsed.data.name);
           if (existingId) {
-            await timerStorage.update(existingId, parsed.data);
+            const updateInput = { ...parsed.data, type: parsed.data.type === "system" ? "me" as const : parsed.data.type };
+            await timerStorage.update(existingId, updateInput);
             nameToId.set(parsed.data.name, existingId);
             if (parsed.data.skillId) skillKeyToId.set(`${parsed.data.type}:${parsed.data.skillId}`, existingId);
             results.push({ name: parsed.data.name, action: "updated" });
             log.log(`Import timer updated name=${parsed.data.name}`);
           } else {
+            if (parsed.data.type === "system") {
+              results.push({ name: parsed.data.name, action: "error", error: "System Timers cannot be imported through a user route" });
+              continue;
+            }
             const created = await timerStorage.create(parsed.data);
             nameToId.set(parsed.data.name, created.id);
             if (parsed.data.skillId) skillKeyToId.set(`${parsed.data.type}:${parsed.data.skillId}`, created.id);

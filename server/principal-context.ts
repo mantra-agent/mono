@@ -14,3 +14,11 @@ export function getCurrentPrincipal(): Principal | null {
 export function getCurrentPrincipalOrSystem(): Principal {
   return getCurrentPrincipal() ?? createSystemPrincipal();
 }
+
+export function requireCurrentUserPrincipal(): Principal & { actorType: "user"; userId: string; accountId: string } {
+  const principal = getCurrentPrincipal();
+  if (principal?.actorType !== "user" || !principal.userId || !principal.accountId) {
+    throw new Error("Authenticated user principal with account ownership required");
+  }
+  return principal as Principal & { actorType: "user"; userId: string; accountId: string };
+}

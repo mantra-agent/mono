@@ -4,7 +4,6 @@ import { requireAuth } from "../auth";
 import { db } from "../db";
 import { eq, and, gte, lte, inArray, lt, sql } from "drizzle-orm";
 import { desc } from "drizzle-orm";
-import { responsibilityRuns } from "@shared/schema";
 import { timerStorage } from "../file-storage/timers";
 import {
   manualAssets, insertManualAssetSchema,
@@ -669,15 +668,7 @@ export async function registerFinanceRoutes(app: Express) {
 
       let plaidRefreshTs: Date | null = null;
       try {
-        const timers = await timerStorage.getAll();
-        const refreshTimerIds = timers.filter(t => t.type === "system" && t.prompt === "plaid-refresh").map(t => t.id);
-        if (refreshTimerIds.length > 0) {
-          const [runRow] = await db
-            .select({ ts: sql<Date | null>`max(${responsibilityRuns.completedAt})` })
-            .from(responsibilityRuns)
-            .where(and(inArray(responsibilityRuns.responsibilityId, refreshTimerIds), eq(responsibilityRuns.status, "completed")));
-          plaidRefreshTs = runRow?.ts ?? null;
-        }
+        plaidRefreshTs = await timerStorage.getLatestSystemRunCompletedAt("plaid-refresh");
       } catch (err) {
         log.warn(`finance activity: timer lookup failed: ${err instanceof Error ? err.message : String(err)}`);
       }

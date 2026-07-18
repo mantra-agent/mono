@@ -5,19 +5,24 @@ import { createExportJob, getExportJob, runExportOrchestrator } from "./export-s
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs";
+import { requireAuth } from "./auth";
+import { getPrincipal } from "./principal";
+import { runWithPrincipal } from "./principal-context";
 
 const log = createLogger("ExportRoutes");
 
 export function registerExportRoutes(app: Express): void {
   // POST /api/export/archive — enqueue a new export job
-  app.post("/api/export/archive", async (_req: Request, res: Response) => {
+  app.post("/api/export/archive", requireAuth, async (req: Request, res: Response) => {
     try {
       const job = await createExportJob();
       log.log(`export job created: ${job.id}`);
 
       // Fire-and-forget — never await this
+      const principal = getPrincipal(req);
+      if (!principal) return res.status(401).json({ error: "Authentication required" });
       setImmediate(() => {
-        runExportOrchestrator(job.id).catch((err: unknown) => {
+        runWithPrincipal(principal, () => runExportOrchestrator(job.id)).catch((err: unknown) => {
           log.error(`export orchestrator unhandled error jobId=${job.id}:`, err instanceof Error ? err.message : String(err));
         });
       });
@@ -30,7 +35,7 @@ export function registerExportRoutes(app: Express): void {
   });
 
   // GET /api/export/archive/:jobId/download — stream the zip file
-  app.get("/api/export/archive/:jobId/download", async (req: Request, res: Response) => {
+  app.get("/api/export/archive/:jobId/download", requireAuth, async (req: Request, res: Response) => {
     try {
       const { jobId } = req.params;
       if (!jobId) return res.status(400).json({ error: "Missing jobId" });
@@ -53,7 +58,7 @@ export function registerExportRoutes(app: Express): void {
   });
 
   // GET /api/export/archive/:jobId — poll job status
-  app.get("/api/export/archive/:jobId", async (req: Request, res: Response) => {
+  app.get("/api/export/archive/:jobId", requireAuth, async (req: Request, res: Response) => {
     try {
       const { jobId } = req.params;
       if (!jobId) {

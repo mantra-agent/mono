@@ -15,7 +15,7 @@ import {
 } from "../calendar-metadata";
 import { getEvent, listAllEvents, type CalendarEvent } from "../google-calendar";
 import { runWithPrincipal } from "../principal-context";
-import { createUserPrincipalFromUser, ensureUserIdentityFoundation } from "../principal";
+import { createUserPrincipalFromUser, resolveUserIdentityFoundation } from "../principal";
 import { storage } from "../storage";
 import { joinMeetingByUrl, MeetingJoinError } from "./join";
 import { meetingUrlForEvent } from "./identity";
@@ -39,7 +39,7 @@ function startAt(event: CalendarEvent): Date | null {
 }
 
 async function discoverUserSchedules(user: Awaited<ReturnType<typeof storage.getUsers>>[number], now: Date): Promise<void> {
-  const foundation = await ensureUserIdentityFoundation(user);
+  const foundation = await resolveUserIdentityFoundation(user.id);
   const principal = createUserPrincipalFromUser(user, foundation.accountId);
 
   await runWithPrincipal(principal, async () => {

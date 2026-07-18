@@ -4,6 +4,14 @@ import { timerStorage } from "./file-storage";
 import { withQueryAttributionAsync } from "./db";
 import { createLogger } from "./log";
 import { getTimezone } from "./timezone";
+import { db } from "./db";
+import { userProfiles } from "@shared/schema";
+import { eq } from "drizzle-orm";
+import type { Principal } from "./principal";
+import { createUserPrincipalFromUser } from "./principal";
+import { runWithPrincipal } from "./principal-context";
+import { storage } from "./storage";
+import { getUserEffectivePermissions } from "./permissions";
 
 const log = createLogger("SystemTimerRegistry");
 
@@ -547,280 +555,99 @@ const TIMER_SCHEDULE_MIGRATIONS: Array<{
 ];
 
 export class SystemTimerRegistry {
-  private lastHealCheckAt = 0;
-  private static readonly HEAL_INTERVAL_MS = 5 * 60 * 1000;
+  private platformDefinitions(): SystemTimerDefinition[] {
+    return SYSTEM_TIMER_DEFINITIONS.filter((definition) => definition.type === "system");
+  }
 
-  private findDefinitionForTimer(timer: Timer): SystemTimerDefinition | null {
-    if (timer.systemKey) {
-      return (
-        SYSTEM_TIMER_DEFINITIONS.find(
-          (definition) => definition.systemKey === timer.systemKey,
-        ) ?? null
-      );
+  private managedUserDefinitions(): SystemTimerDefinition[] {
+    return SYSTEM_TIMER_DEFINITIONS.filter((definition) => definition.type !== "system");
+  }
+
+  private updatesFor(timer: Timer, definition: SystemTimerDefinition, timezone: string): Partial<Timer> {
+    const materialized = materializeDefinition(definition, timezone);
+    const updates: Partial<Timer> = {};
+    if (timer.name !== materialized.name) updates.name = materialized.name;
+    if (timer.description !== materialized.description) updates.description = materialized.description;
+    if (timer.type !== materialized.type) updates.type = materialized.type;
+    if ((timer.prompt ?? "") !== (materialized.prompt ?? "")) updates.prompt = materialized.prompt ?? "";
+    if ((timer.skillId ?? undefined) !== (materialized.skillId ?? undefined)) updates.skillId = materialized.skillId;
+    if (fingerprintSchedules(timer.schedules) !== fingerprintSchedules(materialized.schedules)) updates.schedules = materialized.schedules;
+    if (!timer.enabled && materialized.enabled) updates.enabled = true;
+    if (timer.timezone !== materialized.timezone) updates.timezone = materialized.timezone;
+    if (timer.systemKey !== definition.systemKey) updates.systemKey = definition.systemKey;
+    return updates;
+  }
+
+  async reconcileUserTimers(principal: Principal): Promise<void> {
+    if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+      throw new Error("Managed user Timer reconciliation requires an owning user principal");
     }
-    return (
-      SYSTEM_TIMER_DEFINITIONS.find((definition) =>
-        definition.legacyMatch(timer),
-      ) ?? null
-    );
-  }
-
-  private definitionByKey(systemKey: string): SystemTimerDefinition | null {
-    return (
-      SYSTEM_TIMER_DEFINITIONS.find(
-        (definition) => definition.systemKey === systemKey,
-      ) ?? null
-    );
-  }
-
-  private retiredDefinitionForTimer(timer: Timer) {
-    return (
-      RETIRED_SYSTEM_TIMERS.find(
-        (definition) =>
-          timer.systemKey === definition.systemKey || definition.legacyMatch(timer),
-      ) ?? null
-    );
-  }
-
-  private async retireDeprecatedTimers(timers: Timer[]): Promise<void> {
-    for (const timer of timers) {
-      const retired = this.retiredDefinitionForTimer(timer);
-      if (!retired) continue;
-
-      const updates: Partial<Timer> = {};
-      if (timer.enabled) updates.enabled = false;
-      if (timer.systemKey !== retired.systemKey) updates.systemKey = retired.systemKey;
-      if (timer.description !== retired.description)
-        updates.description = retired.description;
-
-      if (Object.keys(updates).length === 0) continue;
-
-      await withQueryAttributionAsync("system-timer-registry", () =>
-        timerStorage.update(timer.id, updates),
-      );
-      Object.assign(timer, updates);
-      log.log(
-        `Retired deprecated system timer "${timer.name}" (${timer.id}) systemKey=${retired.systemKey}: ${Object.keys(updates).join(", ")}`,
-      );
-    }
-  }
-
-  private async dedupGroup(group: Timer[]): Promise<void> {
-    if (group.length <= 1) return;
-    const counts = await Promise.all(
-      group.map(async (timer) => ({
-        timer,
-        runCount: await withQueryAttributionAsync("system-timer-registry", () =>
-          timerStorage.getRunCount(timer.id),
-        ),
-        hasSystemKey: Boolean(timer.systemKey),
-        hasCanonicalShape: Boolean(this.findDefinitionForTimer(timer)),
-      })),
-    );
-    counts.sort((a, b) => {
-      if (a.hasSystemKey !== b.hasSystemKey) return a.hasSystemKey ? -1 : 1;
-      if (a.hasCanonicalShape !== b.hasCanonicalShape)
-        return a.hasCanonicalShape ? -1 : 1;
-      return (
-        b.runCount - a.runCount ||
-        (a.timer.createdAt || "").localeCompare(b.timer.createdAt || "")
-      );
-    });
-    const keeper = counts[0];
-    const definition = this.findDefinitionForTimer(keeper.timer);
-    if (definition) {
-      const materialized = materializeDefinition(definition);
-      const updates: Partial<Timer> = {};
-      if (keeper.timer.systemKey !== definition.systemKey)
-        updates.systemKey = definition.systemKey;
-      if (definition.skillId && keeper.timer.skillId !== definition.skillId)
-        updates.skillId = definition.skillId;
-      if (Object.keys(updates).length > 0) {
-        await withQueryAttributionAsync("system-timer-registry", () =>
-          timerStorage.update(keeper.timer.id, updates),
-        );
-        Object.assign(keeper.timer, updates, {
-          timezone: materialized.timezone,
-        });
-        log.log(
-          `Fixed duplicate keeper "${keeper.timer.name}" (${keeper.timer.id}) fields=${Object.keys(updates).join(",")}`,
-        );
-      }
-    }
-    for (let i = 1; i < counts.length; i++) {
-      const duplicate = counts[i];
-      if (duplicate.runCount > 0) {
-        const migrated = await withQueryAttributionAsync(
-          "system-timer-registry",
-          () => timerStorage.migrateRuns(duplicate.timer.id, keeper.timer.id),
-        );
-        if (migrated === 0) {
-          log.warn(
-            `Duplicate system timer cleanup degraded: run migration returned zero migrated runs timerName="${duplicate.timer.name}" timerId=${duplicate.timer.id} keeperId=${keeper.timer.id} — skipping delete to preserve run history`,
-          );
+    const [profile] = await db.select({ status: userProfiles.onboardingStatus, timezone: userProfiles.timezone })
+      .from(userProfiles).where(eq(userProfiles.userId, principal.userId)).limit(1);
+    if (!profile || profile.status !== "completed") return;
+    await runWithPrincipal(principal, async () => {
+      const all = await timerStorage.getAll();
+      const timezone = profile.timezone || getTimezone();
+      for (const definition of this.managedUserDefinitions()) {
+        const matched = all.find((timer) => timer.systemKey === definition.systemKey);
+        const materialized = materializeDefinition(definition, timezone);
+        if (!matched) {
+          await timerStorage.createManagedUser(materialized, definition.systemKey, principal);
+          log.info(`Created managed user timer systemKey=${definition.systemKey} owner=${principal.userId}`);
           continue;
         }
+        const updates = this.updatesFor(matched, definition, timezone);
+        if (Object.keys(updates).length > 0) {
+          await timerStorage.update(matched.id, updates);
+          log.info(`Reconciled managed user timer systemKey=${definition.systemKey} owner=${principal.userId}: ${Object.keys(updates).join(",")}`);
+        }
       }
-      await withQueryAttributionAsync("system-timer-registry", () =>
-        timerStorage.delete(duplicate.timer.id),
-      );
-      log.log(
-        `Deleted duplicate system timer: "${duplicate.timer.name}" (${duplicate.timer.id}) runs=${duplicate.runCount}, kept "${keeper.timer.name}" (${keeper.timer.id}) runs=${keeper.runCount}`,
-      );
+    });
+  }
+
+  private async reconcileKnownManagedUserOwners(): Promise<void> {
+    const owners = await timerStorage.getManagedUserOwners();
+    for (const owner of owners) {
+      const user = await storage.getUser(owner.ownerUserId);
+      if (!user) {
+        log.warn(`Managed Timer owner missing userId=${owner.ownerUserId}`);
+        continue;
+      }
+      const principal = createUserPrincipalFromUser(user, owner.accountId);
+      principal.permissions = await getUserEffectivePermissions(user.id);
+      await this.reconcileUserTimers(principal);
     }
   }
 
   async reconcile(): Promise<{ ok: true } | { ok: false; error: string }> {
     try {
-      const all = await withQueryAttributionAsync("system-timer-registry", () =>
-        timerStorage.getAllFresh(),
-      );
-      const userTimezone = getTimezone();
-
-      await this.retireDeprecatedTimers(all);
-
-      for (const timer of all) {
-        if (
-          timer.type === "skill" &&
-          timer.skillId &&
-          SYSTEM_TIMER_SKILL_ALIASES[timer.skillId]
-        ) {
-          const newSkillId = SYSTEM_TIMER_SKILL_ALIASES[timer.skillId];
-          await withQueryAttributionAsync("system-timer-registry", () =>
-            timerStorage.update(timer.id, { skillId: newSkillId }),
-          );
-          timer.skillId = newSkillId;
-          log.log(
-            `Updated timer "${timer.name}" skillId: "${timer.skillId}" → "${newSkillId}"`,
-          );
-        }
-        const newName = TIMER_NAME_RENAMES[timer.name];
-        if (newName) {
-          await withQueryAttributionAsync("system-timer-registry", () =>
-            timerStorage.update(timer.id, { name: newName }),
-          );
-          timer.name = newName;
-          log.log(`Renamed timer "${timer.name}" → "${newName}"`);
-        }
-        for (const migration of TIMER_SCHEDULE_MIGRATIONS) {
-          if (!migration.match(timer)) continue;
-          if (
-            fingerprintSchedules(timer.schedules) !==
-            fingerprintSchedules(migration.schedules)
-          ) {
-            await withQueryAttributionAsync("system-timer-registry", () =>
-              timerStorage.update(timer.id, { schedules: migration.schedules }),
-            );
-            timer.schedules = migration.schedules;
-            log.log(
-              `Migrated timer "${timer.name}" schedule to ${migration.schedules[0]?.frequency ?? "unknown"}`,
-            );
-          }
-        }
-      }
-
-      const afterLegacyMigration = await withQueryAttributionAsync(
-        "system-timer-registry",
-        () => timerStorage.getAllFresh(),
-      );
-      for (const definition of SYSTEM_TIMER_DEFINITIONS) {
-        const legacyMatches = afterLegacyMigration.filter(
-          (timer) =>
-            timer.systemKey === definition.systemKey ||
-            definition.legacyMatch(timer),
-        );
-        if (legacyMatches.length === 0) continue;
-        await this.dedupGroup(legacyMatches);
-      }
-
-      const keyedTimers = await withQueryAttributionAsync(
-        "system-timer-registry",
-        () => timerStorage.getAllFresh(),
-      );
-      for (const definition of SYSTEM_TIMER_DEFINITIONS) {
-        const matches = keyedTimers.filter(
-          (timer) => timer.systemKey === definition.systemKey,
-        );
-        await this.dedupGroup(matches);
-      }
-
-      const refreshed = await withQueryAttributionAsync(
-        "system-timer-registry",
-        () => timerStorage.getAllFresh(),
-      );
-      for (const definition of SYSTEM_TIMER_DEFINITIONS) {
-        const materialized = materializeDefinition(definition, userTimezone);
-        const matched = refreshed.find(
-          (timer) => timer.systemKey === definition.systemKey,
-        );
+      const all = await timerStorage.getAllSystemFresh();
+      for (const definition of this.platformDefinitions()) {
+        const materialized = materializeDefinition(definition);
+        const matched = all.find((timer) => timer.systemKey === definition.systemKey);
         if (!matched) {
-          log.warn(
-            `Missing system timer definition detected during reconcile: systemKey="${definition.systemKey}" name="${definition.name}" type=${definition.type}`,
-          );
-          const created = await withQueryAttributionAsync(
-            "system-timer-registry",
-            () => timerStorage.create(materialized),
-          );
-          log.log(
-            `Created system timer: ${created.name} (${created.type}) systemKey=${definition.systemKey}`,
-          );
+          const created = await timerStorage.createSystem(materialized, definition.systemKey);
+          log.info(`Created platform Timer ${created.name} systemKey=${definition.systemKey}`);
           continue;
         }
-
-        const scheduleMismatch =
-          fingerprintSchedules(matched.schedules) !==
-          fingerprintSchedules(materialized.schedules);
-        const updates: Partial<Timer> = {};
-        if (matched.name !== materialized.name)
-          updates.name = materialized.name;
-        if (matched.description !== materialized.description)
-          updates.description = materialized.description;
-        if (matched.type !== materialized.type)
-          updates.type = materialized.type;
-        if ((matched.prompt ?? "") !== (materialized.prompt ?? ""))
-          updates.prompt = materialized.prompt ?? "";
-        if (
-          (matched.skillId ?? undefined) !== (materialized.skillId ?? undefined)
-        )
-          updates.skillId = materialized.skillId;
-        if (scheduleMismatch) updates.schedules = materialized.schedules;
-        if (!matched.enabled && materialized.enabled) updates.enabled = true;
-        if (matched.timezone !== materialized.timezone)
-          updates.timezone = materialized.timezone;
-        if (matched.systemKey !== materialized.systemKey)
-          updates.systemKey = materialized.systemKey;
-
+        const updates = this.updatesFor(matched, definition, materialized.timezone);
         if (Object.keys(updates).length > 0) {
-          await withQueryAttributionAsync("system-timer-registry", () =>
-            timerStorage.update(matched.id, updates),
-          );
-          log.log(
-            `Reconciled system timer "${matched.name}" systemKey=${definition.systemKey}: ${Object.keys(updates).join(", ")}`,
-          );
+          await timerStorage.updateSystem(matched.id, updates);
+          log.info(`Reconciled platform Timer systemKey=${definition.systemKey}: ${Object.keys(updates).join(",")}`);
         }
       }
+      await this.reconcileKnownManagedUserOwners();
       return { ok: true };
-    } catch (err: unknown) {
-      const error = err instanceof Error ? err.message : String(err);
-      log.error(`Error reconciling system timers:`, error);
-      return { ok: false, error };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.error("Timer registry reconciliation failed", message);
+      return { ok: false, error: message };
     }
   }
 
-  async healMissingTimers(): Promise<void> {
-    const now = Date.now();
-    if (now - this.lastHealCheckAt < SystemTimerRegistry.HEAL_INTERVAL_MS)
-      return;
-    this.lastHealCheckAt = now;
-    const result = await this.reconcile();
-    if (!result.ok) {
-      throw new Error(`system timer registry heal failed: ${result.error}`);
-    }
-  }
 
   isSystemTimer(timer: Timer): boolean {
-    return Boolean(timer.systemKey && this.definitionByKey(timer.systemKey));
+    return timer.scope === "system" && timer.type === "system" && Boolean(timer.systemKey);
   }
 }
-
 export const systemTimerRegistry = new SystemTimerRegistry();
