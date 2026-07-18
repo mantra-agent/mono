@@ -1984,15 +1984,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         const orientationStepId = `system-orientation-${lease.generation}-${orientStartedAt}`;
         // NOT emitting start: publishChatStreamEvent(sessionKey, sessionId, {...})
         const llmStepId = `system-orientation_llm_call-${lease.generation}-${orientStartedAt}`;
-        let orientationLlmStartedAt: number | null = null;
         const orientation = await ensureSessionOriented({
           sessionId,
           sessionKey,
           userMessage: content,
-          onLlmStart: () => {
-            orientationLlmStartedAt = Date.now();
-            // NOT emitting LLM start: publishChatStreamEvent(sessionKey, sessionId, {...})
-          },
         });
         const orientEndedAt = Date.now();
         const orientElapsedMs = orientEndedAt - orientStartedAt;
@@ -2018,21 +2013,106 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           });
           preChronology.push({ s: "system", i: orientationStepIndex });
           if (orientation.llm) {
+            const prepareStepIndex = preSteps.length;
+            preSteps.push({
+              id: `${orientationStepId}-prepare`,
+              name: "orientation_prepare",
+              status: "done",
+              elapsedMs: Math.max(0, orientation.llm.startedAt - orientStartedAt),
+              detail: "session · personas · connector",
+              parentId: orientationStepId,
+              startedAt: orientStartedAt,
+              endedAt: orientation.llm.startedAt,
+            });
+            preChronology.push({ s: "system", i: prepareStepIndex });
+
             const llmDetail = `${orientation.llm.personaName} · ${orientation.llm.model} · ${orientation.llm.provider}${orientation.llm.tier ? ` · tier=${orientation.llm.tier}` : ""}`;
-            const llmStartedAt = orientationLlmStartedAt ?? orientStartedAt;
             const llmStepIndex = preSteps.length;
             preSteps.push({
               id: llmStepId,
               name: "orientation_llm_call",
               status: "done",
-              elapsedMs: orientEndedAt - llmStartedAt,
+              elapsedMs: orientation.llm.elapsedMs,
               detail: llmDetail,
               parentId: orientationStepId,
-              startedAt: llmStartedAt,
-              endedAt: orientEndedAt,
+              startedAt: orientation.llm.startedAt,
+              endedAt: orientation.llm.endedAt,
               metadata: { llm: orientation.llm },
             });
             preChronology.push({ s: "system", i: llmStepIndex });
+
+            const timing = orientation.llm.timing;
+            if (timing) {
+              const providerStart = timing.providerStartedAt ?? orientation.llm.startedAt;
+              const requestSent = timing.requestSentAt ?? providerStart;
+              const firstEvent = timing.firstEventAt ?? requestSent;
+              const firstText = timing.firstTextAt ?? firstEvent;
+              const providerEnd = timing.providerEndedAt ?? orientation.llm.endedAt;
+              const phaseSteps = [
+                {
+                  suffix: "dispatch",
+                  name: "llm_request_sent",
+                  startedAt: providerStart,
+                  endedAt: requestSent,
+                  detail: `pool ${timing.poolEligible ? (timing.poolHit ? "hit" : "miss") : "ineligible"} · acquire ${timing.poolAcquireMs ?? 0}ms`,
+                },
+                {
+                  suffix: "provider",
+                  name: "llm_wait_provider",
+                  startedAt: requestSent,
+                  endedAt: firstEvent,
+                  detail: `${timing.firstEventType || "first event"}`,
+                },
+                {
+                  suffix: "first-token",
+                  name: "llm_wait_first_token",
+                  startedAt: firstEvent,
+                  endedAt: firstText,
+                  detail: `${timing.totalTtftMs ?? firstText - providerStart}ms TTFT`,
+                },
+                {
+                  suffix: "receive",
+                  name: "llm_receive_stream",
+                  startedAt: firstText,
+                  endedAt: providerEnd,
+                  detail: `${orientation.llm.usage?.completionTokens ?? "?"} output tokens`,
+                },
+                {
+                  suffix: "finalize",
+                  name: "llm_finalize",
+                  startedAt: providerEnd,
+                  endedAt: orientation.llm.endedAt,
+                  detail: "usage · audit · JSON",
+                },
+              ];
+              for (const phase of phaseSteps) {
+                const phaseIndex = preSteps.length;
+                preSteps.push({
+                  id: `${llmStepId}-${phase.suffix}`,
+                  name: phase.name,
+                  status: "done",
+                  elapsedMs: Math.max(0, phase.endedAt - phase.startedAt),
+                  detail: phase.detail,
+                  parentId: llmStepId,
+                  startedAt: phase.startedAt,
+                  endedAt: phase.endedAt,
+                });
+                preChronology.push({ s: "system", i: phaseIndex });
+              }
+            }
+
+            const applyStepIndex = preSteps.length;
+            preSteps.push({
+              id: `${orientationStepId}-apply`,
+              name: "orientation_apply",
+              status: "done",
+              elapsedMs: Math.max(0, orientEndedAt - orientation.llm.endedAt),
+              detail: "title · topics · persona · context",
+              parentId: orientationStepId,
+              startedAt: orientation.llm.endedAt,
+              endedAt: orientEndedAt,
+            });
+            preChronology.push({ s: "system", i: applyStepIndex });
           }
         }
         chatRunLifecycle.assertCurrent(lease);

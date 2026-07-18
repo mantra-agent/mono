@@ -87,7 +87,9 @@ export const VoiceEvents = {
 
 export const SYSTEM_STEP_META: Record<string, { label: string }> = {
   orientation: { label: "Orientation" },
+  orientation_prepare: { label: "Load Router" },
   orientation_llm_call: { label: "Orientation LLM" },
+  orientation_apply: { label: "Apply Orientation" },
   model_selection: { label: "Model Selection" },
   context_assembly: { label: "Context Assembly" },
   ctx_history: { label: "Loading History" },
@@ -118,6 +120,7 @@ export const SYSTEM_STEP_META: Record<string, { label: string }> = {
   llm_wait_provider: { label: "Wait for Provider" },
   llm_wait_first_token: { label: "Wait for First Token" },
   llm_receive_stream: { label: "Receive Output Stream" },
+  llm_finalize: { label: "Finalize Inference" },
   llm_connected: { label: "Connected" },
   llm_headers: { label: "Headers Received" },
   compaction: { label: "Compaction" },

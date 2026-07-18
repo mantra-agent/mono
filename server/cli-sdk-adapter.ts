@@ -11,6 +11,7 @@ import type { Options as SdkOptions } from "@anthropic-ai/claude-agent-sdk";
 import { createLogger } from "./log";
 import { getModel } from "./model-registry";
 import { getSecretSync } from "./secrets-store";
+import { thinkingConfigKey } from "./thinking-config";
 
 const log = createLogger("cli-sdk-adapter");
 
@@ -422,13 +423,16 @@ interface WarmWorker {
 
 const WARM_POOL_SIZE = (() => {
   const raw = process.env.CLAUDE_CLI_WARM_POOL_SIZE;
-  if (!raw) return 0;
+  // Two one-shot workers provide one active lease plus one ready reserve. Set
+  // the env explicitly to 0 to disable the lane, or 1-8 to tune capacity.
+  if (raw === undefined) return 2;
   const n = parseInt(raw, 10);
   if (isNaN(n) || n < 0) return 0;
   return Math.min(n, 8);
 })();
 const WARM_MAX_AGE_MS = 5 * 60 * 1000;
 const warmPools = new Map<string, WarmWorker[]>();
+const warmPoolDefinitions = new Map<string, { sdkOptions: SdkOptions; startupFn: SdkStartupFn }>();
 
 function hashShort(s: string): string {
   let h = 0;
@@ -439,10 +443,10 @@ function hashShort(s: string): string {
 function buildPoolKey(
   model: string,
   systemPrompt: string,
-  opts: { thinkingKey: string; connectorConfig?: ClaudeCliTierModelConfig },
+  opts: { lane: "orientation"; thinkingKey: string; connectorConfig?: ClaudeCliTierModelConfig },
 ): string {
   const configKey = opts.connectorConfig ? hashShort(JSON.stringify(opts.connectorConfig)) : "default";
-  return `${model}|sp=${hashShort(systemPrompt)}|th=${opts.thinkingKey}|cfg=${configKey}`;
+  return `${model}|lane=${opts.lane}|sp=${hashShort(systemPrompt)}|th=${opts.thinkingKey}|cfg=${configKey}`;
 }
 
 async function spawnWarmWorker(key: string, sdkOptions: SdkOptions, startupFn: SdkStartupFn): Promise<WarmWorker> {
@@ -480,57 +484,86 @@ function acquireWarmWorker(key: string): WarmWorker | null {
 // is still completing the init handshake (which takes ~1.5s).
 const inflightRefills = new Map<string, number>();
 
-function scheduleWarmRefill(key: string, sdkOptions: SdkOptions, startupFn: SdkStartupFn): void {
-  if (WARM_POOL_SIZE <= 0) return;
+function scheduleWarmRefill(key: string, sdkOptions: SdkOptions, startupFn: SdkStartupFn): Promise<void> {
+  if (WARM_POOL_SIZE <= 0) return Promise.resolve();
+  const definition = warmPoolDefinitions.get(key);
+  const refillOptions = definition?.sdkOptions ?? sdkOptions;
+  const refillStartupFn = definition?.startupFn ?? startupFn;
   const cur = warmPools.get(key) ?? [];
   const inflight = inflightRefills.get(key) ?? 0;
-  if (cur.length + inflight >= WARM_POOL_SIZE) return;
+  if (cur.length + inflight >= WARM_POOL_SIZE) return Promise.resolve();
   inflightRefills.set(key, inflight + 1);
-  setImmediate(() => {
-    void (async () => {
-      const t0 = Date.now();
-      try {
-        const w = await spawnWarmWorker(key, sdkOptions, startupFn);
-        const list = warmPools.get(key) ?? [];
-        if (list.length >= WARM_POOL_SIZE) {
-          // Pool already full by the time init finished — close the extra handle.
-          try { w.handle.close(); } catch { /* ignore */ }
-        } else {
-          list.push(w);
-          warmPools.set(key, list);
-          log.debug(`cli-warm-pool: refilled key=${key} pool_size=${list.length} init_ms=${Date.now() - t0}`);
+  return new Promise((resolve) => {
+    setImmediate(() => {
+      void (async () => {
+        const t0 = Date.now();
+        try {
+          const w = await spawnWarmWorker(key, refillOptions, refillStartupFn);
+          const list = warmPools.get(key) ?? [];
+          if (list.length >= WARM_POOL_SIZE) {
+            // Pool already full by the time init finished — close the extra handle.
+            try { w.handle.close(); } catch { /* ignore */ }
+          } else {
+            list.push(w);
+            warmPools.set(key, list);
+            log.debug(`cli-warm-pool: refilled key=${key} pool_size=${list.length} init_ms=${Date.now() - t0}`);
+          }
+        } catch (e) {
+          const errMsg = e instanceof Error ? e.message : String(e);
+          log.warn(`cli-warm-pool: refill failed key=${key} init_ms=${Date.now() - t0} err=${errMsg}`);
+          // Upgrade pool refill failures to the same structured crash shape as
+          // result-error / thrown so a Railway-only refill crash is no longer
+          // hidden behind a single-line warn. We don't have a per-call stderr
+          // buffer here (refill happens before any lease), so stderrTail is null.
+          emitCliSubprocessCrash({
+            phase: "warm_refill",
+            // Pool key is `model|sp=…|th=…|cfg=…`; the model is the prefix.
+            model: key.split("|")[0] || "unknown",
+            rawError: errMsg,
+            runId: null,
+            convId: null,
+            pooledHit: false,
+            poolEligible: true,
+            workerAgeMs: null,
+            elapsedMs: Date.now() - t0,
+            eventsReceived: null,
+            inputTokens: null,
+            outputTokens: null,
+            stderrTail: null,
+          });
+        } finally {
+          const remaining = (inflightRefills.get(key) ?? 1) - 1;
+          if (remaining <= 0) inflightRefills.delete(key);
+          else inflightRefills.set(key, remaining);
+          resolve();
         }
-      } catch (e) {
-        const errMsg = e instanceof Error ? e.message : String(e);
-        log.warn(`cli-warm-pool: refill failed key=${key} init_ms=${Date.now() - t0} err=${errMsg}`);
-        // Upgrade pool refill failures to the same structured crash shape as
-        // result-error / thrown so a Railway-only refill crash is no longer
-        // hidden behind a single-line warn. We don't have a per-call stderr
-        // buffer here (refill happens before any lease), so stderrTail is null.
-        emitCliSubprocessCrash({
-          phase: "warm_refill",
-          // Pool key is `model|sp=…|th=…|m=…`; the model is the prefix.
-          model: key.split("|")[0] || "unknown",
-          rawError: errMsg,
-          runId: null,
-          convId: null,
-          pooledHit: false,
-          poolEligible: true,
-          workerAgeMs: null,
-          elapsedMs: Date.now() - t0,
-          eventsReceived: null,
-          inputTokens: null,
-          outputTokens: null,
-          stderrTail: null,
-        });
-      } finally {
-        const remaining = (inflightRefills.get(key) ?? 1) - 1;
-        if (remaining <= 0) inflightRefills.delete(key);
-        else inflightRefills.set(key, remaining);
-      }
-    })();
+      })();
+    });
   });
 }
+
+// Keep every registered latency-critical lane ready even when calls are infrequent.
+// Workers are one-shot and rotate before age can turn the next request into a cold miss.
+const warmPoolMaintenance = setInterval(() => {
+  if (WARM_POOL_SIZE <= 0) return;
+  const now = Date.now();
+  const refreshBeforeMs = WARM_MAX_AGE_MS - 30_000;
+  for (const [key, definition] of warmPoolDefinitions.entries()) {
+    const current = warmPools.get(key) ?? [];
+    const ready = current.filter((worker) => {
+      const fresh = !worker.evicted && now - worker.spawnedAt <= refreshBeforeMs;
+      if (!fresh) {
+        try { worker.handle.close(); } catch { /* ignore */ }
+      }
+      return fresh;
+    });
+    warmPools.set(key, ready);
+    for (let i = ready.length; i < WARM_POOL_SIZE; i++) {
+      void scheduleWarmRefill(key, definition.sdkOptions, definition.startupFn);
+    }
+  }
+}, 30_000);
+warmPoolMaintenance.unref?.();
 
 export function getWarmPoolStats(): { enabled: boolean; size: number; perKey: Record<string, number> } {
   const perKey: Record<string, number> = {};
@@ -542,19 +575,31 @@ export function isWarmPoolEnabled(): boolean {
   return WARM_POOL_SIZE > 0;
 }
 
-// Pre-warm the pool on server boot for the default Haiku tool-free chat path. Without
+function poolThinkingKey(
+  connectorConfig: ClaudeCliTierModelConfig | undefined,
+  thinking?: import("./thinking-config").ResolvedThinking,
+  thinkingBudget?: number,
+): string {
+  if (connectorConfig?.thinkingMode) {
+    return `connector-${connectorConfig.thinkingMode}-${connectorConfig.effort ?? "default"}`;
+  }
+  if (thinking) return thinkingConfigKey(thinking);
+  return `legacy-budget-${thinkingBudget ?? 0}`;
+}
+
+// Pre-warm a named latency-critical lane with its exact model and stable system prompt. Without
 // this, the very first trivial Haiku turn after boot pays the cold-spawn cost (the warm
 // worker is otherwise only spawned via background refill *after* the first turn). We
 // build SDK options with the same shape cliSdkStream uses for that path so the pool key
 // matches and the next turn is a hit.
 export async function prewarmWarmPool(opts: {
+  lane: "orientation";
   model: string;
   systemPrompt: string;
-  thinkingKey: string;
   connectorConfig?: ClaudeCliTierModelConfig;
 }): Promise<void> {
   if (WARM_POOL_SIZE <= 0) return;
-  const token = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  const token = getSecretSync("CLAUDE_CODE_OAUTH_TOKEN") || process.env.CLAUDE_CODE_OAUTH_TOKEN;
   if (!token) return;
   const sdkMod = await sdkModulePromise;
   const startupFn = (sdkMod as unknown as { startup?: SdkStartupFn }).startup;
@@ -570,15 +615,20 @@ export async function prewarmWarmPool(opts: {
   );
   sdkOptions.systemPrompt = opts.systemPrompt;
   const key = buildPoolKey(opts.model, opts.systemPrompt, {
-    thinkingKey: opts.thinkingKey,
+    lane: opts.lane,
+    thinkingKey: poolThinkingKey(opts.connectorConfig),
     connectorConfig: opts.connectorConfig,
   });
-  // Fill the entire configured pool at boot, not just one slot, so concurrent
-  // first turns after restart all hit warm.
-  for (let i = 0; i < WARM_POOL_SIZE; i++) {
-    scheduleWarmRefill(key, sdkOptions, startupFn);
-  }
-  log.debug(`cli-warm-pool: prewarm scheduled key=${key} model=${opts.model} slots=${WARM_POOL_SIZE}`);
+  warmPoolDefinitions.set(key, { sdkOptions, startupFn });
+  // Boot prewarming is a readiness gate, not a fire-and-forget hint. Await the
+  // initialize handshakes so routes never accept a fast call before its worker exists.
+  await Promise.all(Array.from(
+    { length: WARM_POOL_SIZE },
+    () => scheduleWarmRefill(key, sdkOptions, startupFn),
+  ));
+  const readySlots = warmPools.get(key)?.length ?? 0;
+  if (readySlots === 0) throw new Error(`Claude CLI warm lane failed to initialize key=${key}`);
+  log.info(`cli-warm-pool: ready key=${key} model=${opts.model} slots=${readySlots}`);
 }
 
 // Built-in Claude Code tools we never use — we route everything through our own MCP `xyz-tools`.
@@ -962,11 +1012,10 @@ export async function* cliSdkStream(
 
     log.debug(line);
 
-    // Guard the win: warn loudly when a tool-free Haiku turn regresses past 1.5s. We
-    // don't have UI dashboards for this; the warn line is the regression alarm.
+    // Guard the win: warn loudly when the dedicated Haiku fast lane regresses past
+    // 1.5s. The nested Orientation LLM phases expose the same breakdown in-product.
     const isHaiku = /haiku/i.test(model);
-    const toolFree = poolEligible; // poolEligible is exactly tool-free (see definition above)
-    if (toolFree && isHaiku && totalTtft !== null && totalTtft > 1500) {
+    if (poolEligible && isHaiku && totalTtft !== null && totalTtft > 1500) {
       log.warn(
         `ttft_regression: tool-free Haiku TTFT exceeded 1500ms — ` + line,
       );
@@ -991,18 +1040,21 @@ export async function* cliSdkStream(
   // because MCP tool closures capture per-request queues; a pooled worker carrying the wrong
   // closure would cross-talk between calls. Pool key includes systemPrompt hash so different
   // activity profiles don't collide.
-  const poolEligible = WARM_POOL_SIZE > 0 && toolDefs.length === 0 && !toolExecutor;
-  const { thinkingConfigKey } = await import("./thinking-config");
-  const thinkingKey = connectorConfig?.thinkingMode
-    ? `connector-${connectorConfig.thinkingMode}-${connectorConfig.effort ?? "default"}`
-    : options.thinking
-      ? thinkingConfigKey(options.thinking)
-      : `legacy-budget-${options.thinkingBudget ?? 0}`;
+  const poolEligible = WARM_POOL_SIZE > 0
+    && options.warmPoolLane === "orientation"
+    && toolDefs.length === 0
+    && !toolExecutor;
+  const thinkingKey = poolThinkingKey(connectorConfig, options.thinking, options.thinkingBudget);
   const pKey = poolEligible
-    ? buildPoolKey(model, systemPrompt ?? "", { thinkingKey, connectorConfig })
+    ? buildPoolKey(model, systemPrompt ?? "", {
+        lane: options.warmPoolLane!,
+        thinkingKey,
+        connectorConfig,
+      })
     : "";
   let pooledWorker: WarmWorker | null = null;
   let pooledHit = false;
+  let voiceWarmHit = false;
 
   // Per-call stderr buffer. For cold spawns we attach the SDK's stderr
   // callback directly. For pool hits, we register this buffer on the worker's
@@ -1015,7 +1067,6 @@ export async function* cliSdkStream(
 
     queryInvokedAt = Date.now();
     let q!: ReturnType<typeof query>;
-    let voiceWarmHit = false;
 
     // Voice pre-warm: if a warm handle exists for this voice session, claim it
     // and skip both pool and cold spawn.
@@ -1049,6 +1100,10 @@ export async function* cliSdkStream(
       }
     }
     handoffDoneAt = Date.now();
+    if (poolEligible) {
+      const startupFn = (await sdkModulePromise as unknown as { startup?: SdkStartupFn }).startup;
+      if (startupFn) void scheduleWarmRefill(pKey, sdkOptions, startupFn);
+    }
 
     // Tell the executor that we've fully handed off to the SDK / pool. This is what
     // "Request Sent" should reflect in the UI — the time from chatCompletionStream entry
@@ -1323,6 +1378,10 @@ export async function* cliSdkStream(
           };
           if (resultMsg.result && typeof resultMsg.result === "string" && !fullText) {
             fullText = resultMsg.result;
+            if (firstTextAt === null) {
+              firstTextAt = Date.now();
+              emitTtftBreakdownLog();
+            }
             yield { type: "text_delta", content: fullText };
           }
 
@@ -1402,6 +1461,26 @@ export async function* cliSdkStream(
         cli_stream_ms: streamMs,
         cli_elapsed_ms: elapsed,
         cli_event_count: eventCount,
+        cliTiming: {
+          providerStartedAt: start,
+          requestSentAt: handoffDoneAt,
+          firstEventAt,
+          firstTextAt,
+          providerEndedAt: doneAt,
+          sdkImportMs,
+          preSdkMs: queryInvokedAt - start,
+          poolAcquireMs: handoffDoneAt !== null ? handoffDoneAt - queryInvokedAt : null,
+          sdkToFirstEventMs: firstEventAt !== null && handoffDoneAt !== null ? firstEventAt - handoffDoneAt : null,
+          firstEventToFirstTextMs: firstEventAt !== null && firstTextAt !== null ? firstTextAt - firstEventAt : null,
+          totalTtftMs: firstTextAt !== null ? firstTextAt - start : null,
+          totalMs: elapsed,
+          afterFirstTextMs: firstTextAt !== null ? doneAt - firstTextAt : null,
+          firstEventType,
+          poolKey: pKey || undefined,
+          poolEligible,
+          poolHit: pooledHit,
+          voiceWarmHit,
+        },
         tokenAccounting: {
           providerReportedUsage: usageSource,
           cacheReadTokens,
@@ -1543,7 +1622,7 @@ export async function* cliSdkStream(
     // so the next caller of the same shape gets a warm worker. No-op when pool is disabled.
     if (poolEligible && !options.signal?.aborted) {
       const startupFn = (await sdkModulePromise as unknown as { startup?: SdkStartupFn }).startup;
-      if (startupFn) scheduleWarmRefill(pKey, sdkOptions, startupFn);
+      if (startupFn) void scheduleWarmRefill(pKey, sdkOptions, startupFn);
     }
   }
 }
@@ -1569,6 +1648,7 @@ export async function cliSdkCompletion(
     toolExecutor: options.toolExecutor,
     thinking: options.thinking,
     routingDecision: options.routingDecision,
+    warmPoolLane: options.warmPoolLane,
     signal: options.signal,
   };
 

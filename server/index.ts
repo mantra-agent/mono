@@ -436,35 +436,17 @@ app.use((req, res, next) => {
   bootPhases.push({ name: "Model Profiles", durationMs: profilesMs });
   log(`[startup] model profiles loaded: ${profilesMs}ms`, "boot");
 
-  // Pre-warm the Claude CLI worker pool for the default chat-activity model so the very
-  // first trivial Haiku turn after boot is a pool hit (otherwise it eats the cold-spawn
-  // cost). Fire-and-forget; never block boot. Skips when pool is disabled or the chat
-  // model isn't a claude-cli model.
-  Promise.resolve().then(async () => {
-    try {
-      const { isWarmPoolEnabled, prewarmWarmPool } = await import("./cli-sdk-adapter");
-      if (!isWarmPoolEnabled()) return;
-      const { getModelForActivity, ACTIVITY_CHAT, ACTIVITY_VOICE_GREETING } = await import("./job-profiles");
-      const { thinkingConfigKey } = await import("./thinking-config");
-      const candidates = new Set<string>();
-      try { candidates.add(getModelForActivity(ACTIVITY_CHAT)); } catch { /* ignore */ }
-      try { candidates.add(getModelForActivity(ACTIVITY_VOICE_GREETING)); } catch { /* ignore */ }
-      for (const full of candidates) {
-        if (!full || !full.startsWith("claude-cli/")) continue;
-        const model = full.split("/").slice(1).join("/");
-        // Boot prewarming predates connector-specific settings and has no routed connector
-        // decision. Keep it on the provider-default shape; real calls use configuration-keyed
-        // workers so a generic warm process can never bypass persisted Claude settings.
-        await prewarmWarmPool({
-          model,
-          systemPrompt: "",
-          thinkingKey: thinkingConfigKey({ thinking: { type: "disabled" } }),
-        });
-      }
-    } catch (err) {
-      log(`[startup] cli warm-pool prewarm failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
-    }
-  });
+  // Orientation sits directly on the first-turn critical path. Build the exact
+  // routed Haiku worker now and wait for its CLI initialize handshake before
+  // accepting requests. Failure degrades to the normal cold path.
+  const tOrientationWarm0 = Date.now();
+  try {
+    const { prewarmOrientationClassifier } = await import("./orientation-bootstrap");
+    await prewarmOrientationClassifier();
+    log(`[startup] orientation classifier ready: ${Date.now() - tOrientationWarm0}ms`, "boot");
+  } catch (err) {
+    log(`[startup] orientation classifier prewarm degraded: ${err instanceof Error ? err.message : String(err)}`, "boot");
+  }
 
   const tAuth0 = Date.now();
   setupAuth(app);
