@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, BriefcaseBusiness, Code2, Heart, User } from "lucide-react";
+import { AlertCircle, BriefcaseBusiness, Heart, SquareTerminal, User } from "lucide-react";
 import { ActivityHeatmap, type ActivityHeatmapDay } from "@/components/activity-heatmap";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { usePageHeader } from "@/hooks/use-page-header";
@@ -41,7 +41,7 @@ const SECTION_PRESENTATION = {
   shipped_prs: {
     title: "CODE",
     order: 3,
-    marker: { icon: Code2, criterion: "top-decile", filled: true },
+    marker: { icon: SquareTerminal, criterion: "top-decile", filled: true },
   },
 } as const;
 
