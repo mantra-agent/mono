@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { User, Check, ChevronDown, Plus, Loader2, Trash2, Pencil, X } from "lucide-react";
+import { User, Check, ChevronDown, ChevronUp, Plus, Loader2, Trash2, Pencil, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
