@@ -2221,9 +2221,9 @@ export class AgentExecutor extends EventEmitter {
       }, idleTimeoutMs);
     };
 
+    const modelSpanId = `model-${ctx.runId}-${ctx.iteration}`;
     try {
       ctx.llmCallStartTime = Date.now();
-      const modelSpanId = `model-${ctx.runId}-${ctx.iteration}`;
       ctx.publish("system_step", { step: "llm_call", status: "started", stepId: modelSpanId, parentId: options.diagnosticTurnId, detail: formatModelConnectionDetail(ctx), childMode: "serial" });
       ctx.llmRequestSentEmitted = false;
       ctx.llmConnectedEmitted = false;
