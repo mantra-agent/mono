@@ -15101,7 +15101,11 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
             return { result: "Missing 'decisions' array parameter", error: true };
           }
           const { setSetting } = await import("./system-settings");
-          await setSetting("skill.news-curation.lastResults", decisions);
+          const { getCurrentPrincipalOrSystem: _getPrincipal } = await import("./principal-context");
+          const _principal = _getPrincipal();
+          // User-scoped key: prevents cross-user mailbox bleed in multi-user deployments
+          const _curationKey = `skill.news-curation.lastResults.${_principal.userId}`;
+          await setSetting(_curationKey, decisions);
           return { result: `Stored ${decisions.length} curation decisions.` };
         }
 
