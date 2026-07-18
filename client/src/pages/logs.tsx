@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -34,6 +35,7 @@ import { usePageHeader } from "@/hooks/use-page-header";
 const log = createLogger("logs-page");
 
 const PAGE_SIZE = 500;
+const LOG_ROW_HEIGHT = 29;
 
 /** Severity ranking for threshold-based filtering: selecting a level shows that level and above. */
 const LOG_LEVEL_RANK: Record<string, number> = { verbose: -1, debug: 0, log: 1, info: 1, warn: 2, error: 3 };
@@ -109,39 +111,38 @@ function fetchLogFiles(): Promise<LogFilesResponse> {
   });
 }
 
-function LogRow({ entry, timezone, wrap, isSeen }: { entry: LogEntry; timezone: string; wrap: boolean; isSeen?: boolean }) {
+function getLogEntryKey(entry: LogEntry): string {
+  return `${entry.line}-${entry.ts}-${entry.source}`;
+}
+
+function LogRow({
+  entry,
+  isSeen,
+  onSelect,
+}: {
+  entry: LogEntry;
+  isSeen?: boolean;
+  onSelect: () => void;
+}) {
   const levelColor = LEVEL_COLORS[entry.level] || "text-muted-foreground";
   const rowBg = entry.level === "error" && isSeen ? "" : (LEVEL_BG[entry.level] || "");
-  const isClient = entry.source.startsWith("client:");
 
   return (
-    <details
-      className={`group border-b border-border/30 ${rowBg}`}
+    <button
+      type="button"
+      className={`flex h-full w-full items-center gap-1.5 overflow-hidden border-b border-border/30 px-2 text-left font-mono text-xs hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${rowBg}`}
+      aria-label={`${entry.level} log: ${entry.message}`}
+      onClick={onSelect}
       data-testid={`log-entry-${entry.line}`}
       data-log-level={entry.level}
     >
-      <summary className="flex h-7 cursor-pointer list-none items-center gap-1.5 overflow-hidden px-2 font-mono text-xs hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150 group-open:rotate-90" />
-        <span className={`min-w-0 flex-1 truncate ${levelColor}`}>
-          {entry.message}
-        </span>
-      </summary>
-      <div className="space-y-1 px-7 pb-2 font-mono">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <span className="tabular-nums">{formatLogTime(entry.ts, timezone)}</span>
-          <Badge variant="outline" className={`px-1 py-0 text-xs ${isClient ? "border-active/30 text-active" : "border-neutral/30 text-neutral"}`}>
-            {entry.source}
-          </Badge>
-        </div>
-        <div className={`text-xs ${levelColor} ${wrap ? "break-words" : "overflow-x-auto whitespace-nowrap"}`}>
-          {entry.message}
-        </div>
-      </div>
-    </details>
+      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <span className={`min-w-0 flex-1 truncate ${levelColor}`}>
+        {entry.message}
+      </span>
+    </button>
   );
 }
-
-
 
 function VirtualizedLogList({ entries, timezone, wrap, parentRef, seenErrors, onErrorsSeen }: {
   entries: LogEntry[];
@@ -152,12 +153,13 @@ function VirtualizedLogList({ entries, timezone, wrap, parentRef, seenErrors, on
   onErrorsSeen: (ids: number[]) => void;
 }) {
   const reportedRef = useRef(new Set<number>());
+  const [selectedEntry, setSelectedEntry] = useState<LogEntry | null>(null);
 
   const virtualizer = useVirtualizer({
     count: entries.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 29,
-    getItemKey: (index) => `${entries[index].line}-${entries[index].ts}-${entries[index].source}`,
+    estimateSize: () => LOG_ROW_HEIGHT,
+    getItemKey: (index) => getLogEntryKey(entries[index]),
     overscan: 30,
   });
 
@@ -177,25 +179,56 @@ function VirtualizedLogList({ entries, timezone, wrap, parentRef, seenErrors, on
   }, [virtualItems, entries, onErrorsSeen]);
 
   return (
-    <div style={{ height: `${virtualizer.getTotalSize()}px`, width: "100%", position: "relative" }}>
-      {virtualItems.map((virtualRow) => {
-        const entry = entries[virtualRow.index];
-        return (
-          <div
-            key={virtualRow.key}
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              width: "100%",
-              transform: `translateY(${virtualRow.start}px)`,
-            }}
-          >
-            <LogRow entry={entry} timezone={timezone} wrap={wrap} isSeen={seenErrors.has(entry.line)} />
-          </div>
-        );
-      })}
-    </div>
+    <>
+      <div style={{ height: `${virtualizer.getTotalSize()}px`, width: "100%", position: "relative" }}>
+        {virtualItems.map((virtualRow) => {
+          const entry = entries[virtualRow.index];
+          return (
+            <div
+              key={virtualRow.key}
+              className="overflow-hidden"
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                height: `${LOG_ROW_HEIGHT}px`,
+                transform: `translateY(${virtualRow.start}px)`,
+              }}
+            >
+              <LogRow
+                entry={entry}
+                isSeen={seenErrors.has(entry.line)}
+                onSelect={() => setSelectedEntry(entry)}
+              />
+            </div>
+          );
+        })}
+      </div>
+      <Dialog open={selectedEntry !== null} onOpenChange={(open) => { if (!open) setSelectedEntry(null); }}>
+        <DialogContent className="max-h-[80dvh] w-[calc(100%-2rem)] max-w-2xl overflow-hidden p-4 sm:p-6">
+          <DialogHeader>
+            <DialogTitle className="text-base">Log entry</DialogTitle>
+          </DialogHeader>
+          {selectedEntry && (
+            <div className="min-h-0 space-y-3 overflow-auto font-mono text-xs">
+              <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                <span className="tabular-nums">{formatLogTime(selectedEntry.ts, timezone)}</span>
+                <Badge variant="outline" className={`px-1 py-0 text-xs ${selectedEntry.source.startsWith("client:") ? "border-active/30 text-active" : "border-neutral/30 text-neutral"}`}>
+                  {selectedEntry.source}
+                </Badge>
+                <Badge variant="outline" className={`px-1 py-0 text-xs ${LEVEL_COLORS[selectedEntry.level] || "text-muted-foreground"}`}>
+                  {selectedEntry.level}
+                </Badge>
+              </div>
+              <div className={`${LEVEL_COLORS[selectedEntry.level] || "text-muted-foreground"} ${wrap ? "break-words" : "overflow-x-auto whitespace-nowrap"}`}>
+                {selectedEntry.message}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
