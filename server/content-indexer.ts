@@ -4,6 +4,35 @@ import type { IndexData, IndexSection } from "@shared/models/indexed-content";
 import { and, eq } from "drizzle-orm";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithSensitiveVisible, sensitiveOwnershipValues } from "./sensitive-scope";
+import type { ObjectAclPolicy } from "./object_storage/objectAcl";
+
+/**
+ * Single source of truth for the private ACL policy applied to archived
+ * content objects. User-owned when ownership is known, system-scoped otherwise.
+ */
+function privateVaultAclPolicy(owner: {
+  ownerUserId?: string | null;
+  accountId?: string | null;
+  vaultId?: string | null;
+}): ObjectAclPolicy {
+  if (owner.ownerUserId) {
+    return {
+      owner: owner.ownerUserId,
+      ownerUserId: owner.ownerUserId,
+      accountId: owner.accountId ?? undefined,
+      createdByUserId: owner.ownerUserId,
+      scope: "user",
+      visibility: "private",
+      vaultId: owner.vaultId ?? undefined,
+    };
+  }
+  return {
+    owner: "system",
+    scope: "system",
+    visibility: "private",
+    vaultId: owner.vaultId ?? undefined,
+  };
+}
 
 const log = createLogger("ContentIndexer");
 
@@ -36,20 +65,11 @@ export async function persistToObjectStorage(content: string, category: string):
     const buffer = Buffer.from(content, "utf-8");
     await storageBackend.putObject(key, buffer, { contentType: "text/plain; charset=utf-8" });
     const principal = getCurrentPrincipalOrSystem();
-    await setObjectAclPolicy(key, principal.userId ? {
-      owner: principal.userId,
+    await setObjectAclPolicy(key, privateVaultAclPolicy({
       ownerUserId: principal.userId,
       accountId: principal.accountId,
-      createdByUserId: principal.userId,
-      scope: "user",
-      visibility: "private",
-      vaultId: principal.activeVaultId ?? undefined,
-    } : {
-      owner: "system",
-      scope: "system",
-      visibility: "private",
-      vaultId: principal.activeVaultId ?? undefined,
-    });
+      vaultId: principal.activeVaultId,
+    }));
     const objectKey = `/objects/${category}/${filename}`;
     log.log(`persistToObjectStorage: stored ${buffer.length} bytes at ${objectKey} (category=${category})`);
     return objectKey;
@@ -361,15 +381,14 @@ export async function readVisibleIndexedContent(options: {
   const objectFile = await objectStorageService.getObjectEntityFile(cleanPath, principal);
   const existingPolicy = await getObjectAclPolicy(objectFile.key);
   if (!existingPolicy && row.ownerUserId) {
-    await setObjectAclPolicy(objectFile.key, {
-      owner: row.ownerUserId,
+    // Lazy migration: objects archived before ACL stamping inherit their
+    // policy from the indexed_content ownership row (single source of truth).
+    await setObjectAclPolicy(objectFile.key, privateVaultAclPolicy({
       ownerUserId: row.ownerUserId,
       accountId: row.principalAccountId,
-      createdByUserId: row.ownerUserId,
-      scope: "user",
-      visibility: "private",
-      vaultId: row.vaultId ?? undefined,
-    });
+      vaultId: row.vaultId,
+    }));
+    log.log(`readVisibleIndexedContent: backfilled missing object ACL from row ownership id=${row.id} key=${objectFile.key}`);
   }
   const allowed = await objectStorageService.canAccessObjectEntity({
     principal,
@@ -441,20 +460,11 @@ async function persistFileToObjectStorage(filePath: string, category: string): P
     const stream = fs.createReadStream(filePath);
     await storageBackend.putObject(key, stream, { contentType: "text/plain; charset=utf-8" });
     const principal = getCurrentPrincipalOrSystem();
-    await setObjectAclPolicy(key, principal.userId ? {
-      owner: principal.userId,
+    await setObjectAclPolicy(key, privateVaultAclPolicy({
       ownerUserId: principal.userId,
       accountId: principal.accountId,
-      createdByUserId: principal.userId,
-      scope: "user",
-      visibility: "private",
-      vaultId: principal.activeVaultId ?? undefined,
-    } : {
-      owner: "system",
-      scope: "system",
-      visibility: "private",
-      vaultId: principal.activeVaultId ?? undefined,
-    });
+      vaultId: principal.activeVaultId,
+    }));
     const objectKey = `/objects/${category}/${filename}`;
     log.log(`persistFileToObjectStorage: streamed file from ${filePath} to ${objectKey} (category=${category})`);
     return objectKey;
