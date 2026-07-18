@@ -1,6 +1,5 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { memo, useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -41,6 +40,7 @@ const LOG_ROW_HEIGHT = 29;
 const LOG_LEVEL_RANK: Record<string, number> = { verbose: -1, debug: 0, log: 1, info: 1, warn: 2, error: 3 };
 
 interface LogEntry {
+  id?: string;
   ts: string;
   level: string;
   source: string;
@@ -112,17 +112,17 @@ function fetchLogFiles(): Promise<LogFilesResponse> {
 }
 
 function getLogEntryKey(entry: LogEntry): string {
-  return `${entry.line}-${entry.ts}-${entry.source}`;
+  return entry.id ?? `file:${entry.line}:${entry.ts}:${entry.source}`;
 }
 
-function LogRow({
+const LogRow = memo(function LogRow({
   entry,
   isSeen,
   onSelect,
 }: {
   entry: LogEntry;
   isSeen?: boolean;
-  onSelect: () => void;
+  onSelect: (entry: LogEntry) => void;
 }) {
   const levelColor = LEVEL_COLORS[entry.level] || "text-muted-foreground";
   const rowBg = entry.level === "error" && isSeen ? "" : (LEVEL_BG[entry.level] || "");
@@ -130,11 +130,13 @@ function LogRow({
   return (
     <button
       type="button"
-      className={`flex h-full w-full items-center gap-1.5 overflow-hidden border-b border-border/30 px-2 text-left font-mono text-xs hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${rowBg}`}
+      className={`flex w-full shrink-0 items-center gap-1.5 overflow-hidden border-b border-border/30 px-2 text-left font-mono text-xs hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${rowBg}`}
+      style={{ height: `${LOG_ROW_HEIGHT}px`, minHeight: `${LOG_ROW_HEIGHT}px` }}
       aria-label={`${entry.level} log: ${entry.message}`}
-      onClick={onSelect}
+      onClick={() => onSelect(entry)}
       data-testid={`log-entry-${entry.line}`}
       data-log-level={entry.level}
+      data-log-key={getLogEntryKey(entry)}
     >
       <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
       <span className={`min-w-0 flex-1 truncate ${levelColor}`}>
@@ -142,66 +144,60 @@ function LogRow({
       </span>
     </button>
   );
-}
+});
 
-function VirtualizedLogList({ entries, timezone, wrap, parentRef, seenErrors, onErrorsSeen }: {
+function LogList({ entries, timezone, wrap, parentRef, seenErrors, onErrorsSeen }: {
   entries: LogEntry[];
   timezone: string;
   wrap: boolean;
   parentRef: React.RefObject<HTMLDivElement | null>;
-  seenErrors: Set<number>;
-  onErrorsSeen: (ids: number[]) => void;
+  seenErrors: Set<string>;
+  onErrorsSeen: (ids: string[]) => void;
 }) {
-  const reportedRef = useRef(new Set<number>());
+  const listRef = useRef<HTMLDivElement>(null);
+  const reportedRef = useRef(new Set<string>());
   const [selectedEntry, setSelectedEntry] = useState<LogEntry | null>(null);
+  const selectEntry = useCallback((entry: LogEntry) => setSelectedEntry(entry), []);
 
-  const virtualizer = useVirtualizer({
-    count: entries.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => LOG_ROW_HEIGHT,
-    getItemKey: (index) => getLogEntryKey(entries[index]),
-    overscan: 30,
-  });
-
-  const virtualItems = virtualizer.getVirtualItems();
-
-  // Mark error entries as "seen" when they appear in the virtualizer's rendered range
   useEffect(() => {
-    const newSeen: number[] = [];
-    for (const item of virtualItems) {
-      const entry = entries[item.index];
-      if (entry?.level === "error" && !reportedRef.current.has(entry.line)) {
-        reportedRef.current.add(entry.line);
-        newSeen.push(entry.line);
+    const list = listRef.current;
+    const root = parentRef.current;
+    if (!list || !root) return;
+
+    const observer = new IntersectionObserver((observations) => {
+      const newlySeen: string[] = [];
+      for (const observation of observations) {
+        if (!observation.isIntersecting) continue;
+        const key = (observation.target as HTMLElement).dataset.logKey;
+        if (!key || reportedRef.current.has(key)) continue;
+        reportedRef.current.add(key);
+        newlySeen.push(key);
+        observer.unobserve(observation.target);
       }
+      if (newlySeen.length > 0) onErrorsSeen(newlySeen);
+    }, { root, threshold: 0.5 });
+
+    const errorRows = list.querySelectorAll<HTMLElement>('[data-log-level="error"]');
+    for (const row of errorRows) {
+      const key = row.dataset.logKey;
+      if (key && !reportedRef.current.has(key)) observer.observe(row);
     }
-    if (newSeen.length > 0) onErrorsSeen(newSeen);
-  }, [virtualItems, entries, onErrorsSeen]);
+
+    return () => observer.disconnect();
+  }, [entries, parentRef, onErrorsSeen]);
 
   return (
     <>
-      <div style={{ height: `${virtualizer.getTotalSize()}px`, width: "100%", position: "relative" }}>
-        {virtualItems.map((virtualRow) => {
-          const entry = entries[virtualRow.index];
+      <div ref={listRef} className="w-full">
+        {entries.map((entry) => {
+          const entryKey = getLogEntryKey(entry);
           return (
-            <div
-              key={virtualRow.key}
-              className="overflow-hidden"
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                height: `${LOG_ROW_HEIGHT}px`,
-                transform: `translateY(${virtualRow.start}px)`,
-              }}
-            >
-              <LogRow
-                entry={entry}
-                isSeen={seenErrors.has(entry.line)}
-                onSelect={() => setSelectedEntry(entry)}
-              />
-            </div>
+            <LogRow
+              key={entryKey}
+              entry={entry}
+              isSeen={seenErrors.has(entryKey)}
+              onSelect={selectEntry}
+            />
           );
         })}
       </div>
@@ -243,8 +239,10 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
   const [sourceFilter, setSourceFilter] = useState("all");
   const [paused, setPaused] = useState(false);
   const [wrap, setWrap] = useState(true);
-  const [seenErrors, setSeenErrors] = useState<Set<number>>(new Set());
+  const [seenErrors, setSeenErrors] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
+  const realtimeConnectionId = useRef(`realtime:${Date.now().toString(36)}`);
+  const realtimeSequence = useRef(0);
 
   // ── Verbose toggle ──────────────────────────────────────────────────
   const { data: verboseData } = useQuery<{ enabled: boolean }>({
@@ -295,22 +293,37 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
   useEffect(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const logsWs = new WebSocket(`${protocol}//${window.location.host}/ws`);
+    let frameId: number | null = null;
+    let pendingEntries: LogEntry[] = [];
+
+    const flushPendingEntries = () => {
+      frameId = null;
+      if (pendingEntries.length === 0) return;
+      const batch = pendingEntries;
+      pendingEntries = [];
+      setRealtimeLogs((previous) => [...previous, ...batch].slice(-2000));
+    };
+
     logsWs.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
         if (data.type === "log" && data.log) {
-          const entry: LogEntry = {
+          pendingEntries.push({
+            id: `${realtimeConnectionId.current}:${++realtimeSequence.current}`,
             ts: data.log.timestamp || new Date().toISOString(),
             level: data.log.level || "info",
             source: data.log.source || "server",
             message: data.log.message || "",
             line: Date.now(),
-          };
-          setRealtimeLogs(prev => [...prev.slice(-2000), entry]);
+          });
+          if (frameId === null) frameId = window.requestAnimationFrame(flushPendingEntries);
         }
       } catch {}
     };
-    return () => { logsWs.close(); };
+    return () => {
+      if (frameId !== null) window.cancelAnimationFrame(frameId);
+      logsWs.close();
+    };
   }, []);
 
   const allLogs = useMemo(() => {
@@ -391,7 +404,7 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
     URL.revokeObjectURL(url);
   }, [filteredLogs, currentFile]);
 
-  const handleErrorsSeen = useCallback((ids: number[]) => {
+  const handleErrorsSeen = useCallback((ids: string[]) => {
     setSeenErrors(prev => {
       const next = new Set(prev);
       let changed = false;
@@ -562,7 +575,7 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
           </div>
         ) : (
           <div className={wrap ? "" : "min-w-max"}>
-            <VirtualizedLogList
+            <LogList
               entries={filteredLogs}
               timezone={timezone}
               wrap={wrap}
