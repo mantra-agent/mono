@@ -1829,11 +1829,17 @@ function VnextJournalTab() {
   const selectedClaim = selectedClaimResponse?.claim;
 
   return (
-    <div className={cn("flex flex-1", MEMORY_SHELL_CLASS)} data-testid="log-tab">
-      <div className={cn("w-80 shrink-0 border-r flex flex-col overflow-hidden", MEMORY_PANEL_CLASS)}>
-        <div className="border-b border-card-border p-2">
+    <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden bg-background text-foreground" data-testid="log-tab">
+      <div
+        className={cn(
+          "flex min-w-0 flex-col overflow-hidden bg-background",
+          selectedClaimId !== null ? "w-80 shrink-0 border-r border-border" : "flex-1",
+        )}
+        data-testid="journal-tree-panel"
+      >
+        <div className="border-b border-border p-2">
           <div className="flex items-center gap-1">
-            <div className="relative flex-1 min-w-0">
+            <div className="relative min-w-0 flex-1">
               <HierarchySearchInput
                 value={searchQuery}
                 onChange={setSearchQuery}
@@ -1844,7 +1850,7 @@ function VnextJournalTab() {
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button size="sm" variant="ghost" className="h-7 w-7 p-0 shrink-0" title="Journal range" data-testid="button-journal-range">
+                <Button size="sm" variant="ghost" className="h-7 w-7 shrink-0 p-0" title="Journal range" data-testid="button-journal-range">
                   <SlidersHorizontal className="h-3.5 w-3.5" />
                 </Button>
               </DropdownMenuTrigger>
@@ -1862,7 +1868,7 @@ function VnextJournalTab() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          <div className="flex items-center gap-1 mt-1" data-testid="log-nav-controls">
+          <div className="mt-1 flex items-center gap-1" data-testid="log-nav-controls">
             <Button
               variant="ghost"
               size="icon"
@@ -1872,7 +1878,7 @@ function VnextJournalTab() {
             >
               <ChevronLeft className="h-3.5 w-3.5" />
             </Button>
-            <span className="text-xs font-medium flex-1 text-center text-muted-foreground" data-testid="log-period-label">
+            <span className="flex-1 text-center text-xs font-medium text-muted-foreground" data-testid="log-period-label">
               {formatPeriodLabel(currentDate, granularity, timezone)}
             </span>
             <Button
@@ -1887,7 +1893,7 @@ function VnextJournalTab() {
             <Button
               variant="ghost"
               size="sm"
-              className="text-xs h-6 px-2"
+              className="h-6 px-2 text-xs"
               onClick={() => setCurrentDate(new Date())}
               data-testid="log-nav-today"
             >
@@ -1896,77 +1902,86 @@ function VnextJournalTab() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto scrollbar-thin">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            </div>
-          ) : claimsByDay.size === 0 ? (
-            <div className={MEMORY_EMPTY_CLASS} data-testid="log-empty-state">
-              <Brain className="h-8 w-8 mb-3 opacity-40" />
-              <p className="text-sm font-medium">No memories in this period</p>
-              <p className="text-xs mt-1">Navigate to a different time range</p>
-            </div>
-          ) : (
-            <div className="p-1.5 space-y-0.5">
-              {Array.from(claimsByDay.entries())
+        <div className="flex-1 overflow-y-auto bg-background scrollbar-thin">
+          <div className="space-y-1 p-2">
+            {isLoading ? (
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading memories…</div>
+            ) : claimsByDay.size === 0 ? (
+              <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="log-empty-state">
+                {searchQuery.trim() ? "No matching memories." : "No memories in this period."}
+              </div>
+            ) : (
+              Array.from(claimsByDay.entries())
                 .sort(([a], [b]) => b.localeCompare(a))
                 .map(([day, dayClaims]) => {
-                  const isExpanded = expandedDays.has(day);
+                  const isSearching = searchQuery.trim().length > 0;
+                  const isOpen = isSearching || expandedDays.has(day);
                   return (
-                    <div key={day} data-testid={`log-day-${day}`}>
-                      <button
-                        className="flex items-center gap-1.5 w-full text-left py-1 px-2 rounded-md hover:bg-accent/50 transition-colors text-xs font-bold text-muted-foreground uppercase tracking-wider"
-                        onClick={() => toggleDay(day)}
+                    <Collapsible
+                      key={day}
+                      open={isOpen}
+                      onOpenChange={() => {
+                        if (!isSearching) toggleDay(day);
+                      }}
+                      data-testid={`log-day-${day}`}
+                    >
+                      <CollapsibleTrigger
+                        className={WORKING_SECTION_TRIGGER_CLASS}
                         data-testid={`log-day-toggle-${day}`}
                       >
-                        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", isExpanded && "rotate-90")} />
-                        <span className="flex-1">{formatDayHeader(day, timezone)}</span>
-                        <span className="font-mono text-muted-foreground/60">{dayClaims.length}</span>
-                      </button>
-                      {isExpanded && (
-                        <div className="ml-3 space-y-px">
-                          {dayClaims.map(claim => (
-                            <button
-                              key={claim.id}
-                              className={cn(
-                                "flex items-start gap-2 w-full text-left py-1.5 px-2 rounded-md text-sm transition-colors",
-                                selectedClaimId === claim.id
-                                  ? "bg-accent text-foreground"
-                                  : "text-muted-foreground hover:bg-accent/70 hover:text-foreground"
-                              )}
-                              onClick={() => setSelectedClaimId(claim.id)}
-                              data-testid={`log-claim-${claim.id}`}
-                            >
-                              <span className="text-xs mt-0.5 shrink-0 w-10 opacity-60">
-                                {claim.createdAt ? eventTimeInTz(claim.createdAt, timezone) : ""}
-                              </span>
-                              <VnextClaimTypeIcon claimType={claim.claimType} />
-                              <div className="min-w-0 flex-1">
-                                <p className="text-xs font-medium truncate">
-                                  {claim.title || firstLine(claim.content, 70)}
-                                </p>
+                        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", isOpen && "rotate-90")} />
+                        <span className="min-w-0 flex-1 truncate">{formatDayHeader(day, timezone)}</span>
+                        <span className="shrink-0 text-xs font-normal tabular-nums text-muted-foreground/70">{dayClaims.length}</span>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <div className="ml-[11px] mt-0.5">
+                          {dayClaims.map((claim, index) => {
+                            const isLast = index === dayClaims.length - 1;
+                            const isSelected = selectedClaimId === claim.id;
+                            return (
+                              <div key={claim.id} className="flex min-w-0 items-stretch">
+                                <div className="relative mr-1 w-5 shrink-0 self-stretch" aria-hidden="true">
+                                  <div className={cn("absolute left-1/2 top-0 -translate-x-px border-l border-border", isLast ? "bottom-1/2" : "bottom-0")} />
+                                  <div className="absolute left-1/2 right-0 top-1/2 border-t border-border" />
+                                </div>
+                                <button
+                                  type="button"
+                                  className={cn(
+                                    WORKING_TREE_ROW_CLASS,
+                                    isSelected ? WORKING_TREE_SELECTED_CLASS : WORKING_TREE_IDLE_CLASS,
+                                  )}
+                                  onClick={() => setSelectedClaimId(claim.id)}
+                                  data-testid={`log-claim-${claim.id}`}
+                                >
+                                  <VnextClaimTypeIcon claimType={claim.claimType} />
+                                  <span className={cn("min-w-0 flex-1 truncate text-left", isSelected && "font-medium")}>
+                                    {claim.title || firstLine(claim.content, 70)}
+                                  </span>
+                                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">
+                                    {claim.createdAt ? eventTimeInTz(claim.createdAt, timezone) : ""}
+                                  </span>
+                                </button>
                               </div>
-                            </button>
-                          ))}
+                            );
+                          })}
                         </div>
-                      )}
-                    </div>
+                      </CollapsibleContent>
+                    </Collapsible>
                   );
-                })}
-            </div>
-          )}
+                })
+            )}
+          </div>
         </div>
       </div>
 
       {selectedClaimId !== null && (
-        <div className={cn("flex-1 flex flex-col overflow-hidden min-w-0", MEMORY_PANEL_CLASS)} data-testid="log-detail-panel">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background" data-testid="log-detail-panel">
           {selectedClaim ? (
-            <div className="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-4">
+            <div className="flex-1 space-y-4 overflow-y-auto p-4 scrollbar-thin">
               <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
                   <VnextClaimTypeIcon claimType={selectedClaim.claimType} />
-                  <h3 className="text-base font-semibold text-foreground truncate" data-testid="log-detail-title">
+                  <h3 className="truncate text-base font-semibold text-foreground" data-testid="log-detail-title">
                     {selectedClaim.title || firstLine(selectedClaim.content, 80)}
                   </h3>
                 </div>
@@ -1975,7 +1990,7 @@ function VnextJournalTab() {
                 </Button>
               </div>
 
-              <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1" data-testid="log-detail-time">
                   <Clock className="h-2.5 w-2.5" />
                   {selectedClaim.createdAt
@@ -1991,7 +2006,7 @@ function VnextJournalTab() {
               </div>
 
               {(selectedClaim.topics ?? []).length > 0 && (
-                <div className="flex items-center gap-1.5 flex-wrap">
+                <div className="flex flex-wrap items-center gap-1.5">
                   {(selectedClaim.topics ?? []).map(topic => (
                     <Badge key={topic} variant="outline" className="text-xs" data-testid={`log-detail-topic-${topic}`}>{topic}</Badge>
                   ))}
@@ -1999,7 +2014,7 @@ function VnextJournalTab() {
               )}
 
               <div>
-                <p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
+                <p className="mb-1.5 flex items-center gap-1 text-xs font-medium text-muted-foreground">
                   <FileText className="h-3 w-3" />
                   Memory
                 </p>
@@ -2010,19 +2025,17 @@ function VnextJournalTab() {
 
               {selectedClaim.metadata && Object.keys(selectedClaim.metadata).length > 0 && (
                 <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-1.5">Metadata</p>
-                  <pre className="text-xs font-mono whitespace-pre-wrap text-foreground/70 bg-muted/20 border border-card-border rounded-md p-3" data-testid="log-detail-metadata">
+                  <p className="mb-1.5 text-xs font-medium text-muted-foreground">Metadata</p>
+                  <pre className="whitespace-pre-wrap rounded-md border border-card-border bg-muted/20 p-3 font-mono text-xs text-foreground/70" data-testid="log-detail-metadata">
                     {JSON.stringify(selectedClaim.metadata, null, 2)}
                   </pre>
                 </div>
               )}
             </div>
           ) : selectedClaimLoading ? (
-            <div className="flex-1 flex items-center justify-center">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            </div>
+            <div className="px-4 py-3 text-sm text-muted-foreground">Loading memory…</div>
           ) : (
-            <div className={MEMORY_EMPTY_CLASS}>Memory not found</div>
+            <div className="px-4 py-3 text-sm text-muted-foreground">Memory not found.</div>
           )}
         </div>
       )}
