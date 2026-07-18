@@ -24,7 +24,6 @@ function ToastLabel({ label }: { label: string }) {
               key={`${part.ref.canonical}-${index}`}
               refValue={part.ref}
               surface="chat-inline"
-              className="mx-0 text-sm font-semibold text-cyan-100 drop-shadow-[0_0_10px_rgba(34,211,238,0.35)] hover:text-white [&>span]:border-white/70"
             />
           );
         }
