@@ -154,6 +154,40 @@ export type SegmentChronologyEntry =
   | { s: "content"; c: string }
   | { s: "compacting"; i: number };
 
+function alignAssistantChronology(
+  chronology: SegmentChronologyEntry[] | undefined,
+  content: string,
+  sessionId: string,
+): SegmentChronologyEntry[] | undefined {
+  if (!chronology) return undefined;
+  const chronologicalContent = chronology
+    .filter((entry): entry is Extract<SegmentChronologyEntry, { s: "content" }> => entry.s === "content")
+    .map((entry) => entry.c)
+    .join("");
+  if (chronologicalContent === content) return chronology;
+
+  if (content.startsWith(chronologicalContent)) {
+    const suffix = content.slice(chronologicalContent.length);
+    if (!suffix) return chronology;
+    const aligned = [...chronology];
+    for (let index = aligned.length - 1; index >= 0; index -= 1) {
+      const entry = aligned[index];
+      if (entry.s !== "content") continue;
+      aligned[index] = { s: "content", c: entry.c + suffix };
+      return aligned;
+    }
+    aligned.push({ s: "content", c: suffix });
+    return aligned;
+  }
+
+  log.warn(
+    `[ChatFileStorage] assistant chronology content mismatch sessionId=${sessionId} chronologyLen=${chronologicalContent.length} contentLen=${content.length}; persisting authoritative terminal content`,
+  );
+  const diagnostics = chronology.filter((entry) => entry.s !== "content");
+  if (content) diagnostics.push({ s: "content", c: content });
+  return diagnostics;
+}
+
 export interface CrossSessionMeta {
   fromSessionId: string;
   toSessionId: string;
@@ -1591,6 +1625,14 @@ export const chatFileStorage: IChatFileStorage = {
       }
       const sanitizedContent =
         role === "assistant" ? stripRoleMarkers(content, sessionId) : content;
+      const alignedSegmentChronology =
+        role === "assistant"
+          ? alignAssistantChronology(
+              segmentChronology,
+              sanitizedContent,
+              sessionId,
+            )
+          : segmentChronology;
 
       // Diagnostic messages bypass the renderable-payload guard — they are
       // intentionally stored as non-chat-visible forensic records.
@@ -1599,7 +1641,7 @@ export const chatFileStorage: IChatFileStorage = {
         thinking,
         toolCalls,
         systemSteps,
-        segmentChronology,
+        segmentChronology: alignedSegmentChronology,
       })) {
         log.warn(
           `[ChatFileStorage] createMessage rejected empty chat-visible assistant row sessionId=${sessionId}`,
@@ -1626,8 +1668,8 @@ export const chatFileStorage: IChatFileStorage = {
         outputTokens: tokenUsage?.outputTokens ?? null,
         totalTokens: tokenUsage?.totalTokens ?? null,
         segmentChronology:
-          segmentChronology && segmentChronology.length > 0
-            ? segmentChronology
+          alignedSegmentChronology && alignedSegmentChronology.length > 0
+            ? alignedSegmentChronology
             : null,
       };
       if (persona) msg.persona = persona;
@@ -2093,11 +2135,19 @@ export const chatFileStorage: IChatFileStorage = {
         msg.outputTokens = updates.outputTokens;
       if (updates.totalTokens !== undefined)
         msg.totalTokens = updates.totalTokens;
-      if (updates.segmentChronology !== undefined)
+      if (updates.segmentChronology !== undefined) {
+        const alignedSegmentChronology = alignAssistantChronology(
+          updates.segmentChronology,
+          updates.content !== undefined
+            ? stripRoleMarkers(updates.content, sessionId)
+            : msg.content,
+          sessionId,
+        );
         msg.segmentChronology =
-          updates.segmentChronology.length > 0
-            ? updates.segmentChronology
+          alignedSegmentChronology && alignedSegmentChronology.length > 0
+            ? alignedSegmentChronology
             : null;
+      }
       if (updates.assistantState !== undefined)
         msg.assistantState = updates.assistantState;
       if (updates.assistantInterruptedAt !== undefined)

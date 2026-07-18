@@ -71,6 +71,7 @@ import { getCurrentPrincipalOrSystem } from "../../principal-context";
 import { resolveQuestionResponse } from "../../question-response";
 
 const chatLog = createLogger("ChatStream");
+
 const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
 function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
 
@@ -2736,13 +2737,14 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
         // Persist any partial assistant content if available (system steps, chronology)
         const crashSystemSteps = preSteps.length > 0 ? preSteps : undefined;
+        const crashContent =
+          assistantDraftContent ||
+          "Response interrupted by an error before completion.";
         const crashChronology =
           preChronology.length > 0 ? preChronology : undefined;
         if (typeof assistantDraft !== "undefined" && assistantDraft) {
           await chatStorage.updateAssistantDraft(sessionId, assistantDraft.id, {
-            content:
-              assistantDraftContent ||
-              "Response interrupted by an error before completion.",
+            content: crashContent,
             thinking: assistantDraftThinking || undefined,
             model: chatModel,
             systemSteps: crashSystemSteps,
@@ -2754,7 +2756,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           await chatStorage.createMessage(
             sessionId,
             "assistant",
-            "Response interrupted by an error before completion.",
+            crashContent,
             undefined,
             undefined,
             chatModel,
