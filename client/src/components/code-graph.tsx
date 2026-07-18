@@ -541,7 +541,7 @@ function InteractiveGraph({
   );
 }
 
-export function CodeGraphTab() {
+export function CodeGraphTab({ hideSearch }: { hideSearch?: boolean } = {}) {
   const [status, setStatus] = useState<"checking" | "ready" | "indexing" | "error" | "disabled">("checking");
   const [indexingEnabled, setIndexingEnabledState] = useState<boolean | null>(null);
   const [sourceInfo, setSourceInfo] = useState<any>(null);
@@ -951,41 +951,57 @@ export function CodeGraphTab() {
 
   return (
     <div className="w-full space-y-4 p-4" data-testid="code-graph-tab">
-      <div className="flex flex-col gap-2 @sm:flex-row">
-        <div className="flex min-w-0 flex-1 gap-2">
-          <input
-            type="text"
-            className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-1 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            placeholder="Search codebase"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            onKeyDown={(event) => event.key === "Enter" && handleSearch()}
-            data-testid="input-graph-search"
-          />
+      {!hideSearch && (
+        <div className="flex flex-col gap-2 @sm:flex-row">
+          <div className="flex min-w-0 flex-1 gap-2">
+            <input
+              type="text"
+              className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-1 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              placeholder="Search codebase"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={(event) => event.key === "Enter" && handleSearch()}
+              data-testid="input-graph-search"
+            />
+            <Button
+              size="sm"
+              className="h-9 shrink-0"
+              onClick={handleSearch}
+              disabled={searching}
+              aria-label="Search codebase"
+              data-testid="button-graph-search"
+            >
+              {searching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+            </Button>
+          </div>
           <Button
+            variant="outline"
             size="sm"
             className="h-9 shrink-0"
-            onClick={handleSearch}
-            disabled={searching}
-            aria-label="Search codebase"
-            data-testid="button-graph-search"
+            onClick={() => setActiveView(activeView === "graph" ? "tree" : "graph")}
+            data-testid={activeView === "graph" ? "button-view-tree" : "button-view-graph"}
           >
-            {searching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+            {activeView === "graph" ? <Code2 className="mr-1.5 h-3.5 w-3.5" /> : <Network className="mr-1.5 h-3.5 w-3.5" />}
+            {activeView === "graph" ? "View tree" : "View graph"}
           </Button>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-9 shrink-0"
-          onClick={() => setActiveView(activeView === "graph" ? "tree" : "graph")}
-          data-testid={activeView === "graph" ? "button-view-tree" : "button-view-graph"}
-        >
-          {activeView === "graph" ? <Code2 className="mr-1.5 h-3.5 w-3.5" /> : <Network className="mr-1.5 h-3.5 w-3.5" />}
-          {activeView === "graph" ? "View tree" : "View graph"}
-        </Button>
-      </div>
+      )}
+      {hideSearch && (
+        <div className="flex justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 shrink-0"
+            onClick={() => setActiveView(activeView === "graph" ? "tree" : "graph")}
+            data-testid={activeView === "graph" ? "button-view-tree" : "button-view-graph"}
+          >
+            {activeView === "graph" ? <Code2 className="mr-1.5 h-3.5 w-3.5" /> : <Network className="mr-1.5 h-3.5 w-3.5" />}
+            {activeView === "graph" ? "View tree" : "View graph"}
+          </Button>
+        </div>
+      )}
 
-      {searchError && (
+      {!hideSearch && searchError && (
         <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-error" data-testid="search-error">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           <span className="min-w-0 flex-1 truncate">Search failed: {searchError}</span>
@@ -995,7 +1011,7 @@ export function CodeGraphTab() {
         </div>
       )}
 
-      {searchResults && (
+      {!hideSearch && searchResults && (
         <div className="rounded-lg border border-border/40 bg-muted/30 p-1" data-testid="tree-search-results">
           <ProfileTreeRow
             label="Search results"
