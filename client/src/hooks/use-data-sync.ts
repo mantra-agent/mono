@@ -56,11 +56,14 @@ function recomputeActiveDescendants(sessions: ChatSession[]): ChatSession[] {
 }
 
 /**
- * Optimistically update a session's status in the query cache and recompute
- * derived fields (hasActiveDescendant). Runs before the background refetch
- * for instant UI response.
+ * Apply a session status transition to every client cache projection that owns
+ * it. Local send admission and server realtime events share this boundary so
+ * SessionMenu and the focused session cannot observe different statuses.
  */
-function optimisticSessionStatusUpdate(sessionId: string, status: string): void {
+export function applySessionStatusToCache(sessionId: string, status: string): void {
+  queryClient.setQueryData<ChatSession>(["/api/sessions", sessionId], (old) =>
+    old ? { ...old, status } : old,
+  );
   queryClient.setQueryData<ChatSession[]>(["/api/sessions"], (old) => {
     if (!old) return old;
     const updated = old.map(s => s.id === sessionId ? { ...s, status } : s);
@@ -260,17 +263,17 @@ export function useDataSync() {
       // response can overwrite the just-applied server event and make the menu blink.
       if (eventName === "chat.session.status_changed" && event.payload) {
         const { sessionId, status } = event.payload as { sessionId?: string; status?: string };
-        if (sessionId && status) optimisticSessionStatusUpdate(sessionId, status);
+        if (sessionId && status) applySessionStatusToCache(sessionId, status);
         return;
       }
       if (eventName === "chat.autonomous.completed" && event.payload) {
         const { sessionId } = event.payload as { sessionId?: string };
-        if (sessionId) optimisticSessionStatusUpdate(sessionId, "saved");
+        if (sessionId) applySessionStatusToCache(sessionId, "saved");
         return;
       }
       if (eventName === "chat.autonomous.failed" && event.payload) {
         const { sessionId } = event.payload as { sessionId?: string };
-        if (sessionId) optimisticSessionStatusUpdate(sessionId, "failed");
+        if (sessionId) applySessionStatusToCache(sessionId, "failed");
         return;
       }
       if (eventName === "chat.autonomous.started" && event.payload) {
