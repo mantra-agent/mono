@@ -1079,7 +1079,10 @@ export interface IChatFileStorage {
     content: string,
     speaker: MessageSpeakerMeta,
     turnId?: string,
-  ): Promise<FileMessage | null>;
+  ): Promise<
+    | { outcome: "created" | "duplicate"; message: FileMessage }
+    | { outcome: "session_not_found" }
+  >;
   createAssistantDraft(
     sessionId: string,
     opts?: {
@@ -1867,11 +1870,14 @@ export const chatFileStorage: IChatFileStorage = {
         log.warn(
           `[ChatFileStorage] createMeetingUserMessage: session ${sessionId} not found, skipping`,
         );
-        return null;
+        return { outcome: "session_not_found" as const };
       }
-      if (turnId && data.messages.some((message) => message.role === "user" && message.turnId === turnId)) {
-        log.debug(`[ChatFileStorage] duplicate meeting turn ignored session=${sessionId} turnId=${turnId}`);
-        return null;
+      const existing = turnId
+        ? data.messages.find((message) => message.role === "user" && message.turnId === turnId)
+        : undefined;
+      if (existing) {
+        log.debug(`[ChatFileStorage] duplicate meeting turn accepted session=${sessionId} turnId=${turnId}`);
+        return { outcome: "duplicate" as const, message: existing };
       }
       const now = new Date().toISOString();
       const msg: FileMessage = {
@@ -1892,7 +1898,7 @@ export const chatFileStorage: IChatFileStorage = {
       data.updatedAt = now;
       await writeConv(data);
       invalidateSessionsCache();
-      return msg;
+      return { outcome: "created" as const, message: msg };
     });
   },
 

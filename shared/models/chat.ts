@@ -709,9 +709,6 @@ export interface MeetingSessionMeta {
   /** Last meeting speech attempt, surfaced so failures are never silent. */
   speechStatus?: "speaking" | "spoken" | "failed";
   speechStatusDetail?: string;
-  /** Whether finalized utterances that call Mantra by name may trigger a spoken answer. */
-  /** Durable replay guard: complete assembled turn id most recently claimed for an addressed response. */
-  lastAddressedTurnId?: string;
   /** Speaker routing policy snapshotted from calendar metadata before bot dispatch. */
   speakerPolicy?: MeetingSpeakerPolicy;
   /** Per-stream recognition state for mixed Scribe + Deepgram meetings. */

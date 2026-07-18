@@ -170,6 +170,10 @@ Real-time voice database work uses the reserved `voice` lane. Install it before 
 
 ---
 
+## Meeting Turn Orchestration
+
+Live meeting transcript commits are fragments, not conversational turns. `meeting/turn-queue.ts` is the PostgreSQL source of truth for fragment grouping, participation state, execution claims, and completion; the session document remains the canonical transcript. All user-owned queue mutations use principal-scoped storage predicates, while global recovery runs only under the named `meeting-turn-worker` system principal before restoring the meeting owner principal. `meeting/turn-coordinator.ts` owns quiet-window completion, fixed-budget participation inference, replay-safe draining, and stream settlement. Process-local transports such as Twilio must stamp `execution_affinity_boot_id`; only that boot may claim the turn, and cleanup must unregister its callback. Never infer process liveness from another process's in-memory maps.
+
 ## Session Streaming
 
 Server-authoritative streaming state for chat sessions. The server maintains a `StreamingContent` state object per active session. Clients subscribe via WebSocket and receive a snapshot + deltas. No client-side reducers or reconciliation — the server is the single source of truth.

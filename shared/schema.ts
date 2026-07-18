@@ -1593,6 +1593,62 @@ export type WorkflowSession = typeof workflowSessions.$inferSelect;
 export const insertWorkflowTemplateSchema = createInsertSchema(workflowTemplates).omit({ createdAt: true, updatedAt: true });
 export const insertWorkflowRunSchema = createInsertSchema(workflowRuns).omit({ createdAt: true, updatedAt: true });
 
+// ─── Meeting Turn Orchestration ───
+
+export const meetingTurnAssemblyStatuses = ["collecting", "complete"] as const;
+export const meetingTurnParticipationStatuses = ["pending", "claimed", "respond", "silent", "failed"] as const;
+export const meetingTurnExecutionStatuses = ["waiting", "pending", "claimed", "completed", "failed", "not_applicable"] as const;
+
+/**
+ * Durable orchestration for live-meeting turns. Transcript words remain canonical
+ * in the session document; this table owns grouping, participation, and execution.
+ */
+export const meetingTurns = pgTable("meeting_turns", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sessionId: text("session_id").notNull(),
+  sessionKey: text("session_key").notNull(),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id").notNull(),
+  accountId: text("account_id").notNull(),
+  speakerKey: text("speaker_key").notNull(),
+  speakerLabel: text("speaker_label").notNull(),
+  participationMode: text("participation_mode").notNull().default("contextual"),
+  executionAffinityBootId: text("execution_affinity_boot_id"),
+  text: text("text").notNull(),
+  sourceTurnIds: text("source_turn_ids").array().notNull().default(sql`'{}'::text[]`),
+  sourceMessageIds: text("source_message_ids").array().notNull().default(sql`'{}'::text[]`),
+  revision: integer("revision").notNull().default(1),
+  assemblyStatus: text("assembly_status", { enum: meetingTurnAssemblyStatuses }).notNull().default("collecting"),
+  participationStatus: text("participation_status", { enum: meetingTurnParticipationStatuses }).notNull().default("pending"),
+  executionStatus: text("execution_status", { enum: meetingTurnExecutionStatuses }).notNull().default("waiting"),
+  participationDecision: jsonb("participation_decision"),
+  prompt: text("prompt"),
+  completenessDeferrals: integer("completeness_deferrals").notNull().default(0),
+  readyAt: timestamp("ready_at", { withTimezone: true }).notNull(),
+  firstFragmentAt: timestamp("first_fragment_at", { withTimezone: true }).notNull().defaultNow(),
+  lastFragmentAt: timestamp("last_fragment_at", { withTimezone: true }).notNull().defaultNow(),
+  claimToken: text("claim_token"),
+  claimedAt: timestamp("claimed_at", { withTimezone: true }),
+  claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true }),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  assistantMessageId: text("assistant_message_id"),
+  error: text("error"),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("idx_meeting_turns_ready").on(table.assemblyStatus, table.readyAt),
+  index("idx_meeting_turns_session").on(table.sessionId, table.createdAt),
+  index("idx_meeting_turns_owner").on(table.ownerUserId),
+  index("idx_meeting_turns_account").on(table.accountId),
+  index("idx_meeting_turns_affinity").on(table.executionAffinityBootId),
+  uniqueIndex("idx_meeting_turns_claimed_session")
+    .on(table.sessionId)
+    .where(sql`${table.executionStatus} = 'claimed'`),
+]);
+
+export type MeetingTurn = typeof meetingTurns.$inferSelect;
+
 // ─── Meeting Recap Distributions ───
 
 export const meetingRecapDistributionStatuses = [

@@ -32,7 +32,10 @@ async function callerIdentity(phone: string): Promise<{ name: string; personId?:
 }
 function xmlEscape(value: string): string { return value.replace(/[<>&"']/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[c]!); }
 
-export function registerPhoneRoutes(app: Express, deps: { ingestPhoneTurn: PhoneIngestFn }): void {
+export function registerPhoneRoutes(app: Express, deps: {
+  ingestPhoneTurn: PhoneIngestFn;
+  releasePhoneTurn: (sessionId: string) => Promise<void>;
+}): void {
   const wss = new WebSocketServer({ noServer: true });
   const sttProvider = new DeepgramSTTProvider();
 
@@ -130,7 +133,7 @@ export function registerPhoneRoutes(app: Express, deps: { ingestPhoneTurn: Phone
           } catch (error) { await fail(error instanceof Error ? error : new Error(String(error))); }
         });
         socket.on("close", async () => {
-          stt.close(); await detector.close(); pendingCalls.delete(callSid);
+          stt.close(); await detector.close(); pendingCalls.delete(callSid); await deps.releasePhoneTurn(call.sessionId);
           const current = await chatStorage.getSession(call.sessionId);
           if (current?.meeting?.botStatus !== "failed") {
             await chatStorage.updateMeetingMeta(call.sessionId, { botStatus: "ended", endedAt: new Date().toISOString(), statusDetail: "Phone call ended" });

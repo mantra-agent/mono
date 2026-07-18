@@ -33,6 +33,8 @@ export type MeetingIngestFn = (event: {
   };
   turnId?: string;
   text?: string;
+  participationMode?: "contextual" | "always";
+  executionAffinityBootId?: string;
   botStatus?: MeetingBotStatus;
   statusDetail?: string;
   stt?: {

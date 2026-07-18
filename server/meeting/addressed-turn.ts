@@ -28,7 +28,7 @@ export interface MeetingParticipationDecision {
   confidence: number;
   prompt?: string;
   classifierFailure?: "timeout" | "error" | "invalid_output";
-  invocationKind?: "leading" | "trailing";
+  invocationKind?: "leading" | "middle" | "trailing";
   invocationAlias?: "mantra" | "mancha";
   evidence?: MeetingParticipationEvidence;
 }
@@ -37,7 +37,7 @@ export interface MeetingParticipationInput {
   sessionId: string;
   sessionKey: string;
   turnId: string;
-  currentMessageId: string;
+  currentMessageIds: string[];
   text: string;
   speakerLabel: string;
   participants: MeetingParticipant[];
@@ -54,7 +54,7 @@ interface ExchangeContext {
 
 interface ExplicitInvocation {
   prompt: string;
-  kind: "leading" | "trailing";
+  kind: "leading" | "middle" | "trailing";
   alias: "mantra" | "mancha";
 }
 
@@ -73,6 +73,19 @@ function explicitInvocation(text: string): ExplicitInvocation | null {
       kind: "leading",
       alias: normalizeInvocationAlias(leading[1]),
     };
+  }
+
+  const middle = /\b(mantra|mancha)\b[\s,.:;!?-]+(.+)$/i.exec(normalized);
+  if (middle) {
+    const before = normalized.slice(0, middle.index).trim();
+    const conversationalLeadIn = /(?:^|[.!?]\s+)(?:critically|also|then|finally|lastly|okay|ok|um|uh|and(?:\s+then)?)\b/i.test(before);
+    if (conversationalLeadIn) {
+      return {
+        prompt: middle[2]?.trim() || normalized,
+        kind: "middle",
+        alias: normalizeInvocationAlias(middle[1]),
+      };
+    }
   }
 
   const punctuatedTrailing = /^(.+?)[,:;-]\s*(mantra|mancha)[\s,.:;!?-]*$/i.exec(normalized);
@@ -102,8 +115,16 @@ function clearlyAddressesOther(text: string, speaker: string, participants: Meet
   return participants.find((p) => p.label !== speaker && p.label.split(/\s+/)[0]?.toLowerCase() === start.toLowerCase())?.label ?? null;
 }
 
-function recentContext(messages: Message[], currentMessageId?: string): Message[] {
-  return messages.filter((m) => m.id !== currentMessageId && (m.role === "user" || m.role === "assistant")).slice(-MAX_CONTEXT_TURNS);
+function recentContext(messages: Message[], currentMessageIds: string[] = []): Message[] {
+  const current = new Set(currentMessageIds);
+  const boundary = messages.reduce(
+    (latest, message, index) => current.has(message.id) ? Math.max(latest, index) : latest,
+    -1,
+  );
+  const chronological = boundary >= 0 ? messages.slice(0, boundary + 1) : messages;
+  return chronological
+    .filter((message) => !current.has(message.id) && (message.role === "user" || message.role === "assistant"))
+    .slice(-MAX_CONTEXT_TURNS);
 }
 
 function speakerLabel(message: Message): string | undefined {
@@ -258,7 +279,7 @@ export async function inferMeetingParticipation(input: MeetingParticipationInput
 
   const messages = recentContext(
     await chatStorage.getMessagesBySession(input.sessionId),
-    input.currentMessageId,
+    input.currentMessageIds,
   );
   const exchange = buildExchangeContext(messages, input.speakerLabel);
   const evidence = buildDecisionEvidence(input, exchange);
@@ -314,6 +335,8 @@ export async function inferMeetingParticipation(input: MeetingParticipationInput
         },
       ],
       jsonMode: true,
+      semanticTierOverride: "fast",
+      overrideReason: "meeting participation inference has a 1500ms latency budget",
       maxTokens: 96,
       temperature: 0,
       signal: controller.signal,
@@ -365,11 +388,35 @@ export async function inferMeetingParticipation(input: MeetingParticipationInput
   }
 }
 
-export type AddressedTurnClaim = "claimed" | "duplicate" | "not_meeting";
-export async function claimAddressedMeetingTurn(sessionId: string, turnId: string): Promise<AddressedTurnClaim> {
-  const session = await chatStorage.getSession(sessionId);
-  if (!session?.meeting || session.type !== "meeting") return "not_meeting";
-  if (session.meeting.lastAddressedTurnId === turnId) return "duplicate";
-  await chatStorage.updateMeetingMeta(sessionId, { lastAddressedTurnId: turnId });
-  return "claimed";
+export interface MeetingTurnCompleteness {
+  complete: boolean;
+  reason: string;
+  confidence: number;
+}
+
+const TRAILING_INCOMPLETE_WORD = /\b(?:and|or|but|so|because|if|when|while|that|which|who|with|to|for|about|of|the|a|an|your|our|my|their|either|also|then|um|uh)\s*[,.…-]*$/i;
+const INCOMPLETE_WAKE_PROMPT = /^(?:hey[\s,.:;!?-]+)?(?:mantra|mancha)\b[\s,.:;!?-]*(?:if|can|could|would|will|why|how|what|when|where|who)?\s*$/i;
+const TRAILING_COMPLEMENT_VERB = /\b(?:predict|explain|describe|answer|elaborate|continue|compare|discuss|consider|imagine|suppose|think about|talk about|tell (?:me|us)|give (?:me|us) (?:an?|the) overview|look at|come up with)\s*[,.?!…-]*$/i;
+const TRAILING_RELATIVE_SUBJECT = /\b(?:that|which|who|if|when|where|because)\s+(?:i|you|we|they|he|she|it)\s*[,.?!…-]*$/i;
+
+/** Fast local gate between committed STT fragments and conversational turns. */
+export function assessMeetingTurnCompleteness(
+  text: string,
+  priorDeferrals = 0,
+): MeetingTurnCompleteness {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return { complete: false, reason: "empty", confidence: 1 };
+  if (priorDeferrals >= 2) {
+    return { complete: true, reason: "bounded_quiet_window_elapsed", confidence: 0.76 };
+  }
+  if (INCOMPLETE_WAKE_PROMPT.test(normalized)) {
+    return { complete: false, reason: "wake_word_without_request", confidence: 0.99 };
+  }
+  if (TRAILING_INCOMPLETE_WORD.test(normalized) || TRAILING_RELATIVE_SUBJECT.test(normalized)) {
+    return { complete: false, reason: "trailing_syntactic_continuation", confidence: 0.92 };
+  }
+  if (TRAILING_COMPLEMENT_VERB.test(normalized)) {
+    return { complete: false, reason: "request_missing_complement", confidence: 0.9 };
+  }
+  return { complete: true, reason: "quiet_window_and_complete_clause", confidence: 0.82 };
 }
