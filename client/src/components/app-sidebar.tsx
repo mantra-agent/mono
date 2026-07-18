@@ -426,7 +426,7 @@ export function NavPage() {
                               <item.icon
                                 className={cn(
                                   "h-4 w-4 shrink-0",
-                                  level ? sc.icon : ""
+                                  item.titleTone === "muted" ? "text-muted-foreground" : level ? sc.icon : ""
                                 )}
                               />
                             )}
