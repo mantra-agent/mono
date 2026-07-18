@@ -80,6 +80,7 @@ export const skills = pgTable("skills", {
   vaultId: text("vault_id"),
 
   sessionType: text("session_type"),
+  personaId: integer("persona_id"),
   successCount: integer("success_count").notNull().default(0),
   failureCount: integer("failure_count").notNull().default(0),
 
@@ -151,6 +152,7 @@ export const insertSkillSchema = createInsertSchema(skills).omit({
   author: z.string().default("user"),
   budgetBehavior: z.string().nullable().optional(),
   sessionType: z.enum(sessionTypes).nullable().optional(),
+  personaId: z.number().int().nullable().optional(),
   checklist: z.array(checklistItemSchema).optional().default([]),
   references: z.array(z.object({
     name: z.string().min(1),

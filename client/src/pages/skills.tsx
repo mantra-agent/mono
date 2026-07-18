@@ -864,6 +864,7 @@ function SkillEditorDialog({
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
   const [addToMemory, setAddToMemory] = useState(true);
   const [sessionType, setSessionType] = useState<string>("agent");
+  const [personaId, setPersonaId] = useState<number | null>(null);
   const [version, setVersion] = useState("1.0");
   const [author, setAuthor] = useState("user");
   const [references, setReferences] = useState<{ name: string; content: string }[]>([]);
@@ -884,6 +885,7 @@ function SkillEditorDialog({
       setChecklist(Array.isArray(editingSkill.checklist) ? editingSkill.checklist as ChecklistItem[] : []);
       setAddToMemory(editingSkill.addToMemory !== false);
       setSessionType(editingSkill.sessionType || "agent");
+      setPersonaId(typeof editingSkill.personaId === "number" ? editingSkill.personaId : null);
       setVersion(editingSkill.version);
       setAuthor(editingSkill.author);
       setReferences(editingSkill.references.map(r => ({ name: r.name, content: r.content })));
@@ -902,11 +904,17 @@ function SkillEditorDialog({
       setChecklist([]);
       setAddToMemory(true);
       setSessionType("agent");
+      setPersonaId(null);
       setVersion("1.0");
       setAuthor("user");
       setReferences([]);
     }
   }, [editingSkill, open]);
+
+  const { data: personas = [] } = useQuery<{ id: number; name: string }[]>({
+    queryKey: ["/api/personas"],
+    enabled: open,
+  });
 
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -957,6 +965,7 @@ function SkillEditorDialog({
       checklist: validChecklist,
       addToMemory,
       sessionType,
+      personaId,
       status: editingSkill?.status || "draft",
       version,
       author,
@@ -1036,6 +1045,23 @@ function SkillEditorDialog({
                     <SelectItem value="a1e5c7f8-9b6d-4e23-f0c4-5d2a3b6c7e8f">Memory</SelectItem>
                     <SelectItem value="b2f6d8a9-0c7e-4f34-a1d5-6e3b4c7d8f0a">Thinking</SelectItem>
                     <SelectItem value="c3a7e9b0-1d8f-4a45-b2e6-7f4c5d8e9a1b">Strategy</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs mb-1 block">Persona</Label>
+                <Select
+                  value={personaId != null ? String(personaId) : "default"}
+                  onValueChange={(v) => setPersonaId(v === "default" ? null : Number(v))}
+                >
+                  <SelectTrigger className="h-8 text-xs" data-testid="select-persona">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">Default</SelectItem>
+                    {personas.map(p => (
+                      <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
