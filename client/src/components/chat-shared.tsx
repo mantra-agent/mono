@@ -2428,7 +2428,6 @@ export const ChatTurn = memo(function ChatTurn({
   compactReferences = false,
   suppressedEmailDraftIds,
   questionResponses,
-  questionSubmissionDisabled,
   onQuestionSubmit,
 }: {
   message: ChatMessage;
@@ -2438,8 +2437,7 @@ export const ChatTurn = memo(function ChatTurn({
   compactReferences?: boolean;
   suppressedEmailDraftIds?: string;
   questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
-  questionSubmissionDisabled?: boolean;
-  onQuestionSubmit?: (response: QuestionResponseMeta) => Promise<boolean>;
+  onQuestionSubmit: (response: QuestionResponseMeta) => Promise<boolean>;
 }) {
   const isUser = message.role === "user";
   const isSystemPrompt = message.role === "system_prompt";
@@ -2797,7 +2795,6 @@ export const ChatTurn = memo(function ChatTurn({
                 key={prompt.toolCallId}
                 prompt={prompt}
                 response={questionResponses?.get(prompt.toolCallId)}
-                disabled={questionSubmissionDisabled}
                 onSubmit={onQuestionSubmit}
               />
             ))}

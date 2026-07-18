@@ -73,13 +73,11 @@ function OptionRow({
 export function QuestionWidget({
   prompt,
   response,
-  disabled,
   onSubmit,
 }: {
   prompt: QuestionWidgetPrompt;
   response?: QuestionResponseMeta;
-  disabled?: boolean;
-  onSubmit?: (response: QuestionResponseMeta) => Promise<boolean>;
+  onSubmit: (response: QuestionResponseMeta) => Promise<boolean>;
 }) {
   const [selected, setSelected] = useState<string[]>(response?.selectedOptionIds ?? []);
   const [otherSelected, setOtherSelected] = useState(Boolean(response?.otherText));
@@ -125,7 +123,6 @@ export function QuestionWidget({
   };
 
   const submit = async () => {
-    if (!onSubmit) return;
     const normalizedOther = otherSelected ? otherText.trim() : "";
     if (selected.length === 0 && !normalizedOther) {
       setError("Choose an answer.");
@@ -171,7 +168,7 @@ export function QuestionWidget({
     );
   }
 
-  const controlsDisabled = Boolean(disabled) || submitting;
+  const controlsDisabled = submitting;
   return (
     <div className="-ml-10 border rounded-md border-border/60 bg-muted/20 my-1" data-testid={`question-widget-${prompt.toolCallId}`}>
       <div className="flex items-start gap-2 px-3 py-2 border-b border-border/40">

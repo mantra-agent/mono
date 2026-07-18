@@ -64,8 +64,7 @@ interface MessageListProps {
   liveStreamRenderId?: string | null;
   compactReferences?: boolean;
   questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
-  questionSubmissionDisabled?: boolean;
-  onQuestionSubmit?: (response: QuestionResponseMeta) => Promise<boolean>;
+  onQuestionSubmit: (response: QuestionResponseMeta) => Promise<boolean>;
 }
 
 type ListItem =
@@ -221,7 +220,6 @@ export function MessageList({
   liveStreamRenderId,
   compactReferences = false,
   questionResponses,
-  questionSubmissionDisabled,
   onQuestionSubmit,
 }: MessageListProps) {
   const { layer } = useVisibilityLayer();
@@ -753,7 +751,6 @@ export function MessageList({
         compactReferences={compactReferences}
         suppressedEmailDraftIds={suppressed && suppressed.length > 0 ? suppressed.join("|") : undefined}
         questionResponses={questionResponses}
-        questionSubmissionDisabled={questionSubmissionDisabled}
         onQuestionSubmit={onQuestionSubmit}
       />
     );
