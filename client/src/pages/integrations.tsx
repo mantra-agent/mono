@@ -93,6 +93,18 @@ import {
 import { SiX } from "react-icons/si";
 import { SecretsForSection } from "@/components/SecretControl";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import type {
+  SemanticTier,
+  OpenAIReasoningEffort,
+  OpenAIReasoningMode,
+  OpenAIReasoningSummary,
+  OpenAIVerbosity,
+  OpenAIServiceTier,
+  ClaudeCliEffort,
+  ClaudeCliThinkingMode,
+  ModelConnectorProvider,
+} from "@shared/model-connectors";
+import { SEMANTIC_TIERS } from "@shared/model-connectors";
 import { VoiceV3WebhookSecretCard } from "@/components/VoiceV3WebhookSecretCard";
 import { usePlaidLink } from "react-plaid-link";
 import { useRoute, useLocation } from "wouter";
@@ -5477,28 +5489,26 @@ function SendGridDetail() {
   );
 }
 
-type SemanticTier = "max" | "high" | "balanced" | "fast";
-type OpenAIReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
-type OpenAIReasoningMode = "standard" | "pro";
-type OpenAIReasoningSummary = "auto" | "concise" | "detailed" | "none";
-type OpenAIVerbosity = "low" | "medium" | "high";
-type OpenAIServiceTier = "auto" | "default" | "flex" | "priority";
-type ClaudeCliEffort = "low" | "medium" | "high" | "max";
-type ClaudeCliThinkingMode = "adaptive" | "disabled";
+// UI-level tier config: covers the wire format from the API where legacy string mappings
+// coexist with rich per-provider objects. The canonical shared types
+// (OpenAITierModelConfig, ClaudeCliTierModelConfig) are the server-side source of truth;
+// this local union adds the legacy string variant for normalization.
 type TierModelConfig = string | {
   model: string;
+  // OpenAI fields
   reasoningEffort?: OpenAIReasoningEffort;
   reasoningMode?: OpenAIReasoningMode;
   reasoningSummary?: OpenAIReasoningSummary;
   verbosity?: OpenAIVerbosity;
   serviceTier?: OpenAIServiceTier;
   maxOutputTokens?: number;
+  // Claude CLI fields
   effort?: ClaudeCliEffort;
   thinkingMode?: ClaudeCliThinkingMode;
   maxTurns?: number;
 };
 interface ModelConnectorDetail {
-  id: number; provider: "anthropic" | "openai" | "openai-subscription" | "claude-cli"; label: string; status: string;
+  id: number; provider: ModelConnectorProvider; label: string; status: string;
   config: { kind?: "model" | "openai-models" | "claude-cli-models"; tierMappings: Record<SemanticTier, TierModelConfig> };
 }
 interface ModelProviderDetail {
@@ -5515,7 +5525,7 @@ interface ModelProviderDetail {
   }>;
 }
 
-const MODEL_TIERS: readonly SemanticTier[] = ["max", "high", "balanced", "fast"];
+const MODEL_TIERS = SEMANTIC_TIERS;
 const TIER_COPY: Record<SemanticTier, string> = {
   max: "Best available model for frontier reasoning and judgment.",
   high: "Strong reasoning with lower latency and cost than Max.",
@@ -5580,7 +5590,7 @@ function sanitizeOpenAITierConfig(provider: ModelConnectorDetail["provider"], co
   return sanitized;
 }
 
-function OpenAISettingSelect<T extends string>({
+function TierSettingSelect<T extends string>({
   label, value, options, description, disabled, onChange,
 }: {
   label: string; value: T | undefined; options: readonly T[]; description: string; disabled?: boolean; onChange: (value: T) => void;
@@ -5597,8 +5607,10 @@ function OpenAISettingSelect<T extends string>({
   </div>;
 }
 
-function OpenAIConnectorTree({ connector, models, title }: { connector: ModelConnectorDetail; models: ModelProviderDetail["models"]; title: string }) {
+function ConnectorTierTree({ connector, models, title }: { connector: ModelConnectorDetail; models: ModelProviderDetail["models"]; title: string }) {
   const { toast } = useToast();
+  const isOpenAI = isOpenAIProvider(connector.provider);
+  const isClaude = connector.provider === "claude-cli";
   const mutation = useMutation({
     mutationFn: async (tierMappings: Record<SemanticTier, Exclude<TierModelConfig, string>>) => (await apiRequest("PATCH", `/api/models/connectors/${connector.id}`, { tierMappings })).json(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/models/connectors"] }),
@@ -5606,19 +5618,27 @@ function OpenAIConnectorTree({ connector, models, title }: { connector: ModelCon
   });
   const mappings = Object.fromEntries(MODEL_TIERS.map((tier) => {
     const config = normalizeTierConfig(connector.provider, connector.config.tierMappings[tier]);
+    if (!isOpenAI) return [tier, config];
     const model = models.find((item) => item.id === config.model || `${connector.provider}/${item.id}` === config.model);
     return [tier, sanitizeOpenAITierConfig(connector.provider, config, model)];
   })) as Record<SemanticTier, Exclude<TierModelConfig, string>>;
   const updateTier = (tier: SemanticTier, patch: Partial<Exclude<TierModelConfig, string>>) => {
     const nextConfig = { ...mappings[tier], ...patch };
-    const nextModel = models.find((item) => item.id === nextConfig.model || `${connector.provider}/${item.id}` === nextConfig.model);
-    mutation.mutate({ ...mappings, [tier]: sanitizeOpenAITierConfig(connector.provider, nextConfig, nextModel) });
+    if (isOpenAI) {
+      const nextModel = models.find((item) => item.id === nextConfig.model || `${connector.provider}/${item.id}` === nextConfig.model);
+      mutation.mutate({ ...mappings, [tier]: sanitizeOpenAITierConfig(connector.provider, nextConfig, nextModel) });
+    } else {
+      mutation.mutate({ ...mappings, [tier]: nextConfig });
+    }
   };
-  const isSubscription = connector.provider === "openai-subscription";
-  const surfaceLabel = isSubscription ? "Subscription" : "API";
-  const settingsDescription = isSubscription
-    ? "Subscription connector tiers. Effort controls reasoning depth, summaries expose reasoning output, verbosity controls response detail, and max output tokens is capped by the selected model."
-    : "API connector tiers. Settings follow OpenAI Responses API docs: effort controls reasoning depth, summaries expose reasoning output, verbosity controls response detail, service tier controls latency class, and max output tokens is capped by the selected model.";
+  const isSubscription = connector.provider === "openai-subscription" || isClaude;
+  const sectionLabel = isClaude ? "Subscription connector" : isSubscription ? "Subscription connector" : "API connector";
+  const testIdPrefix = isClaude ? "claude-cli" : `openai-${connector.provider}`;
+  const settingsDescription = isClaude
+    ? "Claude subscription tiers. Configure the model, adaptive reasoning effort, thinking mode, and maximum agent turns. Mantra continues to own prompts, tools, permissions, and sessions."
+    : isSubscription
+      ? "Subscription connector tiers. Effort controls reasoning depth, summaries expose reasoning output, verbosity controls response detail, and max output tokens is capped by the selected model."
+      : "API connector tiers. Settings follow OpenAI Responses API docs: effort controls reasoning depth, summaries expose reasoning output, verbosity controls response detail, service tier controls latency class, and max output tokens is capped by the selected model.";
 
   return <Card className="overflow-hidden min-w-0">
     <CardHeader className="pb-2">
@@ -5626,12 +5646,16 @@ function OpenAIConnectorTree({ connector, models, title }: { connector: ModelCon
       <p className="text-sm text-muted-foreground">{settingsDescription}</p>
     </CardHeader>
     <CardContent className="p-0">
-      <IntegrationTreeSection label={`${surfaceLabel} connector`} initialOpen testIdPrefix={`openai-${connector.provider}`}>
+      <IntegrationTreeSection label={sectionLabel} initialOpen testIdPrefix={testIdPrefix}>
         {MODEL_TIERS.map((tier) => {
           const config = mappings[tier];
           const model = models.find((item) => item.id === config.model || `${connector.provider}/${item.id}` === config.model);
-          const supported = supportedOpenAISettings(model, connector.provider);
           const selectedLabel = model?.name ?? config.model;
+          // OpenAI-specific capability detection
+          const supported = isOpenAI ? supportedOpenAISettings(model, connector.provider) : null;
+          // Claude-specific capability detection
+          const supportsThinking = isClaude && model?.thinkingLevel !== "none" && model !== undefined;
+
           return <ProfileTreeRow
             key={tier}
             label={<span className="capitalize">{tier}</span>}
@@ -5639,31 +5663,47 @@ function OpenAIConnectorTree({ connector, models, title }: { connector: ModelCon
             hasValue
             showEmpty
             defaultOpen={tier === "balanced"}
-            testId={`openai-${connector.provider}-${tier}-tier`}
+            testId={`${testIdPrefix}-${tier}-tier`}
             expandedContentClassName="space-y-3"
             expandedContent={<div className="space-y-3">
               <p className="text-xs text-muted-foreground">{TIER_COPY[tier]}</p>
-              <OpenAISettingSelect
+              <TierSettingSelect
                 label="Model"
                 value={config.model}
                 options={models.map((item) => item.id)}
-                description="Required. The model used when routing selects this semantic tier."
+                description={isClaude ? "Required. Moving aliases follow Claude Code updates; versioned choices stay pinned." : "Required. The model used when routing selects this semantic tier."}
                 disabled={mutation.isPending || models.length === 0}
                 onChange={(modelId) => {
-                  const nextModel = models.find((item) => item.id === modelId);
-                  const nextSupported = supportedOpenAISettings(nextModel, connector.provider);
-                  updateTier(tier, {
-                    model: modelId,
-                    reasoningEffort: nextSupported.reasoningEffort ? (config.reasoningEffort ?? (tier === "max" ? "high" : tier === "fast" ? "minimal" : "medium")) : undefined,
-                    reasoningMode: nextSupported.reasoningMode ? (config.reasoningMode ?? "standard") : undefined,
-                    reasoningSummary: nextSupported.reasoningSummary ? (config.reasoningSummary ?? "auto") : undefined,
-                    verbosity: nextSupported.verbosity ? (config.verbosity ?? "medium") : undefined,
-                    serviceTier: nextSupported.serviceTier ? (config.serviceTier ?? "auto") : undefined,
-                    maxOutputTokens: Math.min(config.maxOutputTokens ?? nextModel?.maxTokens ?? 4096, nextModel?.maxTokens ?? Number.MAX_SAFE_INTEGER),
-                  });
+                  if (isClaude) {
+                    const nextModel = models.find((item) => item.id === modelId);
+                    const nextSupportsThinking = nextModel?.thinkingLevel !== "none";
+                    updateTier(tier, { model: modelId, effort: nextSupportsThinking ? config.effort : undefined, thinkingMode: nextSupportsThinking ? config.thinkingMode : "disabled" });
+                  } else {
+                    const nextModel = models.find((item) => item.id === modelId);
+                    const nextSupported = supportedOpenAISettings(nextModel, connector.provider);
+                    updateTier(tier, {
+                      model: modelId,
+                      reasoningEffort: nextSupported.reasoningEffort ? (config.reasoningEffort ?? (tier === "max" ? "high" : tier === "fast" ? "minimal" : "medium")) : undefined,
+                      reasoningMode: nextSupported.reasoningMode ? (config.reasoningMode ?? "standard") : undefined,
+                      reasoningSummary: nextSupported.reasoningSummary ? (config.reasoningSummary ?? "auto") : undefined,
+                      verbosity: nextSupported.verbosity ? (config.verbosity ?? "medium") : undefined,
+                      serviceTier: nextSupported.serviceTier ? (config.serviceTier ?? "auto") : undefined,
+                      maxOutputTokens: Math.min(config.maxOutputTokens ?? nextModel?.maxTokens ?? 4096, nextModel?.maxTokens ?? Number.MAX_SAFE_INTEGER),
+                    });
+                  }
                 }}
               />
-              <div className="grid gap-2 @sm:grid-cols-2">
+              {/* Info cards: provider-specific */}
+              {isClaude ? <div className="grid gap-2 @sm:grid-cols-2">
+                <div className="rounded-md border border-border/60 px-3 py-2">
+                  <div className="text-xs font-medium">Subscription</div>
+                  <div className="mt-1 text-xs text-muted-foreground">Usage is governed by the connected Claude plan.</div>
+                </div>
+                <div className="rounded-md border border-border/60 px-3 py-2">
+                  <div className="text-xs font-medium">Context</div>
+                  <div className="mt-1 text-xs text-muted-foreground">{formatTokenCount(model?.contextWindow)} · {model?.thinkingDescription ?? "provider default"}</div>
+                </div>
+              </div> : <div className="grid gap-2 @sm:grid-cols-2">
                 <div className="rounded-md border border-border/60 px-3 py-2">
                   <div className="text-xs font-medium">Cost</div>
                   <div className="mt-1 text-xs text-muted-foreground">Input {formatModelPrice(model?.cost?.input)} · output {formatModelPrice(model?.cost?.output)}</div>
@@ -5672,31 +5712,61 @@ function OpenAIConnectorTree({ connector, models, title }: { connector: ModelCon
                   <div className="text-xs font-medium">Speed / size</div>
                   <div className="mt-1 text-xs text-muted-foreground">Context {formatTokenCount(model?.contextWindow)} · max output {formatTokenCount(model?.maxTokens)}</div>
                 </div>
-              </div>
-              {supported.reasoningEffort && <OpenAISettingSelect label="Reasoning effort" value={config.reasoningEffort ?? "medium"} options={REASONING_EFFORTS} description="Default: tier-derived. Higher effort can improve reasoning and increases latency." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningEffort: value })} />}
-              {supported.reasoningMode && <OpenAISettingSelect label="Reasoning mode" value={config.reasoningMode ?? "standard"} options={["standard", "pro"] as const} description="Default: standard. Pro is available only on API gpt-5.6 reasoning models." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningMode: value })} />}
-              {supported.reasoningSummary && <OpenAISettingSelect label="Reasoning summary" value={config.reasoningSummary ?? "auto"} options={REASONING_SUMMARIES} description="Default: auto. Controls whether OpenAI returns summarized reasoning." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningSummary: value })} />}
-              {supported.verbosity && <OpenAISettingSelect label="Verbosity" value={config.verbosity ?? "medium"} options={VERBOSITIES} description="Default: medium. Controls output detail for GPT-5-class text generation." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { verbosity: value })} />}
-              {supported.serviceTier && <OpenAISettingSelect label="Service tier" value={config.serviceTier ?? "auto"} options={supported.serviceTierOptions} description="Default: auto. Controls API latency/cost class when the account supports it." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { serviceTier: value })} />}
-              {supported.maxOutputTokens && <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
+              </div>}
+              {/* Provider-specific settings */}
+              {isClaude && <>
+                <TierSettingSelect
+                  label="Effort"
+                  value={(config.effort ?? "activity-default") as typeof CLAUDE_EFFORT_OPTIONS[number]}
+                  options={CLAUDE_EFFORT_OPTIONS}
+                  description="Activity default inherits Mantra's resolved thinking. Higher effort increases reasoning depth and latency."
+                  disabled={mutation.isPending || !supportsThinking || config.thinkingMode === "disabled"}
+                  onChange={(value) => updateTier(tier, { effort: value === "activity-default" ? undefined : value })}
+                />
+                <TierSettingSelect
+                  label="Thinking"
+                  value={(config.thinkingMode ?? "activity-default") as typeof CLAUDE_THINKING_OPTIONS[number]}
+                  options={CLAUDE_THINKING_OPTIONS}
+                  description="Activity default inherits Mantra. Adaptive lets Claude choose its reasoning depth."
+                  disabled={mutation.isPending || !supportsThinking}
+                  onChange={(value) => updateTier(tier, { thinkingMode: value === "activity-default" ? undefined : value, effort: value === "disabled" ? undefined : config.effort })}
+                />
+                <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
+                  <div className="min-w-0">
+                    <Label className="text-xs text-muted-foreground">Max turns</Label>
+                    <p className="text-xs text-muted-foreground/80">Optional. Limits total Claude agent turns for one request.</p>
+                  </div>
+                  <Input
+                    key={`${tier}-${config.maxTurns ?? "default"}`}
+                    type="number"
+                    min={1}
+                    max={1000}
+                    defaultValue={config.maxTurns ?? ""}
+                    placeholder="Activity default"
+                    disabled={mutation.isPending}
+                    onBlur={(event) => {
+                      const raw = event.target.value.trim();
+                      if (!raw) { if (config.maxTurns !== undefined) updateTier(tier, { maxTurns: undefined }); return; }
+                      const value = Number.parseInt(raw, 10);
+                      if (Number.isFinite(value) && value >= 1 && value <= 1000 && value !== config.maxTurns) updateTier(tier, { maxTurns: value });
+                    }}
+                    className="h-8 font-mono text-xs"
+                  />
+                </div>
+              </>}
+              {supported?.reasoningEffort && <TierSettingSelect label="Reasoning effort" value={config.reasoningEffort ?? "medium"} options={REASONING_EFFORTS} description="Default: tier-derived. Higher effort can improve reasoning and increases latency." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningEffort: value })} />}
+              {supported?.reasoningMode && <TierSettingSelect label="Reasoning mode" value={config.reasoningMode ?? "standard"} options={["standard", "pro"] as const} description="Default: standard. Pro is available only on API gpt-5.6 reasoning models." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningMode: value })} />}
+              {supported?.reasoningSummary && <TierSettingSelect label="Reasoning summary" value={config.reasoningSummary ?? "auto"} options={REASONING_SUMMARIES} description="Default: auto. Controls whether OpenAI returns summarized reasoning." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningSummary: value })} />}
+              {supported?.verbosity && <TierSettingSelect label="Verbosity" value={config.verbosity ?? "medium"} options={VERBOSITIES} description="Default: medium. Controls output detail for GPT-5-class text generation." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { verbosity: value })} />}
+              {supported?.serviceTier && <TierSettingSelect label="Service tier" value={config.serviceTier ?? "auto"} options={supported.serviceTierOptions} description="Default: auto. Controls API latency/cost class when the account supports it." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { serviceTier: value })} />}
+              {supported?.maxOutputTokens && <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
                 <div className="min-w-0">
                   <Label className="text-xs text-muted-foreground">Max output</Label>
                   <p className="text-xs text-muted-foreground/80">Positive integer. Must not exceed {formatTokenCount(model?.maxTokens)} for this model.</p>
                 </div>
-                <Input
-                  type="number"
-                  min={1}
-                  max={model?.maxTokens}
-                  value={config.maxOutputTokens ?? ""}
-                  disabled={mutation.isPending}
-                  onChange={(event) => {
-                    const value = Number.parseInt(event.target.value, 10);
-                    if (Number.isFinite(value) && value > 0) updateTier(tier, { maxOutputTokens: model?.maxTokens ? Math.min(value, model.maxTokens) : value });
-                  }}
-                  className="h-8 font-mono text-xs"
-                />
+                <Input type="number" min={1} max={model?.maxTokens} value={config.maxOutputTokens ?? ""} disabled={mutation.isPending} onChange={(event) => { const value = Number.parseInt(event.target.value, 10); if (Number.isFinite(value) && value > 0) updateTier(tier, { maxOutputTokens: model?.maxTokens ? Math.min(value, model.maxTokens) : value }); }} className="h-8 font-mono text-xs" />
               </div>}
-              {!supported.reasoningEffort && !supported.verbosity && !supported.serviceTier ? <p className="text-xs text-muted-foreground">This model exposes only model selection and max output in the current connector contract.</p> : null}
+              {isOpenAI && !supported?.reasoningEffort && !supported?.verbosity && !supported?.serviceTier ? <p className="text-xs text-muted-foreground">This model exposes only model selection and max output in the current connector contract.</p> : null}
             </div>}
           >
             <span className="truncate font-mono">{selectedLabel}</span>
@@ -5708,123 +5778,7 @@ function OpenAIConnectorTree({ connector, models, title }: { connector: ModelCon
   </Card>;
 }
 
-function ClaudeConnectorTree({ connector, models, title }: { connector: ModelConnectorDetail; models: ModelProviderDetail["models"]; title: string }) {
-  const { toast } = useToast();
-  const mutation = useMutation({
-    mutationFn: async (tierMappings: Record<SemanticTier, Exclude<TierModelConfig, string>>) => (await apiRequest("PATCH", `/api/models/connectors/${connector.id}`, { tierMappings })).json(),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/models/connectors"] }),
-    onError: (error: Error) => toast({ title: "Claude mapping failed", description: error.message, variant: "destructive" }),
-  });
-  const mappings = Object.fromEntries(MODEL_TIERS.map((tier) => [tier, normalizeTierConfig(connector.provider, connector.config.tierMappings[tier])])) as Record<SemanticTier, Exclude<TierModelConfig, string>>;
-  const updateTier = (tier: SemanticTier, patch: Partial<Exclude<TierModelConfig, string>>) => {
-    const next = { ...mappings[tier], ...patch };
-    mutation.mutate({ ...mappings, [tier]: next });
-  };
-
-  return <Card className="overflow-hidden min-w-0">
-    <CardHeader className="pb-2">
-      <CardTitle className="text-base font-semibold">{title}</CardTitle>
-      <p className="text-sm text-muted-foreground">Claude subscription tiers. Configure the model, adaptive reasoning effort, thinking mode, and maximum agent turns. Mantra continues to own prompts, tools, permissions, and sessions.</p>
-    </CardHeader>
-    <CardContent className="p-0">
-      <IntegrationTreeSection label="Subscription connector" initialOpen testIdPrefix="claude-cli">
-        {MODEL_TIERS.map((tier) => {
-          const config = mappings[tier];
-          const model = models.find((item) => item.id === config.model);
-          const supportsThinking = model?.thinkingLevel !== "none" && model !== undefined;
-          return <ProfileTreeRow
-            key={tier}
-            label={<span className="capitalize">{tier}</span>}
-            icon={tier === "fast" ? <Zap className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
-            hasValue
-            showEmpty
-            defaultOpen={tier === "balanced"}
-            testId={`claude-cli-${tier}-tier`}
-            expandedContentClassName="space-y-3"
-            expandedContent={<div className="space-y-3">
-              <p className="text-xs text-muted-foreground">{TIER_COPY[tier]}</p>
-              <OpenAISettingSelect
-                label="Model"
-                value={config.model}
-                options={models.map((item) => item.id)}
-                description="Required. Moving aliases follow Claude Code updates; versioned choices stay pinned."
-                disabled={mutation.isPending || models.length === 0}
-                onChange={(modelId) => {
-                  const nextModel = models.find((item) => item.id === modelId);
-                  const nextSupportsThinking = nextModel?.thinkingLevel !== "none";
-                  updateTier(tier, {
-                    model: modelId,
-                    effort: nextSupportsThinking ? config.effort : undefined,
-                    thinkingMode: nextSupportsThinking ? config.thinkingMode : "disabled",
-                  });
-                }}
-              />
-              <div className="grid gap-2 @sm:grid-cols-2">
-                <div className="rounded-md border border-border/60 px-3 py-2">
-                  <div className="text-xs font-medium">Subscription</div>
-                  <div className="mt-1 text-xs text-muted-foreground">Usage is governed by the connected Claude plan.</div>
-                </div>
-                <div className="rounded-md border border-border/60 px-3 py-2">
-                  <div className="text-xs font-medium">Context</div>
-                  <div className="mt-1 text-xs text-muted-foreground">{formatTokenCount(model?.contextWindow)} · {model?.thinkingDescription ?? "provider default"}</div>
-                </div>
-              </div>
-              <OpenAISettingSelect
-                label="Effort"
-                value={(config.effort ?? "activity-default") as typeof CLAUDE_EFFORT_OPTIONS[number]}
-                options={CLAUDE_EFFORT_OPTIONS}
-                description="Activity default inherits Mantra's resolved thinking. Higher effort increases reasoning depth and latency."
-                disabled={mutation.isPending || !supportsThinking || config.thinkingMode === "disabled"}
-                onChange={(value) => updateTier(tier, { effort: value === "activity-default" ? undefined : value })}
-              />
-              <OpenAISettingSelect
-                label="Thinking"
-                value={(config.thinkingMode ?? "activity-default") as typeof CLAUDE_THINKING_OPTIONS[number]}
-                options={CLAUDE_THINKING_OPTIONS}
-                description="Activity default inherits Mantra. Adaptive lets Claude choose its reasoning depth."
-                disabled={mutation.isPending || !supportsThinking}
-                onChange={(value) => updateTier(tier, {
-                  thinkingMode: value === "activity-default" ? undefined : value,
-                  effort: value === "disabled" ? undefined : config.effort,
-                })}
-              />
-              <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
-                <div className="min-w-0">
-                  <Label className="text-xs text-muted-foreground">Max turns</Label>
-                  <p className="text-xs text-muted-foreground/80">Optional. Limits total Claude agent turns for one request.</p>
-                </div>
-                <Input
-                  key={`${tier}-${config.maxTurns ?? "default"}`}
-                  type="number"
-                  min={1}
-                  max={1000}
-                  defaultValue={config.maxTurns ?? ""}
-                  placeholder="Activity default"
-                  disabled={mutation.isPending}
-                  onBlur={(event) => {
-                    const raw = event.target.value.trim();
-                    if (!raw) {
-                      if (config.maxTurns !== undefined) updateTier(tier, { maxTurns: undefined });
-                      return;
-                    }
-                    const value = Number.parseInt(raw, 10);
-                    if (Number.isFinite(value) && value >= 1 && value <= 1000 && value !== config.maxTurns) updateTier(tier, { maxTurns: value });
-                  }}
-                  className="h-8 font-mono text-xs"
-                />
-              </div>
-            </div>}
-          >
-            <span className="truncate font-mono">{model?.name ?? config.model}</span>
-          </ProfileTreeRow>;
-        })}
-        {models.length === 0 && <p className="px-2 py-1.5 text-sm text-muted-foreground">No models are currently available for this connector.</p>}
-      </IntegrationTreeSection>
-    </CardContent>
-  </Card>;
-}
-
-function ModelConnectorSection({ provider, title = "Model mapping" }: { provider: "anthropic" | "openai" | "openai-subscription" | "claude-cli"; title?: string }) {
+function ModelConnectorSection({ provider, title = "Model mapping" }: { provider: ModelConnectorProvider; title?: string }) {
   const { toast } = useToast();
   const { data } = useQuery<{ connectors: ModelConnectorDetail[] }>({ queryKey: ["/api/models/connectors"] });
   const { data: modelsData } = useQuery<{ providers: ModelProviderDetail[] }>({ queryKey: ["/api/models/available"] });
@@ -5839,8 +5793,7 @@ function ModelConnectorSection({ provider, title = "Model mapping" }: { provider
     <CardHeader><CardTitle className="text-base font-semibold">{title}</CardTitle></CardHeader>
     <CardContent><p className="text-sm text-muted-foreground">No connector is configured for this provider.</p></CardContent>
   </Card>;
-  if (isOpenAIProvider(provider)) return <OpenAIConnectorTree connector={connector} models={models} title={title} />;
-  if (provider === "claude-cli") return <ClaudeConnectorTree connector={connector} models={models} title={title} />;
+  if (isOpenAIProvider(provider) || provider === "claude-cli") return <ConnectorTierTree connector={connector} models={models} title={title} />;
   return <Card className="overflow-hidden min-w-0">
     <CardHeader><CardTitle className="text-base font-semibold">{title}</CardTitle></CardHeader>
     <CardContent className="space-y-3">
