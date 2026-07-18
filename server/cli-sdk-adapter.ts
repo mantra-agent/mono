@@ -1599,6 +1599,19 @@ export async function cliSdkCompletion(
     throw new Error(error);
   }
 
+  // Mirror anthropicCompletion: when jsonMode is requested, normalise the raw
+  // text through safeParseJSON (strips markdown fences, extracts embedded JSON)
+  // and re-serialise so callers always receive clean JSON.
+  if (options.jsonMode) {
+    const { safeParseJSON } = await import("./utils/json-parse");
+    const parsed = safeParseJSON(content, "cliSdkCompletion");
+    if (parsed.ok) {
+      content = JSON.stringify(parsed.data);
+    } else {
+      throw new Error(`CLI SDK JSON mode failed: ${parsed.error}. Model returned non-JSON: "${content.slice(0, 100)}"`);
+    }
+  }
+
   return {
     content,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
