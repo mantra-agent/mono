@@ -1432,6 +1432,26 @@ function ToolIconStrip({
   );
 }
 
+function visibleAncestorDepth(
+  step: ExecutionStep,
+  visibleGraphSteps: ExecutionStep[],
+): number {
+  const byId = new Map(
+    visibleGraphSteps.map((candidate) => [candidate.id, candidate]),
+  );
+  const visited = new Set<string>();
+  let depth = 0;
+  let parentId = step.parentId;
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId);
+    const parent = byId.get(parentId);
+    if (!parent) break;
+    depth += 1;
+    parentId = parent.parentId;
+  }
+  return depth;
+}
+
 function DiagnosticStepTree({
   step,
   allSteps,
@@ -1492,10 +1512,12 @@ function DiagnosticStepTree({
 
 export function ExecutionTimeline({
   steps,
+  graphSteps = steps,
   isStreaming,
   layer = 4,
 }: {
   steps: ExecutionStep[];
+  graphSteps?: ExecutionStep[];
   isStreaming: boolean;
   autoCollapse?: boolean;
   model?: string | null;
@@ -1508,6 +1530,12 @@ export function ExecutionTimeline({
 
   const layerSteps = filterStepsByLayer(steps, layer, isStreaming);
   const filteredSteps = layerSteps.filter(
+    (step) =>
+      step.diagnosticVisibility !== "hidden" &&
+      step.diagnosticVisibility !== "raw",
+  );
+  const graphLayerSteps = filterStepsByLayer(graphSteps, layer, isStreaming);
+  const visibleGraphSteps = graphLayerSteps.filter(
     (step) =>
       step.diagnosticVisibility !== "hidden" &&
       step.diagnosticVisibility !== "raw",
@@ -1568,11 +1596,12 @@ export function ExecutionTimeline({
             <DiagnosticStepTree
               key={step.id}
               step={step}
-              allSteps={steps}
+              allSteps={graphSteps}
               visibleSteps={filteredSteps}
               layer={layer}
               iconOverrides={iconOverrides}
               summaryOnly={summaryOnly}
+              depth={visibleAncestorDepth(step, visibleGraphSteps)}
             />
           );
         if (step.type === "thinking") {
@@ -1594,11 +1623,12 @@ export function ExecutionTimeline({
             <DiagnosticStepTree
               key={step.id}
               step={step}
-              allSteps={steps}
+              allSteps={graphSteps}
               visibleSteps={filteredSteps}
               layer={layer}
               iconOverrides={iconOverrides}
               summaryOnly={summaryOnly}
+              depth={visibleAncestorDepth(step, visibleGraphSteps)}
             />
           );
         return null;
@@ -1894,80 +1924,22 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
 
   flushTimeline();
 
-  // The executor normally persists exactly the content emitted through the
-  // chronology. A terminal/crash path can append a suffix after the final
-  // chronology flush, so preserve the established boundaries and add only that
-  // missing suffix. A genuinely different finalized body remains authoritative.
   const persistedContent = message.content || "";
-  if (persistedContent.startsWith(chronologyContent)) {
-    const suffix = persistedContent.slice(chronologyContent.length);
-    if (suffix) {
-      const lastContentIndex = segments.findLastIndex(
-        (segment) => segment.type === "content",
-      );
-      if (lastContentIndex >= 0) {
-        const lastContent = segments[lastContentIndex];
-        if (lastContent.type === "content") {
-          segments[lastContentIndex] = {
-            type: "content",
-            content: lastContent.content + suffix,
-          };
-        }
-      } else {
-        segments.push({ type: "content", content: suffix });
-      }
-    }
-  } else if (persistedContent !== chronologyContent) {
-    const firstContentIndex = segments.findIndex(
-      (segment) => segment.type === "content",
-    );
-    const withoutChronologyContent = segments.filter(
+  if (persistedContent !== chronologyContent) {
+    // New writes align these values at the persistence boundary. Older rows can
+    // disagree, but the client cannot truthfully infer where rewritten prose
+    // belonged. Degrade deterministically to diagnostics followed by the
+    // authoritative persisted response instead of inventing false chronology.
+    const diagnosticSegments = segments.filter(
       (segment) => segment.type !== "content",
     );
-    withoutChronologyContent.splice(
-      firstContentIndex >= 0 ? firstContentIndex : withoutChronologyContent.length,
-      0,
-      { type: "content", content: persistedContent },
-    );
-    return withoutChronologyContent;
+    if (persistedContent) {
+      diagnosticSegments.push({ type: "content", content: persistedContent });
+    }
+    return diagnosticSegments;
   }
 
   return segments;
-}
-
-function finalizedSegmentSignature(segments: MessageSegment[]): {
-  content: string;
-  toolOrder: string[];
-} {
-  let content = "";
-  const toolOrder: string[] = [];
-  for (const segment of segments) {
-    if (segment.type === "content") {
-      content += segment.content;
-      continue;
-    }
-    for (const step of segment.steps) {
-      if (step.type === "tool_call") {
-        toolOrder.push(step.toolCallId || step.toolName || step.id);
-      }
-    }
-  }
-  return { content, toolOrder };
-}
-
-function finalizedSegmentsAreEquivalent(
-  streamed: MessageSegment[],
-  persisted: MessageSegment[],
-): boolean {
-  const streamedSignature = finalizedSegmentSignature(streamed);
-  const persistedSignature = finalizedSegmentSignature(persisted);
-  return (
-    streamedSignature.content === persistedSignature.content &&
-    streamedSignature.toolOrder.length === persistedSignature.toolOrder.length &&
-    streamedSignature.toolOrder.every(
-      (toolId, index) => toolId === persistedSignature.toolOrder[index],
-    )
-  );
 }
 
 const IMAGE_EXTS = new Set([
@@ -2501,7 +2473,6 @@ export const ChatTurn = memo(function ChatTurn({
     !isSystemPrompt &&
     !!streaming &&
     streaming.segments.length > 0;
-  const settledStreamingSegmentsRef = useRef<MessageSegment[] | null>(null);
   const [copied, setCopied] = useState(false);
   const turnRootRef = useRef<HTMLDivElement>(null);
   const previousTurnTraceRef = useRef<{
@@ -2521,28 +2492,10 @@ export const ChatTurn = memo(function ChatTurn({
   });
   const shouldStripTags =
     !isUser && !isSystemPrompt && (layer === 1 || !tagPref?.showExpressionTags);
-  const savedSegments = segmentsFromSavedMessage(message);
-  if (hasStreamingSegments && streaming?.source === null) {
-    settledStreamingSegmentsRef.current = streaming.segments;
-  }
-  const settledStreamingSegments = settledStreamingSegmentsRef.current;
-  const canPreserveSettledSegments =
-    !hasStreamingSegments &&
-    !!settledStreamingSegments &&
-    finalizedSegmentsAreEquivalent(settledStreamingSegments, savedSegments);
-  if (
-    !hasStreamingSegments &&
-    settledStreamingSegments &&
-    !canPreserveSettledSegments
-  ) {
-    settledStreamingSegmentsRef.current = null;
-  }
   const segments: MessageSegment[] =
     hasStreamingSegments && streaming
       ? streaming.segments
-      : canPreserveSettledSegments && settledStreamingSegments
-        ? settledStreamingSegments
-        : savedSegments;
+      : segmentsFromSavedMessage(message);
 
   if (!isUser && !isSystemPrompt) {
     log.verbose(

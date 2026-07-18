@@ -88,6 +88,14 @@ export interface SegmentStreamProps {
  */
 export function SegmentStream({ segments, isStreaming, layer, stripTags = false, suppressTrailingThinking = false, contentClassName, contentCompact = false, planSessionId }: SegmentStreamProps) {
   const renderSegments = useMemo(() => normalizeRenderSegments(segments, layer), [segments, layer]);
+  const graphSteps = useMemo(() => {
+    const byId = new Map<string, Extract<MessageSegment, { type: "timeline" }>["steps"][number]>();
+    for (const segment of segments) {
+      if (segment.type !== "timeline") continue;
+      for (const step of segment.steps) byId.set(step.id, step);
+    }
+    return [...byId.values()];
+  }, [segments]);
   const hasContent = renderSegments.some(seg => seg.type === "content" && seg.content.length > 0);
 
   useEffect(() => {
@@ -131,6 +139,7 @@ export function SegmentStream({ segments, isStreaming, layer, stripTags = false,
               <ExecutionTimeline
                 key={`timeline-${seg.sourceIndexes.join("-")}`}
                 steps={seg.segment.steps}
+                graphSteps={graphSteps}
                 isStreaming={isStreaming}
                 autoCollapse
                 layer={layer}
