@@ -8,6 +8,31 @@ import { storage } from "../storage";
  * Meeting ownership is captured durably at session creation, so transports
  * never have to infer identity from an unauthenticated provider callback.
  */
+export interface MeetingOwnerIdentity {
+  ownerUserId: string;
+  accountId: string;
+}
+
+export async function runWithMeetingOwnerIdentity<T>(
+  identity: MeetingOwnerIdentity,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const current = getCurrentPrincipal();
+  if (current?.actorType === "user") {
+    if (current.userId !== identity.ownerUserId || current.accountId !== identity.accountId) {
+      throw new Error("Meeting session is not owned by the current principal");
+    }
+    return operation();
+  }
+
+  const user = await storage.getUser(identity.ownerUserId);
+  if (!user) throw new Error(`Meeting owner ${identity.ownerUserId} not found`);
+  return runWithPrincipal(
+    createUserPrincipalFromUser(user, identity.accountId),
+    operation,
+  );
+}
+
 export async function runWithMeetingOwnerPrincipal<T>(
   meeting: MeetingSessionMeta,
   operation: () => Promise<T>,
@@ -19,22 +44,5 @@ export async function runWithMeetingOwnerPrincipal<T>(
       `Meeting owner context is incomplete: ownerUserId=${ownerUserId ?? "none"} accountId=${accountId ?? "none"}`,
     );
   }
-
-  const current = getCurrentPrincipal();
-  if (current?.actorType === "user") {
-    if (current.userId !== ownerUserId || current.accountId !== accountId) {
-      throw new Error("Meeting session is not owned by the current principal");
-    }
-    return operation();
-  }
-
-  const user = await storage.getUser(ownerUserId);
-  if (!user) {
-    throw new Error(`Meeting owner ${ownerUserId} not found`);
-  }
-
-  return runWithPrincipal(
-    createUserPrincipalFromUser(user, accountId),
-    operation,
-  );
+  return runWithMeetingOwnerIdentity({ ownerUserId, accountId }, operation);
 }

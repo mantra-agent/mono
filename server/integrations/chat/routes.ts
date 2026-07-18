@@ -60,7 +60,7 @@ import {
   type MessageSpeakerMeta,
   type QuestionResponseMeta,
 } from "@shared/models/chat";
-import { db } from "../../db";
+import { BOOT_ID, db } from "../../db";
 import { and, eq, inArray, isNull, notInArray, sql as drizzleSql, type SQL } from "drizzle-orm";
 import { combineWithVisibleScope, visibleScopePredicate } from "../../scoped-storage";
 import { libraryPages } from "@shared/models/info";
@@ -1302,7 +1302,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       status: "started" | "done",
       elapsedMs?: number,
     ) => void,
-    currentMessageId?: string,
+    currentMessageIds?: string[],
   ): Promise<{
     messages: ExecutorMessage[];
     conversationHistory: ConversationHistoryMessage[];
@@ -1338,6 +1338,13 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     const endLoad = beginSubStep("ctx_history_load");
     chatLog.log(`loadHistory START sessionId=${sessionId}`);
     let existingMessages = await chatStorage.getMessagesBySession(sessionId);
+    if (currentMessageIds?.length) {
+      const boundary = existingMessages.reduce(
+        (latest, message, index) => currentMessageIds.includes(message.id) ? Math.max(latest, index) : latest,
+        -1,
+      );
+      if (boundary >= 0) existingMessages = existingMessages.slice(0, boundary + 1);
+    }
     chatLog.log(
       `loadHistory DONE messageCount=${existingMessages.length} elapsed=${Date.now() - histStart}ms sessionId=${sessionId}`,
     );
@@ -1373,8 +1380,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           msg.role === "user" && msg.speaker?.label?.trim()
             ? `[${msg.speaker.label.trim()}] ${baseContent}`
             : baseContent;
-        const isCurrentMessage = currentMessageId
-          ? msg.id === currentMessageId
+        const isCurrentMessage = currentMessageIds?.length
+          ? currentMessageIds.includes(msg.id)
           : i === sourceLastUserIdx
             && (baseContent === enrichedContent
               || attributedContent === enrichedContent);
@@ -1738,7 +1745,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           enrichedContent,
           resolvedModel,
           onProgress,
-          currentMessageId,
+          currentMessageIds,
         );
       }
     }
@@ -1835,7 +1842,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     onResponse?: (content: string) => Promise<void> | void,
     registeredRunGeneration?: number,
     acceptedLease?: ChatRunLease,
-    currentMessageId?: string,
+    currentMessageIds?: string[],
+    onSettled?: (result: {
+      status: "completed" | "failed";
+      assistantMessageId?: string;
+      error?: string;
+    }) => Promise<void> | void,
   ) {
     const lease = acceptedLease ?? chatRunLifecycle.begin(sessionId, sessionKey);
     let selectedAutoTier = autoTier;
@@ -1909,6 +1921,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     let assistantDraftContent = "";
     let assistantDraftThinking = "";
     let assistantDraftCheckpointPending: NodeJS.Timeout | null = null;
+    let settlement: { status: "completed" | "failed"; assistantMessageId?: string; error?: string } | null = null;
 
     const diagnosticRunId = `pre-run-${lease.generation}-${randomUUID().slice(0, 8)}`;
     const diagnosticTurnId = `system-turn-${diagnosticRunId}`;
@@ -2164,7 +2177,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         content,
         chatModel,
         onCtxProgress,
-        currentMessageId,
+        currentMessageIds,
       );
       chatRunLifecycle.assertCurrent(lease);
       const contextEndedAt = Date.now();
@@ -2602,6 +2615,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         outputTokens: turnTokenUsage.outputTokens,
         totalTokens: turnTokenUsage.totalTokens,
       });
+      settlement = {
+        status: result.status === "succeeded" ? "completed" : "failed",
+        assistantMessageId: msg!.id,
+        ...(result.status === "succeeded" ? {} : { error: result.error || result.terminationReason || "executor_failed" }),
+      };
       } // end if (!isSuperseded)
     } catch (error: unknown) {
       if (error instanceof ChatRunInvalidatedError) {
@@ -2615,6 +2633,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             chatLog.warn(`superseded draft delete failed sessionId=${sessionId}: ${deleteErr instanceof Error ? deleteErr.message : String(deleteErr)}`),
           );
         }
+        settlement = { status: "failed", error: error.reason };
         return;
       }
       settleDiagnosticTurn("error", "processing error");
@@ -2693,6 +2712,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         );
       }
 
+      settlement = {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
+
       await chatStorage
         .updateSessionStatus(sessionId, "failed")
         .catch((err) =>
@@ -2702,6 +2726,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           ),
         );
     } finally {
+      if (onSettled) {
+        await onSettled(settlement || { status: "failed", error: "run_did_not_settle" }).catch((error) =>
+          chatLog.error(`stream settlement callback failed sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`),
+        );
+      }
       const settledCurrent = chatRunLifecycle.finish(lease);
       chatLog.log(
         `stream cleanup sessionId=${sessionId} generation=${lease.generation} current=${settledCurrent}`,
@@ -2967,6 +2996,24 @@ export async function registerChatRoutes(app: Express): Promise<void> {
   // M0/M1 meeting spine — canonical meeting ingest.
   // Single mutation path for meeting transcript lines and bot status updates.
   // Shared by the dev loopback transport and the Recall.ai webhook receiver.
+  const { createMeetingTurnCoordinator } = await import("../../meeting/turn-coordinator");
+  const meetingTurnCoordinator = createMeetingTurnCoordinator(async (request) => {
+    await processChatStream(
+      request.sessionKey,
+      request.sessionId,
+      request.content,
+      undefined,
+      undefined,
+      undefined,
+      request.sayAloud,
+      request.onResponse,
+      request.runGeneration,
+      undefined,
+      request.currentMessageIds,
+      request.onSettled,
+    );
+  });
+
   async function ingestMeetingEvent(event: {
     sessionId?: string;
     create?: {
@@ -2985,6 +3032,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     };
     turnId?: string;
     text?: string;
+    participationMode?: "contextual" | "always";
+    executionAffinityBootId?: string;
     botStatus?: MeetingBotStatus;
     statusDetail?: string;
     stt?: {
@@ -3156,161 +3205,72 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }
     kickFinalization();
 
-    const persistedMessage = await chatStorage.createMeetingUserMessage(
+    const sourceTurnId = event.turnId || `${sessionId}:${Date.now()}:${randomUUID().slice(0, 8)}`;
+    const transcriptAcceptance = await chatStorage.createMeetingUserMessage(
       sessionId,
       event.text,
       resolution.speaker,
-      event.turnId,
+      sourceTurnId,
     );
-    // A replayed provider turn has already crossed the canonical persistence
-    // boundary. Do not publish it, infer addressing again, or start another run.
-    if (!persistedMessage) {
-      return {
-        ok: true,
+    if (transcriptAcceptance.outcome === "session_not_found") {
+      return { ok: false, status: 404, error: "Meeting session disappeared during transcript persistence" };
+    }
+    const persistedMessage = transcriptAcceptance.message;
+    // Provider retries must cross the queue boundary again. Queue enrollment is
+    // idempotent on sourceTurnId, so a crash between these two durable writes
+    // repairs itself on replay instead of stranding a transcript-only turn.
+    if (transcriptAcceptance.outcome === "created") {
+      publishChatStreamEvent(sessionKey, sessionId, {
+        type: "user_message",
+        content: event.text,
         sessionId,
-        sessionKey,
-        speaker: resolution.speaker,
-        queued: false,
-      };
+        title: session.title || undefined,
+      });
     }
 
-    publishChatStreamEvent(sessionKey, sessionId, {
-      type: "user_message",
-      content: event.text,
-      sessionId,
-      title: session.title || undefined,
-    });
-
-    const { inferMeetingParticipation } = await import("../../meeting/addressed-turn");
-    const turnId = event.turnId || persistedMessage?.id || `${sessionId}:${Date.now()}`;
-    const participationDecision = await inferMeetingParticipation({
+    const { appendMeetingTurnFragment } = await import("../../meeting/turn-queue");
+    const assembled = await appendMeetingTurnFragment({
       sessionId,
       sessionKey,
-      turnId,
-      currentMessageId: persistedMessage.id,
-      text: event.text,
+      speakerKey: resolution.speaker.key || resolution.speaker.personId || resolution.speaker.label.toLowerCase(),
       speakerLabel: resolution.speaker.label,
-      participants: resolution.participants,
+      participationMode: event.participationMode,
+      executionAffinityBootId: event.executionAffinityBootId,
+      text: event.text,
+      sourceTurnId,
+      sourceMessageId: persistedMessage.id,
     });
-    chatLog.log(
-      `meeting participation decision sessionId=${sessionId} turnId=${turnId} messageId=${persistedMessage.id} outcome=${participationDecision.outcome} shouldRespond=${participationDecision.shouldRespond} reason=${participationDecision.reason} confidence=${participationDecision.confidence} latencyMs=${participationDecision.latencyMs} classifierFailure=${participationDecision.classifierFailure || "none"} invocationKind=${participationDecision.invocationKind || "none"} invocationAlias=${participationDecision.invocationAlias || "none"} currentTurnIsQuestion=${participationDecision.evidence?.currentTurnIsQuestion ?? "unknown"} agentAskedQuestion=${participationDecision.evidence?.agentAskedQuestion ?? "unknown"} speakerContinuesAgentExchange=${participationDecision.evidence?.speakerContinuesAgentExchange ?? "unknown"} msSinceAgentSpoke=${participationDecision.evidence?.msSinceAgentSpoke ?? "unknown"} lastAssistantMessageId=${participationDecision.evidence?.lastAssistantMessageId ?? "none"} lastAssistantActivityAt=${participationDecision.evidence?.lastAssistantActivityAt ?? "none"}`,
+    chatLog.debug(
+      `meeting turn buffered sessionId=${sessionId} turnId=${assembled.id} revision=${assembled.revision} fragments=${assembled.sourceTurnIds.length} readyAt=${assembled.readyAt.toISOString()}`,
     );
-
-    const shouldTriggerParticipation =
-      participationDecision.shouldRespond &&
-      !!participationDecision.prompt;
-
-    // Passive transcript remains context only. The participation decision is
-    // the sole path that may start an agent run without composer interaction.
-    if (!shouldTriggerParticipation) {
-      return {
-        ok: true,
-        sessionId,
-        sessionKey,
-        speaker: resolution.speaker,
-        queued: false,
-      };
-    }
-
-    // If a run is already active, the transcript line is persisted and
-    // visible; the agent finishes its current turn (no abort in meetings).
-    const isInFlight =
-      chatRunLifecycle.current(sessionId) !== undefined ||
-      agentExecutor.hasActiveRunForSession(sessionId);
-    if (isInFlight) {
-      chatLog.log(
-        `meeting ingest: run in flight sessionId=${sessionId}, message queued`,
-      );
-      return {
-        ok: true,
-        sessionId,
-        sessionKey,
-        speaker: resolution.speaker,
-        queued: true,
-      };
-    }
-
-    let runGeneration: number | undefined;
-    try {
-      const { sessionManager } = await import("../../session-manager");
-      runGeneration = sessionManager.registerSession(sessionId, sessionKey, "meeting");
-    } catch (regErr) {
-      chatLog.warn(
-        `sessionManager.registerSession failed: ${regErr instanceof Error ? regErr.message : String(regErr)}`,
-      );
-    }
-    await chatStorage
-      .updateSessionStatus(sessionId, "streaming")
-      .catch((err) =>
-        chatLog.warn(
-          `status update to streaming failed sessionId=${sessionId}`,
-          err,
-        ),
-      );
-
-    // The agent sees the attributed line; persisted content stays raw.
-    let streamContent = `[${resolution.speaker.label}] ${event.text}`;
-    let sayAddressedAloud = false;
-    if (shouldTriggerParticipation) {
-      const { claimAddressedMeetingTurn } = await import("../../meeting/addressed-turn");
-      const claim = await claimAddressedMeetingTurn(sessionId, turnId);
-      chatLog.log(
-        `meeting address claim sessionId=${sessionId} messageId=${persistedMessage.id} decision=${claim}`,
-      );
-      if (claim === "claimed") {
-        streamContent = `[${resolution.speaker.label}] ${participationDecision.prompt}`;
-        sayAddressedAloud = true;
-      }
-    }
-
-    processChatStream(
-      sessionKey,
-      sessionId,
-      streamContent,
-      undefined,
-      undefined,
-      undefined,
-      sayAddressedAloud,
-      undefined,
-      runGeneration,
-      undefined,
-      persistedMessage.id,
-    ).catch((err) => {
-      chatLog.error("meeting ingest processChatStream error:", err);
-    });
+    meetingTurnCoordinator.schedule();
 
     return {
       ok: true,
       sessionId,
       sessionKey,
       speaker: resolution.speaker,
-      queued: false,
+      queued: true,
     };
   }
 
-  // External audio transports reuse the canonical session → executor spine.
+  // External audio transports reuse the same durable turn intake. Phone
+  // playback remains transport-owned, so the queue worker speaks only through
+  // the registered callback for that live connection.
   const { registerPhoneRoutes } = await import("../../phone/routes");
   registerPhoneRoutes(app, {
     ingestPhoneTurn: async (event) => {
+      meetingTurnCoordinator.registerPhoneResponse(event.sessionId, event.onResponse);
       const result = await ingestMeetingEvent({
         sessionId: event.sessionId,
         speakerLabel: event.speakerLabel,
         text: event.text,
+        participationMode: "always",
+        executionAffinityBootId: BOOT_ID,
       });
-      if (result.ok && !result.queued) {
-        processChatStream(
-          result.sessionKey,
-          result.sessionId,
-          `[${event.speakerLabel}] ${event.text}`,
-          undefined,
-          undefined,
-          undefined,
-          false,
-          event.onResponse,
-        ).catch((err) => chatLog.error(`phone ingest processChatStream error: ${err instanceof Error ? err.message : String(err)}`));
-      }
       return result;
     },
+    releasePhoneTurn: (sessionId) => meetingTurnCoordinator.unregisterPhoneResponse(sessionId),
   });
 
   // Recall.ai webhook receiver — registered with the canonical ingest path.
