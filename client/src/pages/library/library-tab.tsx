@@ -110,11 +110,11 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
     });
   }, []);
 
-  const selectPage = useCallback((id: string) => {
+  const selectPage = useCallback((id: string, slug?: string) => {
     setSelectedId(id);
-    const page = pages.find(p => p.id === id);
-    if (page?.slug) {
-      window.location.hash = `library?page=${page.slug}`;
+    const resolvedSlug = slug || pages.find(p => p.id === id)?.slug;
+    if (resolvedSlug) {
+      window.location.hash = `library?page=${resolvedSlug}`;
     }
   }, [pages]);
 
@@ -206,7 +206,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
       if (opts?.parentId) {
         setExpandedIds(prev => { const next = new Set(prev); next.add(opts.parentId!); return next; });
       }
-      selectPage(page.id);
+      selectPage(page.id, page.slug);
     },
   });
 
