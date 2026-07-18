@@ -1,6 +1,6 @@
 // Use createLogger for logging ONLY
 import { createLogger } from "@/lib/logger";
-import { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useFocusContext } from "@/hooks/use-focus-context";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -11,7 +11,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -55,6 +54,7 @@ import {
   BreadcrumbList,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
   ChevronLeft,
   ChevronRight,
@@ -98,6 +98,7 @@ import {
   Settings,
   Zap,
   MoreHorizontal,
+  SlidersHorizontal,
   Share2,
   GitBranch,
   Users,
@@ -159,7 +160,6 @@ const WORKING_TREE_ROW_CLASS = "group relative flex items-center gap-2 rounded-m
 const WORKING_TREE_SELECTED_CLASS = "bg-accent text-foreground";
 const WORKING_TREE_IDLE_CLASS = "text-muted-foreground hover:bg-accent/70 hover:text-foreground";
 
-const TagsContent = lazy(() => import("@/pages/tags"));
 
 interface WorkspaceItem {
   name: string;
@@ -1738,6 +1738,7 @@ function VnextJournalTab() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedClaimId, setSelectedClaimId] = useState<number | null>(null);
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
 
   useFocusContext(
     selectedClaimId !== null
@@ -1785,21 +1786,31 @@ function VnextJournalTab() {
     enabled: selectedClaimId !== null,
   });
 
+  const filteredClaims = useMemo(() => {
+    if (!searchQuery.trim()) return claims;
+    const tokens = searchQuery.toLowerCase().trim().split(/\s+/);
+    return claims.filter(claim => {
+      const haystack = [
+        claim.title,
+        claim.content,
+        claim.claimType,
+        claim.lifecycleStage,
+        ...(claim.topics ?? []),
+      ].filter(Boolean).join(" ").toLowerCase();
+      return tokens.every(t => haystack.includes(t));
+    });
+  }, [claims, searchQuery]);
+
   const claimsByDay = useMemo(() => {
     const grouped = new Map<string, VnextClaim[]>();
-    for (const claim of claims) {
+    for (const claim of filteredClaims) {
       if (!claim.createdAt) continue;
       const day = eventDateKeyInTz(claim.createdAt, timezone);
       if (!grouped.has(day)) grouped.set(day, []);
       grouped.get(day)!.push(claim);
     }
     return grouped;
-  }, [claims, timezone]);
-
-  const summary = useMemo(() => claims.reduce<Record<string, number>>((counts, claim) => {
-    counts[claim.claimType] = (counts[claim.claimType] ?? 0) + 1;
-    return counts;
-  }, {}), [claims]);
+  }, [filteredClaims, timezone]);
 
   useEffect(() => {
     const days = Array.from(claimsByDay.keys()).sort().reverse();
@@ -1820,45 +1831,63 @@ function VnextJournalTab() {
   return (
     <div className={cn("flex flex-1", MEMORY_SHELL_CLASS)} data-testid="log-tab">
       <div className={cn("w-80 shrink-0 border-r flex flex-col overflow-hidden", MEMORY_PANEL_CLASS)}>
-        <div className={cn("flex items-center justify-between", MEMORY_PANEL_HEADER_CLASS)}>
-          <div className="flex items-center gap-2" data-testid="log-granularity-controls">
-            {(["day", "week", "month", "year"] as LogGranularity[]).map(g => (
-              <Button
-                key={g}
-                variant={granularity === g ? "default" : "ghost"}
-                size="sm"
-                className="text-xs capitalize"
-                onClick={() => setGranularity(g)}
-                data-testid={`log-granularity-${g}`}
-              >
-                {g}
-              </Button>
-            ))}
+        <div className="border-b border-card-border p-2">
+          <div className="flex items-center gap-1">
+            <div className="relative flex-1 min-w-0">
+              <HierarchySearchInput
+                value={searchQuery}
+                onChange={setSearchQuery}
+                inputTestId="input-search-journal"
+                clearTestId="button-clear-journal-search"
+                ariaLabel="Search journal"
+              />
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0 shrink-0" title="Journal range" data-testid="button-journal-range">
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-28">
+                {(["day", "week", "month", "year"] as LogGranularity[]).map(g => (
+                  <DropdownMenuItem
+                    key={g}
+                    onClick={() => setGranularity(g)}
+                    className={cn("text-xs", granularity === g && "font-semibold text-foreground")}
+                    data-testid={`menu-journal-${g}`}
+                  >
+                    {g.toUpperCase()}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
-          <div className="flex items-center gap-1" data-testid="log-nav-controls">
+          <div className="flex items-center gap-1 mt-1" data-testid="log-nav-controls">
             <Button
               variant="ghost"
               size="icon"
+              className="h-6 w-6"
               onClick={() => setCurrentDate(navigateDate(currentDate, granularity, -1))}
               data-testid="log-nav-prev"
             >
-              <ChevronLeft className="h-4 w-4" />
+              <ChevronLeft className="h-3.5 w-3.5" />
             </Button>
-            <span className="text-sm font-medium min-w-[160px] text-center" data-testid="log-period-label">
+            <span className="text-xs font-medium flex-1 text-center text-muted-foreground" data-testid="log-period-label">
               {formatPeriodLabel(currentDate, granularity, timezone)}
             </span>
             <Button
               variant="ghost"
               size="icon"
+              className="h-6 w-6"
               onClick={() => setCurrentDate(navigateDate(currentDate, granularity, 1))}
               data-testid="log-nav-next"
             >
-              <ChevronRight className="h-4 w-4" />
+              <ChevronRight className="h-3.5 w-3.5" />
             </Button>
             <Button
               variant="ghost"
               size="sm"
-              className="text-xs ml-2"
+              className="text-xs h-6 px-2"
               onClick={() => setCurrentDate(new Date())}
               data-testid="log-nav-today"
             >
@@ -1867,21 +1896,7 @@ function VnextJournalTab() {
           </div>
         </div>
 
-        {claims.length > 0 && (
-          <div className="flex items-center gap-3 px-4 py-2 border-b border-card-border bg-muted/10 text-xs text-muted-foreground" data-testid="log-summary-bar">
-            <span className="font-medium" data-testid="log-total-events">{claims.length} memories</span>
-            {Object.entries(summary).map(([type, count]) => (
-              <span key={type} className="flex items-center gap-1" data-testid={`log-summary-type-${type}`}>
-                <Badge variant="secondary" className="text-xs px-1.5 py-0">
-                  {claimTypeLabel(type)}
-                </Badge>
-                {count}
-              </span>
-            ))}
-          </div>
-        )}
-
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto scrollbar-thin">
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -1889,50 +1904,48 @@ function VnextJournalTab() {
           ) : claimsByDay.size === 0 ? (
             <div className={MEMORY_EMPTY_CLASS} data-testid="log-empty-state">
               <Brain className="h-8 w-8 mb-3 opacity-40" />
-              <p className="text-sm font-medium">No memories created in this period</p>
-              <p className="text-xs mt-1">Navigate to a different time range to explore memory history</p>
+              <p className="text-sm font-medium">No memories in this period</p>
+              <p className="text-xs mt-1">Navigate to a different time range</p>
             </div>
           ) : (
-            <div className="px-4 py-2">
+            <div className="p-1.5 space-y-0.5">
               {Array.from(claimsByDay.entries())
                 .sort(([a], [b]) => b.localeCompare(a))
                 .map(([day, dayClaims]) => {
                   const isExpanded = expandedDays.has(day);
                   return (
-                    <div key={day} className="mb-2" data-testid={`log-day-${day}`}>
+                    <div key={day} data-testid={`log-day-${day}`}>
                       <button
-                        className="flex items-center gap-2 w-full text-left py-1.5 px-2 rounded hover:bg-accent/50 transition-colors"
+                        className="flex items-center gap-1.5 w-full text-left py-1 px-2 rounded-md hover:bg-accent/50 transition-colors text-xs font-bold text-muted-foreground uppercase tracking-wider"
                         onClick={() => toggleDay(day)}
                         data-testid={`log-day-toggle-${day}`}
                       >
-                        {isExpanded ? (
-                          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                        ) : (
-                          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                        )}
-                        <span className="text-sm font-medium">{formatDayHeader(day, timezone)}</span>
-                        <Badge variant="secondary" className="text-xs font-mono px-1 py-0 ml-auto">
-                          {dayClaims.length}
-                        </Badge>
+                        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", isExpanded && "rotate-90")} />
+                        <span className="flex-1">{formatDayHeader(day, timezone)}</span>
+                        <span className="font-mono text-muted-foreground/60">{dayClaims.length}</span>
                       </button>
                       {isExpanded && (
-                        <div className="ml-6 border-l border-card-border pl-3 mt-1 space-y-1">
+                        <div className="ml-3 space-y-px">
                           {dayClaims.map(claim => (
                             <button
                               key={claim.id}
-                              className={cn("flex items-start gap-2 w-full text-left py-1.5 px-2", MEMORY_LIST_ROW_CLASS, selectedClaimId === claim.id && MEMORY_SELECTED_ROW_CLASS)}
+                              className={cn(
+                                "flex items-start gap-2 w-full text-left py-1.5 px-2 rounded-md text-sm transition-colors",
+                                selectedClaimId === claim.id
+                                  ? "bg-accent text-foreground"
+                                  : "text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+                              )}
                               onClick={() => setSelectedClaimId(claim.id)}
                               data-testid={`log-claim-${claim.id}`}
                             >
-                              <span className="text-xs text-muted-foreground mt-0.5 shrink-0 w-12">
+                              <span className="text-xs mt-0.5 shrink-0 w-10 opacity-60">
                                 {claim.createdAt ? eventTimeInTz(claim.createdAt, timezone) : ""}
                               </span>
                               <VnextClaimTypeIcon claimType={claim.claimType} />
                               <div className="min-w-0 flex-1">
-                                <p className="text-xs font-medium truncate" data-testid={`log-claim-title-${claim.id}`}>
+                                <p className="text-xs font-medium truncate">
                                   {claim.title || firstLine(claim.content, 70)}
                                 </p>
-                                <p className="text-xs text-muted-foreground truncate">{lifecycleLabel(claim.lifecycleStage)}</p>
                               </div>
                             </button>
                           ))}
@@ -3332,7 +3345,7 @@ export default function MemoryPageFull() {
   const [graphFullscreenOpen, setGraphFullscreenOpen] = useState(false);
 
   usePageHeader({
-    title: activeTab === "memories" ? "Layers" : activeTab === "graph" ? "Memory Graph" : "Memory",
+    title: activeTab === "memories" ? "Layers" : activeTab === "graph" ? "Memory Graph" : activeTab === "maintenance" ? "Journal" : "Memory",
     tabs: memoryTabs,
     activeTab,
     onTabChange: setActiveTab,
@@ -3355,22 +3368,7 @@ export default function MemoryPageFull() {
       {activeTab === "sources" && <LogTab initialEntryId={initialEntryId} />}
       {activeTab === "extraction" && <QueryTab />}
       {activeTab === "graph" && <GraphTab onOpenFullscreen={() => setGraphFullscreenOpen(true)} />}
-      {activeTab === "maintenance" && (
-        <Tabs defaultValue="events" className="flex flex-1 min-h-0 flex-col">
-          <TabsList className="mx-3 mt-3 w-fit">
-            <TabsTrigger value="events" data-testid="tab-memory-maintenance-events">Events</TabsTrigger>
-            <TabsTrigger value="topics" data-testid="tab-memory-maintenance-topics">Topics</TabsTrigger>
-          </TabsList>
-          <TabsContent value="events" className="min-h-0 flex-1 mt-3">
-            <VnextJournalTab />
-          </TabsContent>
-          <TabsContent value="topics" className="min-h-0 flex-1 mt-3 overflow-hidden">
-            <Suspense fallback={<div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}>
-              <TagsContent embedded />
-            </Suspense>
-          </TabsContent>
-        </Tabs>
-      )}
+      {activeTab === "maintenance" && <VnextJournalTab />}
     </div>
   );
 }
