@@ -30,6 +30,8 @@ export interface VoiceSession {
   cachedSystemPrompt: string | null;
   cachedSystemPromptFocusKey: string | null;
   cachedAt: number;
+  /** Per-process memo: the authoritative orientation check (real session title) already passed for this chat session. */
+  orientationEnsured: boolean;
   toolCalls: VoiceToolCall[];
   turnCount: number;
   startedAt: number;

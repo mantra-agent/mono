@@ -244,6 +244,7 @@ export function createVoiceSession(
     cachedSystemPrompt: preCachedSystemPrompt || null,
     cachedSystemPromptFocusKey: null,
     cachedAt: preCachedSystemPrompt ? Date.now() : 0,
+    orientationEnsured: false,
     toolCalls: [],
     turnCount: 0,
     startedAt: Date.now(),
