@@ -9,21 +9,19 @@ const log = createLogger("QuestionResponse");
 
 export function useQuestionResponse({
   sessionId,
-  enabled,
   busy,
   pendingTurn,
   setPendingTurn,
   toast,
 }: {
   sessionId: string | null;
-  enabled: boolean;
   busy: boolean;
   pendingTurn: PendingChatTurn | null;
   setPendingTurn?: (turn: PendingChatTurn | null) => void;
   toast: ReturnType<typeof useToast>["toast"];
 }) {
   return useCallback(async (questionResponse: QuestionResponseMeta): Promise<boolean> => {
-    if (!sessionId || !enabled || busy || pendingTurn) return false;
+    if (!sessionId || busy || pendingTurn) return false;
 
     const clientTurnId = `question-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const submittedAt = new Date().toISOString();
@@ -71,5 +69,5 @@ export function useQuestionResponse({
       });
       return false;
     }
-  }, [sessionId, enabled, busy, pendingTurn, setPendingTurn, toast]);
+  }, [sessionId, busy, pendingTurn, setPendingTurn, toast]);
 }

@@ -30,6 +30,7 @@ import {
   Search,
   User,
   Pin,
+  MessageCircleQuestion,
   MessageSquare,
   Radio,
   Timer,
@@ -72,6 +73,7 @@ export function groupSessions(sessions: ChatSession[], opts?: { activeVoiceSessi
   const stickyIds = opts?.recentStickyIds ?? new Set<string>();
 
   const pinned: ChatSession[] = [];
+  const review: ChatSession[] = [];
   const active: ChatSession[] = [];
   const recentUrgent: ChatSession[] = []; // "Recent" — unread or < 1h old
   const today: ChatSession[] = [];
@@ -81,6 +83,12 @@ export function groupSessions(sessions: ChatSession[], opts?: { activeVoiceSessi
   const archive: ChatSession[] = [];
 
   for (const conv of sorted) {
+    // Blocked on an unanswered inline question: the session needs Ray before it
+    // can proceed, so it outranks Active. Archived sessions stay archived.
+    if (conv.awaitingQuestionResponse && !conv.archivedAt) {
+      review.push(conv);
+      continue;
+    }
     // Streaming, actively running, plan-executing, or voice-connected sessions go to "Active".
     // hasActivePlan keeps a session in Active during the gap between plan steps,
     // when no child session is streaming yet.
@@ -127,6 +135,7 @@ export function groupSessions(sessions: ChatSession[], opts?: { activeVoiceSessi
   }
 
   const groups: SessionGroup[] = [];
+  if (review.length > 0) groups.push({ label: "Review", sessions: review, defaultOpen: true });
   if (active.length > 0) groups.push({ label: "Active", sessions: active, defaultOpen: true });
   if (pinned.length > 0) groups.push({ label: "Pinned", sessions: pinned, defaultOpen: true });
   if (recentUrgent.length > 0) groups.push({ label: "Recent", sessions: recentUrgent, defaultOpen: true });
@@ -248,15 +257,18 @@ export function ConversationItem({
 
   // Build status text class — error/active are semantic states; unread uses foreground.
   // Read/already-viewed sessions are muted, including pinned sessions.
+  const isAwaitingQuestion = !!conv.awaitingQuestionResponse;
   const statusTextClass = conv.errorSeverity === "error" && !isLive
     ? "text-error"
     : isLive
       ? "text-active font-medium animate-pulse"
-      : conv.hasActiveDescendant || conv.hasActivePlan
-        ? "text-active font-medium animate-pulse"
-        : hasUnreadResult
-          ? "text-foreground font-medium"
-          : "text-muted-foreground";
+      : isAwaitingQuestion
+        ? "text-active font-medium"
+        : conv.hasActiveDescendant || conv.hasActivePlan
+          ? "text-active font-medium animate-pulse"
+          : hasUnreadResult
+            ? "text-foreground font-medium"
+            : "text-muted-foreground";
 
   // Build container class — selected uses bg-sidebar-accent but keeps status color
   const containerClass = cn(
@@ -271,7 +283,7 @@ export function ConversationItem({
   // - Default: Bot or User icon
   const isWaiting = conv.status === "waiting";
   const isActiveMeeting = conv.type === "meeting" && conv.meeting?.botStatus === "live";
-  const isSpinning = !isWaiting && !isActiveMeeting && (isLive || !!conv.hasActiveDescendant || !!conv.hasActivePlan);
+  const isSpinning = !isWaiting && !isActiveMeeting && !isAwaitingQuestion && (isLive || !!conv.hasActiveDescendant || !!conv.hasActivePlan);
   const showPinIcon = (isPinned && !isSpinning && !isWaiting) || iconHovered;
   const isIconInteractive = iconHovered || (isPinned && !isSpinning);
 
@@ -285,6 +297,9 @@ export function ConversationItem({
   const renderIcon = () => {
     if (isWaiting && !iconHovered) {
       return <Timer className="h-3.5 w-3.5 shrink-0 text-active" data-testid={`icon-conversation-waiting-${conv.id}`} />;
+    }
+    if (isAwaitingQuestion && !iconHovered && !isLive) {
+      return <MessageCircleQuestion className="h-3.5 w-3.5 shrink-0 text-active" data-testid={`icon-conversation-question-${conv.id}`} />;
     }
     if (isSpinning && !iconHovered) {
       return <ActiveStatusSpinner className="h-3.5 w-3.5" />;

@@ -801,6 +801,8 @@ export interface ChatSession {
   contextFlags?: Record<string, boolean>;
   hasPlan?: boolean;
   hasActivePlan?: boolean;
+  /** Derived: session contains a `question` tool call with no matching answer message. */
+  awaitingQuestionResponse?: boolean;
   hasActiveDescendant?: boolean;
   archivedAt?: string | null;
   ftueWelcome?: boolean;

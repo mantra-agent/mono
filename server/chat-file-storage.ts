@@ -10,6 +10,7 @@ import { eventBus } from "./event-bus";
 import { TTLCache } from "./utils/ttl-cache";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { normalizeSessionModelTierOverride } from "./session-model-tier-override";
+import { hasUnansweredQuestion } from "./question-response";
 import type {
   AssistantMessageState,
   ChildSessionBlockMeta,
@@ -477,6 +478,7 @@ async function writeConv(data: SessionData): Promise<void> {
     personaId: data.personaId ?? null,
     messageCount: data.messages.length,
     lastMessageRole: getLastMessageRole(data.messages),
+    awaitingQuestionResponse: hasUnansweredQuestion(data.messages) || undefined,
     type: data.type || "text",
     sessionType: data.sessionType || "user",
     isPinned: data.isPinned || false,
@@ -804,6 +806,7 @@ function convToMeta(data: SessionData): FileSession {
     meeting: data.meeting,
     messageCount: data.messages.length,
     lastMessageRole: getLastMessageRole(data.messages),
+    awaitingQuestionResponse: hasUnansweredQuestion(data.messages) || undefined,
     topics: data.topics || [],
     runStatus: data.runStatus,
     parentSessionId: data.parentSessionId,
@@ -958,6 +961,7 @@ function docMetadataToSession(doc: {
     voiceSessionId: metadataString(meta, "voiceSessionId"),
     messageCount: metadataNumber(meta, "messageCount") || 0,
     lastMessageRole: toLastMessageRole(metadataString(meta, "lastMessageRole")),
+    awaitingQuestionResponse: metadataBool(meta, "awaitingQuestionResponse") || undefined,
     topics: metadataStringArray(meta, "topics"),
     runStatus: metadataString(meta, "runStatus") as RunStatus | undefined,
     parentSessionId: metadataString(meta, "parentSessionId"),

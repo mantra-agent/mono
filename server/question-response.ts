@@ -62,3 +62,29 @@ export function resolveQuestionResponse(
     content: formatQuestionResponseContent(normalizedPrompt.value, validated.value),
   };
 }
+
+/**
+ * Derived predicate: true when the session contains a persisted `question` tool
+ * call with no matching answer message. Cached into session list metadata at
+ * write time (same pattern as messageCount/lastMessageRole), never stored as an
+ * independently mutable flag.
+ */
+export function hasUnansweredQuestion(messages: FileMessage[]): boolean {
+  const answeredToolCallIds = new Set<string>();
+  for (const message of messages) {
+    const answeredId = message.questionResponse?.questionToolCallId;
+    if (answeredId) answeredToolCallIds.add(answeredId);
+  }
+  for (const message of messages) {
+    const toolCalls = message.toolCalls;
+    if (!Array.isArray(toolCalls)) continue;
+    for (const call of toolCalls) {
+      if (!call || typeof call !== "object") continue;
+      const value = call as Record<string, unknown>;
+      if (value.toolName !== "question" || typeof value.toolCallId !== "string") continue;
+      if (value.status === "error") continue;
+      if (!answeredToolCallIds.has(value.toolCallId)) return true;
+    }
+  }
+  return false;
+}

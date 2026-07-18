@@ -440,7 +440,6 @@ export function SessionTranscriptPanel({
 
   const submitQuestionResponse = useQuestionResponse({
     sessionId: activeSession,
-    enabled: isAgentRunning,
     busy: isSessionActive,
     pendingTurn: contextPendingTurn,
     setPendingTurn: focusCtx?.setPendingTurn,
@@ -769,7 +768,7 @@ export function SessionTranscriptPanel({
         onScroll={handleScroll}
         compactReferences={isWidget}
         questionResponses={questionResponses}
-        questionSubmissionDisabled={!isAgentRunning || isSessionActive || Boolean(contextPendingTurn)}
+        questionSubmissionDisabled={isSessionActive || Boolean(contextPendingTurn)}
         onQuestionSubmit={submitQuestionResponse}
       />
     </div>

@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, Loader2, MessageCircleQuestion } from "lucide-react";
+import { Loader2, MessageCircleQuestion } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { SimpleCheckCircle } from "@/components/home/home-check-circle";
 import { cn } from "@/lib/utils";
 import { createLogger } from "@/lib/logger";
 import {
@@ -38,6 +37,44 @@ function responseLabels(prompt: QuestionWidgetPrompt, response: QuestionResponse
   return labels;
 }
 
+function OptionRow({
+  checked,
+  disabled,
+  label,
+  description,
+  testId,
+  onSelect,
+}: {
+  checked: boolean;
+  disabled: boolean;
+  label: string;
+  description?: string;
+  testId: string;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={onSelect}
+      className={cn(
+        "flex w-full items-start gap-2.5 rounded-sm px-2 py-1.5 text-left transition-colors",
+        checked ? "bg-accent/60" : "hover:bg-accent/40",
+        disabled && "cursor-not-allowed opacity-60",
+      )}
+      data-testid={testId}
+    >
+      <SimpleCheckCircle checked={checked} interactive={false} className="mt-0.5 shrink-0" />
+      <span className="min-w-0 text-sm">
+        <span className="block text-foreground">{label}</span>
+        {description && <span className="mt-0.5 block text-xs text-muted-foreground">{description}</span>}
+      </span>
+    </button>
+  );
+}
+
 export function QuestionWidget({
   prompt,
   response,
@@ -67,23 +104,29 @@ export function QuestionWidget({
     [prompt, response],
   );
 
-  const chooseSingle = (value: string) => {
+  const isSingle = prompt.selectionMode === "single";
+
+  const selectOption = (optionId: string) => {
     setError(null);
-    if (value === "__other__") {
-      setSelected([]);
-      setOtherSelected(true);
+    if (isSingle) {
+      setSelected([optionId]);
+      setOtherSelected(false);
+      setOtherText("");
       return;
     }
-    setSelected([value]);
-    setOtherSelected(false);
-    setOtherText("");
+    setSelected((current) => current.includes(optionId)
+      ? current.filter((id) => id !== optionId)
+      : [...current, optionId]);
   };
 
-  const toggleMultiple = (optionId: string, checked: boolean) => {
+  const toggleOther = () => {
     setError(null);
-    setSelected((current) => checked
-      ? [...current.filter((id) => id !== optionId), optionId]
-      : current.filter((id) => id !== optionId));
+    setOtherSelected((current) => {
+      const next = !current;
+      if (!next) setOtherText("");
+      if (next && isSingle) setSelected([]);
+      return next;
+    });
   };
 
   const submit = async () => {
@@ -121,130 +164,75 @@ export function QuestionWidget({
 
   if (response) {
     return (
-      <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-card p-4" data-testid={`question-widget-${prompt.toolCallId}`}>
-        <div className="flex items-start gap-3">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-success/10">
-            <Check className="h-4 w-4 text-success" />
-          </div>
+      <div className="border rounded-md border-success/40 bg-success/5 my-1" data-testid={`question-widget-${prompt.toolCallId}`}>
+        <div className="flex items-start gap-2.5 px-3 py-2">
+          <SimpleCheckCircle checked interactive={false} className="mt-0.5 shrink-0" />
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-foreground">{prompt.question}</p>
-            <p className="mt-2 text-sm text-muted-foreground">{answeredLabels.join(", ")}</p>
+            <p className="text-sm text-foreground">{prompt.question}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{answeredLabels.join(", ")}</p>
           </div>
         </div>
       </div>
     );
   }
 
-  const controlsDisabled = disabled || submitting;
+  const controlsDisabled = Boolean(disabled) || submitting;
   return (
-    <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-card p-4" data-testid={`question-widget-${prompt.toolCallId}`}>
-      <div className="flex items-start gap-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted">
-          <MessageCircleQuestion className="h-4 w-4 text-foreground" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium leading-6 text-foreground">{prompt.question}</p>
-          {prompt.selectionMode === "single" ? (
-            <RadioGroup
-              className="mt-3 gap-2"
-              value={otherSelected ? "__other__" : selected[0] ?? ""}
-              onValueChange={chooseSingle}
+    <div className="border rounded-md border-border/60 bg-muted/20 my-1" data-testid={`question-widget-${prompt.toolCallId}`}>
+      <div className="flex items-start gap-2 px-3 py-2 border-b border-border/40">
+        <MessageCircleQuestion className="mt-0.5 h-4 w-4 shrink-0 text-active" />
+        <p className="min-w-0 text-sm font-medium text-foreground">{prompt.question}</p>
+      </div>
+      <div className="space-y-0.5 px-2 py-2">
+        {prompt.options.map((option) => (
+          <OptionRow
+            key={option.id}
+            checked={selected.includes(option.id)}
+            disabled={controlsDisabled}
+            label={option.label}
+            description={option.description}
+            testId={`question-option-${prompt.toolCallId}-${option.id}`}
+            onSelect={() => selectOption(option.id)}
+          />
+        ))}
+        {prompt.allowOther && (
+          <div>
+            <OptionRow
+              checked={otherSelected}
               disabled={controlsDisabled}
-            >
-              {prompt.options.map((option) => (
-                <label key={option.id} className="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-border px-3 py-2.5 hover:bg-accent">
-                  <RadioGroupItem value={option.id} className="mt-0.5" />
-                  <span className="min-w-0 text-sm">
-                    <span className="block text-foreground">{option.label}</span>
-                    {option.description && <span className="mt-0.5 block text-muted-foreground">{option.description}</span>}
-                  </span>
-                </label>
-              ))}
-              {prompt.allowOther && (
-                <label className="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-border px-3 py-2.5 hover:bg-accent">
-                  <RadioGroupItem value="__other__" className="mt-0.5" />
-                  <span className="min-w-0 flex-1 text-sm">
-                    <span className="block text-foreground">Other</span>
-                    {otherSelected && (
-                      <textarea
-                        autoFocus
-                        value={otherText}
-                        onChange={(event) => setOtherText(event.target.value)}
-                        onClick={(event) => event.stopPropagation()}
-                        disabled={controlsDisabled}
-                        rows={2}
-                        placeholder="Add your answer"
-                        className="mt-2 w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                      />
-                    )}
-                  </span>
-                </label>
-              )}
-            </RadioGroup>
-          ) : (
-            <div className="mt-3 space-y-2">
-              {prompt.options.map((option) => {
-                const checked = selected.includes(option.id);
-                return (
-                  <label key={option.id} className="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-border px-3 py-2.5 hover:bg-accent">
-                    <Checkbox
-                      checked={checked}
-                      onCheckedChange={(value) => toggleMultiple(option.id, value === true)}
-                      disabled={controlsDisabled}
-                      className="mt-0.5"
-                    />
-                    <span className="min-w-0 text-sm">
-                      <span className="block text-foreground">{option.label}</span>
-                      {option.description && <span className="mt-0.5 block text-muted-foreground">{option.description}</span>}
-                    </span>
-                  </label>
-                );
-              })}
-              {prompt.allowOther && (
-                <div className="rounded-lg border border-border px-3 py-2.5">
-                  <label className="flex min-h-6 cursor-pointer items-start gap-3">
-                    <Checkbox
-                      checked={otherSelected}
-                      onCheckedChange={(value) => {
-                        setOtherSelected(value === true);
-                        setError(null);
-                        if (value !== true) setOtherText("");
-                      }}
-                      disabled={controlsDisabled}
-                      className="mt-0.5"
-                    />
-                    <span className="text-sm text-foreground">Other</span>
-                  </label>
-                  {otherSelected && (
-                    <textarea
-                      autoFocus
-                      value={otherText}
-                      onChange={(event) => setOtherText(event.target.value)}
-                      disabled={controlsDisabled}
-                      rows={2}
-                      placeholder="Add your answer"
-                      className="mt-2 w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                    />
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          <div className="mt-4 flex items-center justify-between gap-3">
-            <p className={cn("text-sm", error ? "text-error" : "text-muted-foreground")}>
-              {error ?? (prompt.selectionMode === "multiple" ? "Choose all that apply." : "Choose one.")}
-            </p>
-            <Button
-              type="button"
-              className="min-h-11 bg-cta text-cta-foreground hover:bg-cta/90"
-              disabled={controlsDisabled}
-              onClick={submit}
-              data-testid={`button-answer-question-${prompt.toolCallId}`}
-            >
-              {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Answer"}
-            </Button>
+              label="Other"
+              testId={`question-option-${prompt.toolCallId}-other`}
+              onSelect={toggleOther}
+            />
+            {otherSelected && (
+              <textarea
+                autoFocus
+                value={otherText}
+                onChange={(event) => setOtherText(event.target.value)}
+                disabled={controlsDisabled}
+                rows={2}
+                placeholder="Add your answer"
+                className="ml-[26px] mt-1 w-[calc(100%-26px)] resize-none rounded-sm border border-border/30 bg-transparent p-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border/60"
+                data-testid={`question-other-text-${prompt.toolCallId}`}
+              />
+            )}
           </div>
-        </div>
+        )}
+      </div>
+      <div className="flex items-center justify-between gap-3 border-t border-border/40 px-3 py-2">
+        <p className={cn("text-xs", error ? "text-error" : "text-muted-foreground")}>
+          {error ?? (prompt.selectionMode === "multiple" ? "Choose all that apply." : "Choose one.")}
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          className="bg-cta text-cta-foreground hover:bg-cta/90"
+          disabled={controlsDisabled}
+          onClick={submit}
+          data-testid={`button-answer-question-${prompt.toolCallId}`}
+        >
+          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Answer"}
+        </Button>
       </div>
     </div>
   );
