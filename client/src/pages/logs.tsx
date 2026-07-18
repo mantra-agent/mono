@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Badge } from "@/components/ui/badge";
@@ -111,7 +111,6 @@ function fetchLogFiles(): Promise<LogFilesResponse> {
 
 function LogRow({ entry, timezone, wrap, isSeen }: { entry: LogEntry; timezone: string; wrap: boolean; isSeen?: boolean }) {
   const levelColor = LEVEL_COLORS[entry.level] || "text-muted-foreground";
-  // Error rows keep their tint until the entry has appeared in the viewport.
   const rowBg = entry.level === "error" && isSeen ? "" : (LEVEL_BG[entry.level] || "");
   const isClient = entry.source.startsWith("client:");
 
@@ -121,9 +120,9 @@ function LogRow({ entry, timezone, wrap, isSeen }: { entry: LogEntry; timezone: 
       data-testid={`log-entry-${entry.line}`}
       data-log-level={entry.level}
     >
-      <summary aria-label={`${entry.level} log: ${entry.message}`} className="flex min-h-7 cursor-pointer list-none items-start gap-1.5 px-2 py-1 font-mono text-xs hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-        <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150 group-open:rotate-90" />
-        <span className={`min-w-0 flex-1 ${levelColor} ${wrap ? "break-words" : "truncate whitespace-nowrap"}`}>
+      <summary className="flex h-7 cursor-pointer list-none items-center gap-1.5 overflow-hidden px-2 font-mono text-xs hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150 group-open:rotate-90" />
+        <span className={`min-w-0 flex-1 truncate ${levelColor}`}>
           {entry.message}
         </span>
       </summary>
@@ -142,61 +141,7 @@ function LogRow({ entry, timezone, wrap, isSeen }: { entry: LogEntry; timezone: 
   );
 }
 
-function MeasuredLogRow({
-  entry,
-  index,
-  start,
-  timezone,
-  wrap,
-  isSeen,
-  resizeItem,
-}: {
-  entry: LogEntry;
-  index: number;
-  start: number;
-  timezone: string;
-  wrap: boolean;
-  isSeen: boolean;
-  resizeItem: (index: number, size: number) => void;
-}) {
-  const rowRef = useRef<HTMLDivElement>(null);
 
-  useLayoutEffect(() => {
-    // TanStack's measureElement resolves ResizeObserver callbacks through mutable list indexes.
-    // Own the observer here so prepended realtime rows cannot orphan surviving row measurements.
-    const element = rowRef.current;
-    if (!element) return;
-
-    let active = true;
-    const measure = () => {
-      if (active) resizeItem(index, element.offsetHeight);
-    };
-
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-
-    return () => {
-      active = false;
-      observer.disconnect();
-    };
-  }, [index, resizeItem]);
-
-  return (
-    <div
-      ref={rowRef}
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        width: "100%",
-        transform: `translateY(${start}px)`,
-      }}
-    >
-      <LogRow entry={entry} timezone={timezone} wrap={wrap} isSeen={isSeen} />
-    </div>
-  );
-}
 
 function VirtualizedLogList({ entries, timezone, wrap, parentRef, seenErrors, onErrorsSeen }: {
   entries: LogEntry[];
@@ -211,7 +156,7 @@ function VirtualizedLogList({ entries, timezone, wrap, parentRef, seenErrors, on
   const virtualizer = useVirtualizer({
     count: entries.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 28,
+    estimateSize: () => 29,
     getItemKey: (index) => `${entries[index].line}-${entries[index].ts}-${entries[index].source}`,
     overscan: 30,
   });
@@ -236,16 +181,18 @@ function VirtualizedLogList({ entries, timezone, wrap, parentRef, seenErrors, on
       {virtualItems.map((virtualRow) => {
         const entry = entries[virtualRow.index];
         return (
-          <MeasuredLogRow
+          <div
             key={virtualRow.key}
-            entry={entry}
-            index={virtualRow.index}
-            start={virtualRow.start}
-            timezone={timezone}
-            wrap={wrap}
-            isSeen={seenErrors.has(entry.line)}
-            resizeItem={virtualizer.resizeItem}
-          />
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              transform: `translateY(${virtualRow.start}px)`,
+            }}
+          >
+            <LogRow entry={entry} timezone={timezone} wrap={wrap} isSeen={seenErrors.has(entry.line)} />
+          </div>
         );
       })}
     </div>
