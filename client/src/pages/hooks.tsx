@@ -165,6 +165,7 @@ function HookTreeRow({
       hasValue
       showEmpty
       mobileLayout="inline"
+      menuVisibility="hover"
       testId={`tree-row-hook-${hook.id}`}
       expandedContentClassName="space-y-1"
       expandedContent={(
