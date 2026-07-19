@@ -83,9 +83,18 @@ export function groupSessions(sessions: ChatSession[], opts?: { activeVoiceSessi
   const archive: ChatSession[] = [];
 
   for (const conv of sorted) {
-    // Blocked on an unanswered inline question: the session needs Ray before it
-    // can proceed, so it outranks Active. Archived sessions stay archived.
-    if (conv.awaitingQuestionResponse && !conv.archivedAt) {
+    // Classification precedence is structural: Archive → Snooze → Review →
+    // Active → Pinned → recency buckets. A reminder is an explicit deferral,
+    // so Review or runtime activity must not pull the session forward early.
+    if (conv.archivedAt) {
+      archive.push(conv);
+      continue;
+    }
+    if (conv.reminder?.active) {
+      snooze.push(conv);
+      continue;
+    }
+    if (conv.awaitingQuestionResponse) {
       review.push(conv);
       continue;
     }
@@ -96,17 +105,7 @@ export function groupSessions(sessions: ChatSession[], opts?: { activeVoiceSessi
       active.push(conv);
       continue;
     }
-    // Archived sessions always go to Archive, regardless of other flags.
-    if (conv.archivedAt) {
-      archive.push(conv);
-      continue;
-    }
-    // Snoozed sessions should stay in Snooze even when pinned for attention.
-    if (conv.reminder?.active) {
-      snooze.push(conv);
-      continue;
-    }
-    // Pinned sessions go to "Pinned" unless snoozed.
+    // Pinned sessions go to "Pinned" after terminal, deferred, review, and active states.
     if (conv.isPinned) {
       pinned.push(conv);
       continue;
