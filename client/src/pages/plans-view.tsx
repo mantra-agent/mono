@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/collapsible";
 import {
   ChevronRight,
+  FileText,
 } from "lucide-react";
 import { PlanWidget } from "@/components/plan-widget";
 import type { PlanData, PlanStatus, PlanStep } from "@/components/plan-shared";
@@ -58,7 +59,27 @@ function PlansZeroState() {
 // ─── Plan Row ────────────────────────────────────────────────────────
 
 function PlanRow({ plan }: { plan: PlanSummary }) {
-  return <PlanWidget plan={plan} variant="tree" showArchiveAction />;
+  const [open, setOpen] = useState(false);
+  const title = plan.title.replace(/^Plan:\s*/, "") || plan.id;
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <div className="min-w-0 overflow-hidden rounded-md">
+        <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/70">
+          <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-foreground">{title}</span>
+          <ChevronRight
+            className={`h-3 w-3 shrink-0 text-muted-foreground/60 transition-transform ${open ? "rotate-90" : ""}`}
+          />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="overflow-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-200">
+          <div className="pb-2 pl-4 pt-1">
+            <PlanWidget plan={plan} showArchiveAction />
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
+  );
 }
 
 function PlanGroup({
