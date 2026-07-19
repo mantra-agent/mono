@@ -20,6 +20,8 @@ The composer supports both `@` and `#` as mention triggers. `#` biases toward wo
 
 Legacy forms like `[page:slug]`, `[person:id]`, `[goal:id]`, `[spec:slug]`, and `Intention ID: <id>` are compatibility only, not the target grammar.
 
+In product/UI work, “reference” means the existing canonical reference system, component, or pattern. Do not create a parallel reference-like block unless the shared system cannot represent the use case; state that limitation before introducing another pattern.
+
 Do not create, add, restore, scaffold, maintain, or run tests. No test files, test harnesses, fixtures, snapshots, test runners, or test-only scripts. If a task would normally call for a regression test, do not add one. Never invoke test commands, the `run_tests` tool, Jest/Vitest/Playwright test modes, smoke tests, unit tests, integration tests, end-to-end tests, or ad-hoc test scripts.
 
 Do not run standalone TypeScript checks (`npm run check`, `tsc --noEmit`, or equivalent typecheck-only commands) as part of the normal coding verification loop. The only required automated gate is whether the production build succeeds via `npm run build`. Run typecheck-only commands or tests only if Ray explicitly reverses this policy in the current conversation.
@@ -65,6 +67,13 @@ Before any code diagnosis, system debugging, file edit, build, PR, or merge:
 14. Do not report coding work as done until the PR is merged to `main`, unless Ray explicitly asks for PR-only/review-first or merge is blocked.
 15. Final reports include instructions loaded, files changed, implementation-plan/design check against Engineering Principles, Engineering Principles violations cured in the plan, impact/change-scope evidence, build result, PR reference (canonical `@pr:repo/number`), merge SHA, and any degraded proof.
 
+## Execution Defaults
+
+- For a bounded visual or implementation change that the user specifies, make one coherent scoped pass and one final verification. Do not enter an unsolicited tuning loop unless the requested change fails the production build/runtime correctness gate or the user asks for another iteration.
+- When automation is the goal, complete infrastructure and setup work end-to-end. Ask the user only for credentials, approvals, or physical actions the system cannot perform.
+- Before coding under pressure, establish the external state that determines truth: target branch, deploy target, live artifact, verification command, and terminal state. Local edits, PRs, merges, builds, deployments, and user-visible behavior are distinct states.
+- If `AGENTS.md` is missing, allow only safe root discovery and creation of `AGENTS.md` at the verified repository root. Block normal code work until it exists.
+
 ## Diagnostic Workflow
 
 1. Load root and relevant subdirectory instructions first.
@@ -73,6 +82,7 @@ Before any code diagnosis, system debugging, file edit, build, PR, or merge:
 4. Identify the single source of truth and the invariant that failed.
 5. Prefer fixing the producer/state model over patching the renderer/consumer.
 6. Use impact analysis before touching symbols or shared flows.
+7. For media-page issues, start with structured client logs filtered to the relevant MediaUpload/MediaGrid logger, then inspect server media/upload logs. Railway output alone is capped and does not contain the authoritative client trace.
 
 ## Standard Coding Ship Path
 

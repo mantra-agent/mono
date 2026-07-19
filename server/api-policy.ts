@@ -108,7 +108,6 @@ const PERSONAL_RULES: ApiPolicyRule[] = [
       "/api/workflows",
       "/api/exec",
       "/api/opportunities",
-      "/api/preferences",
       "/api/rules",
       "/api/beliefs",
       "/api/vaults",

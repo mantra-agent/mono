@@ -92,24 +92,24 @@ function parseClaimsFromResponse(parsed: Record<string, unknown>): ClaimCandidat
 }
 
 // ---------------------------------------------------------------------------
-// Extraction prompt (v7 — predictive-value filter, preference/rule rejection)
+// Extraction prompt (v8 — predictive-value filter, soft personal-pattern admission)
 // ---------------------------------------------------------------------------
 
 const VNEXT_CLAIM_EXTRACTION_PROMPT = `You extract durable vNext memory claims. You are not summarizing.
 
 Default to returning no claims. Most sources should produce {"claims": []}.
 
-Goal: extract only claims that improve Agent's ability to predict the external world — people's behavior, relationship dynamics, organizational incentives, market forces, financial constraints, family dynamics, health trajectories, or non-obvious causal patterns. Every claim must pass this test: "Does this improve prediction of the external world or people in it?"
+Goal: extract only claims that improve Agent's ability to predict people or the external world. This includes durable personal facts, tastes, tendencies, working patterns, and communication patterns when they help predict Ray's choices or experience. Every claim must pass this test: "Will this help Agent predict a person, relationship, decision, or external constraint later?"
 
 ## Hard rejections — never extract these
 
-1. **Ray's preferences about how Agent should work.** These are stored in the preferences system. Examples: "Ray prefers short responses," "Ray wants workflow steps to be self-contained," "Ray considers conservative animations too safe."
-2. **Agent behavioral rules or constraints.** These are stored in the rules system. Examples: "Agent should not force workflow acceptance without approval," "Agent is prohibited from logging wellness activities autonomously."
+1. **Deterministic Agent commands or constraints.** Explicit hard behavioral overrides belong in personal Rules. Examples: "Agent must never use the phrase no pressure in strategic outreach," "Agent is prohibited from logging wellness activities autonomously."
+2. **Universal product behavior or system policy.** Anything that should apply to multiple users belongs in the relevant system, tool, workflow, permission boundary, or global instructions.
 3. **Agent/system architecture facts.** Recoverable from code, docs, and tools. Examples: "Lightway is hosted on Cloudflare Pages," "The scan service uses a dispatch table pattern."
 4. **Implementation summaries.** Code changes, PRs, migrations, deploys, builds, database row counts, task/project status snapshots, UI changelog facts.
 5. **Short-lived calendar/scheduling facts.** Specific meeting times and dates that expire within days.
 6. **Process status messages** with no underlying external-world fact.
-7. **Near-restatements of the source.** If the claim just paraphrases a sentence from the source, reject it.
+7. **Near-restatements with no durable predictive fact.** Reject paraphrase-only summaries. A directly stated stable personal fact or pattern still qualifies because the fact itself is predictive.
 
 ## What to extract
 
@@ -119,6 +119,7 @@ Claims about the external world that Agent cannot recover from structured tools:
 - Organizational dynamics, power structures, incentive alignment
 - Financial facts: compensation ranges, funding status, account structures, deal terms
 - Relationship context: trust level shifts, communication patterns, conflict dynamics, family dynamics
+- Personal patterns: tastes, dislikes, recurring choices, working style, communication style, design sensibility, and stable tendencies
 - Strategic context: why a decision was made, what pressure created it, what constraints bind it
 - Commitments and promises between people (not task assignments to Agent)
 - Market signals: industry shifts, competitor moves, pricing dynamics
@@ -132,12 +133,12 @@ Claim types:
 
 ## Negative examples — do NOT extract claims like these
 
-BAD: "Ray prefers Mantra's landing page animations to feel more ambitious and premium." → This is a preference. It belongs in the preferences system.
-BAD: "Agent should not force workflow acceptance past browser evidence gates without Ray's approval." → This is an Agent rule. It belongs in the rules system.
-BAD: "Ray expects implementation reviews to explicitly compare code against engineering principles." → This is a work preference/rule.
+GOOD: "Ray prefers Mantra's landing page animations to feel ambitious and premium rather than conservative." → This is a durable design tendency that predicts future choices.
+BAD: "Agent should not force workflow acceptance past browser evidence gates without Ray's approval." → This is a deterministic Agent command. It belongs in personal Rules if individual, or the workflow system if universal.
+GOOD: "Ray usually expects implementation reviews to compare code against engineering principles." → This is a stable working pattern when phrased descriptively rather than as a command.
 BAD: "The Lightway site is hosted on Cloudflare Pages rather than Railway." → This is an architecture fact recoverable from infrastructure tools.
 BAD: "PR #175 merged at 60e5f30, extending the FTUE flow." → This is an implementation summary.
-BAD: "Workflow child sessions should be spawned with full stage definitions." → This is an Agent architecture preference.
+BAD: "Workflow child sessions should be spawned with full stage definitions." → This is an Agent architecture instruction.
 
 ## Positive examples — these ARE worth extracting
 
@@ -253,15 +254,12 @@ function getClaimExtractionBudgetKey(parentEntry: MemoryEntry): string {
 }
 
 // ---------------------------------------------------------------------------
-// Preference/rule pattern detection for scorer penalty
+// Deterministic Agent-command detection for scorer rejection
 // ---------------------------------------------------------------------------
 
-const PREFERENCE_RULE_PATTERNS = [
-  /^ray\s+(prefers?|wants?|expects?|considers?|likes?|dislikes?|values?)\b/i,
-  /^agent\s+(should|must|is\s+prohibited|is\s+not\s+allowed|cannot)\b/i,
-  /\bray\s+prefers?\b/i,
-  /\bagent\s+should\b/i,
-  /\bagent\s+is\s+prohibited\b/i,
+const AGENT_COMMAND_PATTERNS = [
+  /^agent\s+(should|must|is\s+prohibited|is\s+not\s+allowed|cannot|never)\b/i,
+  /\bagent\s+(should|must|never|is\s+prohibited)\b/i,
   /\bbehavioral\s+rule\b/i,
   /\bwork(flow|space)\s+(child\s+)?sessions?\s+should\b/i,
 ];
@@ -274,8 +272,8 @@ const ARCHITECTURE_PATTERNS = [
   /\bnpm\s+run\s+build\b/i,
 ];
 
-function isPreferenceOrRuleShaped(content: string): boolean {
-  return PREFERENCE_RULE_PATTERNS.some((p) => p.test(content));
+function isAgentCommandShaped(content: string): boolean {
+  return AGENT_COMMAND_PATTERNS.some((pattern) => pattern.test(content));
 }
 
 function isArchitectureShaped(content: string): boolean {
@@ -293,9 +291,9 @@ export function scoreClaimForBudget(claim: ClaimCandidate): { score: number; rea
   if (wordCount > 80) return { score: 0, reasons: [], rejectedReason: "too_long" };
   if (!/[.!?]$/.test(content) && wordCount < 8) return { score: 0, reasons: [], rejectedReason: "not_claim_shaped" };
 
-  // Hard reject preference/rule restatements and architecture facts
-  if (claim.claimType === "state" && isPreferenceOrRuleShaped(content)) {
-    return { score: 0, reasons: ["preference_or_rule"], rejectedReason: "preference_rule_restatement" };
+  // Personal patterns are valid state claims. Deterministic Agent commands are not memory.
+  if (isAgentCommandShaped(content)) {
+    return { score: 0, reasons: ["agent_command"], rejectedReason: "agent_command_restatement" };
   }
   if (isArchitectureShaped(content)) {
     return { score: 0, reasons: ["architecture_fact"], rejectedReason: "architecture_restatement" };

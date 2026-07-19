@@ -16,7 +16,6 @@ import {
   fileTaskStorage,
   timerStorage,
   fileBeliefStorage,
-  filePreferenceStorage,
   fileRuleStorage,
 } from "./file-storage";
 import { listHooks } from "./hook-storage";
@@ -615,29 +614,6 @@ async function genLife(dir: string): Promise<{ count: number }> {
       await writeFile(dir, "life/principles.md", `# Principles\n\n_Could not read principles document: ${principlesErr?.message}_`);
     }
 
-    // Preferences — document-backed via filePreferenceStorage
-    const prefs = await filePreferenceStorage.getAll();
-    const prefsByDomain = prefs.reduce((acc: Record<string, typeof prefs>, p) => {
-      const d = p.domain ?? "general";
-      if (!acc[d]) acc[d] = [];
-      acc[d].push(p);
-      return acc;
-    }, {});
-    const prefsMd =
-      `# Preferences\n\n` +
-      Object.entries(prefsByDomain).map(([domain, items]) =>
-        `## ${domain}\n\n` +
-        items.map((p) => {
-          const evidenceMd = (p.evidence ?? []).length
-            ? `\n  Evidence: ${(p.evidence as string[]).map(e => `"${e}"`).join("; ")}`
-            : "";
-          const tagsMd = p.tags?.length ? ` [tags: ${p.tags.join(", ")}]` : "";
-          const personMd = p.personName ? ` (for: ${p.personName})` : "";
-          return `- **${p.preference ?? ""}** _(${Math.round((p.confidence ?? 0.5) * 100)}% confident)${personMd}${tagsMd}_${evidenceMd}`;
-        }).join("\n")
-      ).join("\n\n");
-    await writeFile(dir, "life/preferences.md", prefsMd);
-
     // Rules — document-backed via fileRuleStorage, grouped by scope
     const rules = await fileRuleStorage.getAll();
     const alwaysRules = rules.filter(r => r.scope === "always");
@@ -648,11 +624,8 @@ async function genLife(dir: string): Promise<{ count: number }> {
         `### Rule\n\n` +
         `${r.rule ?? ""}\n\n` +
         (r.context ? `_Context: ${r.context}_\n\n` : "") +
-        `- Confidence: ${Math.round((r.confidence ?? 0.5) * 100)}%` +
-        (r.source !== "manual" ? ` | Source: ${r.source}` : "") +
-        (r.principleRef ? ` | Principle: ${r.principleRef}` : "") +
-        (r.tags?.length ? ` | Tags: ${r.tags.join(", ")}` : "") +
-        (r.violations > 0 ? ` | Violations: ${r.violations}` : "") +
+        (r.source !== "manual" ? `- Source: ${r.source}` : "") +
+        (r.tags?.length ? `${r.source !== "manual" ? " | " : "- "}Tags: ${r.tags.join(", ")}` : "") +
         "\n"
       );
     }
@@ -667,7 +640,7 @@ async function genLife(dir: string): Promise<{ count: number }> {
         : "");
     await writeFile(dir, "life/rules.md", rulesMd);
 
-    count = prefs.length + rules.length + 1; // +1 for principles
+    count = rules.length + 1; // +1 for principles
   } catch (err: any) {
     log.warn("genLife failed:", err?.message);
     await writeFile(dir, "life/_ERRORS.md", `# Life Export Error\n\n${err?.message ?? err}`);

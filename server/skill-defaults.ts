@@ -1085,7 +1085,7 @@ Save to Library:
 - Prefer deterministic period artifacts over semantic memory when available: daily journals feed weekly; weekly reflections feed monthly; monthly reflections feed quarterly; quarterly reflections feed annual.
 - Use memory search to fill named gaps, not as the primary source when period artifacts exist.
 - Do not fabricate. If a section has no evidence, omit it or name the absence as a signal.
-- Keep tool mutations rare. Reflection may create/link the Library page and update check-in artifact metadata. Do not rewrite goals, principles, beliefs, preferences, or rules unless preContext explicitly asks for maintenance and the evidence is strong.
+- Keep tool mutations rare. Reflection may create/link the Library page and update check-in artifact metadata. Do not rewrite goals, principles, beliefs, personal patterns, or Rules unless preContext explicitly asks for maintenance and the evidence is strong.
 
 ## Library Save and Surfacing
 

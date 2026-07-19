@@ -108,7 +108,7 @@ The context system builds the LLM prompt from ~40 dynamically resolved sections.
 - **No layer sections:** short/mid/long-term memory layers are no longer context sections. `memory_entries` remains a write-side store only (session summaries, sleep cycle) pending full retirement
 - **Pre-warming:** 7 storage layers pre-warmed at boot (people, projects, tasks, principles, rules, goals, skills)
 - **Budget:** compact boot context target; heavy docs render as retrieval references, no truncation of source data
-- **Universal behavior vs learned state:** Product behavior, tool policy, and system invariants belong in bootstrap global context/code. Never encode them as user-owned preferences or rules. `preference-rule-policy.ts` is the canonical prompt-policy source for preference/rule classification and Question-widget confirmation; storage-layer enforcement remains authoritative for writes.
+- **Personal Rules vs learned state:** A Rule is a user-owned, durable, deterministic override of Agent's default behavior. Universal behavior belongs in the system that owns it. Personal facts, tastes, tendencies, and probabilistic guidance belong in vNext memory. `personal-rule-policy.ts` is the canonical classification source; storage-layer validation remains authoritative for writes.
 
 ### When Working Here
 - Section resolvers run in parallel via `Promise.all` — each has a 15-second timeout
@@ -523,8 +523,8 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 
 ### File-Storage Abstraction
 - `TTLCache` coalesces same-key reads and generation-guards cache writes so a fetch completed after invalidation cannot repopulate stale state.
-- **16 modules** (3,713 lines) using `BaseDocumentStore<T>` pattern over `workspace_documents`
-- Covers: projects, priorities, personas, principles, predictions, beliefs, preferences, check-ins, issues, emotional state
+- **Document-backed modules** use the `BaseDocumentStore<T>` pattern over `workspace_documents`
+- Covers: projects, priorities, personas, principles, predictions, beliefs, Rules, check-ins, issues, emotional state
 - **Common pattern:** documentStorage backend → TTLCache(Infinity) → invalidate on write → JSON serialization
 - **Gotcha:** Every module loads ALL documents of its type for any query
 

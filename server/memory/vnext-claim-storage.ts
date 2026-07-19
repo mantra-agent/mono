@@ -272,7 +272,15 @@ function clampVnextClaimCap(value: number): number {
 }
 
 function computeContentHash(content: string): string {
-  return createHash("sha256").update(content.trim().toLowerCase()).digest("hex");
+  const principal = getCurrentPrincipalOrSystem();
+  const ownerKey = principal.userId
+    ? `user:${principal.userId}`
+    : principal.accountId
+      ? `account:${principal.accountId}`
+      : `actor:${principal.actorType}`;
+  return createHash("sha256")
+    .update(`${ownerKey}\u001f${content.trim().toLowerCase()}`)
+    .digest("hex");
 }
 
 function normalizeClaimType(value: string): MemoryVnextClaimType {
@@ -439,6 +447,61 @@ export async function executeVnextClaimTitleTwinSearch(
 }
 
 export class MemoryVnextClaimStorage {
+
+  async backfillOwnerScopedContentHashes(limit = 250): Promise<number> {
+    const principal = getCurrentPrincipalOrSystem();
+    if (principal.actorType !== "system") {
+      throw new Error("vNext content-hash backfill requires a system principal");
+    }
+    const boundedLimit = Math.max(1, Math.min(limit, 1000));
+    const result = await db.execute(sql`
+      WITH candidates AS (
+        SELECT id,
+          encode(
+            digest(
+              convert_to(
+                (CASE
+                  WHEN owner_user_id IS NOT NULL THEN 'user:' || owner_user_id
+                  WHEN account_id IS NOT NULL THEN 'account:' || account_id
+                  ELSE 'actor:system'
+                END) || chr(31) || lower(trim(content)),
+                'UTF8'
+              ),
+              'sha256'
+            ),
+            'hex'
+          ) AS next_hash
+        FROM memory_vnext_claims
+        WHERE content_hash <> encode(
+          digest(
+            convert_to(
+              (CASE
+                WHEN owner_user_id IS NOT NULL THEN 'user:' || owner_user_id
+                WHEN account_id IS NOT NULL THEN 'account:' || account_id
+                ELSE 'actor:system'
+              END) || chr(31) || lower(trim(content)),
+              'UTF8'
+            ),
+            'sha256'
+          ),
+          'hex'
+        )
+        ORDER BY id
+        LIMIT ${boundedLimit}
+      )
+      UPDATE memory_vnext_claims claims
+      SET content_hash = candidates.next_hash
+      FROM candidates
+      WHERE claims.id = candidates.id
+      RETURNING claims.id
+    `);
+    const updated = result.rows.length;
+    if (updated > 0) {
+      log.info(`backfillOwnerScopedContentHashes: updated=${updated} limit=${boundedLimit}`);
+    }
+    return updated;
+  }
+
   async createClaim(input: CreateVnextClaimInput): Promise<MemoryVnextClaim> {
     const principal = getCurrentPrincipalOrSystem();
     const contentHash = computeContentHash(input.claim.content);

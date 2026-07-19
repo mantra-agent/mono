@@ -210,16 +210,6 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
   },
 
   {
-    id: "world_model.people.partner.preferences",
-    title: "Preferences",
-    parentId: "world_model.people.partner",
-    sourceType: "dynamic",
-    freshnessPolicy: "per-session",
-    priority: 2.5,
-    includedIn: ["full", "world"],
-    defaultIncluded: true,
-  },
-  {
     id: "world_model.people.partner.goals",
     title: "Goals",
     parentId: "world_model.people.partner",

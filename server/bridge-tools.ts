@@ -6896,187 +6896,79 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
   },
 
-  async preferences(args) {
-    const { filePreferenceStorage } = await import("./file-storage/preferences");
-
-    const action = args.action || "list";
-
-    try {
-      switch (action) {
-        case "list": {
-          const all = await filePreferenceStorage.getAll();
-          if (all.length === 0) return { result: "No preferences saved yet." };
-          const lines = all.map(p => `- [${p.id}] ${p.domain}: ${p.preference} (confidence: ${p.confidence}, reinforcements: ${p.reinforcements}${p.tags.length > 0 ? `, tags: ${p.tags.join(", ")}` : ""})`);
-          return { result: `${all.length} preferences:\n${lines.join("\n")}` };
-        }
-        case "get": {
-          const id = args.id;
-          if (!id) return { result: "Missing preference id", error: true };
-          const pref = await filePreferenceStorage.getById(id);
-          if (!pref) return { result: `Preference ${id} not found`, error: true };
-          const parts = [
-            `**${pref.domain}**: ${pref.preference}`,
-            `ID: ${pref.id}`,
-            `Person: ${pref.personName || "N/A"}`,
-            `Confidence: ${pref.confidence}`,
-            `Reinforcements: ${pref.reinforcements}`,
-            `Evidence: ${pref.evidence.length > 0 ? pref.evidence.join("; ") : "none"}`,
-            `Tags: ${pref.tags.length > 0 ? pref.tags.join(", ") : "none"}`,
-          ];
-          return { result: parts.join("\n") };
-        }
-        case "save":
-        case "create": {
-          const domain = args.domain;
-          const preference = args.preference;
-          if (!domain || !preference) return { result: "Missing domain or preference text", error: true };
-          const existingPrefs = await filePreferenceStorage.getAll().catch(() => []);
-          const duplicate = existingPrefs.find(p => isSimilarText(p.preference, preference));
-          if (duplicate) {
-            const reinforced = await filePreferenceStorage.reinforce(duplicate.id, "Re-stated");
-            return { result: `Similar preference already exists — reinforced: "${duplicate.preference}" (ID: ${duplicate.id}, confidence: ${reinforced?.confidence})` };
-          }
-          const pref = await filePreferenceStorage.create({
-            domain,
-            preference,
-            personName: args.personName,
-            evidence: args.evidence ? (Array.isArray(args.evidence) ? args.evidence : [args.evidence]) : undefined,
-            confidence: args.confidence,
-            tags: args.tags,
-          });
-          eventBus.publish({ category: "agent", event: "data:preference_created", payload: { id: pref.id, domain: pref.domain, preference: pref.preference } });
-          return { result: `Preference saved: "${pref.preference}" in domain "${pref.domain}" (ID: ${pref.id})` };
-        }
-        case "update": {
-          const id = args.id;
-          if (!id) return { result: "Missing preference id", error: true };
-          const updates: Record<string, any> = {};
-          if (args.domain) updates.domain = args.domain;
-          if (args.preference) updates.preference = args.preference;
-          if (args.personName) updates.personName = args.personName;
-          if (args.confidence !== undefined) updates.confidence = args.confidence;
-          if (args.tags) updates.tags = args.tags;
-          const updated = await filePreferenceStorage.update(id, updates);
-          if (!updated) return { result: `Preference ${id} not found`, error: true };
-          eventBus.publish({ category: "agent", event: "data:preference_updated", payload: { id, fields: Object.keys(updates) } });
-          return { result: `Preference updated: "${updated.preference}" — ${Object.entries(updates).map(([k, v]) => `${k}: ${v}`).join(", ")}` };
-        }
-        case "delete": {
-          const id = args.id;
-          if (!id) return { result: "Missing preference id", error: true };
-          const deleted = await filePreferenceStorage.delete(id);
-          if (!deleted) return { result: `Preference ${id} not found`, error: true };
-          return { result: `Preference ${id} deleted.` };
-        }
-        case "reinforce": {
-          const id = args.id;
-          if (!id) return { result: "Missing preference id", error: true };
-          const evidence = args.evidence ? (Array.isArray(args.evidence) ? args.evidence[0] : args.evidence) : undefined;
-          const reinforced = await filePreferenceStorage.reinforce(id, evidence);
-          if (!reinforced) return { result: `Preference ${id} not found`, error: true };
-          return { result: `Preference reinforced: "${reinforced.preference}" (confidence: ${reinforced.confidence}, reinforcements: ${reinforced.reinforcements})` };
-        }
-        default:
-          return { result: `Unknown preferences action: ${action}. Available: list, get, save, update, delete, reinforce`, error: true };
-      }
-    } catch (err: any) {
-      return { result: `Preferences tool error: ${err.message}`, error: true };
-    }
-  },
-
   async rules(args) {
     const { fileRuleStorage } = await import("./file-storage/rules");
-
     const action = args.action || "list";
 
     try {
       switch (action) {
         case "list": {
           const all = await fileRuleStorage.getAll();
-          if (all.length === 0) return { result: "No rules saved yet." };
-          const lines = all.map(r => `- [${r.id}] ${r.rule} (source: ${r.source}, scope: ${r.scope}, confidence: ${r.confidence}${r.tags.length > 0 ? `, tags: ${r.tags.join(", ")}` : ""})`);
-          return { result: `${all.length} rules:\n${lines.join("\n")}` };
+          if (all.length === 0) return { result: "No personal Rules saved yet." };
+          const lines = all.map((rule) =>
+            `- [${rule.id}] ${rule.rule} (source: ${rule.source}, scope: ${rule.scope}${rule.context ? `, context: ${rule.context}` : ""}${rule.tags.length > 0 ? `, tags: ${rule.tags.join(", ")}` : ""})`,
+          );
+          return { result: `${all.length} personal Rules:
+${lines.join("\n")}` };
         }
         case "get": {
           const id = args.id;
-          if (!id) return { result: "Missing rule id", error: true };
+          if (!id) return { result: "Missing Rule id", error: true };
           const rule = await fileRuleStorage.getById(id);
           if (!rule) return { result: `Rule ${id} not found`, error: true };
-          const parts = [
-            `**Rule**: ${rule.rule}`,
-            `ID: ${rule.id}`,
-            `Source: ${rule.source}`,
-            `Scope: ${rule.scope}`,
-            `Context: ${rule.context || "N/A"}`,
-            `Confidence: ${rule.confidence}`,
-            `Reinforcements: ${rule.reinforcements}`,
-            `Violations: ${rule.violations}`,
-            `Principle Ref: ${rule.principleRef || "none"}`,
-            `Tags: ${rule.tags.length > 0 ? rule.tags.join(", ") : "none"}`,
-          ];
-          return { result: parts.join("\n") };
+          return {
+            result: [
+              `**Rule**: ${rule.rule}`,
+              `ID: ${rule.id}`,
+              `Source: ${rule.source}`,
+              `Scope: ${rule.scope}`,
+              `Context: ${rule.context || "N/A"}`,
+              `Tags: ${rule.tags.length > 0 ? rule.tags.join(", ") : "none"}`,
+            ].join("\n"),
+          };
         }
         case "save":
         case "create": {
-          const ruleText = args.rule;
-          if (!ruleText) return { result: "Missing rule text", error: true };
+          const ruleText = typeof args.rule === "string" ? args.rule.trim() : "";
+          if (!ruleText) return { result: "Missing Rule text", error: true };
           const existingRules = await fileRuleStorage.getAll().catch(() => []);
-          const duplicateRule = existingRules.find(r => isSimilarText(r.rule, ruleText));
-          if (duplicateRule) {
-            const reinforced = await fileRuleStorage.reinforce(duplicateRule.id);
-            return { result: `Similar rule already exists — reinforced: "${duplicateRule.rule}" (ID: ${duplicateRule.id}, confidence: ${reinforced?.confidence})` };
+          const duplicate = existingRules.find((rule) => isSimilarText(rule.rule, ruleText));
+          if (duplicate) {
+            return { result: `Equivalent personal Rule already exists: "${duplicate.rule}" (ID: ${duplicate.id})` };
           }
           const rule = await fileRuleStorage.create({
             rule: ruleText,
             source: args.source,
             scope: args.scope,
             context: args.context,
-            confidence: args.confidence,
-            principleRef: args.principleRef,
             tags: args.tags,
           });
           eventBus.publish({ category: "agent", event: "data:rule_created", payload: { id: rule.id, rule: rule.rule, scope: rule.scope } });
-          return { result: `Rule saved: "${rule.rule}" (ID: ${rule.id}, source: ${rule.source}, scope: ${rule.scope})` };
+          return { result: `Personal Rule saved: "${rule.rule}" (ID: ${rule.id}, scope: ${rule.scope})` };
         }
         case "update": {
           const id = args.id;
-          if (!id) return { result: "Missing rule id", error: true };
-          const updates: Record<string, any> = {};
-          if (args.rule) updates.rule = args.rule;
+          if (!id) return { result: "Missing Rule id", error: true };
+          const updates: Record<string, unknown> = {};
+          if (typeof args.rule === "string" && args.rule.trim()) updates.rule = args.rule.trim();
           if (args.source) updates.source = args.source;
           if (args.scope) updates.scope = args.scope;
-          if (args.context) updates.context = args.context;
-          if (args.confidence !== undefined) updates.confidence = args.confidence;
-          if (args.principleRef) updates.principleRef = args.principleRef;
-          if (args.tags) updates.tags = args.tags;
+          if (typeof args.context === "string" && args.context.trim()) updates.context = args.context.trim();
+          if (Array.isArray(args.tags) && args.tags.length > 0) updates.tags = args.tags;
           const updated = await fileRuleStorage.update(id, updates);
           if (!updated) return { result: `Rule ${id} not found`, error: true };
           eventBus.publish({ category: "agent", event: "data:rule_updated", payload: { id, fields: Object.keys(updates) } });
-          return { result: `Rule updated: "${updated.rule}" — ${Object.entries(updates).map(([k, v]) => `${k}: ${v}`).join(", ")}` };
+          return { result: `Personal Rule updated: "${updated.rule}"` };
         }
         case "delete": {
           const id = args.id;
-          if (!id) return { result: "Missing rule id", error: true };
+          if (!id) return { result: "Missing Rule id", error: true };
           const deleted = await fileRuleStorage.delete(id);
           if (!deleted) return { result: `Rule ${id} not found`, error: true };
           return { result: `Rule ${id} deleted.` };
         }
-        case "reinforce": {
-          const id = args.id;
-          if (!id) return { result: "Missing rule id", error: true };
-          const reinforced = await fileRuleStorage.reinforce(id);
-          if (!reinforced) return { result: `Rule ${id} not found`, error: true };
-          return { result: `Rule reinforced: "${reinforced.rule}" (confidence: ${reinforced.confidence}, reinforcements: ${reinforced.reinforcements})` };
-        }
-        case "violation": {
-          const id = args.id;
-          if (!id) return { result: "Missing rule id", error: true };
-          const violated = await fileRuleStorage.recordViolation(id);
-          if (!violated) return { result: `Rule ${id} not found`, error: true };
-          return { result: `Rule violation recorded: "${violated.rule}" (confidence: ${violated.confidence}, violations: ${violated.violations})` };
-        }
         default:
-          return { result: `Unknown rules action: ${action}. Available: list, get, save, update, delete, reinforce, violation`, error: true };
+          return { result: `Unknown rules action: ${action}. Available: list, get, save, create, update, delete`, error: true };
       }
     } catch (err: any) {
       return { result: `Rules tool error: ${err.message}`, error: true };

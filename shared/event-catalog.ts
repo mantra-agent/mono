@@ -48,8 +48,6 @@ export const AgentEvents = {
   DATA_BELIEF_INVALIDATED: "data:belief_invalidated",
   DATA_RULE_CREATED: "data:rule_created",
   DATA_RULE_UPDATED: "data:rule_updated",
-  DATA_PREFERENCE_CREATED: "data:preference_created",
-  DATA_PREFERENCE_UPDATED: "data:preference_updated",
 } as const;
 
 export const ChatEvents = {

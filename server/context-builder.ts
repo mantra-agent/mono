@@ -29,7 +29,6 @@ import { fileRuleStorage } from "./file-storage/rules";
 
 import { fileEmotionalStateStorage } from "./file-storage/emotional-state";
 import { personaStorage } from "./file-storage/persona-storage";
-import { filePreferenceStorage } from "./file-storage/preferences";
 import { renderFocusContextBlock } from "@shared/models/chat";
 import { peopleStorage } from "./people-storage";
 import { memoryStorage, MEMORY_THRESHOLDS } from "./memory";
@@ -46,10 +45,10 @@ import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { eventBus } from "./event-bus";
 import { sanitizeSummary } from "./utils/sanitize-summary";
 import {
-  PREFERENCE_RULE_PERSISTENCE_CONTEXT,
-  PREFERENCES_TOOL_DESCRIPTION,
+  PERSONAL_RULE_CONTEXT,
   RULES_TOOL_DESCRIPTION,
-} from "./preference-rule-policy";
+  UNIVERSAL_CONVERSATION_CONTEXT,
+} from "./personal-rule-policy";
 
 const STRUCTURAL_TAG_PATTERN = /(<\/?(?:entry|turn|concept|thought|link|claim|evidence)(?:\s[^>]*)?>)/g;
 
@@ -97,12 +96,10 @@ const INVALIDATION_EVENT_MAP: Record<string, string[]> = {
     "world_model.people", "world_model.people.self", "world_model.people.self.identity",
     "world_model.people.self.voice", "world_model.people.self.persona",
     "world_model.people.partner", "world_model.people.partner.identity",
-    "world_model.people.partner.preferences",
     "world_model.people.partner.goals", "world_model.people.others",
   ],
   "data:principles_changed": ["world_model.people.self.principles"],
   "data:beliefs_changed": ["world_model.beliefs"],
-  "data:preferences_changed": ["world_model.people.partner.preferences"],
   "data:tasks_changed": ["world_model.active_work", "world_model.active_work.tasks"],
   "data:projects_changed": ["world_model.active_work", "world_model.active_work.projects"],
   "data:decisions_changed": ["world_model.decisions"],
@@ -227,7 +224,6 @@ const sectionResolvers: Record<string, SectionResolver> = {
   "world_model.people.partner": async () => "",
   "world_model.people.partner.identity": resolvePartnerIdentity,
 
-  "world_model.people.partner.preferences": resolvePreferences,
   "world_model.people.partner.goals": resolveGoalsAll,
   "world_model.people.partner.goals": async () => "",
   "world_model.people.partner.goals.today": resolveGoalsToday,
@@ -329,6 +325,7 @@ async function resolveEmotionalExpression(request: ContextRequest): Promise<stri
     if (isVoice) {
       lines.push("");
       lines.push("In this voice session, these tags will be vocalized by the TTS engine to add natural expressiveness to your speech.");
+      lines.push("When singing through ElevenLabs v3, place one natural-language singing tag immediately before the full lyric block, then keep the lyrics in one continuous block without repeated speaking tags between lines.");
     }
 
     return lines.join("\n");
@@ -341,7 +338,7 @@ async function resolveEmotionalExpression(request: ContextRequest): Promise<stri
 
 
 async function resolveGeneralInstructions(): Promise<string> {
-  return PREFERENCE_RULE_PERSISTENCE_CONTEXT;
+  return `${UNIVERSAL_CONVERSATION_CONTEXT}\n\n${PERSONAL_RULE_CONTEXT}`;
 }
 
 /** Section descriptions for the orient catalog. Keyed by section ID. */
@@ -357,7 +354,6 @@ const SECTION_CATALOG: Record<string, { description: string; recommendedFor: str
   "world_model.people.self.rules": { description: "Active behavioral rules and operational directives", recommendedFor: "all conversations", tokenCost: "medium" },
   "world_model.people.partner": { description: "Partner context wrapper", recommendedFor: "conversations", tokenCost: "small" },
   "world_model.people.partner.identity": { description: "Partner identity, context, growth edges", recommendedFor: "conversations", tokenCost: "small" },
-  "world_model.people.partner.preferences": { description: "Learned partner preferences across domains", recommendedFor: "conversations, product work", tokenCost: "medium" },
   "world_model.people.partner.goals": { description: "Full life goal tree with domains and horizons", recommendedFor: "planning, coaching, strategy", tokenCost: "large" },
   "world_model.people.partner.goals": { description: "Goals by horizon wrapper", recommendedFor: "conversations, planning", tokenCost: "small" },
   "world_model.people.partner.goals.today": { description: "Today's goals", recommendedFor: "conversations, planning", tokenCost: "small" },
@@ -408,8 +404,8 @@ function buildContextSectionCatalog(): string {
 
   lines.push("");
   lines.push("**Session type profiles** (recommended starting points):");
-  lines.push("- **Conversation**: include memory, people.others, partner.preferences, partner.goals, active_work, session_context, thoughts, principles, chat_instructions");
-  lines.push("- **Implementation**: exclude memory, people.others, partner.preferences, partner.goals, beliefs, decisions, capabilities.library, capabilities.skills, thoughts, session_context");
+  lines.push("- **Conversation**: include memory, people.others, partner.goals, active_work, session_context, thoughts, principles, chat_instructions");
+  lines.push("- **Implementation**: exclude memory, people.others, partner.goals, beliefs, decisions, capabilities.library, capabilities.skills, thoughts, session_context");
   lines.push("- **Planning/Review**: include partner.goals, active_work, goals_by_horizon, decisions, memory, principles, thoughts");
   lines.push("- **Coaching/Reflection**: include principles, partner.goals, thoughts, memory, journal");
 
@@ -710,70 +706,21 @@ async function resolveActivePersona(request: ContextRequest): Promise<string> {
   }
 }
 
-async function resolvePreferences(): Promise<string> {
-  try {
-    const all = await filePreferenceStorage.getAll();
-    if (all.length === 0) return "No preferences recorded yet.";
-
-    const byDomain = new Map<string, typeof all>();
-    for (const pref of all) {
-      const domain = pref.domain || "general";
-      if (!byDomain.has(domain)) byDomain.set(domain, []);
-      byDomain.get(domain)!.push(pref);
-    }
-
-    const sections: string[] = [];
-    for (const [domain, prefs] of byDomain) {
-      const lines = prefs.map(p => {
-        const conf = `(confidence: ${(p.confidence * 100).toFixed(0)}%)`;
-        return `- ${p.preference} ${conf}`;
-      });
-      sections.push(`**${domain}:**\n${lines.join("\n")}`);
-    }
-
-    return `Known preferences:\n\n${sections.join("\n\n")}`;
-  } catch {
-    return "Preferences unavailable.";
-  }
-}
-
-
-function getRuleMergeKey(rule: string): string | null {
-  const normalized = rule.toLowerCase();
-  if (normalized.includes("never truncate") || normalized.includes("no truncation") || normalized.includes("truncation destroys information")) return "no_truncation";
-  if (normalized.includes("calendar") && normalized.includes("confirm") && normalized.includes("date") && normalized.includes("time")) return "calendar_confirmation";
-  if (normalized.includes("never send") && normalized.includes("email") && normalized.includes("authorization")) return "email_send_authorization";
-  if (normalized.includes("npm run build") && (normalized.includes("standalone type") || normalized.includes("tsc --noemit") || normalized.includes("tsc --no-emit"))) return "coding_build_only";
-  if (normalized.includes("console.log") && normalized.includes("createlogger")) return "client_logging_framework";
-  return null;
-}
-
 async function resolveActiveRules(): Promise<string> {
   try {
-    const all = await fileRuleStorage.getAll();
-    if (all.length === 0) return "No rules defined yet.";
+    const rules = await fileRuleStorage.getAll();
+    if (rules.length === 0) return "No personal Rules defined yet.";
 
-    const byKey = new Map<string, typeof all[number]>();
-    for (const rule of all) {
-      const mergeKey = getRuleMergeKey(rule.rule) || rule.id;
-      const current = byKey.get(mergeKey);
-      if (!current || rule.confidence > current.confidence) {
-        byKey.set(mergeKey, rule);
-      }
-    }
-
-    const lines = [...byKey.values()].map(r => {
-      const scope = r.scope === "always" ? " [always]" : "";
-      const conf = `(confidence: ${(r.confidence * 100).toFixed(0)}%)`;
-      const stats = `(+${r.reinforcements}/-${r.violations})`;
-      return `- ${r.rule} ${conf} ${stats}${scope}`;
+    const lines = rules.map((rule) => {
+      const scope = rule.scope === "always" ? " [always]" : rule.context ? ` [context: ${rule.context}]` : "";
+      return `- ${rule.rule}${scope}`;
     });
 
-    const deduped = all.length - lines.length;
-    const note = deduped > 0 ? `\n\n_Deduped ${deduped} overlapping active rule${deduped === 1 ? "" : "s"} at render time._` : "";
-    return `Active rules guiding behavior:\n\n${lines.join("\n")}${note}`;
+    return `Personal Rules that override default behavior for this user:
+
+${lines.join("\n")}`;
   } catch {
-    return "Rules unavailable.";
+    return "Personal Rules unavailable.";
   }
 }
 
@@ -1816,7 +1763,6 @@ const TOOL_SHORT_DESCRIPTIONS: Record<string, string> = {
   memory: "Unified memory — read/write knowledge files, search all layers, manage graph links, run maintenance. Actions: read, write, read_entry, search, create_link, update_entry, get, consolidate_short, integrate_mid_to_long, run_myelination, run_memory_decay, run_memory_reinforcement, run_capability_audit.",
   notion: "Search, read, and browse Notion pages and databases. Actions: status, search, get_page, get_content, list_databases, query_database.",
   people: "Manage personal contacts — search, get details, outreach agenda, notes, interactions. Actions: list, get, search, agenda, add_note, update_note, delete_note, log_interaction, create, scan_imports, scan_ignored.",
-  preferences: PREFERENCES_TOOL_DESCRIPTION,
   priorities: "Manage daily/weekly/monthly priorities and next-period (next_day, next_week, next_month) priorities (max 3 each). Actions: add, update, remove, mark_status.",
   rules: RULES_TOOL_DESCRIPTION,
   scratch: "Manage temporary workspace files. Actions: read, write, edit, list, search.",
@@ -1985,7 +1931,8 @@ async function resolveTools(request: ContextRequest): Promise<string> {
     "**Tool routing instructions:**",
     "- Use tools immediately when they can do the requested work or fetch authoritative state.",
     "- Default to pulling the relevant slice of Ray’s life-context through tools when it could materially improve the answer. Do not wait to be reminded; do not over-fetch.",
-    "- Preferences and rules are user-specific learned state; follow the universal persistence policy in General Instructions before mutating them.",
+    "- Rule = explicit personal hard constraint. Preference-shaped facts, tastes, and tendencies belong in vNext memory; universal behavior belongs in the system that owns it.",
+    "- If you promise to flag, check back, remind, or otherwise follow up later, create the timer or hook in the same turn. Never make an unwired follow-up promise.",
     "- Treat tool inputs as sparse patches: omit unknown, unchanged, or blank optional fields. Use explicit clearFields/confirmation semantics for destructive clears; never send empty strings, empty arrays, or empty objects as a way to clear persisted data.",
     "- References are fundamental object links, like HTML links for Agent's world. Use typed references whenever you mention durable objects with known IDs.",
     "- Canonical persisted grammar is `@type:id`. Supported types are page, person, goal, task, project, milestone, meeting, decision, wellness_activity, priority, file, news, web_article, x_item, reddit_post, rss_item, and pr. Use the registry/parser rather than hard-coded partial lists when generating or rendering references.",

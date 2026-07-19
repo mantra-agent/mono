@@ -9,8 +9,6 @@ export type { PersonaEntry } from "./persona-storage";
 // Intention storage removed — intentions system deprecated
 export { fileIssueStorage, FileIssueStorage } from "./issues";
 // FilePredictionStorage removed — predictions are now thesis-linked via thesis_predictions table
-export { filePreferenceStorage, FilePreferenceStorage } from "./preferences";
-export type { Preference } from "./preferences";
 export { filePrincipleStorage, FilePrincipleStorage } from "./principles";
 export type { Principle, PrincipleIndex } from "./principles";
 export { fileProjectStorage, FileProjectStorage } from "./projects";
