@@ -9,6 +9,8 @@ import {
   Bot,
   ChevronRight,
   ChevronDown,
+  Circle,
+  CircleCheck,
   Loader2,
   MoreHorizontal,
   Trash2,
@@ -83,13 +85,16 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
   depth = 0,
   sessionTitleById,
   childStream,
+  planStepCompleted,
 }: {
   meta: ChildSessionBlockMeta;
   sessionKey?: string | null;
   depth?: number;
   sessionTitleById?: Record<string, string>;
   childStream?: SessionStreamState;
+  planStepCompleted?: boolean;
 }) {
+  const insidePlan = planStepCompleted !== undefined;
   const { layer } = useVisibilityLayer();
   const { toast } = useToast();
   const [expanded, setExpanded] = useState(false);
@@ -244,7 +249,15 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
               <ChevronRight className="h-3.5 w-3.5" />
             )}
           </button>
-          {isChildStreaming && !hasError ? (
+          {insidePlan ? (
+            planStepCompleted ? (
+              <CircleCheck className="h-3.5 w-3.5 shrink-0 text-success" />
+            ) : isChildStreaming ? (
+              <ActiveStatusSpinner className="h-3.5 w-3.5" />
+            ) : (
+              <Circle className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
+            )
+          ) : isChildStreaming && !hasError ? (
             <ActiveStatusSpinner className="h-3.5 w-3.5" />
           ) : (
             <Bot className={`h-3.5 w-3.5 shrink-0 ${iconClass}`} data-testid={`icon-child-agent-${meta.childSessionId}`} />
@@ -307,7 +320,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
         </div>
       )}
 
-      {!expanded && (
+      {!expanded && !insidePlan && (
         <div className="px-8 pb-2 min-h-7" data-testid={`text-child-summary-${meta.childSessionId}`}>
           <div className="text-xs leading-6 text-muted-foreground truncate">
             {latestLine}
