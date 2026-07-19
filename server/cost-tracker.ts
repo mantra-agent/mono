@@ -32,6 +32,28 @@ async function initializeDailyFromDb(dateStr: string): Promise<void> {
   }
 }
 
+
+function providerUsageSemantics(provider: string, metadata?: Record<string, unknown>): "per_call" | "cumulative_provider_session" | "unknown" {
+  const tokenAccounting = metadata?.tokenAccounting;
+  const providerReportedUsage = tokenAccounting && typeof tokenAccounting === "object"
+    ? (tokenAccounting as Record<string, unknown>).providerReportedUsage
+    : undefined;
+
+  if (metadata?.usageSemantics === "per_call" || metadata?.usageSemantics === "cumulative_provider_session") {
+    return metadata.usageSemantics;
+  }
+
+  if (provider === "claude-cli") {
+    return providerReportedUsage === "assistant.usage" ? "cumulative_provider_session" : "per_call";
+  }
+
+  if (provider === "anthropic" || provider === "openai" || provider === "openai-subscription" || provider === "local") {
+    return "per_call";
+  }
+
+  return "unknown";
+}
+
 async function ensureDailyInitialized(): Promise<void> {
   const today = new Date().toISOString().split("T")[0];
   if (dailyInitialized && today === dailyDate) return;
@@ -91,6 +113,7 @@ export async function logApiCall(params: {
     const cacheReadTokens = params.usage?.cacheReadTokens ?? 0;
     const cacheWriteTokens = params.usage?.cacheWriteTokens ?? 0;
     const totalTokens = params.usage?.totalTokens || (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens);
+    const usageSemantics = providerUsageSemantics(provider, params.metadata);
 
     const costPerM = getModelCostPerMillion(model);
     const costInput = (inputTokens / 1_000_000) * costPerM.input
@@ -137,7 +160,9 @@ export async function logApiCall(params: {
           cacheWriteTokens,
           reasoningTokens: params.usage?.reasoningTokens ?? null,
           visibleOutputTokens: params.usage?.visibleOutputTokens ?? null,
+          usageSemantics,
         },
+        usageSemantics,
       },
     });
   } catch (err: unknown) {
