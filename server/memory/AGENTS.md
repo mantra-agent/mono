@@ -242,6 +242,8 @@ Named markdown files for durable reference knowledge:
 
 `DocumentStorage` is the compatibility boundary for workspace documents while legacy memory retires. `DOCUMENT_STORE_MIGRATION_MODE` is the single activation discriminant: missing/invalid values resolve to `off`; `shadow` enables the atomic workspace mirror while legacy reads remain authoritative; `cutover` permits target reads only after exact reconciliation. The database trigger preserves atomicity even for older direct-SQL writers and is inert when mode state is off. Missing state or target errors fail visibly in cutover mode; never add a silent read fallback. Production activation requires separate human approval.
 
+In `DOCUMENT_STORE_MIGRATION_MODE=independent`, `document_store_documents` is the only read/write authority. Activation is one-way and database-persisted: startup requires exact source-target equality, removes the forward mirror, and installs a database trigger that rejects any future `memory_entries(layer='workspace')` mutation. Archived workspace rows remain untouched until a separately approved retention deletion. Do not add legacy workspace fallbacks or bypass writes.
+
 ## When Working Here
 
 - **Embeddings are 1536-dimensional** (OpenAI text-embedding-3-small). All vector operations use this dimension.

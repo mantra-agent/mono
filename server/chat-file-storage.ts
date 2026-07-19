@@ -1,8 +1,10 @@
 import { documentStorage } from "./memory";
 import { db } from "./db";
-import { memoryEntries, sessionArtifacts, sessionTree } from "@shared/schema";
+import { memoryEntries, documentStoreDocuments, sessionArtifacts, sessionTree } from "@shared/schema";
 import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { combineWithVisibleScope, combineWithWritableScope } from "./scoped-storage";
+import { documentStoreIndependentWritesEnabled } from "./memory/document-store-cutover";
+import { targetReadsEnabled } from "./memory/document-storage";
 import { generateId } from "./file-storage/utils";
 import { createLogger } from "./log";
 import { markSessionDeleted } from "./chat-journal";
@@ -586,6 +588,13 @@ const chatDocumentScopeColumns = {
   vaultId: memoryEntries.vaultId,
 };
 
+const targetChatDocumentScopeColumns = {
+  scope: documentStoreDocuments.scope,
+  ownerUserId: documentStoreDocuments.ownerUserId,
+  accountId: documentStoreDocuments.accountId,
+  vaultId: documentStoreDocuments.vaultId,
+};
+
 async function deleteSessionSubtree(rootSessionId: string): Promise<SessionDeletionResult> {
   const principal = getCurrentPrincipalOrSystem();
   const sessions = await chatFileStorage.getAllSessions();
@@ -612,20 +621,34 @@ async function deleteSessionSubtree(rootSessionId: string): Promise<SessionDelet
   }
 
   await db.transaction(async (tx) => {
-    const deletedDocuments = await tx
-      .delete(memoryEntries)
-      .where(
-        combineWithWritableScope(
-          principal,
-          chatDocumentScopeColumns,
-          and(
-            eq(memoryEntries.layer, "workspace"),
-            eq(memoryEntries.source, "chat"),
-            inArray(memoryEntries.sourceId, deletedSessionIds),
-          ),
-        ),
-      )
-      .returning({ sessionId: memoryEntries.sourceId });
+    const deletedDocuments = await documentStoreIndependentWritesEnabled()
+      ? await tx
+          .delete(documentStoreDocuments)
+          .where(
+            combineWithWritableScope(
+              principal,
+              targetChatDocumentScopeColumns,
+              and(
+                eq(documentStoreDocuments.documentType, "chat"),
+                inArray(documentStoreDocuments.documentId, deletedSessionIds),
+              ),
+            ),
+          )
+          .returning({ sessionId: documentStoreDocuments.documentId })
+      : await tx
+          .delete(memoryEntries)
+          .where(
+            combineWithWritableScope(
+              principal,
+              chatDocumentScopeColumns,
+              and(
+                eq(memoryEntries.layer, "workspace"),
+                eq(memoryEntries.source, "chat"),
+                inArray(memoryEntries.sourceId, deletedSessionIds),
+              ),
+            ),
+          )
+          .returning({ sessionId: memoryEntries.sourceId });
 
     if (!deletedDocuments.some((row) => row.sessionId === rootSessionId)) {
       throw new Error(`Session is not writable: ${rootSessionId}`);
@@ -2920,39 +2943,56 @@ export async function searchSessionSummaries(
   try {
     const cutoff = new Date(Date.now() - sinceHours * 60 * 60 * 1000);
     const searchPattern = `%${trimmed}%`;
-    const updatedAtSql = sql<string>`coalesce(${memoryEntries.metadata}->>'updatedAt', ${memoryEntries.processedAt}::text, ${memoryEntries.createdAt}::text)`;
-    const messageCountSql = sql<number>`coalesce((${memoryEntries.metadata}->>'messageCount')::int, 0)`;
     const principal = getCurrentPrincipalOrSystem();
-    const rows = await db
-      .select({
-        docId: memoryEntries.sourceId,
-        title: memoryEntries.title,
-        metadata: memoryEntries.metadata,
-        updatedAt: memoryEntries.processedAt,
-      })
-      .from(memoryEntries)
-      .where(
-        combineWithVisibleScope(
-          principal,
-          {
-            scope: memoryEntries.scope,
-            ownerUserId: memoryEntries.ownerUserId,
-            accountId: memoryEntries.accountId,
-          },
-          and(
-            eq(memoryEntries.layer, "workspace"),
-            eq(memoryEntries.source, "chat"),
-            sql`${updatedAtSql} >= ${cutoff.toISOString()}`,
-            sql`${messageCountSql} > 0`,
-            or(
-              ilike(memoryEntries.title, searchPattern),
-              ilike(memoryEntries.content, searchPattern),
+    const rows = await targetReadsEnabled()
+      ? await db
+          .select({
+            docId: documentStoreDocuments.documentId,
+            title: documentStoreDocuments.title,
+            metadata: documentStoreDocuments.metadata,
+            updatedAt: documentStoreDocuments.updatedAt,
+          })
+          .from(documentStoreDocuments)
+          .where(
+            combineWithVisibleScope(
+              principal,
+              targetChatDocumentScopeColumns,
+              and(
+                eq(documentStoreDocuments.documentType, "chat"),
+                sql`coalesce(${documentStoreDocuments.metadata}->>'updatedAt', ${documentStoreDocuments.updatedAt}::text, ${documentStoreDocuments.createdAt}::text) >= ${cutoff.toISOString()}`,
+                sql`coalesce((${documentStoreDocuments.metadata}->>'messageCount')::int, 0) > 0`,
+                or(
+                  ilike(documentStoreDocuments.title, searchPattern),
+                  ilike(documentStoreDocuments.content, searchPattern),
+                ),
+              ),
             ),
-          ),
-        ),
-      )
-      .orderBy(desc(sql`${updatedAtSql}`))
-      .limit(Math.max(1, Math.min(maxResults, 100)));
+          )
+          .orderBy(desc(sql`coalesce(${documentStoreDocuments.metadata}->>'updatedAt', ${documentStoreDocuments.updatedAt}::text, ${documentStoreDocuments.createdAt}::text)`))
+          .limit(Math.max(1, Math.min(maxResults, 100)))
+      : await db
+          .select({
+            docId: memoryEntries.sourceId,
+            title: memoryEntries.title,
+            metadata: memoryEntries.metadata,
+            updatedAt: memoryEntries.processedAt,
+          })
+          .from(memoryEntries)
+          .where(
+            combineWithVisibleScope(
+              principal,
+              chatDocumentScopeColumns,
+              and(
+                eq(memoryEntries.layer, "workspace"),
+                eq(memoryEntries.source, "chat"),
+                sql`coalesce(${memoryEntries.metadata}->>'updatedAt', ${memoryEntries.processedAt}::text, ${memoryEntries.createdAt}::text) >= ${cutoff.toISOString()}`,
+                sql`coalesce((${memoryEntries.metadata}->>'messageCount')::int, 0) > 0`,
+                or(ilike(memoryEntries.title, searchPattern), ilike(memoryEntries.content, searchPattern)),
+              ),
+            ),
+          )
+          .orderBy(desc(sql`coalesce(${memoryEntries.metadata}->>'updatedAt', ${memoryEntries.processedAt}::text, ${memoryEntries.createdAt}::text)`))
+          .limit(Math.max(1, Math.min(maxResults, 100)));
 
     return buildSessionSummaries(rows.filter((row): row is {
       docId: string;

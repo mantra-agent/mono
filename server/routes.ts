@@ -187,7 +187,7 @@ export async function registerRoutes(
       const journalDocs = await documentStorage.getDocumentsByType("journal" as any);
       if (journalDocs.length > 0) {
         for (const doc of journalDocs) {
-          await documentStorage.deleteDocument("journal" as any, String(doc.id));
+          await documentStorage.deleteDocument("journal" as any, doc.docId);
         }
         routesLog.log(`journal-cleanup: Deleted ${journalDocs.length} old documentStorage journal entries`);
       }
