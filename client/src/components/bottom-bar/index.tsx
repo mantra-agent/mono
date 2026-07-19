@@ -426,6 +426,8 @@ interface BottomBarProps {
   contained?: boolean;
   /** Publish measured height for independent overlays such as app toasts. */
   publishGlobalHeight?: boolean;
+  /** Reports physical-mobile composer focus so AppLayout can own viewport restoration. */
+  onComposerFocusChange?: (focused: boolean) => void;
   /** When embedded in the Session Window, the parent owns the visible session identity. */
   sessionId?: string | null;
   /** Parent-owned stream state for the visible session. Avoids a second single-session subscription. */
@@ -441,6 +443,7 @@ interface BottomBarProps {
 export function BottomBar({
   contained,
   publishGlobalHeight = false,
+  onComposerFocusChange,
   sessionId: controlledSessionId,
   sessionSub: controlledSessionSub,
   setSessionId: controlledSetSessionId,
@@ -889,6 +892,8 @@ export function BottomBar({
                 }}
                 onKeyDown={voiceActive ? undefined : handleKeyDown}
                 onPaste={voiceActive ? undefined : handlePaste}
+                onFocus={onComposerFocusChange ? () => onComposerFocusChange(true) : undefined}
+                onBlur={onComposerFocusChange ? () => onComposerFocusChange(false) : undefined}
                 placeholder={voiceInputPlaceholder ?? (isAgentRunning ? "Message Agent…" : "Agent offline")}
                 disabled={!isAgentRunning || voiceActive || turnAdmissionPending}
                 className={cn(
