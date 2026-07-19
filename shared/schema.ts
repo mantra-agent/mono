@@ -431,7 +431,7 @@ export const responsibilityRuns = pgTable("responsibility_runs", {
   index("idx_responsibility_runs_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_responsibility_runs_account").on(table.accountId),
   check("responsibility_runs_ownership_contract", sql`
-    (${table.scope} = 'user' AND ${table.type} <> 'system' AND ${table.ownerUserId} IS NOT NULL AND ${table.accountId} IS NOT NULL)
+    (${table.scope} = 'user' AND ${table.ownerUserId} IS NOT NULL AND ${table.accountId} IS NOT NULL)
     OR (${table.scope} IN ('system', 'quarantine') AND ${table.ownerUserId} IS NULL AND ${table.accountId} IS NULL)
   `),
   uniqueIndex("idx_responsibility_runs_successful_scheduled_slot_unique")

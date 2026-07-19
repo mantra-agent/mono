@@ -323,6 +323,7 @@ Four interacting layers: intention stack (what), timer scheduler (when), skill r
 - Before any user Timer handler executes, the scheduler restores the Timer owner through `runWithPrincipal`. Platform commands use a named system principal. Missing ownership fails closed.
 - `system_key` is management identity, not execution authority. Managed skill Timers are provisioned per completed-onboarding user at explicit identity/login boundaries; platform command Timers are system-scoped. Scheduler rescheduling never reconciles or creates Timers.
 - Timer ownership migration is provenance-only and durable. Ambiguous rows are quarantined, never assigned to the first or primary user.
+- Timer `system_key` uniqueness is authority-scoped: one partial index for platform system keys and one for `(owner_user_id, system_key)` managed-user keys. Boot always drops the retired global `idx_timers_system_key_unique`, even after migration completion; no bootstrap or auto-heal path may recreate it.
 
 ### Timer Scheduler
 - **18 system timer seeds** hardcoded and reconciled on every boot

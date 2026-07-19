@@ -209,6 +209,24 @@ async function ensureDocumentStoreDocumentsSchema(pool: { query: (sql: string, p
 
 const TIMER_OWNERSHIP_MIGRATION_KEY = "migration.timer-ownership.v1";
 
+type SqlQueryable = {
+  query: (sql: string, params?: unknown[]) => Promise<unknown>;
+};
+
+async function ensureTimerSystemKeyIndexes(queryable: SqlQueryable): Promise<void> {
+  await queryable.query(`DROP INDEX IF EXISTS idx_timers_system_key_unique`);
+  await queryable.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_timers_system_key_system_unique
+    ON timers(system_key)
+    WHERE scope = 'system' AND system_key IS NOT NULL
+  `);
+  await queryable.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_timers_system_key_user_unique
+    ON timers(owner_user_id, system_key)
+    WHERE scope = 'user' AND system_key IS NOT NULL
+  `);
+}
+
 async function assertTimerOwnershipContract(client: {
   query: (sql: string, params?: unknown[]) => Promise<{ rows?: Array<Record<string, unknown>> }>;
 }): Promise<void> {
@@ -242,6 +260,7 @@ async function ensureTimerOwnershipSchema(pool: {
   try {
     await client.query("BEGIN");
     await client.query(`SELECT pg_advisory_xact_lock(hashtext('${TIMER_OWNERSHIP_MIGRATION_KEY}'))`);
+    await ensureTimerSystemKeyIndexes(client);
     const state = await client.query(`SELECT value FROM system_settings WHERE key = $1 LIMIT 1`, [TIMER_OWNERSHIP_MIGRATION_KEY]);
     if (state.rows?.[0]?.value === true) {
       await client.query("COMMIT");
@@ -252,8 +271,6 @@ async function ensureTimerOwnershipSchema(pool: {
     ALTER TABLE responsibility_runs ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'quarantine';
     ALTER TABLE responsibility_runs ADD COLUMN IF NOT EXISTS owner_user_id TEXT;
     ALTER TABLE responsibility_runs ADD COLUMN IF NOT EXISTS account_id TEXT;
-
-    DROP INDEX IF EXISTS idx_timers_system_key_unique;
 
     UPDATE timers
     SET scope = 'system', owner_user_id = NULL, account_id = NULL
@@ -325,11 +342,6 @@ async function ensureTimerOwnershipSchema(pool: {
 
     CREATE INDEX IF NOT EXISTS idx_responsibility_runs_scope_owner ON responsibility_runs(scope, owner_user_id);
     CREATE INDEX IF NOT EXISTS idx_responsibility_runs_account ON responsibility_runs(account_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_timers_system_key_system_unique
-      ON timers(system_key) WHERE scope = 'system' AND system_key IS NOT NULL;
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_timers_system_key_user_unique
-      ON timers(owner_user_id, system_key) WHERE scope = 'user' AND system_key IS NOT NULL;
-
     DO $$
     BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'timers_ownership_contract') THEN
@@ -815,7 +827,7 @@ export async function runSchemaBootstrap(
     // immediately after table creation.
     await pool.query(`ALTER TABLE timers ADD COLUMN IF NOT EXISTS system_key TEXT`);
     await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`);
-    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_timers_system_key_unique ON timers(system_key)`);
+    await ensureTimerSystemKeyIndexes(pool);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS responsibility_runs (
@@ -4322,9 +4334,7 @@ export async function runSchemaBootstrap(
     await ensureColumns("timers", [
       { name: "system_key", type: "TEXT" },
     ]);
-    await pool.query(
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_timers_system_key_unique ON timers(system_key) WHERE system_key IS NOT NULL`,
-    );
+    await ensureTimerSystemKeyIndexes(pool);
     log("auto-heal: ensured timer system key column", "migration");
   });
 
