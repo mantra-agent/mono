@@ -12,14 +12,13 @@ import {
   ChevronRight,
   MoreHorizontal,
   Compass,
-  Lightbulb,
   ShieldCheck,
   Search,
   X,
   type LucideIcon,
 } from "lucide-react";
 
-type SectionKey = "theses" | "rules" | "beliefs" | "principles";
+type SectionKey = "theses" | "rules" | "principles";
 
 type OrientationRecord = Record<string, unknown> & { id?: string | number };
 
@@ -68,24 +67,6 @@ const SECTION_CONFIGS: SectionConfig[] = [
     ],
   },
   {
-    key: "beliefs",
-    deleteEndpoint: (item) => `/api/beliefs/${item.id}`,
-    label: "Beliefs",
-    icon: Lightbulb,
-    endpoint: "/api/beliefs",
-    title: (item) => text(item.claim) || "Untitled belief",
-    subtitle: (item) => text(item.domain),
-    detailRows: [
-      { label: "Claim", value: (item) => item.claim },
-      { label: "Domain", value: (item) => item.domain },
-      { label: "Status", value: (item) => item.status },
-      { label: "Confidence", value: (item) => percent(item.confidence) },
-      { label: "Evidence", value: (item) => item.evidence },
-      { label: "Principle", value: (item) => item.principleRef },
-      { label: "Tags", value: (item) => item.tags },
-    ],
-  },
-  {
     key: "theses",
     deleteEndpoint: (item) => `/api/theses/${item.id}`,
     label: "Theses",
@@ -112,10 +93,6 @@ function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-
-function percent(value: unknown): string {
-  return typeof value === "number" ? `${Math.round(value * 100)}%` : "";
-}
 
 function formatValue(value: unknown): string {
   if (value == null || value === "") return "—";
@@ -308,7 +285,7 @@ function OrientationSection({
   loading: boolean;
   searchActive: boolean;
 }) {
-  const [expanded, setExpanded] = useState(section.key !== "beliefs");
+  const [expanded, setExpanded] = useState(true);
   const isExpanded = searchActive || expanded;
   return (
     <div className="space-y-0.5">

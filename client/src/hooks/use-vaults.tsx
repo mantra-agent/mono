@@ -183,7 +183,6 @@ function invalidateVaultScopedQueries() {
     "/api/tasks",
     "/api/people",
     "/api/rules",
-    "/api/beliefs",
     "/api/skills",
     "/api/theses",
     "/api/signals",
