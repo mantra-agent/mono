@@ -1,8 +1,8 @@
 import { db } from "../db";
 import { emotionalStates } from "@shared/models/cognition";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull, or } from "drizzle-orm";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
-import { combineWithVisibleScope, ownedInsertValues } from "../scoped-storage";
+import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { TTLCache } from "../utils/ttl-cache";
 import { createLogger } from "../log";
 
@@ -160,6 +160,83 @@ export class FileEmotionalStateStorage {
         " a=" +
         arousal,
     );
+    return entry;
+  }
+
+  async update(
+    id: string,
+    input: {
+      stateName?: string;
+      valence?: number;
+      arousal?: number;
+      triggers?: string[];
+      context?: string;
+      narrative?: string;
+      clearFields?: Array<"triggers" | "context" | "narrative">;
+      expected: {
+        stateName: string;
+        valence: number;
+        arousal: number;
+        triggers: string[];
+        context: string;
+        narrative: string;
+      };
+    },
+  ): Promise<EmotionalStateEntry | null> {
+    if (!/^\d+$/.test(id)) return null;
+    const numericId = Number(id);
+
+    const patch: Partial<typeof emotionalStates.$inferInsert> = {};
+    if (input.stateName !== undefined) patch.stateName = input.stateName;
+    if (input.valence !== undefined) patch.valence = input.valence;
+    if (input.arousal !== undefined) patch.arousal = input.arousal;
+    if (input.triggers !== undefined) patch.triggers = input.triggers;
+    if (input.context?.trim()) patch.context = input.context.trim();
+    if (input.narrative?.trim()) patch.narrative = input.narrative.trim();
+
+    for (const field of input.clearFields || []) {
+      if (field === "triggers") patch.triggers = [];
+      if (field === "context") patch.context = "";
+      if (field === "narrative") patch.narrative = null;
+    }
+
+    if (Object.keys(patch).length === 0) return null;
+
+    const expectedTriggers = input.expected.triggers.length > 0
+      ? eq(emotionalStates.triggers, input.expected.triggers)
+      : or(isNull(emotionalStates.triggers), eq(emotionalStates.triggers, []));
+    const expectedContext = input.expected.context
+      ? eq(emotionalStates.context, input.expected.context)
+      : or(isNull(emotionalStates.context), eq(emotionalStates.context, ""));
+    const expectedNarrative = input.expected.narrative
+      ? eq(emotionalStates.narrative, input.expected.narrative)
+      : or(isNull(emotionalStates.narrative), eq(emotionalStates.narrative, ""));
+
+    patch.updatedByUserId = getCurrentPrincipalOrSystem().userId ?? undefined;
+    const [row] = await db
+      .update(emotionalStates)
+      .set(patch)
+      .where(
+        combineWithWritableScope(
+          getCurrentPrincipalOrSystem(),
+          emotionalScopeColumns,
+          and(
+            eq(emotionalStates.id, numericId),
+            eq(emotionalStates.stateName, input.expected.stateName),
+            eq(emotionalStates.valence, input.expected.valence),
+            eq(emotionalStates.arousal, input.expected.arousal),
+            expectedTriggers,
+            expectedContext,
+            expectedNarrative,
+          ),
+        ),
+      )
+      .returning();
+
+    if (!row) return null;
+    this.invalidateCache();
+    const entry = rowToEntry(row);
+    log.log("update id=" + entry.id + " state=" + entry.stateName);
     return entry;
   }
 

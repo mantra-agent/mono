@@ -358,6 +358,64 @@ export async function registerOrientationRoutes(app: Express) {
     }
   });
 
+  app.put("/api/emotional-state/:id", async (req, res) => {
+    log.debug("PUT /api/emotional-state/" + req.params.id);
+    try {
+      if (!/^\d+$/.test(req.params.id)) {
+        return res.status(400).json({ error: "Invalid emotional state ID" });
+      }
+      const clearableField = z.enum(["triggers", "context", "narrative"]);
+      const expectedSchema = z.object({
+        stateName: z.string().min(1),
+        valence: z.number().min(-1).max(1),
+        arousal: z.number().min(0).max(1),
+        triggers: z.array(z.string()),
+        context: z.string(),
+        narrative: z.string(),
+      }).strict();
+      const schema = z.object({
+        stateName: z.string().trim().min(1).optional(),
+        valence: z.number().min(-1).max(1).optional(),
+        arousal: z.number().min(0).max(1).optional(),
+        triggers: z.array(z.string().trim().min(1)).min(1).optional(),
+        context: z.string().trim().min(1).optional(),
+        narrative: z.string().trim().min(1).optional(),
+        clearFields: z.array(clearableField).max(3).optional(),
+        expected: expectedSchema,
+      }).strict().superRefine((data, ctx) => {
+        const mutationFields = ["stateName", "valence", "arousal", "triggers", "context", "narrative"] as const;
+        if (!mutationFields.some((field) => data[field] !== undefined) && !data.clearFields?.length) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "At least one update is required" });
+        }
+        const clearFields = new Set(data.clearFields || []);
+        if (clearFields.size !== (data.clearFields?.length || 0)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "clearFields cannot contain duplicates" });
+        }
+        for (const field of ["triggers", "context", "narrative"] as const) {
+          if (data[field] !== undefined && clearFields.has(field)) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${field} cannot be set and cleared together` });
+          }
+        }
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      }
+      const entry = await fileEmotionalStateStorage.update(req.params.id, parsed.data);
+      if (!entry) return res.status(409).json({ error: "Emotional state changed elsewhere. Refresh before saving." });
+      const { eventBus } = await import("../event-bus");
+      eventBus.publish({
+        category: "agent",
+        event: "cognition.emotion.changed",
+        payload: { stateId: entry.id, stateName: entry.stateName, valence: entry.valence, arousal: entry.arousal },
+      });
+      res.json(entry);
+    } catch (error: any) {
+      log.error("PUT /api/emotional-state/:id error:", error?.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.post("/api/emotional-state", async (req, res) => {
     log.debug("POST /api/emotional-state mood=", req.body?.mood || req.body?.stateName);
     try {
