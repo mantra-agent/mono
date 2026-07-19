@@ -154,7 +154,12 @@ function buildSceneGraph(nodes: MemoryGraph3DNode[], links: MemoryGraph3DLink[])
 function fitCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls, nodes: SceneNode[]) {
   if (nodes.length === 0) return;
   const bounds = new THREE.Box3();
-  nodes.forEach((node) => bounds.expandBySphere(new THREE.Sphere(node.position, node.radius)));
+  let maxNodeRadius = 0;
+  nodes.forEach((node) => {
+    bounds.expandByPoint(node.position);
+    maxNodeRadius = Math.max(maxNodeRadius, node.radius);
+  });
+  bounds.expandByScalar(maxNodeRadius);
   const sphere = bounds.getBoundingSphere(new THREE.Sphere());
   const distance = Math.max(24, sphere.radius / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.18);
   const direction = camera.position.clone().sub(controls.target).normalize();
