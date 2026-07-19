@@ -126,6 +126,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isOneTimeReminder(timer: Timer): boolean {
+  return timer.type === "reminder" &&
+    timer.schedules.length > 0 &&
+    timer.schedules.every((schedule) => schedule.frequency === "once");
+}
+
 function evaluateSlotGuard(
   intendedFireAt: number,
   now: number,
@@ -210,6 +216,19 @@ class TimerScheduler {
     }
 
     log.log(`Starting scheduler, globalPaused=${this.globalPaused}`);
+    try {
+      const deletedCount = await withQueryAttributionAsync("timer-scheduler", () =>
+        timerStorage.deleteCompletedOneTimeRemindersForScheduler(),
+      );
+      if (deletedCount > 0) {
+        log.log(`deleted ${deletedCount} completed one-time reminder(s)`);
+      }
+    } catch (error: unknown) {
+      log.warn(
+        "completed one-time reminder cleanup failed; scheduler will continue",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
     await this.fireBootReminders();
     await this.rescheduleAll();
 
@@ -692,11 +711,18 @@ class TimerScheduler {
       timerStorage.updateRun(timer, run.id, update),
     );
 
-    if (handlerOutput?.disableTimer === true) {
-      await withQueryAttributionAsync("timer-scheduler", () =>
-        timerStorage.updateForScheduler(timer, { enabled: false }),
+    if (result.outcome === "success" && isOneTimeReminder(timer)) {
+      const deleted = await withQueryAttributionAsync("timer-scheduler", () =>
+        timerStorage.deleteForScheduler(timer),
       );
-      log.debug(`disabled timer "${timer.name}" after handler request`);
+      if (deleted) {
+        log.debug(`deleted completed one-time reminder "${timer.name}"`);
+      } else {
+        log.error(`failed to delete completed one-time reminder "${timer.name}"; disabling fallback`);
+        await withQueryAttributionAsync("timer-scheduler", () =>
+          timerStorage.updateForScheduler(timer, { enabled: false }),
+        );
+      }
     }
 
     const event =

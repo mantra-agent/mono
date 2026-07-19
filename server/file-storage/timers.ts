@@ -293,6 +293,46 @@ export class FileTimerStorage {
     return (result.rowCount ?? 0) > 0;
   }
 
+  async deleteForScheduler(timer: Timer): Promise<boolean> {
+    const ownership = ownershipForTimer(timer);
+    const ownershipPredicate = ownership.scope === "user"
+      ? and(eq(timers.scope, "user"), eq(timers.ownerUserId, ownership.ownerUserId), eq(timers.accountId, ownership.accountId))
+      : and(eq(timers.scope, "system"), eq(timers.systemKey, timer.systemKey!));
+    const result = await db.delete(timers).where(and(eq(timers.id, timer.id), ownershipPredicate));
+    this.invalidateCache();
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async deleteCompletedOneTimeRemindersForScheduler(): Promise<number> {
+    const result = await pool.query<{ id: string }>(`
+      DELETE FROM timers AS timer
+      WHERE timer.type = 'reminder'
+        AND timer.enabled = false
+        AND timer.scope = 'user'
+        AND timer.owner_user_id IS NOT NULL
+        AND timer.account_id IS NOT NULL
+        AND jsonb_typeof(timer.schedules) = 'array'
+        AND jsonb_array_length(timer.schedules) > 0
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(timer.schedules) AS schedule
+          WHERE schedule->>'frequency' IS DISTINCT FROM 'once'
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM responsibility_runs AS run
+          WHERE run.responsibility_id = timer.id
+            AND run.status = 'success'
+            AND run.scope = 'user'
+            AND run.owner_user_id = timer.owner_user_id
+            AND run.account_id = timer.account_id
+        )
+      RETURNING timer.id
+    `);
+    if (result.rowCount) this.invalidateCache();
+    return result.rowCount ?? 0;
+  }
+
   async appendRun(timer: Timer, run: TimerRun): Promise<void> {
     const ownership = ownershipForTimer(timer);
     await db.insert(responsibilityRuns).values({
