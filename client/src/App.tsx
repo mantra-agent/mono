@@ -33,6 +33,7 @@ import { AppToastDisplay } from "@/components/toast-display";
 import { ExportProgressBanner } from "@/components/ExportProgressBanner";
 import { TabParamSync } from "@/hooks/use-tab-param";
 import { useIsMobile, ContainerWidthProvider } from "@/hooks/use-mobile";
+import { useMobileViewportRestoration } from "@/hooks/use-mobile-viewport-restoration";
 import NotFound from "@/pages/not-found";
 
 const log = createLogger("App");
@@ -371,10 +372,15 @@ function AppLayout({ mobileSurfaceActive, previewRouteOwnsCanvas }: { mobileSurf
   const { widgetOpen } = useFocusSession();
   const navOpen = sidebarIsMobile ? openMobile : open;
   const mobileSessionSurfaceOpen = isMobile && widgetOpen;
+  const mobileViewport = useMobileViewportRestoration(isMobile && !previewRouteOwnsCanvas);
 
   return (
     <>
-      <div className={cn("flex h-[100dvh] w-full overflow-hidden", mobileSurfaceActive && !previewRouteOwnsCanvas && "bg-background sm:items-start sm:justify-center sm:p-6")}>
+      <div
+        ref={mobileViewport.shellRef}
+        className={cn("flex h-[100dvh] w-full overflow-hidden", mobileSurfaceActive && !previewRouteOwnsCanvas && "bg-background sm:items-start sm:justify-center sm:p-6")}
+        style={mobileViewport.restoredHeight ? { height: `${mobileViewport.restoredHeight}px` } : undefined}
+      >
         <div
           className={cn(
             "relative flex flex-col min-w-0 overflow-hidden flex-1",
@@ -398,7 +404,13 @@ function AppLayout({ mobileSurfaceActive, previewRouteOwnsCanvas }: { mobileSurf
               composer. Keeping the editable composer out of fixed positioning
               prevents WebKit keyboard dismissal from splitting visual and
               hit-test coordinates. Desktop mobile-preview behavior is unchanged. */}
-          {!previewRouteOwnsCanvas && isMobile && <BottomBar contained publishGlobalHeight />}
+          {!previewRouteOwnsCanvas && isMobile && (
+            <BottomBar
+              contained
+              publishGlobalHeight
+              onComposerFocusChange={mobileViewport.onComposerFocusChange}
+            />
+          )}
           {!previewRouteOwnsCanvas && !isMobile && mobileSurfaceActive && <div className="shrink-0" style={{ height: "var(--bottom-bar-height, 0px)" }} />}
           {!previewRouteOwnsCanvas && !isMobile && mobileSurfaceActive && <BottomBar />}
           {!isMobile && mobileSurfaceActive && !previewRouteOwnsCanvas && <FocusWidget contained />}
