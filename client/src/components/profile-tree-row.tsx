@@ -15,6 +15,7 @@ export function ProfileTreeRow({
   expandedContentClassName,
   actionContent,
   menuContent,
+  menuVisibility = "always",
   testId,
   defaultOpen = false,
   mobileLayout = "stacked",
@@ -28,6 +29,7 @@ export function ProfileTreeRow({
   expandedContentClassName?: string;
   actionContent?: ReactNode;
   menuContent?: ReactNode;
+  menuVisibility?: "always" | "hover";
   testId?: string;
   defaultOpen?: boolean;
   mobileLayout?: "stacked" | "inline";
@@ -114,6 +116,8 @@ export function ProfileTreeRow({
                     usesSessionMenuControls
                       ? sessionOverflowControlClassName
                       : "min-h-11 min-w-11 rounded sm:min-h-5 sm:min-w-5 sm:opacity-0 sm:group-hover:opacity-100",
+                    menuVisibility === "hover" &&
+                      "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100",
                   )}
                   aria-label="More actions"
                 >
