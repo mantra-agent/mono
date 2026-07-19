@@ -79,6 +79,47 @@ export class FileRuleStorage extends BaseDocumentStore<Rule> {
     return entry;
   }
 
+  async restoreFromMigration(
+    id: string,
+    input: {
+      rule: string;
+      source: Rule["source"];
+      scope: Rule["scope"];
+      context?: string;
+      tags: string[];
+    },
+  ): Promise<Rule> {
+    const existingById = await this.getById(id);
+    if (existingById) return existingById;
+
+    const existingByText = (await this.getAll()).find(
+      (candidate) => candidate.rule.trim().toLowerCase() === input.rule.trim().toLowerCase(),
+    );
+    if (existingByText) return existingByText;
+
+    const rule = input.rule.trim();
+    const context = input.context?.trim() || "";
+    if (!rule) throw new Error("Rule text is required");
+    if (input.scope === "contextual" && !context) {
+      throw new Error("Context is required for a contextual Rule");
+    }
+
+    const now = this.nowISO();
+    const restored: Rule = {
+      id,
+      rule,
+      source: input.source,
+      scope: input.scope,
+      context: input.scope === "always" ? "" : context,
+      tags: input.tags,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await this.persistAndSync(restored, "restoreFromMigration", ` scope=${restored.scope}`);
+    this.invalidateRuleCache();
+    return restored;
+  }
+
   async update(id: string, updates: Partial<Omit<Rule, "id" | "createdAt">>): Promise<Rule | null> {
     const existing = await this.getById(id);
     if (!existing) return null;

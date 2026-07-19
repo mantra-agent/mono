@@ -7,15 +7,52 @@ import { combineWithVisibleScope, combineWithWritableScope } from "../scoped-sto
 import { tagRegistry } from "../file-storage/tags";
 import { fileRuleStorage } from "../file-storage/rules";
 import { documentStoreDocuments, memoryEntries } from "@shared/schema";
+import { getSetting, setSetting } from "../system-settings";
 import { memoryVnextClaimStorage, persistClaimCandidates } from "./vnext-claim-storage";
 
 const log = createLogger("LegacyRuleMigration");
 const SYSTEM_JOB = "personal-rule-audit-migration";
 
-const RETAINED_RULE_IDS = new Set([
-  "mr7bmhm3utqm73",
-  "mr7blzb8qgewyd",
-]);
+interface RetainedRuleTemplate {
+  id: string;
+  rule: string;
+  source: "correction";
+  scope: "always" | "contextual";
+  context: string;
+  tags: string[];
+}
+
+const RETAINED_RULES: RetainedRuleTemplate[] = [
+  {
+    id: "mr7bmhm3utqm73",
+    rule: "Agent should take the right approach when more than 80% confident, avoiding questions asked only for permission or reassurance. Questions are reserved for genuine forks where a wrong choice would be expensive or hard to reverse.",
+    source: "correction",
+    scope: "always",
+    context: "",
+    tags: ["decision-making", "communication", "autonomy"],
+  },
+  {
+    id: "mr7blzb8qgewyd",
+    rule: "Never say things like \"I'm not in a rush\" or \"no pressure\" in strategic communications. Stated calm signals anxiety. Convey confidence structurally through tone, brevity, and restraint.",
+    source: "correction",
+    scope: "contextual",
+    context: "strategic communications",
+    tags: ["communication", "strategy", "voice", "strategic-communications"],
+  },
+];
+
+const RETAINED_RULE_IDS = new Set(RETAINED_RULES.map((rule) => rule.id));
+const RESTORATION_MARKER_PREFIX = "migration.personal_rules.retained_v2";
+
+const PROMOTED_RULE_TEXTS = [
+  "In strategic outreach, do not foreground awkward mechanics, delayed replies, obvious realizations, or other negative context that does not advance the relationship. Move directly toward the desired next step.",
+  "When proposing meeting times, cluster them near existing calendar commitments to preserve long uninterrupted focus blocks.",
+  "When reviewing recruiter or executive-search communications, do not treat urgency framing as a real deadline without independent evidence.",
+  "For executive-role positioning, use 'organizational systems' rather than 'operating systems' unless actual operating-system software is meant.",
+  "In voice mode, use short in-between moments to capture and work through ideas rather than deferring them solely because another near-term life task is happening.",
+  "Do not default to asking 'what's the one thing?' in coaching conversations. Respond to the substance of what the user is saying.",
+  "Do not ask filler questions. Ask only when the question is genuinely interesting or needed to proceed.",
+];
 
 const SOFT_RULE_CLAIMS = new Map<string, {
   title: string;
@@ -154,6 +191,93 @@ async function migrateSoftRule(row: AuditedRuleRow): Promise<void> {
   await deleteAuditedRule(row);
 }
 
+interface RestorationOwner extends AuditedRuleRow {
+  promotedRuleCount: number;
+}
+
+async function listRestorationOwners(): Promise<RestorationOwner[]> {
+  const systemPrincipal = createNamedSystemPrincipal(SYSTEM_JOB);
+  return runWithPrincipal(systemPrincipal, async () => {
+    const rows = await db
+      .select({
+        ownerUserId: documentStoreDocuments.ownerUserId,
+        accountId: documentStoreDocuments.accountId,
+        vaultId: documentStoreDocuments.vaultId,
+        promotedRuleCount: sql<number>`count(DISTINCT ${documentStoreDocuments.metadata}->>'rule')::int`,
+      })
+      .from(documentStoreDocuments)
+      .where(combineWithVisibleScope(
+        systemPrincipal,
+        documentScopeColumns,
+        and(
+          eq(documentStoreDocuments.documentType, "rule"),
+          isNotNull(documentStoreDocuments.ownerUserId),
+          isNotNull(documentStoreDocuments.accountId),
+          inArray(
+            sql<string>`${documentStoreDocuments.metadata}->>'rule'`,
+            PROMOTED_RULE_TEXTS,
+          ),
+        ),
+      ))
+      .groupBy(
+        documentStoreDocuments.ownerUserId,
+        documentStoreDocuments.accountId,
+        documentStoreDocuments.vaultId,
+      );
+
+    return rows
+      .filter((row): row is typeof row & { ownerUserId: string; accountId: string } => (
+        !!row.ownerUserId && !!row.accountId && row.promotedRuleCount === PROMOTED_RULE_TEXTS.length
+      ))
+      .map((row) => ({
+        documentId: "retained-rule-restoration",
+        ownerUserId: row.ownerUserId,
+        accountId: row.accountId,
+        vaultId: row.vaultId,
+        promotedRuleCount: row.promotedRuleCount,
+      }));
+  });
+}
+
+async function restoreMissingRetainedRules(): Promise<{ owners: number; restored: number; errors: number }> {
+  const owners = await listRestorationOwners();
+  let restored = 0;
+  let errors = 0;
+
+  for (const owner of owners) {
+    const markerKey = `${RESTORATION_MARKER_PREFIX}.${owner.ownerUserId}`;
+    if (await getSetting(markerKey)) continue;
+
+    try {
+      const principal = ownerPrincipal(owner);
+      await runWithPrincipal(principal, async () => {
+        for (const template of RETAINED_RULES) {
+          const before = await fileRuleStorage.getById(template.id);
+          await fileRuleStorage.restoreFromMigration(template.id, template);
+          if (!before) restored++;
+        }
+      });
+      await setSetting(markerKey, {
+        completedAt: new Date().toISOString(),
+        ownerUserId: owner.ownerUserId,
+        accountId: owner.accountId,
+        restoredRuleIds: RETAINED_RULES.map((rule) => rule.id),
+        promotedRuleCount: owner.promotedRuleCount,
+      });
+    } catch (error) {
+      errors++;
+      log.error(
+        `retained Rule restoration failed owner=${owner.ownerUserId}: ${error instanceof Error ? error.stack || error.message : String(error)}`,
+      );
+    }
+  }
+
+  if (owners.length > 0 || errors > 0) {
+    log.info(`retained Rule restoration owners=${owners.length} restored=${restored} errors=${errors}`);
+  }
+  return { owners: owners.length, restored, errors };
+}
+
 async function listAuditedRules(): Promise<AuditedRuleRow[]> {
   const systemPrincipal = createNamedSystemPrincipal(SYSTEM_JOB);
   return runWithPrincipal(systemPrincipal, async () => {
@@ -217,7 +341,8 @@ async function listAuditedRules(): Promise<AuditedRuleRow[]> {
   });
 }
 
-export async function migrateAuditedRules(): Promise<{ scanned: number; retained: number; deleted: number; errors: number }> {
+export async function migrateAuditedRules(): Promise<{ scanned: number; retained: number; restored: number; deleted: number; errors: number }> {
+  const restoration = await restoreMissingRetainedRules();
   const rows = await listAuditedRules();
   let retained = 0;
   let deleted = 0;
@@ -235,30 +360,7 @@ export async function migrateAuditedRules(): Promise<{ scanned: number; retained
       continue;
     }
     if (RETAINED_RULE_IDS.has(row.documentId)) {
-      try {
-        const principal = ownerPrincipal(row);
-        await runWithPrincipal(principal, async () => {
-          const rule = await fileRuleStorage.getById(row.documentId);
-          if (!rule) throw new Error(`Retained Rule ${row.documentId} not found`);
-          const normalized = await fileRuleStorage.update(row.documentId, { tags: rule.tags });
-          if (!normalized) throw new Error(`Retained Rule ${row.documentId} was not writable`);
-          await db
-            .delete(memoryEntries)
-            .where(combineWithWritableScope(
-              principal,
-              memoryScopeColumns,
-              and(
-                eq(memoryEntries.layer, "workspace"),
-                eq(memoryEntries.source, "rule"),
-                eq(memoryEntries.sourceId, row.documentId),
-              ),
-            ));
-        });
-        retained++;
-      } catch (error) {
-        errors++;
-        log.error(`failed to normalize retained id=${row.documentId} owner=${row.ownerUserId}: ${error instanceof Error ? error.stack || error.message : String(error)}`);
-      }
+      retained++;
       continue;
     }
     try {
@@ -273,5 +375,11 @@ export async function migrateAuditedRules(): Promise<{ scanned: number; retained
   if (rows.length > 0 || errors > 0) {
     log.info(`audit complete scanned=${rows.length} retained=${retained} deleted=${deleted} errors=${errors}`);
   }
-  return { scanned: rows.length, retained, deleted, errors };
+  return {
+    scanned: rows.length,
+    retained,
+    restored: restoration.restored,
+    deleted,
+    errors: errors + restoration.errors,
+  };
 }
