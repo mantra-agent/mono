@@ -42,9 +42,6 @@ import {
   Image as ImageIcon,
   ScrollText,
   Lightbulb,
-  ChevronRight,
-  Bug,
-  RefreshCw,
   Plus,
   X,
   Link,
@@ -99,89 +96,6 @@ function formatDate(dateStr: string) {
   });
 }
 
-function formatIssueDate(dateStr: string) {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-function IssuesSidebar({ allIssues, activeId, onSelect }: {
-  allIssues: Issue[];
-  activeId: number | null;
-  onSelect: (id: number) => void;
-}) {
-  const openIssues = allIssues.filter(i => i.status === "open");
-  const inProgressIssues = allIssues.filter(i => i.status === "in_progress");
-  const inReviewIssues = allIssues.filter(i => i.status === "in_review");
-  const resolvedIssues = allIssues.filter(i => i.status === "resolved");
-  const activeCount = openIssues.length + inProgressIssues.length + inReviewIssues.length;
-
-  const [resolvedCollapsed, setResolvedCollapsed] = useState(true);
-
-  const renderGroup = (label: string, issues: Issue[], collapsed?: boolean, setCollapsed?: (v: boolean) => void) => {
-    if (issues.length === 0) return null;
-    const isCollapsible = collapsed !== undefined && setCollapsed;
-    return (
-      <div>
-        {isCollapsible ? (
-          <button
-            onClick={() => setCollapsed(!collapsed)}
-            className="flex items-center gap-1.5 w-full text-left mb-1 px-2 py-1"
-          >
-            <ChevronRight className={`h-3 w-3 text-muted-foreground transition-transform ${collapsed ? "" : "rotate-90"}`} />
-            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              {label} ({issues.length})
-            </span>
-          </button>
-        ) : (
-          <div className="flex items-center gap-1.5 px-2 py-1 mb-1">
-            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              {label} ({issues.length})
-            </span>
-          </div>
-        )}
-        {(!isCollapsible || !collapsed) && (
-          <div className="space-y-0.5">
-            {issues.map((issue) => (
-              <button
-                key={issue.id}
-                onClick={() => onSelect(issue.id)}
-                className={`flex items-center gap-2 w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                  activeId === issue.id ? "bg-primary/10 text-foreground" : "hover-elevate text-muted-foreground"
-                }`}
-                data-testid={`sidebar-issue-${issue.id}`}
-              >
-                <StatusIcon status={issue.status as IssueStatus} className="h-3.5 w-3.5 shrink-0" />
-                <span className={`truncate flex-1 ${issue.status === "resolved" ? "line-through" : ""}`}>
-                  {issue.title}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  return (
-    <div className="w-64 shrink-0 border-r flex flex-col bg-muted/30 hidden @md:flex">
-      <div className="p-3 border-b flex items-center gap-2">
-        <Bug className="h-4 w-4 text-muted-foreground" />
-        <span className="text-sm font-semibold">Issues</span>
-        {activeCount > 0 && (
-          <Badge variant="secondary" className="text-xs font-mono px-1 py-0 ml-auto">{activeCount}</Badge>
-        )}
-      </div>
-      <ScrollArea className="flex-1">
-        <div className="p-2 space-y-2">
-          {renderGroup("In Review", inReviewIssues)}
-          {renderGroup("In Progress", inProgressIssues)}
-          {renderGroup("Open", openIssues)}
-          {renderGroup("Resolved", resolvedIssues, resolvedCollapsed, setResolvedCollapsed)}
-        </div>
-      </ScrollArea>
-    </div>
-  );
-}
 
 function formatNoteTime(ts: string) {
   try {
@@ -755,42 +669,28 @@ export default function IssueDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="flex h-full">
-        <div className="hidden @md:flex w-64 shrink-0 border-r bg-muted/30 items-center justify-center">
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-        </div>
-        <div className="flex-1 p-6 max-w-4xl space-y-4">
-          <Skeleton className="h-8 w-48" />
-          <Skeleton className="h-64 w-full" />
-        </div>
+      <div className="space-y-4 p-4">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-64 w-full" />
       </div>
     );
   }
 
   if (!issue) {
     return (
-      <div className="flex h-full">
-        <IssuesSidebar allIssues={allIssues} activeId={null} onSelect={(id) => setLocation(`/issues/${id}`)} />
-        <div className="flex-1 p-6">
-          <Button variant="ghost" onClick={() => setLocation("/build?tab=issues")} className="@md:hidden" data-testid="button-back-to-issues">
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Issues
-          </Button>
-          <div className="mt-8 text-center text-muted-foreground" data-testid="text-issue-not-found">
-            Issue not found.
-          </div>
-        </div>
+      <div className="p-4">
+        <Button variant="ghost" onClick={() => setLocation("/build?tab=issues")} data-testid="button-back-to-issues">
+          <ArrowLeft className="mr-2 h-4 w-4" /> Back to Issues
+        </Button>
+        <div className="mt-8 text-center text-muted-foreground" data-testid="text-issue-not-found">Issue not found.</div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full">
-      <IssuesSidebar allIssues={allIssues} activeId={issueId} onSelect={(id) => setLocation(`/issues/${id}`)} />
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-6 max-w-4xl">
-          <IssueDetail issue={issue} allIssues={allIssues} />
-        </div>
+    <div className="h-full overflow-y-auto scrollbar-thin">
+      <div className="p-4">
+        <IssueDetail issue={issue} allIssues={allIssues} />
       </div>
     </div>
   );

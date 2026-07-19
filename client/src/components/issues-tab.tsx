@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { IssueInlineProfile } from "@/components/issue-inline-profile";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -21,7 +22,6 @@ import {
   Loader2,
   RefreshCw,
 } from "lucide-react";
-import { useLocation } from "wouter";
 import type { Issue, IssueStatus } from "@shared/schema";
 
 const STATUS_CYCLE: IssueStatus[] = ["open", "in_progress", "in_review", "resolved"];
@@ -70,25 +70,21 @@ function formatIssueDate(date: Date, timezone: string) {
 
 function IssueTreeRow({ issue, onCycleStatus, isUpdating }: IssueTreeRowProps) {
   const { timezone } = useTimezone();
-  const [, setLocation] = useLocation();
   const status = issue.status as IssueStatus;
   const nextStatus = STATUS_CYCLE[(STATUS_CYCLE.indexOf(status) + 1) % STATUS_CYCLE.length];
-  const openIssue = () => setLocation(`/issues/${issue.id}`);
 
   return (
     <ProfileTreeRow
       label={(
-        <button
-          type="button"
-          onClick={openIssue}
+        <span
           className={cn(
-            "max-w-full truncate text-left font-medium text-foreground",
+            "block max-w-full truncate font-medium text-foreground",
             status === "resolved" && "text-muted-foreground line-through",
           )}
-          data-testid={`button-open-issue-${issue.id}`}
+          data-testid={`label-issue-${issue.id}`}
         >
           {issue.title}
-        </button>
+        </span>
       )}
       icon={(
         <Tooltip>
@@ -116,26 +112,14 @@ function IssueTreeRow({ issue, onCycleStatus, isUpdating }: IssueTreeRowProps) {
       hasValue
       showEmpty
       mobileLayout="inline"
-      actionContent={(
-        <button
-          type="button"
-          onClick={openIssue}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-          aria-label={`Open ${issue.title}`}
-        >
-          <ChevronRight className="h-3.5 w-3.5" />
-        </button>
-      )}
+      expandedContent={<IssueInlineProfile issueId={issue.id} />}
+      expandedContentClassName="px-2 pb-3 pl-2"
       testId={`issue-item-${issue.id}`}
     >
       {issue.createdAt ? (
-        <button
-          type="button"
-          onClick={openIssue}
-          className="truncate font-mono text-muted-foreground"
-        >
+        <span className="truncate font-mono text-muted-foreground">
           {formatIssueDate(issue.createdAt, timezone)}
-        </button>
+        </span>
       ) : null}
     </ProfileTreeRow>
   );
