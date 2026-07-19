@@ -176,6 +176,33 @@ function slowQueryStatus(slowQueries: SystemResourcesData["slowQueries"]): Statu
   return "ok";
 }
 
+function frontendExperienceStatus(frontend: SystemResourcesData["frontendExperience"]): Status {
+  if (!frontend || frontend.sampleHealth === "empty") return "amber";
+  if (frontend.recentDegradations.length > 0) return "amber";
+  if (frontend.metrics.some(metric => metric.p95 !== null && metric.p95 > frontendMetricBudget(frontend, metric.kind, metric.name))) return "amber";
+  return "ok";
+}
+
+function frontendMetricBudget(frontend: NonNullable<SystemResourcesData["frontendExperience"]>, kind: string, name: string): number {
+  if (kind === "navigation") return frontend.budgets.navigation.p95Ms;
+  if (kind === "web_vital") {
+    const lower = name.toLowerCase();
+    if (lower.includes("cls")) return frontend.budgets.webVital.clsGoodScore;
+    if (lower.includes("inp")) return frontend.budgets.webVital.inpGoodMs;
+    return frontend.budgets.webVital.lcpGoodMs;
+  }
+  if (kind === "chat_latency") {
+    if (name.includes("ack")) return frontend.budgets.chatLatency.submitToAckP95Ms;
+    if (name.includes("first")) return frontend.budgets.chatLatency.submitToFirstTokenP95Ms;
+    return frontend.budgets.chatLatency.submitToCompleteP95Ms;
+  }
+  if (kind === "transport_gap") return frontend.budgets.transportGapP95Ms;
+  if (kind === "long_task") return frontend.budgets.longTaskP95Ms;
+  if (kind === "event_loop_responsiveness") return frontend.budgets.eventLoopResponsivenessP95Ms;
+  if (kind === "frame_contention") return frontend.budgets.frameContentionP95Ms;
+  return Number.POSITIVE_INFINITY;
+}
+
 function divergenceStatus(divergence: SystemResourcesData["divergence"]): Status {
   if (divergence.value >= THRESHOLDS.divergenceRed) return "red";
   if (divergence.value >= THRESHOLDS.divergenceAmber) return "amber";
@@ -199,6 +226,10 @@ function sharedWsStatus(diagnostics: SharedWSDiagnostics): Status {
   if (diagnostics.duplicateOwnerRefs > 0 || diagnostics.refCount !== diagnostics.ownerCount) return "red";
   if (diagnostics.refCount > 0 && diagnostics.physicalSockets === 0) return "amber";
   return "ok";
+}
+
+function formatMetricName(kind: string, name: string): string {
+  return `${kind.replace(/_/g, " ")} · ${name.replace(/_/g, " ")}`;
 }
 
 function wsStateLabel(readyState: number): string {
@@ -426,6 +457,7 @@ function ResourcesView({
   const transportStatus = realtimeStatus(r.realtime);
   const browserStatus = sharedWsStatus(clientWs);
   const realtimeBranchStatus = highestStatus([transportStatus, browserStatus]);
+  const frontendStatus = frontendExperienceStatus(r.frontendExperience);
 
   const memoryPercent = r.memory.maxMemoryBytes
     ? r.memory.rssUsedPct ?? Math.round((r.memory.rss / r.memory.maxMemoryBytes) * 1000) / 10
@@ -613,6 +645,69 @@ function ResourcesView({
                     detail={<DetailText>{r.divergence.detail}</DetailText>}
                     testId="tile-divergence"
                   />
+          </PerformanceSection>
+
+
+          <PerformanceSection
+            label="Frontend Experience"
+            status={frontendStatus}
+            testId="section-frontend-experience"
+          >
+                  {r.frontendExperience ? (
+                    <>
+                      <MetricRow
+                        label="Sample health"
+                        value={`${r.frontendExperience.sampleHealth} · ${r.frontendExperience.sampleCount}`}
+                        status={r.frontendExperience.sampleHealth === "healthy" ? "ok" : "amber"}
+                        detail={<DetailText>{r.frontendExperience.windowHours}h window · raw retention {r.frontendExperience.rawRetentionDays}d · same summary used by system.frontend_performance.</DetailText>}
+                        testId="tile-frontend-sample-health"
+                      />
+                      {r.frontendExperience.metrics.slice(0, 8).map(metric => (
+                        <MetricRow
+                          key={`${metric.kind}:${metric.name}`}
+                          label={formatMetricName(metric.kind, metric.name)}
+                          value={`${formatMs(metric.p50)} / ${formatMs(metric.p95)}`}
+                          status={metric.p95 !== null && metric.p95 > frontendMetricBudget(r.frontendExperience, metric.kind, metric.name) ? "amber" : "ok"}
+                          detail={<DetailText>p50 / p95 · n={metric.count} · budget {formatMs(frontendMetricBudget(r.frontendExperience, metric.kind, metric.name))} · latest {formatRelative(metric.latestAt ? new Date(metric.latestAt).getTime() : null, now)}</DetailText>}
+                        />
+                      ))}
+                      <MetricRow
+                        label="Budgets"
+                        value="p95 guarded"
+                        detail={(
+                          <DetailList
+                            items={[
+                              `Navigation ${formatMs(r.frontendExperience.budgets.navigation.p95Ms)}`,
+                              `Chat ack ${formatMs(r.frontendExperience.budgets.chatLatency.submitToAckP95Ms)} · first token ${formatMs(r.frontendExperience.budgets.chatLatency.submitToFirstTokenP95Ms)} · complete ${formatMs(r.frontendExperience.budgets.chatLatency.submitToCompleteP95Ms)}`,
+                              `Vitals LCP ${formatMs(r.frontendExperience.budgets.webVital.lcpGoodMs)} · INP ${formatMs(r.frontendExperience.budgets.webVital.inpGoodMs)} · CLS ${r.frontendExperience.budgets.webVital.clsGoodScore}`,
+                              `Long task ${formatMs(r.frontendExperience.budgets.longTaskP95Ms)} · frame contention ${formatMs(r.frontendExperience.budgets.frameContentionP95Ms)}`,
+                            ]}
+                          />
+                        )}
+                        testId="tile-frontend-budgets"
+                      />
+                      <MetricRow
+                        label="Recent degradations"
+                        value={String(r.frontendExperience.recentDegradations.length)}
+                        status={r.frontendExperience.recentDegradations.length ? "amber" : "ok"}
+                        detail={(
+                          <DetailList
+                            items={r.frontendExperience.recentDegradations.length
+                              ? r.frontendExperience.recentDegradations.slice(0, 8).map(item => `${formatMetricName(item.kind, item.name)} · ${formatMs(item.value)}${item.routeKey ? ` · ${item.routeKey}` : ""} · ${formatRelative(new Date(item.occurredAt).getTime(), now)}`)
+                              : ["No threshold-only frontend degradations in this window."]}
+                          />
+                        )}
+                        testId="tile-frontend-degradations"
+                      />
+                    </>
+                  ) : (
+                    <MetricRow
+                      label="Frontend summary"
+                      value="Unavailable"
+                      status="amber"
+                      detail={<DetailText>No browser telemetry summary was returned with system resources.</DetailText>}
+                    />
+                  )}
           </PerformanceSection>
 
           <PerformanceSection

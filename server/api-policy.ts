@@ -42,7 +42,7 @@ const SERVICE_RULES: ApiPolicyRule[] = [
 ];
 
 const PERSONAL_RULES: ApiPolicyRule[] = [
-  { classification: "personal", exact: ["/api/client-logs"], reason: "authenticated bounded client diagnostics ingestion" },
+  { classification: "personal", exact: ["/api/client-logs", "/api/browser-telemetry"], reason: "authenticated bounded client diagnostics ingestion" },
   {
     classification: "personal",
     prefixes: [

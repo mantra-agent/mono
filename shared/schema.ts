@@ -30,6 +30,7 @@ export * from "./models/magic-demo";
 export * from "./models/platforms";
 export * from "./models/vaults";
 export * from "./models/communications";
+export * from "./models/browser-telemetry";
 
 
 export const mobileStartupTelemetry = pgTable("mobile_startup_telemetry", {

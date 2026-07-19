@@ -13689,6 +13689,19 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
     if (action === "budget") {
       return { result: JSON.stringify({ mode: "unlimited", budgetEnforced: false, message: "Skill budgets are disabled; usage is tracked for observability only." }) };
     }
+
+    if (action === "frontend_performance") {
+      try {
+        const { requireCurrentUserPrincipal } = await import("./principal-context");
+        const { getBrowserTelemetrySummary } = await import("./browser-telemetry-storage");
+        const hoursRaw = args.hours === undefined ? 24 : Number(args.hours);
+        const summary = await getBrowserTelemetrySummary(requireCurrentUserPrincipal(), Number.isFinite(hoursRaw) ? hoursRaw : 24);
+        return { result: JSON.stringify(summary) };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { result: `Failed to get frontend performance summary: ${msg}`, error: true };
+      }
+    }
     if (action === "events") {
       try {
         const { getCurrentPrincipalOrSystem } = await import("./principal-context");
@@ -13768,7 +13781,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         return { result: `Failed to get tool stats: ${msg}`, error: true };
       }
     }
-    return { result: `Unknown system action: ${action}. Available: state, create_issue, get_issue, logs, log_files, budget, events, active_runs, clear_active_run, accounts, tool_stats`, error: true };
+    return { result: `Unknown system action: ${action}. Available: state, create_issue, get_issue, logs, log_files, budget, frontend_performance, events, active_runs, clear_active_run, accounts, tool_stats`, error: true };
   },
   async timers(args) {
     const action = args.action as string;

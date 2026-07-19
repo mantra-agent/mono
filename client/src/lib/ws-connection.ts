@@ -1,6 +1,7 @@
 // Use createLogger for logging ONLY
 import { chatBeacon } from "@/lib/chat-beacon";
 import { createLogger } from "@/lib/logger";
+import { recordTransportGap } from "@/lib/browser-telemetry";
 
 const log = createLogger("SharedWS");
 
@@ -144,7 +145,10 @@ function createSharedWebSocket(): SharedWebSocket {
       lastMessageAt = connectTime;
       log.debug(`open wasReconnect=${wasReconnect} refCount=${refCount}`);
       hasEverConnected = true;
-      if (wasReconnect) reconnects++;
+      if (wasReconnect) {
+        reconnects++;
+        recordTransportGap("reconnect", Math.max(0, connectTime - lastMessageTime), { reconnectAttempt, refCount, streamActive: streamOwners.size > 0 });
+      }
       startLivenessTimer();
       emitDiagnostics();
       for (const [id, handler] of openHandlers) {
@@ -240,6 +244,7 @@ function createSharedWebSocket(): SharedWebSocket {
     log.warn(`forceReconnect — socket OPEN but dead (no message in ${elapsed}ms), recycling`);
     forcedReconnects++;
     chatBeacon("ws_force_reconnect", { elapsedSinceLastMsg: elapsed, streamActive: streamOwners.size > 0 });
+    recordTransportGap("liveness_timeout", elapsed, { streamActive: streamOwners.size > 0 });
     emitDiagnostics();
     ws.close(4000, "liveness-timeout");
   }

@@ -1,3 +1,5 @@
+import type { BrowserTelemetrySummary } from "./browser-telemetry";
+
 export interface DbPoolResource {
   total: number;
   idle: number;
@@ -125,4 +127,5 @@ export interface SystemResourcesData {
     value: number;
     detail: string;
   };
+  frontendExperience: BrowserTelemetrySummary | null;
 }
