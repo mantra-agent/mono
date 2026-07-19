@@ -1,4 +1,4 @@
-import { and, gte, lt } from "drizzle-orm";
+import { and, gte, lt, sql } from "drizzle-orm";
 import { tasks, wellnessLogs } from "@shared/schema";
 import { db } from "./db";
 import type { Principal } from "./principal";
@@ -7,6 +7,10 @@ import { combineWithVisibleScope } from "./scoped-storage";
 import { combineWithSensitiveVisible } from "./sensitive-scope";
 import { userDayBounds } from "./utils/user-time";
 import { fetchMergedPrsSince } from "./integrations/github-timeline";
+import { createLogger } from "./log";
+
+const log = createLogger("DashboardActivity");
+const DASHBOARD_LOAD_BUDGET_MS = 1_000;
 
 const wellnessLogScope = {
   ownerUserId: wellnessLogs.ownerUserId,
@@ -36,6 +40,8 @@ export interface ActivityDashboardResult {
   kpis: ActivityDashboardKpi[];
   series: ActivityDashboardSeries[];
 }
+
+export type ActivityDashboardSource = "all" | "core" | "code";
 
 const KPI_DEFINITIONS: ReadonlyArray<Pick<ActivityDashboardKpi, "key" | "label">> = [
   {
@@ -74,36 +80,64 @@ function localCalendarDate(value: Date): string {
 }
 
 async function queryWellnessSeries(start: Date, end: Date, principal: Principal): Promise<Map<string, number>> {
+  const localDate = sql<string>`to_char(${wellnessLogs.completedAt} AT TIME ZONE 'America/Chicago', 'YYYY-MM-DD')`;
   const rows = await db
-    .select({ completedAt: wellnessLogs.completedAt })
+    .select({ date: localDate, value: sql<number>`count(*)::int` })
     .from(wellnessLogs)
-    .where(combineWithSensitiveVisible(wellnessLogScope, and(gte(wellnessLogs.completedAt, start), lt(wellnessLogs.completedAt, end)), principal));
-  const counts = new Map<string, number>();
-  for (const row of rows) increment(counts, localCalendarDate(row.completedAt));
-  return counts;
+    .where(combineWithSensitiveVisible(wellnessLogScope, and(gte(wellnessLogs.completedAt, start), lt(wellnessLogs.completedAt, end)), principal))
+    .groupBy(localDate);
+  return new Map(rows.map((row) => [row.date, Number(row.value)]));
 }
 
 async function queryTaskSeries(start: Date, end: Date, principal: Principal): Promise<Map<string, number>> {
+  const localDate = sql<string>`to_char(${tasks.completedAt} AT TIME ZONE 'America/Chicago', 'YYYY-MM-DD')`;
   const rows = await db
-    .select({ completedAt: tasks.completedAt })
+    .select({ date: localDate, value: sql<number>`count(*)::int` })
     .from(tasks)
-    .where(combineWithVisibleScope(principal, taskScope, and(gte(tasks.completedAt, start), lt(tasks.completedAt, end))));
-  const counts = new Map<string, number>();
-  for (const row of rows) if (row.completedAt) increment(counts, localCalendarDate(row.completedAt));
-  return counts;
+    .where(combineWithVisibleScope(principal, taskScope, and(gte(tasks.completedAt, start), lt(tasks.completedAt, end))))
+    .groupBy(localDate);
+  return new Map(rows.map((row) => [row.date, Number(row.value)]));
 }
 
-export async function queryActivityDashboard(date: string, principal: Principal): Promise<ActivityDashboardResult> {
+async function timedSource<T>(
+  source: ActivityDashboardKpi["key"],
+  timings: Partial<Record<ActivityDashboardKpi["key"], number>>,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const startedAt = performance.now();
+  try {
+    return await operation();
+  } finally {
+    timings[source] = Math.round(performance.now() - startedAt);
+  }
+}
+
+export async function queryActivityDashboard(
+  date: string,
+  principal: Principal,
+  source: ActivityDashboardSource = "all",
+): Promise<ActivityDashboardResult> {
+  const startedAt = performance.now();
+  const timings: Partial<Record<ActivityDashboardKpi["key"], number>> = {};
   const dates = recentDates(date, 364);
   const rangeStart = userDayBounds(dates[0]).start;
   const selectedEnd = userDayBounds(date).end;
   const rangeEnd = new Date(selectedEnd.getTime() + 1);
-  const [interactions, wellness, completedTasks, shippedPrs] = await Promise.all([
-    queryDistinctInteractionPeopleSeries(dates[0], date),
-    queryWellnessSeries(rangeStart, rangeEnd, principal),
-    queryTaskSeries(rangeStart, rangeEnd, principal),
-    fetchMergedPrsSince(rangeStart),
-  ]);
+  const includeCore = source !== "code";
+  const includeCode = source !== "core";
+
+  const corePromise = includeCore
+    ? Promise.all([
+        timedSource("opportunity_interactions", timings, () => queryDistinctInteractionPeopleSeries(dates[0], date, principal)),
+        timedSource("wellness_completions", timings, () => queryWellnessSeries(rangeStart, rangeEnd, principal)),
+        timedSource("completed_tasks", timings, () => queryTaskSeries(rangeStart, rangeEnd, principal)),
+      ])
+    : Promise.resolve([new Map<string, number>(), new Map<string, number>(), new Map<string, number>()] as const);
+  const codePromise = includeCode
+    ? timedSource("shipped_prs", timings, () => fetchMergedPrsSince(rangeStart))
+    : Promise.resolve([]);
+  const [[interactions, wellness, completedTasks], shippedPrs] = await Promise.all([corePromise, codePromise]);
+
   const shipped = new Map<string, number>();
   for (const pr of shippedPrs) increment(shipped, localCalendarDate(new Date(pr.mergedAt)));
   const countMaps: Record<ActivityDashboardKpi["key"], Map<string, number>> = {
@@ -112,11 +146,25 @@ export async function queryActivityDashboard(date: string, principal: Principal)
     completed_tasks: completedTasks,
     shipped_prs: shipped,
   };
-  const series = KPI_DEFINITIONS.map((definition) => ({
-    key: definition.key,
-    label: definition.label,
-    days: dates.map((day) => ({ date: day, value: countMaps[definition.key].get(day) ?? 0 })),
-  }));
+  const includedKeys = source === "core"
+    ? new Set<ActivityDashboardKpi["key"]>(["opportunity_interactions", "wellness_completions", "completed_tasks"])
+    : source === "code"
+      ? new Set<ActivityDashboardKpi["key"]>(["shipped_prs"])
+      : null;
+  const series = KPI_DEFINITIONS
+    .filter((definition) => !includedKeys || includedKeys.has(definition.key))
+    .map((definition) => ({
+      key: definition.key,
+      label: definition.label,
+      days: dates.map((day) => ({ date: day, value: countMaps[definition.key].get(day) ?? 0 })),
+    }));
+  const totalMs = Math.round(performance.now() - startedAt);
+  const diagnostic = { date, source, totalMs, sourcesMs: timings };
+  if (totalMs > DASHBOARD_LOAD_BUDGET_MS) {
+    log.warn("Dashboard load exceeded latency budget", diagnostic);
+  } else {
+    log.debug("Dashboard load completed", diagnostic);
+  }
   return {
     date,
     kpis: series.map((item) => ({ key: item.key, label: item.label, value: item.days.find((day) => day.date === date)?.value ?? 0 })),

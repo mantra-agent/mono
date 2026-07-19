@@ -11,6 +11,8 @@ import {
 import { environmentSourceBindings, providerConnections } from "@shared/models/platforms";
 import { db } from "../db";
 import { createLogger } from "../log";
+import pLimit from "p-limit";
+import { TTLCache } from "../utils/ttl-cache";
 
 const log = createLogger("VersionTimeline");
 
@@ -87,6 +89,9 @@ interface TimelineCache {
 
 let cache: TimelineCache | null = null;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const mergedPrCache = new TTLCache<TimelinePR[]>("MergedPrHistory", CACHE_TTL_MS);
+const MERGED_PR_MAX_PAGES = 10;
+const MERGED_PR_PAGE_CONCURRENCY = 3;
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -297,26 +302,43 @@ async function allGitHubRepos(): Promise<RepoRef[]> {
   return fallback ? [fallback] : [];
 }
 
+function mergedPrPagePath(ref: RepoRef, page: number): string {
+  return `/repos/${ref.owner}/${ref.repo}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=100&page=${page}`;
+}
+
+function qualifyingMergedPrs(raw: GHPullRaw[], since: Date): TimelinePR[] {
+  return raw.flatMap((pr) => {
+    if (!pr.merged_at || new Date(pr.merged_at) < since) return [];
+    return [{
+      number: pr.number,
+      title: pr.title,
+      author: pr.user?.login ?? null,
+      htmlUrl: pr.html_url,
+      mergedAt: pr.merged_at,
+      mergeCommitSha: pr.merge_commit_sha,
+      commits: [],
+    }];
+  });
+}
+
 async function fetchMergedPrsForRepo(ref: RepoRef, since: Date): Promise<TimelinePR[]> {
-  const results: TimelinePR[] = [];
-  for (let page = 1; page <= 10; page += 1) {
-    const raw = await gh<GHPullRaw[]>(
-      "GET",
-      `/repos/${ref.owner}/${ref.repo}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=100&page=${page}`,
-    );
-    if (raw.length === 0) break;
-    for (const pr of raw) {
-      if (!pr.merged_at) continue;
-      const mergedAt = new Date(pr.merged_at);
-      if (mergedAt < since) continue;
-      results.push({ number: pr.number, title: pr.title, author: pr.user?.login ?? null, htmlUrl: pr.html_url, mergedAt: pr.merged_at, mergeCommitSha: pr.merge_commit_sha, commits: [] });
-    }
-    if (raw.length < 100) break;
-  }
+  const firstPage = await gh<GHPullRaw[]>("GET", mergedPrPagePath(ref, 1));
+  const results = qualifyingMergedPrs(firstPage, since);
+  if (firstPage.length < 100) return results;
+
+  const limit = pLimit(MERGED_PR_PAGE_CONCURRENCY);
+  const remainingPages = Array.from(
+    { length: MERGED_PR_MAX_PAGES - 1 },
+    (_, index) => index + 2,
+  );
+  const pages = await Promise.all(
+    remainingPages.map((page) => limit(() => gh<GHPullRaw[]>("GET", mergedPrPagePath(ref, page)))),
+  );
+  for (const page of pages) results.push(...qualifyingMergedPrs(page, since));
   return results;
 }
 
-export async function fetchMergedPrsSince(since: Date): Promise<TimelinePR[]> {
+async function fetchMergedPrHistory(since: Date): Promise<TimelinePR[]> {
   const repos = await allGitHubRepos();
   if (repos.length === 0) return [];
   const perRepo = await Promise.all(
@@ -327,7 +349,6 @@ export async function fetchMergedPrsSince(since: Date): Promise<TimelinePR[]> {
       }),
     ),
   );
-  // Deduplicate by htmlUrl (unique across repos)
   const seen = new Set<string>();
   const results: TimelinePR[] = [];
   for (const prs of perRepo) {
@@ -338,6 +359,11 @@ export async function fetchMergedPrsSince(since: Date): Promise<TimelinePR[]> {
     }
   }
   return results;
+}
+
+export async function fetchMergedPrsSince(since: Date): Promise<TimelinePR[]> {
+  const cacheKey = since.toISOString();
+  return mergedPrCache.getOrFetch(cacheKey, () => fetchMergedPrHistory(since));
 }
 
 // ── Public API ─────────────────────────────────────────────────────────

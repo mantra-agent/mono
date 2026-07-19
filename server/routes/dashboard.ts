@@ -7,6 +7,8 @@ import { requirePermission } from "../permissions";
 
 const log = createLogger("dashboard-routes");
 
+const sourceSchema = z.enum(["all", "core", "code"]).default("all");
+
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const [year, month, day] = value.split("-").map(Number);
   const candidate = new Date(Date.UTC(year, month - 1, day));
@@ -21,15 +23,18 @@ export function registerDashboardRoutes(app: Express) {
     requireAuth,
     requirePermission("system:read"),
     async (req, res) => {
-      const parsed = dateSchema.safeParse(req.query.date);
-      if (!parsed.success) return res.status(400).json({ error: "date must be a valid YYYY-MM-DD calendar date" });
+      const parsedDate = dateSchema.safeParse(req.query.date);
+      if (!parsedDate.success) return res.status(400).json({ error: "date must be a valid YYYY-MM-DD calendar date" });
+      const parsedSource = sourceSchema.safeParse(req.query.source);
+      if (!parsedSource.success) return res.status(400).json({ error: "source must be all, core, or code" });
       if (!req.principal) return res.status(401).json({ error: "Authentication required" });
 
       try {
-        res.json(await queryActivityDashboard(parsed.data, req.principal));
+        res.json(await queryActivityDashboard(parsedDate.data, req.principal, parsedSource.data));
       } catch (error) {
         log.error("Failed to load activity dashboard", {
-          date: parsed.data,
+          date: parsedDate.data,
+          source: parsedSource.data,
           error: error instanceof Error ? error.message : String(error),
         });
         res.status(500).json({ error: "Failed to load dashboard activity" });

@@ -1,28 +1,46 @@
-import { peopleStorage } from "./people-storage";
+import { sql } from "drizzle-orm";
+import { persons } from "@shared/schema";
+import { db } from "./db";
+import type { Principal } from "./principal";
+import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { visibleScopePredicate } from "./scoped-storage";
 
-const QUALIFYING_INTERACTION_TYPES = new Set(["email", "call", "text"]);
+const personScope = {
+  scope: persons.scope,
+  ownerUserId: persons.ownerUserId,
+  accountId: persons.accountId,
+  vaultId: persons.vaultId,
+};
 
-function increment(counts: Map<string, number>, date: string): void {
-  counts.set(date, (counts.get(date) ?? 0) + 1);
+interface InteractionCountRow {
+  date: string;
+  value: number;
 }
 
 export async function queryDistinctInteractionPeopleSeries(
   startDate: string,
   endDate: string,
+  principal: Principal = getCurrentPrincipalOrSystem(),
 ): Promise<Map<string, number>> {
-  const index = await peopleStorage.listPeople();
-  const people = await peopleStorage.getPeopleByIds(index.map((person) => person.id));
-  const counts = new Map<string, number>();
+  const result = await db.execute<InteractionCountRow>(sql`
+    SELECT
+      interaction.value->>'date' AS date,
+      COUNT(DISTINCT ${persons.id})::int AS value
+    FROM ${persons}
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(${persons.interactions}) = 'array' THEN ${persons.interactions}
+        ELSE '[]'::jsonb
+      END
+    ) AS interaction(value)
+    WHERE ${visibleScopePredicate(principal, personScope)}
+      AND interaction.value->>'type' IN ('email', 'call', 'text')
+      AND interaction.value->>'date' >= ${startDate}
+      AND interaction.value->>'date' <= ${endDate}
+    GROUP BY interaction.value->>'date'
+  `);
 
-  for (const person of people) {
-    const interactionDates = new Set<string>();
-    for (const interaction of person.interactions) {
-      if (!QUALIFYING_INTERACTION_TYPES.has(interaction.type)) continue;
-      if (interaction.date < startDate || interaction.date > endDate) continue;
-      interactionDates.add(interaction.date);
-    }
-    for (const date of interactionDates) increment(counts, date);
-  }
-
-  return counts;
+  return new Map(
+    (result.rows ?? []).map((row) => [row.date, Number(row.value)]),
+  );
 }

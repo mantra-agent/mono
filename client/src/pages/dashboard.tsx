@@ -36,7 +36,7 @@ const SECTION_PRESENTATION = {
   completed_tasks: {
     title: "TASKS",
     order: 2,
-    marker: { icon: BriefcaseBusiness, criterion: "above-value", threshold: 30, filled: true },
+    marker: { icon: BriefcaseBusiness, criterion: "above-value", threshold: 40, filled: true },
   },
   shipped_prs: {
     title: "CODE",
@@ -51,42 +51,52 @@ function localDateToday(): string {
   return new Date(now.getTime() - offset).toISOString().slice(0, 10);
 }
 
+function renderSeries(series: DashboardSeries[], startingIndex = 0) {
+  return [...series]
+    .sort((left, right) => SECTION_PRESENTATION[left.key].order - SECTION_PRESENTATION[right.key].order)
+    .map((item, index) => (
+      <div key={item.key} className={startingIndex + index === 0 ? "" : "pt-6"}>
+        <ProfileDetailSection
+          title={SECTION_PRESENTATION[item.key].title}
+          defaultOpen
+          testId={`section-dashboard-${item.key}`}
+        >
+          <ActivityHeatmap
+            days={item.days}
+            marker={SECTION_PRESENTATION[item.key].marker}
+            valueLabel={SECTION_PRESENTATION[item.key].title.toLowerCase()}
+          />
+        </ProfileDetailSection>
+      </div>
+    ));
+}
+
 export default function DashboardPage() {
   usePageHeader({ title: "Dashboard" });
   const date = localDateToday();
-  const query = useQuery<DashboardActivity>({
-    queryKey: [`/api/dashboard/activity?date=${encodeURIComponent(date)}`],
+  const coreQuery = useQuery<DashboardActivity>({
+    queryKey: [`/api/dashboard/activity?date=${encodeURIComponent(date)}&source=core`],
   });
+  const codeQuery = useQuery<DashboardActivity>({
+    queryKey: [`/api/dashboard/activity?date=${encodeURIComponent(date)}&source=code`],
+  });
+  const hasError = coreQuery.isError || codeQuery.isError;
+  const hasData = Boolean(coreQuery.data || codeQuery.data);
 
   return (
     <div className="h-full min-w-0 overflow-y-auto bg-background p-4 md:p-3">
       <div className="flex flex-col gap-6">
-        {query.isError && (
+        {hasError && (
           <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-destructive">
             <AlertCircle className="h-4 w-4" />
-            Dashboard activity could not be loaded.
+            Some dashboard activity could not be loaded.
           </div>
         )}
 
-        {!query.isLoading && !query.isError && query.data && (
+        {hasData && (
           <div className="bg-background">
-            {[...query.data.series]
-              .sort((left, right) => SECTION_PRESENTATION[left.key].order - SECTION_PRESENTATION[right.key].order)
-              .map((series, index) => (
-                <div key={series.key} className={index === 0 ? "" : "pt-6"}>
-                  <ProfileDetailSection
-                    title={SECTION_PRESENTATION[series.key].title}
-                    defaultOpen
-                    testId={`section-dashboard-${series.key}`}
-                  >
-                    <ActivityHeatmap
-                      days={series.days}
-                      marker={SECTION_PRESENTATION[series.key].marker}
-                      valueLabel={SECTION_PRESENTATION[series.key].title.toLowerCase()}
-                    />
-                  </ProfileDetailSection>
-                </div>
-              ))}
+            {renderSeries(coreQuery.data?.series ?? [])}
+            {renderSeries(codeQuery.data?.series ?? [], coreQuery.data?.series.length ?? 0)}
           </div>
         )}
       </div>
