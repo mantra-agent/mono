@@ -49,14 +49,20 @@ Access control is server-owned and permission-based. Future code must plug into 
 - Migration note: legacy `requireAdmin`, `role`, `isAdmin`, and scope-string gates may remain only as compatibility wrappers or privileged-mode audit checks. New user-triggered authorization must be expressed as named permissions plus principal ownership predicates.
 
 
+### Background Document Repair
+
+Background chat-document repair must never write as a system principal or infer ownership from the caller. Enumerate candidates read-only, recover the persisted owner/account/vault tuple, and re-enter that user principal. Inside the same bounded transaction, lock and validate the current user/account authorization before locking and mutating the exact document row. Normal writes and ACL changes serialize behind repair. Malformed rows fail per-document without blocking boot.
+
 ### Skills and Prompt Modules
+
+Built-in system skills are versioned code-owned definitions unless `customized=true`. On boot, synchronize the full definition only when the persisted numeric version is lower than the code version, using a conditional update over `author=system`, `customized=false`, and the expected version. Never downgrade a higher persisted version. Every built-in definition change must increment its version.
 
 - Skills are runnable workflows stored in `skills` with run records in `skill_runs`. They are user/agent-facing capabilities and may be launched by the skill runner.
 - Prompt Modules are internal prompt templates stored in `prompt_modules` with snapshots in `prompt_module_versions`. They are loaded by code with `getPromptModulePrompt()` / `getPromptModule()` and are not runnable Skills.
 - `prompt-module-registry.ts` is the typed manifest for prompt keys, domains, owner systems, and call-site metadata. Code should use manifest keys instead of ad hoc string literals.
 - `prompt-module-defaults.ts` is bootstrap/backfill fixture data only. Runtime prompt fetch must fail closed when a DB prompt module is missing; do not silently recreate from defaults or Skills.
 - Prompt module routes must enforce named permissions at the route boundary: read with `build:read`, mutation/backfill/restore/delete with `build:write` or `system:write`.
-- Do not reintroduce boot-time reconciliation that rewrites live `skills` or `prompt_modules` from code defaults. Live DB rows are the source of truth after bootstrap/migration.
+- Do not unconditionally rewrite live `skills` or `prompt_modules` from code defaults. Live DB rows are authoritative after bootstrap. Explicit monotonic built-in Skill version migrations may atomically replace the full definition only when `author=system`, `customized=false`, and persisted version is lower; Prompt Modules remain DB-owned and use their own versioning path.
 - Skill persona selection has two layers: product recommendations live on `skills.recommended_persona_template_id` and may reference only global selectable persona templates; user choices live in `skill_persona_preferences`. `skill-persona-service.ts` is the canonical preference mutation and runtime resolution boundary. Runtime precedence is user override, legacy user-owned skill persona during migration, product recommendation resolved through `personaStorage.resolveTemplateForCurrentPrincipal()`, then normal session default resolution.
 
 Key files:
