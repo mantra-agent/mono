@@ -1,3 +1,8 @@
+import {
+  PREFERENCES_TOOL_DESCRIPTION,
+  RULES_TOOL_DESCRIPTION,
+} from "./preference-rule-policy";
+
 export interface ToolDetailEntry {
   description: string;
   whenToUse?: string;
@@ -192,14 +197,14 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: 'Create: { "action": "create", "title": "Hire designer", "description": "Should we bring on a senior designer in Q2?", "dataContent": "Budget $5k/mo", "scenariosContent": "Option A...", "planContent": "Next steps" }\nLock: { "action": "lock", "id": "..." }\nSet traffic light: { "action": "update", "id": "...", "trafficLight": "yellow" }',
   },
   preferences: {
-    description: "Manage learned user preferences — likes, dislikes, working styles, personal facts. Actions: list, get, save, create, update, delete, reinforce.",
-    whenToUse: "When you learn something about the user's likes, dislikes, working style, or habits.",
-    example: '{ "action": "save", "domain": "communication", "preference": "Prefers bullet points" }',
+    description: PREFERENCES_TOOL_DESCRIPTION,
+    whenToUse: "When user-specific preference content has been proposed exactly and confirmed through the Question widget. Do not use for universal product behavior or system policy.",
+    example: 'After explicit Question widget confirmation: { "action": "save", "domain": "communication", "preference": "Prefers bullet points" }',
   },
   rules: {
-    description: "Manage behavioral rules and operational directives. Actions: list, get, save, create, update, delete, reinforce, violation.",
-    whenToUse: "When the user gives explicit behavioral directives or sets operational boundaries.",
-    example: '{ "action": "save", "rule": "Always summarize action items at end of conversations", "scope": "always" }',
+    description: RULES_TOOL_DESCRIPTION,
+    whenToUse: "When a user-specific behavioral directive has been proposed exactly and confirmed through the Question widget. Universal product behavior and system invariants belong in global context/code.",
+    example: 'After explicit Question widget confirmation: { "action": "save", "rule": "Always summarize action items at end of conversations", "scope": "always" }',
   },
   intentions: {
     description: "DEPRECATED — Intentions system removed. Use the 'autonomy' skill for autonomous work.",

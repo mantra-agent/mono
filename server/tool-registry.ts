@@ -7,6 +7,11 @@ import { sql, and as andOp, eq as eqOp, gte as gteOp } from "drizzle-orm";
 import { storage } from "./storage";
 import { TTLCache } from "./utils/ttl-cache";
 import type { SkillWithReferences } from "@shared/models/skills";
+import {
+  PREFERENCES_TOOL_DESCRIPTION,
+  QUESTION_TOOL_DESCRIPTION,
+  RULES_TOOL_DESCRIPTION,
+} from "./preference-rule-policy";
 
 const log = createLogger("ToolRegistry");
 
@@ -349,7 +354,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   question: {
-    description: "Ask the user one bounded clarification question as an inline Session Window widget, then stop and wait for their response. Use only when the answer cannot be inferred from available context. This is not a durable Decision record.",
+    description: QUESTION_TOOL_DESCRIPTION,
     category: "communication",
     parameters: {
       type: "object",
@@ -1035,7 +1040,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   preferences: {
-    description: "Manage learned user preferences — likes, dislikes, working styles, personal facts. Actions: list, get, save, create, update, delete, reinforce.",
+    description: PREFERENCES_TOOL_DESCRIPTION,
     category: "knowledge",
 
     parameters: {
@@ -1054,7 +1059,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   rules: {
-    description: "Manage behavioral rules and operational directives. Actions: list, get, save, create, update, delete, reinforce, violation.",
+    description: RULES_TOOL_DESCRIPTION,
     category: "knowledge",
 
     parameters: {
