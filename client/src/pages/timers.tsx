@@ -588,13 +588,15 @@ function TimerTreeSection({
   timers,
   emptyLabel,
   renderTimer,
+  defaultOpen = true,
 }: {
   label: string;
   timers: TimerItem[];
   emptyLabel: string;
   renderTimer: (timer: TimerItem) => ReactNode;
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(defaultOpen);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -1152,6 +1154,7 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
               timers={reminders}
               emptyLabel="No reminders set."
               renderTimer={renderTimer}
+              defaultOpen={false}
             />
           </>
         )}
