@@ -345,6 +345,7 @@ interface ActivityWithStatus {
   lastCompletedAt: string | null;
   tier: string | null;
   metricValue: number | null;
+  doneToday: boolean;
   doneForCurrentPeriod: boolean;
   status: "overdue" | "due_soon" | "on_track" | "never_done";
   urgency: number;
@@ -794,6 +795,7 @@ function ActivityRow({ activity, onOpenDetails }: { activity: ActivityWithStatus
                   daysUntilDue: a.intervalDays,
                   urgency: 0,
                   lastCompletedAt: new Date().toISOString(),
+                  doneToday: true,
                   doneForCurrentPeriod: true,
                   pulse: "good" as const,
                   pulsePercent: 100,
@@ -836,7 +838,7 @@ function ActivityRow({ activity, onOpenDetails }: { activity: ActivityWithStatus
           <button
             type="button"
             data-testid={`button-log-${activity.id}`}
-            className={activity.doneForCurrentPeriod
+            className={activity.doneToday
               ? "h-4 w-4 rounded-full border border-success bg-transparent text-success inline-flex items-center justify-center transition-colors hover:bg-success/10"
               : "h-4 w-4 rounded-full border border-input bg-transparent inline-flex items-center justify-center transition-colors hover:border-success hover:bg-success/10"}
             disabled={!isExpandable && (logCooldown || logMutation.isPending)}
@@ -850,7 +852,7 @@ function ActivityRow({ activity, onOpenDetails }: { activity: ActivityWithStatus
           >
             {logMutation.isPending ? (
               <Loader2 className="h-3 w-3 animate-spin" />
-            ) : activity.doneForCurrentPeriod ? (
+            ) : activity.doneToday ? (
               <Check className="h-3 w-3" />
             ) : null}
           </button>
@@ -877,7 +879,7 @@ function ActivityRow({ activity, onOpenDetails }: { activity: ActivityWithStatus
 
         {/* Activity name */}
         <span
-          className={`truncate flex-1 min-w-0 leading-5 ${activity.doneForCurrentPeriod ? "text-muted-foreground" : "text-foreground"}`}
+          className={`truncate flex-1 min-w-0 leading-5 ${activity.doneToday ? "text-muted-foreground" : "text-foreground"}`}
         >
           {activity.name}
         </span>
