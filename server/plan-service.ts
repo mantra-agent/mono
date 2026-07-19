@@ -215,6 +215,104 @@ export async function getLatestPlanStepAttempt(planId: string, stepId: string): 
   return rows[rows.length - 1] ?? null;
 }
 
+export async function getPlanStepAttemptByChildSession(
+  planId: string,
+  stepId: string,
+  childSessionId: string,
+): Promise<PlanStepAttemptRow | null> {
+  const rows = await db.select().from(planStepAttempts).where(visiblePlanAttempt(and(
+    eq(planStepAttempts.planId, planId),
+    eq(planStepAttempts.stepId, stepId),
+    eq(planStepAttempts.childSessionId, childSessionId),
+  )));
+  return rows[0] ?? null;
+}
+
+export type CompletePlanStepAttemptOutcome =
+  | { outcome: "transitioned" }
+  | { outcome: "reconciled_existing" };
+
+export async function completePlanStepAttempt(params: {
+  planId: string;
+  stepId: string;
+  attemptNumber: number;
+  childSessionId: string;
+  outcome: string;
+  durationSeconds: number;
+  completedAt: Date;
+}): Promise<CompletePlanStepAttemptOutcome> {
+  return db.transaction(async (tx) => {
+    const stepPatch = {
+      status: "completed",
+      sessionId: params.childSessionId,
+      outcome: params.outcome,
+      error: null,
+      durationSeconds: params.durationSeconds,
+      completedAt: params.completedAt,
+      updatedAt: params.completedAt,
+    } as const;
+
+    const transitioned = await tx.update(planSteps)
+      .set(stepPatch)
+      .where(writablePlanStep(and(
+        eq(planSteps.planId, params.planId),
+        eq(planSteps.id, params.stepId),
+        eq(planSteps.status, "running"),
+        eq(planSteps.sessionId, params.childSessionId),
+      )))
+      .returning({ id: planSteps.id });
+
+    let result: CompletePlanStepAttemptOutcome = { outcome: "transitioned" };
+    if (transitioned.length === 0) {
+      const current = await tx.select({ status: planSteps.status, sessionId: planSteps.sessionId })
+        .from(planSteps)
+        .where(visiblePlanStep(and(eq(planSteps.planId, params.planId), eq(planSteps.id, params.stepId))))
+        .then(rows => rows[0]);
+      if (!current || current.status !== "completed" || current.sessionId !== params.childSessionId) {
+        throw new Error(
+          `[state] Step ${params.stepId} completion conflicted with status=${current?.status ?? "missing"} ` +
+          `session=${current?.sessionId ?? "none"}; expected running/completed owned by ${params.childSessionId}`,
+        );
+      }
+      await tx.update(planSteps)
+        .set(stepPatch)
+        .where(writablePlanStep(and(
+          eq(planSteps.planId, params.planId),
+          eq(planSteps.id, params.stepId),
+          eq(planSteps.status, "completed"),
+          eq(planSteps.sessionId, params.childSessionId),
+        )));
+      result = { outcome: "reconciled_existing" };
+    }
+
+    const attemptPatch: Partial<typeof planStepAttempts.$inferInsert> = {
+      status: "completed",
+      childSessionId: params.childSessionId,
+      outcome: params.outcome,
+      error: null,
+      durationSeconds: params.durationSeconds,
+      completedAt: params.completedAt,
+      updatedAt: params.completedAt,
+    };
+    const attemptRows = await tx.update(planStepAttempts)
+      .set(attemptPatch)
+      .where(writablePlanAttempt(and(
+        eq(planStepAttempts.planId, params.planId),
+        eq(planStepAttempts.stepId, params.stepId),
+        eq(planStepAttempts.attemptNumber, params.attemptNumber),
+        eq(planStepAttempts.childSessionId, params.childSessionId),
+      )))
+      .returning({ id: planStepAttempts.id });
+    if (attemptRows.length === 0) {
+      throw new Error(
+        `[state] Attempt ${params.attemptNumber} for step ${params.stepId} is not owned by child ${params.childSessionId}`,
+      );
+    }
+
+    return result;
+  });
+}
+
 function planRowsToMeta(plan: PlanExecutionRow, steps: PlanStepRow[]): PlanMeta {
   return {
     id: plan.id,

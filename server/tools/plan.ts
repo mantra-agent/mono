@@ -11,6 +11,7 @@ import { eq, and, desc, gt, sql, type SQL } from "drizzle-orm";
 import { planExecutions, planSteps } from "@shared/schema";
 import {
   createPlanSessionLink,
+  getPlanStepAttemptByChildSession,
   renderPlanProjection,
   unlinkPlanSession,
 } from "../plan-service";
@@ -662,6 +663,25 @@ async function handleUpdateStep(
 
   const setFields: Record<string, any> = { updatedAt: new Date() };
   const requestedStatus = args.status as string | undefined;
+  const callerSessionId = typeof args._sessionId === "string" ? args._sessionId : "";
+  const callerAttempt = callerSessionId
+    ? await getPlanStepAttemptByChildSession(resolvedPlanId, stepId, callerSessionId)
+    : null;
+  if (callerAttempt) {
+    const isCurrentAttempt = step.status === "running" && step.sessionId === callerSessionId;
+    const isGateReport = requestedStatus === "blocked" || requestedStatus === "needs_review";
+    if (!isCurrentAttempt || !isGateReport) {
+      log.warn(
+        `[${resolvedPlanId}] Ignored ${requestedStatus || "field-only"} update from managed child ` +
+        `${callerSessionId} for ${stepId}; parent executor owns terminal step state`,
+      );
+      return {
+        result: isCurrentAttempt
+          ? `Step "${step.title}" is managed by the parent executor. End this child session when complete; the executor will record completion automatically. Use blocked or needs_review only when execution must stop.`
+          : `Attempt ${callerAttempt.attemptNumber} is no longer the active owner of step "${step.title}". No plan state was changed.`,
+      };
+    }
+  }
   if (requestedStatus) {
     const validStatuses = new Set([
       "pending",

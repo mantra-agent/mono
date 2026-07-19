@@ -15,7 +15,7 @@ import { eq, type SQL } from "drizzle-orm";
 import { planExecutions, planSteps } from "@shared/schema";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
-import { PLAN_EXECUTION_LEASE_MS, claimPlanExecution, createPlanStepAttempt, getLatestPlanStepAttempt, releasePlanExecution, renewPlanExecution, renderPlanProjection, transitionPlanStepStatus, updatePlanStatus as persistPlanStatus, updatePlanStepAttempt, updatePlanStepFields } from "./plan-service";
+import { PLAN_EXECUTION_LEASE_MS, claimPlanExecution, completePlanStepAttempt, createPlanStepAttempt, getLatestPlanStepAttempt, releasePlanExecution, renewPlanExecution, renderPlanProjection, transitionPlanStepStatus, updatePlanStatus as persistPlanStatus, updatePlanStepAttempt, updatePlanStepFields } from "./plan-service";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
 import {
@@ -499,12 +499,21 @@ planId,
           }
 
           const outcome = truncateOutcome(result.output || "Completed successfully");
-          await updatePlanStepAttempt({ planId, stepId: step.id, attemptNumber: attemptCount, childSessionId, status: "completed", outcome, durationSeconds: lastDuration, completedAt: new Date() });
-          await transitionStep(
-            planId, step.id, "running", "completed",
-            { completedAt: new Date(), durationSeconds: lastDuration, sessionId: childSessionId, outcome },
-            "monitor returned completed",
-          );
+          const completion = await completePlanStepAttempt({
+            planId,
+            stepId: step.id,
+            attemptNumber: attemptCount,
+            childSessionId,
+            outcome,
+            durationSeconds: lastDuration,
+            completedAt: new Date(),
+          });
+          if (completion.outcome === "reconciled_existing") {
+            log.warn(
+              `[${planId}] Step ${stepIndex + 1} was already completed by child ${childSessionId}; ` +
+              "reconciled the owned attempt instead of retrying successful work",
+            );
+          }
           await renderPlanToLibraryPage(planId);
 
           publishPlanEvent("plan.step.completed", {
