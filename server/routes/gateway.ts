@@ -5,6 +5,7 @@ import { getCached } from "./shared";
 import { join } from "path";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
+import { requirePermission } from "../permissions";
 
 const log = createLogger("GatewayRoutes");
 
@@ -291,7 +292,7 @@ export async function registerGatewayRoutes(app: Express) {
 
     let resources: import("@shared/system-resources").SystemResourcesData | null = null;
     try {
-      const [{ getDbSaturationInfo, getInFlightStats, getSlowQueryStats, getInFlightHighThreshold, getLongRunningQueries }, { agentExecutor }, { admissionController }, { getZombieMetrics }, perfMon, { getRealtimeTransportMetrics }, { sessionManager }, { getBrowserTelemetrySummary }] = await Promise.all([
+      const [{ getDbSaturationInfo, getInFlightStats, getSlowQueryStats, getInFlightHighThreshold, getLongRunningQueries }, { agentExecutor }, { admissionController }, { getZombieMetrics }, perfMon, { getRealtimeTransportMetrics }, { sessionManager }] = await Promise.all([
         import("../db"),
         import("../agent-executor"),
         import("../run-admission"),
@@ -299,7 +300,6 @@ export async function registerGatewayRoutes(app: Express) {
         import("../performance-monitor"),
         import("../realtime-transport-metrics"),
         import("../session-manager"),
-        import("../browser-telemetry-storage"),
       ]);
 
       const now = Date.now();
@@ -320,7 +320,6 @@ export async function registerGatewayRoutes(app: Express) {
       const elAvg = diag?.eventLoopLag?.avg ?? 0;
       const transportMetrics = getRealtimeTransportMetrics();
       const sessionMetrics = sessionManager.getSubscriptionMetrics();
-      const frontendExperience = req.principal ? await getBrowserTelemetrySummary(req.principal, 24) : null;
 
       const slotRunIds = new Set(slots.map(s => s.runId));
       let divergence = 0;
@@ -411,7 +410,6 @@ export async function registerGatewayRoutes(app: Express) {
           value: divergence,
           detail: divergenceParts.length > 0 ? divergenceParts.join("; ") : "in sync",
         },
-        frontendExperience,
       };
     } catch (err: any) {
       failures.push(`resources: ${err?.message || String(err)}`);
@@ -419,6 +417,31 @@ export async function registerGatewayRoutes(app: Express) {
     }
 
     res.json({ processes, failures: failures.length > 0 ? failures : undefined, resources });
+  });
+
+  // Dedicated low-cadence endpoint for frontend browser telemetry summary.
+  // Kept separate from /api/gateway/processes (2s poll) because getBrowserTelemetrySummary
+  // reads a bounded 24h window. The Performance page fetches this
+  // every 30s via a separate useQuery with refetchInterval 30_000.
+  app.get("/api/gateway/frontend-experience", requireAuth, requirePermission("system:read"), async (req, res) => {
+    try {
+      const { getBrowserTelemetrySummary } = await import("../browser-telemetry-storage");
+      const summary = req.principal ? await getBrowserTelemetrySummary(req.principal, 24) : null;
+      res.json({ frontendExperience: summary });
+    } catch (err: any) {
+      log.error("frontend-experience endpoint failed:", err);
+      res.status(500).json({ error: err?.message || String(err) });
+    }
+  });
+
+  app.get("/api/gateway/context-health", requireAuth, requirePermission("system:read"), async (_req, res) => {
+    try {
+      const { getContextHealthSummary } = await import("../context-health-storage");
+      res.json({ contextHealth: await getContextHealthSummary(24) });
+    } catch (err: any) {
+      log.error("context-health endpoint failed:", err);
+      res.status(500).json({ error: err?.message || String(err) });
+    }
   });
 
   // Diagnostic endpoint that proves "books == reality" for the abort/admission

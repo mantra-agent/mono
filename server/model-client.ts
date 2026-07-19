@@ -426,6 +426,7 @@ async function recordInference(params: {
   requestContent?: string;
   responseContent?: string;
   error?: Record<string, unknown>;
+  latency?: { providerTtftMs?: number | null; firstSdkEventMs?: number | null; firstThinkingMs?: number | null };
   signal?: AbortSignal;
 }): Promise<void> {
   try {
@@ -459,6 +460,7 @@ async function recordInference(params: {
         status: params.status,
         routing: auditRouting(params.routing),
         error: params.error,
+        latency: params.latency,
         trackedAtBoundary: true,
       },
     });
@@ -1707,11 +1709,40 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
   if (!breakdownEmitted) {
     yield emitBreakdown();
   }
-  await recordInference({ startTime: t0, routing, metadata: options.metadata, status: "success", usage: streamUsage, requestContent, responseContent, signal: options.signal });
+  await recordInference({
+    startTime: t0,
+    routing,
+    metadata: options.metadata,
+    status: "success",
+    usage: streamUsage,
+    requestContent,
+    responseContent,
+    latency: {
+      providerTtftMs: firstTextAt !== null ? firstTextAt - t0 : null,
+      firstSdkEventMs: firstSdkEventAt !== null ? firstSdkEventAt - t0 : null,
+      firstThinkingMs: firstThinkingAt !== null ? firstThinkingAt - t0 : null,
+    },
+    signal: options.signal,
+  });
   } catch (err: unknown) {
     const status: InferenceStatus = isAbortError(err, options.signal) ? "aborted" : (responseContent ? "partial" : "error");
     routing.attempts = appendFailedAttempt(routing, err);
-    await recordInference({ startTime: t0, routing, metadata: options.metadata, status, usage: streamUsage, requestContent, responseContent, error: serializeModelError(err), signal: options.signal });
+    await recordInference({
+      startTime: t0,
+      routing,
+      metadata: options.metadata,
+      status,
+      usage: streamUsage,
+      requestContent,
+      responseContent,
+      error: serializeModelError(err),
+      latency: {
+        providerTtftMs: firstTextAt !== null ? firstTextAt - t0 : null,
+        firstSdkEventMs: firstSdkEventAt !== null ? firstSdkEventAt - t0 : null,
+        firstThinkingMs: firstThinkingAt !== null ? firstThinkingAt - t0 : null,
+      },
+      signal: options.signal,
+    });
     throw enrichModelError(err, routing, options.metadata);
   }
 }

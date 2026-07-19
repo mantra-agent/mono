@@ -34,6 +34,12 @@ function routeKey(): string {
   return `${window.location.pathname || "/"}`.slice(0, BROWSER_TELEMETRY_LIMITS.maxStringLength);
 }
 
+/** Returns the current page visibility state, or undefined if the API is unavailable. */
+function captureVisibility(): "visible" | "hidden" | undefined {
+  if (typeof document === "undefined" || typeof document.visibilityState === "undefined") return undefined;
+  return document.visibilityState === "visible" ? "visible" : "hidden";
+}
+
 function scheduleFlush(): void {
   if (flushTimer || typeof window === "undefined") return;
   flushTimer = setTimeout(() => void flushBrowserTelemetry(), FLUSH_INTERVAL_MS);
@@ -47,6 +53,9 @@ export function recordBrowserTelemetry(event: BrowserTelemetryEventInput): void 
     ...event,
     routeKey: event.routeKey ?? routeKey(),
     occurredAt: event.occurredAt ?? new Date().toISOString(),
+    // Tag visibility at capture time so the server can filter background-tab noise.
+    // Caller may override by providing visibility explicitly (e.g. chat_latency always keeps all).
+    visibility: event.visibility ?? captureVisibility(),
   });
   scheduleFlush();
 }

@@ -576,13 +576,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   system: {
-    description: "System operations — get system state snapshot, fetch a specific issue, create issues, retrieve runtime logs, check budget, view current-process events, active runs, clear terminal zombie runs, connected accounts, and tool stats. Actions: state, get_issue, create_issue, logs, log_files, budget, frontend_performance, events, active_runs, clear_active_run, accounts, tool_stats. A full log archive is available in the logs/ directory. Use log_files to list all available log files (with size and date). Use logs with the file parameter to read any historical log file by filename.",
+    description: "System operations — get system state snapshot, fetch a specific issue, create issues, retrieve runtime logs, check budget, view current-process events, active runs, clear terminal zombie runs, connected accounts, and tool stats. Actions: state, get_issue, create_issue, logs, log_files, budget, frontend_performance, context_health, events, active_runs, clear_active_run, accounts, tool_stats. A full log archive is available in the logs/ directory. Use log_files to list all available log files (with size and date). Use logs with the file parameter to read any historical log file by filename.",
     category: "system",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["state", "get_issue", "create_issue", "logs", "log_files", "budget", "frontend_performance", "events", "active_runs", "clear_active_run", "accounts", "tool_stats"], description: "Action to perform. Use log_files to list available log files; use logs to read a specific log file." },
+        action: { type: "string", enum: ["state", "get_issue", "create_issue", "logs", "log_files", "budget", "frontend_performance", "context_health", "events", "active_runs", "clear_active_run", "accounts", "tool_stats"], description: "Action to perform. Use log_files to list available log files; use logs to read a specific log file." },
         id: { type: "string", description: "Issue ID (for get_issue)" },
         title: { type: "string", description: "Issue title (for create_issue)" },
         description: { type: "string", description: "Issue description (for create_issue)" },
@@ -597,7 +597,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         runId: { type: "string", description: "Filter events by run ID (for events) or run ID to clear (for clear_active_run)" },
         reason: { type: "string", description: "Reason for clearing an active run (for clear_active_run)" },
         provider: { type: "string", description: "Filter accounts by provider (for accounts)" },
-        hours: { type: "number", description: "Summary window in hours for frontend_performance (default 24, max 168)" },
+        hours: { type: "number", description: "Summary window in hours for frontend_performance/context_health (default 24, max 168)" },
       },
       required: ["action"],
     },
