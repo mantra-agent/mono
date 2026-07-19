@@ -74,7 +74,7 @@ function PageTitle({ title, customContent, href }: { title: string; customConten
     return (
       <a
         href={href}
-        className="min-w-0 truncate text-sm font-medium text-foreground transition-colors hover:text-cta"
+        className="min-w-0 flex-1 truncate text-sm font-medium text-foreground transition-colors hover:text-cta"
         data-testid="top-bar-page-title"
         title={title}
       >
@@ -84,7 +84,7 @@ function PageTitle({ title, customContent, href }: { title: string; customConten
   }
   return (
     <div
-      className="min-w-0 truncate text-sm font-medium text-foreground"
+      className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
       data-testid="top-bar-page-title"
       title={title}
     >
@@ -164,7 +164,7 @@ export function TopBar() {
     >
       {!previewOwnsAgentIcon && <XyzIconButton />}
       {!navOpen && <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} href={pageHeaderConfig?.titleHref} />}
-      <div className="flex-1" />
+      {navOpen && <div className="flex-1" />}
       <ConnectionsIndicator />
       {converseButton}
     </div>
