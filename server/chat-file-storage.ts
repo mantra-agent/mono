@@ -2545,6 +2545,7 @@ export const chatFileStorage: IChatFileStorage = {
       data.contextFlags = { ...(data.contextFlags || {}), ...flags };
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
+      invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
     });
   },
 

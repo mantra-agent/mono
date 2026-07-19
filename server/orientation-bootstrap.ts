@@ -25,16 +25,11 @@ import type { ClaudeCliTierModelConfig } from "@shared/model-connectors";
 import { ACTIVITY_CHAT } from "./job-profiles";
 import { personaStorage, type PersonaEntry } from "./file-storage/persona-storage";
 import { safeParseJSON } from "./utils/json-parse";
+import { isSessionOrientationEstablished } from "./session-orientation";
 
 const log = createLogger("orientation-bootstrap");
 
 const BOOTSTRAP_MAX_TOKENS = 300;
-const PLACEHOLDER_TITLES = new Set(["New Session", "New Chat"]);
-
-/** True when the session carries a real (non-placeholder) title, meaning orientation already happened. */
-export function hasRealSessionTitle(title: string | null | undefined): boolean {
-  return !!title && !PLACEHOLDER_TITLES.has(title);
-}
 
 export interface OrientationLlmTiming {
   providerStartedAt?: number;
@@ -216,7 +211,7 @@ export async function ensureSessionOriented(options: {
     if (!session) {
       return { applied: false, skipped: "no-session", elapsedMs: Date.now() - startedAt };
     }
-    if (hasRealSessionTitle(session.title)) {
+    if (isSessionOrientationEstablished(session)) {
       return { applied: false, skipped: "already-oriented", elapsedMs: Date.now() - startedAt };
     }
 

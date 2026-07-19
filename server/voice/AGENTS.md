@@ -52,10 +52,10 @@ Provider custom-LLM callbacks resolve by one exact app voice session ID. The ID 
 2. Session resolved by exact app voice session ID, with exact owned-lease recovery only (`session.ts`)
 3. Coalesce/cascade detection handled in `handleCustomLLM`
 4. `executeVoiceTurn` handles abort, locking, circuit breaker, message building
-5. Unoriented sessions (placeholder title) run the shared orientation bootstrap (`orientation-bootstrap.ts`) serially before persona snapshot resolution — one fast-tier classification through the canonical orient path; on apply, the cached system prompt is invalidated so the turn reassembles under the oriented persona. Memoized on `VoiceSession.orientationEnsured`; fallback outcomes retry next turn. FTUE preorient short-circuits via its real title.
+5. Sessions without established orientation (meaningful title plus explicit context scope) run the shared orientation bootstrap (`orientation-bootstrap.ts`) serially before persona snapshot resolution. The bootstrap applies title/topics/persona/context scope through the canonical orient path; on apply, the cached system prompt is invalidated so the turn reassembles under the oriented persona. `world_model.orientation` itself is real-time in the context spine, so a startup prompt assembled before the first utterance cannot survive this mutation through a lower cache. Memoized on `VoiceSession.orientationEnsured`; fallback outcomes retry next turn. FTUE preorientation establishes title, persona, and context scope and therefore short-circuits.
 6. `executeVoiceTurnBody` wires prompt assembly, SSE init, executor, result handling
-6. Content streamed through SSE to ElevenLabs for TTS
-7. Turn data persisted (`persistence.ts`), diagnostics emitted
+7. Content streams through SSE to ElevenLabs for TTS
+8. Turn data persists (`persistence.ts`), diagnostics emit
 
 ### Content Accumulation
 Uses per-iteration content model (`iterationResults[]`) with explicit `mergeIterationResults()`. Tool call continuations replace pre-tool preamble. Max-tokens continuations concatenate.
