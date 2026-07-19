@@ -6,24 +6,21 @@ export interface ActivityHeatmapDay {
   value: number;
 }
 
-interface ActivityHeatmapMarker {
+interface ActivityHeatmapMarkerBase {
   icon: LucideIcon;
-  criterion: "above-80-percent-of-maximum" | "top-decile";
   filled?: boolean;
 }
+
+type ActivityHeatmapMarker = ActivityHeatmapMarkerBase & (
+  | { criterion: "above-80-percent-of-maximum" }
+  | { criterion: "above-value"; threshold: number }
+);
 
 interface ActivityHeatmapProps {
   days: ActivityHeatmapDay[];
   marker?: ActivityHeatmapMarker;
   onSelectDate?: (date: string) => void;
   valueLabel: string;
-}
-
-function percentileThreshold(values: number[], percentile: number): number | null {
-  const positiveValues = values.filter((value) => value > 0).sort((left, right) => left - right);
-  if (positiveValues.length === 0) return null;
-  const index = Math.ceil(percentile * positiveValues.length) - 1;
-  return positiveValues[Math.max(0, index)];
 }
 
 export function heatmapFillColor(percent: number): string {
@@ -56,9 +53,9 @@ export function ActivityHeatmap({ days, marker, onSelectDate, valueLabel }: Acti
     return () => observer.disconnect();
   }, []);
 
-  const { weeks, maximum, latestDate, topDecileThreshold } = useMemo(() => {
+  const { weeks, maximum, latestDate } = useMemo(() => {
     const latest = days.at(-1)?.date;
-    if (!latest) return { weeks: [], maximum: 0, latestDate: "", topDecileThreshold: null };
+    if (!latest) return { weeks: [], maximum: 0, latestDate: "" };
 
     const valuesByDate = new Map(days.map((day) => [day.date, day.value]));
     const latestDay = new Date(`${latest}T12:00:00Z`);
@@ -83,7 +80,6 @@ export function ActivityHeatmap({ days, marker, onSelectDate, valueLabel }: Acti
       weeks: grouped,
       maximum: Math.max(0, ...visibleValues),
       latestDate: latest,
-      topDecileThreshold: percentileThreshold(visibleValues, 0.9),
     };
   }, [days, weeksToShow]);
   const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -108,8 +104,8 @@ export function ActivityHeatmap({ days, marker, onSelectDate, valueLabel }: Acti
               const percent = maximum === 0 ? 0 : Math.round((day.value / maximum) * 100);
               const showMarker = marker?.criterion === "above-80-percent-of-maximum"
                 ? percent > 80
-                : marker?.criterion === "top-decile"
-                  ? topDecileThreshold !== null && day.value >= topDecileThreshold
+                : marker?.criterion === "above-value"
+                  ? day.value > marker.threshold
                   : false;
               const MarkerIcon = marker?.icon;
               return (
