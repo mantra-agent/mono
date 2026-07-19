@@ -106,12 +106,18 @@ export async function registerOrientationRoutes(app: Express) {
   });
 
   const { fileRuleStorage } = await import("../file-storage/rules");
+  const ruleMutationSchema = z.object({
+    rule: z.string().trim().min(1).optional(),
+    source: z.enum(["correction", "reflection", "manual"]).optional(),
+    scope: z.enum(["always", "contextual"]).optional(),
+    context: z.string().trim().min(1).optional(),
+    tags: z.array(z.string().trim().min(1)).min(1).optional(),
+  }).strict();
 
   app.get("/api/rules", async (_req, res) => {
     log.debug("GET /api/rules");
     try {
-      const rules = await fileRuleStorage.getAll();
-      res.json(rules);
+      res.json(await fileRuleStorage.getAll());
     } catch (error: any) {
       log.error("GET /api/rules error:", error?.message);
       res.status(500).json({ error: error.message });
@@ -133,27 +139,38 @@ export async function registerOrientationRoutes(app: Express) {
   app.post("/api/rules", async (req, res) => {
     log.debug("POST /api/rules");
     try {
-      const { rule, source, scope, context, confidence, principleRef, tags } = req.body;
-      if (!rule) {
-        return res.status(400).json({ error: "rule is required" });
+      const input = ruleMutationSchema.extend({ rule: z.string().trim().min(1) }).parse(req.body);
+      const scope = input.scope ?? (input.context ? "contextual" : "always");
+      if (scope === "contextual" && !input.context) {
+        return res.status(400).json({ error: "context is required for a contextual Rule" });
       }
-      const created = await fileRuleStorage.create({ rule, source, scope, context, confidence, principleRef, tags });
-      res.json(created);
+      res.json(await fileRuleStorage.create({ ...input, scope }));
     } catch (error: any) {
       log.error("POST /api/rules error:", error?.message);
-      res.status(500).json({ error: error.message });
+      res.status(error instanceof z.ZodError ? 400 : 500).json({ error: error.message });
     }
   });
 
   app.put("/api/rules/:id", async (req, res) => {
     log.debug("PUT /api/rules/:id id=", req.params.id);
     try {
-      const updated = await fileRuleStorage.update(req.params.id, req.body);
+      const input = ruleMutationSchema.parse(req.body);
+      if (Object.keys(input).length === 0) {
+        return res.status(400).json({ error: "at least one Rule field is required" });
+      }
+      const existing = await fileRuleStorage.getById(req.params.id);
+      if (!existing) return res.status(404).json({ error: "Rule not found" });
+      const nextScope = input.scope ?? existing.scope;
+      const nextContext = input.context ?? existing.context;
+      if (nextScope === "contextual" && !nextContext) {
+        return res.status(400).json({ error: "context is required for a contextual Rule" });
+      }
+      const updated = await fileRuleStorage.update(req.params.id, input);
       if (!updated) return res.status(404).json({ error: "Rule not found" });
       res.json(updated);
     } catch (error: any) {
       log.error("PUT /api/rules/:id error:", error?.message);
-      res.status(500).json({ error: error.message });
+      res.status(error instanceof z.ZodError ? 400 : 500).json({ error: error.message });
     }
   });
 
@@ -165,96 +182,6 @@ export async function registerOrientationRoutes(app: Express) {
       res.json({ message: "Rule deleted" });
     } catch (error: any) {
       log.error("DELETE /api/rules/:id error:", error?.message);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/rules/:id/reinforce", async (req, res) => {
-    log.debug("POST /api/rules/:id/reinforce id=", req.params.id);
-    try {
-      const updated = await fileRuleStorage.reinforce(req.params.id);
-      if (!updated) return res.status(404).json({ error: "Rule not found" });
-      res.json(updated);
-    } catch (error: any) {
-      log.error("POST /api/rules/:id/reinforce error:", error?.message);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/rules/:id/violation", async (req, res) => {
-    log.debug("POST /api/rules/:id/violation id=", req.params.id);
-    try {
-      const updated = await fileRuleStorage.recordViolation(req.params.id);
-      if (!updated) return res.status(404).json({ error: "Rule not found" });
-      res.json(updated);
-    } catch (error: any) {
-      log.error("POST /api/rules/:id/violation error:", error?.message);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  const { filePreferenceStorage } = await import("../file-storage/preferences");
-
-  app.get("/api/preferences", async (_req, res) => {
-    log.debug("GET /api/preferences");
-    try {
-      const preferences = await filePreferenceStorage.getAll();
-      res.json(preferences);
-    } catch (error: any) {
-      log.error("GET /api/preferences error:", error?.message);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/preferences/:id", async (req, res) => {
-    log.debug("GET /api/preferences/:id id=", req.params.id);
-    try {
-      const preference = await filePreferenceStorage.getById(req.params.id);
-      if (!preference) return res.status(404).json({ error: "Preference not found" });
-      res.json(preference);
-    } catch (error: any) {
-      log.error("GET /api/preferences/:id error:", error?.message);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/preferences", async (req, res) => {
-    log.debug("POST /api/preferences");
-    try {
-      const { domain, preference, evidence, confidence, tags } = req.body;
-      if (!domain || !preference) {
-        return res.status(400).json({ error: "domain and preference are required" });
-      }
-      const created = await filePreferenceStorage.create({
-        domain, preference, evidence, confidence, tags,
-      });
-      res.json(created);
-    } catch (error: any) {
-      log.error("POST /api/preferences error:", error?.message);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.put("/api/preferences/:id", async (req, res) => {
-    log.debug("PUT /api/preferences/:id id=", req.params.id);
-    try {
-      const updated = await filePreferenceStorage.update(req.params.id, req.body);
-      if (!updated) return res.status(404).json({ error: "Preference not found" });
-      res.json(updated);
-    } catch (error: any) {
-      log.error("PUT /api/preferences/:id error:", error?.message);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.delete("/api/preferences/:id", async (req, res) => {
-    log.debug("DELETE /api/preferences/:id id=", req.params.id);
-    try {
-      const deleted = await filePreferenceStorage.delete(req.params.id);
-      if (!deleted) return res.status(404).json({ error: "Preference not found" });
-      res.json({ message: "Preference deleted" });
-    } catch (error: any) {
-      log.error("DELETE /api/preferences/:id error:", error?.message);
       res.status(500).json({ error: error.message });
     }
   });

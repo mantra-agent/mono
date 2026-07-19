@@ -199,7 +199,6 @@ export const TOOL_ICON_MAP: Record<string, string> = {
   meetings: "Calendar",
   git: "GitBranch",
   strategy: "Compass",
-  preferences: "SlidersHorizontal",
   rules: "ScrollText",
   priorities: "Star",
   session: "MessageSquare",

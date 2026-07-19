@@ -12,7 +12,6 @@ import {
   ChevronRight,
   MoreHorizontal,
   Compass,
-  Heart,
   Lightbulb,
   ShieldCheck,
   Search,
@@ -20,7 +19,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-type SectionKey = "theses" | "rules" | "beliefs" | "preferences" | "principles";
+type SectionKey = "theses" | "rules" | "beliefs" | "principles";
 
 type OrientationRecord = Record<string, unknown> & { id?: string | number };
 
@@ -37,22 +36,6 @@ interface SectionConfig {
 
 const SECTION_CONFIGS: SectionConfig[] = [
   {
-    key: "preferences",
-    deleteEndpoint: (item) => `/api/preferences/${item.id}`,
-    label: "Preferences",
-    icon: Heart,
-    endpoint: "/api/preferences",
-    title: (item) => text(item.preference) || "Untitled preference",
-    subtitle: (item) => text(item.domain),
-    detailRows: [
-      { label: "Preference", value: (item) => item.preference },
-      { label: "Domain", value: (item) => item.domain },
-      { label: "Confidence", value: (item) => percent(item.confidence) },
-      { label: "Evidence", value: (item) => item.evidence },
-      { label: "Tags", value: (item) => item.tags },
-    ],
-  },
-  {
     key: "rules",
     deleteEndpoint: (item) => `/api/rules/${item.id}`,
     label: "Rules",
@@ -65,8 +48,6 @@ const SECTION_CONFIGS: SectionConfig[] = [
       { label: "Scope", value: (item) => item.scope },
       { label: "Context", value: (item) => item.context },
       { label: "Source", value: (item) => item.source },
-      { label: "Confidence", value: (item) => percent(item.confidence) },
-      { label: "Principle", value: (item) => item.principleRef },
       { label: "Tags", value: (item) => item.tags },
     ],
   },

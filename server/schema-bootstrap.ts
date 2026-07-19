@@ -2058,6 +2058,20 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_created_at ON memory_vnext_claims(created_at)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_scope_owner ON memory_vnext_claims(scope, owner_user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_account ON memory_vnext_claims(account_id)`);
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'uk_memory_vnext_claim_content_hash'
+            AND conrelid = 'memory_vnext_claims'::regclass
+        ) THEN
+          ALTER TABLE memory_vnext_claims
+            ADD CONSTRAINT uk_memory_vnext_claim_content_hash UNIQUE (content_hash);
+        END IF;
+      END $$
+    `);
 
     const embeddingType = await pool.query<{ embedding_type: string | null }>(`
       SELECT format_type(a.atttypid, a.atttypmod) AS embedding_type

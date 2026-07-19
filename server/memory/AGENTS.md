@@ -62,7 +62,7 @@ Sleep/NREM/REM must prefer stage semantics for decay, reinforcement, dream seedi
 - **Source**: Integrated from mid-term when count threshold met
 - **Lifetime**: Permanent (subject to decay)
 - **Promotion**: `integrateMidToLong()` in `server/memory/integration.ts`
-- **Content**: Distilled knowledge, patterns, preferences
+- **Content**: Distilled knowledge, patterns, and tendencies
 
 ## Ingestion Pipeline
 
@@ -273,12 +273,12 @@ The active migration target is source-backed, stage-driven memory. Treat this se
 
 ### Claim quality contract
 
-The extraction prompt (v7) enforces a predictive-value filter: every claim must improve Agent's ability to predict the external world or people in it. The scorer (`scoreClaimForBudget`) enforces this structurally.
+The extraction prompt (v8) enforces a predictive-value filter: every claim must improve Agent's ability to predict people or the external world. Stable personal facts, tastes, tendencies, working patterns, and communication patterns qualify when they improve prediction. The scorer (`scoreClaimForBudget`) enforces this structurally.
 
 **Hard rejections (prompt + scorer):**
 
-- Ray's preferences about how Agent should work → stored in preferences system
-- Agent behavioral rules or constraints → stored in rules system
+- Deterministic Agent commands or constraints → stored as personal Rules when individual, or in the owning system when universal
+- Universal product behavior or tool policy → stored in the owning system, never personal memory
 - Agent/system architecture facts → recoverable from code, docs, tools
 - Implementation summaries (PRs, merges, deploys, builds, row counts, task status)
 - Short-lived calendar/scheduling facts
@@ -287,7 +287,8 @@ The extraction prompt (v7) enforces a predictive-value filter: every claim must 
 
 **Scorer penalties:**
 
-- State claims matching preference/rule patterns (e.g. "Ray prefers...", "Agent should...") are hard-rejected with `rejectedReason: preference_rule_restatement`
+- Deterministic Agent-command claims (e.g. "Agent should..." or "Agent must...") are hard-rejected with `rejectedReason: agent_command_restatement`
+- Descriptive personal patterns (e.g. "Ray prefers..." or "Ray tends to...") remain eligible state claims
 - Architecture-shaped claims (e.g. "hosted on...", "PR #N merged") are hard-rejected with `rejectedReason: architecture_restatement`
 - Cause claims receive the highest type score (+30), then action (+25), then state (+10)
 - State claims can recover score through entity mentions and topic richness
@@ -295,6 +296,7 @@ The extraction prompt (v7) enforces a predictive-value filter: every claim must 
 **What qualifies:**
 
 - People: identity, relationships, motivations, behavior predictions
+- Personal patterns: tastes, recurring choices, working style, communication style, and stable tendencies
 - Organizations: dynamics, power structures, incentive alignment
 - Finances: compensation ranges, funding status, deal terms
 - Family: dynamics, conflict, support patterns, health trajectories
@@ -302,7 +304,7 @@ The extraction prompt (v7) enforces a predictive-value filter: every claim must 
 - Commitments: promises between people (not Agent task assignments)
 - Market: industry shifts, competitor moves, pricing dynamics
 
-**Eval evidence (v7 prompt, 2026-07-09):** 12 samples (5 noise sources, 7 positive sources). Noise rejection: 5/5 (100%). External-fact recall: 7/7 (100%). No regression from v6's 18/18 on external facts; self-referential restatements now fully rejected.
+**Evaluation status:** v8 deliberately broadens admission to soft personal patterns while preserving deterministic Agent-command rejection. Do not reuse v7 preference-rejection metrics as evidence for v8 behavior.
 
 ### Claim shape
 
@@ -315,7 +317,7 @@ All vNext claim logic lives in `server/memory/vnext-*` modules with zero imports
 
 | Module | Responsibility |
 |---|---|
-| `vnext-claim-extraction.ts` | Canonical `ClaimCandidate` type, extraction prompt (v6), chunk-level extraction, cross-chunk dedup, budget scoring/ranking, `processVnextClaimsForSource` entry point |
+| `vnext-claim-extraction.ts` | Canonical `ClaimCandidate` type, extraction prompt (v8), chunk-level extraction, cross-chunk dedup, budget scoring/ranking, `processVnextClaimsForSource` entry point |
 | `vnext-claim-storage.ts` | DB CRUD for `memory_vnext_claims`, `memory_vnext_claim_links`, `memory_vnext_source_refs`, semantic search, reinforcement, nuke, and the canonical `persistClaimCandidates()` mutation path (two-phase dedup, create, entity linking, causal linking). Phase 1: intra-batch semantic dedup merges paraphrases from the same extraction before any DB write (`CLAIM_INTRA_BATCH_DEDUP_THRESHOLD = 0.85`). Phase 2: cross-source dedup against existing DB claims reinforces near-duplicates (`CLAIM_DEDUP_SIMILARITY_THRESHOLD = 0.85`), with a title-collision fallback that dedups same-titled active claims at `CLAIM_TITLE_DEDUP_SIMILARITY_THRESHOLD = 0.55` (same-fact restatements extracted on different days drift to 0.58–0.84 similarity). All thresholds defined and exported here. `sourceMemoryId` is a nullable legacy column (no FK to `memory_entries`); canonical provenance lives in `memory_vnext_sources` (source refs) |
 | `vnext-entity-resolution.ts` | Resolve entity mentions from claims to People/Project/Goal records |
 | `vnext-source-poller.ts` | Queue-based extraction: poll settled sources, chunk, extract via `vnext-claim-extraction`, persist, reconcile stale claims |
@@ -402,3 +404,12 @@ Memory/myelination prompt templates live in Prompt Modules, not Skills. They hav
 | Mid-term merge | `myelination-mid-merge` | `memory-transitions.ts`, `sleep-maintenance.ts` |
 | Consolidation | `myelination-mid-merge-consolidate` | `memory-transitions.ts` |
 
+
+### Personal Rules cutover
+
+- Preferences is retired as a tool, UI, context section, API, event family, and export domain. The string `preference` remains only where it denotes a generic product/UI setting, a People relationship-memory category, or the legacy document type read by migration.
+- Personal Rules contain only explicit user-owned deterministic behavioral overrides. They do not carry confidence, reinforcement, violation, or principle-link fields.
+- `legacy-rule-migration.ts` is the bounded disposition for the audited legacy Rule set. It retains and normalizes the four records that pass the personal-delta razor and removes the rest after their universal behavior has moved into owning system/tool/domain instructions.
+- `legacy-preference-migration.ts` promotes six hard personal overrides to Rules, converts seven soft personal patterns to vNext claims through `persistClaimCandidates`, and removes four system-owned correction records. It deletes each legacy document only after its destination mutation succeeds.
+- Both migration workers restore the document owner's principal and vault before mutation, are replay-safe, and run in bounded batches from the vNext poller.
+- vNext `content_hash` includes the owning principal key separated with ASCII unit separator 31. The database keeps one global unique constraint over that owner-scoped hash, preventing both same-user duplicates and cross-user collisions. The poller repairs legacy hashes in bounded batches; runtime boot never performs an unbounded table rewrite.

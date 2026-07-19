@@ -13,6 +13,12 @@ If the work does not fit cleanly into the current project stack, pause and ask w
 
 Before ending the work, update the task to the truthful state: completed, blocked, active, or another accurate status. Include the outcome or blocker so the canonical work record reflects reality.
 
+## Plan Boundary
+
+Use plan infrastructure only when a step materially benefits from fresh context: crossing into a genuinely different system/domain, creating an independent or adversarial review boundary, or decomposing work too large for one coherent context. Sequential publishing, build, deployment, or verification phases are not enough by themselves.
+
+When a plan step becomes blocked, failed, or needs review, report the step, cause, and next required action to the parent session. Never leave the parent showing only the last successful checkpoint.
+
 ## When to Plan
 
 Create a durable plan (via the `plan` tool) when:

@@ -1,5 +1,5 @@
 import { createLogger } from "../log";
-import type { Principal } from "../principal";
+import { createNamedSystemPrincipal, type Principal } from "../principal";
 import { runWithPrincipal } from "../principal-context";
 import type { MemoryVnextSourceQueueRow, MemorySource } from "@shared/schema";
 import { parseReferenceText } from "@shared/reference-parser";
@@ -435,6 +435,33 @@ export async function processSettledSources(): Promise<{
   totalRetirementCandidates: number;
   errors: number;
 }> {
+  const hashBackfill = await runWithPrincipal(
+    createNamedSystemPrincipal("memory-maintenance"),
+    () => memoryVnextClaimStorage.backfillOwnerScopedContentHashes(250),
+  );
+  if (hashBackfill > 0) {
+    log.info(`processSettledSources: owner-scoped content hashes updated=${hashBackfill}`);
+  }
+
+  // Migrate a bounded legacy Preference batch before normal extraction.
+  // Each record restores its owning principal, persists through the canonical
+  // vNext boundary, and is deleted only after durable admission succeeds.
+  const { migrateAuditedRules } = await import("./legacy-rule-migration");
+  const ruleMigration = await migrateAuditedRules();
+  if (ruleMigration.scanned > 0 || ruleMigration.errors > 0) {
+    log.info(
+      `processSettledSources: Rule audit scanned=${ruleMigration.scanned} retained=${ruleMigration.retained} deleted=${ruleMigration.deleted} errors=${ruleMigration.errors}`,
+    );
+  }
+
+  const { migrateLegacyPreferences } = await import("./legacy-preference-migration");
+  const preferenceMigration = await migrateLegacyPreferences();
+  if (preferenceMigration.scanned > 0 || preferenceMigration.errors > 0) {
+    log.info(
+      `processSettledSources: preference migration scanned=${preferenceMigration.scanned} migrated=${preferenceMigration.migrated} errors=${preferenceMigration.errors}`,
+    );
+  }
+
   // Repair legacy active claims before new extraction. The backfill method is
   // bounded and runs inside each settled source owner's principal context.
 
@@ -448,6 +475,7 @@ export async function processSettledSources(): Promise<{
   // Reset any stuck processing rows first (crash recovery)
   await resetStuckProcessing(STUCK_PROCESSING_TIMEOUT_MINUTES);
 
+  const migrationErrors = ruleMigration.errors + preferenceMigration.errors;
   const sources = await pollSettledSources(SETTLE_MINUTES, MAX_SOURCES_PER_RUN);
 
   if (sources.length === 0) {
@@ -459,7 +487,7 @@ export async function processSettledSources(): Promise<{
       totalSkipped: 0,
       totalDecayed: 0,
       totalRetirementCandidates: 0,
-      errors: 0,
+      errors: migrationErrors,
     };
   }
 
@@ -471,7 +499,7 @@ export async function processSettledSources(): Promise<{
   let totalSkipped = 0;
   let totalDecayed = 0;
   let totalRetirementCandidates = 0;
-  let errors = 0;
+  let errors = migrationErrors;
 
   for (const row of sources) {
     try {

@@ -28,6 +28,8 @@ export const VAULT_CROSS_ACCESS_ALLOWLIST = new Set<string>([
   // reinforcement, NREM merge across all vaults for the owning user
   "sleep-cycle",
   "memory-maintenance",
+  "preference-vnext-migration",
+  "personal-rule-audit-migration",
 
   // System-wide integration checks — OpenAI subscription account is
   // a platform-level resource, not per-vault

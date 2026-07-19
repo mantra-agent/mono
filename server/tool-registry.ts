@@ -8,10 +8,9 @@ import { storage } from "./storage";
 import { TTLCache } from "./utils/ttl-cache";
 import type { SkillWithReferences } from "@shared/models/skills";
 import {
-  PREFERENCES_TOOL_DESCRIPTION,
   QUESTION_TOOL_DESCRIPTION,
   RULES_TOOL_DESCRIPTION,
-} from "./preference-rule-policy";
+} from "./personal-rule-policy";
 
 const log = createLogger("ToolRegistry");
 
@@ -182,7 +181,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   railway: {
-    description: "Inspect and manage a Railway-hosted Platform Environment. Cross-environment operations require `platformEnvironmentId`, which resolves the hosting binding and authenticated connector through the canonical Platform Environment resolver. Omit it only for current-runtime self-inspection with status, logs, or build_logs. Actions: status, deployments, logs, build_logs, list_variables (names only), redeploy, restart. Destructive actions and secret values are intentionally not exposed.",
+    description: "Inspect and manage a Railway-hosted Platform Environment. Cross-environment operations require `platformEnvironmentId`, which resolves the hosting binding and authenticated connector through the canonical Platform Environment resolver. Omit it only for current-runtime self-inspection with status, logs, or build_logs. When Git auto-deploy is functioning, inspect that deployment and do not trigger a manual redeploy unless the user explicitly asks or a confirmed provider failure requires recovery. Actions: status, deployments, logs, build_logs, list_variables (names only), redeploy, restart. Destructive actions and secret values are intentionally not exposed.",
     category: "system",
     parameters: {
       type: "object",
@@ -213,7 +212,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   meta: {
-    description: "Queue and execute Meta/Ray-Ban DAT SDK calls through the mobile iOS bridge. Requires the mobile app debug overlay to be open so the phone can poll, execute native DAT calls locally, and post results back. Actions: queue, call, results, commands, status, preflight, initialize, listDevices, requestCamera, register, connect, capture.",
+    description: "Queue and execute Meta/Ray-Ban DAT SDK calls through the mobile iOS bridge. Requires the mobile app debug overlay to be open so the phone can poll, execute native DAT calls locally, and post results back. When the user asks what they are looking at during a glasses session, capture first, analyze the image with the images tool, then answer from evidence; diagnose bridge failure before asking for manual debugging. Actions: queue, call, results, commands, status, preflight, initialize, listDevices, requestCamera, register, connect, capture.",
     category: "system",
     parameters: {
       type: "object",
@@ -397,7 +396,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   people: {
-    description: "Manage personal contacts — query, search, get details, check outreach agenda, add notes, log interactions, safely merge existing contacts, update or delete interactions. Actions: list, query, get_many, get, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, create, update, scan_imports, scan_ignored, list_import_candidates (paginated pending candidates plus queue metadata — totalPending, totalCandidates, decided counts, remainingAfterOffset, and progressPercent — so import progress can be tracked from the response instead of guessed), get/find import candidates, search_import_candidates (search pending import candidates by name, exact or partial email, and candidate ID without loading the entire queue — returns exact candidate IDs, summaries, and supports pagination; use query param for name/email partial match, candidateId for exact lookup, decision to filter by status, limit/offset for pagination), add/merge/skip/undo decisions, and preview/apply/get batches. Use canonical @person:id syntax in messages to link to people. Legacy [person:id] syntax is accepted during migration.",
+    description: "Manage personal contacts — query, search, get details, check outreach agenda, add notes, log interactions, safely merge existing contacts, update or delete interactions. Time-bound information about a person belongs in an interaction; use notes for untimed context. In contact-import triage, account for every candidate exactly once and name every skip. Generic, role-based, and automated senders should be skipped unless the user identifies a real relationship. Actions: list, query, get_many, get, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, create, update, scan_imports, scan_ignored, list_import_candidates (paginated pending candidates plus queue metadata — totalPending, totalCandidates, decided counts, remainingAfterOffset, and progressPercent — so import progress can be tracked from the response instead of guessed), get/find import candidates, search_import_candidates (search pending import candidates by name, exact or partial email, and candidate ID without loading the entire queue — returns exact candidate IDs, summaries, and supports pagination; use query param for name/email partial match, candidateId for exact lookup, decision to filter by status, limit/offset for pagination), add/merge/skip/undo decisions, and preview/apply/get batches. Use canonical @person:id syntax in messages to link to people. Legacy [person:id] syntax is accepted during migration.",
     category: "communication",
 
     parameters: {
@@ -474,7 +473,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   library: {
-    description: "Manage Library wiki pages and Notes scratchpad. Actions: list_library_pages, get_library_page, resolve_parent, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate. Any page can have child pages, optional tags, and an optional status. Use 'browse_tree' or 'tree' to see the full page hierarchy as an indented outline. Use canonical @page:slug syntax in messages to link to library pages. Legacy [page:slug] syntax is accepted during migration. Prefer edit_library_page over update_library_page for targeted changes to existing page content — it avoids re-transmitting the entire document.",
+    description: "Manage Library wiki pages and Notes scratchpad. Anything the user may share externally, including drafts, specs, research, bug reports, and analysis, belongs in a Library page rather than scratch. Actions: list_library_pages, get_library_page, resolve_parent, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate. Any page can have child pages, optional tags, and an optional status. Use 'browse_tree' or 'tree' to see the full page hierarchy as an indented outline. Use canonical @page:slug syntax in messages to link to library pages. Legacy [page:slug] syntax is accepted during migration. Prefer edit_library_page over update_library_page for targeted changes to existing page content — it avoids re-transmitting the entire document.",
     category: "knowledge",
 
     parameters: {
@@ -724,7 +723,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   meetings: {
-    description: "Manage calendar events — create, list, update, or delete meetings.",
+    description: "Manage calendar events — create, list, update, or delete meetings. Before creating an event, verify the title, date, start time, duration/end time, and attendees; do not create until those details are confirmed.",
     category: "calendar",
 
     parameters: {
@@ -1039,25 +1038,6 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: ["action"],
     },
   },
-  preferences: {
-    description: PREFERENCES_TOOL_DESCRIPTION,
-    category: "knowledge",
-
-    parameters: {
-      type: "object",
-      properties: {
-        action: { type: "string", enum: ["list", "get", "save", "create", "update", "delete", "reinforce"], description: "The action to perform" },
-        id: { type: "string", description: "Preference ID (required for get, update, delete, reinforce)" },
-        domain: { type: "string", description: "Preference domain/category (e.g., 'communication', 'work_style', 'food', 'tech'). Required for save." },
-        preference: { type: "string", description: "The preference text (required for save)" },
-        personName: { type: "string", description: "Person this preference belongs to (defaults to the user)" },
-        evidence: { type: "array", items: { type: "string", description: "A supporting quote or observation" }, description: "Supporting evidence or quotes for this preference" },
-        confidence: { type: "number", description: "Confidence level 0-1 (default 0.5)" },
-        tags: { type: "array", items: { type: "string", description: "A category tag" }, description: "Tags for categorization" },
-      },
-      required: ["action"],
-    },
-  },
   rules: {
     description: RULES_TOOL_DESCRIPTION,
     category: "knowledge",
@@ -1065,14 +1045,12 @@ export const TOOLS: Record<string, ToolMeta> = {
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list", "get", "save", "create", "update", "delete", "reinforce", "violation"], description: "The action to perform" },
-        id: { type: "string", description: "Rule ID (required for get, update, delete, reinforce, violation)" },
-        rule: { type: "string", description: "The rule text (required for save)" },
-        source: { type: "string", enum: ["correction", "reflection", "manual"], description: "How this rule was derived (default: manual)" },
-        scope: { type: "string", enum: ["always", "contextual"], description: "Whether the rule always applies or only in certain contexts (default: contextual)" },
-        context: { type: "string", description: "When/where this rule applies (for contextual rules)" },
-        confidence: { type: "number", description: "Confidence level 0-1 (default 0.5)" },
-        principleRef: { type: "string", description: "Reference to a related principle" },
+        action: { type: "string", enum: ["list", "get", "save", "create", "update", "delete"], description: "The action to perform" },
+        id: { type: "string", description: "Rule ID (required for get, update, delete)" },
+        rule: { type: "string", description: "The explicit personal behavioral command (required for save/create)" },
+        source: { type: "string", enum: ["correction", "reflection", "manual"], description: "How the user established this Rule (default: manual)" },
+        scope: { type: "string", enum: ["always", "contextual"], description: "Whether the Rule always applies or only in a named context (default: contextual)" },
+        context: { type: "string", description: "When the Rule applies (required in substance for contextual Rules)" },
         tags: { type: "array", items: { type: "string", description: "A category tag" }, description: "Tags for categorization" },
       },
       required: ["action"],
@@ -1384,7 +1362,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   images: {
-    description: "Generate, edit, or analyze images. Actions: generate (text-to-image), edit (combine/modify images), analyze (describe/extract from an image).",
+    description: "Generate, edit, or analyze images. For uploads, use the exact /objects/uploads/<id>.<ext> object path from attachment metadata without rewriting it. Render generated or uploaded images inline as ![descriptive alt](/objects/uploads/<id>.<ext>), not signed/download URLs. Actions: generate (text-to-image), edit (combine/modify images), analyze (describe/extract from an image).",
     category: "media",
 
     parameters: {
@@ -1430,7 +1408,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   health: {
-    description: "Query health metrics and fully manage the wellness calendar. Actions: summary (7-day summary by metric type), metrics (raw metric rows with optional type/date filters), list_activities (all active wellness activities), log_activity (record a completion by activityId or name with fuzzy match, optional date param YYYY-MM-DD for past-date logging), activity_status (all activities grouped by status: overdue/due_soon/on_track/never_done with urgency scores — includes tier and metricValue for metric-backed activities), create_activity (add a new wellness activity with name, intervalDays, category, and optional fields including linkedMetricType, greatThreshold, goodThreshold for metric-backed auto-completion), update_activity (modify an existing activity by activityId or name — set newName, benefit, risk, intervalDays, estimatedMinutes, estimatedCost, requirements, category, linkedMetricType, greatThreshold, goodThreshold, windowStart, windowEnd), delete_activity (archive an activity by activityId or name), activity_logs (view completion history with tier and metricValue, optionally filtered by activityId and days), delete_log (delete a specific log entry by logId), save_gratitude (upsert a gratitude entry — content required, date optional defaults to today, auto-logs Gratitude wellness activity), get_gratitude (get a single gratitude entry by date, defaults to today), list_gratitudes (list gratitude entries in reverse-chronological order, optional limit default 30), save_learning (upsert a learning entry — content required, date optional defaults to today, auto-logs Learning wellness activity), get_learning (get a single learning entry by date, defaults to today), list_learnings (list learning entries in reverse-chronological order, optional limit default 30).",
+    description: "Query health metrics and fully manage the wellness calendar. Autonomous skills must not call save_learning or save_gratitude; those are user-authored personal logs. Actions: summary (7-day summary by metric type), metrics (raw metric rows with optional type/date filters), list_activities (all active wellness activities), log_activity (record a completion by activityId or name with fuzzy match, optional date param YYYY-MM-DD for past-date logging), activity_status (all activities grouped by status: overdue/due_soon/on_track/never_done with urgency scores — includes tier and metricValue for metric-backed activities), create_activity (add a new wellness activity with name, intervalDays, category, and optional fields including linkedMetricType, greatThreshold, goodThreshold for metric-backed auto-completion), update_activity (modify an existing activity by activityId or name — set newName, benefit, risk, intervalDays, estimatedMinutes, estimatedCost, requirements, category, linkedMetricType, greatThreshold, goodThreshold, windowStart, windowEnd), delete_activity (archive an activity by activityId or name), activity_logs (view completion history with tier and metricValue, optionally filtered by activityId and days), delete_log (delete a specific log entry by logId), save_gratitude (upsert a gratitude entry — content required, date optional defaults to today, auto-logs Gratitude wellness activity), get_gratitude (get a single gratitude entry by date, defaults to today), list_gratitudes (list gratitude entries in reverse-chronological order, optional limit default 30), save_learning (upsert a learning entry — content required, date optional defaults to today, auto-logs Learning wellness activity), get_learning (get a single learning entry by date, defaults to today), list_learnings (list learning entries in reverse-chronological order, optional limit default 30).",
     category: "health",
 
     parameters: {

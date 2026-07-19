@@ -12,8 +12,6 @@ const INVALIDATION_MAP: Record<string, string[][]> = {
   "data:goals_changed": [["/api/goals/today"], ["/api/home/feed"]],
   "data:calendar_changed": [["/api/calendar/events"], ["/api/calendar/metadata"]],
   "data:people_changed": [["/api/people"]],
-  "data:preference_created": [["/api/preferences"]],
-  "data:preference_updated": [["/api/preferences"]],
   "data:sessions_changed": [["/api/sessions"]],
   "data:tasks_changed": [["/api/projects/tasks"], ["/api/projects/todo"]],
   "data:library_changed": [["/api/info/library"], ["/api/info/library/tree"], ["/api/info/library/unread"], ["/api/library/index"]],
@@ -146,23 +144,6 @@ function maybeToastGoalChange(payload: Record<string, unknown> | undefined): voi
       title: goalId ? `Goal added: @goal:${goalId}` : "Goal added",
       description: !goalId && title ? title : undefined,
     });
-  }
-}
-
-function maybeToastPreferenceChange(eventName: string, payload: Record<string, unknown> | undefined): void {
-  const preference = typeof payload?.preference === "string" ? payload.preference.trim() : "";
-  const domain = typeof payload?.domain === "string" ? payload.domain.trim() : "";
-
-  if (eventName === "data:preference_created") {
-    toast({
-      title: "Preference saved",
-      description: preference || domain || undefined,
-    });
-    return;
-  }
-
-  if (eventName === "data:preference_updated") {
-    toast({ title: "Preference updated" });
   }
 }
 
@@ -302,10 +283,6 @@ export function useDataSync() {
 
       if (eventName === "data:goals_changed") {
         maybeToastGoalChange(event.payload as Record<string, unknown> | undefined);
-      }
-
-      if (eventName === "data:preference_created" || eventName === "data:preference_updated") {
-        maybeToastPreferenceChange(eventName, event.payload as Record<string, unknown> | undefined);
       }
 
 

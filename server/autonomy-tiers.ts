@@ -37,7 +37,6 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   goals: { default: 1, actions: { list: 0, get: 0, search: 0 } },
   beliefs: { default: 1, actions: { list: 0, get: 0 } },
 
-  preferences: { default: 1, actions: { list: 0, get: 0 } },
   rules: { default: 1, actions: { list: 0, get: 0 } },
   priorities: { default: 1 },
   intentions: { default: 0 },

@@ -1,8 +1,5 @@
 import { BaseDocumentStore, principalCacheKey } from "./base";
-import { createLogger } from "../log";
 import { TTLCache } from "../utils/ttl-cache";
-
-const parseLog = createLogger("StoreRules");
 
 export interface Rule {
   id: string;
@@ -10,10 +7,6 @@ export interface Rule {
   source: "correction" | "reflection" | "manual";
   scope: "always" | "contextual";
   context: string;
-  confidence: number;
-  reinforcements: number;
-  violations: number;
-  principleRef: string;
   tags: string[];
   createdAt: string;
   updatedAt: string;
@@ -27,10 +20,6 @@ function docToRule(doc: { content: string; metadata: Record<string, unknown> }):
     source: (meta.source as Rule["source"]) || "manual",
     scope: (meta.scope as Rule["scope"]) || "contextual",
     context: String(meta.context || ""),
-    confidence: Number(meta.confidence ?? 0.5),
-    reinforcements: Number(meta.reinforcements ?? 0),
-    violations: Number(meta.violations ?? 0),
-    principleRef: String(meta.principleRef || ""),
     tags: (meta.tags as string[]) || [],
     createdAt: String(meta.createdAt || new Date().toISOString()),
     updatedAt: String(meta.updatedAt || new Date().toISOString()),
@@ -38,24 +27,24 @@ function docToRule(doc: { content: string; metadata: Record<string, unknown> }):
 }
 
 export class FileRuleStorage extends BaseDocumentStore<Rule> {
-  private readonly _allCache = new TTLCache<Rule[]>("Rules", 60_000);
+  private readonly allCache = new TTLCache<Rule[]>("Rules", 60_000);
 
   constructor() {
     super({
       docType: "rule",
       logPrefix: "StoreRules",
       pathPrefix: "rules",
-      getTitle: (r) => r.rule,
+      getTitle: (rule) => rule.rule,
       docToEntity: docToRule,
     });
   }
 
   private invalidateRuleCache(): void {
-    this._allCache.invalidateAll();
+    this.allCache.invalidateAll();
   }
 
   async getAll(): Promise<Rule[]> {
-    return this._allCache.getOrFetch(principalCacheKey("rules"), () => super.getAll());
+    return this.allCache.getOrFetch(principalCacheKey("rules"), () => super.getAll());
   }
 
   async create(input: {
@@ -63,33 +52,51 @@ export class FileRuleStorage extends BaseDocumentStore<Rule> {
     source?: Rule["source"];
     scope?: Rule["scope"];
     context?: string;
-    confidence?: number;
-    principleRef?: string;
     tags?: string[];
   }): Promise<Rule> {
+    const rule = input.rule.trim();
+    if (!rule) throw new Error("Rule text is required");
+    const scope = input.scope || (input.context ? "contextual" : "always");
+    const context = input.context?.trim() || "";
+    if (scope === "contextual" && !context) {
+      throw new Error("Context is required for a contextual Rule");
+    }
+
     const now = this.nowISO();
     const entry: Rule = {
       id: this.newId(),
-      rule: input.rule,
+      rule,
       source: input.source || "manual",
-      scope: input.scope || "contextual",
-      context: input.context || "",
-      confidence: input.confidence ?? 0.5,
-      reinforcements: 0,
-      violations: 0,
-      principleRef: input.principleRef || "",
+      scope,
+      context: scope === "always" ? "" : context,
       tags: input.tags || [],
       createdAt: now,
       updatedAt: now,
     };
 
-    await this.persistAndSync(entry, "create", " source=" + entry.source + " scope=" + entry.scope);
+    await this.persistAndSync(entry, "create", ` source=${entry.source} scope=${entry.scope}`);
     this.invalidateRuleCache();
     return entry;
   }
 
   async update(id: string, updates: Partial<Omit<Rule, "id" | "createdAt">>): Promise<Rule | null> {
-    const result = await this.updateEntity(id, updates);
+    const existing = await this.getById(id);
+    if (!existing) return null;
+    const nextScope = updates.scope ?? existing.scope;
+    const nextContext = nextScope === "always"
+      ? ""
+      : (updates.context ?? existing.context).trim();
+    if (nextScope === "contextual" && !nextContext) {
+      throw new Error("Context is required for a contextual Rule");
+    }
+    const normalized = {
+      ...updates,
+      ...(typeof updates.rule === "string" ? { rule: updates.rule.trim() } : {}),
+      scope: nextScope,
+      context: nextContext,
+    };
+    if (normalized.rule === "") throw new Error("Rule text is required");
+    const result = await this.updateEntity(id, normalized);
     this.invalidateRuleCache();
     return result;
   }
@@ -98,26 +105,6 @@ export class FileRuleStorage extends BaseDocumentStore<Rule> {
     const result = await super.delete(id);
     if (result) this.invalidateRuleCache();
     return result;
-  }
-
-  async reinforce(id: string): Promise<Rule | null> {
-    this.log.log("reinforce id=" + id);
-    const existing = await this.getById(id);
-    if (!existing) return null;
-    return this.update(id, {
-      reinforcements: existing.reinforcements + 1,
-      confidence: Math.min(1, existing.confidence + 0.05),
-    });
-  }
-
-  async recordViolation(id: string): Promise<Rule | null> {
-    this.log.log("recordViolation id=" + id);
-    const existing = await this.getById(id);
-    if (!existing) return null;
-    return this.update(id, {
-      violations: existing.violations + 1,
-      confidence: Math.max(0, existing.confidence - 0.1),
-    });
   }
 }
 
