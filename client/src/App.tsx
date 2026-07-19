@@ -24,7 +24,7 @@ import { VaultProvider } from "@/hooks/use-vaults";
 import { useDataSync } from "@/hooks/use-data-sync";
 import { ClientPresenceProvider } from "@/hooks/use-client-presence";
 import { ExecutorStatusProvider } from "@/hooks/use-executor-status";
-import { FocusSessionProvider } from "@/hooks/use-focus-session";
+import { FocusSessionProvider, useFocusSession } from "@/hooks/use-focus-session";
 import { FocusContextProvider } from "@/hooks/use-focus-context";
 import { TaskModalProvider } from "@/contexts/task-modal-context";
 import { FocusWidget } from "@/components/focus-widget";
@@ -368,7 +368,9 @@ function AuthGate({ children }: { children: ReactNode }) {
 function AppLayout({ mobileSurfaceActive, previewRouteOwnsCanvas }: { mobileSurfaceActive: boolean; previewRouteOwnsCanvas: boolean }) {
   const isMobile = useIsMobile();
   const { open, openMobile, isMobile: sidebarIsMobile } = useSidebar();
+  const { widgetOpen } = useFocusSession();
   const navOpen = sidebarIsMobile ? openMobile : open;
+  const mobileSessionSurfaceOpen = isMobile && widgetOpen;
 
   return (
     <>
@@ -379,22 +381,29 @@ function AppLayout({ mobileSurfaceActive, previewRouteOwnsCanvas }: { mobileSurf
             mobileSurfaceActive && !previewRouteOwnsCanvas && "sm:h-[740px] sm:min-h-[680px] sm:max-w-[390px] sm:rounded-[2rem] sm:border sm:border-black sm:bg-background sm:shadow-none",
           )}
         >
-          {!previewRouteOwnsCanvas && <TopBar />}
-          {!previewRouteOwnsCanvas && <ExportProgressBanner />}
+          {!previewRouteOwnsCanvas && !mobileSessionSurfaceOpen && <TopBar />}
+          {!previewRouteOwnsCanvas && !mobileSessionSurfaceOpen && <ExportProgressBanner />}
           <div className="flex flex-1 min-h-0 w-full">
-            <main className="@container flex-1 min-w-0 overflow-y-auto overflow-x-hidden scrollbar-thin">
-              <ContainerWidthProvider>
-                {navOpen ? <NavPage /> : <Router />}
-              </ContainerWidthProvider>
-            </main>
+            {mobileSessionSurfaceOpen ? (
+              <FocusWidget contained />
+            ) : (
+              <main className="@container flex-1 min-w-0 overflow-y-auto overflow-x-hidden scrollbar-thin">
+                <ContainerWidthProvider>
+                  {navOpen ? <NavPage /> : <Router />}
+                </ContainerWidthProvider>
+              </main>
+            )}
           </div>
-          {/* On mobile, BottomBar is fixed-positioned here; spacer keeps content from hiding behind it.
-              On desktop, BottomBar renders inside FocusWidget as a contained flow element. */}
-          {!previewRouteOwnsCanvas && (isMobile || mobileSurfaceActive) && <div className="shrink-0" style={{ height: "var(--bottom-bar-height, 0px)" }} />}
-          {!previewRouteOwnsCanvas && (isMobile || mobileSurfaceActive) && <BottomBar />}
-          {mobileSurfaceActive && !previewRouteOwnsCanvas && <FocusWidget contained />}
+          {/* Physical mobile uses one flex column for page/session content and the
+              composer. Keeping the editable composer out of fixed positioning
+              prevents WebKit keyboard dismissal from splitting visual and
+              hit-test coordinates. Desktop mobile-preview behavior is unchanged. */}
+          {!previewRouteOwnsCanvas && isMobile && <BottomBar contained publishGlobalHeight />}
+          {!previewRouteOwnsCanvas && !isMobile && mobileSurfaceActive && <div className="shrink-0" style={{ height: "var(--bottom-bar-height, 0px)" }} />}
+          {!previewRouteOwnsCanvas && !isMobile && mobileSurfaceActive && <BottomBar />}
+          {!isMobile && mobileSurfaceActive && !previewRouteOwnsCanvas && <FocusWidget contained />}
         </div>
-        {!mobileSurfaceActive && !previewRouteOwnsCanvas && <FocusWidget />}
+        {!isMobile && !mobileSurfaceActive && !previewRouteOwnsCanvas && <FocusWidget />}
       </div>
       {previewRouteOwnsCanvas ? null : (
         <AppToastDisplay className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--bottom-bar-height,0px)+3rem)] z-[80]" />

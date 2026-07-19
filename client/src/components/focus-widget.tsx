@@ -192,11 +192,12 @@ export function FocusWidget({ contained = false }: { contained?: boolean } = {})
   // the session menu sidebar. So we always mount FocusWidgetPanel on desktop.
   if (!isDesktop && !widgetOpen) return null;
 
-  return <FocusWidgetPanel isAgentRunning={isAgentRunning} />;
+  return <FocusWidgetPanel isAgentRunning={isAgentRunning} contained={contained} />;
 }
 
 interface FocusWidgetPanelProps {
   isAgentRunning: boolean;
+  contained: boolean;
 }
 
 /**
@@ -204,7 +205,7 @@ interface FocusWidgetPanelProps {
  * subscription and transcript panel. Closing the widget tears this whole subtree
  * down so its hooks stop running.
  */
-function FocusWidgetPanel({ isAgentRunning }: FocusWidgetPanelProps) {
+function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) {
   const { route, widgetOpen, setWidgetOpen, getSessionForRoute, setSessionForRoute, clearSessionForRoute, sessionMenuResetKey, requestBottomBarFocus, setMobileSessionTitle } = useFocusSession();
   const { hasStreaming } = useSessionActivityState();
   const [, setLocationNav] = useLocation();
@@ -817,12 +818,17 @@ function FocusWidgetPanel({ isAgentRunning }: FocusWidgetPanelProps) {
     </div>
   );
 
-  // Mobile: full-screen overlay (unchanged from popup behavior).
+  // Physical mobile is contained by AppLayout's flex content slot so the
+  // Session Window and composer share one coordinate system through keyboard
+  // transitions. The non-contained branch remains for independent overlays.
   if (!isDesktop) {
     return (
       <div
-        className="fixed inset-x-0 top-0 z-40 bg-background flex flex-col overflow-hidden"
-        style={{ bottom: "var(--bottom-bar-height, 0px)" }}
+        className={cn(
+          "bg-background flex flex-col overflow-hidden",
+          contained ? "relative flex-1 min-w-0 min-h-0" : "fixed inset-x-0 top-0 z-40",
+        )}
+        style={contained ? undefined : { bottom: "var(--bottom-bar-height, 0px)" }}
         data-testid="panel-focus-widget"
       >
         {headerAndPanel}

@@ -156,7 +156,7 @@ export function TopBar() {
   return (
     <div
       className={cn(
-        "shrink-0 flex items-center gap-3 px-1.5 sticky top-0 z-50 bg-background",
+        "shrink-0 flex items-center gap-3 px-1.5 bg-background",
         widgetOpen && "hidden",
       )}
       style={{ height: 42 }}
