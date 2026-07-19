@@ -1105,6 +1105,26 @@ export class MemoryVnextClaimStorage {
     return Number(row?.count ?? 0);
   }
 
+  /**
+   * Random active user-owned claims for non-authoritative dream seeding.
+   * Global templates are excluded and system principals fail closed.
+   */
+  async listRandomActiveClaims(limit = 8): Promise<MemoryVnextClaim[]> {
+    const principal = getCurrentPrincipalOrSystem();
+    if (!principal.userId) throw new Error("vNext dream sampling requires a user principal");
+    const bounded = Math.min(Math.max(Math.floor(limit), 1), 25);
+    return db
+      .select()
+      .from(memoryVnextClaims)
+      .where(combineWithWritableScope(
+        principal,
+        vnextClaimScopeColumns,
+        sql`${memoryVnextClaims.lifecycleStage} <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}`,
+      ))
+      .orderBy(sql`random()`)
+      .limit(bounded);
+  }
+
   async listBridgeEdges(): Promise<VnextBridgeEdge[]> {
     const principal = getCurrentPrincipalOrSystem();
     if (!principal.userId) throw new Error("vNext bridge listing requires a user principal");

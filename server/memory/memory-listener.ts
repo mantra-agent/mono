@@ -1,7 +1,6 @@
 import { eventBus, type BusEvent } from "../event-bus";
 import { getTimezone } from "../timezone";
 import { getUserName } from "../context-assembly";
-import { isConsolidating, notifyNewEntry, estimateShortTermTokens, getThresholds, runConsolidation, runStageOneAdvancementSweep } from "./consolidation";
 import { memoryEntries, type MemorySource } from "@shared/schema";
 import { createLogger } from "../log";
 import { storage } from "../storage";
@@ -268,25 +267,6 @@ async function handleVoiceInsight(sessionId: string, content: string): Promise<v
 
   log.debug(`Voice insight stored: ${sourceId}`);
   emitEntriesChanged("created", "short");
-  await checkThreshold();
-}
-
-async function checkThreshold(): Promise<void> {
-  try {
-    if (isConsolidating()) {
-      notifyNewEntry();
-      return;
-    }
-    const tokens = await estimateShortTermTokens();
-    const thresholds = await getThresholds();
-    if (tokens > thresholds.triggerCapacity) {
-      log.debug(`Short-term trigger capacity exceeded: ${tokens} tokens > ${thresholds.triggerCapacity} — triggering consolidation`);
-      runConsolidation("short");
-    }
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    log.error(`Threshold check error: ${message}`);
-  }
 }
 
 async function handleChatStreamUserMessage(payload: Record<string, unknown>, sessionKey?: string): Promise<void> {
@@ -405,7 +385,6 @@ async function handleAgentToolResult(busEvent: BusEvent): Promise<void> {
     displayTitle,
   ), "tool-result-ingest");
   emitEntriesChanged("created", "short");
-  await checkThreshold();
 }
 
 async function handleEvent(busEvent: BusEvent): Promise<void> {
@@ -452,63 +431,9 @@ async function handleEvent(busEvent: BusEvent): Promise<void> {
 }
 
 let registered = false;
-let promotionTimerId: ReturnType<typeof setInterval> | null = null;
-
-const SHORT_TERM_PROMOTION_INTERVAL_MS = 30 * 60 * 1000;
-const SHORT_TERM_MAX_AGE_MS = 30 * 60 * 1000;
-
-async function promoteAgedShortTermEntries(): Promise<void> {
-  if (isConsolidating()) {
-    log.debug("[TimedPromotion] Skipping — consolidation already running");
-    return;
-  }
-
-  try {
-    const entries = await memoryStorage.getLayer("short", 100, 0);
-    const cutoff = Date.now() - SHORT_TERM_MAX_AGE_MS;
-    const aged = entries.filter(e => {
-      const created = e.createdAt instanceof Date ? e.createdAt.getTime() : new Date(e.createdAt).getTime();
-      return created < cutoff;
-    });
-
-    if (aged.length === 0) {
-      log.debug("[TimedPromotion] No aged short-term entries to promote");
-      return;
-    }
-
-    log.debug(`[TimedPromotion] Found ${aged.length} short-term entries older than 30 minutes, triggering consolidation`);
-    // Await actual consolidation so the Today layer reflects materialized
-    // mid-term entries rather than firing speculatively before promotion.
-    try {
-      await runConsolidation("short");
-      await runStageOneAdvancementSweep();
-    } catch (consolErr: unknown) {
-      const msg = consolErr instanceof Error ? consolErr.message : String(consolErr);
-      log.warn(`[TimedPromotion] runConsolidation failed: ${msg}`);
-      // Fall back to notifying the running consolidation loop.
-      notifyNewEntry();
-    }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.error(`[TimedPromotion] Error: ${msg}`);
-  }
-
-  try {
-    const { updateTodayLayer } = await import("../temporal-log");
-    await updateTodayLayer();
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.warn(`[TimedPromotion] updateTodayLayer failed (non-fatal): ${msg}`);
-  }
-}
-
 export function registerMemoryListener(): void {
   if (registered) return;
   registered = true;
-
-  memoryStorage.backfillNeighborhoodCaches().catch(err => {
-    log.warn(`Neighborhood backfill on startup failed: ${err instanceof Error ? err.message : String(err)}`);
-  });
 
   eventBus.on("event", (busEvent: BusEvent) => {
     const { event, payload } = busEvent;
@@ -543,14 +468,6 @@ export function registerMemoryListener(): void {
     }
   });
 
-  if (!promotionTimerId) {
-    promotionTimerId = setInterval(() => {
-      promoteAgedShortTermEntries().catch(err => {
-        log.error(`[TimedPromotion] Unhandled error: ${err instanceof Error ? err.message : String(err)}`);
-      });
-    }, SHORT_TERM_PROMOTION_INTERVAL_MS);
-    log.debug(`[TimedPromotion] Started 30-minute short-term promotion timer`);
-  }
 
-  log.debug(`Registered memory event listener (Exchange model)`);
+  log.info("Registered memory event listener with legacy propagation disabled");
 }

@@ -114,13 +114,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   memory: {
-    description: "Unified memory system — read/write knowledge files, search vNEXT claims, manage legacy maintenance records and graph links, run maintenance ops, link/get entity associations, batch retrieve, find duplicates, count entries, bulk delete. Actions: read, write, read_entry, search, create_link, update_entry, delete_entry, get, get_many, find_duplicates, count, bulk_delete, consolidate_short, integrate_mid_to_long, run_myelination, run_memory_decay, run_memory_reinforcement, run_capability_audit, run_full_sleep_cycle, compute_gsi, run_nrem, run_rem, link_entity, get_entity_links, list_sources, add_source, delete_source, search_claims, vnext_claim_counts, vnext_claim_detail, run_vnext_lifecycle.",
+    description: "Unified memory system — read/write knowledge files, search vNEXT claims, manage graph links, run vNext maintenance ops, reject retired legacy maintenance calls with migration guidance, link/get entity associations, batch retrieve, find duplicates, count entries, bulk delete. Actions: read, write, read_entry, search, create_link, update_entry, delete_entry, get, get_many, find_duplicates, count, bulk_delete, run_capability_audit, run_full_sleep_cycle, compute_gsi, run_rem, link_entity, get_entity_links, list_sources, add_source, delete_source, search_claims, vnext_claim_counts, vnext_claim_detail, run_vnext_lifecycle.",
     category: "memory",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["read", "write", "read_entry", "search", "create_link", "update_entry", "delete_entry", "get", "get_many", "find_duplicates", "count", "bulk_delete", "consolidate_short", "integrate_mid_to_long", "run_myelination", "run_memory_decay", "run_memory_reinforcement", "run_capability_audit", "run_full_sleep_cycle", "compute_gsi", "run_nrem", "run_rem", "link_entity", "get_entity_links", "list_sources", "add_source", "delete_source", "search_claims", "vnext_claim_counts", "vnext_claim_detail", "run_vnext_lifecycle"], description: "Action to perform" },
+        action: { type: "string", enum: ["read", "write", "read_entry", "search", "create_link", "update_entry", "delete_entry", "get", "get_many", "find_duplicates", "count", "bulk_delete", "consolidate_short", "integrate_mid_to_long", "run_myelination", "run_memory_decay", "run_memory_reinforcement", "run_nrem", "run_capability_audit", "run_full_sleep_cycle", "compute_gsi", "run_rem", "link_entity", "get_entity_links", "list_sources", "add_source", "delete_source", "search_claims", "vnext_claim_counts", "vnext_claim_detail", "run_vnext_lifecycle"], description: "Action to perform" },
         file: { type: "string", description: "File name (for read/write, e.g., PRINCIPLES.md)" },
         content: { type: "string", description: "Content to write (for write) or updated content (for update_entry)" },
         append: { type: "boolean", description: "Append instead of overwrite (for write, default false)" },
@@ -143,7 +143,6 @@ export const TOOLS: Record<string, ToolMeta> = {
         toId: { type: "number", description: "Target memory ID (for create_link)" },
         relationship: { type: "string", description: "Relationship type (for create_link)" },
         strength: { type: "number", description: "Link strength 0–1 (for create_link, default 0.5)" },
-        force: { type: "boolean", description: "Force operation even if under threshold (for integrate_mid_to_long)" },
         includeGSI: { type: "boolean", description: "Include GSI computation in sleep cycle (for run_full_sleep_cycle, default false)" },
         entityType: { type: "string", description: "Entity type to link (for link_entity, e.g. 'person', 'project', 'goal')" },
         entityId: { type: "string", description: "Entity ID to link (for link_entity/get_entity_links). Also used as entity filter for search_claims." },

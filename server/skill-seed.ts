@@ -202,13 +202,14 @@ export async function migrateSkillProcessToToolBased(): Promise<void> {
   }
 }
 
-export async function migrateSkillAddToMemoryDefaults(): Promise<void> {
-  const skillsToDisable = ["consolidate", "integrate"];
-  for (const name of skillsToDisable) {
-    const [existing] = await db.select({ id: skills.id, addToMemory: skills.addToMemory }).from(skills).where(eq(skills.name, name));
-    if (existing && existing.addToMemory !== false) {
-      await db.update(skills).set({ addToMemory: false, updatedAt: new Date() }).where(eq(skills.id, existing.id));
-      log.debug(`Set addToMemory=false for skill "${name}"`);
+export async function deprecateRetiredBuiltinSkills(): Promise<void> {
+  // Preserve compatibility rows through the rollback window, but make them inert.
+  const retired = ["consolidate", "integrate"];
+  for (const name of retired) {
+    const [existing] = await db.select({ id: skills.id, author: skills.author, status: skills.status }).from(skills).where(eq(skills.name, name));
+    if (existing && existing.author === "system" && existing.status !== "deprecated") {
+      await db.update(skills).set({ status: "deprecated", addToMemory: false, updatedAt: new Date() }).where(eq(skills.id, existing.id));
+      log.info(`Deprecated retired builtin skill "${name}"`);
     }
   }
 }
@@ -217,7 +218,7 @@ export async function migrateSkillProcessUpdates(): Promise<void> {
   const migrations: Array<{ name: string; sentinel: string }> = [
     {
       name: "sleep",
-      sentinel: "## Phase 5: Targeted Forgetting",
+      sentinel: "## Phase 1: Run the vNext Sleep Cycle",
     },
     {
       name: "brief-daily",

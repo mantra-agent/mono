@@ -820,117 +820,47 @@ For each selected idea:
   },
   {
     name: "sleep",
-    description: "Nightly sleep cycle — decay/reinforcement, NREM consolidation, targeted forgetting, budget enforcement, dormant pruning, REM dream generation, and optional GSI scoring.",
+    description: "Nightly vNext sleep cycle — existing claim lifecycle, REM dream generation over vNext claims and recent sessions, and weekly GSI scoring.",
     category: "memory",
     activity: ACTIVITY_MEMORY,
     author: "system",
-    version: "4.0",
+    version: "5.0",
     addToMemory: false,
     pinnedToContext: false,
     whenToUse: "Used for memory operations",
     outputSpec: "See process instructions",
     checklist: [
-      { check: "Core sleep cycle completed with decay, reinforcement, NREM, targeted forgetting, budget enforcement, and REM results reported", weight: 3 },
-      { check: "Budget enforcement results noted — whether it triggered and how many entries pruned", weight: 2 },
-      { check: "Dream narrative saved to Library under Reports/Dreams if REM succeeded", weight: 1 },
-      { check: "Sleep report archived to Library with per-phase summaries covering entry-level, NREM, targeted forgetting, budget, REM, and GSI if computed", weight: 2 },
+      { check: "run_full_sleep_cycle completed and lifecycle, bridge, and REM results reported", weight: 3 },
+      { check: "Dream narrative filed to Library under Reports/Dreams if REM produced one", weight: 2 },
+      { check: "Sleep report archived to Library covering lifecycle, bridges, REM, and GSI if computed", weight: 2 },
+      { check: "Errors from the cycle surfaced explicitly, not silently dropped", weight: 1 },
     ],
-    process: `You are running the nightly sleep cycle — memory maintenance with graph cleanup, budget enforcement, and dream generation.
+    process: `You are running the nightly vNext sleep cycle — claim maintenance and dream generation over the vNext memory graph. Legacy memory propagation and maintenance are retired; do not invoke legacy layer operations.
 
 Determine today's day of the week. If it is Sunday, include GSI computation.
 
-## Phase 1-4: Core Sleep Cycle
+## Phase 1: Run the vNext Sleep Cycle
 
-Call the \`memory\` tool with action \`run_full_sleep_cycle\` and include_gsi=true if it is Sunday, otherwise include_gsi=false.
+Call the \`memory\` tool with action \`run_full_sleep_cycle\` and includeGSI=true if it is Sunday, otherwise includeGSI=false.
 
 This orchestrates:
-- Phase 1 (Entry-level): Universal memory decay + reinforcement of recently recalled entries
-- Phase 2 (NREM): Link decay (0.95x nightly), link reinforcement, incremental merge of similar entries (up to 50), orphan cleanup (up to 100), dormant pruning (recall_count=0, ≤1 link, 30+ days old, decay<0.3, up to 50)
-- Phase 3 (REM): Random diverse seed selection, graph walks, cross-domain concept synthesis, dream narrative generation
-- Phase 4 (GSI, weekly): Graph Structural Integrity score computation
+- Existing vNext claim lifecycle: stage advancement (extracted → sourced → linked → canonical), existing confidence decay and retirement rules, and bridge maintenance
+- REM: non-authoritative dream generation seeded from random active claims and recent sessions; no claim state is changed
 
-## Phase 5: Targeted Forgetting
+## Phase 2: File the Dream
 
-Run the editorial forgetting pass after the core cycle. This is the work passive decay cannot do. Use the \`memory\` tool searches and deletion/update actions to handle, within conservative safety rails:
-
-- Expired scheduled deletions (\`deletionExpired: true\`)
-- Contradictory belief-layer entries where one side is clearly stale
-- Superseded planning and priority entries
-- Untitled or empty shell entries
-- Invalidated beliefs
-- Deep orphans with no recent recall and no canonical/principle/architecture tags
-
-Safety rails: never delete high-confidence beliefs, recently recalled entries, canonical/principle/architecture-tagged entries, or anything where the replacement truth is uncertain. Cap destructive deletions at 50 total and report deferrals.
-
-## Phase 6: Save Dream to Library
-
-If REM generated a dream narrative, save it to the Library under Reports/Dreams with naming: "Dream — {YYYY-MM-DD} — {DreamTitle}"
+If the tool result includes a dream narrative, create a Library page under Reports/Dreams named "Dream — {YYYY-MM-DD} — {DreamTitle}" containing the narrative and the insight. The cycle does not persist dreams itself; this filing step is the only durable copy.
 
 ## Report
 
 Write a sleep report to the Library (under Reports, named "Sleep Report — {YYYY-MM-DD}") summarizing:
-- **Entry-level:** decayed, reinforced, flagged
-- **NREM:** links decayed/pruned/reinforced, entries merged, orphans processed, dormant entries pruned
-- **Forgetting:** expired deletions, contradictions, superseded entries, shells, invalidated beliefs, deep orphans; include deletion count and deferrals
-- **Budget:** whether budget enforcement triggered, entries pruned if so
-- **REM:** dream title and key insight, domains woven
-- **GSI:** score if computed
+- **Lifecycle:** scanned, canonicalized, retired (with reasons if notable), decayed
+- **Bridges:** created, replaced, final edge count
+- **REM:** dream title, key insight, domains woven, source counts
+- **GSI:** score and components if computed
+- **Errors:** any errors reported by the cycle
 
 Be concise and factual.`,
-  },
-  {
-    name: "integrate",
-    description: "Integrates mid-term memories into long-term and runs graph myelination.",
-    category: "memory",
-    activity: ACTIVITY_MEMORY,
-    author: "system",
-    version: "1.0",
-    addToMemory: false,
-    pinnedToContext: false,
-    whenToUse: "Used for memory operations",
-    outputSpec: "See process instructions",
-    checklist: [
-      { check: "Reports mid-term token counts before and after integration", weight: 2 },
-      { check: "Reports whether myelination found ungraphed entries to process", weight: 1 },
-      { check: "Both integration and myelination steps completed, not just one", weight: 2 },
-      { check: "Output is concise — factual summary without unnecessary commentary", weight: 1 },
-    ],
-    process: `You are running the mid-to-long memory integration process.
-
-Step 1: Call the \`memory\` tool with action \`integrate_mid_to_long\` to promote mid-term memories into long-term.
-Step 2: Call the \`memory\` tool with action \`run_myelination\` to update the concept graph with any newly promoted long-term entries.
-
-After both operations complete, report:
-- How many mid-term tokens were before and after integration
-- Whether myelination found ungraphed entries to process
-
-This is a maintenance operation — be concise and factual in your report.`,
-  },
-  {
-    name: "consolidate",
-    description: "Promotes short-term memories older than 30 minutes into mid-term storage.",
-    category: "memory",
-    activity: ACTIVITY_MEMORY,
-    author: "system",
-    version: "1.0",
-    addToMemory: false,
-    pinnedToContext: false,
-    whenToUse: "Used for memory operations",
-    outputSpec: "See process instructions",
-    checklist: [
-      { check: "Reports the number of entries promoted from short-term to mid-term", weight: 2 },
-      { check: "Reports token counts before and after consolidation", weight: 1 },
-      { check: "Output is concise — factual summary without unnecessary commentary", weight: 1 },
-    ],
-    process: `You are running the age-based short-term memory consolidation process.
-
-Call the \`memory\` tool with action \`consolidate_short\` to promote all short-term memories older than 30 minutes into mid-term.
-
-After the operation completes, report:
-- How many entries were promoted
-- How many tokens were in short-term before and after
-
-This is a maintenance operation — be concise and factual in your report.`,
   },
   {
     name: "reflect",

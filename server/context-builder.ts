@@ -1759,7 +1759,7 @@ const TOOL_SHORT_DESCRIPTIONS: Record<string, string> = {
   router: "Call and inspect the model routing layer. Actions: eval, list_inference_calls, get_inference_call.",
   library: "Manage wiki pages, notes, and annotations. Actions: list_library_pages, get_library_page, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, link_pages, annotate.",
   meetings: "Manage calendar events. Actions: add, list, update, delete.",
-  memory: "Unified memory — read/write knowledge files, search all layers, manage graph links, run maintenance. Actions: read, write, read_entry, search, create_link, update_entry, get, consolidate_short, integrate_mid_to_long, run_myelination, run_memory_decay, run_memory_reinforcement, run_capability_audit.",
+  memory: "Unified memory — read/write knowledge files, search vNext claims, manage links and provenance, and run vNext lifecycle, REM, and GSI operations. Legacy layer propagation is retired.",
   notion: "Search, read, and browse Notion pages and databases. Actions: status, search, get_page, get_content, list_databases, query_database.",
   people: "Manage personal contacts — search, get details, outreach agenda, notes, interactions. Actions: list, get, search, agenda, add_note, update_note, delete_note, log_interaction, create, scan_imports, scan_ignored.",
   priorities: "Manage daily/weekly/monthly priorities and next-period (next_day, next_week, next_month) priorities (max 3 each). Actions: add, update, remove, mark_status.",

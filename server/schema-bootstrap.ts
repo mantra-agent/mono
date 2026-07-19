@@ -3050,7 +3050,7 @@ export async function runSchemaBootstrap(
       migrateSkillRenames,
       migrateLegacyPromptOverrides,
       migrateSkillProcessToToolBased,
-      migrateSkillAddToMemoryDefaults,
+      deprecateRetiredBuiltinSkills,
       migrateSkillProcessUpdates,
       deleteZombieSkills,
     } = await import("./skill-seed");
@@ -3059,7 +3059,7 @@ export async function runSchemaBootstrap(
     await seedBuiltinSkills();
     await migrateLegacyPromptOverrides();
     await migrateSkillProcessToToolBased();
-    await migrateSkillAddToMemoryDefaults();
+    await deprecateRetiredBuiltinSkills();
     await migrateSkillProcessUpdates();
     await deleteZombieSkills();
     await verifyRequiredSkills();

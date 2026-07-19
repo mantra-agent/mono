@@ -1,6 +1,6 @@
 # Memory Architecture
 
-The memory system provides persistent, searchable, graph-linked knowledge storage across three temporal tiers. It handles ingestion, embedding, consolidation, retrieval, graph relationships, and a nightly sleep cycle for maintenance.
+The memory subsystem is in staged retirement. vNext claims are the active semantic graph and the nightly sleep substrate. Legacy `memory_entries` tiers remain as compatibility/archive data while their readers migrate; automatic legacy propagation and maintenance launchers are disabled.
 
 ## Core Tables
 
@@ -42,7 +42,7 @@ Report both until all consumers migrate.
 | `stage_3` | Deep/canonical integration | usually `long` |
 | `stage_4` | Sleep-upkeep-maintained canonical memory | compatible with `long` |
 
-Sleep/NREM/REM must prefer stage semantics for decay, reinforcement, dream seeding, pruning, and upkeep while preserving `layer` filters for compatibility.
+The nightly sleep cycle no longer operates on integration stages or layers; it maintains vNext claims only. Stage semantics remain relevant for legacy consolidation/enrichment code until Phase B removal.
 
 ## Three-Tier Architecture
 
@@ -182,45 +182,31 @@ Entries are linked via `memory_links` with typed relationships and strength scor
 - Strength decays over time if not reinforced
 - Myelination strengthens frequently-co-recalled links
 
-## Sleep Cycle
+## Sleep Cycle (vNext)
 
-A nightly maintenance cycle (runs ~2 AM CT) with 5 phases:
+A nightly maintenance cycle (runs ~2 AM CT), orchestrated by `server/sleep-cycle.ts` — `runFullSleepCycle()`. It operates exclusively on vNext claims and never mutates legacy `memory_entries`.
 
-### Phase 1: Memory Decay
-- `server/memory/decay.ts` — `runMemoryDecay()`
-- Applies exponential decay to `recallCount` and link `strength`
-- Entries below threshold get `deletionScheduledAt`
-- Already-expired entries are hard-deleted
+### Phase 1: vNext Claim Lifecycle
+- `server/memory/vnext-lifecycle.ts` — `runVnextLifecycle()`
+- Uses the existing vNext lifecycle unchanged: stage advancement (extracted → sourced → linked → canonical), existing confidence decay and retirement criteria
+- Bridge maintenance (cross-island bridge edges)
+- New semantic deduplication or contradiction retirement is deliberately excluded until it has shadow-mode evidence and replay guarantees
 
-### Phase 2: Memory Reinforcement
-- `server/memory/reinforcement.ts` — `runMemoryReinforcement()`
-- Boosts entries with high recent recall
-- Strengthens links between co-recalled entries
+### Phase 2: REM (Creative Synthesis)
+- `server/memory/dream-engine.ts` — `runREMPhase()`
+- Seeds: random active user-owned vNext claims + recent session titles/topics
+- Single LLM call generates the dream (title, narrative, insight, domains)
+- No memory mutation in the engine: the narrative returns through the tool result and the sleep skill files it to Library. Publishes `sleep:dream_generated`.
 
-### Phase 3: NREM (Structural Maintenance)
-- `server/memory/nrem.ts` — `runNREM()`
-- Prunes weak/orphaned links
-- Deduplicates similar entries
-- Fixes broken references
-- Library page self-heal operations
+### Phase 3: GSI (Graph Structure Index, weekly)
+- `server/memory/graph-metrics.ts` — `computeGSI()`
+- Computed over vNext claims/links/sources/entity links, principal-scoped
+- Components: connectivity, link quality, orphan rate, cluster balance (degree entropy), decay health (confidence-distribution entropy)
+- Publishes `sleep:gsi_computed`; no legacy ingest
 
-### Phase 4: REM (Creative Synthesis)
-- `server/memory/rem.ts` — `runREM()`
-- Samples entries across domains
-- LLM generates "dream" narratives finding cross-domain connections
-- Dreams stored as long-term entries and Library pages
+The cycle report goes to the journal (`appendJournalEntry`) and `sleep:cycle_complete` — it is not written to `memory_entries`. The sleep skill (v5) files the dream and a sleep report to the Library.
 
-### Phase 5: GSI (General Semantic Index)
-- `server/memory/gsi.ts` — `computeGSI()`
-- Computes a global semantic health score
-- Measures coverage, connectivity, freshness, diversity
-
-### Myelination (Separate from Sleep)
-- `server/memory/myelination.ts` — `runMyelination()`
-- Runs periodically on its own timer
-- Strengthens high-traffic graph paths
-- Recomputes `memory_graph_cache` neighborhoods
-- Identifies and creates missing links between related entries
+Legacy sleep phases (entry decay, reinforcement, NREM over `memory_entries`, budget enforcement, belief pass, targeted forgetting) are removed. `sleep-maintenance.ts` is deleted. Consolidate/Integrate timers are durably disabled, their skill rows are deprecated for rollback visibility, manual legacy maintenance routes fail closed, and the in-process threshold/timed-promotion loops are removed.
 
 ## Entity Links
 
@@ -321,7 +307,7 @@ All vNext claim logic lives in `server/memory/vnext-*` modules with zero imports
 | `vnext-claim-storage.ts` | DB CRUD for `memory_vnext_claims`, `memory_vnext_claim_links`, `memory_vnext_source_refs`, semantic search, reinforcement, nuke, and the canonical `persistClaimCandidates()` mutation path (two-phase dedup, create, entity linking, causal linking). Phase 1: intra-batch semantic dedup merges paraphrases from the same extraction before any DB write (`CLAIM_INTRA_BATCH_DEDUP_THRESHOLD = 0.85`). Phase 2: cross-source dedup against existing DB claims reinforces near-duplicates (`CLAIM_DEDUP_SIMILARITY_THRESHOLD = 0.85`), with a title-collision fallback that dedups same-titled active claims at `CLAIM_TITLE_DEDUP_SIMILARITY_THRESHOLD = 0.55` (same-fact restatements extracted on different days drift to 0.58–0.84 similarity). All thresholds defined and exported here. `sourceMemoryId` is a nullable legacy column (no FK to `memory_entries`); canonical provenance lives in `memory_vnext_sources` (source refs) |
 | `vnext-entity-resolution.ts` | Resolve entity mentions from claims to People/Project/Goal records |
 | `vnext-source-poller.ts` | Queue-based extraction: poll settled sources, chunk, extract via `vnext-claim-extraction`, persist, reconcile stale claims |
-| `vnext-lifecycle.ts` | Lifecycle stage transitions: confidence decay, retirement candidates. Runs during sleep cycle (after reinforcement, before NREM) and via manual tool trigger. Canonical claims decay confidence by 0.05 per run when unreinforced for 14+ days. Claims retire when: duplicate content hash, contradicted/superseded, low-confidence stale action (< 0.45, 30+ days), or generic low confidence (< 0.3) + stale (21+ days) + no recall. Retired claims excluded from searchClaims defaults and findClaimsBySourceOrigin but remain queryable with explicit lifecycleStage=retired filter. |
+| `vnext-lifecycle.ts` | Lifecycle stage transitions: confidence decay, retirement candidates, and bridge maintenance. Runs unchanged as sleep cycle Phase 1 and via manual tool trigger. Canonical claims decay confidence by 0.05 per run when unreinforced for 14+ days. Claims retire when: duplicate content hash, contradicted/superseded, low-confidence stale action (< 0.45, 30+ days), or generic low confidence (< 0.3) + stale (21+ days) + no recall. Retired claims excluded from searchClaims defaults and findClaimsBySourceOrigin but remain queryable with explicit lifecycleStage=retired filter. |
 | `vnext-content-chunking.ts` | Content loading (sessions, library pages) and chunking helpers |
 | `vnext-source-queue.ts` | Source queue DB operations (poll, mark processing/completed, reset stuck) |
 
@@ -401,7 +387,7 @@ Memory/myelination prompt templates live in Prompt Modules, not Skills. They hav
 | Summarize/enrich | `myelination-summarize` | `memory-enrichment.ts` |
 | Link discovery | `myelination-link` | `graph-discovery.ts`, `memory-enrichment.ts` |
 | Cross-concept links | `myelination-cross-concept` | `graph-discovery.ts` |
-| Mid-term merge | `myelination-mid-merge` | `memory-transitions.ts`, `sleep-maintenance.ts` |
+| Mid-term merge | `myelination-mid-merge` | `memory-transitions.ts` |
 | Consolidation | `myelination-mid-merge-consolidate` | `memory-transitions.ts` |
 
 
