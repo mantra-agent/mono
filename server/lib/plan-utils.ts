@@ -372,9 +372,10 @@ ${priorSection}
 ${workspaceSection}
 ${planContextSection ? `\n${planContextSection}\n` : ""}${retrySection ? `\n${retrySection}\n` : ""}
 ### Important
-- Complete your task fully, then end your session.
+- The parent plan executor owns this step's running, completed, failed, skipped, and retry state. Do not call plan(action: "update_step") to mark this step complete or failed. End your session when the work is complete; the executor will record the terminal state from your session result.
+- Use plan(action: "update_step") for this step only when reporting blocked or needs_review so execution must stop.
 - If you discover the plan needs additional steps, call plan(action: "add_steps") with the planId.
-- If you cannot complete this step, explain what went wrong clearly so the plan can recover.`.trim();
+- If you cannot complete this step, report blocked or needs_review and explain what is needed clearly so the plan can recover.`.trim();
 }
 
 /**
