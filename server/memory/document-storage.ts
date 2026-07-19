@@ -640,6 +640,68 @@ export class DocumentStorage {
     return result.length > 0;
   }
 
+  async patchDocumentMetadata(
+    docType: DocType,
+    docId: string,
+    metadataPatch: Record<string, unknown>,
+  ): Promise<WorkspaceDocCompat | null> {
+    log.debug(
+      `patchDocumentMetadata docType=${docType} docId=${docId} keys=${Object.keys(metadataPatch).join(",")}`,
+    );
+    const metadataJson = JSON.stringify(metadataPatch);
+    if (await documentStoreIndependentWritesEnabled()) {
+      await targetReadsEnabled();
+      const rows = await db
+        .update(documentStoreDocuments)
+        .set({
+          metadata: sql`COALESCE(${documentStoreDocuments.metadata}, '{}'::jsonb) || ${metadataJson}::jsonb`,
+          updatedAt: new Date(),
+          updatedByUserId: getCurrentPrincipalOrSystem().userId ?? undefined,
+          sourceContentHash: null,
+          sourceMetadataHash: null,
+          sourceIdentityHash: null,
+        })
+        .where(
+          combineWithWritableScope(
+            getCurrentPrincipalOrSystem(),
+            documentScopeColumns,
+            and(
+              eq(documentStoreDocuments.documentType, docType),
+              eq(documentStoreDocuments.documentId, docId),
+            ),
+          ),
+        )
+        .returning();
+      log.debug(
+        `patchDocumentMetadata target docType=${docType} docId=${docId} updated=${rows.length > 0}`,
+      );
+      return rows[0] ? targetToDoc(rows[0]) : null;
+    }
+
+    const rows = await db
+      .update(memoryEntries)
+      .set({
+        metadata: sql`COALESCE(${memoryEntries.metadata}, '{}'::jsonb) || ${metadataJson}::jsonb`,
+        processedAt: new Date(),
+      })
+      .where(
+        combineWithWritableScope(
+          getCurrentPrincipalOrSystem(),
+          memoryScopeColumns,
+          and(
+            eq(memoryEntries.layer, WORKSPACE_LAYER),
+            eq(memoryEntries.source, docType),
+            eq(memoryEntries.sourceId, docId),
+          ),
+        ),
+      )
+      .returning();
+    log.debug(
+      `patchDocumentMetadata docType=${docType} docId=${docId} updated=${rows.length > 0}`,
+    );
+    return rows[0] ? entryToDoc(rows[0]) : null;
+  }
+
   async updateDocument(
     docType: DocType,
     docId: string,

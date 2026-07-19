@@ -452,6 +452,7 @@ async function readConv(id: string): Promise<SessionData | null> {
   if (!doc) return null;
   try {
     const data = JSON.parse(doc.content) as SessionData;
+    data.hasUnreadResult = metadataBool(doc.metadata || {}, "hasUnreadResult");
     if (!data.sessionType) data.sessionType = "user";
     const legacy = data as SessionData & { needsAttention?: boolean; attentionReason?: string };
     if (data.isPinned === undefined) data.isPinned = legacy.needsAttention === true;
@@ -2420,10 +2421,10 @@ export const chatFileStorage: IChatFileStorage = {
 
   async setHasUnreadResult(id: string, hasUnreadResult: boolean) {
     return withConvLock(id, async () => {
-      const data = await readConv(id);
-      if (!data) return;
-      data.hasUnreadResult = hasUnreadResult;
-      await writeConv(data);
+      const updated = await documentStorage.patchDocumentMetadata("chat", id, {
+        hasUnreadResult,
+      });
+      if (!updated) return;
       invalidateSessionsCache();
     });
   },
