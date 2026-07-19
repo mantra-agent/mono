@@ -202,6 +202,10 @@ export function LibraryPageEditor({
   const isNewUntitledPage = !selectedPage.title && !selectedPage.plainTextContent?.trim();
 
   useEffect(() => {
+    setBodyFocused(false);
+  }, [selectedId]);
+
+  useEffect(() => {
     setIsTitleEditing(isNewUntitledPage);
   }, [isNewUntitledPage, selectedId]);
 
