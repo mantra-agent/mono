@@ -2,11 +2,9 @@ import { createHash } from "crypto";
 import { trackEmbedding } from "../cost-tracker";
 import { ACTIVITY_MEMORY } from "../job-profiles";
 import { createLogger } from "../log";
+import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "./embedding-profile";
 
 const log = createLogger("Embedding");
-
-const EMBEDDING_MODEL = "all-MiniLM-L6-v2";
-const EMBEDDING_DIMENSIONS = 384;
 
 const EMBEDDING_CACHE_MAX_SIZE = 200;
 const _embeddingCache = new Map<string, { vector: number[]; timestamp: number }>();
@@ -134,4 +132,4 @@ export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
   return results;
 }
 
-export { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL };
+export { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "./embedding-profile";
