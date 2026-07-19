@@ -291,7 +291,7 @@ export async function registerGatewayRoutes(app: Express) {
 
     let resources: import("@shared/system-resources").SystemResourcesData | null = null;
     try {
-      const [{ getDbSaturationInfo, getInFlightStats, getSlowQueryStats, getInFlightHighThreshold, getLongRunningQueries }, { agentExecutor }, { admissionController }, { getZombieMetrics }, perfMon, { getRealtimeTransportMetrics }, { sessionManager }, { getBrowserTelemetrySummary }] = await Promise.all([
+      const [{ getDbSaturationInfo, getInFlightStats, getSlowQueryStats, getInFlightHighThreshold, getLongRunningQueries }, { agentExecutor }, { admissionController }, { getZombieMetrics }, perfMon, { getRealtimeTransportMetrics }, { sessionManager }] = await Promise.all([
         import("../db"),
         import("../agent-executor"),
         import("../run-admission"),
@@ -299,7 +299,6 @@ export async function registerGatewayRoutes(app: Express) {
         import("../performance-monitor"),
         import("../realtime-transport-metrics"),
         import("../session-manager"),
-        import("../browser-telemetry-storage"),
       ]);
 
       const now = Date.now();
@@ -320,7 +319,6 @@ export async function registerGatewayRoutes(app: Express) {
       const elAvg = diag?.eventLoopLag?.avg ?? 0;
       const transportMetrics = getRealtimeTransportMetrics();
       const sessionMetrics = sessionManager.getSubscriptionMetrics();
-      const frontendExperience = req.principal ? await getBrowserTelemetrySummary(req.principal, 24) : null;
 
       const slotRunIds = new Set(slots.map(s => s.runId));
       let divergence = 0;
@@ -411,7 +409,6 @@ export async function registerGatewayRoutes(app: Express) {
           value: divergence,
           detail: divergenceParts.length > 0 ? divergenceParts.join("; ") : "in sync",
         },
-        frontendExperience,
       };
     } catch (err: any) {
       failures.push(`resources: ${err?.message || String(err)}`);
@@ -421,7 +418,22 @@ export async function registerGatewayRoutes(app: Express) {
     res.json({ processes, failures: failures.length > 0 ? failures : undefined, resources });
   });
 
-  // Diagnostic endpoint that proves "books == reality" for the abort/admission
+  // Dedicated low-cadence endpoint for frontend browser telemetry summary.
+  // Kept separate from /api/gateway/processes (2s poll) because getBrowserTelemetrySummary
+  // performs a 24h window scan of up to 5,000 rows. The Performance page fetches this
+  // every 30s via a separate useQuery with refetchInterval 30_000.
+  app.get("/api/gateway/frontend-experience", requireAuth, async (req, res) => {
+    try {
+      const { getBrowserTelemetrySummary } = await import("../browser-telemetry-storage");
+      const summary = req.principal ? await getBrowserTelemetrySummary(req.principal, 24) : null;
+      res.json({ frontendExperience: summary });
+    } catch (err: any) {
+      log.error("frontend-experience endpoint failed:", err);
+      res.status(500).json({ error: err?.message || String(err) });
+    }
+  });
+
+    // Diagnostic endpoint that proves "books == reality" for the abort/admission
   // accounting fixed in task #853. It cross-checks four independent sources of
   // truth — executor activeRuns, admission slots, CLI zombie counter, DB pool —
   // and reports the divergences. Production used to wedge silently when these

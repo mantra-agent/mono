@@ -1,5 +1,5 @@
 // Use createLogger for logging ONLY
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { desc, gte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { browserPerformanceTelemetry } from "@shared/schema";
 import {
@@ -10,11 +10,39 @@ import {
   type BrowserTelemetrySummary,
 } from "@shared/browser-telemetry";
 import { db } from "./db";
+import { pool } from "./db";
 import type { Principal } from "./principal";
 import { combineWithVisibleScope, ownedInsertValues } from "./scoped-storage";
 import { createLogger } from "./log";
 
 const log = createLogger("BrowserTelemetry");
+
+// ---------------------------------------------------------------------------
+// Boot schema healing
+// ---------------------------------------------------------------------------
+
+/**
+ * Add the visibility column introduced in migration 0079 if it does not yet
+ * exist. Safe to run on every boot (IF NOT EXISTS guard). Called once from
+ * registerSystemRoutes at route-registration time so the column is present
+ * before the first ingest request arrives.
+ */
+export async function healBrowserTelemetrySchema(): Promise<void> {
+  try {
+    await pool.query(
+      `ALTER TABLE browser_performance_telemetry ADD COLUMN IF NOT EXISTS visibility TEXT`
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_browser_perf_visibility ON browser_performance_telemetry(visibility, kind, received_at)`
+    );
+  } catch (err) {
+    log.warn("browser telemetry schema heal failed", { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
 
 const telemetryEventSchema = z.object({
   kind: z.enum(BROWSER_TELEMETRY_EVENT_KINDS),
@@ -27,11 +55,16 @@ const telemetryEventSchema = z.object({
   bucket: z.string().max(80).optional(),
   metadata: z.record(z.unknown()).optional(),
   occurredAt: z.string().datetime().optional(),
+  visibility: z.enum(["visible", "hidden"]).optional(),
 });
 
 const telemetryBatchSchema = z.object({
   events: z.array(telemetryEventSchema).max(BROWSER_TELEMETRY_LIMITS.maxBatchSize),
 });
+
+// ---------------------------------------------------------------------------
+// Rate limiting
+// ---------------------------------------------------------------------------
 
 const BUDGET_WINDOW_MS = 60_000;
 const MAX_EVENTS_PER_WINDOW = 300;
@@ -48,6 +81,10 @@ export function claimBrowserTelemetryBudget(key: string, eventCount: number): bo
   current.count += eventCount;
   return true;
 }
+
+// ---------------------------------------------------------------------------
+// Sanitization helpers
+// ---------------------------------------------------------------------------
 
 function stripUnsafeString(value: string | undefined): string | null {
   if (!value) return null;
@@ -71,6 +108,10 @@ function sanitizeMetadata(input: Record<string, unknown> | undefined): Record<st
   if (json.length <= BROWSER_TELEMETRY_LIMITS.maxMetadataBytes) return output;
   return { truncated: true };
 }
+
+// ---------------------------------------------------------------------------
+// Ingest
+// ---------------------------------------------------------------------------
 
 export function parseBrowserTelemetryBatch(body: unknown): BrowserTelemetryEventInput[] {
   const parsed = telemetryBatchSchema.parse(body);
@@ -100,15 +141,67 @@ export async function ingestBrowserTelemetry(principal: Principal, events: Brows
     bucket: stripUnsafeString(event.bucket),
     metadata: sanitizeMetadata(event.metadata),
     occurredAt: event.occurredAt ? new Date(event.occurredAt) : new Date(),
+    visibility: event.visibility ?? null,
   }));
   await db.insert(browserPerformanceTelemetry).values(rows);
   return rows.length;
 }
 
+// ---------------------------------------------------------------------------
+// Retention prune
+// ---------------------------------------------------------------------------
+
 export async function pruneExpiredBrowserTelemetry(): Promise<void> {
   const cutoff = new Date(Date.now() - BROWSER_TELEMETRY_LIMITS.rawRetentionDays * 24 * 60 * 60 * 1000);
   await db.delete(browserPerformanceTelemetry).where(sql`${browserPerformanceTelemetry.receivedAt} < ${cutoff}`);
 }
+
+// ---------------------------------------------------------------------------
+// Visibility-aware filtering
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when a row should be included in percentile calculations for the
+ * given metric kind.
+ *
+ * Policy (documented here as the single source of truth for this decision):
+ *
+ * - chat_latency: keep ALL rows regardless of visibility. Chat turns are
+ *   user-initiated and their latency is meaningful whether the tab is focused
+ *   or not (e.g. the user may switch tabs while waiting for a response).
+ *
+ * - event_loop_responsiveness (timer_lag) and transport_gap (liveness_gap):
+ *   exclude visibility='hidden' AND NULL. These metrics are exclusively driven
+ *   by browser throttling of backgrounded tabs (setTimeout/setInterval fire at
+ *   ≥1 s and WebSocket keepalive intervals elongate), producing p95 values in
+ *   the 6-minute range that permanently orange the panel with no signal value.
+ *   NULL rows (pre-migration 0079) are also excluded here because they cannot
+ *   be distinguished from hidden-tab samples, and these two metrics are the
+ *   specific ones reported as dominated by background noise. Old data ages out
+ *   within 7 days (rawRetentionDays), so the transition window is short.
+ *
+ * - All other kinds (navigation, web_vital, long_task, frame_contention):
+ *   exclude visibility='hidden' only; include NULL rows. NULL represents data
+ *   collected before tagging was introduced — it is most likely from visible
+ *   sessions (the panel was only open when the user was looking at it) and
+ *   should be preserved for historical continuity during the 7-day transition.
+ */
+function shouldIncludeForPercentile(kind: string, visibility: string | null): boolean {
+  if (kind === "chat_latency") {
+    // Chat latency: keep all samples, visibility irrelevant.
+    return true;
+  }
+  if (kind === "event_loop_responsiveness" || kind === "transport_gap") {
+    // Timer-lag and liveness-gap: exclude hidden AND NULL (see policy above).
+    return visibility === "visible";
+  }
+  // All other kinds: exclude hidden, include NULL.
+  return visibility !== "hidden";
+}
+
+// ---------------------------------------------------------------------------
+// Summary
+// ---------------------------------------------------------------------------
 
 export async function getBrowserTelemetrySummary(principal: Principal, windowHours = 24): Promise<BrowserTelemetrySummary> {
   const hours = Math.min(Math.max(Math.floor(windowHours), 1), 168);
@@ -127,11 +220,15 @@ export async function getBrowserTelemetrySummary(principal: Principal, windowHou
     routeKey: browserPerformanceTelemetry.routeKey,
     occurredAt: browserPerformanceTelemetry.occurredAt,
     receivedAt: browserPerformanceTelemetry.receivedAt,
+    visibility: browserPerformanceTelemetry.visibility,
   })
     .from(browserPerformanceTelemetry)
     .where(scope)
     .orderBy(desc(browserPerformanceTelemetry.receivedAt))
     .limit(5000);
+
+  // Count excluded hidden-tab samples so the UI can surface the exclusion.
+  const hiddenSampleCount = rows.filter((row) => row.visibility === "hidden").length;
 
   const groups = new Map<string, typeof rows>();
   for (const row of rows) {
@@ -142,12 +239,14 @@ export async function getBrowserTelemetrySummary(principal: Principal, windowHou
   }
 
   const metrics = Array.from(groups.values()).map((group) => {
-    const sorted = group.map((row) => Number(row.value)).filter(Number.isFinite).sort((a, b) => a - b);
+    // Filter rows per-metric according to the visibility policy.
+    const eligible = group.filter((row) => shouldIncludeForPercentile(row.kind, row.visibility));
+    const sorted = eligible.map((row) => Number(row.value)).filter(Number.isFinite).sort((a, b) => a - b);
     const pick = (pct: number) => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * pct))] : null;
     return {
       kind: group[0].kind,
       name: group[0].name,
-      count: group.length,
+      count: eligible.length,
       p50: pick(0.5),
       p95: pick(0.95),
       latestAt: group[0].receivedAt instanceof Date ? group[0].receivedAt.toISOString() : null,
@@ -155,7 +254,7 @@ export async function getBrowserTelemetrySummary(principal: Principal, windowHou
   }).sort((a, b) => b.count - a.count).slice(0, 50);
 
   const recentDegradations = rows
-    .filter((row) => row.kind === "long_task" || row.kind === "frame_contention" || row.kind === "transport_gap" || row.kind === "event_loop_responsiveness")
+    .filter((row) => (row.kind === "long_task" || row.kind === "frame_contention" || row.kind === "transport_gap" || row.kind === "event_loop_responsiveness") && shouldIncludeForPercentile(row.kind, row.visibility))
     .slice(0, 20)
     .map((row) => ({
       kind: row.kind,
@@ -177,6 +276,7 @@ export async function getBrowserTelemetrySummary(principal: Principal, windowHou
     budgets: BROWSER_TELEMETRY_BUDGETS,
     metrics,
     recentDegradations,
+    hiddenSampleCount,
   };
 }
 

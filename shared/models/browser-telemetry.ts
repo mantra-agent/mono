@@ -18,11 +18,15 @@ export const browserPerformanceTelemetry = pgTable("browser_performance_telemetr
   metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
   occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
   receivedAt: timestamp("received_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  // Visibility state at the time the sample was captured. NULL for rows written before
+  // visibility tagging was introduced (migration 0079). Application code treats NULL per-metric.
+  visibility: text("visibility"),
 }, (table) => ({
   scopeOwnerIdx: index("idx_browser_perf_scope_owner").on(table.scope, table.ownerUserId),
   accountReceivedIdx: index("idx_browser_perf_account_received").on(table.accountId, table.receivedAt),
   kindReceivedIdx: index("idx_browser_perf_kind_received").on(table.kind, table.receivedAt),
   sessionIdx: index("idx_browser_perf_session").on(table.sessionId, table.receivedAt),
+  visibilityIdx: index("idx_browser_perf_visibility").on(table.visibility, table.kind, table.receivedAt),
 }));
 
 export type BrowserPerformanceTelemetry = typeof browserPerformanceTelemetry.$inferSelect;

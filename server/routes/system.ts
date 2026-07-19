@@ -1,7 +1,7 @@
 // Use createLogger for logging ONLY
 import type { Express } from "express";
 import { requireAuth } from "../auth";
-import { claimBrowserTelemetryBudget, getBrowserTelemetrySummary, ingestBrowserTelemetry, logBrowserTelemetryIngestFailure, parseBrowserTelemetryBatch, pruneExpiredBrowserTelemetry } from "../browser-telemetry-storage";
+import { claimBrowserTelemetryBudget, getBrowserTelemetrySummary, healBrowserTelemetrySchema, ingestBrowserTelemetry, logBrowserTelemetryIngestFailure, parseBrowserTelemetryBatch, pruneExpiredBrowserTelemetry } from "../browser-telemetry-storage";
 import { requirePermission } from "../permissions";
 import { executorManager } from "../executor-manager";
 import { eventBus } from "../event-bus";
@@ -29,6 +29,9 @@ function claimClientLogBudget(key: string, count: number): boolean {
 }
 
 export async function registerSystemRoutes(app: Express, serverStartTime: Date) {
+  // Heal browser telemetry schema (adds visibility column if not present).
+  healBrowserTelemetrySchema().catch(err => log.error("browser telemetry schema heal failed", err instanceof Error ? err.message : String(err)));
+
   // Diagnostic detail is intentionally process-local and defaults off on every boot.
 
   app.use(["/api/logs", "/api/server", "/api/boot-info", "/api/config", "/api/design-doc"], requireAuth, requirePermission("system:read"));

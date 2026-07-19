@@ -188,6 +188,7 @@ Server-authoritative streaming state for chat sessions. The server maintains a `
 - `streaming-reducers.ts` — Pure reducer functions for `StreamingContent` (appendThinking, addToolCall, appendToolResult, setSegments, etc.). Used by SessionManager
 - `shared/streaming-types.ts` — Shared types: `ExecutionStep`, `MessageSegment`, `StreamingContent`, `StreamingStatus`
 - Diagnostic timing is normalized by the shared streaming reducer: every node is either a span with authoritative `startedAt`/`endedAt` boundaries or a milestone with one `occurredAt`; only spans contribute duration. Producers must preserve stable IDs and parents, and visibility filtering must never alter timing accounting.
+- **Canonical per-turn latency decomposition:** The `ExecutionStep` span tree (`shared/streaming-types.ts`, published per turn via `session-manager.ts` / `streaming-reducers.ts`) is the authoritative record of per-turn phases — orientation, context assembly, and model call — each with `startedAt`/`endedAt` boundaries. Latency analysis and TTFT attribution must read existing step trees; do not add new span instrumentation.
 
 ### WebSocket Protocol
 - `session.subscribe { sessionId }` — Client subscribes to a session. Server replies with `session.snapshot`
