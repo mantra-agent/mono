@@ -89,7 +89,6 @@ export const PROMPT_MODULE_MANIFEST: Record<PromptModuleKey, PromptModuleManifes
     activity: ACTIVITY_MEMORY,
     callSites: [
       { file: "server/memory/memory-transitions.ts", purpose: "Merges mid-term memories." },
-      { file: "server/memory/sleep-maintenance.ts", purpose: "Merges memories during sleep maintenance." },
     ],
   },
   "myelination-mid-merge-consolidate": {

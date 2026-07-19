@@ -1,10 +1,29 @@
-import { memoryStorage } from "./memory-storage";
-import { createLogger } from "../log";
-import { eventBus } from "../event-bus";
-import { db } from "../db";
 import { sql } from "drizzle-orm";
+import { db, withQueryAttributionAsync } from "../db";
+import { eventBus } from "../event-bus";
+import { createLogger } from "../log";
+import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { combineWithWritableScope } from "../scoped-storage";
 
-const log = createLogger("GSI");
+const claimAliasScopeColumns = {
+  scope: sql`c.scope`,
+  ownerUserId: sql`c.owner_user_id`,
+  accountId: sql`c.account_id`,
+};
+
+const linkAliasScopeColumns = {
+  scope: sql`l.scope`,
+  ownerUserId: sql`l.owner_user_id`,
+  accountId: sql`l.account_id`,
+};
+
+const plainClaimScopeColumns = {
+  scope: sql`memory_vnext_claims.scope`,
+  ownerUserId: sql`memory_vnext_claims.owner_user_id`,
+  accountId: sql`memory_vnext_claims.account_id`,
+};
+
+const log = createLogger("GraphMetrics");
 
 export interface GSIScore {
   overall: number;
@@ -13,191 +32,193 @@ export interface GSIScore {
   orphanRate: number;
   clusterBalance: number;
   decayHealth: number;
-  entryId: number | null;
   computedAt: string;
   details: Record<string, unknown>;
 }
 
-function computeEntropy(values: number[]): number {
-  if (values.length === 0) return 0;
+const WEIGHTS = {
+  connectivity: 0.25,
+  linkQuality: 0.2,
+  orphanRate: 0.2,
+  clusterBalance: 0.15,
+  decayHealth: 0.2,
+} as const;
 
-  const bucketCount = 10;
-  const buckets = new Array(bucketCount).fill(0);
-  for (const v of values) {
-    const idx = Math.min(Math.floor(v * bucketCount), bucketCount - 1);
-    buckets[idx]++;
-  }
-
-  const total = values.length;
-  let entropy = 0;
-  for (const count of buckets) {
-    if (count === 0) continue;
-    const p = count / total;
-    entropy -= p * Math.log2(p);
-  }
-
-  const maxEntropy = Math.log2(bucketCount);
-  return maxEntropy > 0 ? entropy / maxEntropy : 0;
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
 }
 
+/** Shannon entropy of a bucketed distribution, normalized to [0,1]. */
+function normalizedEntropy(buckets: number[]): number {
+  const total = buckets.reduce((sum, count) => sum + count, 0);
+  if (total === 0) return 0;
+  const probabilities = buckets.filter((count) => count > 0).map((count) => count / total);
+  if (probabilities.length <= 1) return 0;
+  const entropy = -probabilities.reduce((sum, p) => sum + p * Math.log2(p), 0);
+  return clamp01(entropy / Math.log2(buckets.length));
+}
+
+/**
+ * Graph Structure Index over the vNext claim graph. Components:
+ * - connectivity: share of active claims with at least one claim link or entity link
+ * - linkQuality: mean claim-link strength
+ * - orphanRate: inverted share of active claims with no links and no source refs
+ * - clusterBalance: entropy of the per-claim degree distribution (penalizes hub-and-spoke)
+ * - decayHealth: entropy of the confidence distribution (penalizes collapse to one band)
+ *
+ * Report-only: publishes an event and returns the score. No memory writes.
+ */
 export async function computeGSI(): Promise<GSIScore> {
-  const startTime = Date.now();
-  log.log("[GSI] Computing Graph Structural Integrity score");
+  return withQueryAttributionAsync("memory-read", async () => {
+    const principal = getCurrentPrincipalOrSystem();
+    if (!principal.userId) throw new Error("vNext GSI requires a user principal");
+    const [core] = (
+      await db.execute(sql`
+        SELECT
+          count(*)::int AS active_claims,
+          count(*) FILTER (
+            WHERE EXISTS (SELECT 1 FROM memory_vnext_claim_links l WHERE (l.from_claim_id = c.id OR l.to_claim_id = c.id)
+              AND l.owner_user_id IS NOT DISTINCT FROM c.owner_user_id
+              AND l.account_id IS NOT DISTINCT FROM c.account_id)
+               OR EXISTS (SELECT 1 FROM memory_vnext_entity_links e WHERE e.claim_id = c.id
+              AND e.owner_user_id IS NOT DISTINCT FROM c.owner_user_id
+              AND e.account_id IS NOT DISTINCT FROM c.account_id)
+          )::int AS linked_claims,
+          count(*) FILTER (
+            WHERE NOT EXISTS (SELECT 1 FROM memory_vnext_claim_links l WHERE (l.from_claim_id = c.id OR l.to_claim_id = c.id)
+              AND l.owner_user_id IS NOT DISTINCT FROM c.owner_user_id
+              AND l.account_id IS NOT DISTINCT FROM c.account_id)
+              AND NOT EXISTS (SELECT 1 FROM memory_vnext_entity_links e WHERE e.claim_id = c.id
+              AND e.owner_user_id IS NOT DISTINCT FROM c.owner_user_id
+              AND e.account_id IS NOT DISTINCT FROM c.account_id)
+              AND NOT EXISTS (SELECT 1 FROM memory_vnext_sources s WHERE s.claim_id = c.id
+              AND s.owner_user_id IS NOT DISTINCT FROM c.owner_user_id
+              AND s.account_id IS NOT DISTINCT FROM c.account_id)
+          )::int AS orphan_claims,
+          count(*) FILTER (WHERE c.lifecycle_stage = 'canonical')::int AS canonical_claims
+        FROM memory_vnext_claims c
+        WHERE c.lifecycle_stage <> 'retired'
+          AND ${combineWithWritableScope(principal, claimAliasScopeColumns, sql`TRUE`)}
+      `)
+    ).rows as unknown as Array<{
+      active_claims: number;
+      linked_claims: number;
+      orphan_claims: number;
+      canonical_claims: number;
+    }>;
 
-  const metrics = await memoryStorage.getGraphMetrics();
+    const activeClaims = Number(core?.active_claims ?? 0);
+    const linkedClaims = Number(core?.linked_claims ?? 0);
+    const orphanClaims = Number(core?.orphan_claims ?? 0);
+    const canonicalClaims = Number(core?.canonical_claims ?? 0);
 
-  const connectivity = metrics.totalEntries > 0
-    ? Math.min(1.0, metrics.linkedEntries / metrics.totalEntries)
-    : 0;
+    const [linkStats] = (
+      await db.execute(sql`
+        SELECT count(*)::int AS link_count, COALESCE(avg(strength), 0) AS avg_strength
+        FROM memory_vnext_claim_links l
+        JOIN memory_vnext_claims a ON a.id = l.from_claim_id AND a.lifecycle_stage <> 'retired'
+        JOIN memory_vnext_claims b ON b.id = l.to_claim_id AND b.lifecycle_stage <> 'retired'
+        WHERE ${combineWithWritableScope(principal, linkAliasScopeColumns, sql`TRUE`)}
+          AND a.owner_user_id IS NOT DISTINCT FROM l.owner_user_id
+          AND a.account_id IS NOT DISTINCT FROM l.account_id
+          AND b.owner_user_id IS NOT DISTINCT FROM l.owner_user_id
+          AND b.account_id IS NOT DISTINCT FROM l.account_id
+      `)
+    ).rows as unknown as Array<{ link_count: number; avg_strength: string | number }>;
 
-  const linkQuality = metrics.totalLinks > 0
-    ? Math.min(1.0, metrics.avgLinkStrength)
-    : 0;
+    const degreeRows = (
+      await db.execute(sql`
+        SELECT degree_bucket, count(*)::int AS claim_count
+        FROM (
+          SELECT c.id, LEAST(4, (
+            SELECT count(*) FROM memory_vnext_claim_links l
+            WHERE (l.from_claim_id = c.id OR l.to_claim_id = c.id)
+              AND l.owner_user_id IS NOT DISTINCT FROM c.owner_user_id
+              AND l.account_id IS NOT DISTINCT FROM c.account_id
+          )) AS degree_bucket
+          FROM memory_vnext_claims c
+          WHERE c.lifecycle_stage <> 'retired'
+            AND ${combineWithWritableScope(principal, claimAliasScopeColumns, sql`TRUE`)}
+        ) degrees
+        GROUP BY degree_bucket
+      `)
+    ).rows as unknown as Array<{ degree_bucket: number; claim_count: number }>;
 
-  const orphanRate = metrics.totalEntries > 0
-    ? Math.max(0, Math.min(1.0, 1.0 - (metrics.orphanEntries / metrics.totalEntries)))
-    : 1.0;
+    const confidenceRows = (
+      await db.execute(sql`
+        SELECT width_bucket(confidence, 0, 1, 5) AS bucket, count(*)::int AS claim_count
+        FROM memory_vnext_claims
+        WHERE lifecycle_stage <> 'retired'
+          AND ${combineWithWritableScope(principal, plainClaimScopeColumns, sql`TRUE`)}
+        GROUP BY bucket
+      `)
+    ).rows as unknown as Array<{ bucket: number; claim_count: number }>;
 
-  let clusterBalance = 0;
-  try {
-    const clusterRows = await db.execute(sql`
-      SELECT linked_id, COUNT(*)::int AS link_count
-      FROM (
-        SELECT from_id AS linked_id FROM memory_links
-        UNION ALL
-        SELECT to_id AS linked_id FROM memory_links
-      ) sub
-      GROUP BY linked_id
-      ORDER BY link_count DESC
-    `);
+    const connectivity = activeClaims > 0 ? clamp01(linkedClaims / activeClaims) : 0;
+    const linkQuality = clamp01(Number(linkStats?.avg_strength ?? 0));
+    const orphanRate = activeClaims > 0 ? clamp01(1 - orphanClaims / activeClaims) : 0;
 
-    const linkCounts = (clusterRows.rows as Array<{ linked_id: number; link_count: number }>)
-      .map(r => r.link_count);
-
-    if (linkCounts.length > 1) {
-      const maxCount = linkCounts[0];
-      const avgCount = linkCounts.reduce((a, b) => a + b, 0) / linkCounts.length;
-      const variance = linkCounts.reduce((sum, c) => sum + Math.pow(c - avgCount, 2), 0) / linkCounts.length;
-      const cv = avgCount > 0 ? Math.sqrt(variance) / avgCount : 0;
-      clusterBalance = Math.max(0, 1.0 - Math.min(1.0, cv / 3));
-    } else if (linkCounts.length === 1) {
-      clusterBalance = 0.5;
+    const degreeBuckets = [0, 0, 0, 0, 0];
+    for (const row of degreeRows) {
+      const bucket = Math.max(0, Math.min(4, Number(row.degree_bucket)));
+      degreeBuckets[bucket] += Number(row.claim_count);
     }
-  } catch (err: unknown) {
-    log.warn(`[GSI] Cluster balance computation failed: ${err instanceof Error ? err.message : String(err)}`);
-    clusterBalance = 0.5;
-  }
+    const clusterBalance = normalizedEntropy(degreeBuckets);
 
-  let decayHealth = 0;
-  try {
-    const distribution = await memoryStorage.getDecayScoreDistribution();
-    const scores = distribution.map(d => Number(d.score));
-
-    if (scores.length > 0) {
-      const normalizedEntropy = computeEntropy(scores);
-      const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-      decayHealth = Math.max(0, Math.min(1.0, 0.5 * normalizedEntropy + 0.5 * avgScore));
+    const confidenceBuckets = [0, 0, 0, 0, 0];
+    for (const row of confidenceRows) {
+      const bucket = Math.max(1, Math.min(5, Number(row.bucket))) - 1;
+      confidenceBuckets[bucket] += Number(row.claim_count);
     }
-  } catch (err: unknown) {
-    log.warn(`[GSI] Decay health computation failed: ${err instanceof Error ? err.message : String(err)}`);
-    decayHealth = 0.5;
-  }
+    const decayHealth = normalizedEntropy(confidenceBuckets);
 
-  const weights = {
-    connectivity: 0.25,
-    linkQuality: 0.20,
-    orphanRate: 0.20,
-    clusterBalance: 0.15,
-    decayHealth: 0.20,
-  };
-
-  const overall = Math.min(1.0, Math.max(0,
-    weights.connectivity * connectivity +
-    weights.linkQuality * linkQuality +
-    weights.orphanRate * orphanRate +
-    weights.clusterBalance * clusterBalance +
-    weights.decayHealth * decayHealth
-  ));
-
-  const computedAt = new Date().toISOString();
-
-  const gsiContent = [
-    `# Graph Structural Integrity Report`,
-    `Computed: ${computedAt}`,
-    "",
-    `## Overall GSI Score: ${(overall * 100).toFixed(1)}%`,
-    "",
-    `## Component Scores`,
-    `- Connectivity: ${(connectivity * 100).toFixed(1)}% (${metrics.linkedEntries}/${metrics.totalEntries} entries linked)`,
-    `- Link Quality: ${(linkQuality * 100).toFixed(1)}% (avg strength: ${metrics.avgLinkStrength.toFixed(3)}, ${metrics.weakLinks} weak, ${metrics.strongLinks} strong)`,
-    `- Orphan Rate: ${(orphanRate * 100).toFixed(1)}% (${metrics.orphanEntries} orphans)`,
-    `- Cluster Balance: ${(clusterBalance * 100).toFixed(1)}%`,
-    `- Decay Health: ${(decayHealth * 100).toFixed(1)}%`,
-    "",
-    `## Raw Metrics`,
-    `- Total entries: ${metrics.totalEntries}`,
-    `- Total links: ${metrics.totalLinks}`,
-    `- Linked entries: ${metrics.linkedEntries}`,
-    `- Orphan entries: ${metrics.orphanEntries}`,
-  ].join("\n");
-
-  const sourceId = `gsi-${computedAt.slice(0, 10)}`;
-  let entryId: number | null = null;
-
-  try {
-    const gsiEntry = await memoryStorage.ingest(
-      gsiContent,
-      "memory",
-      sourceId,
-      {
-        type: "gsi_report",
-        overall,
-        connectivity,
-        linkQuality,
-        orphanRate,
-        clusterBalance,
-        decayHealth,
-        totalEntries: metrics.totalEntries,
-        totalLinks: metrics.totalLinks,
-        computed_at: computedAt,
-      },
-      ["gsi", "graph-health", "system-metrics"],
-      `GSI Report — ${(overall * 100).toFixed(1)}%`,
+    const overall = clamp01(
+      connectivity * WEIGHTS.connectivity +
+        linkQuality * WEIGHTS.linkQuality +
+        orphanRate * WEIGHTS.orphanRate +
+        clusterBalance * WEIGHTS.clusterBalance +
+        decayHealth * WEIGHTS.decayHealth,
     );
-    entryId = gsiEntry.id;
-    log.log(`[GSI] Report stored as memory entry #${entryId}`);
-  } catch (err: unknown) {
-    log.error(`[GSI] Failed to store GSI report: ${err instanceof Error ? err.message : String(err)}`);
-  }
 
-  const result: GSIScore = {
-    overall,
-    connectivity,
-    linkQuality,
-    orphanRate,
-    clusterBalance,
-    decayHealth,
-    entryId,
-    computedAt,
-    details: {
-      totalEntries: metrics.totalEntries,
-      totalLinks: metrics.totalLinks,
-      linkedEntries: metrics.linkedEntries,
-      orphanEntries: metrics.orphanEntries,
-      avgLinkStrength: metrics.avgLinkStrength,
-      weakLinks: metrics.weakLinks,
-      strongLinks: metrics.strongLinks,
-    },
-  };
+    const score: GSIScore = {
+      overall,
+      connectivity,
+      linkQuality,
+      orphanRate,
+      clusterBalance,
+      decayHealth,
+      computedAt: new Date().toISOString(),
+      details: {
+        activeClaims,
+        linkedClaims,
+        orphanClaims,
+        canonicalClaims,
+        claimLinkCount: Number(linkStats?.link_count ?? 0),
+        degreeBuckets,
+        confidenceBuckets,
+      },
+    };
 
-  const elapsed = Date.now() - startTime;
-  log.log(`[GSI] Computed in ${elapsed}ms: overall=${(overall * 100).toFixed(1)}% connectivity=${(connectivity * 100).toFixed(1)}% linkQuality=${(linkQuality * 100).toFixed(1)}% orphanRate=${(orphanRate * 100).toFixed(1)}% clusterBalance=${(clusterBalance * 100).toFixed(1)}% decayHealth=${(decayHealth * 100).toFixed(1)}%`);
+    eventBus.publish({
+      category: "system",
+      event: "sleep:gsi_computed",
+      payload: {
+        overall: score.overall,
+        connectivity: score.connectivity,
+        linkQuality: score.linkQuality,
+        orphanRate: score.orphanRate,
+        clusterBalance: score.clusterBalance,
+        decayHealth: score.decayHealth,
+        activeClaims,
+      },
+    });
 
-  eventBus.publish({
-    category: "system",
-    event: "sleep:gsi_computed",
-    payload: { overall, entryId, computedAt },
+    log.log(
+      `GSI computed over vNext graph: overall=${score.overall.toFixed(3)} ` +
+        `(connectivity=${connectivity.toFixed(2)}, linkQuality=${linkQuality.toFixed(2)}, ` +
+        `orphanRate=${orphanRate.toFixed(2)}, clusterBalance=${clusterBalance.toFixed(2)}, decayHealth=${decayHealth.toFixed(2)})`,
+    );
+    return score;
   });
-
-  return result;
 }
