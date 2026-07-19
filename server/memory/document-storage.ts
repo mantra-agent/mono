@@ -16,7 +16,10 @@ import {
   ownedInsertValues,
 } from "../scoped-storage";
 import { createLogger } from "../log";
-import { DOCUMENT_STORE_CUTOVER_KEY } from "./document-store-cutover";
+import {
+  DOCUMENT_STORE_CUTOVER_KEY,
+  documentStoreIndependentWritesEnabled,
+} from "./document-store-cutover";
 import { documentStoreTargetReadsRequested } from "./document-store-migration-mode";
 import {
   executeSemanticSearch,
@@ -77,7 +80,7 @@ function targetToDoc(entry: DocumentStoreDocument): WorkspaceDocCompat {
   };
 }
 
-async function targetReadsEnabled(): Promise<boolean> {
+export async function targetReadsEnabled(): Promise<boolean> {
   if (!documentStoreTargetReadsRequested()) return false;
   const result = await db.execute(sql`
     SELECT read_enabled
@@ -124,6 +127,75 @@ export class DocumentStorage {
     noReturn = false,
   ): Promise<WorkspaceDocCompat> {
     const now = new Date();
+    if (await documentStoreIndependentWritesEnabled()) {
+      await targetReadsEnabled();
+      const principal = getCurrentPrincipalOrSystem();
+      const ownerValues = ownedInsertValues(principal, documentScopeColumns);
+      if (!ownerValues.ownerUserId || !ownerValues.accountId) {
+        throw new Error(
+          `Independent document writes require an explicit user and account owner: ${docType}/${docId}`,
+        );
+      }
+      const createdAt = timestamps?.createdAt ?? now;
+      const updatedAt = timestamps?.updatedAt ?? now;
+      const query = db
+        .insert(documentStoreDocuments)
+        .values({
+          documentType: docType,
+          documentId: docId,
+          sourceId: docId,
+          path,
+          title,
+          content,
+          metadata,
+          tags: [],
+          migrationKey: "document_store_independent_v1",
+          migratedAt: now,
+          ...ownerValues,
+          createdByUserId: principal.userId ?? undefined,
+          updatedByUserId: principal.userId ?? undefined,
+          createdAt,
+          updatedAt,
+        } as typeof documentStoreDocuments.$inferInsert)
+        .onConflictDoUpdate({
+          target: [
+            documentStoreDocuments.scope,
+            documentStoreDocuments.ownerUserId,
+            documentStoreDocuments.accountId,
+            documentStoreDocuments.documentType,
+            documentStoreDocuments.documentId,
+          ],
+          set: {
+            sourceId: docId,
+            path,
+            title,
+            content,
+            metadata,
+            updatedByUserId: principal.userId ?? undefined,
+            updatedAt,
+            ...(timestamps?.createdAt ? { createdAt: timestamps.createdAt } : {}),
+            sourceContentHash: null,
+            sourceMetadataHash: null,
+            sourceIdentityHash: null,
+          },
+        });
+      if (noReturn) {
+        await withQueryAttributionAsync("document-write", () => query, "document-upsert");
+        log.verbose(() => `upsertDocument target docType=${docType} docId=${docId} (no-return)`);
+        return {
+          id: 0, docType, docId, path, title, content, metadata, embedding: null,
+          createdAt, updatedAt,
+        };
+      }
+      const [result] = await withQueryAttributionAsync(
+        "document-write",
+        () => query.returning(),
+        "document-upsert",
+      );
+      if (!result) throw new Error(`Document upsert returned no row: ${docType}/${docId}`);
+      log.verbose(() => `upsertDocument target docType=${docType} docId=${docId} id=${result.id}`);
+      return targetToDoc(result);
+    }
     const insertValues: Record<string, unknown> = {
       layer: WORKSPACE_LAYER,
       source: docType,
@@ -530,6 +602,24 @@ export class DocumentStorage {
   }
 
   async deleteDocument(docType: DocType, docId: string): Promise<boolean> {
+    if (await documentStoreIndependentWritesEnabled()) {
+      await targetReadsEnabled();
+      const result = await db
+        .delete(documentStoreDocuments)
+        .where(
+          combineWithWritableScope(
+            getCurrentPrincipalOrSystem(),
+            documentScopeColumns,
+            and(
+              eq(documentStoreDocuments.documentType, docType),
+              eq(documentStoreDocuments.documentId, docId),
+            ),
+          ),
+        )
+        .returning({ id: documentStoreDocuments.id });
+      log.debug(`deleteDocument target docType=${docType} docId=${docId} deleted=${result.length > 0}`);
+      return result.length > 0;
+    }
     const result = await db
       .delete(memoryEntries)
       .where(
@@ -560,6 +650,36 @@ export class DocumentStorage {
     log.debug(
       `updateDocument docType=${docType} docId=${docId} fields=${Object.keys(updates).join(",")}`,
     );
+    if (await documentStoreIndependentWritesEnabled()) {
+      await targetReadsEnabled();
+      const setData: Record<string, unknown> = {
+        updatedAt: new Date(),
+        updatedByUserId: getCurrentPrincipalOrSystem().userId ?? undefined,
+        sourceContentHash: null,
+        sourceMetadataHash: null,
+        sourceIdentityHash: null,
+      };
+      if (updates.title !== undefined) setData.title = updates.title;
+      if (updates.content !== undefined) setData.content = updates.content;
+      if (updates.metadata !== undefined) setData.metadata = updates.metadata;
+      if (updates.path !== undefined) setData.path = updates.path;
+      const rows = await db
+        .update(documentStoreDocuments)
+        .set(setData)
+        .where(
+          combineWithWritableScope(
+            getCurrentPrincipalOrSystem(),
+            documentScopeColumns,
+            and(
+              eq(documentStoreDocuments.documentType, docType),
+              eq(documentStoreDocuments.documentId, docId),
+            ),
+          ),
+        )
+        .returning();
+      log.debug(`updateDocument target docType=${docType} docId=${docId} updated=${rows.length > 0}`);
+      return rows[0] ? targetToDoc(rows[0]) : null;
+    }
     const setData: Record<string, unknown> = { processedAt: new Date() };
     if (updates.title !== undefined) setData.title = updates.title;
     if (updates.content !== undefined) setData.content = updates.content;

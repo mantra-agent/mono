@@ -205,6 +205,23 @@ async function ensureDocumentStoreDocumentsSchema(pool: { query: (sql: string, p
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_migration_conflicts_run ON document_store_migration_conflicts(run_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_migration_conflicts_source ON document_store_migration_conflicts(source_memory_entry_id)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS document_store_cutover_state (
+      cutover_key TEXT PRIMARY KEY,
+      shadow_writes_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      read_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      independent_writes_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      independent_started_at TIMESTAMPTZ(6),
+      legacy_workspace_row_count INTEGER,
+      last_reconciled_at TIMESTAMPTZ(6),
+      reconciliation JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query(`ALTER TABLE document_store_cutover_state
+    ADD COLUMN IF NOT EXISTS independent_writes_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS independent_started_at TIMESTAMPTZ(6),
+    ADD COLUMN IF NOT EXISTS legacy_workspace_row_count INTEGER`);
 }
 
 const TIMER_OWNERSHIP_MIGRATION_KEY = "migration.timer-ownership.v1";
@@ -1298,7 +1315,7 @@ export async function runSchemaBootstrap(
             UPDATE sessions SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
             UPDATE messages SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
             UPDATE workspace_documents SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
-            UPDATE memory_entries SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
+            UPDATE memory_entries SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL AND layer <> 'workspace';
             UPDATE memory_entity_links SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
             UPDATE info_notes SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
             UPDATE library_pages SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
@@ -1324,8 +1341,8 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS processing_error TEXT`);
     await pool.query(`ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS processing_updated_at TIMESTAMPTZ`);
-    await pool.query(`UPDATE memory_entries SET processing_status = 'idle' WHERE processing_status IS NULL OR processing_status NOT IN ('idle', 'processing', 'error')`);
-    await pool.query(`UPDATE memory_entries SET processing_updated_at = processed_at WHERE processing_updated_at IS NULL AND processed_at IS NOT NULL`);
+    await pool.query(`UPDATE memory_entries SET processing_status = 'idle' WHERE layer <> 'workspace' AND (processing_status IS NULL OR processing_status NOT IN ('idle', 'processing', 'error'))`);
+    await pool.query(`UPDATE memory_entries SET processing_updated_at = processed_at WHERE layer <> 'workspace' AND processing_updated_at IS NULL AND processed_at IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_processing_status ON memory_entries(processing_status)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_processing_run ON memory_entries(processing_run_id) WHERE processing_run_id IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_stage_processing_claim ON memory_entries(integration_stage, processing_status, created_at, processed_at) WHERE integration_stage = 'stage_1'`);
@@ -2330,11 +2347,12 @@ export async function runSchemaBootstrap(
     if (exists.rowCount === 0) {
       const dupeCount = await pool.query(`
         SELECT count(*) AS cnt FROM memory_entries
-        WHERE source_id IS NOT NULL
+        WHERE layer <> 'workspace'
+          AND source_id IS NOT NULL
           AND id NOT IN (
             SELECT DISTINCT ON (layer, source, source_id) id
             FROM memory_entries
-            WHERE source_id IS NOT NULL
+            WHERE layer <> 'workspace' AND source_id IS NOT NULL
             ORDER BY layer, source, source_id, processed_at DESC NULLS LAST, id DESC
           )
       `);
@@ -2342,11 +2360,12 @@ export async function runSchemaBootstrap(
       if (removed > 0) {
         await pool.query(`
           DELETE FROM memory_entries
-          WHERE source_id IS NOT NULL
+          WHERE layer <> 'workspace'
+            AND source_id IS NOT NULL
             AND id NOT IN (
               SELECT DISTINCT ON (layer, source, source_id) id
               FROM memory_entries
-              WHERE source_id IS NOT NULL
+              WHERE layer <> 'workspace' AND source_id IS NOT NULL
               ORDER BY layer, source, source_id, processed_at DESC NULLS LAST, id DESC
             )
         `);
@@ -2377,7 +2396,7 @@ export async function runSchemaBootstrap(
     // idempotent and survives future syncs.
     // Backfill any pre-existing NULLs FIRST so SET NOT NULL doesn't fail.
     await pool.query(
-      `UPDATE memory_entries SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL`,
+      `UPDATE memory_entries SET created_at = CURRENT_TIMESTAMP WHERE layer <> 'workspace' AND created_at IS NULL`,
     );
     await pool.query(`
       ALTER TABLE memory_entries
@@ -2705,7 +2724,7 @@ export async function runSchemaBootstrap(
         WHEN layer IN ('mid', 'long', 'workspace') THEN 'stage_1'
         ELSE 'stage_0'
       END
-      WHERE integration_stage IS NULL OR integration_stage = 'stage_0'
+      WHERE layer <> 'workspace' AND (integration_stage IS NULL OR integration_stage = 'stage_0')
     `);
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_memory_integration_stage ON memory_entries(integration_stage)`,
@@ -3503,7 +3522,7 @@ export async function runSchemaBootstrap(
   await heal("backfill session memory titles", async () => {
     const untitled = await pool.query(`
       SELECT id, metadata FROM memory_entries
-      WHERE source = 'conversation' AND title IS NULL AND metadata IS NOT NULL
+      WHERE layer <> 'workspace' AND source = 'conversation' AND title IS NULL AND metadata IS NOT NULL
     `);
     if (untitled.rows.length === 0) return;
 
@@ -3873,6 +3892,8 @@ export async function runSchemaBootstrap(
   await heal(
     "migrate api_call data from memory_entries to api_calls",
     async () => {
+      const { documentStoreIndependentWritesRequested } = await import("./memory/document-store-migration-mode");
+      if (documentStoreIndependentWritesRequested()) return;
       const countResult = await pool.query(`
       SELECT COUNT(*)::int AS cnt FROM memory_entries
       WHERE layer = 'workspace' AND source = 'api_call'
@@ -3950,10 +3971,9 @@ export async function runSchemaBootstrap(
 
   await heal("retire raw session memory rows from graph surfaces", async () => {
     const rawSessionPredicate = `
-      (source = 'chat' AND layer = 'workspace' AND COALESCE(metadata->>'mirrorKind', '') != 'session_summary')
-      OR (source = 'voice_session' AND layer = 'workspace' AND COALESCE(metadata->>'mirrorKind', '') != 'session_summary')
-      OR (source = 'chat_journal' AND layer = 'workspace' AND COALESCE(metadata->>'mirrorKind', '') != 'session_summary')
-      OR (source = 'conversation' AND (COALESCE(source_id, '') LIKE 'exchange-%' OR COALESCE(tags, ARRAY[]::text[]) @> ARRAY['exchange']::text[]))
+      source = 'conversation'
+      AND layer <> 'workspace'
+      AND (COALESCE(source_id, '') LIKE 'exchange-%' OR COALESCE(tags, ARRAY[]::text[]) @> ARRAY['exchange']::text[])
     `;
 
     const linkResult = await pool.query(`
@@ -3994,7 +4014,7 @@ export async function runSchemaBootstrap(
       const result = await pool.query(`
         UPDATE memory_entries
         SET metadata = jsonb_set(metadata, '{claimType}', '"action"')
-        WHERE metadata->>'claimType' = 'event'
+        WHERE layer <> 'workspace' AND metadata->>'claimType' = 'event'
       `);
       if (result.rowCount && result.rowCount > 0) {
         log(

@@ -1,18 +1,30 @@
 import { abortTrace } from "../../abort-trace";
 import { pool as dbPool } from "../../db";
+import { documentStoreIndependentWritesEnabled } from "../../memory/document-store-cutover";
 import { chatStorage } from "./storage";
 import { createLogger } from "../../log";
+import { getCurrentPrincipalOrSystem } from "../../principal-context";
 
 const log = createLogger("chat-abort-defer");
 
 const STATUS_UPDATE_TIMEOUT_MS = 2000;
 
-const STATUS_UPDATE_SQL = `UPDATE memory_entries
+const LEGACY_STATUS_UPDATE_SQL = `UPDATE memory_entries
    SET metadata = jsonb_set(coalesce(metadata, '{}'::jsonb), '{status}', to_jsonb($1::text), true),
        processed_at = NOW()
  WHERE layer = 'workspace'
    AND source = 'chat'
-   AND source_id = $2`;
+   AND source_id = $2
+   AND (($3::text IS NOT NULL AND owner_user_id = $3) OR ($4::text IS NOT NULL AND account_id = $4))`;
+
+const TARGET_STATUS_UPDATE_SQL = `UPDATE document_store_documents
+   SET metadata = jsonb_set(coalesce(metadata, '{}'::jsonb), '{status}', to_jsonb($1::text), true),
+       updated_at = NOW(),
+       migrated_at = NOW(),
+       migration_key = 'document_store_independent_v1'
+ WHERE document_type = 'chat'
+   AND document_id = $2
+   AND (($3::text IS NOT NULL AND owner_user_id = $3) OR ($4::text IS NOT NULL AND account_id = $4))`;
 
 export function deferStatusSaved(sessionId: string, routeStartAt: number): void {
   const dbStartAt = Date.now();
@@ -40,17 +52,31 @@ export function deferStatusSaved(sessionId: string, routeStartAt: number): void 
     },
   );
 
-  void runSqlBackstop(sessionId, routeStartAt);
+  const principal = getCurrentPrincipalOrSystem();
+  void runSqlBackstop(
+    sessionId,
+    routeStartAt,
+    principal.userId ?? null,
+    principal.accountId ?? null,
+  );
 }
 
-async function runSqlBackstop(sessionId: string, routeStartAt: number): Promise<void> {
+async function runSqlBackstop(
+  sessionId: string,
+  routeStartAt: number,
+  ownerUserId: string | null,
+  accountId: string | null,
+): Promise<void> {
   const sqlStartAt = Date.now();
   let client: import("pg").PoolClient | null = null;
   try {
     client = await dbPool.connect();
     await client.query("BEGIN");
     await client.query("SET LOCAL statement_timeout = '2000ms'");
-    const res = await client.query(STATUS_UPDATE_SQL, ["saved", sessionId]);
+    const sql = await documentStoreIndependentWritesEnabled()
+      ? TARGET_STATUS_UPDATE_SQL
+      : LEGACY_STATUS_UPDATE_SQL;
+    const res = await client.query(sql, ["saved", sessionId, ownerUserId, accountId]);
     await client.query("COMMIT");
     abortTrace("db_status_sql_updated", {
       sessionId,

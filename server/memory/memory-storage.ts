@@ -3247,7 +3247,7 @@ export class MemoryStorage {
     const result = await db.execute(sql`
       UPDATE memory_entries
       SET summary = NULL, content_hash = NULL, title = NULL
-      WHERE layer IN ('long', 'workspace')
+      WHERE layer = 'long'
         AND (${memoryKnowledgeEligibleSql})
       AND (summary IS NOT NULL OR content_hash IS NOT NULL)
     `);
@@ -3371,7 +3371,7 @@ export class MemoryStorage {
         COUNT(CASE WHEN content_hash IS NOT NULL THEN 1 END)::int AS with_hash,
         COUNT(CASE WHEN summary IS NULL OR content_hash IS NULL OR embedding IS NULL THEN 1 END)::int AS needs_processing
       FROM memory_entries
-      WHERE layer IN ('long', 'workspace')
+      WHERE layer = 'long'
         AND (${memoryKnowledgeEligibleSql})
     `);
     const row = result.rows[0] as unknown as MyelinationStatsRow;
