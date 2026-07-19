@@ -6,7 +6,7 @@ import { runWithPrincipal } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope } from "../scoped-storage";
 import { tagRegistry } from "../file-storage/tags";
 import { fileRuleStorage } from "../file-storage/rules";
-import { documentStoreDocuments, memoryEntries } from "@shared/schema";
+import { documentStoreDocuments, memoryEntries, memoryVnextClaims } from "@shared/schema";
 import { getSetting, setSetting } from "../system-settings";
 import { memoryVnextClaimStorage, persistClaimCandidates } from "./vnext-claim-storage";
 
@@ -44,16 +44,7 @@ const RETAINED_RULES: RetainedRuleTemplate[] = [
 const RETAINED_RULE_IDS = new Set(RETAINED_RULES.map((rule) => rule.id));
 const RESTORATION_MARKER_PREFIX = "migration.personal_rules.retained_v2";
 
-const PROMOTED_RULE_TEXTS = [
-  "In strategic outreach, do not foreground awkward mechanics, delayed replies, obvious realizations, or other negative context that does not advance the relationship. Move directly toward the desired next step.",
-  "When proposing meeting times, cluster them near existing calendar commitments to preserve long uninterrupted focus blocks.",
-  "When reviewing recruiter or executive-search communications, do not treat urgency framing as a real deadline without independent evidence.",
-  "For executive-role positioning, use 'organizational systems' rather than 'operating systems' unless actual operating-system software is meant.",
-  "In voice mode, use short in-between moments to capture and work through ideas rather than deferring them solely because another near-term life task is happening.",
-  "Do not default to asking 'what's the one thing?' in coaching conversations. Respond to the substance of what the user is saying.",
-  "Do not ask filler questions. Ask only when the question is genuinely interesting or needed to proceed.",
-];
-
+const MIGRATED_SOFT_RULE_SOURCE_ID = "mr7bmer6na1gn6";
 const SOFT_RULE_CLAIMS = new Map<string, {
   title: string;
   content: string;
@@ -200,41 +191,27 @@ async function listRestorationOwners(): Promise<RestorationOwner[]> {
   return runWithPrincipal(systemPrincipal, async () => {
     const rows = await db
       .select({
-        ownerUserId: documentStoreDocuments.ownerUserId,
-        accountId: documentStoreDocuments.accountId,
-        vaultId: documentStoreDocuments.vaultId,
-        promotedRuleCount: sql<number>`count(DISTINCT ${documentStoreDocuments.metadata}->>'rule')::int`,
+        ownerUserId: memoryVnextClaims.ownerUserId,
+        accountId: memoryVnextClaims.accountId,
       })
-      .from(documentStoreDocuments)
-      .where(combineWithVisibleScope(
-        systemPrincipal,
-        documentScopeColumns,
-        and(
-          eq(documentStoreDocuments.documentType, "rule"),
-          isNotNull(documentStoreDocuments.ownerUserId),
-          isNotNull(documentStoreDocuments.accountId),
-          inArray(
-            sql<string>`${documentStoreDocuments.metadata}->>'rule'`,
-            PROMOTED_RULE_TEXTS,
-          ),
-        ),
-      ))
-      .groupBy(
-        documentStoreDocuments.ownerUserId,
-        documentStoreDocuments.accountId,
-        documentStoreDocuments.vaultId,
-      );
+      .from(memoryVnextClaims)
+      .where(and(
+        eq(memoryVnextClaims.source, "manual"),
+        eq(memoryVnextClaims.sourceId, MIGRATED_SOFT_RULE_SOURCE_ID),
+        isNotNull(memoryVnextClaims.ownerUserId),
+        isNotNull(memoryVnextClaims.accountId),
+      ));
 
     return rows
       .filter((row): row is typeof row & { ownerUserId: string; accountId: string } => (
-        !!row.ownerUserId && !!row.accountId && row.promotedRuleCount === PROMOTED_RULE_TEXTS.length
+        !!row.ownerUserId && !!row.accountId
       ))
       .map((row) => ({
         documentId: "retained-rule-restoration",
         ownerUserId: row.ownerUserId,
         accountId: row.accountId,
-        vaultId: row.vaultId,
-        promotedRuleCount: row.promotedRuleCount,
+        vaultId: null,
+        promotedRuleCount: 7,
       }));
   });
 }
