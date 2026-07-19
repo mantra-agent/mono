@@ -160,6 +160,41 @@ export async function migrateLegacySkillPersonaPreferences(): Promise<void> {
   }
 }
 
+function builtinSkillDefinitionPatch(def: (typeof BUILTIN_SKILL_DEFAULTS)[number]) {
+  return {
+    description: def.description,
+    category: def.category,
+    activity: def.activity,
+    process: def.process,
+    whenToUse: def.whenToUse ?? `Used for ${def.category} operations`,
+    outputSpec: def.outputSpec ?? "See process instructions",
+    checklist: def.checklist ?? [],
+    version: def.version || "1.0",
+    author: def.author || "system",
+    status: "active",
+    addToMemory: def.addToMemory ?? true,
+    pinnedToContext: def.pinnedToContext ?? false,
+    updatedAt: new Date(),
+  };
+}
+
+function compareSkillVersions(left: string, right: string): number | null {
+  const parse = (value: string): number[] | null => {
+    const core = value.trim().split("-")[0];
+    if (!/^\d+(?:\.\d+)*$/.test(core)) return null;
+    return core.split(".").map((part) => Number(part));
+  };
+  const a = parse(left);
+  const b = parse(right);
+  if (!a || !b) return null;
+  const length = Math.max(a.length, b.length);
+  for (let i = 0; i < length; i++) {
+    const delta = (a[i] ?? 0) - (b[i] ?? 0);
+    if (delta !== 0) return delta < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
 export async function seedBuiltinSkills(): Promise<void> {
   let inserted = 0;
   let preserved = 0;
@@ -196,9 +231,63 @@ export async function seedBuiltinSkills(): Promise<void> {
         }
       }
 
-      const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, def.name));
+      let [existing] = await db
+        .select({
+          id: skills.id,
+          author: skills.author,
+          customized: skills.customized,
+          version: skills.version,
+        })
+        .from(skills)
+        .where(eq(skills.name, def.name));
 
       if (existing) {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const versionOrder = compareSkillVersions(existing.version, defVersion);
+          if (versionOrder === null) {
+            log.warn(`Skipped builtin skill sync for "${def.name}": invalid version ${existing.version} or ${defVersion}`);
+            break;
+          }
+          if (versionOrder > 0) {
+            if (existing.author === "system" && existing.customized !== true) {
+              log.warn(`Skipped builtin skill downgrade for "${def.name}" ${existing.version} → ${defVersion}`);
+            }
+            break;
+          }
+          if (
+            versionOrder === 0 ||
+            existing.author !== "system" ||
+            existing.customized === true
+          ) {
+            break;
+          }
+          const updated = await db
+            .update(skills)
+            .set(builtinSkillDefinitionPatch(def))
+            .where(
+              and(
+                eq(skills.id, existing.id),
+                eq(skills.author, "system"),
+                eq(skills.customized, false),
+                eq(skills.version, existing.version),
+              ),
+            )
+            .returning({ id: skills.id });
+          if (updated.length > 0) {
+            log.info(`Synchronized builtin skill "${def.name}" ${existing.version} → ${defVersion}`);
+            break;
+          }
+          [existing] = await db
+            .select({
+              id: skills.id,
+              author: skills.author,
+              customized: skills.customized,
+              version: skills.version,
+            })
+            .from(skills)
+            .where(eq(skills.name, def.name));
+          if (!existing) break;
+        }
         preserved++;
         continue;
       }
@@ -459,16 +548,15 @@ export async function resetSkillToDefault(skillName: string): Promise<boolean> {
   const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === skillName);
   if (!def) return false;
 
-  const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, skillName));
-  if (!existing) return false;
+  const [existing] = await db
+    .select({ id: skills.id, author: skills.author })
+    .from(skills)
+    .where(eq(skills.name, skillName));
+  if (!existing || existing.author !== "system") return false;
 
   await db.update(skills).set({
-    description: def.description,
-    category: def.category,
-    activity: def.activity,
-    process: def.process,
+    ...builtinSkillDefinitionPatch(def),
     customized: false,
-    updatedAt: new Date(),
   }).where(eq(skills.id, existing.id));
 
   log.debug(`Reset skill "${skillName}" to default`);

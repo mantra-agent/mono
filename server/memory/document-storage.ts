@@ -894,6 +894,9 @@ export class DocumentStorage {
       title: string | null;
       createdAt: string | null;
       metadata: Record<string, unknown>;
+      ownerUserId: string | null;
+      accountId: string | null;
+      vaultId: string | null;
     }>
   > {
     if (await targetReadsEnabled()) {
@@ -903,7 +906,8 @@ export class DocumentStorage {
       ];
       if (sinceTimestamp) conditions.push(sql`metadata->>'timestamp' >= ${sinceTimestamp}`);
       const rows = await db.execute(sql`
-        SELECT source_memory_entry_id, id, document_id, title, created_at, metadata
+        SELECT source_memory_entry_id, id, document_id, title, created_at, metadata,
+               owner_user_id, account_id, vault_id
         FROM document_store_documents
         WHERE ${sql.join(conditions, sql` AND `)}
         ORDER BY updated_at DESC
@@ -911,12 +915,16 @@ export class DocumentStorage {
       return ((rows.rows ?? rows) as Array<{
         source_memory_entry_id: number | null; id: number; document_id: string; title: string | null;
         created_at: string | Date | null; metadata: Record<string, unknown>;
+        owner_user_id: string | null; account_id: string | null; vault_id: string | null;
       }>).map((row) => ({
         id: row.source_memory_entry_id ?? row.id,
         docId: row.document_id,
         title: row.title,
         createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at ? String(row.created_at) : null,
         metadata: typeof row.metadata === "string" ? JSON.parse(row.metadata) : row.metadata || {},
+        ownerUserId: row.owner_user_id,
+        accountId: row.account_id,
+        vaultId: row.vault_id,
       }));
     }
     const conditions = [
@@ -932,7 +940,8 @@ export class DocumentStorage {
       conditions.push(sql`metadata->>'timestamp' >= ${sinceTimestamp}`);
     }
     const rows = await db.execute(sql`
-      SELECT id, source_id, title, created_at, metadata
+      SELECT id, source_id, title, created_at, metadata,
+             owner_user_id, account_id, vault_id
       FROM memory_entries
       WHERE ${sql.join(conditions, sql` AND `)}
       ORDER BY processed_at DESC
@@ -944,6 +953,9 @@ export class DocumentStorage {
         title: string | null;
         created_at: string | Date | null;
         metadata: Record<string, unknown>;
+        owner_user_id: string | null;
+        account_id: string | null;
+        vault_id: string | null;
       }>
     ).map((r) => ({
       id: r.id,
@@ -958,6 +970,9 @@ export class DocumentStorage {
         typeof r.metadata === "string"
           ? JSON.parse(r.metadata)
           : r.metadata || {},
+      ownerUserId: r.owner_user_id,
+      accountId: r.account_id,
+      vaultId: r.vault_id,
     }));
   }
 

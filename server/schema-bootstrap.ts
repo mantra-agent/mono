@@ -3884,7 +3884,7 @@ export async function runSchemaBootstrap(
     const { chatFileStorage } = await import("./chat-file-storage");
     const result = await chatFileStorage.reconcileInterruptedAssistantDrafts();
     log(
-      `[startup] stale streaming sessions scanned=${result.sessionsScanned} assistantDraftsReconciled=${result.draftsReconciled}`,
+      `[startup] stale streaming sessions scanned=${result.sessionsScanned} assistantDraftsReconciled=${result.draftsReconciled} failures=${result.failures}`,
       "boot",
     );
   });
