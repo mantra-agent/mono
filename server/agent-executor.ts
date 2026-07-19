@@ -9,16 +9,15 @@ import { safeStringify } from "./utils/safe-stringify";
 
 const log = createLogger("Executor");
 import { writeJournal, publishJournalToUI, type JournalEntry } from "./chat-journal";
-import { ACTIVITY_CHAT, ACTIVITY_FRAMING, type ActivityId } from "./job-profiles";
+import { ACTIVITY_CHAT, type ActivityId } from "./job-profiles";
 import { resolveModelCandidates, type ModelRoutingDecision } from "./model-routing";
 import { resolveSessionModelTierOverride } from "./session-model-tier-override";
 import { resolveThinkingConfig, thinkingBudgetToTier, type ResolvedThinking, type ThinkingTierConfig } from "./thinking-config";
 import { getThinkingInfo, getModelName } from "./model-registry";
 // logApiCall import removed — inference recording is handled at the model-client
 // boundary (recordInference). See logIterationCost comment for context.
-import { getPromptModulePromptEntry } from "./prompt-modules";
 import { generateToolCallId } from "./file-storage/utils";
-import { STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_TIMEOUT_EXTENDED_MS, COMPACTION_LLM_TIMEOUT_MS, POST_ABORT_DRAIN_GRACE_MS, withTimeout } from "./timeout";
+import { STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_TIMEOUT_EXTENDED_MS, POST_ABORT_DRAIN_GRACE_MS } from "./timeout";
 import pLimit from "p-limit";
 import { withQueryAttributionAsync } from "./db";
 import { abortTrace } from "./abort-trace";
@@ -26,6 +25,7 @@ import type { ExecutorStreamEvent, ModelProviderFailureInfo, PersonaSnapshot } f
 import type { SegmentChronologyEntry, SystemStepRecord } from "./chat-file-storage";
 import { ModelProviderError, type StreamEvent as ModelStreamEvent, type StreamMessage } from "./model-client";
 import { maybeOffloadToolOutput } from "./tool-output-artifacts";
+import { buildContinuationCapsule, renderContinuationCapsule, type ContinuationCapsuleEntry } from "./continuation-capsule";
 
 function normalizeMcpToolName(name: string | undefined): string | undefined {
   if (!name) return name;
@@ -382,14 +382,12 @@ function compactStage1(messages: ExecutorMessage[]): { messages: ExecutorMessage
 }
 
 interface Stage2CompactionTelemetry {
+  strategy: "deterministic_capsule";
   rangeStartIdx?: number;
   rangeEndIdx?: number;
   pairCount?: number;
-  serializedChars?: number;
-  summaryChars?: number;
-  llmAttempted: boolean;
-  fallbackUsed: boolean;
-  failureReason?: string;
+  sourceChars?: number;
+  capsuleChars?: number;
   skippedReason?: string;
   durationMs: number;
 }
@@ -413,31 +411,10 @@ interface CompactionTelemetry {
   stage2?: Stage2CompactionTelemetry;
 }
 
-function serializeIterationPairsForSummary(messages: ExecutorMessage[], startIdx: number, endIdx: number): string {
-  const parts: string[] = [];
-  for (let i = startIdx; i <= endIdx; i++) {
-    const msg = messages[i];
-    if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      const blocks = msg.content as ContentBlock[];
-      for (const b of blocks) {
-        if (b.type === "tool_use") {
-          const inputStr = JSON.stringify(b.input || {}).slice(0, 300);
-          parts.push(`Assistant called tool: ${b.name}(${inputStr})`);
-        } else if (b.type === "text" && b.text) {
-          parts.push(`Assistant said: ${b.text.slice(0, 200)}`);
-        }
-      }
-    } else if (msg.role === "tool_result" && Array.isArray(msg.content)) {
-      const blocks = msg.content as ContentBlock[];
-      for (const b of blocks) {
-        if (b.type === "tool_result") {
-          const resultPreview = (b.content || "").slice(0, 300);
-          parts.push(`Tool result (${b.is_error ? "ERROR" : "ok"}): ${resultPreview}`);
-        }
-      }
-    }
-  }
-  return parts.join("\n");
+interface PreparedStage2Capsule {
+  range: { startIdx: number; endIdx: number; pairCount: number };
+  content: string;
+  sourceChars: number;
 }
 
 function findCompactableRange(messages: ExecutorMessage[]): { startIdx: number; endIdx: number; pairCount: number } | null {
@@ -474,106 +451,129 @@ function findCompactableRange(messages: ExecutorMessage[]): { startIdx: number; 
   return { startIdx: firstIterationIdx, endIdx: preserveStart - 1, pairCount };
 }
 
-async function compactStage2(messages: ExecutorMessage[], contextLimit: number, signal?: AbortSignal): Promise<{ messages: ExecutorMessage[]; compacted: boolean; summaryContent?: string; telemetry: Stage2CompactionTelemetry }> {
+function executorEntriesForCapsule(
+  messages: ExecutorMessage[],
+  startIdx: number,
+  endIdx: number,
+): { entries: ContinuationCapsuleEntry[]; sourceChars: number } {
+  const entries: ContinuationCapsuleEntry[] = [];
+  const toolEntryById = new Map<string, ContinuationCapsuleEntry>();
+  let sourceChars = 0;
+
+  for (let i = startIdx; i <= endIdx; i++) {
+    const message = messages[i];
+    if (typeof message.content === "string") {
+      sourceChars += message.content.length;
+      entries.push(message.role === "tool_result"
+        ? {
+            role: "tool",
+            toolName: message.name,
+            toolResult: message.content,
+            toolCallId: message.toolCallId,
+          }
+        : { role: message.role, content: message.content });
+      continue;
+    }
+
+    const textParts: string[] = [];
+    for (const block of message.content) {
+      if (block.type === "text" && block.text) {
+        sourceChars += block.text.length;
+        textParts.push(block.text);
+        continue;
+      }
+      if (block.type === "tool_use") {
+        const args = block.input || {};
+        const serializedArgs = safeStringify(args, {
+          maxBytes: 8_000,
+          maxDepth: 5,
+          maxKeys: 24,
+          maxArrayItems: 24,
+          maxStrLen: 1_200,
+          label: "agent-executor.compaction-capsule.tool-args",
+        });
+        sourceChars += serializedArgs.length;
+        const toolEntry: ContinuationCapsuleEntry = {
+          role: "tool",
+          toolName: block.name,
+          toolArguments: args,
+          toolCallId: block.id,
+        };
+        entries.push(toolEntry);
+        if (block.id) toolEntryById.set(block.id, toolEntry);
+        continue;
+      }
+      if (block.type === "tool_result") {
+        const result = block.content || "";
+        sourceChars += result.length;
+        const existing = block.tool_use_id ? toolEntryById.get(block.tool_use_id) : undefined;
+        if (existing) {
+          existing.toolResult = result;
+          existing.isError = block.is_error;
+        } else {
+          entries.push({
+            role: "tool",
+            toolName: message.name,
+            toolResult: result,
+            toolCallId: block.tool_use_id,
+            isError: block.is_error,
+          });
+        }
+      }
+    }
+    if (textParts.length > 0) {
+      entries.push({ role: message.role === "tool_result" ? "tool" : message.role, content: textParts.join("\n") });
+    }
+  }
+
+  return { entries, sourceChars };
+}
+
+function prepareStage2Capsule(messages: ExecutorMessage[]): PreparedStage2Capsule | null {
+  const range = findCompactableRange(messages);
+  if (!range) return null;
+  const normalized = executorEntriesForCapsule(messages, range.startIdx, range.endIdx);
+  if (normalized.sourceChars < 200) return null;
+  const capsule = buildContinuationCapsule(normalized.entries);
+  const content = `[Working Context Capsule]\n\n${renderContinuationCapsule(capsule)}`;
+  return { range, content, sourceChars: normalized.sourceChars };
+}
+
+function compactStage2(
+  messages: ExecutorMessage[],
+  prepared = prepareStage2Capsule(messages),
+): { messages: ExecutorMessage[]; compacted: boolean; summaryContent?: string; telemetry: Stage2CompactionTelemetry } {
   const startedAt = Date.now();
   const beforeTokens = estimateTotalTokens(messages);
-  const range = findCompactableRange(messages);
-  if (!range) {
-    const telemetry: Stage2CompactionTelemetry = { llmAttempted: false, fallbackUsed: false, skippedReason: "no_compactable_range", durationMs: Date.now() - startedAt };
+  if (!prepared) {
+    const telemetry: Stage2CompactionTelemetry = {
+      strategy: "deterministic_capsule",
+      skippedReason: "no_compactable_range",
+      durationMs: Date.now() - startedAt,
+    };
     log.debug(`Stage 2 skipped: no compactable range found. messages=${messages.length}`);
     return { messages, compacted: false, telemetry };
   }
 
-  const serialized = serializeIterationPairsForSummary(messages, range.startIdx, range.endIdx);
-  if (serialized.length < 200) {
-    const telemetry: Stage2CompactionTelemetry = { rangeStartIdx: range.startIdx, rangeEndIdx: range.endIdx, pairCount: range.pairCount, serializedChars: serialized.length, llmAttempted: false, fallbackUsed: false, skippedReason: "serialized_content_too_small", durationMs: Date.now() - startedAt };
-    log.debug(`Stage 2 skipped: serialized content too small (${serialized.length} chars < 200). range=${range.startIdx}-${range.endIdx} pairs=${range.pairCount}`);
-    return { messages, compacted: false, telemetry };
-  }
-
-  let summary: string;
-  let fallbackUsed = false;
-  let failureReason: string | undefined;
-  try {
-    const promptEntry = await getPromptModulePromptEntry("chat-compactrunhistory", ACTIVITY_FRAMING);
-    const { chatCompletion } = await import("./model-client");
-    const result = await withTimeout(
-      chatCompletion({
-        activity: promptEntry.activity,
-        messages: [
-          { role: "system", content: promptEntry.prompt || "Summarize these tool call iterations concisely." },
-          { role: "user", content: serialized },
-        ],
-        maxTokens: 1500,
-        // Threading the run's abort signal here is the previously-missing wire-up:
-        // when an idle-timeout abort fires mid-compaction, the LLM call now
-        // actually unwinds instead of running to completion on a slot that is
-        // about to be released — the call that used to leak.
-        signal,
-        metadata: { source: "executor-compaction", activity: promptEntry.activity },
-      }),
-      COMPACTION_LLM_TIMEOUT_MS,
-      "compaction-llm",
-    );
-    summary = result.content;
-    log.debug(`Stage 2 compaction: LLM summarized ${range.pairCount} iteration pairs (${serialized.length} chars → ${summary.length} chars)`);
-  } catch (err: unknown) {
-    fallbackUsed = true;
-    failureReason = err instanceof Error ? err.message : String(err);
-    log.error(`Stage 2 compaction LLM call failed, falling back to heuristic: ${failureReason}`);
-    summary = heuristicSummary(messages, range.startIdx, range.endIdx);
-  }
-
-  const summaryContent = `[Session Compaction] Summary of ${range.pairCount} earlier tool call iterations in this run:\n\n${summary}`;
-  const summaryMessage: ExecutorMessage = {
-    role: "system",
-    content: summaryContent,
-  };
-
-  const before = messages.slice(0, range.startIdx);
-  const after = messages.slice(range.endIdx + 1);
-  const compacted = [...before, summaryMessage, ...after];
+  const { range, content, sourceChars } = prepared;
+  const capsuleMessage: ExecutorMessage = { role: "system", content };
+  const compacted = [
+    ...messages.slice(0, range.startIdx),
+    capsuleMessage,
+    ...messages.slice(range.endIdx + 1),
+  ];
   const afterTokens = estimateTotalTokens(compacted);
   const telemetry: Stage2CompactionTelemetry = {
     rangeStartIdx: range.startIdx,
     rangeEndIdx: range.endIdx,
     pairCount: range.pairCount,
-    serializedChars: serialized.length,
-    summaryChars: summary.length,
-    llmAttempted: true,
-    fallbackUsed,
-    failureReason,
+    sourceChars,
+    capsuleChars: content.length,
+    strategy: "deterministic_capsule",
     durationMs: Date.now() - startedAt,
   };
-  log.debug(`Stage 2 compacted: pairs=${range.pairCount} range=${range.startIdx}-${range.endIdx} messagesRemoved=${messages.length - compacted.length} tokens=${beforeTokens}→${afterTokens} serializedChars=${serialized.length} summaryChars=${summary.length} fallbackUsed=${fallbackUsed}`);
-
-  return { messages: compacted, compacted: true, summaryContent, telemetry };
-}
-
-function heuristicSummary(messages: ExecutorMessage[], startIdx: number, endIdx: number): string {
-  const actions: string[] = [];
-  let actionNum = 0;
-  for (let i = startIdx; i <= endIdx; i++) {
-    const msg = messages[i];
-    if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      for (const b of msg.content as ContentBlock[]) {
-        if (b.type === "tool_use") {
-          actionNum++;
-          const inputPreview = JSON.stringify(b.input || {}).slice(0, 150);
-          actions.push(`${actionNum}. ${b.name}(${inputPreview})`);
-        }
-      }
-    } else if (msg.role === "tool_result" && Array.isArray(msg.content)) {
-      for (const b of msg.content as ContentBlock[]) {
-        if (b.type === "tool_result" && actions.length > 0) {
-          const status = b.is_error ? "ERROR" : "ok";
-          const preview = (b.content || "").slice(0, 100);
-          actions[actions.length - 1] += ` → ${status}: ${preview}`;
-        }
-      }
-    }
-  }
-  return `[Prior actions in this run]\n${actions.join("\n")}`;
+  log.debug(`Stage 2 compacted deterministically: pairs=${range.pairCount} range=${range.startIdx}-${range.endIdx} messagesRemoved=${messages.length - compacted.length} tokens=${beforeTokens}→${afterTokens} sourceChars=${sourceChars} capsuleChars=${content.length}`);
+  return { messages: compacted, compacted: true, summaryContent: content, telemetry };
 }
 
 function compactStage3(messages: ExecutorMessage[]): { messages: ExecutorMessage[]; compacted: boolean } {
@@ -594,7 +594,6 @@ async function runCompaction(
   contextLimit: number,
   publish: (type: JournalEntry["type"], extra?: Partial<JournalEntry>) => void,
   hasRunStage2: boolean,
-  signal?: AbortSignal,
 ): Promise<{ messages: ExecutorMessage[]; stage: number; summaryContent?: string; telemetry: CompactionTelemetry }> {
   const threshold1 = Math.floor(contextLimit * 0.65);
   const threshold2 = Math.floor(contextLimit * 0.80);
@@ -636,6 +635,9 @@ async function runCompaction(
   log.debug(`Compaction needed: ${currentTokens} tokens > ${threshold1} threshold (65% of ${contextLimit})`);
   const compactionStepId = `compaction-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   publish("compacting", { stepId: compactionStepId, status: "active", content: "Working context compression started..." });
+  const preparedStage2Capsule = currentTokens > threshold2 && !hasRunStage2
+    ? prepareStage2Capsule(messages)
+    : null;
 
   const s1 = compactStage1(messages);
   if (s1.compacted) {
@@ -647,8 +649,8 @@ async function runCompaction(
 
   if (currentTokens > threshold2 && !hasRunStage2) {
     log.debug(`Stage 2 needed: ${currentTokens} tokens > ${threshold2} threshold (80%)`);
-    publish("compacting", { stepId: compactionStepId, status: "active", content: "Summarizing earlier working context..." });
-    const s2 = await compactStage2(messages, contextLimit, signal);
+    publish("compacting", { stepId: compactionStepId, status: "active", content: "Folding earlier working context..." });
+    const s2 = compactStage2(messages, preparedStage2Capsule);
     stage2Telemetry = s2.telemetry;
     if (s2.compacted) {
       messages = s2.messages;
@@ -2021,10 +2023,8 @@ export class AgentExecutor extends EventEmitter {
 
   private async handleEmergencyCompaction(
     messages: ExecutorMessage[],
-    contextLimit: number,
     options: ExecutorRunOptions,
     publish: RunIterationContext["publish"],
-    signal: AbortSignal,
   ): Promise<{ compacted: boolean; hasRunStage2: boolean }> {
     log.warn(`Context length error detected, attempting emergency compaction`);
     const compactionStepId = `emergency-compaction-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -2033,10 +2033,7 @@ export class AgentExecutor extends EventEmitter {
     let hasRunStage2 = false;
     const emergencyTokensBefore = estimateTotalTokens(messages);
     const emergencyMessagesBefore = messages.length;
-    // Use the run-owned abort signal, not options.signal — internally-triggered
-    // aborts (idle_timeout, zombie_timeout, circuit_breaker) live on the run's
-    // abortController, which options.signal does not track.
-    const s2 = await compactStage2(messages, contextLimit, signal);
+    const s2 = compactStage2(messages);
     if (s2.compacted) {
       messages.splice(0, messages.length, ...s2.messages);
       if (s2.summaryContent) {
@@ -2085,7 +2082,7 @@ export class AgentExecutor extends EventEmitter {
 
     const tokensBefore = estimateTotalTokens(messages);
     const messagesBefore = messages.length;
-    const compactionResult = await runCompaction(messages, contextLimit, ctx.publish, hasRunStage2, abortController.signal);
+    const compactionResult = await runCompaction(messages, contextLimit, ctx.publish, hasRunStage2);
     if (compactionResult.stage > 0) {
       messages.splice(0, messages.length, ...compactionResult.messages);
       const tokensAfter = estimateTotalTokens(messages);
@@ -2395,7 +2392,7 @@ export class AgentExecutor extends EventEmitter {
           throw new Error(`Context length error persists after ${MAX_EMERGENCY_RETRIES} emergency compaction retries. Context may be fundamentally too large.`);
         }
         log.debug(`Emergency compaction attempt ${ctx.emergencyCompactionRetries}/${MAX_EMERGENCY_RETRIES} runId=${ctx.runId}`);
-        const emergency = await this.handleEmergencyCompaction(messages, contextLimit, options, ctx.publish, abortController.signal);
+        const emergency = await this.handleEmergencyCompaction(messages, options, ctx.publish);
         if (emergency.compacted) {
           if (emergency.hasRunStage2) hasRunStage2 = true;
           return { finalContent: "", shouldContinue: true, hasRunStage2 };

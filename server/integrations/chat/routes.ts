@@ -1289,6 +1289,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     toolCalls?: any[];
     thinking?: string;
     publicRole?: "user" | "assistant";
+    capsule?: import("@shared/models/chat").ContinuationCapsule;
     archiveRefId?: string;
     archiveDownloadable?: boolean;
   };
@@ -1411,6 +1412,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           conversationHistory.push({
             role: "system",
             content: stamped,
+            capsule: msg.compaction?.capsule,
             archiveRefId: msg.compaction?.archiveRefId,
             archiveDownloadable: msg.compaction?.archiveDownloadable,
           });
