@@ -391,7 +391,6 @@ function downloadJson(data: unknown, filename: string) {
 
 function TimerActions({
   timer,
-  onToggle,
   onExport,
   onRunNow,
   onEdit,
@@ -399,7 +398,6 @@ function TimerActions({
   globalPaused,
 }: {
   timer: TimerItem;
-  onToggle: (enabled: boolean) => void;
   onExport: () => void;
   onRunNow: () => void;
   onEdit: () => void;
@@ -408,24 +406,6 @@ function TimerActions({
 }) {
   return (
     <>
-      <button
-        type="button"
-        className={cn(
-          "absolute right-14 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground",
-          timer.enabled ? "text-foreground" : "text-muted-foreground/50",
-        )}
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggle(!timer.enabled);
-        }}
-        onKeyDown={(event) => event.stopPropagation()}
-        aria-label={timer.enabled ? `Disable ${timer.name}` : `Enable ${timer.name}`}
-        data-testid={`button-enabled-${timer.id}`}
-      >
-        {timer.enabled
-          ? <CheckCircle2 className="h-3.5 w-3.5" />
-          : <Circle className="h-3.5 w-3.5" />}
-      </button>
       <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <button
@@ -483,8 +463,6 @@ function TimerTreeRow({
   const skillLabel = timer.type === "skill" && timer.skillId
     ? (skillNameMap[timer.skillId] || timer.skillId)
     : null;
-  const isMuted = !timer.enabled || globalPaused;
-
   return (
     <div className="min-w-0" data-testid={`tree-timer-${timer.id}`}>
       <div className="relative min-w-0 overflow-hidden">
@@ -499,19 +477,30 @@ function TimerTreeRow({
               setExpanded((current) => !current);
             }
           }}
-          className={cn(
-            "group relative flex w-full min-w-0 cursor-pointer select-none items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/70",
-            isMuted ? "text-muted-foreground" : "text-foreground",
-          )}
+          className="group relative flex w-full min-w-0 cursor-pointer select-none items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/70"
           data-testid={`card-timer-${timer.id}`}
         >
+          <button
+            type="button"
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground"
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggle(!timer.enabled);
+            }}
+            onKeyDown={(event) => event.stopPropagation()}
+            aria-label={timer.enabled ? `Disable ${timer.name}` : `Enable ${timer.name}`}
+            data-testid={`button-enabled-${timer.id}`}
+          >
+            {timer.enabled
+              ? <CheckCircle2 className="h-3.5 w-3.5 text-success" />
+              : <Circle className="h-3.5 w-3.5 text-muted-foreground/50" />}
+          </button>
           <TypeIcon className="h-3.5 w-3.5 shrink-0" />
-          <span className="min-w-0 flex-1 truncate pr-20" data-testid={`text-name-${timer.id}`}>
+          <span className="min-w-0 flex-1 truncate pr-14" data-testid={`text-name-${timer.id}`}>
             {timer.name}
           </span>
           <TimerActions
             timer={timer}
-            onToggle={onToggle}
             onExport={onExport}
             onRunNow={onRunNow}
             onEdit={onEdit}
