@@ -12,7 +12,7 @@ import { useSessionSubscription, type SessionStatus, type SessionStreamState } f
 import { useExecutorStatus } from "@/hooks/use-executor-status";
 import { useChatSend } from "@/hooks/use-chat-send";
 import { useToast } from "@/hooks/use-toast";
-import { useVoiceSessionOptional, type VoiceTranscriptEntry } from "@/hooks/use-voice-session";
+import { useVoiceSessionOptional } from "@/hooks/use-voice-session";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { deleteSessionTree, getSessionDeletionDescription } from "@/lib/session-deletion";
 import { emitSessionChanged, emitSessionListChanged } from "@/hooks/use-data-sync";
@@ -82,34 +82,6 @@ function getLastAssistantText(content: StreamingContent | null): string {
     .filter((s) => s.type === "text" && s.content)
     .map((s) => s.content);
   return textSegments.join("").trim();
-}
-
-type VoiceInputDisplay = { text: string; state: "empty" | "active" };
-
-function getVoiceInputDisplay(transcript: VoiceTranscriptEntry[]): VoiceInputDisplay {
-  const userEntries = transcript.filter((entry) => entry.source === "user" && !entry.isToolCall && entry.message.trim().length > 0);
-  if (userEntries.length === 0) return { text: "", state: "empty" };
-
-  const latest = userEntries[userEntries.length - 1];
-  if (latest.status !== "provisional") return { text: "", state: "empty" };
-
-  const latestTurnKey = latest.turnKey;
-  const latestTurnId = latest.turnId;
-  const sameTurn = userEntries.filter((entry) => {
-    if (entry.status !== "provisional") return false;
-    if (latestTurnKey) return entry.turnKey === latestTurnKey;
-    if (latestTurnId) return entry.turnId === latestTurnId;
-    return entry === latest;
-  });
-  const bySequence = sameTurn
-    .filter((entry) => typeof entry.sequence === "number")
-    .sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
-
-  const displayEntry = bySequence.at(-1) ?? sameTurn.at(-1) ?? latest;
-  return {
-    text: displayEntry.message,
-    state: "active",
-  };
 }
 
 function getVoiceInputPlaceholder(voiceSession: NonNullable<ReturnType<typeof useVoiceSessionOptional>> | null): string {
@@ -600,18 +572,18 @@ export function BottomBar({
     }
   }, [barState, sessionSub.canStop, sessionSub.status, sessionSub.streamingContent]);
 
-  const voiceInputDisplay = useMemo(() => {
+  const voiceInputText = useMemo(() => {
     if (
       !voiceSession ||
       voiceSession.status === "idle" ||
       voiceSession.transcriptSessionId !== focusedSessionId
     ) {
-      return { text: "", state: "empty" as const };
+      return "";
     }
-    return getVoiceInputDisplay(voiceSession.transcript);
-  }, [focusedSessionId, voiceSession?.status, voiceSession?.transcript, voiceSession?.transcriptSessionId]);
+    return voiceSession.userComposition;
+  }, [focusedSessionId, voiceSession?.status, voiceSession?.transcriptSessionId, voiceSession?.userComposition]);
 
-  const displayedInputText = voiceActive ? voiceInputDisplay.text : inputText;
+  const displayedInputText = voiceActive ? voiceInputText : inputText;
   const voiceInputPlaceholder = voiceActive ? getVoiceInputPlaceholder(voiceSession) : undefined;
 
   useEffect(() => {
@@ -903,7 +875,7 @@ export function BottomBar({
                   "focus:border-ring focus:ring-1 focus:ring-ring",
                   "disabled:cursor-not-allowed",
                   voiceActive
-                    ? cn("disabled:opacity-100", voiceInputDisplay.state === "active" ? "text-active" : "text-muted-foreground")
+                    ? cn("disabled:opacity-100", voiceInputText ? "text-active" : "text-muted-foreground")
                     : "disabled:opacity-50",
                   "overflow-hidden",
                 )}
