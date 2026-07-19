@@ -270,6 +270,7 @@ const POLLING_ENDPOINTS = new Set([
 
 const NOISY_REQUEST_ENDPOINTS = new Set([
   "/api/client-logs",
+  "/api/browser-telemetry",
 ]);
 
 app.use((req, res, next) => {

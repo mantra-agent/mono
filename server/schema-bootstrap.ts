@@ -115,6 +115,37 @@ async function ensureVoiceSessionActiveSchema(pool: {
 }
 
 
+
+async function ensureBrowserPerformanceTelemetrySchema(pool: { query: (sql: string, params?: unknown[]) => Promise<unknown> }): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS browser_performance_telemetry (
+      id SERIAL PRIMARY KEY,
+      scope TEXT NOT NULL DEFAULT 'user',
+      owner_user_id TEXT,
+      account_id TEXT,
+      created_by_user_id TEXT,
+      kind TEXT NOT NULL,
+      name TEXT NOT NULL,
+      value REAL NOT NULL,
+      unit TEXT NOT NULL,
+      route_key TEXT,
+      session_id TEXT,
+      client_turn_id TEXT,
+      bucket TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at TIMESTAMPTZ NOT NULL,
+      received_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query(`ALTER TABLE browser_performance_telemetry ADD COLUMN IF NOT EXISTS created_by_user_id TEXT`);
+  await pool.query(`ALTER TABLE browser_performance_telemetry ADD COLUMN IF NOT EXISTS bucket TEXT`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_browser_perf_scope_owner ON browser_performance_telemetry(scope, owner_user_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_browser_perf_account_received ON browser_performance_telemetry(account_id, received_at)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_browser_perf_kind_received ON browser_performance_telemetry(kind, received_at)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_browser_perf_session ON browser_performance_telemetry(session_id, received_at)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_browser_perf_retention ON browser_performance_telemetry(received_at)`);
+}
+
 async function ensureDocumentStoreDocumentsSchema(pool: { query: (sql: string, params?: unknown[]) => Promise<unknown> }): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS document_store_documents (
@@ -504,6 +535,7 @@ export async function runSchemaBootstrap(
   await ensureVoiceSessionActiveSchema(pool);
   await ensureDocumentStoreDocumentsSchema(pool);
   await ensureTimerOwnershipSchema(pool);
+  await ensureBrowserPerformanceTelemetrySchema(pool);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS communication_audiences (

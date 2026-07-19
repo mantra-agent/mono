@@ -231,13 +231,14 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: '{ "action": "search", "query": "meeting notes" }',
   },
   system: {
-    description: "System operations — get system state snapshot, create issues, retrieve runtime logs. Actions: state, create_issue, logs.",
-    whenToUse: "When needing a high-level view of system health, creating issue reports, or inspecting runtime logs for debugging.",
-    example: 'State: { "action": "state" }\nCreate issue: { "action": "create_issue", "title": "Login bug", "description": "..." }\nLogs: { "action": "logs", "level": "error", "limit": 50 }',
+    description: "System operations — get system state snapshot, create issues, retrieve runtime logs, and inspect frontend performance. Actions: state, create_issue, logs, frontend_performance.",
+    whenToUse: "When needing a high-level view of system health, creating issue reports, inspecting runtime logs, or reading the same frontend telemetry summary shown on the Performance page.",
+    example: 'State: { "action": "state" }\nCreate issue: { "action": "create_issue", "title": "Login bug", "description": "..." }\nLogs: { "action": "logs", "level": "error", "limit": 50 }\nFrontend: { "action": "frontend_performance", "hours": 24 }',
     actions: {
       state: { description: "Get a comprehensive snapshot of system state — memory counts, skill count, capabilities health, and more." },
       create_issue: { description: "Create a new issue to track a bug or improvement.", requiredParams: ["title"], optionalParams: ["description", "priority", "labels"] },
       logs: { description: "Retrieve recent runtime logs. Filter by level (debug/info/warn/error) and source module.", optionalParams: ["limit", "level", "source"] },
+      frontend_performance: { description: "Read the canonical browser telemetry summary used by the Performance page Frontend Experience section.", optionalParams: ["hours"] },
     },
   },
   meetings: {

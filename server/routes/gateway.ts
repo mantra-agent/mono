@@ -59,7 +59,7 @@ export async function registerGatewayRoutes(app: Express) {
     }
   });
 
-  app.get("/api/gateway/processes", async (_req, res) => {
+  app.get("/api/gateway/processes", async (req, res) => {
     const EXPECTED_PROCESS_COUNT = 7;
     const pid = process.pid;
     const uptime = Math.floor(process.uptime());
@@ -291,7 +291,7 @@ export async function registerGatewayRoutes(app: Express) {
 
     let resources: import("@shared/system-resources").SystemResourcesData | null = null;
     try {
-      const [{ getDbSaturationInfo, getInFlightStats, getSlowQueryStats, getInFlightHighThreshold, getLongRunningQueries }, { agentExecutor }, { admissionController }, { getZombieMetrics }, perfMon, { getRealtimeTransportMetrics }, { sessionManager }] = await Promise.all([
+      const [{ getDbSaturationInfo, getInFlightStats, getSlowQueryStats, getInFlightHighThreshold, getLongRunningQueries }, { agentExecutor }, { admissionController }, { getZombieMetrics }, perfMon, { getRealtimeTransportMetrics }, { sessionManager }, { getBrowserTelemetrySummary }] = await Promise.all([
         import("../db"),
         import("../agent-executor"),
         import("../run-admission"),
@@ -299,6 +299,7 @@ export async function registerGatewayRoutes(app: Express) {
         import("../performance-monitor"),
         import("../realtime-transport-metrics"),
         import("../session-manager"),
+        import("../browser-telemetry-storage"),
       ]);
 
       const now = Date.now();
@@ -319,6 +320,7 @@ export async function registerGatewayRoutes(app: Express) {
       const elAvg = diag?.eventLoopLag?.avg ?? 0;
       const transportMetrics = getRealtimeTransportMetrics();
       const sessionMetrics = sessionManager.getSubscriptionMetrics();
+      const frontendExperience = req.principal ? await getBrowserTelemetrySummary(req.principal, 24) : null;
 
       const slotRunIds = new Set(slots.map(s => s.runId));
       let divergence = 0;
@@ -409,6 +411,7 @@ export async function registerGatewayRoutes(app: Express) {
           value: divergence,
           detail: divergenceParts.length > 0 ? divergenceParts.join("; ") : "in sync",
         },
+        frontendExperience,
       };
     } catch (err: any) {
       failures.push(`resources: ${err?.message || String(err)}`);

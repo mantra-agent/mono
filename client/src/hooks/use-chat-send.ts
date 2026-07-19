@@ -2,6 +2,7 @@
 import { useState, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { createLogger } from "@/lib/logger";
+import { markChatAck, markChatSubmitted } from "@/lib/browser-telemetry";
 
 const log = createLogger("ChatSend");
 import type { ChatSession, PageContext } from "@shared/models/chat";
@@ -101,6 +102,7 @@ export function useChatSend(deps: UseChatSendDeps) {
     const submittedAt = new Date().toISOString();
     const clientTurnId = `turn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     log.debug("STREAM:SEND:START", { clientTurnId, sessionId: activeSession, submittedAt, attachedFileCount: attachedFiles.length });
+    markChatSubmitted(clientTurnId, activeSession);
     setIsSending(true);
     const messageText = text.trim();
     setPendingTurn({ clientTurnId, sessionId: activeSession, submittedAt, status: "posting", content: messageText });
@@ -152,6 +154,8 @@ export function useChatSend(deps: UseChatSendDeps) {
         const errBody = await response.json().catch(() => null);
         throw new Error(errBody?.error || "Failed to send message");
       }
+
+      markChatAck(clientTurnId, convId);
 
       const responseBody = await response.json() as {
         sessionKey?: string;
