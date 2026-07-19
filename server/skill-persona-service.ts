@@ -83,6 +83,24 @@ export async function setSkillPersonaPreference(
     throw new Error("A user principal with an account is required to set a skill persona preference");
   }
 
+  // Enforce skill visibility at the canonical mutation boundary. Route and
+  // tool callers may already resolve the skill, but no future caller can use
+  // this service to create a preference for another user's private skill.
+  const [visibleSkill] = await db
+    .select({ id: skills.id })
+    .from(skills)
+    .where(
+      combineWithVisibleScope(
+        principal,
+        skillScopeColumns,
+        eq(skills.id, skillId),
+      ),
+    )
+    .limit(1);
+  if (!visibleSkill) {
+    throw new Error("Skill not found or not visible to the current principal");
+  }
+
   if (personaId === null) {
     await db
       .delete(skillPersonaPreferences)
