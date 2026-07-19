@@ -10,7 +10,12 @@ import { withTimeout, STREAM_FINAL_MESSAGE_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";
 import { getSecretSync, onSecretChange } from "./secrets-store";
 import type { ToolDefinition } from "@shared/models/tools";
-import type { ModelProviderFailureInfo } from "@shared/models/chat";
+import type {
+  ModelProviderFailureInfo,
+  ProviderStreamProgressInfo,
+  ProviderTraceInfo,
+  ProviderTransportErrorInfo,
+} from "@shared/models/chat";
 import { createNamedSystemPrincipal } from "./principal";
 import { runWithPrincipal } from "./principal-context";
 import { resolveSessionModelTierOverride } from "./session-model-tier-override";
@@ -767,6 +772,129 @@ function sanitizeProviderDiagnostic(value: string | undefined): string | undefin
     .slice(0, MAX_PROVIDER_DIAGNOSTIC_CHARS);
 }
 
+function providerTransportErrorInfo(error: unknown, depth = 0, seen = new Set<object>()): ProviderTransportErrorInfo | undefined {
+  if (error === undefined || error === null || depth > 3) return undefined;
+  if (typeof error !== "object") {
+    return { message: sanitizeProviderDiagnostic(String(error)) };
+  }
+  if (seen.has(error)) return { message: "[Circular error cause]" };
+  seen.add(error);
+
+  const record = error as Record<string, unknown>;
+  const socketRecord = record.socket && typeof record.socket === "object"
+    ? record.socket as Record<string, unknown>
+    : undefined;
+  const numericSocketField = (key: string): number | undefined => {
+    const value = socketRecord?.[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  };
+  const stringSocketField = (key: string): string | undefined => {
+    const value = socketRecord?.[key];
+    return typeof value === "string" ? sanitizeProviderDiagnostic(value)?.slice(0, 256) : undefined;
+  };
+  const socket = socketRecord ? {
+    localAddress: stringSocketField("localAddress"),
+    localPort: numericSocketField("localPort"),
+    remoteAddress: stringSocketField("remoteAddress"),
+    remotePort: numericSocketField("remotePort"),
+    remoteFamily: stringSocketField("remoteFamily"),
+    timeout: numericSocketField("timeout"),
+    bytesWritten: numericSocketField("bytesWritten"),
+    bytesRead: numericSocketField("bytesRead"),
+  } : undefined;
+  const boundedSocket = socket && Object.values(socket).some((value) => value !== undefined) ? socket : undefined;
+  const errno = record.errno;
+
+  return {
+    name: typeof record.name === "string" ? sanitizeProviderDiagnostic(record.name)?.slice(0, 128) : undefined,
+    message: typeof record.message === "string" ? sanitizeProviderDiagnostic(record.message) : undefined,
+    code: typeof record.code === "string" || typeof record.code === "number"
+      ? sanitizeProviderDiagnostic(String(record.code))?.slice(0, 128)
+      : undefined,
+    errno: typeof errno === "string" || typeof errno === "number" ? errno : undefined,
+    syscall: typeof record.syscall === "string" ? sanitizeProviderDiagnostic(record.syscall)?.slice(0, 128) : undefined,
+    socket: boundedSocket,
+    cause: providerTransportErrorInfo(record.cause, depth + 1, seen),
+  };
+}
+
+function providerTraceInfo(headers: Headers): ProviderTraceInfo | undefined {
+  const read = (name: string): string | undefined => sanitizeProviderDiagnostic(headers.get(name) || undefined)?.slice(0, 256);
+  const trace: ProviderTraceInfo = {
+    responseDate: read("date"),
+    cfRay: read("cf-ray"),
+    cfCacheStatus: read("cf-cache-status"),
+    server: read("server"),
+    via: read("via"),
+    openaiProcessingMs: read("openai-processing-ms"),
+    envoyUpstreamServiceTime: read("x-envoy-upstream-service-time"),
+  };
+  return Object.values(trace).some((value) => value !== undefined) ? trace : undefined;
+}
+
+interface CodexStreamProgressState {
+  headersMs?: number;
+  firstEventAt?: number;
+  lastEventAt?: number;
+  eventCount: number;
+  bytesReceived: number;
+  lastEventType?: string;
+  lastSequenceNumber?: number;
+}
+
+function observeCodexProviderEvent(state: CodexStreamProgressState, chunk: CodexResponsesChunk): number {
+  const observedAt = Date.now();
+  if (state.firstEventAt === undefined) state.firstEventAt = observedAt;
+  state.lastEventAt = observedAt;
+  state.eventCount++;
+  state.lastEventType = chunk.type;
+  if (typeof chunk.sequence_number === "number") state.lastSequenceNumber = chunk.sequence_number;
+  return observedAt;
+}
+
+function codexStreamProgressInfo(
+  scope: CodexAttemptScope,
+  state: CodexStreamProgressState,
+  terminalEventSeen: boolean,
+): ProviderStreamProgressInfo {
+  const observedAt = Date.now();
+  const abortReason = scope.signal.aborted
+    ? providerTransportErrorInfo(scope.signal.reason)?.message || sanitizeProviderDiagnostic(String(scope.signal.reason))
+    : undefined;
+  return {
+    startedAt: new Date(scope.startedAt).toISOString(),
+    observedAt: new Date(observedAt).toISOString(),
+    elapsedMs: observedAt - scope.startedAt,
+    headersMs: state.headersMs,
+    firstEventMs: state.firstEventAt === undefined ? undefined : state.firstEventAt - scope.startedAt,
+    firstEventAt: state.firstEventAt === undefined ? undefined : new Date(state.firstEventAt).toISOString(),
+    lastEventMs: state.lastEventAt === undefined ? undefined : state.lastEventAt - scope.startedAt,
+    lastEventAt: state.lastEventAt === undefined ? undefined : new Date(state.lastEventAt).toISOString(),
+    eventCount: state.eventCount,
+    bytesReceived: state.bytesReceived,
+    lastEventType: sanitizeProviderDiagnostic(state.lastEventType)?.slice(0, 256),
+    lastSequenceNumber: state.lastSequenceNumber,
+    terminalEventSeen,
+    localAbort: scope.signal.aborted,
+    localAbortReason: abortReason,
+    timeToFirstEventTimedOut: scope.timedOut(),
+  };
+}
+
+function codexFailureDiagnostics(
+  scope: CodexAttemptScope,
+  state: CodexStreamProgressState,
+  terminalEventSeen: boolean,
+  response?: Response,
+  transportError?: unknown,
+): Partial<ModelProviderFailure> {
+  return {
+    transportError: providerTransportErrorInfo(transportError),
+    providerTrace: response ? providerTraceInfo(response.headers) : undefined,
+    streamProgress: codexStreamProgressInfo(scope, state, terminalEventSeen),
+  };
+}
+
 function providerFailureReference(failure: Pick<ModelProviderFailure, "providerRequestId" | "responseId" | "clientRequestId">): string | undefined {
   return failure.providerRequestId || failure.responseId || failure.clientRequestId;
 }
@@ -799,6 +927,10 @@ function buildProviderUserMessage(failure: Omit<ModelProviderFailure, "userMessa
     return `${providerName} did not begin responding within ${Math.round(CODEX_TIME_TO_FIRST_EVENT_MS / 1000)} seconds.${referenceSuffix}`;
   }
   if (failure.kind === "stream_interrupted") {
+    if (failure.streamProgress && !failure.streamProgress.localAbort) {
+      const responseStarted = failure.streamProgress.eventCount > 0 ? " after OpenAI began responding" : "";
+      return `The network connection to ${providerName} closed unexpectedly${responseStarted}. Mantra did not cancel the request. You can continue safely.${reportedSuffix}${referenceSuffix}`;
+    }
     return `The ${providerName} stream ended before the response completed.${reportedSuffix}${referenceSuffix}`;
   }
   if (failure.kind === "transport") {
@@ -964,6 +1096,7 @@ async function fetchCodexAttempt(
         bodySnippet: err?.message || "request timed out before response headers",
         clientRequestId: scope.clientRequestId,
         phase: "fetch",
+        diagnostics: codexFailureDiagnostics(scope, { eventCount: 0, bytesReceived: 0 }, false, undefined, err),
       });
     }
     if (err.name === "AbortError" || err.code === "ERR_CANCELED" || scope.signal.aborted) throw err;
@@ -973,6 +1106,7 @@ async function fetchCodexAttempt(
       message: err?.message || String(err),
       clientRequestId: scope.clientRequestId,
       phase: "fetch",
+      diagnostics: codexFailureDiagnostics(scope, { eventCount: 0, bytesReceived: 0 }, false, undefined, err),
     });
   }
 
@@ -1032,6 +1166,12 @@ function codexHttpAttemptError(response: Response, bodySnippet: string, scope: C
     providerRequestId: response.headers.get("x-request-id") || undefined,
     phase: "fetch",
     diagnostics: {
+      ...codexFailureDiagnostics(
+        scope,
+        { headersMs: Date.now() - scope.startedAt, eventCount: 0, bytesReceived: 0 },
+        false,
+        response,
+      ),
       ...detail,
       eventType: "http_response",
     },
@@ -1040,7 +1180,12 @@ function codexHttpAttemptError(response: Response, bodySnippet: string, scope: C
 
 function responsesProviderFailure(
   chunk: CodexResponsesChunk,
-  context: { clientRequestId: string; providerRequestId?: string; status?: number },
+  context: {
+    clientRequestId: string;
+    providerRequestId?: string;
+    status?: number;
+    diagnostics?: Partial<ModelProviderFailure>;
+  },
 ): ModelProviderAttemptError {
   const topLevelError = chunk.type === "error"
     ? { code: chunk.code, message: chunk.message, type: "error" }
@@ -1063,6 +1208,7 @@ function responsesProviderFailure(
     providerRequestId: context.providerRequestId,
     phase: "protocol",
     diagnostics: {
+      ...context.diagnostics,
       providerCode,
       providerType,
       providerMessage,
@@ -1213,6 +1359,11 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
       let firstEventSeen = false;
       let protocolFailure: ModelProviderAttemptError | undefined;
       let terminalEventSeen = false;
+      const progress: CodexStreamProgressState = {
+        headersMs: Date.now() - scope.startedAt,
+        eventCount: 0,
+        bytesReceived: 0,
+      };
 
       while (true) {
         let read: ReadableStreamReadResult<Uint8Array>;
@@ -1229,7 +1380,8 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
             bodySnippet: err?.message || "response body stalled before first event",
             clientRequestId: scope.clientRequestId,
             providerRequestId: response.headers.get("x-request-id") || undefined,
-            phase: "first_event",
+            phase: firstEventSeen ? "stream" : "first_event",
+            diagnostics: codexFailureDiagnostics(scope, progress, terminalEventSeen, response, err),
           });
         }
         if (read.done) {
@@ -1241,10 +1393,12 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
               clientRequestId: scope.clientRequestId,
               providerRequestId: response.headers.get("x-request-id") || undefined,
               phase: "first_event",
+              diagnostics: codexFailureDiagnostics(scope, progress, terminalEventSeen, response),
             });
           }
           break;
         }
+        progress.bytesReceived += read.value.byteLength;
         buffer += decoder.decode(read.value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
@@ -1266,9 +1420,11 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
               clientRequestId: scope.clientRequestId,
               providerRequestId: response.headers.get("x-request-id") || undefined,
               phase: "protocol",
+              diagnostics: codexFailureDiagnostics(scope, progress, terminalEventSeen, response),
             });
           }
 
+          observeCodexProviderEvent(progress, chunk);
           if (!firstEventSeen) {
             firstEventSeen = true;
             scope.markFirstEvent();
@@ -1294,6 +1450,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
             clientRequestId: scope.clientRequestId,
             providerRequestId: response.headers.get("x-request-id") || undefined,
             status: response.status,
+            diagnostics: codexFailureDiagnostics(scope, progress, terminalEventSeen, response),
           });
           else if (chunk.type === "response.completed" || chunk.type === "response.incomplete") terminalEventSeen = true;
         }
@@ -1309,6 +1466,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
           clientRequestId: scope.clientRequestId,
           providerRequestId: response.headers.get("x-request-id") || undefined,
           phase: firstEventSeen ? "stream" : "first_event",
+          diagnostics: codexFailureDiagnostics(scope, progress, terminalEventSeen, response),
         });
       }
       if (!content) log.warn(`openai-subscription completion: empty content for model=${codexModel}`);
@@ -1858,6 +2016,11 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
       let attemptFailure: ModelProviderAttemptError | undefined;
       let firstProviderEventSeen = false;
       let terminalEventSeen = false;
+      const progress: CodexStreamProgressState = {
+        headersMs: Date.now() - scope.startedAt,
+        eventCount: 0,
+        bytesReceived: 0,
+      };
 
       sseLoop: while (true) {
         let read: ReadableStreamReadResult<Uint8Array>;
@@ -1875,6 +2038,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
             clientRequestId: scope.clientRequestId,
             providerRequestId: response.headers.get("x-request-id") || undefined,
             phase: firstProviderEventSeen ? "stream" : "first_event",
+            diagnostics: codexFailureDiagnostics(scope, progress, terminalEventSeen, response, err),
           });
           break;
         }
@@ -1888,10 +2052,12 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
               clientRequestId: scope.clientRequestId,
               providerRequestId: response.headers.get("x-request-id") || undefined,
               phase: firstProviderEventSeen ? "stream" : "first_event",
+              diagnostics: codexFailureDiagnostics(scope, progress, terminalEventSeen, response),
             });
           }
           break;
         }
+        progress.bytesReceived += value.byteLength;
         buffer += decoder.decode(value, { stream: true });
 
         const lines = buffer.split("\n");
@@ -1915,10 +2081,12 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
               clientRequestId: scope.clientRequestId,
               providerRequestId: response.headers.get("x-request-id") || undefined,
               phase: "protocol",
+              diagnostics: codexFailureDiagnostics(scope, progress, terminalEventSeen, response),
             });
             break sseLoop;
           }
 
+          observeCodexProviderEvent(progress, chunk);
           scope.markFirstEvent();
           if (!firstProviderEventSeen) {
             firstProviderEventSeen = true;
@@ -1958,6 +2126,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
             clientRequestId: scope.clientRequestId,
             providerRequestId: response.headers.get("x-request-id") || undefined,
             status: response.status,
+            diagnostics: codexFailureDiagnostics(scope, progress, terminalEventSeen, response),
           });
             attemptFailure.retryable = attemptFailure.retryable && !yieldedRealEvent;
             break sseLoop;
