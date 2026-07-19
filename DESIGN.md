@@ -407,6 +407,13 @@ hierarchy-tree:
     editing: "fields and dates edit in place"
     references: "canonical reference widgets expand inline when context is useful"
     nesting: "visible rails or indentation"
+  panel:
+    orientation: "always vertical"
+    mobile: "full display"
+    web: "left third of the screen"
+  detail:
+    expansion: "inline beneath the selected row, indented with a quiet left rail"
+    split-view: "never"
 ```
 
 #### Hierarchy Tree rules
@@ -419,6 +426,8 @@ hierarchy-tree:
 - Edit short fields in place. Use `InlineDatePicker` for dates.
 - Render canonical references with the shared reference renderer. When a reference has useful Simple-view context, expand that context directly beneath its row rather than opening a detached card.
 - Prefer one compact tree over separate cards, lists, and detail fragments.
+- Selected objects expand inline beneath their row, accordion-style, reusing the object's detail styling inside the expanded body (as in Projects and Simple). Never open a horizontal split-view master-detail panel for a hierarchy tree page.
+- The hierarchy tree panel is always vertical. On mobile it takes the full display. On web it takes the left third of the screen; the remaining canvas stays quiet `bg-background`.
 
 ### Zero states
 
