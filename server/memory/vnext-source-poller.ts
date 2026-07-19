@@ -448,9 +448,9 @@ export async function processSettledSources(): Promise<{
   // vNext boundary, and is deleted only after durable admission succeeds.
   const { migrateAuditedRules } = await import("./legacy-rule-migration");
   const ruleMigration = await migrateAuditedRules();
-  if (ruleMigration.scanned > 0 || ruleMigration.errors > 0) {
+  if (ruleMigration.scanned > 0 || ruleMigration.restored > 0 || ruleMigration.errors > 0) {
     log.info(
-      `processSettledSources: Rule audit scanned=${ruleMigration.scanned} retained=${ruleMigration.retained} deleted=${ruleMigration.deleted} errors=${ruleMigration.errors}`,
+      `processSettledSources: Rule audit scanned=${ruleMigration.scanned} retained=${ruleMigration.retained} restored=${ruleMigration.restored} deleted=${ruleMigration.deleted} errors=${ruleMigration.errors}`,
     );
   }
 
