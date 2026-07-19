@@ -1,4 +1,14 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import {
+  forceCollide,
+  forceLink,
+  forceManyBody,
+  forceSimulation,
+  forceX,
+  forceY,
+  forceZ,
+  type Simulation,
+} from "@/lib/d3-force-3d";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { MemorySourceIcon } from "@/components/memory/memory-source-icon";
@@ -35,11 +45,18 @@ interface MemoryGraph3DProps {
 }
 
 interface SceneNode extends MemoryGraph3DNode {
-  position: THREE.Vector3;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
   radius: number;
 }
 
 interface SceneLink extends MemoryGraph3DLink {
+  source: number | SceneNode;
+  target: number | SceneNode;
   fromIndex: number;
   toIndex: number;
 }
@@ -55,14 +72,17 @@ interface GraphRuntime {
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
   nodes: SceneNode[];
-  requestRender: () => void;
+  requestRender: (refreshLabels?: boolean) => void;
   setSelectedNodeId: (nodeId: number | null) => void;
 }
 
 const CURVE_SEGMENTS = 3;
-const MAX_OVERLAY_NODES = 40;
-const MAX_RENDERED_LINKS = 8_000;
+const MAX_RENDERED_LINKS = 2_500;
 const LARGE_GRAPH_THRESHOLD = 1_000;
+const LABEL_PERCENTILE = 0.1;
+const LABEL_POSITION_TICKS = 4;
+const LABEL_REFRESH_TICKS = 12;
+const INITIAL_LAYOUT_SCALE = 20;
 
 const nodeVertexShader = `
   attribute float aVisibility;
@@ -117,38 +137,45 @@ function seededUnit(id: number, salt: number): number {
   return value - Math.floor(value);
 }
 
-function createNodePosition(node: MemoryGraph3DNode, index: number, count: number, maxDegree: number): THREE.Vector3 {
-  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
-  const normalizedY = 1 - ((index + 0.5) / Math.max(1, count)) * 2;
-  const radial = Math.sqrt(Math.max(0, 1 - normalizedY * normalizedY));
-  const theta = goldenAngle * index + seededUnit(node.id, 1) * 0.6;
-  const graphRadius = Math.max(16, Math.cbrt(Math.max(1, count)) * 7);
-  const degreePull = Math.pow(node.degree / Math.max(1, maxDegree), 0.35);
-  const depth = 0.72 + seededUnit(node.id, 2) * 0.34 - degreePull * 0.18;
-  return new THREE.Vector3(
-    Math.cos(theta) * radial * graphRadius * depth,
-    normalizedY * graphRadius * depth,
-    Math.sin(theta) * radial * graphRadius * depth,
-  );
+function createInitialPosition(nodeId: number, index: number, count: number): [number, number, number] {
+  const radius = INITIAL_LAYOUT_SCALE * Math.cbrt(0.5 + index);
+  const roll = index * Math.PI * (3 - Math.sqrt(5));
+  const yaw = index * Math.PI * 20 / (9 + Math.sqrt(221));
+  const jitter = 0.82 + seededUnit(nodeId, 2) * 0.36;
+  return [
+    radius * Math.sin(roll) * Math.cos(yaw) * jitter,
+    radius * Math.cos(roll) * jitter,
+    radius * Math.sin(roll) * Math.sin(yaw) * jitter,
+  ];
 }
 
 function buildSceneGraph(nodes: MemoryGraph3DNode[], links: MemoryGraph3DLink[]) {
   const maxDegree = Math.max(1, ...nodes.map((node) => node.degree));
-  const sceneNodes: SceneNode[] = nodes.map((node, index) => ({
-    ...node,
-    position: createNodePosition(node, index, nodes.length, maxDegree),
-    radius: 1.55 + Math.pow(node.degree / maxDegree, 0.48) * 3.1,
-  }));
+  const sceneNodes: SceneNode[] = nodes.map((node, index) => {
+    const [x, y, z] = createInitialPosition(node.id, index, nodes.length);
+    const degreeRatio = node.degree / maxDegree;
+    return {
+      ...node,
+      x,
+      y,
+      z,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      radius: 0.8 + Math.pow(degreeRatio, 0.6) * 9.2,
+    };
+  });
   const nodeIndex = new Map(sceneNodes.map((node, index) => [node.id, index]));
-  const sceneLinks = links
-    .flatMap((link): SceneLink[] => {
-      const fromIndex = nodeIndex.get(link.fromId);
-      const toIndex = nodeIndex.get(link.toId);
-      return fromIndex == null || toIndex == null ? [] : [{ ...link, fromIndex, toIndex }];
-    })
-    .sort((left, right) => right.strength - left.strength)
+  const simulationLinks = links.flatMap((link): SceneLink[] => {
+    const fromIndex = nodeIndex.get(link.fromId);
+    const toIndex = nodeIndex.get(link.toId);
+    if (fromIndex == null || toIndex == null || fromIndex === toIndex) return [];
+    return [{ ...link, source: link.fromId, target: link.toId, fromIndex, toIndex }];
+  });
+  const renderedLinks = [...simulationLinks]
+    .sort((left, right) => right.strength - left.strength || left.id - right.id)
     .slice(0, MAX_RENDERED_LINKS);
-  return { sceneNodes, sceneLinks, nodeIndex };
+  return { sceneNodes, simulationLinks, renderedLinks, nodeIndex };
 }
 
 function fitCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls, nodes: SceneNode[]) {
@@ -156,53 +183,48 @@ function fitCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls, nod
   const bounds = new THREE.Box3();
   let maxNodeRadius = 0;
   nodes.forEach((node) => {
-    bounds.expandByPoint(node.position);
+    bounds.expandByPoint(new THREE.Vector3(node.x, node.y, node.z));
     maxNodeRadius = Math.max(maxNodeRadius, node.radius);
   });
   bounds.expandByScalar(maxNodeRadius);
   const sphere = bounds.getBoundingSphere(new THREE.Sphere());
-  const distance = Math.max(24, sphere.radius / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.18);
+  const distance = Math.max(30, sphere.radius / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.16);
   const direction = camera.position.clone().sub(controls.target).normalize();
   if (direction.lengthSq() === 0) direction.set(0.62, 0.36, 1);
   controls.target.copy(sphere.center);
   camera.position.copy(sphere.center).add(direction.multiplyScalar(distance));
-  camera.near = Math.max(0.1, distance / 220);
-  camera.far = Math.max(500, distance * 16);
+  camera.near = Math.max(0.1, distance / 260);
+  camera.far = Math.max(800, distance * 18);
   camera.updateProjectionMatrix();
   controls.update();
 }
 
-function createCurveControlPoint(from: SceneNode, to: SceneNode, linkId: number) {
-  const direction = to.position.clone().sub(from.position).normalize();
-  const axis = Math.abs(direction.y) < 0.85 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
-  const perpendicular = direction.clone().cross(axis).normalize();
-  return from.position
-    .clone()
-    .add(to.position)
-    .multiplyScalar(0.5)
-    .addScaledVector(perpendicular, 0.9 + seededUnit(linkId, 21) * 2.1);
-}
-
-function writeQuadraticCurvePoint(
-  from: THREE.Vector3,
-  control: THREE.Vector3,
-  to: THREE.Vector3,
+function writeQuadraticPoint(
+  positions: Float32Array,
+  offset: number,
+  fromX: number,
+  fromY: number,
+  fromZ: number,
+  controlX: number,
+  controlY: number,
+  controlZ: number,
+  toX: number,
+  toY: number,
+  toZ: number,
   progress: number,
-  target: THREE.Vector3,
 ) {
   const inverse = 1 - progress;
-  target.copy(from)
-    .multiplyScalar(inverse * inverse)
-    .addScaledVector(control, 2 * inverse * progress)
-    .addScaledVector(to, progress * progress);
+  positions[offset] = inverse * inverse * fromX + 2 * inverse * progress * controlX + progress * progress * toX;
+  positions[offset + 1] = inverse * inverse * fromY + 2 * inverse * progress * controlY + progress * progress * toY;
+  positions[offset + 2] = inverse * inverse * fromZ + 2 * inverse * progress * controlZ + progress * progress * toZ;
 }
 
 function labelsOverlap(rect: DOMRect, occupied: DOMRect[]) {
   return occupied.some((other) => !(
-    rect.right + 6 < other.left
-    || rect.left - 6 > other.right
-    || rect.bottom + 4 < other.top
-    || rect.top - 4 > other.bottom
+    rect.right + 8 < other.left
+    || rect.left - 8 > other.right
+    || rect.bottom + 6 < other.top
+    || rect.top - 6 > other.bottom
   ));
 }
 
@@ -213,6 +235,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
   const hostRef = useRef<HTMLDivElement>(null);
   const labelRefs = useRef(new Map<number, HTMLDivElement>());
   const runtimeRef = useRef<GraphRuntime | null>(null);
+  const [visibleLabelNodeIds, setVisibleLabelNodeIds] = useState<number[]>([]);
   const selectedNodeIdRef = useRef(selectedNodeId);
   selectedNodeIdRef.current = selectedNodeId;
   const onNodeSelectRef = useRef(onNodeSelect);
@@ -221,15 +244,15 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
   onNodeHoverRef.current = onNodeHover;
 
   const overlayNodes = useMemo(() => {
-    const highestInformationNodes = [...nodes]
-      .sort((left, right) => right.degree - left.degree || left.id - right.id)
-      .slice(0, MAX_OVERLAY_NODES);
-    const selectedNode = selectedNodeId == null ? null : nodes.find((node) => node.id === selectedNodeId);
-    if (selectedNode && !highestInformationNodes.some((node) => node.id === selectedNode.id)) {
-      highestInformationNodes.push(selectedNode);
-    }
-    return highestInformationNodes;
-  }, [nodes, selectedNodeId]);
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const candidates = visibleLabelNodeIds.flatMap((nodeId): MemoryGraph3DNode[] => {
+      const node = nodeById.get(nodeId);
+      return node == null ? [] : [node];
+    });
+    const selectedNode = selectedNodeId == null ? null : nodeById.get(selectedNodeId);
+    if (selectedNode && !candidates.some((node) => node.id === selectedNode.id)) candidates.push(selectedNode);
+    return candidates;
+  }, [nodes, selectedNodeId, visibleLabelNodeIds]);
 
   useImperativeHandle(forwardedRef, () => ({
     zoomIn: () => {
@@ -237,7 +260,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       if (!runtime) return;
       runtime.camera.position.lerp(runtime.controls.target, 0.2);
       runtime.controls.update();
-      runtime.requestRender();
+      runtime.requestRender(true);
     },
     zoomOut: () => {
       const runtime = runtimeRef.current;
@@ -245,13 +268,13 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       const offset = runtime.camera.position.clone().sub(runtime.controls.target).multiplyScalar(1.25);
       runtime.camera.position.copy(runtime.controls.target).add(offset);
       runtime.controls.update();
-      runtime.requestRender();
+      runtime.requestRender(true);
     },
     fitToView: () => {
       const runtime = runtimeRef.current;
       if (!runtime) return;
       fitCamera(runtime.camera, runtime.controls, runtime.nodes);
-      runtime.requestRender();
+      runtime.requestRender(true);
     },
   }), []);
 
@@ -260,14 +283,18 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
   }, [selectedNodeId]);
 
   useEffect(() => {
+    runtimeRef.current?.requestRender();
+  }, [overlayNodes]);
+
+  useEffect(() => {
     const host = hostRef.current;
     if (!host || nodes.length === 0) return;
 
-    const { sceneNodes, sceneLinks, nodeIndex } = buildSceneGraph(nodes, links);
+    const { sceneNodes, simulationLinks, renderedLinks, nodeIndex } = buildSceneGraph(nodes, links);
     const sceneNodeById = new Map(sceneNodes.map((node) => [node.id, node]));
     const isLargeGraph = sceneNodes.length >= LARGE_GRAPH_THRESHOLD;
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 2_000);
+    const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 4_000);
     camera.position.set(30, 20, 45);
 
     const renderer = new THREE.WebGLRenderer({
@@ -290,8 +317,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     controls.rotateSpeed = 0.58;
     controls.zoomSpeed = 0.9;
     controls.panSpeed = 0.68;
-    controls.minDistance = 6;
-    controls.maxDistance = 500;
+    controls.minDistance = 8;
+    controls.maxDistance = 1_200;
     controls.screenSpacePanning = true;
 
     const signalColor = colorFromToken("--cta");
@@ -318,101 +345,150 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       side: THREE.FrontSide,
     });
     const nodeMesh = new THREE.InstancedMesh(nodeGeometry, nodeMaterial, sceneNodes.length);
-    nodeMesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-    const transform = new THREE.Object3D();
-    sceneNodes.forEach((node, index) => {
-      transform.position.copy(node.position);
-      transform.scale.setScalar(node.radius);
-      transform.updateMatrix();
-      nodeMesh.setMatrixAt(index, transform.matrix);
-    });
-    nodeMesh.instanceMatrix.needsUpdate = true;
-    nodeMesh.computeBoundingSphere();
+    nodeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    nodeMesh.frustumCulled = false;
     scene.add(nodeMesh);
 
-    const linkPositions = new Float32Array(sceneLinks.length * CURVE_SEGMENTS * 6);
+    const linkPositions = new Float32Array(renderedLinks.length * CURVE_SEGMENTS * 6);
+    const linkColors = new Float32Array(renderedLinks.length * CURVE_SEGMENTS * 6);
     const linkGeometry = new THREE.BufferGeometry();
-    const curvePoint = new THREE.Vector3();
-    sceneLinks.forEach((link, linkIndex) => {
-      const fromNode = sceneNodes[link.fromIndex];
-      const toNode = sceneNodes[link.toIndex];
-      const direction = toNode.position.clone().sub(fromNode.position).normalize();
-      const from = fromNode.position.clone().addScaledVector(direction, fromNode.radius * 0.94);
-      const to = toNode.position.clone().addScaledVector(direction, -toNode.radius * 0.94);
-      const control = createCurveControlPoint(fromNode, toNode, link.id);
+    const baseLinkColor = signalColor.clone().multiplyScalar(0.34);
+    renderedLinks.forEach((link, linkIndex) => {
+      const brightness = 0.32 + Math.pow(Math.max(0, link.strength), 2.4) * 0.68;
       for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
         const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
-        writeQuadraticCurvePoint(from, control, to, segment / CURVE_SEGMENTS, curvePoint);
-        curvePoint.toArray(linkPositions, offset);
-        writeQuadraticCurvePoint(from, control, to, (segment + 1) / CURVE_SEGMENTS, curvePoint);
-        curvePoint.toArray(linkPositions, offset + 3);
+        linkColors[offset] = baseLinkColor.r * brightness;
+        linkColors[offset + 1] = baseLinkColor.g * brightness;
+        linkColors[offset + 2] = baseLinkColor.b * brightness;
+        linkColors[offset + 3] = baseLinkColor.r * brightness;
+        linkColors[offset + 4] = baseLinkColor.g * brightness;
+        linkColors[offset + 5] = baseLinkColor.b * brightness;
       }
     });
-    linkGeometry.setAttribute("position", new THREE.BufferAttribute(linkPositions, 3));
-    linkGeometry.computeBoundingSphere();
+    linkGeometry.setAttribute("position", new THREE.BufferAttribute(linkPositions, 3).setUsage(THREE.DynamicDrawUsage));
+    linkGeometry.setAttribute("color", new THREE.BufferAttribute(linkColors, 3));
     const linkMaterial = new THREE.LineBasicMaterial({
-      color: signalColor.clone().multiplyScalar(0.52),
+      vertexColors: true,
       transparent: true,
-      opacity: 0.42,
+      opacity: 0.18,
       depthWrite: false,
     });
-    scene.add(new THREE.LineSegments(linkGeometry, linkMaterial));
+    const linkLines = new THREE.LineSegments(linkGeometry, linkMaterial);
+    linkLines.frustumCulled = false;
+    scene.add(linkLines);
 
-    const dustCount = isLargeGraph ? 80 : 140;
-    const dustPositions = new Float32Array(dustCount * 3);
-    const bounds = new THREE.Box3();
-    sceneNodes.forEach((node) => bounds.expandByPoint(node.position));
-    const boundingSphere = bounds.getBoundingSphere(new THREE.Sphere());
-    for (let index = 0; index < dustCount; index += 1) {
-      const theta = seededUnit(index, 10) * Math.PI * 2;
-      const phi = Math.acos(2 * seededUnit(index, 11) - 1);
-      const radius = boundingSphere.radius * (0.32 + Math.pow(seededUnit(index, 12), 0.62) * 1.06);
-      dustPositions[index * 3] = boundingSphere.center.x + Math.sin(phi) * Math.cos(theta) * radius;
-      dustPositions[index * 3 + 1] = boundingSphere.center.y + Math.cos(phi) * radius * 0.72;
-      dustPositions[index * 3 + 2] = boundingSphere.center.z + Math.sin(phi) * Math.sin(theta) * radius;
-    }
-    const dustGeometry = new THREE.BufferGeometry();
-    dustGeometry.setAttribute("position", new THREE.BufferAttribute(dustPositions, 3));
-    const dustMaterial = new THREE.PointsMaterial({
-      color: signalColor.clone().multiplyScalar(0.62),
-      size: isLargeGraph ? 0.42 : 0.58,
-      sizeAttenuation: true,
-      transparent: true,
-      opacity: 0.38,
-      depthWrite: false,
-    });
-    scene.add(new THREE.Points(dustGeometry, dustMaterial));
-
+    const transform = new THREE.Object3D();
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     const projected = new THREE.Vector3();
+    const frustum = new THREE.Frustum();
+    const viewProjection = new THREE.Matrix4();
+    const nodeSphere = new THREE.Sphere();
+    let previousVisibleLabelNodeIds: number[] = [];
     let selectedIndex = selectedNodeIdRef.current == null ? null : nodeIndex.get(selectedNodeIdRef.current) ?? null;
     let hoveredIndex: number | null = null;
     let pointerDown = { x: 0, y: 0 };
     let pendingPointer = { x: 0, y: 0 };
     let renderFrame = 0;
     let pointerFrame = 0;
+    let refreshLabelsOnRender = false;
+    let simulationTick = 0;
 
-    function syncNodeAppearance(index: number | null) {
-      if (index == null) return;
-      const node = sceneNodes[index];
-      const selected = selectedIndex === index;
-      const hovered = hoveredIndex === index;
-      transform.position.copy(node.position);
-      transform.scale.setScalar(node.radius * (selected ? 1.22 : hovered ? 1.12 : 1));
-      transform.updateMatrix();
-      nodeMesh.setMatrixAt(index, transform.matrix);
-      emphasis[index] = selected ? 1 : hovered ? 0.7 : 0;
-      (node.pendingDeletion ? deletionColor : selected || hovered ? activeColor : signalColor).toArray(tints, index * 3);
+    function syncNodeMatrices() {
+      sceneNodes.forEach((node, index) => {
+        const selected = selectedIndex === index;
+        const hovered = hoveredIndex === index;
+        transform.position.set(node.x, node.y, node.z);
+        transform.scale.setScalar(node.radius * (selected ? 1.22 : hovered ? 1.12 : 1));
+        transform.updateMatrix();
+        nodeMesh.setMatrixAt(index, transform.matrix);
+      });
+      nodeMesh.instanceMatrix.needsUpdate = true;
     }
 
-    function commitNodeAppearance(indices: Array<number | null>) {
+    function syncLinkPositions() {
+      renderedLinks.forEach((link, linkIndex) => {
+        const from = sceneNodes[link.fromIndex];
+        const to = sceneNodes[link.toIndex];
+        let dx = to.x - from.x;
+        let dy = to.y - from.y;
+        let dz = to.z - from.z;
+        const distance = Math.max(0.001, Math.sqrt(dx * dx + dy * dy + dz * dz));
+        dx /= distance;
+        dy /= distance;
+        dz /= distance;
+        const fromX = from.x + dx * from.radius * 0.94;
+        const fromY = from.y + dy * from.radius * 0.94;
+        const fromZ = from.z + dz * from.radius * 0.94;
+        const toX = to.x - dx * to.radius * 0.94;
+        const toY = to.y - dy * to.radius * 0.94;
+        const toZ = to.z - dz * to.radius * 0.94;
+        let perpendicularX: number;
+        let perpendicularY: number;
+        let perpendicularZ: number;
+        if (Math.abs(dy) < 0.85) {
+          perpendicularX = -dz;
+          perpendicularY = 0;
+          perpendicularZ = dx;
+        } else {
+          perpendicularX = 0;
+          perpendicularY = dz;
+          perpendicularZ = -dy;
+        }
+        const perpendicularLength = Math.max(0.001, Math.sqrt(
+          perpendicularX * perpendicularX + perpendicularY * perpendicularY + perpendicularZ * perpendicularZ,
+        ));
+        const arc = 0.9 + seededUnit(link.id, 21) * 2.1;
+        const controlX = (fromX + toX) * 0.5 + perpendicularX / perpendicularLength * arc;
+        const controlY = (fromY + toY) * 0.5 + perpendicularY / perpendicularLength * arc;
+        const controlZ = (fromZ + toZ) * 0.5 + perpendicularZ / perpendicularLength * arc;
+        for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
+          const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
+          writeQuadraticPoint(linkPositions, offset, fromX, fromY, fromZ, controlX, controlY, controlZ, toX, toY, toZ, segment / CURVE_SEGMENTS);
+          writeQuadraticPoint(linkPositions, offset + 3, fromX, fromY, fromZ, controlX, controlY, controlZ, toX, toY, toZ, (segment + 1) / CURVE_SEGMENTS);
+        }
+      });
+      (linkGeometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+    }
+
+    function syncNodeAppearance(indices: Array<number | null>) {
       const uniqueIndices = new Set(indices.filter((index): index is number => index != null));
-      uniqueIndices.forEach(syncNodeAppearance);
+      uniqueIndices.forEach((index) => {
+        const node = sceneNodes[index];
+        const selected = selectedIndex === index;
+        const hovered = hoveredIndex === index;
+        emphasis[index] = selected ? 1 : hovered ? 0.7 : 0;
+        (node.pendingDeletion ? deletionColor : selected || hovered ? activeColor : signalColor).toArray(tints, index * 3);
+        transform.position.set(node.x, node.y, node.z);
+        transform.scale.setScalar(node.radius * (selected ? 1.22 : hovered ? 1.12 : 1));
+        transform.updateMatrix();
+        nodeMesh.setMatrixAt(index, transform.matrix);
+      });
       if (uniqueIndices.size === 0) return;
       nodeMesh.instanceMatrix.needsUpdate = true;
       (nodeGeometry.getAttribute("aEmphasis") as THREE.InstancedBufferAttribute).needsUpdate = true;
       (nodeGeometry.getAttribute("aTint") as THREE.InstancedBufferAttribute).needsUpdate = true;
+    }
+
+    function refreshVisibleLabels() {
+      camera.updateMatrixWorld();
+      viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      frustum.setFromProjectionMatrix(viewProjection);
+      const visibleNodes = sceneNodes.filter((node) => {
+        nodeSphere.center.set(node.x, node.y, node.z);
+        nodeSphere.radius = node.radius;
+        return frustum.intersectsSphere(nodeSphere);
+      });
+      const titleCount = Math.ceil(visibleNodes.length * LABEL_PERCENTILE);
+      const nextNodeIds = visibleNodes
+        .sort((left, right) => right.degree - left.degree || right.radius - left.radius || left.id - right.id)
+        .slice(0, titleCount)
+        .map((node) => node.id);
+      const unchanged = nextNodeIds.length === previousVisibleLabelNodeIds.length
+        && nextNodeIds.every((nodeId, index) => nodeId === previousVisibleLabelNodeIds[index]);
+      if (unchanged) return;
+      previousVisibleLabelNodeIds = nextNodeIds;
+      setVisibleLabelNodeIds(nextNodeIds);
     }
 
     function syncLabels() {
@@ -422,18 +498,21 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       labelRefs.current.forEach((element, nodeId) => {
         const node = sceneNodeById.get(nodeId);
         if (!node) return;
-        projected.copy(node.position).project(camera);
-        const visible = projected.z > -1 && projected.z < 1 && Math.abs(projected.x) < 1.08 && Math.abs(projected.y) < 1.08;
+        projected.set(node.x, node.y, node.z).project(camera);
+        const visible = projected.z > -1 && projected.z < 1 && Math.abs(projected.x) < 1.02 && Math.abs(projected.y) < 1.02;
         if (!visible) {
-          element.style.visibility = "hidden";
+          element.style.display = "none";
           return;
         }
         const x = (projected.x * 0.5 + 0.5) * width;
         const y = (-projected.y * 0.5 + 0.5) * height;
-        const distance = camera.position.distanceTo(node.position);
-        element.style.visibility = "visible";
+        const dx = camera.position.x - node.x;
+        const dy = camera.position.y - node.y;
+        const dz = camera.position.z - node.z;
+        const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        element.style.display = "flex";
         element.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%)`;
-        element.style.opacity = selectedNodeIdRef.current === node.id ? "1" : String(THREE.MathUtils.clamp(1.16 - distance / 190, 0.5, 0.88));
+        element.style.opacity = selectedNodeIdRef.current === node.id ? "1" : String(THREE.MathUtils.clamp(1.18 - distance / 520, 0.66, 0.94));
         element.style.zIndex = String(Math.max(1, Math.round(1_000 - distance)));
         projectedLabels.push({ node, x, y, distance });
       });
@@ -446,24 +525,29 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           return rightPriority - leftPriority;
         })
         .forEach(({ node, x, y }) => {
-          const label = labelRefs.current.get(node.id)?.querySelector<HTMLElement>("[data-node-label]");
-          if (!label) return;
+          const element = labelRefs.current.get(node.id);
+          if (!element) return;
           const forced = selectedNodeIdRef.current === node.id;
           const labelWidth = Math.min(200, 44 + Math.min(node.label.length, 26) * 6.2);
           const rect = new DOMRect(x + 14, y - 14, labelWidth, 28);
           const show = forced || !labelsOverlap(rect, occupied);
-          label.style.display = show ? "block" : "none";
+          element.style.display = show ? "flex" : "none";
           if (show) occupied.push(rect);
         });
     }
 
     function renderNow() {
       renderFrame = 0;
+      if (refreshLabelsOnRender) {
+        refreshLabelsOnRender = false;
+        refreshVisibleLabels();
+      }
       syncLabels();
       renderer.render(scene, camera);
     }
 
-    function requestRender() {
+    function requestRender(refreshLabels = false) {
+      refreshLabelsOnRender ||= refreshLabels;
       if (renderFrame !== 0 || document.hidden) return;
       renderFrame = requestAnimationFrame(renderNow);
     }
@@ -471,8 +555,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     function setSelectedNodeId(nextNodeId: number | null) {
       const previousIndex = selectedIndex;
       selectedIndex = nextNodeId == null ? null : nodeIndex.get(nextNodeId) ?? null;
-      commitNodeAppearance([previousIndex, selectedIndex]);
-      requestRender();
+      syncNodeAppearance([previousIndex, selectedIndex]);
+      requestRender(true);
     }
 
     function resize() {
@@ -481,7 +565,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
-      requestRender();
+      requestRender(true);
     }
 
     function pickNode() {
@@ -494,7 +578,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       if (nextHoveredIndex === hoveredIndex) return;
       const previousHoveredIndex = hoveredIndex;
       hoveredIndex = nextHoveredIndex;
-      commitNodeAppearance([previousHoveredIndex, hoveredIndex]);
+      syncNodeAppearance([previousHoveredIndex, hoveredIndex]);
       renderer.domElement.style.cursor = hoveredIndex == null ? "grab" : "pointer";
       if (hoveredIndex == null) {
         onNodeHoverRef.current(null);
@@ -528,48 +612,94 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       pointerFrame = 0;
       const previousHoveredIndex = hoveredIndex;
       hoveredIndex = null;
-      commitNodeAppearance([previousHoveredIndex]);
+      syncNodeAppearance([previousHoveredIndex]);
       renderer.domElement.style.cursor = "grab";
       onNodeHoverRef.current(null);
       requestRender();
     }
 
     function handleVisibilityChange() {
-      if (!document.hidden) requestRender();
+      if (!document.hidden) requestRender(true);
+    }
+
+    const linkForce = forceLink<SceneNode, SceneLink>(simulationLinks)
+      .id((node) => node.id)
+      .distance((link) => {
+        const from = sceneNodes[link.fromIndex];
+        const to = sceneNodes[link.toIndex];
+        const strength = Math.max(0.1, link.strength || 0.5);
+        return from.radius + to.radius + 38 + (1 - strength) * 62;
+      })
+      .strength((link) => 0.08 + Math.max(0.1, link.strength || 0.5) * 0.12)
+      .iterations(1);
+    const simulation: Simulation<SceneNode> = forceSimulation(sceneNodes, 3)
+      .force("charge", forceManyBody<SceneNode>()
+        .strength((node) => -(120 + Math.sqrt(node.degree) * 8))
+        .theta(0.76)
+        .distanceMin(2)
+        .distanceMax(520))
+      .force("links", linkForce)
+      .force("collision", forceCollide<SceneNode>((node) => node.radius + 8).strength(0.88).iterations(1))
+      .force("x", forceX<SceneNode>(0).strength(0.0015))
+      .force("y", forceY<SceneNode>(0).strength(0.0015))
+      .force("z", forceZ<SceneNode>(0).strength(0.0015))
+      .alphaMin(0.002)
+      .alphaDecay(1 - Math.pow(0.002, 1 / 520))
+      .velocityDecay(0.3);
+
+    simulation.on("tick", () => {
+      simulationTick += 1;
+      syncNodeMatrices();
+      syncLinkPositions();
+      if (simulationTick % LABEL_REFRESH_TICKS === 0) refreshVisibleLabels();
+      if (simulationTick % LABEL_POSITION_TICKS === 0) syncLabels();
+      renderer.render(scene, camera);
+    });
+    simulation.on("end", () => {
+      refreshVisibleLabels();
+      requestRender();
+    });
+
+    function handleControlsChange() {
+      requestRender(true);
     }
 
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(host);
-    controls.addEventListener("change", requestRender);
+    controls.addEventListener("change", handleControlsChange);
     renderer.domElement.addEventListener("pointermove", handlePointerMove);
     renderer.domElement.addEventListener("pointerdown", handlePointerDown);
     renderer.domElement.addEventListener("pointerup", handlePointerUp);
     renderer.domElement.addEventListener("pointerleave", handlePointerLeave);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     resize();
+    syncNodeMatrices();
+    syncLinkPositions();
     fitCamera(camera, controls, sceneNodes);
-    commitNodeAppearance([selectedIndex]);
+    syncNodeAppearance([selectedIndex]);
     runtimeRef.current = { camera, controls, nodes: sceneNodes, requestRender, setSelectedNodeId };
+    refreshVisibleLabels();
     requestRender();
 
     return () => {
+      simulation.stop();
+      simulation.on("tick", null);
+      simulation.on("end", null);
       if (renderFrame !== 0) cancelAnimationFrame(renderFrame);
       if (pointerFrame !== 0) cancelAnimationFrame(pointerFrame);
       runtimeRef.current = null;
       resizeObserver.disconnect();
-      controls.removeEventListener("change", requestRender);
+      controls.removeEventListener("change", handleControlsChange);
+      controls.dispose();
       renderer.domElement.removeEventListener("pointermove", handlePointerMove);
       renderer.domElement.removeEventListener("pointerdown", handlePointerDown);
       renderer.domElement.removeEventListener("pointerup", handlePointerUp);
       renderer.domElement.removeEventListener("pointerleave", handlePointerLeave);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      controls.dispose();
       nodeGeometry.dispose();
       nodeMaterial.dispose();
       linkGeometry.dispose();
       linkMaterial.dispose();
-      dustGeometry.dispose();
-      dustMaterial.dispose();
       renderer.dispose();
       renderer.domElement.remove();
     };
@@ -592,7 +722,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-cta/30 bg-card/90 text-active shadow-sm">
               <MemorySourceIcon source={node.source} className="h-3.5 w-3.5" />
             </span>
-            <span data-node-label className="max-w-[200px] truncate whitespace-nowrap rounded-md border border-card-border bg-card/90 px-2 py-1 text-xs font-medium text-foreground shadow-sm">
+            <span className="max-w-[200px] truncate whitespace-nowrap rounded-md border border-card-border bg-card/90 px-2 py-1 text-xs font-medium text-foreground shadow-sm">
               {node.label}
             </span>
           </div>
