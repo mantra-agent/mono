@@ -915,6 +915,12 @@ async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandle
   const resolved = await resolvePersonId(args);
   if (!resolved) return { result: `Person not found: ${args.id || args.name}`, error: true };
 
+  const requestedNewName = typeof args.newName === "string" ? args.newName.trim() : "";
+  const expectedCurrentName = typeof args.expectedCurrentName === "string" ? args.expectedCurrentName.trim() : "";
+  if (expectedCurrentName && !requestedNewName) {
+    return { result: "expectedCurrentName was provided without newName. Provide both to rename.", error: true };
+  }
+
   const updates: Record<string, any> = {};
   if (typeof args.quickSummary === "string") updates.quickSummary = args.quickSummary || undefined;
   if (typeof args.cabinetLevel === "string") updates.cabinetLevel = args.cabinetLevel;
@@ -925,11 +931,27 @@ async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandle
   if (typeof args.trust === "string") updates.trust = args.trust;
   if (Array.isArray(args.tags)) updates.tags = args.tags;
 
-  if (Object.keys(updates).length === 0) {
-    return { result: "No updatable fields provided. Supported: quickSummary, cabinetLevel, company, role, relation, familiarity, trust, tags.", error: true };
+  if (!requestedNewName && Object.keys(updates).length === 0) {
+    return { result: "No updatable fields provided. Supported: newName (with expectedCurrentName), quickSummary, cabinetLevel, company, role, relation, familiarity, trust, tags.", error: true };
   }
 
-  const person = await peopleStorage.updatePerson(resolved.id, updates);
+  let renamed = false;
+  if (requestedNewName) {
+    if (!expectedCurrentName) {
+      return { result: `Rename requires expectedCurrentName confirmation. Current name is "${resolved.name}" — pass it back exactly as expectedCurrentName along with newName.`, error: true };
+    }
+    await peopleStorage.renamePerson({
+      personId: resolved.id,
+      newName: requestedNewName,
+      expectedCurrentName,
+    });
+    renamed = true;
+  }
+
+  const person = Object.keys(updates).length > 0
+    ? await peopleStorage.updatePerson(resolved.id, updates)
+    : await peopleStorage.getPerson(resolved.id);
+  if (!person) return { result: `Person not found after update: ${resolved.id}`, error: true };
   const { eventBus } = await import("./event-bus");
   eventBus.publish({
     category: "agent",
@@ -937,7 +959,10 @@ async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandle
     payload: { source: "people_tool", action: "update", personId: person.id, personName: person.name },
   });
 
-  const changed = Object.keys(updates).join(", ");
+  const changed = [
+    ...(renamed ? [`name (was "${expectedCurrentName}", preserved as nickname)`] : []),
+    ...Object.keys(updates),
+  ].join(", ");
   return { result: `Updated ${person.name} [person:${person.id}]: ${changed}` };
 }
 

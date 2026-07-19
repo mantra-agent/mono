@@ -82,7 +82,7 @@ const strategyScope = {
   ownerUserId: strategies.ownerUserId,
   accountId: strategies.accountId,
 };
-const calendarPeopleOwnerColumns = {
+export const calendarPeopleOwnerColumns = {
   ownerUserId: calendarEventPeople.ownerUserId,
   principalAccountId: calendarEventPeople.principalAccountId,
   vaultId: calendarEventPeople.vaultId,

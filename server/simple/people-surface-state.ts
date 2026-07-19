@@ -3,7 +3,7 @@ import { db } from "../db";
 import { createLogger } from "../log";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
-import { simplePeopleSurfaceState } from "@shared/schema";
+import { persons, simplePeopleSurfaceState } from "@shared/schema";
 
 const log = createLogger("SimplePeopleSurfaceState");
 
@@ -13,6 +13,36 @@ const peopleSurfaceScopeColumns = {
   scope: simplePeopleSurfaceState.scope,
   vaultId: simplePeopleSurfaceState.vaultId,
 };
+
+const personScopeColumns = {
+  scope: persons.scope,
+  ownerUserId: persons.ownerUserId,
+  accountId: persons.accountId,
+  vaultId: persons.vaultId,
+};
+
+/**
+ * Surface-state rows must only ever reference persons the acting principal can see.
+ * This is the single guard at the mutation path; callers do not get to bypass it.
+ */
+async function filterVisiblePersonIds(personIds: string[]): Promise<Set<string>> {
+  const uniqueIds = [...new Set(personIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return new Set();
+  const principal = getCurrentPrincipalOrSystem();
+  const rows = await db
+    .select({ id: persons.id })
+    .from(persons)
+    .where(combineWithVisibleScope(principal, personScopeColumns, inArray(persons.id, uniqueIds)));
+  const visible = new Set(rows.map(row => row.id));
+  if (visible.size !== uniqueIds.length) {
+    const rejected = uniqueIds.filter(id => !visible.has(id));
+    log.warn("rejected surface-state writes for persons not visible to principal", {
+      rejectedCount: rejected.length,
+      sample: rejected.slice(0, 5),
+    });
+  }
+  return visible;
+}
 
 let ensurePromise: Promise<void> | null = null;
 
@@ -99,7 +129,10 @@ export interface PeopleSurfaceStateLookup {
 
 export async function ensurePeopleSurfaceStates(lookups: PeopleSurfaceStateLookup[]): Promise<void> {
   await ensurePeopleSurfaceStateTable();
-  const normalized = lookups.filter(item => item.personId && item.reasonKey);
+  const prefiltered = lookups.filter(item => item.personId && item.reasonKey);
+  if (prefiltered.length === 0) return;
+  const visibleIds = await filterVisiblePersonIds(prefiltered.map(item => item.personId));
+  const normalized = prefiltered.filter(item => visibleIds.has(item.personId));
   if (normalized.length === 0) return;
   const principal = getCurrentPrincipalOrSystem();
   const ownerValues = ownedInsertValues(principal, peopleSurfaceScopeColumns);
@@ -154,6 +187,8 @@ export async function listPeopleSurfaceStates(lookups: PeopleSurfaceStateLookup[
 
 export async function dismissPeopleSurface(personId: string, reasonKey: string): Promise<PeopleSurfaceState> {
   await ensurePeopleSurfaceStateTable();
+  const visible = await filterVisiblePersonIds([personId]);
+  if (!visible.has(personId)) throw new Error(`Person ${personId} is not visible to the current principal`);
   const principal = getCurrentPrincipalOrSystem();
   const ownerValues = ownedInsertValues(principal, peopleSurfaceScopeColumns);
   const now = new Date();
@@ -190,6 +225,8 @@ export async function dismissPeopleSurface(personId: string, reasonKey: string):
 
 export async function snoozePeopleSurface(personId: string, reasonKey: string, snoozedUntil: Date): Promise<PeopleSurfaceState> {
   await ensurePeopleSurfaceStateTable();
+  const snoozeVisible = await filterVisiblePersonIds([personId]);
+  if (!snoozeVisible.has(personId)) throw new Error(`Person ${personId} is not visible to the current principal`);
   const principal = getCurrentPrincipalOrSystem();
   const ownerValues = ownedInsertValues(principal, peopleSurfaceScopeColumns);
   const now = new Date();
