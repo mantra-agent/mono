@@ -505,7 +505,7 @@ const REGISTRY: Record<string, ModelInfo> = {
     name: "Claude Fable (Subscription)",
     provider: "claude-cli",
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 1000000,
+    contextWindow: 200000, // CLI subscription path enforces 200k; 1M requires the [1m] variant + context-1m beta (not requested by our adapter)
     maxOutputTokens: 128000,
     reasoning: false,
     thinking: { level: "extended", description: "Mythos-class adaptive thinking via Claude subscription", adaptiveOnly: true },
@@ -517,7 +517,7 @@ const REGISTRY: Record<string, ModelInfo> = {
     name: "Claude Opus 4.6 (Subscription)",
     provider: "claude-cli",
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 1000000,
+    contextWindow: 200000, // CLI subscription path enforces 200k; 1M requires the [1m] variant + context-1m beta (not requested by our adapter)
     maxOutputTokens: 128000,
     reasoning: false,
     thinking: { level: "extended", description: "Deep extended thinking via Claude subscription" },
