@@ -45,6 +45,11 @@ import { createLogger } from "./log";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { eventBus } from "./event-bus";
 import { sanitizeSummary } from "./utils/sanitize-summary";
+import {
+  PREFERENCE_RULE_PERSISTENCE_CONTEXT,
+  PREFERENCES_TOOL_DESCRIPTION,
+  RULES_TOOL_DESCRIPTION,
+} from "./preference-rule-policy";
 
 const STRUCTURAL_TAG_PATTERN = /(<\/?(?:entry|turn|concept|thought|link|claim|evidence)(?:\s[^>]*)?>)/g;
 
@@ -336,7 +341,7 @@ async function resolveEmotionalExpression(request: ContextRequest): Promise<stri
 
 
 async function resolveGeneralInstructions(): Promise<string> {
-  return "";
+  return PREFERENCE_RULE_PERSISTENCE_CONTEXT;
 }
 
 /** Section descriptions for the orient catalog. Keyed by section ID. */
@@ -345,8 +350,8 @@ const SECTION_CATALOG: Record<string, { description: string; recommendedFor: str
   "world_model.people.self.emotional_guidance": { description: "How to use and update emotional state", recommendedFor: "conversations", tokenCost: "small" },
   "world_model.people.self.emotional_state": { description: "Current emotional state and narrative", recommendedFor: "conversations", tokenCost: "small" },
   "world_model.people.self.emotional_expression": { description: "Expression tags for voice/text", recommendedFor: "conversations, voice", tokenCost: "small" },
-  "world_model.people.self.general_instructions": { description: "General behavioral instructions", recommendedFor: "general chat", tokenCost: "small" },
-  "world_model.people.self.chat_instructions": { description: "Interactive chat-specific instructions (preferences, idea capture)", recommendedFor: "interactive chat", tokenCost: "small" },
+  "world_model.people.self.general_instructions": { description: "Universal product behavior and persistence policy", recommendedFor: "all conversations", tokenCost: "small" },
+  "world_model.people.self.chat_instructions": { description: "Interactive chat-specific instructions", recommendedFor: "interactive chat", tokenCost: "small" },
   "world_model.people.self.principles": { description: "Guiding life principles for decisions and reflection", recommendedFor: "coaching, reflection, planning", tokenCost: "large" },
   "world_model.people.self.journal": { description: "Recent journal entries", recommendedFor: "reflection", tokenCost: "medium" },
   "world_model.people.self.rules": { description: "Active behavioral rules and operational directives", recommendedFor: "all conversations", tokenCost: "medium" },
@@ -478,13 +483,7 @@ async function resolveOrientationProtocol(request: ContextRequest): Promise<stri
 
 async function resolveChatInstructions(request: ContextRequest): Promise<string> {
   if (request.activity !== ACTIVITY_CHAT) return "";
-
-  return [
-    "**Preference and rule awareness:**",
-    "- Notice when the user expresses preferences (how they like things done) or rules (behavioral constraints and operational boundaries).",
-    "- Before recording a new preference or rule, check whether a matching one already exists to avoid duplicates.",
-
-  ].join("\n");
+  return "";
 }
 
 async function resolveRuntimeIdentitySection(): Promise<string> {
@@ -1817,9 +1816,9 @@ const TOOL_SHORT_DESCRIPTIONS: Record<string, string> = {
   memory: "Unified memory — read/write knowledge files, search all layers, manage graph links, run maintenance. Actions: read, write, read_entry, search, create_link, update_entry, get, consolidate_short, integrate_mid_to_long, run_myelination, run_memory_decay, run_memory_reinforcement, run_capability_audit.",
   notion: "Search, read, and browse Notion pages and databases. Actions: status, search, get_page, get_content, list_databases, query_database.",
   people: "Manage personal contacts — search, get details, outreach agenda, notes, interactions. Actions: list, get, search, agenda, add_note, update_note, delete_note, log_interaction, create, scan_imports, scan_ignored.",
-  preferences: "Manage learned user preferences. Actions: list, get, save, create, update, delete, reinforce.",
+  preferences: PREFERENCES_TOOL_DESCRIPTION,
   priorities: "Manage daily/weekly/monthly priorities and next-period (next_day, next_week, next_month) priorities (max 3 each). Actions: add, update, remove, mark_status.",
-  rules: "Manage behavioral rules and directives. Actions: list, get, save, create, update, delete, reinforce, violation.",
+  rules: RULES_TOOL_DESCRIPTION,
   scratch: "Manage temporary workspace files. Actions: read, write, edit, list, search.",
   shell: "Execute a shell command in the workspace directory.",
   skills: `Manage ${getInstanceName()}'s skill library. Actions: list, get, create, update, delete, search.`,
@@ -1986,9 +1985,7 @@ async function resolveTools(request: ContextRequest): Promise<string> {
     "**Tool routing instructions:**",
     "- Use tools immediately when they can do the requested work or fetch authoritative state.",
     "- Default to pulling the relevant slice of Ray’s life-context through tools when it could materially improve the answer. Do not wait to be reminded; do not over-fetch.",
-    "- Preference = how Ray likes something done. Rule = governing instruction or boundary.",
-    "- Save only specific, explicit, durable, repeated, or clearly action-relevant preferences/rules.",
-    "- Check for existing matches before creating new state; reinforce/update rather than duplicate.",
+    "- Preferences and rules are user-specific learned state; follow the universal persistence policy in General Instructions before mutating them.",
     "- Treat tool inputs as sparse patches: omit unknown, unchanged, or blank optional fields. Use explicit clearFields/confirmation semantics for destructive clears; never send empty strings, empty arrays, or empty objects as a way to clear persisted data.",
     "- References are fundamental object links, like HTML links for Agent's world. Use typed references whenever you mention durable objects with known IDs.",
     "- Canonical persisted grammar is `@type:id`. Supported types are page, person, goal, task, project, milestone, meeting, decision, wellness_activity, priority, file, news, web_article, x_item, reddit_post, rss_item, and pr. Use the registry/parser rather than hard-coded partial lists when generating or rendering references.",
