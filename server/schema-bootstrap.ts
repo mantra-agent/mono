@@ -132,6 +132,7 @@ async function ensureBrowserPerformanceTelemetrySchema(pool: { query: (sql: stri
       session_id TEXT,
       client_turn_id TEXT,
       bucket TEXT,
+      visibility TEXT,
       metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
       occurred_at TIMESTAMPTZ NOT NULL,
       received_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -139,6 +140,7 @@ async function ensureBrowserPerformanceTelemetrySchema(pool: { query: (sql: stri
   `);
   await pool.query(`ALTER TABLE browser_performance_telemetry ADD COLUMN IF NOT EXISTS created_by_user_id TEXT`);
   await pool.query(`ALTER TABLE browser_performance_telemetry ADD COLUMN IF NOT EXISTS bucket TEXT`);
+  await pool.query(`ALTER TABLE browser_performance_telemetry ADD COLUMN IF NOT EXISTS visibility TEXT`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_browser_perf_scope_owner ON browser_performance_telemetry(scope, owner_user_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_browser_perf_account_received ON browser_performance_telemetry(account_id, received_at)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_browser_perf_kind_received ON browser_performance_telemetry(kind, received_at)`);

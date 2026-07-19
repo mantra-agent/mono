@@ -13731,6 +13731,24 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         return { result: `Failed to get frontend performance summary: ${msg}`, error: true };
       }
     }
+
+    if (action === "context_health") {
+      try {
+        const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+        const { principalHasPermission } = await import("./permissions");
+        const principal = getCurrentPrincipalOrSystem();
+        if (!principalHasPermission(principal, "system:read")) {
+          return { result: "Permission required: system:read", error: true };
+        }
+        const { getContextHealthSummary } = await import("./context-health-storage");
+        const hoursRaw = args.hours === undefined ? 24 : Number(args.hours);
+        const summary = await getContextHealthSummary(Number.isFinite(hoursRaw) ? hoursRaw : 24);
+        return { result: JSON.stringify(summary) };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { result: `Failed to get context health summary: ${msg}`, error: true };
+      }
+    }
     if (action === "events") {
       try {
         const { getCurrentPrincipalOrSystem } = await import("./principal-context");
@@ -13810,7 +13828,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         return { result: `Failed to get tool stats: ${msg}`, error: true };
       }
     }
-    return { result: `Unknown system action: ${action}. Available: state, create_issue, get_issue, logs, log_files, budget, frontend_performance, events, active_runs, clear_active_run, accounts, tool_stats`, error: true };
+    return { result: `Unknown system action: ${action}. Available: state, create_issue, get_issue, logs, log_files, budget, frontend_performance, context_health, events, active_runs, clear_active_run, accounts, tool_stats`, error: true };
   },
   async timers(args) {
     const action = args.action as string;

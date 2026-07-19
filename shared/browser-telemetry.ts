@@ -23,6 +23,9 @@ export interface BrowserTelemetryEventInput {
   bucket?: string;
   metadata?: Record<string, unknown>;
   occurredAt?: string;
+  /** Visibility state of the page at the moment the sample was captured.
+   *  Omit only for browser environments that do not support document.visibilityState. */
+  visibility?: "visible" | "hidden";
 }
 
 export interface BrowserTelemetryBatchInput {
@@ -76,4 +79,7 @@ export interface BrowserTelemetrySummary {
   budgets: typeof BROWSER_TELEMETRY_BUDGETS;
   metrics: BrowserTelemetryMetricSummary[];
   recentDegradations: Array<{ kind: string; name: string; value: number; unit: string; routeKey: string | null; occurredAt: string }>;
+  /** Number of samples excluded from percentile calculations because visibility='hidden'.
+   *  Zero when all samples are visible or untagged (NULL). */
+  hiddenSampleCount: number;
 }

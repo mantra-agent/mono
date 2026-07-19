@@ -1768,7 +1768,7 @@ const TOOL_SHORT_DESCRIPTIONS: Record<string, string> = {
   shell: "Execute a shell command in the workspace directory.",
   skills: `Manage ${getInstanceName()}'s skill library. Actions: list, get, create, update, delete, search.`,
   strategy: "Strategic modeling — strategies, actors, move trees, simulations, assumptions, artifacts.",
-  system: "System operations — state snapshot, create issues, retrieve runtime logs. Actions: state, create_issue, logs.",
+  system: "System operations — state snapshot, runtime logs, frontend performance, and context health. Actions: state, create_issue, logs, frontend_performance, context_health.",
   tasks: "Create, complete, delete, and update tasks. Actions: create, complete, delete, update.",
   observe: "Record an observation about your own cognition. Not what you thought, but what you notice about how you thought. What pattern fired? What gap appeared? What changed? What connection formed? What's now possible? 1-3 short sentences MAX. If it doesn't pass \"would this change how I act next time?\", don't record it.",
   orient: "Unified session orientation — set title, topics, and persona in a single call. All parameters optional for partial updates.",
