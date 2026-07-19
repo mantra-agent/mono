@@ -793,23 +793,25 @@ function FocusWidgetPanel({ isAgentRunning }: FocusWidgetPanelProps) {
           )}
           style={isDesktop ? { flexBasis: `${sidebarWidth}px` } : undefined}
         >
-          <ConversationSidebar
-            sessions={sessions}
-            convsLoading={sessionsLoading}
-            activeSession={activeSession}
-            isAgentRunning={isAgentRunning}
-            hideForSessionTranscript={false}
-            searchQuery={searchQuery}
-            setSearchQuery={setSearchQuery}
+          {(isDesktop || !showMobileSessionTranscriptPanel) && (
+            <ConversationSidebar
+              sessions={sessions}
+              convsLoading={sessionsLoading}
+              activeSession={activeSession}
+              isAgentRunning={isAgentRunning}
+              hideForSessionTranscript={false}
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
 
-            onSelect={selectSession}
-            onDelete={(id) => sidebarDeleteConversation.mutate(id)}
-            onRename={(id, title) => sidebarRenameConversation.mutate({ id, title })}
-            onArchive={(id) => sidebarArchiveConversation.mutate(id)}
-            onTogglePin={handleTogglePin}
-            onStartNewChat={startNewChat}
-            scrollResetKey={sessionMenuResetKey}
-          />
+              onSelect={selectSession}
+              onDelete={(id) => sidebarDeleteConversation.mutate(id)}
+              onRename={(id, title) => sidebarRenameConversation.mutate({ id, title })}
+              onArchive={(id) => sidebarArchiveConversation.mutate(id)}
+              onTogglePin={handleTogglePin}
+              onStartNewChat={startNewChat}
+              scrollResetKey={sessionMenuResetKey}
+            />
+          )}
         </div>
       </div>
     </div>
