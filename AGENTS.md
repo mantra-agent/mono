@@ -251,7 +251,7 @@ These are the correct way to enforce ownership. Do not write raw queries against
 - Projects, tasks, milestones
 - Decisions, strategies, theses
 - Emotional states, active persona selection
-- Personal Rules, beliefs, observations
+- Personal Rules, observations
 - Timers, hooks, intentions, parked ideas
 - Email cache, calendar metadata, connected accounts
 - Finance (Plaid), health/wellness logs

@@ -64,18 +64,20 @@ export async function routeCapture(
       }
 
       case "memory": {
-        const result = await executeBridgeTool("beliefs", `capture-memory-${Date.now()}`, {
-          action: "create",
-          claim: classification.summary,
-          domain: "capture",
-          confidence: 0.8,
-          tags: ["quick-capture"],
+        const result = await executeBridgeTool("library", `capture-memory-${Date.now()}`, {
+          action: "create_library_page",
+          title: classification.summary.slice(0, 80),
+          plainTextContent: rawText,
+          purpose: "quick-capture",
+          pageContext: "/capture",
+          contentSummary: classification.summary,
+          tags: ["quick-capture", "memory"],
         });
         if (result.error) {
-          return { success: false, system: "memory", ref: null, error: result.result };
+          return { success: false, system: "library", ref: null, error: result.result };
         }
-        const idMatch = result.result.match(/ID:\s*([^\s,)]+)/);
-        return { success: true, system: "memory", ref: idMatch?.[1] || "created" };
+        const idMatch = result.result.match(/\[([^\]]+)\]/);
+        return { success: true, system: "library", ref: idMatch?.[1] || "created" };
       }
 
       case "idea": {

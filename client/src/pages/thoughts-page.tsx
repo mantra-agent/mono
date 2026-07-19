@@ -52,16 +52,16 @@ const typeThemes: Record<string, { border: string; badge: string; badgeText: str
   "MIRROR": {
     border: "border-l-info/60",
     badge: "bg-info/10 text-info-foreground",
-    badgeText: "Belief",
+    badgeText: "World Model",
     icon: Globe,
-    label: "BELIEF",
+    label: "WORLD MODEL",
   },
   "WORLD MODEL": {
     border: "border-l-info/60",
     badge: "bg-info/10 text-info-foreground",
-    badgeText: "Belief",
+    badgeText: "World Model",
     icon: Globe,
-    label: "BELIEF",
+    label: "WORLD MODEL",
   },
   "OBSERVE": {
     border: "border-l-success/60",

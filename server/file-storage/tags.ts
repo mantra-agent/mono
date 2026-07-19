@@ -235,6 +235,22 @@ export const tagRegistry = {
     await saveIndex(index);
   },
 
+  async removeRetiredEntityTypeUsages(entityType: string): Promise<void> {
+    const index = await loadIndex();
+    let changed = false;
+    for (const [slug, entries] of Object.entries(index.usages)) {
+      const filtered = entries.filter((entry) => String(entry.entityType) !== entityType);
+      if (filtered.length === entries.length) continue;
+      changed = true;
+      index.usages[slug] = filtered;
+      if (index.tags[slug]) index.tags[slug].usageCount = filtered.length;
+    }
+    if (changed) {
+      index.coOccurrences = buildCoOccurrences(index.usages);
+      await saveIndex(index);
+    }
+  },
+
   async removeEntityUsages(entityType: EntityType, entityId: string): Promise<void> {
     const index = await loadIndex();
     let changed = false;

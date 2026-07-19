@@ -413,3 +413,11 @@ Memory/myelination prompt templates live in Prompt Modules, not Skills. They hav
 - `legacy-preference-migration.ts` promotes six hard personal overrides to Rules, converts seven soft personal patterns to vNext claims through `persistClaimCandidates`, and removes four system-owned correction records. It deletes each legacy document only after its destination mutation succeeds.
 - Both migration workers restore the document owner's principal and vault before mutation, are replay-safe, and run in bounded batches from the vNext poller.
 - vNext `content_hash` includes the owning principal key separated with ASCII unit separator 31. The database keeps one global unique constraint over that owner-scoped hash, preventing both same-user duplicates and cross-user collisions. The poller repairs legacy hashes in bounded batches; runtime boot never performs an unbounded table rewrite.
+
+
+### Retired Beliefs subsystem
+
+- The standalone Beliefs tool, API, context section, storage model, reflection reads, export, capture target, and confidence lifecycle are removed. Existing rows are intentionally purged without migration because the user classified them as noise.
+- Probabilistic person/world knowledge belongs in vNext claims. Deliberate explanatory positions with evidence and predictions belong in Theses. Do not recreate a generic Beliefs abstraction.
+- Quick-capture memory writes a filed Library source artifact so normal ingestion can decide whether it yields a vNext claim.
+- Generic long-title repair lives in `long-title-maintenance.ts`; it must not be coupled to a cognitive domain.

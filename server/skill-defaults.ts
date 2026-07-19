@@ -854,13 +854,13 @@ This orchestrates:
 Run the editorial forgetting pass after the core cycle. This is the work passive decay cannot do. Use the \`memory\` tool searches and deletion/update actions to handle, within conservative safety rails:
 
 - Expired scheduled deletions (\`deletionExpired: true\`)
-- Contradictory belief-layer entries where one side is clearly stale
+- Contradictory vNext claims where one side is clearly stale
 - Superseded planning and priority entries
 - Untitled or empty shell entries
-- Invalidated beliefs
+- Retired or superseded vNext claims
 - Deep orphans with no recent recall and no canonical/principle/architecture tags
 
-Safety rails: never delete high-confidence beliefs, recently recalled entries, canonical/principle/architecture-tagged entries, or anything where the replacement truth is uncertain. Cap destructive deletions at 50 total and report deferrals.
+Safety rails: never delete high-confidence or canonical vNext claims, recently recalled entries, principle/architecture-tagged entries, or anything where the replacement truth is uncertain. Cap destructive deletions at 50 total and report deferrals.
 
 ## Phase 6: Save Dream to Library
 
@@ -871,7 +871,7 @@ If REM generated a dream narrative, save it to the Library under Reports/Dreams 
 Write a sleep report to the Library (under Reports, named "Sleep Report — {YYYY-MM-DD}") summarizing:
 - **Entry-level:** decayed, reinforced, flagged
 - **NREM:** links decayed/pruned/reinforced, entries merged, orphans processed, dormant entries pruned
-- **Forgetting:** expired deletions, contradictions, superseded entries, shells, invalidated beliefs, deep orphans; include deletion count and deferrals
+- **Forgetting:** expired deletions, contradictions, superseded entries, shells, retired claims, deep orphans; include deletion count and deferrals
 - **Budget:** whether budget enforcement triggered, entries pruned if so
 - **REM:** dream title and key insight, domains woven
 - **GSI:** score if computed
@@ -1065,7 +1065,7 @@ Read:
 - Four quarterly reflections in full.
 - Most recent annual reflection in full if available.
 - Final-quarter monthly reflections for fresh detail.
-- Current principles, Voice/self-model context, goals, beliefs, and targeted memory searches for the year's major arcs.
+- Current principles, Voice/self-model context, goals, active theses, relevant vNext claims, and targeted memory searches for the year's major arcs.
 
 Write sections:
 - \`## Summary\` — year in 2-3 factual sentences, under 80 words.
@@ -1085,7 +1085,7 @@ Save to Library:
 - Prefer deterministic period artifacts over semantic memory when available: daily journals feed weekly; weekly reflections feed monthly; monthly reflections feed quarterly; quarterly reflections feed annual.
 - Use memory search to fill named gaps, not as the primary source when period artifacts exist.
 - Do not fabricate. If a section has no evidence, omit it or name the absence as a signal.
-- Keep tool mutations rare. Reflection may create/link the Library page and update check-in artifact metadata. Do not rewrite goals, principles, beliefs, personal patterns, or Rules unless preContext explicitly asks for maintenance and the evidence is strong.
+- Keep tool mutations rare. Reflection may create/link the Library page and update check-in artifact metadata. Do not rewrite goals, principles, theses, personal patterns, or Rules unless preContext explicitly asks for maintenance and the evidence is strong.
 
 ## Library Save and Surfacing
 

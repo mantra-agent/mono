@@ -35,7 +35,6 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   health: { default: 1, actions: { summary: 0, metrics: 0, activity_status: 0, list_activities: 0, activity_logs: 0, get_gratitude: 0, list_gratitudes: 0 } },
   weather: { default: 0 },
   goals: { default: 1, actions: { list: 0, get: 0, search: 0 } },
-  beliefs: { default: 1, actions: { list: 0, get: 0 } },
 
   rules: { default: 1, actions: { list: 0, get: 0 } },
   priorities: { default: 1 },

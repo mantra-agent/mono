@@ -2296,7 +2296,7 @@ async function handleBackfillLongTitles(
   res: Response,
 ): Promise<void> {
   try {
-    const { backfillLongTitles } = await import("./belief-storage");
+    const { backfillLongTitles } = await import("./long-title-maintenance");
     const result = await backfillLongTitles();
     res.json(result);
   } catch (error: unknown) {
@@ -2388,6 +2388,5 @@ export function registerMemoryRoutes(app: Express) {
     "/api/memory/entity-links/:memoryId/:entityType/:entityId",
     handleDeleteEntityLink,
   );
-  app.post("/api/memory/beliefs/backfill-titles", handleBackfillLongTitles);
   app.post("/api/memory/backfill-long-titles", handleBackfillLongTitles);
 }

@@ -526,7 +526,7 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 ### File-Storage Abstraction
 - `TTLCache` coalesces same-key reads and generation-guards cache writes so a fetch completed after invalidation cannot repopulate stale state.
 - **Document-backed modules** use the `BaseDocumentStore<T>` pattern over `workspace_documents`
-- Covers: projects, priorities, personas, principles, predictions, beliefs, Rules, check-ins, issues, emotional state
+- Covers: projects, priorities, personas, principles, predictions, Rules, check-ins, issues, emotional state
 - **Common pattern:** documentStorage backend → TTLCache(Infinity) → invalidate on write → JSON serialization
 - **Gotcha:** Every module loads ALL documents of its type for any query
 

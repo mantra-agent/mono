@@ -207,7 +207,6 @@ export const TOOL_ICON_MAP: Record<string, string> = {
   intentions: "Crosshair",
   router: "Route",
   skills: "GraduationCap",
-  beliefs: "Heart",
   finance: "DollarSign",
   capabilities: "Cog",
   railway: "TrainFront",

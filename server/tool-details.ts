@@ -61,8 +61,8 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
       consolidate_short: { description: "Consolidate short-term memory entries into mid-term." },
       integrate_mid_to_long: { description: "Integrate mid-term memories into long-term storage.", optionalParams: ["force"] },
       run_myelination: { description: "Run myelination process to strengthen frequently accessed memory pathways." },
-      run_memory_decay: { description: "Apply decay to all long-term memories and beliefs, reducing decay_score and confidence for stale entries." },
-      run_memory_reinforcement: { description: "Reinforce memories and beliefs that have been recently recalled." },
+      run_memory_decay: { description: "Apply decay to long-term memories and vNext claims according to their lifecycle policies." },
+      run_memory_reinforcement: { description: "Reinforce memories that have been recently recalled." },
       list_sources: { description: "Query vNext memory_sources (source refs). Returns provenance links between memories and their sources (memory, library, session, chat_journal, etc.). Filter by memoryId, sourceType, sourceId, or relationship.", optionalParams: ["memoryId", "sourceType", "sourceId", "relationship", "limit"] },
       add_source: { description: "Create a vNext source ref linking a memory entry to its source. Upserts on (memoryId, sourceType, sourceId, relationship).", requiredParams: ["memoryId", "sourceType", "sourceId"], optionalParams: ["relationship", "context", "quote", "strength"] },
       delete_source: { description: "Delete a source ref by its ID.", requiredParams: ["sourceRefId"] },
@@ -214,11 +214,6 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     description: "Manage Agent's skill library — reusable instruction sets. Actions: list, get, create, update, delete, search.",
     whenToUse: "When Agent needs to create, review, or modify its own reusable skills.",
     example: '{ "action": "create", "name": "my-analysis", "process": "...", "description": "Custom analysis" }',
-  },
-  beliefs: {
-    description: "Manage Agent's belief system — claims about the world, user, or self with confidence scores. Actions: list, get, save, create, update, invalidate.",
-    whenToUse: "When Agent forms or updates beliefs based on observations, conversations, or reflections.",
-    example: '{ "action": "create", "claim": "User prefers morning meetings", "domain": "scheduling", "confidence": 0.6 }',
   },
   shell: {
     description: "Execute a shell command in the workspace directory. Use for system operations, running scripts, or inspecting the environment.",

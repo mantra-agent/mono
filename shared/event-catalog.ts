@@ -43,9 +43,6 @@ export const AgentEvents = {
   TOOL_RESULT: "agent.tool_result",
   DATA_PEOPLE_CHANGED: "data:people_changed",
 
-  DATA_BELIEF_CREATED: "data:belief_created",
-  DATA_BELIEF_UPDATED: "data:belief_updated",
-  DATA_BELIEF_INVALIDATED: "data:belief_invalidated",
   DATA_RULE_CREATED: "data:rule_created",
   DATA_RULE_UPDATED: "data:rule_updated",
 } as const;
@@ -107,7 +104,6 @@ export const SYSTEM_STEP_META: Record<string, { label: string }> = {
   ctx_pri_journal: { label: "Journal" },
   ctx_wm_work: { label: "Active Work" },
   ctx_wm_calendar: { label: "Calendar" },
-  ctx_wm_beliefs: { label: "Beliefs" },
   ctx_wm_session: { label: "Session Context" },
   ctx_memory: { label: "Memory Retrieval" },
   ctx_skills_tools: { label: "Skills & Tools" },

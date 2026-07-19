@@ -113,7 +113,6 @@ const SECTION_GROUPS: SectionGroup[] = [
     sections: [
       { id: "world_model.active_work", label: "Active Work" },
       { id: "world_model.decisions", label: "Decisions" },
-      { id: "world_model.beliefs", label: "Beliefs" },
     ],
   },
   {

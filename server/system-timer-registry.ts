@@ -223,7 +223,7 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
 
     systemKey: "sleep",
     name: "Sleep",
-    description: "Nightly belief decay and reinforcement cycle at 2am",
+    description: "Nightly memory lifecycle, graph maintenance, and synthesis cycle at 2am",
     type: "skill",
     skillId: "sleep",
     prompt: "",

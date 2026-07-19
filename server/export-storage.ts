@@ -15,7 +15,6 @@ import {
   fileProjectStorage,
   fileTaskStorage,
   timerStorage,
-  fileBeliefStorage,
   fileRuleStorage,
 } from "./file-storage";
 import { listHooks } from "./hook-storage";
@@ -551,48 +550,24 @@ async function genDecisions(dir: string): Promise<{ count: number }> {
 async function genEpistemic(dir: string): Promise<{ count: number }> {
   let count = 0;
   try {
-    const beliefs = await fileBeliefStorage.getAll();
-    const beliefsMd =
-      `# Beliefs\n\n` +
-      beliefs.map((b) => {
-        const confLabel = b.confidence >= 0.8 ? "High" : b.confidence >= 0.5 ? "Medium" : "Low";
-        const evidenceMd = (b.evidence ?? []).length
-          ? "\n**Evidence:**\n" +
-            (b.evidence as any[]).map((e: any) =>
-              `  - [${e.type ?? "?"}] ${e.summary ?? e.id ?? ""}`
-            ).join("\n") + "\n"
-          : "";
-        return (
-          `## [${b.domain ?? "general"}] ${confLabel} confidence\n\n` +
-          `${b.claim}\n\n` +
-          `- **Confidence:** ${Math.round(b.confidence * 100)}%\n` +
-          `- **Status:** ${b.status ?? "active"}\n` +
-          (b.principleRef ? `- **Principle:** ${b.principleRef}\n` : "") +
-          (b.tags?.length ? `- **Tags:** ${b.tags.join(", ")}\n` : "") +
-          evidenceMd
-        );
-      }).join("\n");
-    await writeFile(dir, "epistemic/beliefs.md", beliefsMd);
-
-    // Predictions now live in thesis_predictions table — export from there
     const { thesisStorage } = await import("./thesis-storage");
     const allTheses = await thesisStorage.list();
     const allPredictions: any[] = [];
-    for (const t of allTheses) {
-      const preds = await thesisStorage.listPredictions(t.id);
-      allPredictions.push(...preds.map(p => ({ ...p, thesisTitle: t.title })));
+    for (const thesis of allTheses) {
+      const predictions = await thesisStorage.listPredictions(thesis.id);
+      allPredictions.push(...predictions.map((prediction) => ({ ...prediction, thesisTitle: thesis.title })));
     }
     const predictionsMd =
       `# Predictions\n\n` +
-      allPredictions.map((p: any) =>
-        `## ${p.claim ?? "Prediction"}\n` +
-        `- **Conviction:** ${p.conviction ?? "low"}\n` +
-        `- **Thesis:** ${p.thesisTitle ?? ""}\n` +
-        `- **Deadline:** ${p.deadline ?? ""}\n` +
-        `- **Outcome:** ${p.outcome ?? "pending"}\n`
+      allPredictions.map((prediction: any) =>
+        `## ${prediction.claim ?? "Prediction"}\n` +
+        `- **Conviction:** ${prediction.conviction ?? "low"}\n` +
+        `- **Thesis:** ${prediction.thesisTitle ?? ""}\n` +
+        `- **Deadline:** ${prediction.deadline ?? ""}\n` +
+        `- **Outcome:** ${prediction.outcome ?? "pending"}\n`,
       ).join("\n");
     await writeFile(dir, "epistemic/predictions.md", predictionsMd);
-    count = beliefs.length + allPredictions.length;
+    count = allPredictions.length;
   } catch (err: any) {
     log.warn("genEpistemic failed:", err?.message);
     await writeFile(dir, "epistemic/_ERRORS.md", `# Epistemic Export Error\n\n${err?.message ?? err}`);

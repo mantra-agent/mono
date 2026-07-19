@@ -274,16 +274,6 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
   },
 
   {
-    id: "world_model.beliefs",
-    title: "Beliefs",
-    parentId: "world_model",
-    sourceType: "dynamic",
-    freshnessPolicy: "per-session",
-    priority: 1.5,
-    includedIn: ["full", "world"],
-  },
-
-  {
     id: "world_model.active_work",
     title: "Active Work",
     parentId: "world_model",

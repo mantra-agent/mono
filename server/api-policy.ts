@@ -109,7 +109,6 @@ const PERSONAL_RULES: ApiPolicyRule[] = [
       "/api/exec",
       "/api/opportunities",
       "/api/rules",
-      "/api/beliefs",
       "/api/vaults",
 
       "/api/email",
