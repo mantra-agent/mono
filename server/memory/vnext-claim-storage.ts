@@ -24,7 +24,8 @@ import {
   type MemoryVnextClaimLink,
 } from "@shared/schema";
 import type { ClaimCandidate } from "./vnext-claim-extraction";
-import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, generateEmbedding } from "./embedding";
+import { generateEmbedding } from "./embedding";
+import { MEMORY_VNEXT_EMBEDDING_PROFILE } from "./embedding-profile";
 import { cosineSimilarity } from "./graph-walker";
 import { resolveVnextEntityMentions } from "./vnext-entity-resolution";
 
@@ -306,11 +307,6 @@ function nextLifecycleStage(current: string, candidate: MemoryVnextLifecycleStag
   const normalizedCurrent = normalizeLifecycleStage(current);
   return order[candidate] > order[normalizedCurrent] ? candidate : normalizedCurrent;
 }
-
-export const MEMORY_VNEXT_EMBEDDING_PROFILE = {
-  model: EMBEDDING_MODEL,
-  dimensions: EMBEDDING_DIMENSIONS,
-} as const;
 
 function validateVnextEmbedding(embedding: number[] | undefined, context: string): number[] | undefined {
   if (!embedding) return undefined;
