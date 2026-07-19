@@ -696,7 +696,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
                 .where(eq(userProfilesTable.userId, principal.userId))
                 .limit(1);
               const userName = userProfile?.preferredName || userProfile?.displayName || "there";
-              firstMessage = `Hey ${userName}! I'm ${FTUE_AGENT_NAME}. I help you keep track of what matters and turn it into action. To start, what's one goal or commitment you'd like me to help move forward?`;
+              firstMessage = `Hey ${userName}! I'm ${FTUE_AGENT_NAME}. I help you keep track of what matters and turn it into action. To start, what's one goal you'd like me to help move forward?`;
               voiceLog.log(`FTUE firstMessage composed for user=${userName} agent=${FTUE_AGENT_NAME}`);
             }
           }
