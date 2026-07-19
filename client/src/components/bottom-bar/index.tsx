@@ -424,6 +424,8 @@ function BottomBarMenu({
 
 interface BottomBarProps {
   contained?: boolean;
+  /** Publish measured height for independent overlays such as app toasts. */
+  publishGlobalHeight?: boolean;
   /** When embedded in the Session Window, the parent owns the visible session identity. */
   sessionId?: string | null;
   /** Parent-owned stream state for the visible session. Avoids a second single-session subscription. */
@@ -438,6 +440,7 @@ interface BottomBarProps {
 
 export function BottomBar({
   contained,
+  publishGlobalHeight = false,
   sessionId: controlledSessionId,
   sessionSub: controlledSessionSub,
   setSessionId: controlledSetSessionId,
@@ -778,7 +781,7 @@ export function BottomBar({
   // and focus widget can position themselves above it.
   const barRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    if (contained) return; // Contained mode doesn't need the global CSS variable
+    if (contained && !publishGlobalHeight) return;
     const el = barRef.current;
     if (!el) return;
     const ro = new ResizeObserver(([entry]) => {
@@ -790,11 +793,13 @@ export function BottomBar({
       ro.disconnect();
       document.documentElement.style.removeProperty("--bottom-bar-height");
     };
-  }, [contained]);
+  }, [contained, publishGlobalHeight]);
 
   if (HIDDEN_ROUTES.has(location)) {
-    // Clear the property when the bar is hidden so consumers fall back to 0
-    if (!contained) document.documentElement.style.setProperty("--bottom-bar-height", "0px");
+    // Clear the property when the bar is hidden so consumers fall back to 0.
+    if (!contained || publishGlobalHeight) {
+      document.documentElement.style.setProperty("--bottom-bar-height", "0px");
+    }
     return null;
   }
 
