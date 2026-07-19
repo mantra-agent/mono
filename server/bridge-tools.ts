@@ -7464,6 +7464,10 @@ ${lines.join("\n")}` };
       const fullMessage = message;
       await chatFileStorage.createMessage(conv.id, "assistant", fullMessage);
       await chatFileStorage.setSessionPinned(conv.id, true);
+      // Mark unread so the session gets unread emphasis in the session menu and
+      // trips the global notification indicator, matching timer/reminder-initiated
+      // sessions. Cleared when the user opens the conversation.
+      await chatFileStorage.setHasUnreadResult(conv.id, true);
       await chatFileStorage.saveSession(conv.id, shortTitle);
 
       const { eventBus } = await import("./event-bus");
@@ -7473,7 +7477,7 @@ ${lines.join("\n")}` };
         payload: { sessionId: conv.id, topic },
       });
 
-      return { result: `Created conversation "${topic}" (${conv.id}) with pin flag. The user will see it highlighted in their sessions.` };
+      return { result: `Created conversation "${topic}" (${conv.id}) pinned and marked unread. It will stay highlighted in the session menu until the user opens it.` };
     } catch (err: any) {
       return { result: `Failed to create conversation: ${err.message}`, error: true };
     }
