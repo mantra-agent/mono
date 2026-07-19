@@ -5,38 +5,32 @@ import {
   repairDocumentStoreWorkspaceProjection,
   runDocumentStoreWorkspaceMigration,
 } from "./document-store-workspace-migration";
-import { setDocumentStoreReadCutover } from "./document-store-cutover";
 import {
-  documentStoreShadowEnabled,
-  documentStoreTargetReadsRequested,
-  getDocumentStoreMigrationMode,
-} from "./document-store-migration-mode";
+  documentStoreIndependentActivationRequested,
+  documentStoreIndependentWritesEnabled,
+  enableIndependentDocumentStore,
+  ensureDocumentStoreMirror,
+  setDocumentStoreReadCutover,
+} from "./document-store-cutover";
 
 const log = createLogger("DocumentStoreBootstrap");
 const ADVISORY_LOCK_KEY = "document_store_workspace_migration_v1";
 
 /**
- * Runs the replay-safe workspace-document copy in explicit shadow/cutover mode.
- * The advisory lock keeps multiple processes from running batches concurrently.
- * Work starts after readiness so migration load cannot prevent serving traffic.
+ * Reconciles and activates the document store before readiness. Every process
+ * waits on the same advisory lock, then re-checks the persisted epoch. No
+ * document consumer can run against a half-reconciled store.
  */
 export async function runDocumentStoreWorkspaceMigrationBootstrap(): Promise<void> {
-  const mode = getDocumentStoreMigrationMode();
-  if (!documentStoreShadowEnabled()) {
-    log.debug("document migration skipped in off mode");
-    return;
-  }
-
   const lockClient = await pool.connect();
   let lockAcquired = false;
   try {
-    const lockResult = await lockClient.query<{ acquired: boolean }>(
-      "SELECT pg_try_advisory_lock(hashtext($1)) AS acquired",
-      [ADVISORY_LOCK_KEY],
-    );
-    lockAcquired = lockResult.rows[0]?.acquired === true;
-    if (!lockAcquired) {
-      log.info("document migration already owned by another process");
+    await lockClient.query("SELECT pg_advisory_lock(hashtext($1))", [ADVISORY_LOCK_KEY]);
+    lockAcquired = true;
+    await ensureDocumentStoreMirror();
+    if (await documentStoreIndependentWritesEnabled()) {
+      await enableIndependentDocumentStore();
+      log.info("document store already independently authoritative");
       return;
     }
 
@@ -52,15 +46,20 @@ export async function runDocumentStoreWorkspaceMigrationBootstrap(): Promise<voi
       before.conflictCount === 0
     ) {
       await setDocumentStoreReadCutover(true, before as unknown as Record<string, unknown>);
-      log.info("document migration already reconciled", {
-        mode,
-        targetReadsEnabled: documentStoreTargetReadsRequested(),
-        reconciliation: before,
-      });
+      if (await documentStoreIndependentActivationRequested()) {
+        await enableIndependentDocumentStore();
+        log.info("document migration reconciled and independently activated", {
+          reconciliation: before,
+        });
+      } else {
+        log.info("document migration reconciled; database activation request not yet present", {
+          reconciliation: before,
+        });
+      }
       return;
     }
 
-    log.info("document migration starting", { mode, reconciliation: before });
+    log.info("document migration starting before readiness", { reconciliation: before });
     const result = await runDocumentStoreWorkspaceMigration(pool);
     if (
       result.status === "completed" &&
@@ -71,11 +70,12 @@ export async function runDocumentStoreWorkspaceMigrationBootstrap(): Promise<voi
         true,
         result.reconciliation as unknown as Record<string, unknown>,
       );
-      log.info("document migration completed", {
-        mode,
-        targetReadsEnabled: documentStoreTargetReadsRequested(),
-        result,
-      });
+      if (await documentStoreIndependentActivationRequested()) {
+        await enableIndependentDocumentStore();
+        log.info("document migration completed and independently activated", { result });
+      } else {
+        log.info("document migration completed; database activation request not yet present", { result });
+      }
       return;
     }
 
@@ -83,7 +83,8 @@ export async function runDocumentStoreWorkspaceMigrationBootstrap(): Promise<voi
       false,
       result.reconciliation as unknown as Record<string, unknown>,
     );
-    log.error("document migration stopped without clean reconciliation", { mode, result });
+    log.error("document migration stopped without clean reconciliation", { result });
+    throw new Error("Document-store startup reconciliation failed; server readiness blocked");
   } finally {
     if (lockAcquired) {
       try {

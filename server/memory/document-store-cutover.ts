@@ -1,13 +1,6 @@
 import { pool } from "../db";
 import { createLogger } from "../log";
 
-import {
-  documentStoreIndependentWritesRequested,
-  documentStoreShadowEnabled,
-  documentStoreTargetReadsRequested,
-  getDocumentStoreMigrationMode,
-} from "./document-store-migration-mode";
-
 const log = createLogger("DocumentStoreCutover");
 export const DOCUMENT_STORE_CUTOVER_KEY = "workspace_v1";
 
@@ -15,6 +8,7 @@ type CutoverState = {
   shadow_writes_enabled: boolean;
   read_enabled: boolean;
   independent_writes_enabled: boolean;
+  independent_activation_requested_at?: Date | null;
   independent_started_at?: Date | null;
   legacy_workspace_row_count?: number | null;
 };
@@ -26,11 +20,14 @@ async function readCutoverState(client: { query: typeof pool.query }): Promise<C
   if (!table.rows[0]?.exists) return null;
   await client.query(
     `ALTER TABLE document_store_cutover_state
-     ADD COLUMN IF NOT EXISTS independent_writes_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
+     ADD COLUMN IF NOT EXISTS independent_writes_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+     ADD COLUMN IF NOT EXISTS independent_activation_requested_at TIMESTAMPTZ(6),
+     ADD COLUMN IF NOT EXISTS independent_started_at TIMESTAMPTZ(6),
+     ADD COLUMN IF NOT EXISTS legacy_workspace_row_count INTEGER`,
   );
   const state = await client.query<CutoverState>(
     `SELECT shadow_writes_enabled, read_enabled, independent_writes_enabled,
-            independent_started_at, legacy_workspace_row_count
+            independent_activation_requested_at, independent_started_at, legacy_workspace_row_count
      FROM document_store_cutover_state
      WHERE cutover_key = $1`,
     [DOCUMENT_STORE_CUTOVER_KEY],
@@ -38,27 +35,41 @@ async function readCutoverState(client: { query: typeof pool.query }): Promise<C
   return state.rows[0] ?? null;
 }
 
-let independentStateCache: { enabled: boolean; checkedAt: number } | null = null;
-const INDEPENDENT_STATE_CACHE_MS = 500;
+let independentEnabled = false;
 
-/**
- * The database epoch is authoritative during a rolling independent activation.
- * Old cutover-mode processes observe it within 500ms and switch writes before
- * the source guard can turn normal traffic into an outage.
- */
+/** PostgreSQL is authoritative. False is never cached across requests. */
 export async function documentStoreIndependentWritesEnabled(): Promise<boolean> {
-  if (documentStoreIndependentWritesRequested()) return true;
-  const now = Date.now();
-  if (independentStateCache && now - independentStateCache.checkedAt < INDEPENDENT_STATE_CACHE_MS) {
-    return independentStateCache.enabled;
-  }
+  if (independentEnabled) return true;
   const state = await readCutoverState(pool);
-  const enabled = state?.independent_writes_enabled === true;
-  independentStateCache = { enabled, checkedAt: now };
-  return enabled;
+  independentEnabled = state?.independent_writes_enabled === true;
+  return independentEnabled;
 }
 
-async function enableIndependentDocumentStore(): Promise<void> {
+export async function documentStoreIndependentActivationRequested(): Promise<boolean> {
+  const state = await readCutoverState(pool);
+  return state?.independent_activation_requested_at != null;
+}
+
+export async function requestIndependentDocumentStoreActivation(): Promise<void> {
+  const result = await pool.query(
+    `UPDATE document_store_cutover_state
+     SET independent_activation_requested_at = COALESCE(independent_activation_requested_at, CURRENT_TIMESTAMP),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE cutover_key = $1
+       AND shadow_writes_enabled = TRUE
+       AND read_enabled = TRUE
+       AND independent_writes_enabled = FALSE`,
+    [DOCUMENT_STORE_CUTOVER_KEY],
+  );
+  if (result.rowCount !== 1) {
+    const state = await readCutoverState(pool);
+    if (state?.independent_writes_enabled) return;
+    throw new Error("Independent activation request requires a reconciled document-store cutover");
+  }
+  log.info("independent document-store activation requested; restart required");
+}
+
+export async function enableIndependentDocumentStore(): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -71,6 +82,7 @@ async function enableIndependentDocumentStore(): Promise<void> {
         shadow_writes_enabled BOOLEAN NOT NULL DEFAULT FALSE,
         read_enabled BOOLEAN NOT NULL DEFAULT FALSE,
         independent_writes_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        independent_activation_requested_at TIMESTAMPTZ(6),
         independent_started_at TIMESTAMPTZ(6),
         legacy_workspace_row_count INTEGER,
         last_reconciled_at TIMESTAMPTZ(6),
@@ -81,12 +93,13 @@ async function enableIndependentDocumentStore(): Promise<void> {
     await client.query(
       `ALTER TABLE document_store_cutover_state
        ADD COLUMN IF NOT EXISTS independent_writes_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+       ADD COLUMN IF NOT EXISTS independent_activation_requested_at TIMESTAMPTZ(6),
        ADD COLUMN IF NOT EXISTS independent_started_at TIMESTAMPTZ(6),
        ADD COLUMN IF NOT EXISTS legacy_workspace_row_count INTEGER`,
     );
     const state = await client.query<CutoverState>(
       `SELECT shadow_writes_enabled, read_enabled, independent_writes_enabled,
-              independent_started_at, legacy_workspace_row_count
+              independent_activation_requested_at, independent_started_at, legacy_workspace_row_count
        FROM document_store_cutover_state
        WHERE cutover_key = $1
        FOR UPDATE`,
@@ -98,6 +111,9 @@ async function enableIndependentDocumentStore(): Promise<void> {
     }
 
     if (!current.independent_writes_enabled) {
+      if (!current.independent_activation_requested_at) {
+        throw new Error("Independent activation has not been requested in PostgreSQL");
+      }
       if (!current.shadow_writes_enabled || !current.read_enabled) {
         throw new Error("Independent mode requires active shadow writes and reconciled target reads");
       }
@@ -204,7 +220,9 @@ async function enableIndependentDocumentStore(): Promise<void> {
              independent_started_at = COALESCE(independent_started_at, CURRENT_TIMESTAMP),
              legacy_workspace_row_count = COALESCE(legacy_workspace_row_count, $2),
              updated_at = CURRENT_TIMESTAMP
-         WHERE cutover_key = $1`,
+         WHERE cutover_key = $1
+           AND independent_writes_enabled = FALSE
+           AND independent_activation_requested_at IS NOT NULL`,
         [DOCUMENT_STORE_CUTOVER_KEY, proof.source_count],
       );
       await client.query(`
@@ -232,7 +250,7 @@ async function enableIndependentDocumentStore(): Promise<void> {
       if (!triggerProof || triggerProof.mirror_count !== 0 || triggerProof.row_guard_count !== 1 || triggerProof.truncate_guard_count !== 1) {
         throw new Error(`Independent trigger catalog assertion failed: ${JSON.stringify(triggerProof)}`);
       }
-      independentStateCache = { enabled: true, checkedAt: Date.now() };
+      independentEnabled = true;
       log.info("document store independent write ownership enabled", { proof, triggerProof });
     } else {
       await client.query(
@@ -252,29 +270,15 @@ async function enableIndependentDocumentStore(): Promise<void> {
   }
 }
 
-/** Install the atomic workspace mirror only when shadow or cutover mode is explicit. */
+/**
+ * Install the atomic compatibility mirror until PostgreSQL records independent
+ * ownership. The persisted epoch is the only authority; deployment variables
+ * cannot enable, disable, or roll back this transition.
+ */
 export async function ensureDocumentStoreMirror(): Promise<void> {
-  const mode = getDocumentStoreMigrationMode();
   const persisted = await readCutoverState(pool);
-  if (persisted?.independent_writes_enabled && !documentStoreIndependentWritesRequested()) {
-    throw new Error(
-      `Document store is permanently independent; configured mode=${mode} would re-enable stale legacy storage`,
-    );
-  }
-  if (documentStoreIndependentWritesRequested()) {
+  if (persisted?.independent_writes_enabled) {
     await enableIndependentDocumentStore();
-    return;
-  }
-  if (!documentStoreShadowEnabled()) {
-    if (persisted) {
-      await pool.query(
-        `UPDATE document_store_cutover_state
-         SET shadow_writes_enabled = FALSE, read_enabled = FALSE, updated_at = CURRENT_TIMESTAMP
-         WHERE cutover_key = $1`,
-        [DOCUMENT_STORE_CUTOVER_KEY],
-      );
-    }
-    log.info("document store migration mode is off; mirror and target reads disabled");
     return;
   }
 
@@ -287,6 +291,7 @@ export async function ensureDocumentStoreMirror(): Promise<void> {
         shadow_writes_enabled BOOLEAN NOT NULL DEFAULT FALSE,
         read_enabled BOOLEAN NOT NULL DEFAULT FALSE,
         independent_writes_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        independent_activation_requested_at TIMESTAMPTZ(6),
         independent_started_at TIMESTAMPTZ(6),
         legacy_workspace_row_count INTEGER,
         last_reconciled_at TIMESTAMPTZ(6),
@@ -296,7 +301,8 @@ export async function ensureDocumentStoreMirror(): Promise<void> {
     `);
     await client.query(
       `ALTER TABLE document_store_cutover_state
-       ADD COLUMN IF NOT EXISTS independent_writes_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
+       ADD COLUMN IF NOT EXISTS independent_writes_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+       ADD COLUMN IF NOT EXISTS independent_activation_requested_at TIMESTAMPTZ(6)`,
     );
     await client.query(
       `INSERT INTO document_store_cutover_state (cutover_key)
@@ -407,12 +413,12 @@ export async function ensureDocumentStoreMirror(): Promise<void> {
     `);
     await client.query(
       `UPDATE document_store_cutover_state
-       SET shadow_writes_enabled = TRUE, read_enabled = FALSE, updated_at = CURRENT_TIMESTAMP
+       SET shadow_writes_enabled = TRUE, updated_at = CURRENT_TIMESTAMP
        WHERE cutover_key = $1`,
       [DOCUMENT_STORE_CUTOVER_KEY],
     );
     await client.query("COMMIT");
-    log.info("workspace mirror installed", { mode });
+    log.info("workspace mirror installed pending database-owned activation");
   } catch (error) {
     try { await client.query("ROLLBACK"); } catch { /* preserve original error */ }
     throw error;
@@ -425,11 +431,6 @@ export async function setDocumentStoreReadCutover(
   enabled: boolean,
   reconciliation: Record<string, unknown>,
 ): Promise<void> {
-  const mode = getDocumentStoreMigrationMode();
-  const effectiveEnabled = enabled && documentStoreTargetReadsRequested();
-  if (enabled && !effectiveEnabled) {
-    log.info("target reads remain disabled outside cutover mode", { mode });
-  }
   const result = await pool.query(
     `UPDATE document_store_cutover_state
      SET read_enabled = $2,
@@ -437,7 +438,7 @@ export async function setDocumentStoreReadCutover(
          reconciliation = $3::jsonb,
          updated_at = CURRENT_TIMESTAMP
      WHERE cutover_key = $1 AND shadow_writes_enabled = TRUE`,
-    [DOCUMENT_STORE_CUTOVER_KEY, effectiveEnabled, JSON.stringify(reconciliation)],
+    [DOCUMENT_STORE_CUTOVER_KEY, enabled, JSON.stringify(reconciliation)],
   );
   if (result.rowCount !== 1) {
     throw new Error("Document-store cutover state is missing or shadow writes are disabled");

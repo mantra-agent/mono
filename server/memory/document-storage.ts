@@ -20,7 +20,6 @@ import {
   DOCUMENT_STORE_CUTOVER_KEY,
   documentStoreIndependentWritesEnabled,
 } from "./document-store-cutover";
-import { documentStoreTargetReadsRequested } from "./document-store-migration-mode";
 import {
   executeSemanticSearch,
   mapRawRowToEntry,
@@ -81,7 +80,6 @@ function targetToDoc(entry: DocumentStoreDocument): WorkspaceDocCompat {
 }
 
 export async function targetReadsEnabled(): Promise<boolean> {
-  if (!documentStoreTargetReadsRequested()) return false;
   const result = await db.execute(sql`
     SELECT read_enabled
     FROM document_store_cutover_state
@@ -90,7 +88,7 @@ export async function targetReadsEnabled(): Promise<boolean> {
   `);
   const row = ((result.rows ?? result) as Array<{ read_enabled: boolean }>)[0];
   if (!row) {
-    throw new Error("Document-store cutover state is missing while cutover mode is active");
+    throw new Error("Document-store cutover state is missing after startup readiness");
   }
   if (row.read_enabled !== true) {
     throw new Error("Document-store cutover is not reconciled; legacy read fallback is disabled");

@@ -1602,7 +1602,6 @@ export async function registerBrainRoutes(app: Express) {
     const summary: Record<string, number> = {};
     const { setSetting } = await import("../system-settings");
     const { documentStorage } = await import("../memory/document-storage");
-    const { documentStoreIndependentWritesRequested } = await import("../memory/document-store-migration-mode");
 
     const configDir = join(filesDir, "workspace", "config");
     if (await pathExists(configDir)) {
@@ -1640,12 +1639,9 @@ export async function registerBrainRoutes(app: Express) {
     const workspaceDir = join(filesDir, "workspace");
     if (!await pathExists(workspaceDir)) return summary;
 
-    if (documentStoreIndependentWritesRequested()) {
-      throw new Error(
-        "Legacy brain file import cannot replace documents after independent cutover; use a target-native import workflow",
-      );
-    }
-    await db.delete(memoryEntries).where(eq(memoryEntries.layer, "workspace"));
+    throw new Error(
+      "Legacy brain file import cannot replace document-store workspace data; use a target-native import workflow",
+    );
 
     const yamlLib = await import("yaml");
     function parseFrontmatter(raw: string): { meta: Record<string, unknown>; body: string } {
