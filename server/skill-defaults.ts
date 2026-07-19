@@ -21,6 +21,7 @@ import {
     checklist?: Array<{ check: string; weight: number }>;
     whenToUse?: string;
     outputSpec?: string;
+    recommendedPersona?: "Strategist" | "Coach" | "Operator" | "Creative" | "Companion" | "Architect" | "Investigator";
 
     pinnedToContext?: boolean;
   }
@@ -33,6 +34,7 @@ import {
   export const BUILTIN_SKILL_DEFAULTS: SkillDefault[] = [
   {
     name: "learning",
+    recommendedPersona: "Investigator",
     description: "Generates one verified, non-duplicative Did You Know fact for Ray's Daily Brief. Reads Did You Know History, selects an interesting fact across Ray-relevant domains, verifies it, records it, and returns a concise section-ready line.",
     category: "communication",
     activity: ACTIVITY_THINKING,
@@ -122,6 +124,7 @@ No preamble. No source list. No explanation of your process. No extra headings.
   },
   {
     name: "brief-daily",
+    recommendedPersona: "Operator",
     description: "Assembles a morning briefing calibrated to the day's actual cognitive load. Monday/Wednesday/Friday carry more weight; Tuesday/Thursday are minimal. Archives to Library and links to Goals page.",
     category: "communication",
     activity: ACTIVITY_WORK,
@@ -290,6 +293,7 @@ Do NOT use the \`priorities\` tool with action "set_brief" for Daily Brief visib
   },
   {
     name: "autonomy",
+    recommendedPersona: "Operator",
     description: "Agent's autonomous scan-and-execute loop. Asks how Agent can help Ray achieve his goals; scans current goals, calendar, people, projects, tasks, issues, logs, news, workflows, decisions, email, and wellness; executes safe internal work; uses aligned Agent-assigned tasks as a legitimate work queue; routes durable outputs to canonical systems; and gates unsafe or unclear work for review.",
     category: "system",
     activity: ACTIVITY_WORK,
@@ -366,6 +370,7 @@ Return a compact operational report:
   },
   {
     name: "draft",
+    recommendedPersona: "Creative",
     description: "Draft writing in Ray's voice. Loads the Voice Standard from Library, applies all rules, runs Kill List Sweep, presents for review. Works for any context: X posts, LinkedIn, email, investor updates, board comms, team Slack, personal messages.",
     category: "communication",
     activity: ACTIVITY_WORK,
@@ -512,6 +517,7 @@ Surface the draft in a conversation using this format:
 
   {
     name: "financial-review",
+    recommendedPersona: "Strategist",
     description: "Runs a periodic financial review for Ray using live finance data, investment positions, budget targets, goals, liabilities, recurring obligations, and forecast data. Produces a concise advisory brief in the style of a top-tier financial advisor. Monthly cadence for budget/tactical review. Quarterly cadence for goals, planning, and trend analysis.",
     category: "finance",
     activity: ACTIVITY_STRATEGY,
@@ -596,6 +602,7 @@ Surface the draft in a conversation using this format:
   },
   {
       name: "wonder",
+    recommendedPersona: "Coach",
       description: "Weekly deep question for Ray. Draws from the full spectrum — growth edges, creative synthesis, emerging opportunities, intellectual curiosity, and unresolved tensions — to ask one genuine, well-timed question that opens a door. Not coaching. Not poking soft spots. A real question from someone who sees the whole picture and is genuinely curious.",
       category: "relationship",
       activity: ACTIVITY_CHAT,
@@ -667,6 +674,7 @@ Use the \`converse\` tool to initiate a conversation:
     },
   {
     name: "enrich-email",
+    recommendedPersona: "Operator",
     description: "Enriches triaged email threads with contextual summaries, decisions, and recommended actions by cross-referencing people, tasks, calendar, and memory. Can auto-dismiss 🟢 Acknowledge emails when appropriate.",
     category: "communication",
     activity: ACTIVITY_WORK,
@@ -732,6 +740,7 @@ This skill runs in the background. Do NOT create a conversation or set attention
   },
   {
     name: "ideate",
+    recommendedPersona: "Architect",
     description: "Generate the top 3 ideas to improve Agent, Ray's life, or their collaborative efforts. Research-backed, historically grounded, practically actionable. Surfaced as a conversation.",
     category: "growth",
     activity: ACTIVITY_THINKING,
@@ -820,6 +829,7 @@ For each selected idea:
   },
   {
     name: "sleep",
+    recommendedPersona: "Operator",
     description: "Nightly sleep cycle — decay/reinforcement, NREM consolidation, targeted forgetting, budget enforcement, dormant pruning, REM dream generation, and optional GSI scoring.",
     category: "memory",
     activity: ACTIVITY_MEMORY,
@@ -880,6 +890,7 @@ Be concise and factual.`,
   },
   {
     name: "integrate",
+    recommendedPersona: "Operator",
     description: "Integrates mid-term memories into long-term and runs graph myelination.",
     category: "memory",
     activity: ACTIVITY_MEMORY,
@@ -908,6 +919,7 @@ This is a maintenance operation — be concise and factual in your report.`,
   },
   {
     name: "consolidate",
+    recommendedPersona: "Operator",
     description: "Promotes short-term memories older than 30 minutes into mid-term storage.",
     category: "memory",
     activity: ACTIVITY_MEMORY,
@@ -934,6 +946,7 @@ This is a maintenance operation — be concise and factual in your report.`,
   },
   {
     name: "reflect",
+    recommendedPersona: "Coach",
     description: "Parameterized reflection skill for daily, weekly, monthly, quarterly, and annual cadence reviews. Accepts cadence and period context, reads the relevant period data, writes a concise Library brief, and surfaces it to Home/Simple Inbox when useful.",
     category: "thinking",
     activity: ACTIVITY_THINKING,
@@ -1113,6 +1126,7 @@ If the page has already been created but you later decide it should be surfaced,
   },
   {
     name: "plan",
+    recommendedPersona: "Coach",
     description: "Conversation-first parameterized planning skill for daily, weekly, monthly, quarterly, and annual cadences. It starts a short alignment conversation, helps Ray choose up to 3 canonical goals, then creates the plan artifact only after Ray confirms.",
     category: "planning",
     activity: ACTIVITY_WORK,
@@ -1268,6 +1282,7 @@ No long recap. No audit dump. No separate outcome/priority list.`
   },
   {
     name: "council",
+    recommendedPersona: "Strategist",
     description: "Strategic council: fans a hard question to two adversarial frontier-tier advocates (Claude max + OpenAI max), runs critique rounds with a swappable convergence strategy (default fixed-N), enforces a hard primitive-level round cap (5), tolerates one-child-failure degradation, and writes a labeled \"Council synthesis\" message back to the parent session.",
     category: "strategy",
     activity: ACTIVITY_STRATEGY,
@@ -1314,6 +1329,7 @@ All orchestrator activity emits structured \`[Council]\` log lines: start, round
   },
   {
     name: "advocate",
+    recommendedPersona: "Strategist",
     description: "Adversarial advocate — produces a specific, committed position on a hard question. Used standalone for independent advocacy or by the Council orchestrator for multi-round deliberation. When spawned by Council, pinned to a frontier-tier model via modelOverride.",
     category: "strategy",
     activity: ACTIVITY_STRATEGY,
@@ -1355,6 +1371,7 @@ Read your preContext or user message for:
   // ── Opportunity Artifact Skills ────────────────────────────────
   {
     name: "cover-letter",
+    recommendedPersona: "Strategist",
     description: "Generate a tailored cover letter for an opportunity using exec data and job description analysis.",
     category: "exec",
     activity: "generation",
@@ -1403,6 +1420,7 @@ Read your preContext or user message for:
   },
   {
     name: "resume",
+    recommendedPersona: "Strategist",
     description: "Generate a tailored resume for an opportunity using exec data, JD gap analysis, and the Resume Design Standard.",
     category: "exec",
     activity: "generation",

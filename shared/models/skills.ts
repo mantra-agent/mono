@@ -1,6 +1,7 @@
 import { pgTable, text, varchar, serial, integer, timestamp, boolean, jsonb, real, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { personas } from "./cognition";
 import { sql } from "drizzle-orm";
 
 export const skillAuthorities = ["full", "notify", "approve", "blocked"] as const;
@@ -81,6 +82,7 @@ export const skills = pgTable("skills", {
 
   sessionType: text("session_type"),
   personaId: integer("persona_id"),
+  recommendedPersonaTemplateId: integer("recommended_persona_template_id").references(() => personas.id, { onDelete: "set null" }),
   successCount: integer("success_count").notNull().default(0),
   failureCount: integer("failure_count").notNull().default(0),
 
@@ -152,7 +154,6 @@ export const insertSkillSchema = createInsertSchema(skills).omit({
   author: z.string().default("user"),
   budgetBehavior: z.string().nullable().optional(),
   sessionType: z.enum(sessionTypes).nullable().optional(),
-  personaId: z.number().int().nullable().optional(),
   checklist: z.array(checklistItemSchema).optional().default([]),
   references: z.array(z.object({
     name: z.string().min(1),
@@ -173,6 +174,26 @@ export const skillFailureDismissals = pgTable("skill_failure_dismissals", {
 ]);
 
 export type SkillFailureDismissal = typeof skillFailureDismissals.$inferSelect;
+
+// Per-user persona overrides for skills. A row here means "when this user runs
+// this skill, use this persona" — it takes precedence over the skill's global
+// recommendedPersonaTemplateId. Persona IDs reference personas visible to the
+// owning user (their copies or global templates).
+export const skillPersonaPreferences = pgTable("skill_persona_preferences", {
+  id: serial("id").primaryKey(),
+  skillId: varchar("skill_id").notNull().references(() => skills.id, { onDelete: "cascade" }),
+  personaId: integer("persona_id").notNull().references(() => personas.id, { onDelete: "cascade" }),
+  ownerUserId: text("owner_user_id").notNull(),
+  accountId: text("account_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  uniqueIndex("skill_persona_preferences_skill_user_account_key").on(table.skillId, table.ownerUserId, table.accountId),
+  index("idx_skill_persona_preferences_owner").on(table.ownerUserId),
+  index("idx_skill_persona_preferences_account").on(table.accountId),
+]);
+
+export type SkillPersonaPreference = typeof skillPersonaPreferences.$inferSelect;
 
 export const insertSkillReferenceSchema = createInsertSchema(skillReferences).omit({
   id: true,

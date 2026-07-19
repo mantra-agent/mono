@@ -108,6 +108,7 @@ When adding real-time sync for new data types, follow this pattern:
 Skills UI is for runnable workflows: capabilities with explicit run identity, sessions, scoring, and operator-facing execution. Internal Prompts UI is for non-runnable prompt templates used by code paths. Do not add run buttons, skill-run language, or session expectations to Internal Prompts unless a future architecture changes prompt execution.
 
 Internal Prompts should show domain grouping, key/name/version/status, used-by/call-site metadata from the prompt-module registry, prompt/output-spec editing, and version restore. Skills should hide migrated internal helpers such as myelination, people summary, strategy simulation, chat compaction, and content-indexing prompt modules.
+Skill persona controls edit the current user's override, not the shared skill definition. Show the product recommendation explicitly as `Recommended · {Persona}`; selecting it clears the override. Persist the preference before reporting the skill edit as complete.
 
 Memory UI should distinguish memory entries from session mirrors and archive/raw session data. When graph/search behavior excludes raw sessions, explain the policy in UI rather than making it look like data disappeared.
 

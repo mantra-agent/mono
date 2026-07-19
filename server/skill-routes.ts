@@ -7,6 +7,7 @@ import { createLogger } from "./log";
 import { db } from "./db";
 import { libraryPages } from "@shared/models/info";
 import { inArray } from "drizzle-orm";
+import { listSkillPersonaConfiguration, setSkillPersonaPreference } from "./skill-persona-service";
 
 const log = createLogger("SkillRoutes");
 
@@ -63,6 +64,41 @@ export function registerSkillRoutes(app: Express): void {
     } catch (err: any) {
       log.error("GET /api/skills/failed-names error:", err.message);
       res.status(500).json({ error: "Failed to fetch failed skill names" });
+    }
+  });
+
+  // Per-user persona overrides for skills. These routes delegate all reads,
+  // visibility validation, ownership stamping, and upserts to the canonical
+  // skill persona service.
+  app.get("/api/skills/persona-config", async (_req, res) => {
+    try {
+      res.json(await listSkillPersonaConfiguration());
+    } catch (err: any) {
+      log.error("GET /api/skills/persona-config error:", err.message);
+      res.status(500).json({ error: "Failed to fetch persona preferences" });
+    }
+  });
+
+  app.put("/api/skills/:id/persona-preference", async (req, res) => {
+    try {
+      const skill = await storage.getSkill(req.params.id);
+      if (!skill) return res.status(404).json({ error: "Skill not found" });
+
+      const personaId = req.body?.personaId;
+      if (personaId !== null && (!Number.isInteger(personaId) || typeof personaId !== "number")) {
+        return res.status(400).json({ error: "personaId must be an integer or null" });
+      }
+
+      const result = await setSkillPersonaPreference(skill.id, personaId);
+      log.log(
+        `${personaId === null ? "Cleared" : "Set"} persona preference skill=${skill.name} persona=${personaId ?? "recommended"}`,
+      );
+      res.json(result);
+    } catch (err: any) {
+      const status = err.message?.includes("not found or not visible") ? 400 :
+        err.message?.includes("user principal") ? 403 : 500;
+      log.error("PUT /api/skills/:id/persona-preference error:", err.message);
+      res.status(status).json({ error: err.message || "Failed to set persona preference" });
     }
   });
 

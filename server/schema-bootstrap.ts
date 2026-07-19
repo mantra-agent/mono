@@ -3043,6 +3043,36 @@ export async function runSchemaBootstrap(
       .catch(() => {});
   });
 
+  // Skill persona schema must exist before skill seeding/migration below.
+  await heal("skills recommended_persona_template_id column", async () => {
+    await pool.query(
+      `ALTER TABLE skills ADD COLUMN IF NOT EXISTS recommended_persona_template_id INTEGER REFERENCES personas(id) ON DELETE SET NULL`,
+    );
+  });
+
+  await heal("skill_persona_preferences table", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS skill_persona_preferences (
+        id SERIAL PRIMARY KEY,
+        skill_id VARCHAR NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+        persona_id INTEGER NOT NULL REFERENCES personas(id) ON DELETE CASCADE,
+        owner_user_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS skill_persona_preferences_skill_user_account_key ON skill_persona_preferences(skill_id, owner_user_id, account_id)`,
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_skill_persona_preferences_owner ON skill_persona_preferences(owner_user_id)`,
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_skill_persona_preferences_account ON skill_persona_preferences(account_id)`,
+    );
+  });
+
   try {
     const {
       seedBuiltinSkills,
@@ -3052,11 +3082,13 @@ export async function runSchemaBootstrap(
       migrateSkillProcessToToolBased,
       migrateSkillAddToMemoryDefaults,
       migrateSkillProcessUpdates,
+      migrateLegacySkillPersonaPreferences,
       deleteZombieSkills,
     } = await import("./skill-seed");
     await ensurePromptModuleTables(pool);
     await migrateSkillRenames();
     await seedBuiltinSkills();
+    await migrateLegacySkillPersonaPreferences();
     await migrateLegacyPromptOverrides();
     await migrateSkillProcessToToolBased();
     await migrateSkillAddToMemoryDefaults();
