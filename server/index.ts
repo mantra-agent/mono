@@ -341,6 +341,8 @@ app.use((req, res, next) => {
   await seedSkillPersonaRecommendations();
   const { runDocumentStoreWorkspaceMigrationBootstrap } = await import("./memory/document-store-bootstrap");
   await runDocumentStoreWorkspaceMigrationBootstrap();
+  const { purgeRetiredBeliefs } = await import("./memory/retired-beliefs-purge");
+  await purgeRetiredBeliefs();
   const { ensurePermissionSchema } = await import("./permissions");
   await ensurePermissionSchema();
   const migrateMs = Date.now() - tMigrate0;
