@@ -7068,6 +7068,25 @@ ${lines.join("\n")}` };
           if (!updated) return { result: `Failed to update skill "${id}"`, error: true };
           return { result: `Updated skill "${updated.name}" (id: ${updated.id})` };
         }
+        case "set_persona": {
+          const identifier = args.id || args.name;
+          if (!identifier) return { result: "Missing skill id or name", error: true };
+          let skill = await storage.getSkill(identifier);
+          if (!skill) skill = await storage.getSkillByName(identifier);
+          if (!skill) return { result: `Skill "${identifier}" not found`, error: true };
+          const personaId = args.personaId;
+          if (personaId !== null && (typeof personaId !== "number" || !Number.isInteger(personaId))) {
+            return { result: "personaId must be an integer or null", error: true };
+          }
+          const { setSkillPersonaPreference } = await import("./skill-persona-service");
+          await setSkillPersonaPreference(skill.id, personaId);
+          if (personaId === null) {
+            return { result: `Cleared persona override for "${skill.name}"; it will use the product recommendation.` };
+          }
+          const { personaStorage } = await import("./file-storage/persona-storage");
+          const persona = await personaStorage.get(personaId);
+          return { result: `Set persona override for "${skill.name}" to ${persona?.name || personaId}.` };
+        }
         case "delete": {
           const id = args.id;
           if (!id) return { result: "Missing skill id", error: true };
@@ -7269,7 +7288,7 @@ ${lines.join("\n")}` };
           };
         }
         default:
-          return { result: `Unknown skills action: ${action}. Available: list, get, create, update, delete, search, run, runs, scores`, error: true };
+          return { result: `Unknown skills action: ${action}. Available: list, get, create, update, set_persona, delete, search, run, runs, scores`, error: true };
       }
     } catch (err: any) {
       return { result: `Skills tool error: ${err.message}`, error: true };

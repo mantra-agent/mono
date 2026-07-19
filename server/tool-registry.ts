@@ -1233,13 +1233,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   skills: {
-    description: "Manage Agent's skill library — reusable instruction sets. Actions: list, get, create, update, delete, search, run, runs, scores. The 'get' action returns full skill details including the structured weighted checklist used by the scorer. The 'run' action spawns an autonomous skill execution. The 'runs' action returns recent execution history (status, duration, score, timestamps, and failureReason/endReason for failed runs) from skill_runs — same data shown in the dashboard's Run History panel. The 'scores' action returns scored runs from skill_runs (the source of truth).",
+    description: "Manage Agent's skill library — reusable instruction sets. Actions: list, get, create, update, set_persona, delete, search, run, runs, scores. The 'get' action returns full skill details including the structured weighted checklist used by the scorer. The 'run' action spawns an autonomous skill execution. The 'runs' action returns recent execution history (status, duration, score, timestamps, and failureReason/endReason for failed runs) from skill_runs — same data shown in the dashboard's Run History panel. The 'scores' action returns scored runs from skill_runs (the source of truth).",
     category: "knowledge",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list", "get", "create", "update", "delete", "search", "run", "runs", "scores"], description: "list: show all skills. get: read full skill details by name including structured checklist. create: add a new skill. update: modify an existing skill by id. delete: remove a user-created skill by id. search: find skills by query string. run: spawn an autonomous skill execution by skill ID. runs: get recent skill_runs (status, duration, pass rate, timestamps) for a skill by name — matches the dashboard Run History panel. scores: get scoring history from skill_runs." },
+        action: { type: "string", enum: ["list", "get", "create", "update", "set_persona", "delete", "search", "run", "runs", "scores"], description: "list: show all skills. get: read full skill details by name including structured checklist. create: add a new skill. update: modify an existing skill by id. set_persona: set or clear the current user's persona override for a skill. delete: remove a user-created skill by id. search: find skills by query string. run: spawn an autonomous skill execution by skill ID. runs: get recent skill_runs (status, duration, pass rate, timestamps) for a skill by name — matches the dashboard Run History panel. scores: get scoring history from skill_runs." },
         id: { type: "string", description: "Skill UUID (for update, delete)" },
         name: { type: "string", description: "Skill name (for get, create, search)" },
         query: { type: "string", description: "Search query (for search action)" },
@@ -1252,6 +1252,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         activity: { type: "string", description: "Activity type (for create/update)" },
         version: { type: "string", description: "Version string (for create/update)" },
         sessionType: { type: "string", enum: ["autonomous", "agent"], description: "Session type for this skill's runs (for create/update). 'agent' surfaces runs as visible conversations alongside user sessions; 'autonomous' (default) files them under SYSTEM sessions." },
+        personaId: { type: ["number", "null"], description: "Persona ID for set_persona. Pass null to clear the override and use the product recommendation." },
         preContext: { type: "string", description: "Optional pre-context string to pass to the skill run (for run)" },
         wait: { type: "boolean", description: "If true (default), wait for the skill run to complete before returning. If false, fire-and-forget. (for run)" },
         limit: { type: "number", description: "Number of records to return (for runs and scores actions, default 20, max 50)" },

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { usePageHeader } from "@/hooks/use-page-header";
 // focus context removed — inline expansion, no selection model
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -864,7 +864,8 @@ function SkillEditorDialog({
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
   const [addToMemory, setAddToMemory] = useState(true);
   const [sessionType, setSessionType] = useState<string>("agent");
-  const [personaId, setPersonaId] = useState<number | null>(null);
+  const [personaChoice, setPersonaChoice] = useState<number | "recommended">("recommended");
+  const personaTouchedRef = useRef(false);
   const [version, setVersion] = useState("1.0");
   const [author, setAuthor] = useState("user");
   const [references, setReferences] = useState<{ name: string; content: string }[]>([]);
@@ -885,7 +886,6 @@ function SkillEditorDialog({
       setChecklist(Array.isArray(editingSkill.checklist) ? editingSkill.checklist as ChecklistItem[] : []);
       setAddToMemory(editingSkill.addToMemory !== false);
       setSessionType(editingSkill.sessionType || "agent");
-      setPersonaId(typeof editingSkill.personaId === "number" ? editingSkill.personaId : null);
       setVersion(editingSkill.version);
       setAuthor(editingSkill.author);
       setReferences(editingSkill.references.map(r => ({ name: r.name, content: r.content })));
@@ -904,7 +904,6 @@ function SkillEditorDialog({
       setChecklist([]);
       setAddToMemory(true);
       setSessionType("agent");
-      setPersonaId(null);
       setVersion("1.0");
       setAuthor("user");
       setReferences([]);
@@ -916,10 +915,48 @@ function SkillEditorDialog({
     enabled: open,
   });
 
+  const { data: personaConfig } = useQuery<{
+    preferences: Record<string, number>;
+    recommendations: Record<string, { templateId: number; name: string }>;
+  }>({
+    queryKey: ["/api/skills/persona-config"],
+    enabled: open,
+  });
+
+  // Hydrate the persona choice from the user's saved preference. "recommended"
+  // means no override: the run falls back to the product recommendation.
+  useEffect(() => {
+    if (!open) {
+      personaTouchedRef.current = false;
+      return;
+    }
+    if (personaTouchedRef.current) return;
+    const saved = editingSkill
+      ? personaConfig?.preferences[editingSkill.id]
+      : undefined;
+    setPersonaChoice(typeof saved === "number" ? saved : "recommended");
+  }, [open, editingSkill, personaConfig]);
+
+  const recommendedName = editingSkill
+    ? personaConfig?.recommendations[editingSkill.id]?.name ?? null
+    : null;
+
+  const savePersonaPreference = async (skillId: string) => {
+    if (!personaTouchedRef.current) return;
+    await apiRequest("PUT", `/api/skills/${skillId}/persona-preference`, {
+      personaId: personaChoice === "recommended" ? null : personaChoice,
+    });
+    await queryClient.invalidateQueries({
+      queryKey: ["/api/skills/persona-config"],
+    });
+  };
+
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
       const res = await apiRequest("POST", "/api/skills", data);
-      return res.json();
+      const skill = await res.json() as { id: string };
+      await savePersonaPreference(skill.id);
+      return skill;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
@@ -934,7 +971,9 @@ function SkillEditorDialog({
   const updateMutation = useMutation({
     mutationFn: async (data: any) => {
       const res = await apiRequest("PATCH", `/api/skills/${editingSkill!.id}`, data);
-      return res.json();
+      const skill = await res.json() as { id: string };
+      await savePersonaPreference(skill.id);
+      return skill;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
@@ -965,7 +1004,6 @@ function SkillEditorDialog({
       checklist: validChecklist,
       addToMemory,
       sessionType,
-      personaId,
       status: editingSkill?.status || "draft",
       version,
       author,
@@ -1051,14 +1089,19 @@ function SkillEditorDialog({
               <div>
                 <Label className="text-xs mb-1 block">Persona</Label>
                 <Select
-                  value={personaId != null ? String(personaId) : "default"}
-                  onValueChange={(v) => setPersonaId(v === "default" ? null : Number(v))}
+                  value={personaChoice === "recommended" ? "recommended" : String(personaChoice)}
+                  onValueChange={(v) => {
+                    personaTouchedRef.current = true;
+                    setPersonaChoice(v === "recommended" ? "recommended" : Number(v));
+                  }}
                 >
                   <SelectTrigger className="h-8 text-xs" data-testid="select-persona">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="default">Default</SelectItem>
+                    <SelectItem value="recommended">
+                      {recommendedName ? `Recommended · ${recommendedName}` : "Default persona"}
+                    </SelectItem>
                     {personas.map(p => (
                       <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>
                     ))}

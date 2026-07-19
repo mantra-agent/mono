@@ -1,7 +1,7 @@
 import { createLogger } from "./log";
 import { db } from "./db";
-import { skills, libraryPages } from "@shared/schema";
-import { eq, sql } from "drizzle-orm";
+import { skills, libraryPages, personas, skillPersonaPreferences } from "@shared/schema";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { BUILTIN_SKILL_DEFAULTS } from "./skill-defaults";
 import * as fs from "fs";
 import * as path from "path";
@@ -45,6 +45,118 @@ export async function migrateSkillRenames(): Promise<void> {
         log.debug(`Renamed skill "${oldName}" → "${newName}"`);
       }
     }
+  }
+}
+
+const ADDITIONAL_SKILL_RECOMMENDATIONS: Record<string, string> = {
+  "affirm": "Companion",
+  "coaching-model-1-0": "Coach",
+  "news-curation": "Investigator",
+  "research": "Investigator",
+  "scan": "Operator",
+};
+
+/**
+ * Product defaults for the cognitive stance each skill should use. Built-in
+ * defaults live beside their workflow definitions; user-created-but-product-
+ * recognized skills are listed above. This migration is replay-safe and only
+ * fills empty recommendations, preserving explicit future product changes.
+ */
+export async function seedSkillPersonaRecommendations(): Promise<void> {
+  const recommendations = new Map<string, string>([
+    ...BUILTIN_SKILL_DEFAULTS.flatMap((def) =>
+      def.recommendedPersona ? [[def.name, def.recommendedPersona] as const] : [],
+    ),
+    ...Object.entries(ADDITIONAL_SKILL_RECOMMENDATIONS),
+  ]);
+  const personaNames = [...new Set(recommendations.values())];
+  const templates = await db
+    .select({ id: personas.id, name: personas.name })
+    .from(personas)
+    .where(
+      and(
+        eq(personas.scope, "global"),
+        eq(personas.source, "seed"),
+        eq(personas.isSystem, false),
+        inArray(personas.name, personaNames),
+      ),
+    );
+  const templateIds = new Map(templates.map((row) => [row.name, row.id]));
+
+  let applied = 0;
+  for (const [skillName, personaName] of recommendations) {
+    const templateId = templateIds.get(personaName);
+    if (!templateId) {
+      log.error(`Cannot seed persona recommendation for skill "${skillName}": global template "${personaName}" is missing`);
+      continue;
+    }
+    const updated = await db
+      .update(skills)
+      .set({ recommendedPersonaTemplateId: templateId, updatedAt: new Date() })
+      .where(
+        and(
+          eq(skills.name, skillName),
+          sql`${skills.recommendedPersonaTemplateId} IS NULL`,
+        ),
+      )
+      .returning({ id: skills.id });
+    applied += updated.length;
+  }
+  log.debug(`Skill persona recommendations complete: ${applied} newly applied, ${recommendations.size} configured`);
+}
+
+/**
+ * Migrate legacy skills.persona_id values into user-owned preferences using
+ * the skill row's existing owner/account identity. No user identity is guessed.
+ * The legacy column is cleared only after the preference upsert succeeds.
+ */
+export async function migrateLegacySkillPersonaPreferences(): Promise<void> {
+  const legacy = await db
+    .select({
+      id: skills.id,
+      personaId: skills.personaId,
+      ownerUserId: skills.ownerUserId,
+      accountId: skills.accountId,
+    })
+    .from(skills)
+    .where(isNotNull(skills.personaId));
+
+  let migrated = 0;
+  for (const row of legacy) {
+    if (!row.personaId || !row.ownerUserId || !row.accountId) {
+      log.error(`Cannot migrate legacy skill persona for skill=${row.id}: missing owner/account identity`);
+      continue;
+    }
+    await db.transaction(async (tx) => {
+      await tx
+        .insert(skillPersonaPreferences)
+        .values({
+          skillId: row.id,
+          personaId: row.personaId!,
+          ownerUserId: row.ownerUserId!,
+          accountId: row.accountId!,
+        })
+        .onConflictDoUpdate({
+          target: [
+            skillPersonaPreferences.skillId,
+            skillPersonaPreferences.ownerUserId,
+            skillPersonaPreferences.accountId,
+          ],
+          set: {
+            personaId: row.personaId!,
+            accountId: row.accountId!,
+            updatedAt: new Date(),
+          },
+        });
+      await tx
+        .update(skills)
+        .set({ personaId: null, updatedAt: new Date() })
+        .where(eq(skills.id, row.id));
+    });
+    migrated++;
+  }
+  if (migrated > 0) {
+    log.debug(`Migrated ${migrated} legacy skill persona assignments into user preferences`);
   }
 }
 

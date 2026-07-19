@@ -617,7 +617,7 @@ export async function executeAutonomousSkillRun(
 
   let addToMemory = true;
   let resolvedSessionType: "autonomous" | "agent" | null = null;
-  let resolvedPersonaId: number | null = null;
+  let resolvedPersona: import("./skill-persona-service").SkillPersonaResolution | null = null;
   if (!isSkillless) {
     logger.log(`[SkillChat] phase=skill-lookup — resolving skill record for "${skillId}" (config.skillId="${config.skillId}")`);
     try {
@@ -631,8 +631,11 @@ export async function executeAutonomousSkillRun(
         if (skillRecord.sessionType === "autonomous" || skillRecord.sessionType === "agent") {
           resolvedSessionType = skillRecord.sessionType;
         }
-        if (typeof skillRecord.personaId === "number") {
-          resolvedPersonaId = skillRecord.personaId;
+        try {
+          const { resolveSkillRunPersona } = await import("./skill-persona-service");
+          resolvedPersona = await resolveSkillRunPersona(skillRecord);
+        } catch (personaResolveErr: unknown) {
+          logger.warn(`[SkillChat] persona resolution failed for "${skillId}": ${personaResolveErr instanceof Error ? personaResolveErr.message : String(personaResolveErr)}`);
         }
       }
     } catch (e: unknown) {
@@ -736,19 +739,20 @@ export async function executeAutonomousSkillRun(
     }
   }
 
-  // Apply the skill's configured default persona through the canonical
-  // mutation path so persona-driven semantic-tier model routing picks it up.
-  if (resolvedPersonaId != null) {
+  // Apply the resolved skill persona through the canonical mutation path so
+  // persona-driven semantic-tier model routing picks it up. Resolution chain:
+  // user_override → skill_persona_legacy → skill_recommendation (lineage).
+  if (resolvedPersona != null) {
     try {
       const { setSessionPersona } = await import("./session-persona");
-      const persona = await setSessionPersona(sessionId, resolvedPersonaId);
+      const persona = await setSessionPersona(sessionId, resolvedPersona.personaId);
       if (persona) {
-        logger.log(`[SkillChat] [${sessionId}] Applied skill persona "${persona.name}" (id=${persona.id})`);
+        logger.log(`[SkillChat] [${sessionId}] Applied skill persona "${persona.name}" (id=${persona.id}, source=${resolvedPersona.source})`);
       } else {
-        logger.warn(`[SkillChat] [${sessionId}] Skill persona id=${resolvedPersonaId} not found — falling back to default persona resolution`);
+        logger.warn(`[SkillChat] [${sessionId}] Skill persona id=${resolvedPersona.personaId} (source=${resolvedPersona.source}) not found — falling back to default persona resolution`);
       }
     } catch (personaErr: unknown) {
-      logger.warn(`[SkillChat] [${sessionId}] Failed to apply skill persona id=${resolvedPersonaId}: ${personaErr instanceof Error ? personaErr.message : String(personaErr)}`);
+      logger.warn(`[SkillChat] [${sessionId}] Failed to apply skill persona id=${resolvedPersona.personaId}: ${personaErr instanceof Error ? personaErr.message : String(personaErr)}`);
     }
   }
 

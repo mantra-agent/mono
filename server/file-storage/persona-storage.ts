@@ -493,6 +493,41 @@ class PersonaStorageClass {
     return matches.find((p) => p.source === "user") || matches[0] || null;
   }
 
+
+  /**
+   * Resolve a global persona template to the visible persona instance for the
+   * current principal. User copies shadow templates through template lineage;
+   * legacy same-name user copies are supported until their lineage is repaired.
+   */
+  async resolveTemplateForCurrentPrincipal(templateId: number): Promise<PersonaEntry | null> {
+    const [templateRow] = await db
+      .select()
+      .from(personas)
+      .where(
+        and(
+          eq(personas.id, templateId),
+          eq(personas.scope, "global"),
+          eq(personas.source, "seed"),
+          eq(personas.isSystem, false),
+        ),
+      )
+      .limit(1);
+    if (!templateRow) return null;
+    const template = rowToEntry(templateRow);
+
+    const principal = getCurrentPrincipalOrSystem();
+    if (principal.actorType === "system") return template;
+
+    const visible = await this.list();
+    const lineageCopy = visible.find((p) => p.templatePersonaId === templateId);
+    if (lineageCopy) return lineageCopy;
+
+    const sameNameCopy = visible.find(
+      (p) => p.source === "user" && p.name.toLowerCase() === template.name.toLowerCase(),
+    );
+    return sameNameCopy || template;
+  }
+
   async getActive(): Promise<PersonaEntry> {
     const all = await this.list();
     const active = all.find((p) => p.isActive);

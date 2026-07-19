@@ -332,6 +332,13 @@ app.use((req, res, next) => {
   bootTracker.startPhase("database");
   const tMigrate0 = Date.now();
   await runSchemaBootstrap("boot");
+  // Persona templates and skill recommendations are a runtime invariant, not
+  // optional background maintenance. Complete them before accepting requests
+  // so the first skill run after boot cannot observe a half-seeded state.
+  const { personaStorage } = await import("./file-storage/persona-storage");
+  await personaStorage.seedDefaults();
+  const { seedSkillPersonaRecommendations } = await import("./skill-seed");
+  await seedSkillPersonaRecommendations();
   const { runDocumentStoreWorkspaceMigrationBootstrap } = await import("./memory/document-store-bootstrap");
   await runDocumentStoreWorkspaceMigrationBootstrap();
   const { ensurePermissionSchema } = await import("./permissions");
@@ -763,13 +770,6 @@ app.use((req, res, next) => {
         }
       }).catch((err) => {
         log(`[startup] long title backfill failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
-      });
-
-      import("./file-storage/persona-storage").then(async ({ personaStorage }) => {
-        await personaStorage.seedDefaults();
-        log("[startup] Persona seed check complete", "boot");
-      }).catch((err) => {
-        log(`[startup] Persona seed failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
       });
 
       import("./plaid-service").then(async ({ reconcileWebhookUrls, isPlaidConfigured }) => {

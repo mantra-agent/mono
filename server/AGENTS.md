@@ -57,6 +57,7 @@ Access control is server-owned and permission-based. Future code must plug into 
 - `prompt-module-defaults.ts` is bootstrap/backfill fixture data only. Runtime prompt fetch must fail closed when a DB prompt module is missing; do not silently recreate from defaults or Skills.
 - Prompt module routes must enforce named permissions at the route boundary: read with `build:read`, mutation/backfill/restore/delete with `build:write` or `system:write`.
 - Do not reintroduce boot-time reconciliation that rewrites live `skills` or `prompt_modules` from code defaults. Live DB rows are the source of truth after bootstrap/migration.
+- Skill persona selection has two layers: product recommendations live on `skills.recommended_persona_template_id` and may reference only global selectable persona templates; user choices live in `skill_persona_preferences`. `skill-persona-service.ts` is the canonical preference mutation and runtime resolution boundary. Runtime precedence is user override, legacy user-owned skill persona during migration, product recommendation resolved through `personaStorage.resolveTemplateForCurrentPrincipal()`, then normal session default resolution.
 
 Key files:
 
