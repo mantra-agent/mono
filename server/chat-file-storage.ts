@@ -162,16 +162,21 @@ function alignAssistantChronology(
   sessionId: string,
 ): SegmentChronologyEntry[] | undefined {
   if (!chronology) return undefined;
-  const chronologicalContent = chronology
+  const sanitizedChronology = chronology.map((entry) =>
+    entry.s === "content"
+      ? { ...entry, c: stripRoleMarkers(entry.c, sessionId) }
+      : entry,
+  );
+  const chronologicalContent = sanitizedChronology
     .filter((entry): entry is Extract<SegmentChronologyEntry, { s: "content" }> => entry.s === "content")
     .map((entry) => entry.c)
     .join("");
-  if (chronologicalContent === content) return chronology;
+  if (chronologicalContent === content) return sanitizedChronology;
 
   if (content.startsWith(chronologicalContent)) {
     const suffix = content.slice(chronologicalContent.length);
     if (!suffix) return chronology;
-    const aligned = [...chronology];
+    const aligned = [...sanitizedChronology];
     for (let index = aligned.length - 1; index >= 0; index -= 1) {
       const entry = aligned[index];
       if (entry.s !== "content") continue;
@@ -185,7 +190,7 @@ function alignAssistantChronology(
   log.warn(
     `[ChatFileStorage] assistant chronology content mismatch sessionId=${sessionId} chronologyLen=${chronologicalContent.length} contentLen=${content.length}; persisting authoritative terminal content`,
   );
-  const diagnostics = chronology.filter((entry) => entry.s !== "content");
+  const diagnostics = sanitizedChronology.filter((entry) => entry.s !== "content");
   if (content) diagnostics.push({ s: "content", c: content });
   return diagnostics;
 }

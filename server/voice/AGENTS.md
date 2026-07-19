@@ -58,7 +58,7 @@ Provider custom-LLM callbacks resolve by one exact app voice session ID. The ID 
 8. Turn data persists (`persistence.ts`), diagnostics emit
 
 ### Content Accumulation
-Uses per-iteration content model (`iterationResults[]`) with explicit `mergeIterationResults()`. Tool call continuations replace pre-tool preamble. Max-tokens continuations concatenate.
+Uses per-iteration content model (`iterationResults[]`) with explicit `mergeIterationResults()`. Every visible iteration is preserved in order, including pre-tool prose, with the same separator encoded into persisted segment chronology.
 
 ## When Working Here
 - The `VoiceSession` interface in `types.ts` is the source of truth

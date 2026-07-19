@@ -768,6 +768,7 @@ interface RunIterationContext {
   chronologyThinkingBuf: string;
   chronologyContentIdx: number;
   chronologyContentBuf: string;
+  chronologyIterationContentPrefix: string;
   // Task #1007 step 4: timestamp captured when tool_use is received from
   // the model stream. Compared against the moment executeOne actually
   // begins to detect dispatch-gap regressions (e.g. main-thread blocked
@@ -790,33 +791,24 @@ const ZOMBIE_CHECK_INTERVAL_MS = 60_000;
 const ZOMBIE_IDLE_THRESHOLD_MS = 5 * 60 * 1000;
 const ZOMBIE_HARD_CAP_MS = 40 * 60 * 1000;
 
+const ITERATION_CONTENT_SEPARATOR = "\n\n";
+
 /**
- * Merge per-iteration content results into a single final string.
- * - tool_call continuation: take the last result only (pre-tool preamble replaced by post-tool response)
- * - max_tokens continuation: concatenate with double-newline separator
- * - Single iteration: passthrough
+ * Merge every model iteration's visible prose into the durable assistant body.
+ * Tool-call preambles were already streamed to the user, so finalization must
+ * preserve them rather than replace them with the post-tool response.
  *
- * This is a pure function — all accumulation logic is explicit and testable.
+ * The chronology producer applies the same separator before the first content
+ * segment of each later text-producing iteration. This keeps the durable body
+ * and its chronological content projection identical by construction.
  */
 export function mergeIterationResults(
   results: Array<{ content: string; continuationType?: "tool_call" | "max_tokens" }>,
 ): string {
-  if (results.length === 0) return "";
-  if (results.length === 1) return results[0].content;
-
-  let merged = "";
-  for (const r of results) {
-    if (!r.content) continue;
-    // If the previous iteration was a tool_call continuation, the prior content
-    // was pre-tool preamble. Replace it entirely with this iteration's response.
-    if (r.continuationType === "tool_call") {
-      merged = r.content;
-    } else {
-      // max_tokens or first iteration — concatenate
-      merged += (merged ? "\n\n" : "") + r.content;
-    }
-  }
-  return merged;
+  return results
+    .map((result) => result.content)
+    .filter(Boolean)
+    .join(ITERATION_CONTENT_SEPARATOR);
 }
 
 export class AgentExecutor extends EventEmitter {
@@ -1182,6 +1174,8 @@ export class AgentExecutor extends EventEmitter {
           if (ctx.chronologyContentIdx < 0) {
             ctx.chronologyContentIdx = ctx.segmentChronology.length;
             ctx.segmentChronology.push({ s: "content", c: "" });
+            ctx.chronologyContentBuf = ctx.chronologyIterationContentPrefix;
+            ctx.chronologyIterationContentPrefix = "";
           }
           ctx.chronologyContentBuf += textDelta;
           ctx.publish("delta", { content: textDelta });
@@ -1983,6 +1977,7 @@ export class AgentExecutor extends EventEmitter {
       chronologyThinkingBuf: "",
       chronologyContentIdx: -1,
       chronologyContentBuf: "",
+      chronologyIterationContentPrefix: "",
     };
 
     if (options.signal) {
@@ -2125,6 +2120,11 @@ export class AgentExecutor extends EventEmitter {
     ctx.iteration++;
     ctx.iterationThinking = "";
     ctx.iterationText = "";
+    ctx.chronologyIterationContentPrefix = ctx.segmentChronology.some(
+      (entry) => entry.s === "content" && entry.c.length > 0,
+    )
+      ? ITERATION_CONTENT_SEPARATOR
+      : "";
     ctx.iterationUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     ctx.pendingToolCalls = [];
     ctx.iterationStopReason = undefined;
@@ -2785,9 +2785,8 @@ export class AgentExecutor extends EventEmitter {
         terminationReason = "complete";
       }
 
-      // Merge per-iteration results into final content (Phase 2 content model).
-      // tool_call continuation → take last result (pre-tool preamble replaced by post-tool response)
-      // max_tokens continuation → concatenate
+      // Merge every visible per-iteration response using the same separator
+      // encoded into segment chronology at each later iteration boundary.
       const finalContent = mergeIterationResults(iterationResults);
 
       log.debug(`pre-publishRunResult runId=${runId} terminationReason=${terminationReason} elapsedMs=${Date.now() - startTime}`);
