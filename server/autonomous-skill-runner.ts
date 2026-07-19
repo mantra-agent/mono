@@ -338,22 +338,6 @@ function parseEstimatedDurationMs(duration: string | null | undefined): number |
 }
 
 const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
-  "consolidate": {
-    skillId: "consolidate",
-    label: "Consolidate",
-    callType: "internal",
-    activity: ACTIVITY_MEMORY,
-    temperature: 0.2,
-    timeoutMs: 5 * 60 * 1000,
-  },
-  "integrate": {
-    skillId: "integrate",
-    label: "Integrate",
-    callType: "internal",
-    activity: ACTIVITY_MEMORY,
-    temperature: 0.2,
-    timeoutMs: 5 * 60 * 1000,
-  },
   "sleep": {
     skillId: "sleep",
     label: "Sleep",
@@ -559,6 +543,9 @@ export async function executeAutonomousSkillRun(
       if (!dbSkill) dbSkill = await storage.getSkill(skillId);
       if (!dbSkill) {
         throw new Error(`No skill run config and no database record found for "${skillId}"`, { cause: new Error("skill-not-found") });
+      }
+      if (dbSkill.status === "deprecated") {
+        throw new Error(`Skill "${dbSkill.name}" is deprecated and cannot be run`, { cause: new Error("skill-deprecated") });
       }
 
       const hardcodedByName = SKILL_RUN_CONFIGS[dbSkill.name];

@@ -399,28 +399,7 @@ app.use((req, res, next) => {
   bootTracker.completePhase("skills_library");
 
   bootTracker.startPhase("memory");
-  try {
-    const { cleanupDuplicateLayerEntries } = await import("./memory/consolidation");
-    const tCleanup0 = Date.now();
-    const cleanupResult = await cleanupDuplicateLayerEntries();
-    const cleanupMs = Date.now() - tCleanup0;
-    bootPhases.push({ name: "Memory Duplicate Cleanup", durationMs: cleanupMs });
-    log(`[startup] memory duplicate cleanup: ${cleanupResult.cleaned} entries cleaned in ${cleanupMs}ms`, "boot");
-  } catch (err: unknown) {
-    log(`[startup] memory duplicate cleanup failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
-  }
-
-  try {
-    const { sanitizeRawJsonSummaries } = await import("./memory/sanitize-summaries-migration");
-    const tSanitize0 = Date.now();
-    const sanitizeResult = await sanitizeRawJsonSummaries();
-    const sanitizeMs = Date.now() - tSanitize0;
-    if (sanitizeResult.fixed > 0) {
-      log(`[startup] memory summary sanitization: ${sanitizeResult.fixed} entries fixed in ${sanitizeMs}ms`, "boot");
-    }
-  } catch (err: unknown) {
-    log(`[startup] memory summary sanitization failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
-  }
+  log("[startup] legacy memory maintenance disabled; compatibility reads remain available", "boot");
 
   // Plan crash recovery — mark any plans interrupted by shutdown as paused
   try {
@@ -753,25 +732,11 @@ app.use((req, res, next) => {
         log(`[startup] memory listener registration failed: ${err.message}`, "boot");
       });
 
-      import("./memory/long-title-maintenance").then(async ({ backfillLongTitles, logMemoryDiagnostics }) => {
+      import("./memory/long-title-maintenance").then(async ({ logMemoryDiagnostics }) => {
         await logMemoryDiagnostics();
-        const result = await backfillLongTitles({ batchDelayMs: 500 });
-        log(`[startup] long title backfill: ${result.updated} healed, ${result.skipped} ok, ${result.errors.length} errors`, "boot");
-        if (result.updated > 0) {
-          const MYELINATION_DELAY_MS = 30_000;
-          log(`[startup] scheduling myelination summarize pass in ${MYELINATION_DELAY_MS / 1000}s for ${result.updated} healed entries`, "boot");
-          setTimeout(async () => {
-            try {
-              const { startMyelinationBackground } = await import("./memory/memory-enrichment");
-              startMyelinationBackground("summarize");
-              log(`[startup] triggered myelination summarize pass for ${result.updated} healed entries`, "boot");
-            } catch (err) {
-              log(`[startup] myelination summarize pass failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
-            }
-          }, MYELINATION_DELAY_MS);
-        }
+        log("[startup] legacy memory diagnostics complete; maintenance writes disabled", "boot");
       }).catch((err) => {
-        log(`[startup] long title backfill failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
+        log(`[startup] legacy memory diagnostics failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
       });
 
       import("./plaid-service").then(async ({ reconcileWebhookUrls, isPlaidConfigured }) => {

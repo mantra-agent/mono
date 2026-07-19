@@ -3082,7 +3082,7 @@ export async function runSchemaBootstrap(
       migrateSkillRenames,
       migrateLegacyPromptOverrides,
       migrateSkillProcessToToolBased,
-      migrateSkillAddToMemoryDefaults,
+      deprecateRetiredBuiltinSkills,
       migrateSkillProcessUpdates,
       migrateLegacySkillPersonaPreferences,
       deleteZombieSkills,
@@ -3093,7 +3093,7 @@ export async function runSchemaBootstrap(
     await migrateLegacySkillPersonaPreferences();
     await migrateLegacyPromptOverrides();
     await migrateSkillProcessToToolBased();
-    await migrateSkillAddToMemoryDefaults();
+    await deprecateRetiredBuiltinSkills();
     await migrateSkillProcessUpdates();
     await deleteZombieSkills();
     await verifyRequiredSkills();

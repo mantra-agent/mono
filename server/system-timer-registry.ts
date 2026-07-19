@@ -179,51 +179,11 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     timezone: "__USER_TZ__",
   },
   {
-    legacyMatch: (t) =>
-      t.type === "skill" &&
-      (t.skillId === "consolidate" || t.skillId === "memory-consolidate"),
-
-    systemKey: "memory-consolidate",
-    name: "Consolidate",
-    description:
-      "Promotes short-term memories older than 30 minutes into mid-term every 30 minutes",
-    type: "skill",
-    skillId: "consolidate",
-    prompt: "",
-    schedules: [
-      {
-        id: "sys-skill-consolidate-1",
-        frequency: "every_x_minutes",
-        interval: 30,
-      },
-    ],
-    enabled: true,
-    timezone: "__USER_TZ__",
-  },
-  {
-    legacyMatch: (t) =>
-      t.type === "skill" &&
-      (t.skillId === "integrate" || t.skillId === "memory-integrate"),
-
-    systemKey: "memory-integrate",
-    name: "Integrate",
-    description:
-      "Integrates mid-term memories into long-term and runs graph myelination every 4 hours",
-    type: "skill",
-    skillId: "integrate",
-    prompt: "",
-    schedules: [
-      { id: "sys-skill-integrate-1", frequency: "every_x_hours", interval: 4 },
-    ],
-    enabled: true,
-    timezone: "__USER_TZ__",
-  },
-  {
     legacyMatch: (t) => t.type === "skill" && t.skillId === "sleep",
 
     systemKey: "sleep",
     name: "Sleep",
-    description: "Nightly memory lifecycle, graph maintenance, and synthesis cycle at 2am",
+    description: "Nightly vNext claim lifecycle, REM dream generation, and weekly GSI at 2am",
     type: "skill",
     skillId: "sleep",
     prompt: "",
@@ -535,22 +495,19 @@ const RETIRED_SYSTEM_TIMERS: Array<{
   legacyMatch: (timer: Timer) => boolean;
   description: string;
 }> = [
-];
-const TIMER_SCHEDULE_MIGRATIONS: Array<{
-  match: (t: Timer) => boolean;
-  schedules: Timer["schedules"];
-}> = [
   {
-    match: (t) =>
+    systemKey: "memory-consolidate",
+    legacyMatch: (t) =>
       t.type === "skill" &&
       (t.skillId === "consolidate" || t.skillId === "memory-consolidate"),
-    schedules: [
-      {
-        id: "sys-skill-consolidate-1",
-        frequency: "every_x_minutes",
-        interval: 30,
-      },
-    ],
+    description: "Legacy short-to-mid memory consolidation retired with the vNext sleep cycle",
+  },
+  {
+    systemKey: "memory-integrate",
+    legacyMatch: (t) =>
+      t.type === "skill" &&
+      (t.skillId === "integrate" || t.skillId === "memory-integrate"),
+    description: "Legacy mid-to-long memory integration retired with the vNext sleep cycle",
   },
 ];
 
@@ -587,9 +544,21 @@ export class SystemTimerRegistry {
     if (!profile || profile.status !== "completed") return;
     await runWithPrincipal(principal, async () => {
       const all = await timerStorage.getAll();
+      for (const retired of RETIRED_SYSTEM_TIMERS) {
+        const stale = all.filter((timer) => timer.systemKey === retired.systemKey || retired.legacyMatch(timer));
+        for (const timer of stale) {
+          if (timer.enabled) {
+            await timerStorage.update(timer.id, { enabled: false });
+            log.info(`Disabled retired timer "${timer.name}" (${retired.systemKey}) owner=${principal.userId}: ${retired.description}`);
+          }
+        }
+      }
+      const remaining = all.filter((timer) =>
+        !RETIRED_SYSTEM_TIMERS.some((retired) => timer.systemKey === retired.systemKey || retired.legacyMatch(timer)),
+      );
       const timezone = profile.timezone || getTimezone();
       for (const definition of this.managedUserDefinitions()) {
-        const matched = all.find((timer) => timer.systemKey === definition.systemKey);
+        const matched = remaining.find((timer) => timer.systemKey === definition.systemKey);
         const materialized = materializeDefinition(definition, timezone);
         if (!matched) {
           await timerStorage.createManagedUser(materialized, definition.systemKey, principal);

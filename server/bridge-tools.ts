@@ -10216,85 +10216,53 @@ ${refs}` : ""),
     const action = String(args.action || "");
     try {
       switch (action) {
-        case "consolidate_short": {
-          const { runAgeBasedConsolidation, estimateShortTermTokens, runStageOneAdvancementSweep } = await import("./memory/consolidation");
-          const tokensBefore = await estimateShortTermTokens();
-          const { promoted, failed } = await runAgeBasedConsolidation();
-          const stageSweep = await runStageOneAdvancementSweep();
-          const tokensAfter = await estimateShortTermTokens();
-          const moved = Math.max(0, tokensBefore - tokensAfter);
-          const stageLine = stageSweep.status === "already_running"
-            ? "Stage 1 sweep: already running."
-            : `Stage 1 sweep: ${stageSweep.advanced} advanced, ${stageSweep.failed} failed, ${stageSweep.skipped} skipped (${stageSweep.claimed} claimed${stageSweep.runtimeCapped ? ", runtime capped" : ""}).`;
-          return { result: `Age-based consolidation complete: ${promoted} entries promoted (${failed} failed). Short-term tokens: ${tokensBefore} before, ${tokensAfter} after (~${moved} tokens moved to mid-term). ${stageLine}` };
-        }
-        case "integrate_mid_to_long": {
-          const { runIntegration } = await import("./memory/consolidation");
-          const forceFlag = args.force === true || args.force === "true";
-          const result = await runIntegration({ force: forceFlag });
-          if (result.status === "already_running") {
-            return { result: `Integration is already in progress — flagged for re-check when current run completes.` };
-          }
-          if (result.status === "skipped") {
-            return { result: `Integration skipped: ${result.reason || "no action needed"}. Mid-term tokens: ${result.tokensBefore}.` };
-          }
-          return { result: `Integration complete: ${result.succeeded} succeeded, ${result.failed} failed out of ${result.attempted} attempted. Mid-term tokens: ${result.tokensBefore} before, ${result.tokensAfter} after (~${result.tokensBefore - result.tokensAfter} moved). Elapsed: ${result.elapsedMs}ms.` };
-        }
-        case "run_myelination": {
-          const { runGraphEnrichment, getGraphMyelinationStatus } = await import("./memory/consolidation");
-          const preStatus = await getGraphMyelinationStatus();
-          if (preStatus.running) {
-            return { result: `Graph myelination is already running (${preStatus.current}/${preStatus.total} processed). Check status later.` };
-          }
-          const entriesToProcess = preStatus.ungraphedCount;
-          runGraphEnrichment().catch((err: unknown) => {
-            toolExec.error("run_myelination: Background enrichment error:", err instanceof Error ? err.message : String(err));
-          });
-          return { result: `Myelination started in background (${entriesToProcess} entries to process). Use get action with key "myelination_status" to check progress.` };
-        }
-        case "run_memory_decay": {
-          const { runMemoryDecay } = await import("./sleep-cycle");
-          const result = await runMemoryDecay();
-          return { result: `Memory decay complete: decayed=${result.decayed}` };
-        }
-        case "run_memory_reinforcement": {
-          const { runMemoryReinforcement } = await import("./sleep-cycle");
-          const result = await runMemoryReinforcement();
-          return { result: `Memory reinforcement complete: reinforced=${result.reinforced}` };
-        }
         case "run_full_sleep_cycle": {
           const includeGSI = args.includeGSI === true || args.includeGSI === "true" || args.include_gsi === true || args.include_gsi === "true";
           const { runFullSleepCycle } = await import("./sleep-cycle");
           const result = await runFullSleepCycle({ includeGSI });
           const parts = [
-            `Full sleep cycle complete (${result.durationMs}ms):`,
-            `  Entry decay: ${result.entryDecay.decayed} decayed`,
-            `  Entry reinforcement: ${result.entryReinforcement.reinforced} reinforced`,
-            `  NREM: ${result.nrem.linksDecayed} links decayed, ${result.nrem.linksPruned} pruned, ${result.nrem.linksReinforced} reinforced, ${result.nrem.entriesMerged} merged, ${result.nrem.orphansRemoved} orphans removed, ${result.nrem.orphansLinked} orphans linked`,
-            `  REM: dream=${result.rem.dreamTitle || "none"} (id=${result.rem.dreamEntryId}), ${result.rem.domainsWoven} domains, ${result.rem.conceptsSynthesized} concepts`,
+            `Full sleep cycle complete (${result.durationMs}ms)${result.timedOut ? ` — TIMED OUT (${result.abortReason || "unknown"})` : ""}:`,
           ];
+          if (result.vnextLifecycle) {
+            const lc = result.vnextLifecycle;
+            parts.push(`  vNext lifecycle: ${lc.scanned} scanned, ${lc.canonicalized} canonicalized, ${lc.retired} retired, ${lc.decayed} decayed, ${lc.errors} errors`);
+            parts.push(`  Bridges: ${lc.bridges.created} created, ${lc.bridges.replaced} replaced, ${lc.bridges.finalEdges} final edges (${lc.bridges.scanned} scanned)`);
+          } else {
+            parts.push("  vNext lifecycle: did not complete");
+          }
+          parts.push(`  REM: ${result.rem.seedCount} seeds, ${result.rem.sessionCount} sessions, ${result.rem.domainsWoven} domains. Dream: "${result.rem.dreamTitle || "none"}"`);
           if (result.gsi) {
             parts.push(`  GSI: ${(result.gsi.overall * 100).toFixed(1)}% (connectivity=${(result.gsi.connectivity * 100).toFixed(1)}%, linkQuality=${(result.gsi.linkQuality * 100).toFixed(1)}%, orphanRate=${(result.gsi.orphanRate * 100).toFixed(1)}%, clusterBalance=${(result.gsi.clusterBalance * 100).toFixed(1)}%, decayHealth=${(result.gsi.decayHealth * 100).toFixed(1)}%)`);
+          }
+          if (result.errors.length > 0) {
+            parts.push(`  Errors (${result.errors.length}): ${result.errors.join("; ")}`);
+          }
+          if (result.rem.dreamInsight) {
+            parts.push("", `Dream insight: ${result.rem.dreamInsight}`);
+          }
+          if (result.rem.dreamNarrative) {
+            parts.push("", "Dream narrative (file to Library per skill instructions):", result.rem.dreamNarrative);
           }
           return { result: parts.join("\n") };
         }
         case "compute_gsi": {
           const { computeGSI } = await import("./memory/graph-metrics");
           const gsi = await computeGSI();
-          return { result: `GSI Score: ${(gsi.overall * 100).toFixed(1)}% — connectivity=${(gsi.connectivity * 100).toFixed(1)}%, linkQuality=${(gsi.linkQuality * 100).toFixed(1)}%, orphanRate=${(gsi.orphanRate * 100).toFixed(1)}%, clusterBalance=${(gsi.clusterBalance * 100).toFixed(1)}%, decayHealth=${(gsi.decayHealth * 100).toFixed(1)}%. Entry #${gsi.entryId}` };
-        }
-        case "run_nrem": {
-          const { runNREMPhase } = await import("./memory/sleep-maintenance");
-          const nrem = await runNREMPhase();
-          return { result: `NREM phase complete (${nrem.durationMs}ms): ${nrem.linksDecayed} links decayed, ${nrem.linksPruned} pruned, ${nrem.linksReinforced} reinforced, ${nrem.entriesMerged} merged, ${nrem.orphansRemoved} orphans removed, ${nrem.orphansLinked} orphans linked` };
+          return { result: `GSI Score: ${(gsi.overall * 100).toFixed(1)}% — connectivity=${(gsi.connectivity * 100).toFixed(1)}%, linkQuality=${(gsi.linkQuality * 100).toFixed(1)}%, orphanRate=${(gsi.orphanRate * 100).toFixed(1)}%, clusterBalance=${(gsi.clusterBalance * 100).toFixed(1)}%, decayHealth=${(gsi.decayHealth * 100).toFixed(1)}% (${gsi.details.activeClaims} active claims)` };
         }
         case "run_rem": {
           const { runREMPhase } = await import("./memory/dream-engine");
           const rem = await runREMPhase();
-          return { result: `REM phase complete (${rem.durationMs}ms): ${rem.seedCount} seeds, ${rem.domainsWoven} domains, ${rem.conceptsSynthesized} concepts. Dream: "${rem.dreamTitle || "none"}" (entry #${rem.dreamEntryId})` };
+          const remParts = [
+            `REM phase complete (${rem.durationMs}ms): ${rem.seedCount} seeds, ${rem.sessionCount} sessions, ${rem.domainsWoven} domains. Dream: "${rem.dreamTitle || "none"}"`,
+          ];
+          if (rem.dreamInsight) remParts.push(`Dream insight: ${rem.dreamInsight}`);
+          if (rem.dreamNarrative) remParts.push("", "Dream narrative (file to Library per skill instructions):", rem.dreamNarrative);
+          if (rem.errors.length > 0) remParts.push(`Errors: ${rem.errors.join("; ")}`);
+          return { result: remParts.join("\n") };
         }
         default:
-          return { result: `Unknown memory_ops action: "${action}". Valid actions: consolidate_short, integrate_mid_to_long, run_myelination, run_memory_decay, run_memory_reinforcement, run_full_sleep_cycle, compute_gsi, run_nrem, run_rem`, error: true };
+          return { result: `Unknown memory_ops action: "${action}". Valid actions: run_full_sleep_cycle, compute_gsi, run_rem`, error: true };
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -13033,7 +13001,22 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       if (bridge) return bridge(args);
       return { result: `memory_graph bridge handler not found`, error: true };
     }
-    const opsActions = new Set(["consolidate_short", "integrate_mid_to_long", "run_myelination", "run_memory_decay", "run_memory_reinforcement", "run_full_sleep_cycle", "compute_gsi", "run_nrem", "run_rem"]);
+    const retiredLegacyMaintenanceActions = new Set([
+      "consolidate_short",
+      "integrate_mid_to_long",
+      "run_myelination",
+      "run_memory_decay",
+      "run_memory_reinforcement",
+      "run_nrem",
+    ]);
+    if (retiredLegacyMaintenanceActions.has(action)) {
+      return {
+        result: `Memory action "${action}" is retired. Legacy memory propagation and maintenance are disabled; use run_vnext_lifecycle, run_full_sleep_cycle, compute_gsi, or run_rem.`,
+        error: true,
+      };
+    }
+
+    const opsActions = new Set(["run_full_sleep_cycle", "compute_gsi", "run_rem"]);
     if (opsActions.has(action)) {
       const bridge = bridgeHandlers.memory_ops;
       if (bridge) return bridge(args);
