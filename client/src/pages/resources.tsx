@@ -225,6 +225,14 @@ function formatPercent(value: number): string {
   return `${(value * 100).toFixed(value >= 0.1 ? 1 : 2)}%`;
 }
 
+function formatUsageSemantics(value: string): string {
+  return value.replace(/_/g, " ");
+}
+
+function formatExclusionReason(value: string): string {
+  return value.replace(/_/g, " ");
+}
+
 function divergenceStatus(divergence: SystemResourcesData["divergence"]): Status {
   if (divergence.value >= THRESHOLDS.divergenceRed) return "red";
   if (divergence.value >= THRESHOLDS.divergenceAmber) return "amber";
@@ -775,50 +783,86 @@ function ResourcesView({
                   {contextHealth ? (
                     <>
                       <MetricRow
-                        label="Calls"
-                        value={`${contextHealth.callCount} · ${contextHealth.callsPerHour}/h`}
+                        label="Scope"
+                        value={`${contextHealth.callCount} rows · ${contextHealth.callsPerHour}/h`}
                         status={contextHealth.callCount > 0 ? "ok" : "amber"}
-                        detail={<DetailText>{contextHealth.windowHours}h window · system-wide · same canonical api_calls summary used by system.context_health.</DetailText>}
+                        detail={(
+                          <DetailList
+                            items={[
+                              `${contextHealth.windowHours}h window · system-wide · row cap ${contextHealth.rowLimit.toLocaleString()}`,
+                              `Source: ${contextHealth.measurementContract.source}`,
+                              `Same canonical summary used by system.context_health.`,
+                            ]}
+                          />
+                        )}
                         testId="tile-context-calls"
+                      />
+                      <MetricRow
+                        label="Comparable population"
+                        value={`${contextHealth.comparableCallCount} in · ${contextHealth.excludedCallCount} out`}
+                        status={contextHealth.comparableCallCount > 0 ? "ok" : "amber"}
+                        detail={(
+                          <DetailList
+                            items={[
+                              contextHealth.measurementContract.comparablePopulation,
+                              contextHealth.measurementContract.contextTokenDefinition,
+                              ...contextHealth.exclusionReasons.map(reason => `Excluded ${reason.count}: ${formatExclusionReason(reason.reason)}`),
+                              ...(contextHealth.exclusionReasons.length ? [] : ["No excluded rows in this window."]),
+                            ]}
+                          />
+                        )}
+                        testId="tile-context-population"
                       />
                       <MetricRow
                         label="Provider TTFT"
                         value={`${formatMs(contextHealth.avgTtftMs)} / ${formatMs(contextHealth.p95TtftMs)}`}
                         status={contextHealth.p95TtftMs !== null && contextHealth.p95TtftMs > contextHealth.budgets.providerTtftP95Ms ? "amber" : contextHealth.ttftSampleCount > 0 ? "ok" : "amber"}
-                        detail={<DetailText>avg / p95 · n={contextHealth.ttftSampleCount} · budget {formatMs(contextHealth.budgets.providerTtftP95Ms)} · provider stream boundary only; use ExecutionStep spans for pre-model attribution.</DetailText>}
+                        detail={<DetailText>avg / p95 · n={contextHealth.ttftSampleCount} · real budget {formatMs(contextHealth.budgets.providerTtftP95Ms)}. This is the only health budget in the context summary.</DetailText>}
                         testId="tile-context-ttft"
                       />
                       <MetricRow
                         label="Context tokens"
-                        value={`${formatTokens(contextHealth.avgContextTokens)} / ${formatTokens(contextHealth.maxContextTokens)}`}
-                        detail={<DetailText>Average / max effective prompt tokens across tracked text-model calls. Derived from provider total minus output so cache semantics stay provider-correct. Informational until a real workload budget is established.</DetailText>}
+                        value={`${formatTokens(contextHealth.medianContextTokens)} / ${formatTokens(contextHealth.p95ContextTokens)} / ${formatTokens(contextHealth.maxContextTokens)}`}
+                        detail={(
+                          <DetailList
+                            items={[
+                              "median / p95 / max across comparable rows only",
+                              "Non-comparable CLI cumulative counters are excluded and never displayed as prompt/context size.",
+                              contextHealth.measurementContract.budgets,
+                              ...contextHealth.contextTokenDistribution.map(bucket => `${bucket.label}: ${bucket.count}`),
+                            ]}
+                          />
+                        )}
                         testId="tile-context-tokens"
                       />
                       <MetricRow
                         label="Output tokens"
                         value={formatTokens(contextHealth.avgOutputTokens)}
-                        detail={<DetailText>Average output tokens · average total tokens ${formatTokens(contextHealth.avgTotalTokens)}.</DetailText>}
+                        detail={<DetailText>Comparable-row average output tokens · comparable-row average total tokens {formatTokens(contextHealth.avgTotalTokens)}.</DetailText>}
                         testId="tile-context-output"
                       />
                       <MetricRow
                         label="Call duration"
                         value={`${formatMs(contextHealth.avgDurationMs)} / ${formatMs(contextHealth.p95DurationMs)}`}
-                        detail={<DetailText>avg / p95 across complete, partial, aborted, and failed inference calls.</DetailText>}
+                        detail={<DetailText>avg / p95 across complete, partial, aborted, and failed tracked inference rows.</DetailText>}
                         testId="tile-context-duration"
                       />
                       <MetricRow
                         label="Model errors"
                         value={`${formatPercent(contextHealth.errorRate)} · ${contextHealth.errorCount}`}
-                        detail={<DetailText>{contextHealth.successCount} successful · {contextHealth.errorCount} errors · {contextHealth.abortedCount} aborted · {contextHealth.partialCount} partial. Informational until a service error budget is established.</DetailText>}
+                        detail={<DetailText>{contextHealth.successCount} successful · {contextHealth.errorCount} errors · {contextHealth.abortedCount} aborted · {contextHealth.partialCount} partial. Informational until a real service error budget is established.</DetailText>}
                         testId="tile-context-errors"
                       />
                       <MetricRow
-                        label="Model mix"
+                        label="Provider rows"
                         value={String(contextHealth.byModel.length)}
                         detail={(
                           <DetailList
                             items={contextHealth.byModel.length
-                              ? contextHealth.byModel.map(item => `${item.provider} · ${item.model} · ${item.tier} · n=${item.callCount} · avg context ${formatTokens(item.avgContextTokens)} · max ${formatTokens(item.maxContextTokens)} · avg TTFT ${formatMs(item.avgTtftMs)}`)
+                              ? [
+                                contextHealth.measurementContract.providerRows,
+                                ...contextHealth.byModel.map(item => `${item.provider} · ${item.model} · ${item.tier} · ${formatUsageSemantics(item.usageSemantics)} · rows ${item.callCount} (${item.comparableCallCount} comparable, ${item.excludedCallCount} excluded) · p95 context ${formatTokens(item.p95ContextTokens)} · max ${formatTokens(item.maxContextTokens)} · avg TTFT ${formatMs(item.avgTtftMs)}`),
+                              ]
                               : ["No model calls in this window."]}
                           />
                         )}

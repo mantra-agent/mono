@@ -11893,6 +11893,83 @@ async function runShellIndexWorker(filePath: string): Promise<{ ok: true; byteCo
   });
 }
 
+
+function formatContextHealthNumber(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+  return String(Math.round(value));
+}
+
+function formatContextHealthLabel(value: string): string {
+  return value.replace(/_/g, " ");
+}
+
+function formatContextHealthSummary(summary: import("@shared/context-health").ContextHealthSummary): string {
+  return JSON.stringify({
+    generatedAt: summary.generatedAt,
+    windowHours: summary.windowHours,
+    rowLimit: summary.rowLimit,
+    scope: summary.measurementContract.scope,
+    source: summary.measurementContract.source,
+    comparablePopulation: summary.measurementContract.comparablePopulation,
+    contextTokenDefinition: summary.measurementContract.contextTokenDefinition,
+    budgetContract: summary.measurementContract.budgets,
+    rows: {
+      total: summary.callCount,
+      comparable: summary.comparableCallCount,
+      excluded: summary.excludedCallCount,
+      callsPerHour: summary.callsPerHour,
+    },
+    contextTokensComparableOnly: {
+      average: summary.avgContextTokens,
+      median: summary.medianContextTokens,
+      p95: summary.p95ContextTokens,
+      max: summary.maxContextTokens,
+      display: `${formatContextHealthNumber(summary.medianContextTokens)} median / ${formatContextHealthNumber(summary.p95ContextTokens)} p95 / ${formatContextHealthNumber(summary.maxContextTokens)} max`,
+      note: "Non-comparable CLI cumulative counters are excluded and never reported as prompt/context size.",
+      distribution: summary.contextTokenDistribution,
+    },
+    exclusions: {
+      contract: summary.measurementContract.exclusions,
+      observed: summary.exclusionReasons.map((reason) => ({
+        reason: formatContextHealthLabel(reason.reason),
+        count: reason.count,
+      })),
+    },
+    providerTtft: {
+      sampleCount: summary.ttftSampleCount,
+      averageMs: summary.avgTtftMs,
+      p95Ms: summary.p95TtftMs,
+      p95BudgetMs: summary.budgets.providerTtftP95Ms,
+    },
+    outcomes: {
+      success: summary.successCount,
+      error: summary.errorCount,
+      aborted: summary.abortedCount,
+      partial: summary.partialCount,
+      errorRate: summary.errorRate,
+    },
+    providerRows: summary.byModel.map((row) => ({
+      provider: row.provider,
+      model: row.model,
+      tier: row.tier,
+      usageSemantics: row.usageSemantics,
+      rows: row.callCount,
+      comparableRows: row.comparableCallCount,
+      excludedRows: row.excludedCallCount,
+      contextTokensComparableOnly: {
+        average: row.avgContextTokens,
+        median: row.medianContextTokens,
+        p95: row.p95ContextTokens,
+        max: row.maxContextTokens,
+      },
+      avgTtftMs: row.avgTtftMs,
+    })),
+    raw: summary,
+  });
+}
+
 const systemTools: Record<string, ToolHandler> = {
   async shell(args) {
     const command = args.command;
@@ -13648,7 +13725,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         const { getContextHealthSummary } = await import("./context-health-storage");
         const hoursRaw = args.hours === undefined ? 24 : Number(args.hours);
         const summary = await getContextHealthSummary(Number.isFinite(hoursRaw) ? hoursRaw : 24);
-        return { result: JSON.stringify(summary) };
+        return { result: formatContextHealthSummary(summary) };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         return { result: `Failed to get context health summary: ${msg}`, error: true };
