@@ -327,6 +327,10 @@ export async function queryActivityStatus() {
   }
 
   const now = new Date();
+  const { start: todayStart, end: todayEnd } = userDayBounds(userDateStr(now));
+  const todayStartMs = todayStart.getTime();
+  const todayEndMs = todayEnd.getTime();
+
   return activities.map((a) => {
     const logs = logsByActivity.get(a.id) ?? [];
     const lastLog = logs[0] ?? null;
@@ -338,9 +342,11 @@ export async function queryActivityStatus() {
       a.category,
     );
 
-    // Compute "done for current period" using the same user-local day boundaries
-    // as the heatmap dialog, so the daily checkbox and the dialog can never disagree
-    // about whether a log lives in today's user-local window.
+    const doneToday = logs.some((l) => {
+      const t = l.date.getTime();
+      return t >= todayStartMs && t <= todayEndMs;
+    });
+
     const { start: periodStart, end: periodEnd } = userPeriodBounds(a.category, now);
     const periodStartMs = periodStart.getTime();
     const periodEndMs = periodEnd.getTime();
@@ -354,6 +360,7 @@ export async function queryActivityStatus() {
       lastCompletedAt: lastCompleted?.toISOString() ?? null,
       tier: lastLog?.tier ?? null,
       metricValue: lastLog?.metricValue ?? null,
+      doneToday,
       doneForCurrentPeriod,
       inWindow: isInWindow(a.category, a.windowStart, a.windowEnd, now, getTimezone()),
       ...status,
