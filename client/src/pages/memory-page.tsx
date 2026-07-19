@@ -1831,10 +1831,7 @@ function VnextJournalTab() {
   return (
     <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden bg-background text-foreground" data-testid="log-tab">
       <div
-        className={cn(
-          "flex min-w-0 flex-col overflow-hidden bg-background",
-          selectedClaimId !== null ? "w-80 shrink-0 border-r border-border" : "flex-1",
-        )}
+        className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-background md:w-1/3 md:min-w-80 md:shrink-0 md:border-r md:border-border"
         data-testid="journal-tree-panel"
       >
         <div className="border-b border-border p-2">
@@ -1939,28 +1936,84 @@ function VnextJournalTab() {
                             const isLast = index === dayClaims.length - 1;
                             const isSelected = selectedClaimId === claim.id;
                             return (
-                              <div key={claim.id} className="flex min-w-0 items-stretch">
-                                <div className="relative mr-1 w-5 shrink-0 self-stretch" aria-hidden="true">
-                                  <div className={cn("absolute left-1/2 top-0 -translate-x-px border-l border-border", isLast ? "bottom-1/2" : "bottom-0")} />
-                                  <div className="absolute left-1/2 right-0 top-1/2 border-t border-border" />
+                              <div key={claim.id} className="min-w-0">
+                                <div className="flex min-w-0 items-stretch">
+                                  <div className="relative mr-1 w-5 shrink-0 self-stretch" aria-hidden="true">
+                                    <div className={cn("absolute left-1/2 top-0 -translate-x-px border-l border-border", isLast && !isSelected ? "bottom-1/2" : "bottom-0")} />
+                                    <div className="absolute left-1/2 right-0 top-1/2 border-t border-border" />
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className={cn(
+                                      WORKING_TREE_ROW_CLASS,
+                                      isSelected ? WORKING_TREE_SELECTED_CLASS : WORKING_TREE_IDLE_CLASS,
+                                    )}
+                                    onClick={() => setSelectedClaimId(isSelected ? null : claim.id)}
+                                    aria-expanded={isSelected}
+                                    data-testid={`log-claim-${claim.id}`}
+                                  >
+                                    <VnextClaimTypeIcon claimType={claim.claimType} />
+                                    <span className={cn("min-w-0 flex-1 truncate text-left", isSelected && "font-medium")}>
+                                      {claim.title || firstLine(claim.content, 70)}
+                                    </span>
+                                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">
+                                      {claim.createdAt ? eventTimeInTz(claim.createdAt, timezone) : ""}
+                                    </span>
+                                  </button>
                                 </div>
-                                <button
-                                  type="button"
-                                  className={cn(
-                                    WORKING_TREE_ROW_CLASS,
-                                    isSelected ? WORKING_TREE_SELECTED_CLASS : WORKING_TREE_IDLE_CLASS,
-                                  )}
-                                  onClick={() => setSelectedClaimId(claim.id)}
-                                  data-testid={`log-claim-${claim.id}`}
-                                >
-                                  <VnextClaimTypeIcon claimType={claim.claimType} />
-                                  <span className={cn("min-w-0 flex-1 truncate text-left", isSelected && "font-medium")}>
-                                    {claim.title || firstLine(claim.content, 70)}
-                                  </span>
-                                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">
-                                    {claim.createdAt ? eventTimeInTz(claim.createdAt, timezone) : ""}
-                                  </span>
-                                </button>
+                                {isSelected && (
+                                  <div className="ml-6 mr-2 border-l border-border/40 pl-2 py-2 space-y-3" data-testid={`log-claim-expanded-${claim.id}`}>
+                                    {selectedClaim ? (
+                                      <>
+                                        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                          <span className="flex items-center gap-1" data-testid="log-detail-time">
+                                            <Clock className="h-2.5 w-2.5" />
+                                            {selectedClaim.createdAt
+                                              ? new Date(selectedClaim.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
+                                              : "Unknown"}
+                                          </span>
+                                          <span className="flex items-center gap-1" data-testid="log-detail-id">
+                                            <Hash className="h-2.5 w-2.5" />{selectedClaim.id}
+                                          </span>
+                                          <Badge variant="outline">{claimTypeLabel(selectedClaim.claimType)}</Badge>
+                                          <Badge variant="outline">{lifecycleLabel(selectedClaim.lifecycleStage)}</Badge>
+                                          <span>{Math.round(Number(selectedClaim.confidence ?? 0) * 100)}% confidence</span>
+                                        </div>
+
+                                        {(selectedClaim.topics ?? []).length > 0 && (
+                                          <div className="flex flex-wrap items-center gap-1.5">
+                                            {(selectedClaim.topics ?? []).map(topic => (
+                                              <Badge key={topic} variant="outline" className="text-xs" data-testid={`log-detail-topic-${topic}`}>{topic}</Badge>
+                                            ))}
+                                          </div>
+                                        )}
+
+                                        <div>
+                                          <p className="mb-1.5 flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                                            <FileText className="h-3 w-3" />
+                                            Memory
+                                          </p>
+                                          <SimpleTextFrame content={selectedClaim.content} />
+                                        </div>
+
+                                        <VnextSourceRefsSection claimId={selectedClaim.id} />
+
+                                        {selectedClaim.metadata && Object.keys(selectedClaim.metadata).length > 0 && (
+                                          <div>
+                                            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Metadata</p>
+                                            <pre className="whitespace-pre-wrap rounded-md border border-card-border bg-muted/20 p-3 font-mono text-xs text-foreground/70" data-testid="log-detail-metadata">
+                                              {JSON.stringify(selectedClaim.metadata, null, 2)}
+                                            </pre>
+                                          </div>
+                                        )}
+                                      </>
+                                    ) : selectedClaimLoading ? (
+                                      <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading memory…</div>
+                                    ) : (
+                                      <div className="px-2 py-1.5 text-sm text-muted-foreground">Memory not found.</div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
@@ -1973,72 +2026,6 @@ function VnextJournalTab() {
           </div>
         </div>
       </div>
-
-      {selectedClaimId !== null && (
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background" data-testid="log-detail-panel">
-          {selectedClaim ? (
-            <div className="flex-1 space-y-4 overflow-y-auto p-4 scrollbar-thin">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <VnextClaimTypeIcon claimType={selectedClaim.claimType} />
-                  <h3 className="truncate text-base font-semibold text-foreground" data-testid="log-detail-title">
-                    {selectedClaim.title || firstLine(selectedClaim.content, 80)}
-                  </h3>
-                </div>
-                <Button variant="ghost" size="icon" onClick={() => setSelectedClaimId(null)} data-testid="log-detail-close">
-                  <X className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span className="flex items-center gap-1" data-testid="log-detail-time">
-                  <Clock className="h-2.5 w-2.5" />
-                  {selectedClaim.createdAt
-                    ? new Date(selectedClaim.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
-                    : "Unknown"}
-                </span>
-                <span className="flex items-center gap-1" data-testid="log-detail-id">
-                  <Hash className="h-2.5 w-2.5" />{selectedClaim.id}
-                </span>
-                <Badge variant="outline">{claimTypeLabel(selectedClaim.claimType)}</Badge>
-                <Badge variant="outline">{lifecycleLabel(selectedClaim.lifecycleStage)}</Badge>
-                <span>{Math.round(Number(selectedClaim.confidence ?? 0) * 100)}% confidence</span>
-              </div>
-
-              {(selectedClaim.topics ?? []).length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {(selectedClaim.topics ?? []).map(topic => (
-                    <Badge key={topic} variant="outline" className="text-xs" data-testid={`log-detail-topic-${topic}`}>{topic}</Badge>
-                  ))}
-                </div>
-              )}
-
-              <div>
-                <p className="mb-1.5 flex items-center gap-1 text-xs font-medium text-muted-foreground">
-                  <FileText className="h-3 w-3" />
-                  Memory
-                </p>
-                <SimpleTextFrame content={selectedClaim.content} />
-              </div>
-
-              <VnextSourceRefsSection claimId={selectedClaim.id} />
-
-              {selectedClaim.metadata && Object.keys(selectedClaim.metadata).length > 0 && (
-                <div>
-                  <p className="mb-1.5 text-xs font-medium text-muted-foreground">Metadata</p>
-                  <pre className="whitespace-pre-wrap rounded-md border border-card-border bg-muted/20 p-3 font-mono text-xs text-foreground/70" data-testid="log-detail-metadata">
-                    {JSON.stringify(selectedClaim.metadata, null, 2)}
-                  </pre>
-                </div>
-              )}
-            </div>
-          ) : selectedClaimLoading ? (
-            <div className="px-4 py-3 text-sm text-muted-foreground">Loading memory…</div>
-          ) : (
-            <div className="px-4 py-3 text-sm text-muted-foreground">Memory not found.</div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
