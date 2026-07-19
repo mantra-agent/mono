@@ -23,6 +23,40 @@ export type QuestionValidationResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: string };
 
+export interface QuestionLifecycleMessage {
+  toolCalls?: unknown;
+  questionResponse?: QuestionResponseMeta;
+}
+
+export function getLatestQuestionToolCallId(
+  messages: readonly QuestionLifecycleMessage[],
+): string | null {
+  let latestToolCallId: string | null = null;
+  for (const message of messages) {
+    if (!Array.isArray(message.toolCalls)) continue;
+    for (const rawCall of message.toolCalls) {
+      if (!rawCall || typeof rawCall !== "object") continue;
+      const call = rawCall as Record<string, unknown>;
+      if (call.toolName !== "question" || typeof call.toolCallId !== "string") continue;
+      if (call.status === "error") continue;
+      if (!normalizeQuestionPrompt(call.arguments).ok) continue;
+      latestToolCallId = call.toolCallId;
+    }
+  }
+  return latestToolCallId;
+}
+
+export function getActiveQuestionToolCallId(
+  messages: readonly QuestionLifecycleMessage[],
+): string | null {
+  const latestToolCallId = getLatestQuestionToolCallId(messages);
+  if (!latestToolCallId) return null;
+  const answered = messages.some(
+    (message) => message.questionResponse?.questionToolCallId === latestToolCallId,
+  );
+  return answered ? null : latestToolCallId;
+}
+
 const MAX_QUESTION_LENGTH = 500;
 const MAX_OPTIONS = 8;
 const MAX_OPTION_ID_LENGTH = 80;
