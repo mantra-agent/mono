@@ -4883,6 +4883,39 @@ export async function runSchemaBootstrap(
     );
   });
 
+  await heal("simple_people_surface_state ownership reconciliation", async () => {
+    const migrationName = "simple_people_surface_state_owner_reconciliation_v1";
+    const exists = await pool.query(
+      `SELECT 1 FROM app_migrations WHERE name = $1`,
+      [migrationName],
+    );
+    if (exists.rowCount && exists.rowCount > 0) return;
+
+    // Historical surfacing runs created surface-state rows owned by one
+    // account that reference persons owned by a different account (issue
+    // 1784469262610). A surface-state row is only meaningful when its owning
+    // account also owns the referenced person, so delete every row whose
+    // person does not exist under the same account. This also clears rows
+    // stranded on retired (merged-away) person IDs.
+    const result = await pool.query(`
+      DELETE FROM simple_people_surface_state s
+      WHERE NOT EXISTS (
+        SELECT 1 FROM persons p
+        WHERE p.id = s.person_id
+          AND p.account_id = s.account_id
+      )
+    `);
+
+    await pool.query(
+      `INSERT INTO app_migrations (name, metadata) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING`,
+      [migrationName, JSON.stringify({ rowsDeleted: result.rowCount ?? 0 })],
+    );
+    log(
+      `[boot] simple_people_surface_state ownership reconciliation: rowsDeleted=${result.rowCount ?? 0}`,
+      "migration",
+    );
+  });
+
   await heal("people_import_candidates ownership backfill", async () => {
     const migrationName = "people_import_candidates_ownership_v1";
     const exists = await pool.query(

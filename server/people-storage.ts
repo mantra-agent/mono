@@ -2,13 +2,14 @@ import { randomBytes } from "crypto";
 import { createLogger } from "./log";
 import { db } from "./db";
 import { getSetting, setSetting } from "./system-settings";
-import { personEmails as personEmailsTable, personMergeAliases, persons } from "@shared/schema";
+import { calendarEventPeople, personEmails as personEmailsTable, personMergeAliases, persons } from "@shared/schema";
 import { eq, inArray } from "drizzle-orm";
 import { TTLCache } from "./utils/ttl-cache";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { mergePersonValues } from "./person-merge-values";
-import { performPersonMerge, type MergePeopleInput, type MergePeopleResult } from "./person-merge-service";
+import { calendarPeopleOwnerColumns, performPersonMerge, type MergePeopleInput, type MergePeopleResult } from "./person-merge-service";
+import { combineWithSensitiveWritable } from "./sensitive-scope";
 import { isCivilDate } from "@shared/civil-date";
 import { toCivilDate } from "./civil-date";
 import { getTimezone } from "./timezone";
@@ -956,6 +957,50 @@ export class PeopleStorage {
       updated.networkProfile.mobilization = computeMobilization(updated);
     }
     await this.savePerson(updated);
+    return updated;
+  }
+
+  async renamePerson(input: { personId: string; newName: string; expectedCurrentName: string }): Promise<Person> {
+    const personId = input.personId.trim();
+    const newName = input.newName.trim();
+    const expectedCurrentName = input.expectedCurrentName.trim();
+    if (!personId) throw new Error("Person ID is required for rename");
+    if (!newName) throw new Error("New name is required for rename");
+    if (!expectedCurrentName) throw new Error("expectedCurrentName confirmation is required for rename");
+
+    const person = await this.getPerson(personId);
+    if (!person) throw new Error(`Person ${personId} not found`);
+    if (person.name !== expectedCurrentName) {
+      throw new Error(
+        `Rename confirmation mismatch: expected current name "${expectedCurrentName}" but person is named "${person.name}". Re-read the person and retry with the exact current name.`,
+      );
+    }
+    if (person.name === newName) {
+      throw new Error(`Person ${person.id} is already named "${newName}"`);
+    }
+
+    const previousName = person.name;
+    const nicknames = [...(person.nicknames || [])];
+    const newNameLower = newName.toLowerCase();
+    const preservedNicknames = nicknames.filter(nick => nick.toLowerCase() !== newNameLower);
+    if (previousName.toLowerCase() !== newNameLower && !preservedNicknames.some(nick => nick.toLowerCase() === previousName.toLowerCase())) {
+      preservedNicknames.push(previousName);
+    }
+
+    const updated = await this.updatePerson(person.id, { name: newName, nicknames: preservedNicknames });
+
+    await db.update(calendarEventPeople)
+      .set({ personName: newName })
+      .where(
+        combineWithSensitiveWritable(
+          calendarPeopleOwnerColumns,
+          eq(calendarEventPeople.personId, person.id),
+          getCurrentPrincipalOrSystem(),
+        ),
+      );
+
+    this.invalidateListCache();
+    log.info(`renamePerson id=${person.id} from="${previousName}" to="${newName}"`);
     return updated;
   }
 
