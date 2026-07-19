@@ -23,7 +23,7 @@ export class ReminderTimerHandler implements TimerHandler {
       log.debug(`session reminder fired for session=${sessionReminderId}`);
       return {
         outcome: "success",
-        output: { sessionReminderId, disableTimer: true },
+        output: { sessionReminderId },
       };
     }
 
@@ -51,7 +51,7 @@ export class ReminderTimerHandler implements TimerHandler {
       log.debug(`library reminder fired for page=${libraryPageId}`);
       return {
         outcome: "success",
-        output: { libraryPageId, disableTimer: true },
+        output: { libraryPageId },
       };
     }
 
@@ -63,7 +63,7 @@ export class ReminderTimerHandler implements TimerHandler {
       !Array.isArray(result.output)
         ? (result.output as Record<string, unknown>)
         : {};
-    return { outcome: "success", output: { ...output, disableTimer: true } };
+    return { outcome: "success", output };
   }
 
 }

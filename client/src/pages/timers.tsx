@@ -3,7 +3,6 @@ import { createLogger } from "@/lib/logger";
 import { useState, useEffect, useMemo, type ReactNode } from "react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { getInstanceName, isAgentType } from "@/lib/instance-config";
 import { Card, CardContent } from "@/components/ui/card";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
@@ -64,10 +63,10 @@ import {
   ChevronRight,
   Loader2,
   CheckCircle2,
+  Circle,
   AlertCircle,
   SkipForward,
   ExternalLink,
-  Timer,
   Zap,
   X,
   Cpu,
@@ -98,12 +97,12 @@ const DAYS: { value: DayOfWeek; label: string; short: string }[] = [
   { value: "sun", label: "Sunday", short: "Sun" },
 ];
 
-const TYPE_META: Record<TimerType, { label: string; icon: typeof Bot; color: string }> = {
-  agent: { label: getInstanceName(), icon: Bot, color: "text-info" },
-  system: { label: "System", icon: Settings, color: "text-warning" },
-  me: { label: "Me", icon: User, color: "text-success" },
-  skill: { label: "Skill", icon: Cpu, color: "text-cat-ai" },
-  reminder: { label: "Reminder", icon: Bell, color: "text-cat-event" },
+const TYPE_META: Record<TimerType, { label: string; icon: typeof Bot }> = {
+  agent: { label: getInstanceName(), icon: Bot },
+  system: { label: "System", icon: Settings },
+  me: { label: "Me", icon: User },
+  skill: { label: "Skill", icon: Cpu },
+  reminder: { label: "Reminder", icon: Bell },
 };
 
 const STATUS_META: Record<TimerRunStatus, { label: string; icon: typeof CheckCircle2; color: string }> = {
@@ -407,51 +406,55 @@ function TimerActions({
   onDelete: () => void;
   globalPaused: boolean;
 }) {
-  const isMobile = useIsMobile();
-
   return (
-    <div
-      className="flex items-center gap-1 shrink-0"
-      onClick={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
-    >
-      <Switch
-        checked={timer.enabled}
-        onCheckedChange={onToggle}
-        className={isMobile ? "scale-90" : "scale-75"}
+    <>
+      <button
+        type="button"
+        className={cn(
+          "absolute right-14 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground",
+          timer.enabled ? "text-foreground" : "text-muted-foreground/50",
+        )}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle(!timer.enabled);
+        }}
+        onKeyDown={(event) => event.stopPropagation()}
         aria-label={timer.enabled ? `Disable ${timer.name}` : `Enable ${timer.name}`}
-        data-testid={`switch-enabled-${timer.id}`}
-      />
-      <DropdownMenu>
+        data-testid={`button-enabled-${timer.id}`}
+      >
+        {timer.enabled
+          ? <CheckCircle2 className="h-3.5 w-3.5" />
+          : <Circle className="h-3.5 w-3.5" />}
+      </button>
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className={cn(
-              "flex items-center justify-center rounded-md text-muted-foreground opacity-70 transition-colors hover:bg-accent hover:text-foreground group-hover:opacity-100",
-              isMobile ? "h-11 w-11" : "h-7 w-7",
-            )}
+            className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md bg-accent/50 opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
             aria-label={`Actions for ${timer.name}`}
             data-testid={`button-timer-menu-${timer.id}`}
           >
-            <MoreHorizontal className="h-4 w-4" />
+            <MoreHorizontal className="h-3.5 w-3.5" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
           <DropdownMenuItem onClick={onRunNow} disabled={globalPaused} data-testid={`menu-run-now-${timer.id}`}>
-            <Zap className="h-3.5 w-3.5 mr-2" /> Run Now
+            <Zap className="mr-2 h-3.5 w-3.5" /> Run Now
           </DropdownMenuItem>
           <DropdownMenuItem onClick={onEdit} data-testid={`menu-edit-${timer.id}`}>
-            <Pencil className="h-3.5 w-3.5 mr-2" /> Edit
+            <Pencil className="mr-2 h-3.5 w-3.5" /> Edit
           </DropdownMenuItem>
           <DropdownMenuItem onClick={onExport} data-testid={`menu-export-${timer.id}`}>
-            <Download className="h-3.5 w-3.5 mr-2" /> Export
+            <Download className="mr-2 h-3.5 w-3.5" /> Export
           </DropdownMenuItem>
           <DropdownMenuItem onClick={onDelete} className="text-destructive" data-testid={`menu-delete-${timer.id}`}>
-            <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
+            <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-    </div>
+    </>
   );
 }
 
@@ -477,15 +480,6 @@ function TimerTreeRow({
   const [expanded, setExpanded] = useState(false);
   const typeMeta = TYPE_META[timer.type] || TYPE_META.agent;
   const TypeIcon = typeMeta.icon;
-  const [, setNow] = useState(Date.now());
-
-  useEffect(() => {
-    if (!timer.nextRunAt) return;
-    const interval = setInterval(() => setNow(Date.now()), 30000);
-    return () => clearInterval(interval);
-  }, [timer.nextRunAt]);
-
-  const schedulesSummary = timer.schedules.map(humanizeSchedule).join(" · ") || "No schedule";
   const skillLabel = timer.type === "skill" && timer.skillId
     ? (skillNameMap[timer.skillId] || timer.skillId)
     : null;
@@ -493,49 +487,51 @@ function TimerTreeRow({
 
   return (
     <div className="min-w-0" data-testid={`tree-timer-${timer.id}`}>
-      <div
-        role="button"
-        tabIndex={0}
-        aria-expanded={expanded}
-        onClick={() => setExpanded((current) => !current)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            setExpanded((current) => !current);
-          }
-        }}
-        className={cn(
-          "group flex w-full min-w-0 cursor-pointer select-none items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/70",
-          isMuted && "text-muted-foreground",
-        )}
-        data-testid={`card-timer-${timer.id}`}
-      >
-        <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-90")} />
-        <TypeIcon className={cn("h-3.5 w-3.5 shrink-0", isMuted ? "text-muted-foreground" : typeMeta.color)} />
-        <span className="min-w-0 flex-1 truncate font-medium" data-testid={`text-name-${timer.id}`}>
-          {timer.name}
-        </span>
-        {skillLabel && (
-          <span className="hidden max-w-40 truncate text-xs text-muted-foreground @md:inline">{skillLabel}</span>
-        )}
-        <span className="hidden max-w-[40%] truncate text-xs text-muted-foreground @sm:inline" title={schedulesSummary}>
-          {schedulesSummary}
-        </span>
-        {timer.nextRunAt && timer.enabled && !globalPaused && (
-          <span className="flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground" title={`Next run ${new Date(timer.nextRunAt).toLocaleString()}`}>
-            <Timer className="h-3 w-3" />
-            {humanizeNextRun(timer.nextRunAt)}
+      <div className="relative min-w-0 overflow-hidden">
+        <div
+          role="button"
+          tabIndex={0}
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              setExpanded((current) => !current);
+            }
+          }}
+          className={cn(
+            "group relative flex w-full min-w-0 cursor-pointer select-none items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/70",
+            isMuted ? "text-muted-foreground" : "text-foreground",
+          )}
+          data-testid={`card-timer-${timer.id}`}
+        >
+          <TypeIcon className="h-3.5 w-3.5 shrink-0" />
+          <span className="min-w-0 flex-1 truncate pr-20" data-testid={`text-name-${timer.id}`}>
+            {timer.name}
           </span>
-        )}
-        <TimerActions
-          timer={timer}
-          onToggle={onToggle}
-          onExport={onExport}
-          onRunNow={onRunNow}
-          onEdit={onEdit}
-          onDelete={onDelete}
-          globalPaused={globalPaused}
-        />
+          <TimerActions
+            timer={timer}
+            onToggle={onToggle}
+            onExport={onExport}
+            onRunNow={onRunNow}
+            onEdit={onEdit}
+            onDelete={onDelete}
+            globalPaused={globalPaused}
+          />
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setExpanded((current) => !current);
+            }}
+            onKeyDown={(event) => event.stopPropagation()}
+            className="absolute right-8 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+            aria-label={expanded ? `Collapse ${timer.name}` : `Expand ${timer.name}`}
+            data-testid={`button-tree-twisty-${timer.id}`}
+          >
+            <ChevronRight className={cn("h-3 w-3 transition-transform", expanded && "rotate-90")} />
+          </button>
+        </div>
       </div>
 
       {expanded && (
@@ -547,7 +543,13 @@ function TimerTreeRow({
           <div className="min-w-0 flex-1 space-y-3 px-2 py-2 text-xs">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-muted-foreground">
               <span>{typeMeta.label}</span>
+              <span>{timer.schedules.map(humanizeSchedule).join(" · ") || "No schedule"}</span>
               <span>{timer.timezone}</span>
+              {timer.nextRunAt && timer.enabled && !globalPaused && (
+                <span title={`Next run ${new Date(timer.nextRunAt).toLocaleString()}`}>
+                  Next {humanizeNextRun(timer.nextRunAt)}
+                </span>
+              )}
               {timer.stats && timer.stats.totalRuns > 0 && (
                 <>
                   <span>{timer.stats.successCount} succeeded</span>
@@ -1112,17 +1114,6 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
             <Plus className="h-3.5 w-3.5 shrink-0" />
             <span>New Timer</span>
           </button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn("h-7 px-2 text-xs", globalPaused && "text-warning")}
-            onClick={() => pauseMutation.mutate(!globalPaused)}
-            disabled={pauseMutation.isPending}
-            data-testid="button-global-pause"
-          >
-            {globalPaused ? <Play className="mr-1.5 h-3.5 w-3.5" /> : <Pause className="mr-1.5 h-3.5 w-3.5" />}
-            {globalPaused ? "Resume All" : "Pause All"}
-          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Timer utilities" data-testid="button-more-actions">
@@ -1130,6 +1121,14 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() => pauseMutation.mutate(!globalPaused)}
+                disabled={pauseMutation.isPending}
+                data-testid="menu-global-pause"
+              >
+                {globalPaused ? <Play className="mr-2 h-3.5 w-3.5" /> : <Pause className="mr-2 h-3.5 w-3.5" />}
+                {globalPaused ? "Resume All" : "Pause All"}
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={handleExportAll} data-testid="menu-export-all-timers">
                 <Download className="mr-2 h-3.5 w-3.5" /> Export All
               </DropdownMenuItem>
