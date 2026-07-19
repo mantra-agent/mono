@@ -100,7 +100,6 @@ const INVALIDATION_EVENT_MAP: Record<string, string[]> = {
     "world_model.people.partner.goals", "world_model.people.others",
   ],
   "data:principles_changed": ["world_model.people.self.principles"],
-  "data:beliefs_changed": ["world_model.beliefs"],
   "data:tasks_changed": ["world_model.active_work", "world_model.active_work.tasks"],
   "data:projects_changed": ["world_model.active_work", "world_model.active_work.projects"],
   "data:decisions_changed": ["world_model.decisions"],
@@ -231,7 +230,6 @@ const sectionResolvers: Record<string, SectionResolver> = {
   "world_model.people.partner.goals.this_week": resolveGoalsThisWeek,
   "world_model.people.partner.goals.this_month": resolveGoalsThisMonth,
   "world_model.people.others": resolveOtherPeople,
-  "world_model.beliefs": async () => "",
   "world_model.active_work": async () => "",
   "world_model.active_work.tasks": resolveActiveTasks,
   "world_model.active_work.projects": resolveActiveProjects,
@@ -361,7 +359,6 @@ const SECTION_CATALOG: Record<string, { description: string; recommendedFor: str
   "world_model.people.partner.goals.this_week": { description: "This week's goals", recommendedFor: "conversations, planning", tokenCost: "small" },
   "world_model.people.partner.goals.this_month": { description: "This month's goals", recommendedFor: "conversations, planning", tokenCost: "small" },
   "world_model.people.others": { description: "Close contacts with relationship context", recommendedFor: "relationship discussions", tokenCost: "large" },
-  "world_model.beliefs": { description: "Tracked beliefs with confidence scores", recommendedFor: "reflection, strategy", tokenCost: "small" },
   "world_model.active_work": { description: "Active work wrapper", recommendedFor: "planning, review", tokenCost: "small" },
   "world_model.active_work.tasks": { description: "Active tasks with status and owners", recommendedFor: "planning, review", tokenCost: "small" },
   "world_model.active_work.projects": { description: "Active projects with milestones", recommendedFor: "planning, review", tokenCost: "small" },
@@ -406,7 +403,7 @@ function buildContextSectionCatalog(): string {
   lines.push("");
   lines.push("**Session type profiles** (recommended starting points):");
   lines.push("- **Conversation**: include memory, people.others, partner.goals, active_work, session_context, thoughts, principles, chat_instructions");
-  lines.push("- **Implementation**: exclude memory, people.others, partner.goals, beliefs, decisions, capabilities.library, capabilities.skills, thoughts, session_context");
+  lines.push("- **Implementation**: exclude memory, people.others, partner.goals, decisions, capabilities.library, capabilities.skills, thoughts, session_context");
   lines.push("- **Planning/Review**: include partner.goals, active_work, goals_by_horizon, decisions, memory, principles, thoughts");
   lines.push("- **Coaching/Reflection**: include principles, partner.goals, thoughts, memory, journal");
 
@@ -1747,7 +1744,6 @@ Use this as your foundation: build forward from these insights, go deeper where 
 }
 
 const TOOL_SHORT_DESCRIPTIONS: Record<string, string> = {
-  beliefs: "Manage beliefs with confidence scores. Actions: list, get, save, create, update, invalidate.",
   code: "Query and navigate the codebase knowledge graph. Actions: query, context, impact, changes, architecture, modules, flows, rename, schema, cypher.",
   docx: "Read, write, edit, and clone Word documents. Actions: read, write, edit, clone.",
   files: "Manage persistent files in object storage. Actions: write, read, list.",
@@ -2191,9 +2187,6 @@ export class ContextBuilder {
       }
       if (sectionId === "world_model.calendar" || sectionId === "world_model.meeting") {
         return "ctx_wm_calendar";
-      }
-      if (sectionId === "world_model.beliefs") {
-        return "ctx_wm_beliefs";
       }
       if (sectionId === "session_context" || sectionId === "thoughts"
         || sectionId === "world_model.temporal"

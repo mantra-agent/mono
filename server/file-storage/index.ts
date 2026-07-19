@@ -1,7 +1,4 @@
 export { fileApiCallStorage, FileApiCallStorage } from "./api-calls";
-export { fileBeliefStorage, FileBeliefStorage } from "./beliefs";
-export type { Belief, BeliefEvidence } from "./beliefs";
-
 export { fileEmotionalStateStorage, FileEmotionalStateStorage } from "./emotional-state";
 export type { EmotionalStateEntry } from "./emotional-state";
 export { personaStorage } from "./persona-storage";

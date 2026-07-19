@@ -7484,94 +7484,6 @@ ${lines.join("\n")}` };
   },
 
 
-  async beliefs(args) {
-    const { memoryBeliefStorage } = await import("./memory/belief-storage");
-    const action = args.action || "list";
-    try {
-      switch (action) {
-        case "list": {
-          const all = await memoryBeliefStorage.getAll();
-          const domain = args.domain;
-          const filtered = domain ? all.filter(b => b.domain.toLowerCase() === domain.toLowerCase()) : all;
-          if (filtered.length === 0) return { result: domain ? `No beliefs in domain "${domain}".` : "No beliefs stored." };
-          const lines = filtered.map(b => `- [${b.status}] ${b.claim} (id: ${b.id}, domain: ${b.domain}, confidence: ${b.confidence})`);
-          return { result: `${filtered.length} belief(s):\n${lines.join("\n")}` };
-        }
-        case "get": {
-          const id = args.id;
-          if (!id) return { result: "Missing belief id", error: true };
-          const belief = await memoryBeliefStorage.getById(id);
-          if (!belief) return { result: `Belief ${id} not found`, error: true };
-          await memoryBeliefStorage.recordRecall(id);
-          const parts = [
-            `Claim: ${belief.claim}`,
-            `Domain: ${belief.domain}`,
-            `Confidence: ${belief.confidence}`,
-            `Status: ${belief.status}`,
-            `Evidence: ${belief.evidence.length > 0 ? belief.evidence.map(e => `${e.type}: ${e.summary}`).join("; ") : "none"}`,
-            `Tags: ${belief.tags.length > 0 ? belief.tags.join(", ") : "none"}`,
-          ];
-          if (belief.principleRef) parts.push(`Principle: ${belief.principleRef}`);
-          return { result: parts.join("\n") };
-        }
-        case "save":
-        case "create": {
-          const claim = args.claim;
-          const domain = args.domain;
-          if (!claim) return { result: "Missing belief claim", error: true };
-          if (!domain) return { result: "Missing belief domain", error: true };
-          const dupResult = await memoryBeliefStorage.findDuplicate(claim);
-          if (dupResult) {
-            const { belief: dupBelief } = dupResult;
-            const newConf = Math.min(1, (dupBelief.confidence || 0.5) + 0.1);
-            await memoryBeliefStorage.updateConfidence(dupBelief.id, newConf);
-            return { result: `Similar belief already exists — reinforced: "${dupBelief.claim}" (ID: ${dupBelief.id}, confidence: ${newConf})` };
-          }
-          const created = await memoryBeliefStorage.create({
-            claim,
-            domain,
-            confidence: args.confidence,
-            evidence: args.evidence,
-            status: args.status,
-            principleRef: args.principleRef,
-            tags: args.tags,
-          });
-          eventBus.publish({ category: "agent", event: "data:belief_created", payload: { id: created.id, claim: created.claim, domain: created.domain } });
-          return { result: `Belief created: "${created.claim}" in domain "${created.domain}" (ID: ${created.id})` };
-        }
-        case "update": {
-          const id = args.id;
-          if (!id) return { result: "Missing belief id", error: true };
-          const updates: Record<string, any> = {};
-          if (args.claim) updates.claim = args.claim;
-          if (args.domain) updates.domain = args.domain;
-          if (args.confidence !== undefined) updates.confidence = args.confidence;
-          if (args.status) updates.status = args.status;
-          if (args.evidence) updates.evidence = args.evidence;
-          if (args.principleRef) updates.principleRef = args.principleRef;
-          if (args.tags) updates.tags = args.tags;
-          if (Object.keys(updates).length === 0) return { result: "No updates provided", error: true };
-          const updated = await memoryBeliefStorage.update(id, updates);
-          if (!updated) return { result: `Belief ${id} not found`, error: true };
-          eventBus.publish({ category: "agent", event: "data:belief_updated", payload: { id, fields: Object.keys(updates) } });
-          return { result: `Belief updated: "${updated.claim}" — ${Object.keys(updates).join(", ")}` };
-        }
-        case "invalidate": {
-          const id = args.id;
-          if (!id) return { result: "Missing belief id", error: true };
-          const invalidated = await memoryBeliefStorage.updateStatus(id, "invalidated");
-          if (!invalidated) return { result: `Belief ${id} not found`, error: true };
-          eventBus.publish({ category: "agent", event: "data:belief_invalidated", payload: { id, claim: invalidated.claim } });
-          return { result: `Belief invalidated: "${invalidated.claim}"` };
-        }
-        default:
-          return { result: `Unknown beliefs action: ${action}. Available: list, get, save, create, update, invalidate`, error: true };
-      }
-    } catch (err: any) {
-      return { result: `Beliefs tool error: ${err.message}`, error: true };
-    }
-  },
-
   async memory_graph(args) {
     const { memoryStorage } = await import("./memory/memory-storage");
     const { createLogger } = await import("./log");
@@ -10321,13 +10233,11 @@ ${refs}` : ""),
           });
           return { result: `Myelination started in background (${entriesToProcess} entries to process). Use get action with key "myelination_status" to check progress.` };
         }
-        case "run_belief_decay":
         case "run_memory_decay": {
           const { runMemoryDecay } = await import("./sleep-cycle");
           const result = await runMemoryDecay();
-          return { result: `Memory decay complete: decayed=${result.decayed}, flipped to uncertain=${result.flippedUncertain}, flagged for review=${result.flaggedForReview}` };
+          return { result: `Memory decay complete: decayed=${result.decayed}` };
         }
-        case "run_belief_reinforcement":
         case "run_memory_reinforcement": {
           const { runMemoryReinforcement } = await import("./sleep-cycle");
           const result = await runMemoryReinforcement();
@@ -10339,7 +10249,7 @@ ${refs}` : ""),
           const result = await runFullSleepCycle({ includeGSI });
           const parts = [
             `Full sleep cycle complete (${result.durationMs}ms):`,
-            `  Entry decay: ${result.entryDecay.decayed} decayed, ${result.entryDecay.flippedUncertain} uncertain, ${result.entryDecay.flaggedForReview} flagged`,
+            `  Entry decay: ${result.entryDecay.decayed} decayed`,
             `  Entry reinforcement: ${result.entryReinforcement.reinforced} reinforced`,
             `  NREM: ${result.nrem.linksDecayed} links decayed, ${result.nrem.linksPruned} pruned, ${result.nrem.linksReinforced} reinforced, ${result.nrem.entriesMerged} merged, ${result.nrem.orphansRemoved} orphans removed, ${result.nrem.orphansLinked} orphans linked`,
             `  REM: dream=${result.rem.dreamTitle || "none"} (id=${result.rem.dreamEntryId}), ${result.rem.domainsWoven} domains, ${result.rem.conceptsSynthesized} concepts`,
@@ -10410,13 +10320,6 @@ ${refs}` : ""),
         const goals = await goalsServiceState.listAll({ includeDormant: true });
         parts.push(`**Goals:** ${goals.length} total`);
       } catch { parts.push("**Goals:** unavailable"); }
-
-      try {
-        const { fileBeliefStorage } = await import("./file-storage/beliefs");
-        const beliefs = await fileBeliefStorage.getAll();
-        const highConf = beliefs.filter(b => (b.confidence || 0) >= 0.7).length;
-        parts.push(`**Beliefs:** ${beliefs.length} total — ${highConf} high-confidence (≥0.7)`);
-      } catch { parts.push("**Beliefs:** unavailable"); }
 
       try {
         const { peopleStorage } = await import("./people-storage");
@@ -13111,7 +13014,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       if (bridge) return bridge(args);
       return { result: `memory_graph bridge handler not found`, error: true };
     }
-    const opsActions = new Set(["consolidate_short", "integrate_mid_to_long", "run_myelination", "run_memory_decay", "run_memory_reinforcement", "run_belief_decay", "run_belief_reinforcement", "run_full_sleep_cycle", "compute_gsi", "run_nrem", "run_rem"]);
+    const opsActions = new Set(["consolidate_short", "integrate_mid_to_long", "run_myelination", "run_memory_decay", "run_memory_reinforcement", "run_full_sleep_cycle", "compute_gsi", "run_nrem", "run_rem"]);
     if (opsActions.has(action)) {
       const bridge = bridgeHandlers.memory_ops;
       if (bridge) return bridge(args);

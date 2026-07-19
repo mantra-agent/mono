@@ -412,12 +412,9 @@ export async function buildWeeklyReflectPreContext(): Promise<{ preContext: stri
   }
 
   const { goalsService } = await import("./goals-service");
-  const { fileBeliefStorage } = await import("./file-storage/beliefs");
 
   const goals = await goalsService.listAll({ status: "active" } as any);
   const activeGoals = goals.slice(0, 20);
-  const beliefs = await fileBeliefStorage.getAll();
-  const activeBeliefs = beliefs.filter(b => b.status === "active").slice(0, 20);
 
   const journalSection = entries.map(e => {
     const title = e.title ? ` — ${e.title}` : "";
@@ -428,11 +425,7 @@ export async function buildWeeklyReflectPreContext(): Promise<{ preContext: stri
     ? activeGoals.map(g => `- [${g.horizon}] ${g.shortName}`).join("\n")
     : "No active goals.";
 
-  const beliefsSection = activeBeliefs.length > 0
-    ? activeBeliefs.map(b => `- [${b.domain}] ${b.claim} (confidence: ${b.confidence})`).join("\n")
-    : "No active beliefs.";
-
-  const preContext = `## Journal Entries (Past 7 Days)\n\n${journalSection}\n\n## Current Goals\n\n${goalsSection}\n\n## Current Beliefs\n\n${beliefsSection}`;
+  const preContext = `## Journal Entries (Past 7 Days)\n\n${journalSection}\n\n## Current Goals\n\n${goalsSection}`;
 
   return { preContext };
 }
@@ -445,13 +438,10 @@ export async function buildMonthlyReflectPreContext(): Promise<{ preContext: str
   }
 
   const { goalsService } = await import("./goals-service");
-  const { fileBeliefStorage } = await import("./file-storage/beliefs");
   const { peopleStorage } = await import("./people-storage");
 
   const goals = await goalsService.listAll({ status: "active" } as any);
   const activeGoals = goals.slice(0, 20);
-  const beliefs = await fileBeliefStorage.getAll();
-  const activeBeliefs = beliefs.filter(b => b.status === "active").slice(0, 20);
 
   const allPeople = await peopleStorage.listPeople();
   const xyzPerson = allPeople.find(p => p.cabinetLevel === "agent")
@@ -475,10 +465,6 @@ export async function buildMonthlyReflectPreContext(): Promise<{ preContext: str
   const goalsSection = activeGoals.length > 0
     ? activeGoals.map(g => `- [${g.horizon}] ${g.shortName}`).join("\n")
     : "No active goals.";
-
-  const beliefsSection = activeBeliefs.length > 0
-    ? activeBeliefs.map(b => `- [${b.domain}] ${b.claim} (confidence: ${b.confidence})`).join("\n")
-    : "No active beliefs.";
 
   let weeklyReflectionsSection = "No recent weekly reflections found.";
   try {
@@ -508,7 +494,7 @@ export async function buildMonthlyReflectPreContext(): Promise<{ preContext: str
     }
   } catch { }
 
-  const preContext = `## Journal Entries (Past 30 Days)\n\n${journalSection}\n\n## Current Voice\n\n${voiceSection}\n\n## Current Principles\n\n${principlesSection}\n\n## Recent Weekly Reflections\n\n${weeklyReflectionsSection}\n\n## Current Goals\n\n${goalsSection}\n\n## Current Beliefs\n\n${beliefsSection}`;
+  const preContext = `## Journal Entries (Past 30 Days)\n\n${journalSection}\n\n## Current Voice\n\n${voiceSection}\n\n## Current Principles\n\n${principlesSection}\n\n## Recent Weekly Reflections\n\n${weeklyReflectionsSection}\n\n## Current Goals\n\n${goalsSection}`;
 
   return { preContext };
 }

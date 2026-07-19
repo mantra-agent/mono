@@ -4114,51 +4114,6 @@ export class MemoryStorage {
     return rows.rows as Array<{ score: number }>;
   }
 
-  async migrateConceptsToBelief(): Promise<number> {
-    const conceptsRaw = await db
-      .select(memoryEntryLightColumns)
-      .from(memoryEntries)
-      .where(eq(memoryEntries.source, "concept" as any));
-    const concepts = conceptsRaw.map((r) =>
-      wrapLightEntry(r as Omit<MemoryEntry, "embedding">),
-    );
-
-    if (concepts.length === 0) return 0;
-
-    let migrated = 0;
-    for (const entry of concepts) {
-      const existingMeta = (entry.metadata || {}) as Record<string, unknown>;
-      const domain =
-        (entry.tags || []).find((t) => t !== "concept") || "general";
-      const newMeta: Record<string, unknown> = {
-        ...existingMeta,
-        confidence: 0.7,
-        decay_score: 1.0,
-        domain,
-        status: "active",
-        migrated_from: "concept",
-      };
-
-      await db
-        .update(memoryEntries)
-        .set({
-          source: "belief",
-          metadata: newMeta,
-          tags: [
-            "belief",
-            ...(entry.tags || []).filter((t) => t !== "concept"),
-          ],
-        })
-        .where(eq(memoryEntries.id, entry.id));
-      migrated++;
-    }
-
-    if (migrated > 0) {
-      log.debug(`Migrated ${migrated} concept entries to belief source`);
-    }
-    return migrated;
-  }
-
   async recomputeNeighborhood(entryId: number): Promise<void> {
     await acquireNeighborhoodSemaphore();
     try {

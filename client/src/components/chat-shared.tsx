@@ -1102,7 +1102,6 @@ const SYSTEM_STEP_ICONS: Record<string, typeof Brain> = {
   ctx_pri_journal: NotebookPen,
   ctx_wm_work: Briefcase,
   ctx_wm_calendar: Calendar,
-  ctx_wm_beliefs: BookOpen,
   ctx_wm_session: History,
   ctx_memory: Database,
   ctx_skills_tools: Wrench,

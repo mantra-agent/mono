@@ -6,9 +6,6 @@ import { getZombieMetrics, resetZombiePeakCount } from "./cli-sdk-adapter";
 const log = createLogger("SleepCycle");
 
 const DEFAULT_DECAY_RATE = 0.03;
-const CONFIDENCE_FLOOR = 0.3;
-const UNCERTAIN_THRESHOLD = 0.4;
-const REVIEW_THRESHOLD = 0.2;
 const REINFORCEMENT_BOOST = 0.1;
 const REINFORCEMENT_CAP = 1.0;
 
@@ -31,8 +28,6 @@ export interface MemoryDecayResult {
   decayed: number;
   byLayer: Record<string, number>;
   byStage: Record<string, number>;
-  flippedUncertain: number;
-  flaggedForReview: number;
   errors: string[];
 }
 
@@ -113,8 +108,6 @@ export async function runMemoryDecay(): Promise<MemoryDecayResult> {
       decayed: 0,
       byLayer: {},
       byStage: {},
-      flippedUncertain: 0,
-      flaggedForReview: 0,
       errors: [],
     };
 
@@ -145,40 +138,11 @@ export async function runMemoryDecay(): Promise<MemoryDecayResult> {
         for (const row of wrappedRows) {
           try {
             const meta = { ...((row.metadata || {}) as Record<string, unknown>) };
-            const isBelief = row.source === "belief";
-
             const currentDecayScore = Number(meta.decay_score ?? 1.0);
             if (currentDecayScore > DECAY_SCORE_FLOOR) {
               const decayRate = Number(meta.decay_rate ?? DEFAULT_DECAY_RATE);
               const newDecayScore = Math.max(DECAY_SCORE_FLOOR, currentDecayScore - decayRate);
               meta.decay_score = newDecayScore;
-            }
-
-            if (isBelief) {
-              const currentConfidence = Number(meta.confidence ?? 0.5);
-              if (currentConfidence > CONFIDENCE_FLOOR) {
-                const beliefDecayRate = Number(meta.decay_rate ?? DEFAULT_DECAY_RATE);
-                const newConfidence = Math.max(CONFIDENCE_FLOOR, currentConfidence - beliefDecayRate);
-                meta.confidence = newConfidence;
-
-                if (newConfidence < UNCERTAIN_THRESHOLD && currentConfidence >= UNCERTAIN_THRESHOLD) {
-                  meta.status = "uncertain";
-                  result.flippedUncertain++;
-                  log.debug(`[Sleep] Belief "${row.content?.slice(0, 60)}" flipped to uncertain (confidence=${newConfidence.toFixed(3)})`);
-                }
-              }
-
-              const confidence = Number(meta.confidence ?? 0.5);
-              const status = String(meta.status || "active");
-              if ((status === "active" || status === "uncertain") && confidence < REVIEW_THRESHOLD) {
-                result.flaggedForReview++;
-                log.debug(`[Sleep] Belief "${row.content?.slice(0, 60)}" flagged for review (confidence=${confidence.toFixed(3)})`);
-                eventBus.publish({
-                  category: "system",
-                  event: "sleep:belief_flagged",
-                  payload: { entryId: row.id, sourceId: row.sourceId, claim: row.content?.slice(0, 120), confidence },
-                });
-              }
             }
 
             const newDecayScore = Number(meta.decay_score ?? 1.0);
@@ -223,7 +187,7 @@ export async function runMemoryDecay(): Promise<MemoryDecayResult> {
         }
       }
 
-      log.debug(`[Sleep] Memory decay complete: decayed=${result.decayed} byLayer=${JSON.stringify(result.byLayer)} byStage=${JSON.stringify(result.byStage)} uncertain=${result.flippedUncertain} flagged=${result.flaggedForReview}`);
+      log.debug(`[Sleep] Memory decay complete: decayed=${result.decayed} byLayer=${JSON.stringify(result.byLayer)} byStage=${JSON.stringify(result.byStage)}`);
       logPoolHealth("decay-end");
     } catch (err: unknown) {
       if (err instanceof CircuitBreakerTripped) throw err;
@@ -289,18 +253,9 @@ export async function runMemoryReinforcement(): Promise<MemoryReinforcementResul
 
       for (const entry of recalledEntries) {
         const meta = { ...(entry.metadata || {}) };
-        const isBelief = entry.source === "belief";
-
         const currentDecayScore = Number(meta.decay_score ?? 1.0);
         const newDecayScore = Math.min(REINFORCEMENT_CAP, currentDecayScore + REINFORCEMENT_BOOST);
         meta.decay_score = newDecayScore;
-
-        if (isBelief) {
-          const currentConfidence = Number(meta.confidence ?? 0.5);
-          const newConfidence = Math.min(REINFORCEMENT_CAP, currentConfidence + REINFORCEMENT_BOOST);
-          meta.confidence = newConfidence;
-          meta.status = "active";
-        }
 
         updates.push({ id: entry.id, metadata: meta });
         result.byLayer[entry.layer] = (result.byLayer[entry.layer] ?? 0) + 1;
@@ -560,7 +515,7 @@ export async function runFullSleepCycle(options?: { includeGSI?: boolean }): Pro
       waiting: pool.waitingCount,
     };
 
-    const emptyDecay: MemoryDecayResult = { decayed: 0, byLayer: {}, byStage: {}, flippedUncertain: 0, flaggedForReview: 0, errors: [] };
+    const emptyDecay: MemoryDecayResult = { decayed: 0, byLayer: {}, byStage: {}, errors: [] };
     const emptyReinforcement: MemoryReinforcementResult = { reinforced: 0, byLayer: {}, byStage: {}, errors: [] };
     const emptyNrem: import("./memory/sleep-maintenance").NREMResult = {
       linksDecayed: 0, linksPruned: 0, linksReinforced: 0, entriesMerged: 0,
@@ -884,8 +839,6 @@ export async function runFullSleepCycle(options?: { includeGSI?: boolean }): Pro
         "## Entry-Level",
         `- Decayed: ${entryDecay.decayed} by layer ${JSON.stringify(entryDecay.byLayer)} / stage ${JSON.stringify(entryDecay.byStage)}`,
         `- Reinforced: ${entryReinforcement.reinforced} by layer ${JSON.stringify(entryReinforcement.byLayer)} / stage ${JSON.stringify(entryReinforcement.byStage)}`,
-        `- Flipped uncertain: ${entryDecay.flippedUncertain}`,
-        `- Flagged for review: ${entryDecay.flaggedForReview}`,
         "",
         "## vNext Claims",
         vnextLifecycleResult
@@ -1004,7 +957,7 @@ export async function runFullSleepCycle(options?: { includeGSI?: boolean }): Pro
         budget: { count: budget.totalCount, finalCount: budget.finalCount, target: budget.target, hardCap: budget.hardCap, surplus: budget.surplus, finalSurplus: budget.finalSurplus, emergency: budget.emergencyMode, deletionRequired: budget.deletionRequired, deleteTarget: budget.deleteTarget, candidatesFound: budget.candidatesFound, deleted: budget.entriesDeleted, shortfall: budget.shortfall, status: budget.status },
         abortedByCircuitBreaker,
         timedOut,
-        entryDecay: { decayed: entryDecay.decayed, byLayer: entryDecay.byLayer, byStage: entryDecay.byStage, flippedUncertain: entryDecay.flippedUncertain },
+        entryDecay: { decayed: entryDecay.decayed, byLayer: entryDecay.byLayer, byStage: entryDecay.byStage },
         entryReinforcement: { reinforced: entryReinforcement.reinforced, byLayer: entryReinforcement.byLayer, byStage: entryReinforcement.byStage },
         vnextLifecycle: vnextLifecycleResult ? { scanned: vnextLifecycleResult.scanned, retired: vnextLifecycleResult.retired, decayed: vnextLifecycleResult.decayed, canonicalized: vnextLifecycleResult.canonicalized, errors: vnextLifecycleResult.errors } : null,
         nrem: { linksDecayed: nrem.linksDecayed, linksPruned: nrem.linksPruned, merged: nrem.entriesMerged, entriesAdvancedToUpkeep: nrem.entriesAdvancedToUpkeep, heuristicMerges: nrem.heuristicMerges },
@@ -1017,6 +970,3 @@ export async function runFullSleepCycle(options?: { includeGSI?: boolean }): Pro
     return { budget, entryDecay, entryReinforcement, vnextLifecycle: vnextLifecycleResult, nrem, rem, gsi, durationMs, abortedByCircuitBreaker, abortReason, timedOut, phaseDurations };
   }, "sleep-cycle");
 }
-
-export { runMemoryDecay as runBeliefDecay, runMemoryReinforcement as runBeliefReinforcement };
-export type { MemoryDecayResult as BeliefDecayResult, MemoryReinforcementResult as BeliefReinforcementResult };

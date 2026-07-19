@@ -744,7 +744,7 @@ app.use((req, res, next) => {
         log(`[startup] memory listener registration failed: ${err.message}`, "boot");
       });
 
-      import("./memory/belief-storage").then(async ({ backfillLongTitles, logMemoryDiagnostics }) => {
+      import("./memory/long-title-maintenance").then(async ({ backfillLongTitles, logMemoryDiagnostics }) => {
         await logMemoryDiagnostics();
         const result = await backfillLongTitles({ batchDelayMs: 500 });
         log(`[startup] long title backfill: ${result.updated} healed, ${result.skipped} ok, ${result.errors.length} errors`, "boot");

@@ -911,7 +911,7 @@ export async function runNREMPhase(parentSignal?: AbortSignal): Promise<NREMResu
       }
 
       try {
-        const { backfillLongTitles } = await import("./belief-storage");
+        const { backfillLongTitles } = await import("./long-title-maintenance");
         const backfillResult = await backfillLongTitles();
         result.longTitlesHealed = backfillResult.updated;
         if (backfillResult.updated > 0) {

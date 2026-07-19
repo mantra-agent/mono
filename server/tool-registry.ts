@@ -1311,26 +1311,6 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
     whenToUse: "When you notice something about how you reasoned, decided, or acted — a pattern, a gap between expectation and reality, a shift, a connection between ideas, or an emerging opportunity. Metacognition, not reasoning.",
   },
-  beliefs: {
-    description: "Manage Agent's belief system — claims with confidence scores. Actions: list, get, save, create, update, invalidate.",
-    category: "knowledge",
-
-    parameters: {
-      type: "object",
-      properties: {
-        action: { type: "string", enum: ["list", "get", "save", "create", "update", "invalidate"], description: "The action to perform" },
-        id: { type: "string", description: "Belief ID (required for get, update, invalidate)" },
-        claim: { type: "string", description: "The belief claim (required for save/create)" },
-        domain: { type: "string", description: "Belief domain (required for save/create, optional filter for list)" },
-        confidence: { type: "number", description: "Confidence score 0–1 (default 0.5)" },
-        status: { type: "string", enum: ["active", "uncertain", "invalidated"], description: "Belief status" },
-        evidence: { type: "array", items: { type: "object", properties: { type: { type: "string" }, id: { type: "string" }, summary: { type: "string" } } }, description: "Evidence supporting the belief" },
-        principleRef: { type: "string", description: "Reference to a related principle" },
-        tags: { type: "array", items: { type: "string" }, description: "Tags for categorization" },
-      },
-      required: ["action"],
-    },
-  },
   finance: {
     description: "Query financial data from connected bank accounts. Actions: summary, transactions, holdings, liabilities, debt_payments, categories, budget, income, recurring, forecast, accounts, assets, goals, import_transactions, link_account, refresh, amortize, list_amortizations, remove_amortization.",
     category: "finance",

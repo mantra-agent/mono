@@ -48,8 +48,6 @@ export function getMemorySourceIcon(source: string): LucideIcon {
       return AlertCircle;
     case "web":
       return Globe;
-    case "belief":
-      return Sparkles;
     case "tool":
       return Wrench;
     case "cause":

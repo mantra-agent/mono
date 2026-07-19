@@ -450,6 +450,8 @@ export async function deleteZombieSkills(): Promise<void> {
 
   const deletedV5 = await getSetting<boolean>("zombie_skills_deleted_v5");
   if (!deletedV5) {
+    // Exact legacy names remain here only so older installations cannot retain
+    // deleted skills after the Beliefs subsystem is gone.
     const zombieNamesV5 = [
       "chat-generateissuetitle",
       "act-generate-artifact",

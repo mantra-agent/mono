@@ -277,7 +277,7 @@ const ALL_EVENT_NAMES = [
   "chat.stream", "pulse", "system:command",
   "tactical:decided", "tactical:executed", "tactical:error", "tactical:skipped",
   "data:people_changed", "data:intention_created", "data:intention_completed",
-  "data:belief_created", "data:belief_updated", "data:rule_created",
+  "data:rule_created",
   "entries_changed", "thought.stream",
   "session_end", "voice_phase", "voice_tools_cleared",
 ];
