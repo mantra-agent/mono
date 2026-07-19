@@ -230,6 +230,54 @@ export type TerminationReason =
   | "circuit_breaker"
   | "yield_to_interactive";
 
+export interface ProviderTransportErrorInfo {
+  name?: string;
+  message?: string;
+  code?: string;
+  errno?: string | number;
+  syscall?: string;
+  socket?: {
+    localAddress?: string;
+    localPort?: number;
+    remoteAddress?: string;
+    remotePort?: number;
+    remoteFamily?: string;
+    timeout?: number;
+    bytesWritten?: number;
+    bytesRead?: number;
+  };
+  cause?: ProviderTransportErrorInfo;
+}
+
+export interface ProviderTraceInfo {
+  responseDate?: string;
+  cfRay?: string;
+  cfCacheStatus?: string;
+  server?: string;
+  via?: string;
+  openaiProcessingMs?: string;
+  envoyUpstreamServiceTime?: string;
+}
+
+export interface ProviderStreamProgressInfo {
+  startedAt: string;
+  observedAt: string;
+  elapsedMs: number;
+  headersMs?: number;
+  firstEventMs?: number;
+  firstEventAt?: string;
+  lastEventMs?: number;
+  lastEventAt?: string;
+  eventCount: number;
+  bytesReceived: number;
+  lastEventType?: string;
+  lastSequenceNumber?: number;
+  terminalEventSeen: boolean;
+  localAbort: boolean;
+  localAbortReason?: string;
+  timeToFirstEventTimedOut: boolean;
+}
+
 export interface ModelProviderFailureInfo {
   kind: string;
   provider: string;
@@ -252,6 +300,9 @@ export interface ModelProviderFailureInfo {
   incompleteReason?: string;
   clientRequestId?: string;
   providerRequestId?: string;
+  transportError?: ProviderTransportErrorInfo;
+  providerTrace?: ProviderTraceInfo;
+  streamProgress?: ProviderStreamProgressInfo;
   providerEventFields?: string[];
   providerResponseFields?: string[];
   usage?: {
