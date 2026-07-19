@@ -150,10 +150,13 @@ function createInitialPosition(nodeId: number, index: number, count: number): [n
 }
 
 function buildSceneGraph(nodes: MemoryGraph3DNode[], links: MemoryGraph3DLink[]) {
-  const maxDegree = Math.max(1, ...nodes.map((node) => node.degree));
+  const degrees = nodes.map((node) => node.degree);
+  const minDegree = Math.min(...degrees);
+  const maxDegree = Math.max(...degrees);
+  const degreeRange = Math.max(1, maxDegree - minDegree);
   const sceneNodes: SceneNode[] = nodes.map((node, index) => {
     const [x, y, z] = createInitialPosition(node.id, index, nodes.length);
-    const degreeRatio = node.degree / maxDegree;
+    const degreeRatio = (node.degree - minDegree) / degreeRange;
     return {
       ...node,
       x,
@@ -162,7 +165,7 @@ function buildSceneGraph(nodes: MemoryGraph3DNode[], links: MemoryGraph3DLink[])
       vx: 0,
       vy: 0,
       vz: 0,
-      radius: 0.8 + Math.pow(degreeRatio, 0.6) * 9.2,
+      radius: 1 + Math.pow(degreeRatio, 0.6) * 9,
     };
   });
   const nodeIndex = new Map(sceneNodes.map((node, index) => [node.id, index]));
@@ -176,6 +179,13 @@ function buildSceneGraph(nodes: MemoryGraph3DNode[], links: MemoryGraph3DLink[])
     .sort((left, right) => right.strength - left.strength || left.id - right.id)
     .slice(0, MAX_RENDERED_LINKS);
   return { sceneNodes, simulationLinks, renderedLinks, nodeIndex };
+}
+
+function syncCameraClippingPlanes(camera: THREE.PerspectiveCamera, target: THREE.Vector3) {
+  const cameraDistance = camera.position.distanceTo(target);
+  camera.near = Math.max(0.1, cameraDistance / 100_000);
+  camera.far = Math.max(800, cameraDistance * 4);
+  camera.updateProjectionMatrix();
 }
 
 function fitCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls, nodes: SceneNode[]) {
@@ -193,9 +203,7 @@ function fitCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls, nod
   if (direction.lengthSq() === 0) direction.set(0.62, 0.36, 1);
   controls.target.copy(sphere.center);
   camera.position.copy(sphere.center).add(direction.multiplyScalar(distance));
-  camera.near = Math.max(0.1, distance / 260);
-  camera.far = Math.max(800, distance * 18);
-  camera.updateProjectionMatrix();
+  syncCameraClippingPlanes(camera, controls.target);
   controls.update();
 }
 
@@ -318,7 +326,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     controls.zoomSpeed = 0.9;
     controls.panSpeed = 0.68;
     controls.minDistance = 8;
-    controls.maxDistance = 1_200;
+    controls.maxDistance = Infinity;
     controls.screenSpacePanning = true;
 
     const signalColor = colorFromToken("--cta");
@@ -661,6 +669,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     });
 
     function handleControlsChange() {
+      syncCameraClippingPlanes(camera, controls.target);
       requestRender(true);
     }
 
