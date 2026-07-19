@@ -116,6 +116,7 @@ function getAttemptChildSessionId(attempt: PlanStepAttempt): string | null {
 }
 
 function PlanAttemptChild({ planId, parentSessionId, step, attempt, ownedChildBlocks, sessionTitleById, sessionStreams }: { planId: string; parentSessionId?: string; step: PlanStep; attempt: PlanStepAttempt; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string>; sessionStreams?: SessionStreamMap }) {
+  const stepCompleted = isProgressedStep(step);
   const childSessionId = getAttemptChildSessionId(attempt);
   if (!childSessionId) return null;
   const startedAt = attempt.startedAt || attempt.updatedAt || attempt.completedAt || new Date().toISOString();
@@ -134,18 +135,17 @@ function PlanAttemptChild({ planId, parentSessionId, step, attempt, ownedChildBl
     planAttemptNumber: attempt.attemptNumber,
   };
   return (
-    <div className="ml-6 mt-1">
-      <ChildSessionBlock
-        meta={meta}
-        depth={1}
-        sessionTitleById={sessionTitleById}
-        childStream={sessionStreams?.[childSessionId]}
-      />
-    </div>
+    <ChildSessionBlock
+      meta={meta}
+      depth={1}
+      sessionTitleById={sessionTitleById}
+      childStream={sessionStreams?.[childSessionId]}
+      planStepCompleted={stepCompleted}
+    />
   );
 }
 
-function PlanStepCheckbox({ step, planId, parentSessionId, ownedChildBlocks, sessionTitleById, sessionStreams }: { step: PlanStep; planId: string; parentSessionId?: string; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string>; sessionStreams?: SessionStreamMap }) {
+function PlanStepCheckbox({ step, stepIndex, planId, parentSessionId, ownedChildBlocks, sessionTitleById, sessionStreams }: { step: PlanStep; stepIndex: number; planId: string; parentSessionId?: string; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string>; sessionStreams?: SessionStreamMap }) {
   const checked = isProgressedStep(step);
   const isRunning = step.status === "running";
   const isBlocked = step.status === "blocked";
@@ -179,75 +179,73 @@ function PlanStepCheckbox({ step, planId, parentSessionId, ownedChildBlocks, ses
     (a, b) => a.attemptNumber - b.attemptNumber,
   );
 
+  const stepLabel = `Step ${stepIndex + 1}: ${step.title}`;
+
+  // When a step has a child session, replace the step row entirely with the
+  // child session widget. The child renders its own check icon via planStepCompleted.
+  if (attempts.length > 0) {
+    return (
+      <div className="space-y-1">
+        {attempts.map((attempt) => (
+          <PlanAttemptChild
+            key={attempt.id ?? `${step.id}-${attempt.attemptNumber}`}
+            planId={planId}
+            parentSessionId={parentSessionId}
+            step={step}
+            attempt={attempt}
+            ownedChildBlocks={ownedChildBlocks}
+            sessionTitleById={sessionTitleById}
+            sessionStreams={sessionStreams}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // Pending step row with "Step N: title" prefix.
   return (
     <div>
-      <div className="flex min-w-0 items-stretch">
-        <div className="relative mr-1 w-5 shrink-0 self-stretch" aria-hidden="true">
-          <div className="absolute bottom-1/2 left-1/2 top-0 -translate-x-px border-l border-border/50" />
-          <div className="absolute left-1/2 right-0 top-1/2 border-t border-border/50" />
-        </div>
-        <div
+      <div
+        className={cn(
+          "group relative flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-foreground",
+          needsReview && "text-foreground",
+          (step.status === "failed" || isBlocked) && "text-destructive hover:text-destructive",
+        )}
+      >
+        <span
           className={cn(
-            "group relative flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-foreground",
-            isRunning && "bg-sidebar-accent/50 text-active hover:text-active",
-            needsReview && "text-foreground",
-            (step.status === "failed" || isBlocked) && "text-destructive hover:text-destructive",
+            "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center transition-colors",
+            checked && "text-success",
+            isBlocked && !checked && "rounded border border-destructive bg-destructive/10 text-destructive",
+            needsReview && !checked && "rounded border border-foreground/70 bg-foreground/10 text-foreground shadow-[0_0_0_1px_hsl(var(--foreground)/0.12)]",
+            !checked && !isBlocked && !needsReview && "text-muted-foreground/50",
           )}
+          aria-hidden="true"
         >
-          <span
-            className={cn(
-              "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center transition-colors",
-              checked && "text-success",
-              isRunning && !checked && "text-active",
-              isBlocked && !checked && "rounded border border-destructive bg-destructive/10 text-destructive",
-              needsReview && !checked && "rounded border border-foreground/70 bg-foreground/10 text-foreground shadow-[0_0_0_1px_hsl(var(--foreground)/0.12)]",
-              !checked && !isRunning && !isBlocked && !needsReview && "text-muted-foreground/50",
-            )}
-            aria-hidden="true"
-          >
-            {checked && !needsReview && <CircleCheck className="h-3.5 w-3.5" />}
-            {isRunning && !checked && <ActiveStatusSpinner className="h-3.5 w-3.5" />}
-            {isBlocked && !checked && <OctagonAlert className="h-3 w-3" />}
-            {needsReview && checked && <MailOpen className="h-3 w-3" />}
-            {!checked && !isRunning && !isBlocked && !needsReview && <Circle className="h-3.5 w-3.5" />}
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span
-                className={cn(
-                  "min-w-0 flex-1 truncate",
-                  checked && "text-muted-foreground",
-                  needsReview && "font-medium text-foreground",
-                  isRunning && "font-medium text-active",
-                )}
-              >
-                {step.title}
-              </span>
-              {isBlocked && <span className="shrink-0 rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive">Blocked</span>}
-              {needsReview && <span className="shrink-0 rounded border border-foreground/25 bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground">Needs Review</span>}
-            </div>
-            {stepErrorText && (
-              <p className="mt-0.5 line-clamp-2 text-xs text-destructive">{stepErrorText}</p>
-            )}
+          {checked && !needsReview && <CircleCheck className="h-3.5 w-3.5" />}
+          {isBlocked && !checked && <OctagonAlert className="h-3 w-3" />}
+          {needsReview && checked && <MailOpen className="h-3 w-3" />}
+          {!checked && !isBlocked && !needsReview && <Circle className="h-3.5 w-3.5" />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span
+              className={cn(
+                "min-w-0 flex-1 truncate",
+                checked && "text-muted-foreground",
+                needsReview && "font-medium text-foreground",
+              )}
+            >
+              {stepLabel}
+            </span>
+            {isBlocked && <span className="shrink-0 rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive">Blocked</span>}
+            {needsReview && <span className="shrink-0 rounded border border-foreground/25 bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground">Needs Review</span>}
           </div>
+          {stepErrorText && (
+            <p className="mt-0.5 line-clamp-2 text-xs text-destructive">{stepErrorText}</p>
+          )}
         </div>
       </div>
-      {attempts.length > 0 && (
-        <div className="space-y-1 pb-1">
-          {attempts.map((attempt) => (
-            <PlanAttemptChild
-              key={attempt.id ?? `${step.id}-${attempt.attemptNumber}`}
-              planId={planId}
-              parentSessionId={parentSessionId}
-              step={step}
-              attempt={attempt}
-              ownedChildBlocks={ownedChildBlocks}
-              sessionTitleById={sessionTitleById}
-              sessionStreams={sessionStreams}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -286,7 +284,7 @@ export function PlanWidget({
   const progressPercent = plan.steps.length > 0
     ? Math.round((progressedCount / plan.steps.length) * 100)
     : 0;
-  const currentStep = plan.steps.find((s) => s.status === "running");
+
 
   useEffect(() => {
     if (variant !== "sticky" || !isTerminal) {
@@ -436,11 +434,6 @@ export function PlanWidget({
                 ) : (
                   <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
                 )}
-                {isExecuting ? (
-                  <ActiveStatusSpinner className="h-4 w-4" />
-                ) : (
-                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                )}
                 {plan.pageSlug ? (
                   <ReferenceRenderer
                     refValue={createReferenceRef({
@@ -453,11 +446,7 @@ export function PlanWidget({
                 ) : (
                   <span className={cn("truncate text-sm font-medium", isExecuting && "text-active animate-pulse")}>{title}</span>
                 )}
-                {isExecuting && currentStep && (
-                  <span className="min-w-0 flex-1 truncate text-xs text-active/80">
-                    {currentStep.title}
-                  </span>
-                )}
+
               </div>
               <div className="mt-2 pl-7">
                 <Progress value={progressPercent} className="h-1.5" />
@@ -518,12 +507,13 @@ export function PlanWidget({
         </div>
 
         <CollapsibleContent className="overflow-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-200">
-          <div className="space-y-2 pt-3">
+          <div className="space-y-1 pt-3">
             <div className="max-h-[28rem] space-y-0.5 overflow-y-auto pr-2 scrollbar-thin">
-              {plan.steps.map((step) => (
+              {plan.steps.map((step, stepIndex) => (
                 <PlanStepCheckbox
                   key={step.id}
                   step={step}
+                  stepIndex={stepIndex}
                   planId={plan.id}
                   parentSessionId={sessionId}
                   ownedChildBlocks={ownedChildBlocks}
