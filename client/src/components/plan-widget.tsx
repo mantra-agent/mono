@@ -58,6 +58,7 @@ import {
 } from "./plan-shared";
 import { ChildSessionBlock } from "@/components/inline-session-blocks";
 import type { ChildSessionBlockMeta } from "@shared/models/chat";
+import type { SessionStreamMap } from "@/hooks/use-session-subscription";
 
 export interface PlanWidgetPlan extends PlanData {
   createdAt?: string;
@@ -73,6 +74,7 @@ interface PlanWidgetProps {
   className?: string;
   ownedChildBlocks?: Map<string, ChildSessionBlockMeta>;
   sessionTitleById?: Record<string, string>;
+  sessionStreams?: SessionStreamMap;
 }
 
 function getBorderColor(status: PlanStatus, isFlashing: boolean): string {
@@ -113,7 +115,7 @@ function getAttemptChildSessionId(attempt: PlanStepAttempt): string | null {
   return attempt.childSessionId || null;
 }
 
-function PlanAttemptChild({ planId, parentSessionId, step, attempt, ownedChildBlocks, sessionTitleById }: { planId: string; parentSessionId?: string; step: PlanStep; attempt: PlanStepAttempt; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string> }) {
+function PlanAttemptChild({ planId, parentSessionId, step, attempt, ownedChildBlocks, sessionTitleById, sessionStreams }: { planId: string; parentSessionId?: string; step: PlanStep; attempt: PlanStepAttempt; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string>; sessionStreams?: SessionStreamMap }) {
   const childSessionId = getAttemptChildSessionId(attempt);
   if (!childSessionId) return null;
   const startedAt = attempt.startedAt || attempt.updatedAt || attempt.completedAt || new Date().toISOString();
@@ -132,22 +134,53 @@ function PlanAttemptChild({ planId, parentSessionId, step, attempt, ownedChildBl
     planAttemptNumber: attempt.attemptNumber,
   };
   return (
-    <div className="ml-10 mt-1">
-      <ChildSessionBlock meta={meta} depth={1} sessionTitleById={sessionTitleById} />
+    <div className="ml-6 mt-1">
+      <ChildSessionBlock
+        meta={meta}
+        depth={1}
+        sessionTitleById={sessionTitleById}
+        childStream={sessionStreams?.[childSessionId]}
+      />
     </div>
   );
 }
 
-function PlanStepCheckbox({ step, planId, parentSessionId, ownedChildBlocks, sessionTitleById }: { step: PlanStep; planId: string; parentSessionId?: string; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string> }) {
+function PlanStepCheckbox({ step, planId, parentSessionId, ownedChildBlocks, sessionTitleById, sessionStreams }: { step: PlanStep; planId: string; parentSessionId?: string; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string>; sessionStreams?: SessionStreamMap }) {
   const checked = isProgressedStep(step);
   const isRunning = step.status === "running";
   const isBlocked = step.status === "blocked";
   const needsReview = step.status === "needs_review";
   const stepErrorText = formatDiagnosticValue(step.error);
-  const attempts = [...(step.attempts ?? [])].sort((a, b) => a.attemptNumber - b.attemptNumber);
+  const attemptsBySession = new Map(
+    (step.attempts ?? [])
+      .filter((attempt) => attempt.childSessionId)
+      .map((attempt) => [attempt.childSessionId!, attempt]),
+  );
+  for (const block of ownedChildBlocks?.values() ?? []) {
+    if (
+      block.planId !== planId ||
+      block.planStepId !== step.id ||
+      attemptsBySession.has(block.childSessionId)
+    ) continue;
+    attemptsBySession.set(block.childSessionId, {
+      id: block.planAttemptId ?? undefined,
+      attemptNumber: block.planAttemptNumber ?? attemptsBySession.size + 1,
+      childSessionId: block.childSessionId,
+      status: block.error ? "failed" : block.summary ? "completed" : "running",
+      startedAt: block.startedAt,
+      updatedAt: block.updatedAt,
+      completedAt: block.summary || block.error ? block.updatedAt : null,
+      durationSeconds: block.elapsedMs != null ? Math.round(block.elapsedMs / 1000) : null,
+      outcome: block.summary,
+      error: block.error,
+    });
+  }
+  const attempts = [...attemptsBySession.values()].sort(
+    (a, b) => a.attemptNumber - b.attemptNumber,
+  );
 
   return (
-    <div className="pl-4">
+    <div>
       <div className="flex min-w-0 items-stretch">
         <div className="relative mr-1 w-5 shrink-0 self-stretch" aria-hidden="true">
           <div className="absolute bottom-1/2 left-1/2 top-0 -translate-x-px border-l border-border/50" />
@@ -210,6 +243,7 @@ function PlanStepCheckbox({ step, planId, parentSessionId, ownedChildBlocks, ses
               attempt={attempt}
               ownedChildBlocks={ownedChildBlocks}
               sessionTitleById={sessionTitleById}
+              sessionStreams={sessionStreams}
             />
           ))}
         </div>
@@ -226,6 +260,7 @@ export function PlanWidget({
   className,
   ownedChildBlocks,
   sessionTitleById,
+  sessionStreams,
 }: PlanWidgetProps) {
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
@@ -507,7 +542,7 @@ export function PlanWidget({
         </div>
 
         <CollapsibleContent className="overflow-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-200">
-          <div className={cn("space-y-2 pt-3 pl-7", isTree && "pb-1 pt-0 pl-4")}>
+          <div className={cn("space-y-2 pt-3", isTree && "pb-1 pt-0 pl-2")}>
             <div className="max-h-[28rem] space-y-0.5 overflow-y-auto pr-2 scrollbar-thin">
               {plan.steps.map((step) => (
                 <PlanStepCheckbox
@@ -517,6 +552,7 @@ export function PlanWidget({
                   parentSessionId={sessionId}
                   ownedChildBlocks={ownedChildBlocks}
                   sessionTitleById={sessionTitleById}
+                  sessionStreams={sessionStreams}
                 />
               ))}
             </div>

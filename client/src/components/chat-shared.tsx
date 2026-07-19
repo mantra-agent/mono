@@ -66,7 +66,7 @@ import {
 import { resolveToolIcon } from "@/lib/tool-icons";
 import { resolvePersonaIcon } from "@/lib/persona-icons";
 import { Button } from "@/components/ui/button";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Tooltip,
   TooltipContent,
@@ -95,6 +95,8 @@ import type {
 } from "@shared/streaming-types";
 import { initialStreamingContent } from "@shared/streaming-types";
 import { SegmentStream } from "@/components/segment-stream";
+import { usePlanEvents } from "@/hooks/use-plan-events";
+import type { SessionStreamMap } from "@/hooks/use-session-subscription";
 
 /** Filter execution steps by visibility layer. */
 export function filterStepsByLayer(
@@ -2108,7 +2110,19 @@ export function MarkdownContent({
   );
 }
 
-function InlinePlanWidget({ planId, sessionId }: { planId: string; sessionId?: string }) {
+function InlinePlanWidget({
+  planId,
+  sessionId,
+  ownedChildBlocks,
+  sessionTitleById,
+  sessionStreams,
+}: {
+  planId: string;
+  sessionId?: string;
+  ownedChildBlocks?: Map<string, ChildSessionBlockMeta>;
+  sessionTitleById?: Record<string, string>;
+  sessionStreams?: SessionStreamMap;
+}) {
   const {
     data: plan,
     isLoading,
@@ -2124,13 +2138,27 @@ function InlinePlanWidget({ planId, sessionId }: { planId: string; sessionId?: s
       return res.json();
     },
     staleTime: 2_000,
-    refetchInterval: (query) =>
-      query.state.data?.status === "executing" ? 2_000 : false,
+    // Create and execute are separate mutations. Poll every non-terminal state,
+    // including the initial `created` response, until PostgreSQL reports the
+    // canonical terminal state.
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "completed" ||
+        status === "completed_with_failures" ||
+        status === "failed" ||
+        status === "aborted"
+        ? false
+        : 2_000;
+    },
   });
+
+  usePlanEvents(() => {
+    queryClient.invalidateQueries({ queryKey: ["/api/plans", planId] });
+  }, planId);
 
   if (isLoading) {
     return (
-      <div className="my-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+      <div className="-ml-10 my-2 w-[calc(100%+2.5rem)] rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
         Loading plan…
       </div>
     );
@@ -2138,13 +2166,22 @@ function InlinePlanWidget({ planId, sessionId }: { planId: string; sessionId?: s
 
   if (error || !plan) {
     return (
-      <div className="my-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+      <div className="-ml-10 my-2 w-[calc(100%+2.5rem)] rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
         @plan:{planId}
       </div>
     );
   }
 
-  return <PlanWidget plan={plan} sessionId={sessionId} className="my-2" />;
+  return (
+    <PlanWidget
+      plan={plan}
+      sessionId={sessionId}
+      className="-ml-10 my-2 w-[calc(100%+2.5rem)]"
+      ownedChildBlocks={ownedChildBlocks}
+      sessionTitleById={sessionTitleById}
+      sessionStreams={sessionStreams}
+    />
+  );
 }
 
 function formatLocalTime(dateStr: string): string {
@@ -2429,6 +2466,9 @@ export const ChatTurn = memo(function ChatTurn({
   suppressedEmailDraftIds,
   questionResponses,
   onQuestionSubmit,
+  planOwnedChildBlocks,
+  sessionTitleById,
+  sessionStreams,
 }: {
   message: ChatMessage;
   isLast: boolean;
@@ -2438,6 +2478,9 @@ export const ChatTurn = memo(function ChatTurn({
   suppressedEmailDraftIds?: string;
   questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
   onQuestionSubmit: (response: QuestionResponseMeta) => Promise<boolean>;
+  planOwnedChildBlocks?: Map<string, ChildSessionBlockMeta>;
+  sessionTitleById?: Record<string, string>;
+  sessionStreams?: SessionStreamMap;
 }) {
   const isUser = message.role === "user";
   const isSystemPrompt = message.role === "system_prompt";
@@ -2803,6 +2846,9 @@ export const ChatTurn = memo(function ChatTurn({
                 key={`tool-plan-${id}`}
                 planId={id}
                 sessionId={message.sessionId}
+                ownedChildBlocks={planOwnedChildBlocks}
+                sessionTitleById={sessionTitleById}
+                sessionStreams={sessionStreams}
               />
             ))}
           </SuppressedEmailDraftsContext.Provider>

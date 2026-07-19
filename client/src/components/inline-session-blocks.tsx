@@ -109,15 +109,21 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
   });
 
   const cachedSessions = queryClient.getQueryData<import("@shared/models/chat").ChatSession[]>(["/api/sessions"]);
-  const hasLiveChildStream = childStream?.status === "streaming" || childStream?.runActive;
-  const isChildStreaming = childSession?.status === "streaming" || hasLiveChildStream;
+  const hasPersistedTerminalState = childSession?.status === "saved" || childSession?.status === "failed";
+  const hasLiveChildStream = !hasPersistedTerminalState &&
+    (childStream?.status === "streaming" || childStream?.runActive);
+  // Persisted child-session status is the lifecycle authority. A delayed stream
+  // snapshot must never resurrect a child that is already saved or failed.
+  const isChildStreaming = !hasPersistedTerminalState &&
+    (childSession?.status === "streaming" || hasLiveChildStream);
 
   // Active child sessions must update their collapsed preview too.
   // The persisted session row status is the activity authority, matching the Session Menu.
   const subscriptionId = isChildStreaming && depth < 2 && !childStream ? meta.childSessionId : null;
   const fallbackChildSub = useSessionSubscription(subscriptionId);
   const childSub = childStream ?? fallbackChildSub;
-  const hasActiveChildSub = childSub.status === "streaming" || childSub.runActive;
+  const hasActiveChildSub = !hasPersistedTerminalState &&
+    (childSub.status === "streaming" || childSub.runActive);
 
   useEffect(() => {
     if (!childSub.updatedAt) return;
