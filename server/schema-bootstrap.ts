@@ -211,6 +211,7 @@ async function ensureDocumentStoreDocumentsSchema(pool: { query: (sql: string, p
       shadow_writes_enabled BOOLEAN NOT NULL DEFAULT FALSE,
       read_enabled BOOLEAN NOT NULL DEFAULT FALSE,
       independent_writes_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      independent_activation_requested_at TIMESTAMPTZ(6),
       independent_started_at TIMESTAMPTZ(6),
       legacy_workspace_row_count INTEGER,
       last_reconciled_at TIMESTAMPTZ(6),
@@ -220,8 +221,38 @@ async function ensureDocumentStoreDocumentsSchema(pool: { query: (sql: string, p
   `);
   await pool.query(`ALTER TABLE document_store_cutover_state
     ADD COLUMN IF NOT EXISTS independent_writes_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS independent_activation_requested_at TIMESTAMPTZ(6),
     ADD COLUMN IF NOT EXISTS independent_started_at TIMESTAMPTZ(6),
     ADD COLUMN IF NOT EXISTS legacy_workspace_row_count INTEGER`);
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION enforce_document_store_cutover_monotonic()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      IF OLD.independent_writes_enabled AND NOT NEW.independent_writes_enabled THEN
+        RAISE EXCEPTION 'independent document-store ownership cannot be reverted';
+      END IF;
+      IF OLD.independent_activation_requested_at IS NOT NULL
+         AND NEW.independent_activation_requested_at IS DISTINCT FROM OLD.independent_activation_requested_at THEN
+        RAISE EXCEPTION 'independent activation request is immutable';
+      END IF;
+      IF OLD.independent_started_at IS NOT NULL
+         AND NEW.independent_started_at IS DISTINCT FROM OLD.independent_started_at THEN
+        RAISE EXCEPTION 'independent activation timestamp is immutable';
+      END IF;
+      IF OLD.legacy_workspace_row_count IS NOT NULL
+         AND NEW.legacy_workspace_row_count IS DISTINCT FROM OLD.legacy_workspace_row_count THEN
+        RAISE EXCEPTION 'independent legacy row baseline is immutable';
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+  await pool.query(`DROP TRIGGER IF EXISTS trg_document_store_cutover_monotonic ON document_store_cutover_state`);
+  await pool.query(`
+    CREATE TRIGGER trg_document_store_cutover_monotonic
+    BEFORE UPDATE ON document_store_cutover_state
+    FOR EACH ROW EXECUTE FUNCTION enforce_document_store_cutover_monotonic()
+  `);
 }
 
 const TIMER_OWNERSHIP_MIGRATION_KEY = "migration.timer-ownership.v1";
@@ -3915,85 +3946,9 @@ export async function runSchemaBootstrap(
     );
   });
 
-  await heal(
-    "migrate api_call data from memory_entries to api_calls",
-    async () => {
-      const { documentStoreIndependentWritesRequested } = await import("./memory/document-store-migration-mode");
-      if (documentStoreIndependentWritesRequested()) return;
-      const countResult = await pool.query(`
-      SELECT COUNT(*)::int AS cnt FROM memory_entries
-      WHERE layer = 'workspace' AND source = 'api_call'
-    `);
-      const sourceCount: number = countResult.rows[0]?.cnt || 0;
-      if (sourceCount === 0) return;
+  // Historical api_call workspace rows are immutable archives after document-store extraction.
+  // Canonical api_calls storage is created above; no startup healer may mutate archived workspace rows.
 
-      const destResult = await pool.query(
-        `SELECT COUNT(*)::int AS cnt FROM api_calls`,
-      );
-      const destCount: number = destResult.rows[0]?.cnt || 0;
-
-      if (destCount >= sourceCount) {
-        await pool.query(
-          `DELETE FROM memory_entries WHERE layer = 'workspace' AND source = 'api_call'`,
-        );
-        log(
-          `auto-heal: cleaned ${sourceCount} legacy api_call rows from memory_entries (api_calls has ${destCount} rows)`,
-          "migration",
-        );
-        return;
-      }
-
-      if (destCount > 0) {
-        log(
-          `auto-heal: partial migration detected (source=${sourceCount}, dest=${destCount}); re-migrating`,
-          "migration",
-        );
-        await pool.query(`DELETE FROM api_calls`);
-      }
-
-      const insertResult = await pool.query(`
-      INSERT INTO api_calls (timestamp, model, provider, profile, input_tokens, output_tokens,
-        cache_read_tokens, cache_write_tokens, total_tokens, cost_input, cost_output, cost_total,
-        session_key, session_id, duration_ms, stop_reason, metadata)
-      SELECT
-        COALESCE((metadata->>'timestamp')::timestamptz, created_at) AS timestamp,
-        COALESCE(metadata->>'model', '') AS model,
-        COALESCE(metadata->>'provider', '') AS provider,
-        metadata->>'profile' AS profile,
-        COALESCE((metadata->>'inputTokens')::int, 0) AS input_tokens,
-        COALESCE((metadata->>'outputTokens')::int, 0) AS output_tokens,
-        (metadata->>'cacheReadTokens')::int AS cache_read_tokens,
-        (metadata->>'cacheWriteTokens')::int AS cache_write_tokens,
-        COALESCE((metadata->>'totalTokens')::int, 0) AS total_tokens,
-        COALESCE((metadata->>'costInput')::real, 0) AS cost_input,
-        COALESCE((metadata->>'costOutput')::real, 0) AS cost_output,
-        COALESCE((metadata->>'costTotal')::real, 0) AS cost_total,
-        metadata->>'sessionKey' AS session_key,
-        (metadata->>'sessionId')::int AS session_id,
-        (metadata->>'durationMs')::int AS duration_ms,
-        metadata->>'stopReason' AS stop_reason,
-        metadata
-      FROM memory_entries
-      WHERE layer = 'workspace' AND source = 'api_call'
-      ORDER BY created_at ASC
-    `);
-      const migratedCount = insertResult.rowCount ?? 0;
-      if (migratedCount === sourceCount) {
-        await pool.query(
-          `DELETE FROM memory_entries WHERE layer = 'workspace' AND source = 'api_call'`,
-        );
-        log(
-          `auto-heal: migrated ${migratedCount} api_call rows from memory_entries to api_calls`,
-          "migration",
-        );
-      } else {
-        log(
-          `auto-heal: migration count mismatch (source=${sourceCount}, inserted=${migratedCount}); keeping legacy rows for safety`,
-          "migration",
-        );
-      }
-    },
-  );
 
   await heal("retire raw session memory rows from graph surfaces", async () => {
     const rawSessionPredicate = `

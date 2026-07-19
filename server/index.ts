@@ -331,8 +331,8 @@ app.use((req, res, next) => {
   bootTracker.startPhase("database");
   const tMigrate0 = Date.now();
   await runSchemaBootstrap("boot");
-  const { ensureDocumentStoreMirror } = await import("./memory/document-store-cutover");
-  await ensureDocumentStoreMirror();
+  const { runDocumentStoreWorkspaceMigrationBootstrap } = await import("./memory/document-store-bootstrap");
+  await runDocumentStoreWorkspaceMigrationBootstrap();
   const { ensurePermissionSchema } = await import("./permissions");
   await ensurePermissionSchema();
   const migrateMs = Date.now() - tMigrate0;
@@ -948,16 +948,6 @@ function startDeferredBackgroundServices(): void {
 
     bootTracker.markReady();
 
-    void import("./memory/document-store-bootstrap")
-      .then(({ runDocumentStoreWorkspaceMigrationBootstrap }) =>
-        runDocumentStoreWorkspaceMigrationBootstrap(),
-      )
-      .catch((error) => {
-        log(
-          `[startup] document migration failed to start: ${error instanceof Error ? error.message : String(error)}`,
-          "boot",
-        );
-      });
   });
 }
 
