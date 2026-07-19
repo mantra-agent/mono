@@ -5,7 +5,6 @@ import {
   ChatTurn,
   segmentsFromSavedMessage,
   emailDraftIdsFromSegments,
-  referenceIdsFromSegments,
   type ChatMessage as Message,
   type ChildSessionBlockMeta,
   type CrossSessionMeta,
@@ -275,20 +274,25 @@ export function MessageList({
       .filter(m => m.role === "child_session_block" && hasChildSessionId(m.childSession))
       .map(m => m.childSession.childSessionId)
   );
-  const anchoredPlanIds = new Set(
-    messages.flatMap((msg) => {
-      if (msg.role !== "assistant") return [];
-      const refs = referenceIdsFromSegments(segmentsFromSavedMessage(msg), "plan", (tool) => {
-        const action = typeof tool.arguments?.action === "string"
-          ? tool.arguments.action
-          : null;
-        return tool.toolName === "plan" &&
-          (action === "create" || action === "associate_session");
-      });
-      return [...refs.fromContent, ...refs.fromToolResults];
-    }),
-  );
-  const isPlanOwnedChildBlock = (meta: ChildSessionBlockMeta): boolean => Boolean(meta.planId && anchoredPlanIds.has(meta.planId));
+  // Plan ownership is encoded on the child block itself. Do not infer it from
+  // whether the plan anchor has already persisted into the transcript: during
+  // live execution the child lifecycle event can arrive first.
+  const planOwnedChildBlocks = new Map<string, ChildSessionBlockMeta>();
+  for (const message of messages) {
+    if (
+      message.role === "child_session_block" &&
+      hasChildSessionId(message.childSession) &&
+      message.childSession.planId
+    ) {
+      planOwnedChildBlocks.set(message.childSession.childSessionId, message.childSession);
+    }
+  }
+  for (const liveChild of childBlocks) {
+    if (hasChildSessionId(liveChild.meta) && liveChild.meta.planId) {
+      planOwnedChildBlocks.set(liveChild.meta.childSessionId, liveChild.meta);
+    }
+  }
+  const isPlanOwnedChildBlock = (meta: ChildSessionBlockMeta): boolean => Boolean(meta.planId);
   const persistedCrossKeys = new Set(
     messages
       .filter(m => m.role === "cross_session" && m.crossSession)
@@ -752,6 +756,9 @@ export function MessageList({
         suppressedEmailDraftIds={suppressed && suppressed.length > 0 ? suppressed.join("|") : undefined}
         questionResponses={questionResponses}
         onQuestionSubmit={onQuestionSubmit}
+        planOwnedChildBlocks={planOwnedChildBlocks}
+        sessionTitleById={sessionTitleById}
+        sessionStreams={sessionStreams}
       />
     );
   };
