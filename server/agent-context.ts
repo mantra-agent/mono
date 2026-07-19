@@ -102,33 +102,23 @@ function truncateConversationHistory(
 }
 
 const BETWEEN_TURN_COMPACTION_THRESHOLD = 0.6;
-const BETWEEN_TURN_COMPACTION_TIMEOUT_MS = 30_000;
-
 type CompactableHistoryMessage = {
   role: string;
   content: string;
   thinking?: string;
-  toolCalls?: Array<{ toolName?: string; result?: unknown; error?: boolean }>;
+  toolCalls?: Array<{
+    toolName?: string;
+    arguments?: Record<string, unknown>;
+    result?: unknown;
+    output?: string;
+    error?: boolean | string | Record<string, unknown>;
+    toolCallId?: string;
+  }>;
   publicRole?: "user" | "assistant";
+  capsule?: import("@shared/models/chat").ContinuationCapsule;
   archiveRefId?: string;
   archiveDownloadable?: boolean;
 };
-
-function serializeForCompaction(msg: CompactableHistoryMessage): string {
-  const parts = [`[${msg.role}]: ${msg.content}`];
-  if (msg.thinking) {
-    const thinking = msg.thinking.length > 1000 ? `${msg.thinking.slice(0, 1000)}...` : msg.thinking;
-    parts.push(`[thinking]: ${thinking}`);
-  }
-  if (Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0) {
-    for (const tc of msg.toolCalls) {
-      const rawResult = typeof tc.result === "string" ? tc.result : tc.result == null ? "" : JSON.stringify(tc.result);
-      const result = rawResult.length > 1500 ? `${rawResult.slice(0, 1500)}...` : rawResult;
-      parts.push(`[tool:${tc.toolName || "unknown"}${tc.error ? ":error" : ""}]: ${result}`);
-    }
-  }
-  return parts.join("\n");
-}
 
 function estimateHistoryTokens(msg: CompactableHistoryMessage): number {
   let tokens = estimateTokens(msg.content);
@@ -171,111 +161,75 @@ export async function runBetweenTurnCompaction(
   if (serialized.length < 200) return false;
 
   try {
-    let archiveRef: any = null;
-    try {
-      const { indexAndArchive } = await import("./content-indexer");
-      archiveRef = await indexAndArchive({
-        content: serialized,
-        sourceType: "compaction",
-        sourceLabel: `session:${sessionId} (${olderMessages.length} messages)`,
-      });
-    } catch {
+    const { indexAndArchiveHeuristic } = await import("./content-indexer");
+    const archiveRef = await indexAndArchiveHeuristic({
+      content: serialized,
+      sourceType: "compaction",
+      sourceLabel: `session:${sessionId} (${olderMessages.length} messages)`,
+    });
+    if (!archiveRef) {
+      log.error(`betweenTurnCompaction: exact archive unavailable; preserving active history sessionId=${sessionId}`);
+      return false;
     }
 
-    const { chatCompletion } = await import("./model-client");
-    const { getPromptModulePrompt } = await import("./prompt-modules");
-    const { ACTIVITY_FRAMING: activity } = await import("./job-profiles");
-
-    const sessionContinuationPrompt = `Write a continuation-grade summary of this session history. This is not always a user-requested conversation: sessions may be user-directed, Agent-directed, skill-directed, plan-step-directed, system/autonomous work, or mixed.
-
-Your job is to preserve enough context for a future continuation of the same session, not to extract an encyclopedic list of facts.
-
-Output format:
-
-Session spine:
-2-4 sentences explaining what kind of session this was, who or what initiated it if knowable, the objective or driving question, what changed during the compacted span, and where continuation should resume.
-
-Key continuity points:
-- Initiator / trigger: who or what appears to have started or directed the session, if knowable.
-- Objective: the session's purpose, question, task, or operating goal.
-- Actions taken: important user, assistant, Agent, skill, plan, tool, or system actions.
-- Systems touched: tools, artifacts, code, files, library pages, tasks, projects, memories, people, or external systems affected.
-- Decisions / conclusions: durable outcomes and why they matter.
-- State changes: created/updated/deleted records, status changes, IDs, branches, PRs, commits, timers, hooks, or other exact references needed later.
-- Open loops / blockers: unresolved questions, failures, promised follow-ups, or pending review.
-- Resume point: the next useful thing a future Agent should do or know when the session continues.
-
-Rules:
-- Preserve causal sequence and narrative continuity over isolated facts.
-- Include exact identifiers, names, dates, numeric values, and artifact references when they affect continuation.
-- Do not assume the session is about what Ray wanted unless the messages show that.
-- Do not output a mere fact list.
-- Do not invent missing context. Say "unknown" or omit a field if it is not knowable from the compacted messages.
-- Be concise but complete enough that the original session can be resumed without rereading the archive.`;
-
-    let systemMsg = sessionContinuationPrompt;
-    let maxTokens = 2200;
-    try {
-      const prompt = await getPromptModulePrompt("chat-compactrunhistory");
-      if (prompt) {
-        systemMsg = `${sessionContinuationPrompt}
-
-Additional legacy compaction guidance from the live prompt module follows. Apply it only when compatible with the session-continuation contract above:
-
-${prompt}`;
+    const { buildContinuationCapsule, renderContinuationCapsule } = await import("./continuation-capsule");
+    const capsuleEntries = olderMessages.flatMap((message) => {
+      const entries: import("./continuation-capsule").ContinuationCapsuleEntry[] = message.capsule
+        ? []
+        : [{
+            role: message.role === "user" || message.role === "assistant" || message.role === "system"
+              ? message.role
+              : "system",
+            content: message.content,
+          }];
+      for (const toolCall of message.toolCalls || []) {
+        entries.push({
+          role: "tool",
+          toolName: toolCall.toolName,
+          toolArguments: toolCall.arguments,
+          toolResult: toolCall.result ?? toolCall.output,
+          toolCallId: toolCall.toolCallId,
+          isError: Boolean(toolCall.error),
+        });
       }
-    } catch { /* use local continuation contract */ }
-    systemMsg += "\n\nMessages are prefixed with `[YYYY-MM-DD HH:MM TZ]` timestamps — preserve notable time gaps in your summary (e.g. \"user was away ~14h before resuming\", \"thread spans 3 days\").";
+      return entries;
+    });
+    const previousCapsule = olderMessages.find((message) => message.capsule)?.capsule;
+    const capsule = buildContinuationCapsule(capsuleEntries, previousCapsule);
+    const capsuleContent = renderContinuationCapsule(capsule);
+    const archiveNote = `
 
-    const compactInput = olderMessages.map(m => {
-      const serializedMsg = serializeForCompaction(m);
-      return serializedMsg.length > 4000 ? `${serializedMsg.slice(0, 4000)}...` : serializedMsg;
-    }).join("\n\n");
-
-    const result = await Promise.race([
-      chatCompletion({
-        activity,
-        messages: [
-          { role: "system", content: systemMsg },
-          { role: "user", content: compactInput },
-        ],
-        maxTokens,
-        metadata: { source: "between-turn-compaction", sessionId, activity },
-      }),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Between-turn compaction timeout")), BETWEEN_TURN_COMPACTION_TIMEOUT_MS)),
-    ]);
-
-    const archiveNote = archiveRef
-      ? `\n\n[Full original messages archived — ref:${archiveRef.id} — use indexed_content tool to retrieve]`
-      : "";
-    const summaryContent = `[Session Compaction] Summary of ${olderMessages.length} earlier messages:\n\n${result.content}${archiveNote}`;
+[Full original messages archived — ref:${archiveRef.id} — use indexed_content tool to retrieve]`;
+    const summaryContent = `[Session Compaction] ${capsuleContent}${archiveNote}`;
     const replaceBeforeIndex = olderMessages.length;
 
     const { chatFileStorage } = await import("./chat-file-storage");
     let tokensAfter = estimateTokens(summaryContent);
     const recentMessages = conversationHistory.slice(-keepRecent);
-    for (const m of recentMessages) tokensAfter += estimateHistoryTokens(m);
+    for (const message of recentMessages) tokensAfter += estimateHistoryTokens(message);
     const tokensSaved = totalTokens - tokensAfter;
 
     const compactResult = await chatFileStorage.compactSession(sessionId, summaryContent, replaceBeforeIndex, {
       type: "between_turn",
-      summary: result.content,
+      summary: capsuleContent,
+      capsuleVersion: capsule.version,
+      capsule,
       replacedMessageCount: olderMessages.length,
       keptMessageCount: recentMessages.length,
-      archiveRefId: archiveRef?.id,
-      archiveFormat: archiveRef ? COMPACTION_ARCHIVE_FORMAT : undefined,
-      archiveDownloadable: !!archiveRef && archiveDownloadable,
+      archiveRefId: archiveRef.id,
+      archiveFormat: COMPACTION_ARCHIVE_FORMAT,
+      archiveDownloadable,
       tokensBefore: totalTokens,
       tokensAfter,
       tokensSaved,
-      summaryLength: result.content.length,
+      summaryLength: capsuleContent.length,
       createdAt: new Date().toISOString(),
     });
 
     if (compactResult.compacted) {
       const { eventBus } = await import("./event-bus");
-      log.log(`betweenTurnCompaction: persisted sessionId=${sessionId} trigger=between-turn messagesBefore=${compactResult.messagesBefore} messagesAfter=${compactResult.messagesAfter} tokensBefore=${totalTokens} tokensAfter=${tokensAfter} tokensSaved=${tokensSaved} summaryLen=${summaryContent.length}`);
-      eventBus.publish({ category: "system", event: "compaction.persisted", payload: { sessionId, trigger: "between-turn", messagesBefore: compactResult.messagesBefore, messagesAfter: compactResult.messagesAfter, tokensBefore: totalTokens, tokensAfter, tokensSaved, summaryLength: summaryContent.length } });
+      log.log(`betweenTurnCompaction: persisted sessionId=${sessionId} trigger=between-turn messagesBefore=${compactResult.messagesBefore} messagesAfter=${compactResult.messagesAfter} tokensBefore=${totalTokens} tokensAfter=${tokensAfter} tokensSaved=${tokensSaved} capsuleLen=${capsuleContent.length}`);
+      eventBus.publish({ category: "system", event: "compaction.persisted", payload: { sessionId, trigger: "between-turn", messagesBefore: compactResult.messagesBefore, messagesAfter: compactResult.messagesAfter, tokensBefore: totalTokens, tokensAfter, tokensSaved, summaryLength: capsuleContent.length, capsuleVersion: capsule.version } });
     }
 
     return compactResult.compacted;

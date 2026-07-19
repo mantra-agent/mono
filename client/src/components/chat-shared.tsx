@@ -2290,7 +2290,19 @@ function CompactionBoundary({
   const replaced = meta?.replacedMessageCount;
   const kept = meta?.keptMessageCount;
   const summary = meta?.summary || cleanCompactionSummary(message.content);
+  const capsule = meta?.capsule;
   const tokensSaved = meta?.tokensSaved;
+  const capsuleSections = capsule
+    ? [
+        { label: "Actions completed", values: capsule.actions },
+        { label: "Systems touched", values: capsule.systemsTouched },
+        { label: "Decisions", values: capsule.decisions },
+        { label: "State changes", values: capsule.stateChanges },
+        { label: "Failures and blockers", values: capsule.failures },
+        { label: "Open loops", values: capsule.openLoops },
+        { label: "References", values: capsule.references },
+      ].filter((section) => section.values.length > 0)
+    : [];
 
   const downloadOriginalConversation = useCallback(async () => {
     if (!meta?.archiveRefId || meta.archiveDownloadable !== true || downloading) return;
@@ -2349,8 +2361,8 @@ function CompactionBoundary({
             </div>
             <div className="text-xs text-muted-foreground">
               {typeof replaced === "number"
-                ? `${replaced} messages summarized`
-                : "Earlier turns summarized"}
+                ? `${replaced} messages compacted`
+                : "Earlier turns compacted"}
               {typeof kept === "number"
                 ? ` · ${kept} recent messages kept live`
                 : ""}
@@ -2369,12 +2381,46 @@ function CompactionBoundary({
         </button>
         {expanded && (
           <div className="mt-3 border-t border-border/60 pt-3">
-            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Compaction summary
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {capsule ? "Continuation state" : "Compaction summary"}
             </div>
-            <div className="prose prose-sm dark:prose-invert max-w-none text-sm">
-              <MarkdownContent content={summary} stripTags={stripTags} />
-            </div>
+            {capsule ? (
+              <div className="space-y-3 text-sm">
+                {capsule.initiator && (
+                  <div>
+                    <div className="text-xs font-medium text-muted-foreground">Initiator</div>
+                    <MarkdownContent content={capsule.initiator} stripTags={stripTags} />
+                  </div>
+                )}
+                {capsule.objective && (
+                  <div>
+                    <div className="text-xs font-medium text-muted-foreground">Objective</div>
+                    <MarkdownContent content={capsule.objective} stripTags={stripTags} />
+                  </div>
+                )}
+                {capsuleSections.map((section) => (
+                  <div key={section.label}>
+                    <div className="text-xs font-medium text-muted-foreground">{section.label}</div>
+                    <div className="prose prose-sm dark:prose-invert max-w-none text-sm">
+                      <MarkdownContent
+                        content={section.values.map((value) => `- ${value}`).join("\n")}
+                        stripTags={stripTags}
+                      />
+                    </div>
+                  </div>
+                ))}
+                {capsule.resumePoint && (
+                  <div>
+                    <div className="text-xs font-medium text-muted-foreground">Resume point</div>
+                    <MarkdownContent content={capsule.resumePoint} stripTags={stripTags} />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="prose prose-sm dark:prose-invert max-w-none text-sm">
+                <MarkdownContent content={summary} stripTags={stripTags} />
+              </div>
+            )}
             {meta?.archiveRefId && meta.archiveDownloadable === true && (
               <button
                 type="button"

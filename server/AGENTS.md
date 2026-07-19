@@ -556,3 +556,4 @@ Container deployments use Tini as PID 1. The shell entrypoint must `exec` the No
 ### Session Compaction Archives
 
 - Compaction archives remain private indexed content. User-facing retrieval must start from a principal-scoped session and persisted compaction marker, resolve the marker's scoped archive reference, and project a public transcript server-side. Never expose or download the underlying object path directly.
+- Context reduction uses one continuation-capsule contract: exact archives preserve evidence, heuristic indexes provide retrieval, and bounded deterministic capsules preserve active continuity. Between-turn compaction must fail closed when exact archival fails; mid-turn compaction remains in-memory and must build its capsule before destructive truncation.

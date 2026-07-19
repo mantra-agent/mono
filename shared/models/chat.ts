@@ -148,9 +148,27 @@ export interface ChildSessionBlockMeta {
 
 export type CrossSessionDirection = "sibling" | "parent" | "child" | "direct";
 
+export interface ContinuationCapsule {
+  version: 1;
+  initiator?: string;
+  objective?: string;
+  actions: string[];
+  systemsTouched: string[];
+  decisions: string[];
+  stateChanges: string[];
+  failures: string[];
+  openLoops: string[];
+  references: string[];
+  resumePoint?: string;
+  sourceMessageCount: number;
+  sourceActionCount: number;
+}
+
 export interface CompactionMeta {
   type: "between_turn";
   summary: string;
+  capsuleVersion?: 1;
+  capsule?: ContinuationCapsule;
   replacedMessageCount: number;
   keptMessageCount: number;
   archiveRefId?: string;
