@@ -94,6 +94,8 @@ export interface VoiceSessionContextValue {
   userSpeaking: boolean;
   isMuted: boolean;
   transcript: VoiceTranscriptEntry[];
+  /** Ephemeral user speech still being extended by the provider. */
+  userComposition: string;
   /** Session identity that owns the ephemeral transcript aggregate. */
   transcriptSessionId: string | null;
   voiceThinking: boolean;
@@ -150,6 +152,34 @@ function safeDiagnosticText(value: unknown): string {
   return getErrorMessage(value).slice(0, 300);
 }
 
+interface TentativeUserTranscriptDebugEvent {
+  type: "tentative_user_transcript";
+  tentative_user_transcription_event?: {
+    user_transcript?: string;
+    event_id?: number;
+  };
+}
+
+function getTentativeUserTranscript(debugEvent: unknown): { text: string; eventId?: number } | null {
+  if (!debugEvent || typeof debugEvent !== "object") return null;
+  const event = debugEvent as TentativeUserTranscriptDebugEvent;
+  if (event.type !== "tentative_user_transcript") return null;
+  const text = event.tentative_user_transcription_event?.user_transcript?.trim() || "";
+  if (!text) return null;
+  return {
+    text,
+    eventId: event.tentative_user_transcription_event?.event_id,
+  };
+}
+
+function compositionMatchesCommit(composition: string, committed: string): boolean {
+  const normalize = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase();
+  const active = normalize(composition);
+  const final = normalize(committed);
+  if (!active || !final) return false;
+  return active === final || active.startsWith(final) || final.startsWith(active);
+}
+
 const WS_OPEN_TIMEOUT_MS = 10_000;
 
 interface StartFailureClassification {
@@ -195,6 +225,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const [voiceThinking, setVoiceThinking] = useState(false);
   const [userSpeaking, setUserSpeaking] = useState(false);
   const [transcript, setTranscript] = useState<VoiceTranscriptEntry[]>([]);
+  const [userComposition, setUserComposition] = useState("");
   const [transcriptSessionId, setTranscriptSessionId] = useState<string | null>(null);
   const [connectionPhases, setConnectionPhases] = useState<ConnectionPhase[]>([]);
   const [connectionStartTime, setConnectionStartTime] = useState<number | null>(null);
@@ -256,6 +287,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     setAgentMode("listening");
     setUserSpeaking(false);
     setVoiceThinking(false);
+    setUserComposition("");
     lastActivityRef.current = Date.now();
 
     if (options?.clearTranscript) {
@@ -277,6 +309,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     setTranscriptSessionId(id);
     transcriptRef.current = [];
     setTranscript([]);
+    setUserComposition("");
     log.debug("VOICE:TRANSCRIPT:OWNER_CHANGED", {
       previousSessionId: previousId,
       nextSessionId: id,
@@ -789,15 +822,9 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
                 emitVoiceDiag("first_user_speech", `First user speech ${elapsedSinceConnect}ms after connect`, "done");
                 phoneDiag("first_user_speech", { elapsedSinceConnect });
               }
-              handleUserTranscript({
-                source: "user",
-                message: msg.text,
-                turnId: msg.turnId,
-                sequence: msg.sequence,
-                transcriptId: msg.eventId,
-                status: "provisional",
-              });
-              log.debug("VOICE:NATIVE:USER_TRANSCRIPT_PROVISIONAL", {
+              setUserSpeaking(true);
+              setUserComposition(msg.isFinal ? "" : msg.text);
+              log.debug("VOICE:NATIVE:USER_COMPOSITION", {
                 messageLength: msg.text.length,
                 providerFinal: msg.isFinal,
               });
@@ -939,6 +966,9 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
         log.debug("VOICE:MESSAGE", { source: message.source, messageLength: message.message?.length || 0 });
         if (message.source === "user" || message.source === "user_edited") {
           setUserSpeaking(true);
+          // ElevenLabs onMessage is the finalized user-transcript boundary.
+          // Committed transcript history remains server-owned via voice_user_transcript.
+          setUserComposition("");
         }
         if (message.source === "ai") {
           // Assistant transcript arrives via the custom-LLM SSE pipeline (ChatStream).
@@ -957,20 +987,35 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
           phoneDiag("first_user_speech", { elapsedSinceConnect });
         }
         if (message.message?.trim()) {
-          handleUserTranscript({
-            source: "user",
-            message: message.message,
-            status: "provisional",
-          });
-          log.debug("VOICE:MESSAGE:USER_TRANSCRIPT_PROVISIONAL", {
+          log.debug("VOICE:MESSAGE:USER_TRANSCRIPT_FINAL", {
             messageLength: message.message.length,
           });
         }
       },
       onError: handleVoiceError,
-      onDebug: (_debug: { type: string; response?: string }) => {
-        // Tentative agent responses are only relevant for native-LLM mode
-        // (deleted v3). Custom-LLM receives assistant text via SSE.
+      onDebug: (debugEvent: unknown) => {
+        // @elevenlabs/client 0.14 routes raw tentative_user_transcript wire
+        // events through onDebug. Adapt that event into explicit composer state;
+        // finalized transcript history still arrives through our server event.
+        const tentative = getTentativeUserTranscript(debugEvent);
+        if (!tentative) return;
+        lastActivityRef.current = Date.now();
+        setUserSpeaking(true);
+        setUserComposition(tentative.text);
+        if (!firstUserSpeechFiredRef.current) {
+          firstUserSpeechFiredRef.current = true;
+          const connectedAt = connectionEstablishedAtRef.current;
+          const elapsedSinceConnect = connectedAt > 0 ? Date.now() - connectedAt : -1;
+          const detail = elapsedSinceConnect >= 0
+            ? `First user speech ${elapsedSinceConnect}ms after connect`
+            : "First user speech (connect time unknown)";
+          emitVoiceDiag("first_user_speech", detail, "done");
+          phoneDiag("first_user_speech", { elapsedSinceConnect });
+        }
+        log.debug("VOICE:MESSAGE:USER_COMPOSITION", {
+          eventId: tentative.eventId,
+          messageLength: tentative.text.length,
+        });
       },
       onModeChange: (mode: { mode: string }) => {
         lastActivityRef.current = Date.now();
@@ -1275,6 +1320,10 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             const activeChatSessionId = chatConversationIdRef.current;
             if (activeChatSessionId && (!p.chatSessionId || p.chatSessionId === activeChatSessionId)) {
               const text = typeof p.text === "string" ? p.text : "";
+              // The server event is the canonical coalescer commitment boundary.
+              // Only retire compatible composition text so a delayed commit for
+              // turn N cannot erase tentative speech already arriving for N+1.
+              setUserComposition((current) => compositionMatchesCommit(current, text) ? "" : current);
               if (text.trim()) {
                 handleUserTranscript({
                   source: "user",
@@ -1636,6 +1685,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     userSpeaking,
     isMuted,
     transcript,
+    userComposition,
     transcriptSessionId,
     voiceThinking,
     startSession,
@@ -1653,7 +1703,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     addTranscriptEntry,
     setVoiceToolHandler,
     setVoiceDiagnosticHandler,
-  }), [status, agentMode, userSpeaking, isMuted, transcript, transcriptSessionId, voiceThinking, startSession, endSession, toggleMute, latestMessage, setActiveConversationId, clearTranscript, activeConversationId, chatSessionKey, connectionPhases, connectionStartTime, phasePersisted, setVoiceThinking, addTranscriptEntry, setVoiceToolHandler, setVoiceDiagnosticHandler]);
+  }), [status, agentMode, userSpeaking, isMuted, transcript, userComposition, transcriptSessionId, voiceThinking, startSession, endSession, toggleMute, latestMessage, setActiveConversationId, clearTranscript, activeConversationId, chatSessionKey, connectionPhases, connectionStartTime, phasePersisted, setVoiceThinking, addTranscriptEntry, setVoiceToolHandler, setVoiceDiagnosticHandler]);
 
   return (
     <VoiceSessionContext.Provider value={value}>
