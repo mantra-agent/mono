@@ -1,15 +1,8 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useLocation } from "wouter";
-import {
-  AlertTriangle,
-  Gauge,
-  Radio,
-  Server,
-  Workflow,
-} from "lucide-react";
+import { AlertTriangle, ChevronRight } from "lucide-react";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
-import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatBytes } from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
@@ -263,37 +256,34 @@ function MetricRow({
   );
 }
 
-function BranchRow({
+function PerformanceSection({
   label,
-  icon,
   status,
-  summary,
   children,
-  defaultOpen = false,
   testId,
 }: {
   label: string;
-  icon: ReactNode;
   status: Status;
-  summary: string;
   children: ReactNode;
-  defaultOpen?: boolean;
   testId?: string;
 }) {
+  const [open, setOpen] = useState(status !== "ok");
+
   return (
-    <ProfileTreeRow
-      label={<span className="font-medium text-foreground">{label}</span>}
-      icon={icon}
-      hasValue
-      showEmpty
-      expandedContent={<TreeChildren>{children}</TreeChildren>}
-      expandedContentClassName="pb-1 pl-2 @sm:pl-5"
-      defaultOpen={defaultOpen || status !== "ok"}
-      testId={testId}
-      mobileLayout="inline"
-    >
-      <StatusValue status={status} value={summary} />
-    </ProfileTreeRow>
+    <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
+      <CollapsibleTrigger className="flex w-full min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate">
+        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
+        <span className="truncate">{label}</span>
+        <span
+          className={cn("ml-auto h-1.5 w-1.5 shrink-0 rounded-full", statusDot(status))}
+          aria-label={`${label} ${statusLabel(status)}`}
+          title={statusLabel(status)}
+        />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <TreeChildren>{children}</TreeChildren>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -310,7 +300,7 @@ function DetailList({ items }: { items: string[] }) {
 }
 
 export default function ResourcesPage() {
-  usePageHeader({ title: "Resources" });
+  usePageHeader({ title: "Performance" });
   const { data, isLoading, isError, error, dataUpdatedAt } = useQuery<ResourcesResponse>({
     queryKey: ["/api/gateway/processes", "resources"],
     retry: false,
@@ -381,7 +371,6 @@ function ResourcesView({
   now: number;
   isStale: boolean;
 }) {
-  const [, setLocation] = useLocation();
   const clientWs = useSyncExternalStore(
     subscribeSharedWSDiagnostics,
     getSharedWSDiagnostics,
@@ -414,7 +403,12 @@ function ResourcesView({
   }, []);
 
   const cpuPercent = diagData?.realtime.cpu.current ?? 0;
-  const serviceStatuses: Status[] = [eventLoopStatus(r.eventLoop), memoryStatus(r.memory)];
+  const serviceStatuses: Status[] = [
+    eventLoopStatus(r.eventLoop),
+    memoryStatus(r.memory),
+    isStale ? "amber" : "ok",
+    failures?.length ? "amber" : "ok",
+  ];
   if (diagData) serviceStatuses.push(cpuStatus(cpuPercent), pingStatus(pingMs));
   const serviceStatus = highestStatus(serviceStatuses);
 
@@ -433,24 +427,6 @@ function ResourcesView({
   const browserStatus = sharedWsStatus(clientWs);
   const realtimeBranchStatus = highestStatus([transportStatus, browserStatus]);
 
-  const collectionStatus: Status = failures?.length ? "amber" : "ok";
-  const freshnessStatus: Status = isStale ? "amber" : "ok";
-  const overallStatus = highestStatus([
-    serviceStatus,
-    workStatus,
-    realtimeBranchStatus,
-    collectionStatus,
-    freshnessStatus,
-  ]);
-  const attentionCount = [
-    ...serviceStatuses,
-    ...workStatuses,
-    transportStatus,
-    browserStatus,
-    collectionStatus,
-    freshnessStatus,
-  ].filter(status => status !== "ok").length;
-
   const memoryPercent = r.memory.maxMemoryBytes
     ? r.memory.rssUsedPct ?? Math.round((r.memory.rss / r.memory.maxMemoryBytes) * 1000) / 10
     : null;
@@ -465,40 +441,15 @@ function ResourcesView({
     .filter(([, value]) => value > 0)
     .map(([tier, value]) => `${tier}: ${value} queued`);
 
-  const healthSummary = overallStatus === "ok"
-    ? "No systems need attention"
-    : `${attentionCount} signal${attentionCount === 1 ? "" : "s"} need attention`;
-
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden">
       <div className="min-h-0 flex-1 overflow-y-auto p-4 scrollbar-thin @sm:p-6">
-        <div className="mx-auto max-w-5xl">
-          <div className="mb-2 flex items-center justify-between gap-3 px-2">
-            <div className="min-w-0 text-xs text-muted-foreground" data-testid="text-resources-updated-at">
-              Updated {formatRelative(r.generatedAt, now)}
-              {isStale ? " · stale" : ""}
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 shrink-0 px-2 text-xs text-muted-foreground"
-              onClick={() => setLocation("/system?tab=logs")}
-            >
-              View logs
-            </Button>
-          </div>
-
-          <ProfileTreeRow
-            label={<span className="font-semibold text-foreground">System health</span>}
-            icon={<Gauge className="h-3.5 w-3.5" />}
-            hasValue
-            showEmpty
-            expandedContent={(
-              <TreeChildren>
-                <div className="px-2 pb-2 text-xs text-muted-foreground" data-testid="text-health-summary">
-                  {healthSummary}
-                </div>
-
+        <div className="mx-auto max-w-5xl space-y-1">
+          <PerformanceSection
+            label="Service"
+            status={serviceStatus}
+            testId="section-service"
+          >
                 {isStale && (
                   <MetricRow
                     label="Data freshness"
@@ -519,13 +470,6 @@ function ResourcesView({
                   />
                 )}
 
-                <BranchRow
-                  label="Service"
-                  icon={<Server className="h-3.5 w-3.5" />}
-                  status={serviceStatus}
-                  summary={statusLabel(serviceStatus)}
-                  testId="branch-service"
-                >
                   {diagData && (
                     <MetricRow
                       label="CPU"
@@ -577,15 +521,13 @@ function ResourcesView({
                       />
                     </>
                   )}
-                </BranchRow>
+          </PerformanceSection>
 
-                <BranchRow
-                  label="Work"
-                  icon={<Workflow className="h-3.5 w-3.5" />}
-                  status={workStatus}
-                  summary={`${r.executor.activeRuns} running · ${r.admission.queueDepth} queued`}
-                  testId="branch-work"
-                >
+          <PerformanceSection
+            label="Work"
+            status={workStatus}
+            testId="section-work"
+          >
                   <MetricRow
                     label="Database"
                     value={`${r.dbPool.waiting} waiting`}
@@ -671,15 +613,13 @@ function ResourcesView({
                     detail={<DetailText>{r.divergence.detail}</DetailText>}
                     testId="tile-divergence"
                   />
-                </BranchRow>
+          </PerformanceSection>
 
-                <BranchRow
-                  label="Realtime"
-                  icon={<Radio className="h-3.5 w-3.5" />}
-                  status={realtimeBranchStatus}
-                  summary={`${r.realtime.uniqueSubscribedSessions} sessions · ${r.realtime.staleSessionSocketLinks} stale`}
-                  testId="branch-realtime"
-                >
+          <PerformanceSection
+            label="Realtime"
+            status={realtimeBranchStatus}
+            testId="section-realtime"
+          >
                   <MetricRow
                     label="Server transport"
                     value={`${r.realtime.eventSockets + r.realtime.sessionSockets} sockets`}
@@ -716,16 +656,7 @@ function ResourcesView({
                     )}
                     testId="card-client-websocket"
                   />
-                </BranchRow>
-              </TreeChildren>
-            )}
-            expandedContentClassName="pb-1 pl-2 @sm:pl-5"
-            defaultOpen
-            testId="tree-system-health"
-            mobileLayout="inline"
-          >
-            <StatusValue status={overallStatus} value={statusLabel(overallStatus)} />
-          </ProfileTreeRow>
+          </PerformanceSection>
         </div>
       </div>
     </div>
