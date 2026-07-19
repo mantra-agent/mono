@@ -45,6 +45,7 @@ import { createLogger } from "./log";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { eventBus } from "./event-bus";
 import { sanitizeSummary } from "./utils/sanitize-summary";
+import { isSessionOrientationEstablished } from "./session-orientation";
 import {
   PREFERENCE_RULE_PERSISTENCE_CONTEXT,
   PREFERENCES_TOOL_DESCRIPTION,
@@ -424,9 +425,7 @@ async function resolveOrientationProtocol(request: ContextRequest): Promise<stri
   if (isInteractive && request.sessionId) {
     try {
       const conv = await chatFileStorage.getSession(request.sessionId);
-      const hasRealTitle = !!conv?.title && conv.title !== "New Session" && conv.title !== "New Chat";
-      const contextFlags = await chatFileStorage.readSessionContextFlags(request.sessionId);
-      if (hasRealTitle && contextFlags !== null) {
+      if (isSessionOrientationEstablished(conv)) {
         return [
           "**Session Orientation Protocol**",
           "",

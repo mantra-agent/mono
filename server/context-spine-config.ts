@@ -42,7 +42,9 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     title: "Session Orientation",
     parentId: "world_model",
     sourceType: "dynamic",
-    freshnessPolicy: "per-session",
+    // Orientation changes within a session. Caching it for the full session can
+    // feed the main model the pre-bootstrap protocol after orientation applies.
+    freshnessPolicy: "real-time",
     priority: 0.1,
     includedIn: ["full", "world"],
     bootstrap: true,

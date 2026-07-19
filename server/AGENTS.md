@@ -102,7 +102,8 @@ The context system builds the LLM prompt from ~40 dynamically resolved sections.
 - **Context layers:** compact kernel, dynamic state, semantic instruction groups, and retrieval references
 - **Semantic context flags:** orientation may set flags like `instructions.coding`, `instructions.library_artifact`, `context.relationships`, and `context.memory`; these expand to concrete section IDs without regex routing
 - **3 cache layers:** Section cache (in-memory Map, TTL by freshness policy), Calendar background cache (15min TTL), Graph memory cache (5min TTL, SHA-256 keyed)
-- **Event-based invalidation:** `INVALIDATION_EVENT_MAP` maps 11 event types to cache-invalidated sections
+- **Orientation state:** `session-orientation.ts` is the canonical persisted completeness predicate. A session is oriented only when it has both a meaningful title and explicit context scope (`contextFlags`, where `{}` means bootstrap/default sections only). `world_model.orientation` is real-time because orientation may change within a session; never cache the pre-orientation protocol for the session lifetime.
+- **Event-based invalidation:** `INVALIDATION_EVENT_MAP` maps mutation events to cache-invalidated sections
 - **Coalescing:** `_sectionInFlight` Map prevents duplicate concurrent resolves
 - **Graph memory retrieval:** `resolveGraphMemory()` is vNext-only — `retrieveVnextContext()` over `memory_vnext_claims` (semantic + causal + contrastive + temporal blend, weights modulated by session type and emotional state), rendered by `renderVnextContext()` with tiered allocation (`allocateTiers()`). No legacy fallback: errors return "Graph memory temporarily unavailable.", empty results render empty. No LLM calls at query time
 - **No layer sections:** short/mid/long-term memory layers are no longer context sections. `memory_entries` remains a write-side store only (session summaries, sleep cycle) pending full retirement
