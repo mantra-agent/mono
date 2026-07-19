@@ -10,6 +10,7 @@ import {
   type CrossSessionMeta,
 } from "@/components/chat-shared";
 import type { QuestionResponseMeta } from "@shared/models/chat";
+import { getLatestQuestionToolCallId } from "@shared/question-prompt";
 import type { StreamingContent } from "@shared/streaming-types";
 import type { SessionStreamMap } from "@/hooks/use-session-subscription";
 import type { PendingChatTurn } from "@/hooks/use-chat-send";
@@ -223,6 +224,21 @@ export function MessageList({
 }: MessageListProps) {
   const { layer } = useVisibilityLayer();
   const { childBlocks, crossMessages } = useLiveSessionBlocks(activeSession);
+  const latestQuestionToolCallId = useMemo(() => {
+    const lifecycleMessages = messages.map((message) => ({
+      toolCalls: message.toolCalls,
+      questionResponse: message.questionResponse,
+    }));
+    if (streaming.segments.length > 0) {
+      lifecycleMessages.push({
+        toolCalls: streaming.segments.flatMap((segment) =>
+          segment.type === "timeline" ? segment.steps : [],
+        ),
+        questionResponse: undefined,
+      });
+    }
+    return getLatestQuestionToolCallId(lifecycleMessages);
+  }, [messages, streaming.segments]);
   const liveDraftCreatedAtRef = useRef<{ id: string; anchorId: string | null; createdAt: string; ts: number } | null>(null);
   const previousStreamTargetTraceRef = useRef<string | null>(null);
   const finalizedTurnRenderKeysRef = useRef<{
@@ -755,6 +771,7 @@ export function MessageList({
         compactReferences={compactReferences}
         suppressedEmailDraftIds={suppressed && suppressed.length > 0 ? suppressed.join("|") : undefined}
         questionResponses={questionResponses}
+        latestQuestionToolCallId={latestQuestionToolCallId}
         onQuestionSubmit={onQuestionSubmit}
         planOwnedChildBlocks={planOwnedChildBlocks}
         sessionTitleById={sessionTitleById}

@@ -1,6 +1,8 @@
 import type { FileMessage } from "./chat-file-storage";
 import {
   formatQuestionResponseContent,
+  getActiveQuestionToolCallId,
+  getLatestQuestionToolCallId,
   normalizeQuestionPrompt,
   normalizeQuestionResponse,
   validateQuestionResponse,
@@ -20,6 +22,11 @@ export function resolveQuestionResponse(
     return { ok: false, status: 400, error: normalizedResponse.error };
   }
   const response = normalizedResponse.value;
+
+  const latestQuestionToolCallId = getLatestQuestionToolCallId(messages);
+  if (latestQuestionToolCallId !== response.questionToolCallId) {
+    return { ok: false, status: 409, error: "This question was superseded by a newer prompt." };
+  }
 
   const alreadyAnswered = messages.some(
     (message) => message.questionResponse?.questionToolCallId === response.questionToolCallId,
@@ -64,27 +71,11 @@ export function resolveQuestionResponse(
 }
 
 /**
- * Derived predicate: true when the session contains a persisted `question` tool
- * call with no matching answer message. Cached into session list metadata at
- * write time (same pattern as messageCount/lastMessageRole), never stored as an
- * independently mutable flag.
+ * Derived predicate: true when the newest persisted `question` tool call has no
+ * matching answer. Newer Questions supersede older unanswered calls by
+ * chronology. Cached into session list metadata at write time (same pattern as
+ * messageCount/lastMessageRole), never stored as an independently mutable flag.
  */
 export function hasUnansweredQuestion(messages: FileMessage[]): boolean {
-  const answeredToolCallIds = new Set<string>();
-  for (const message of messages) {
-    const answeredId = message.questionResponse?.questionToolCallId;
-    if (answeredId) answeredToolCallIds.add(answeredId);
-  }
-  for (const message of messages) {
-    const toolCalls = message.toolCalls;
-    if (!Array.isArray(toolCalls)) continue;
-    for (const call of toolCalls) {
-      if (!call || typeof call !== "object") continue;
-      const value = call as Record<string, unknown>;
-      if (value.toolName !== "question" || typeof value.toolCallId !== "string") continue;
-      if (value.status === "error") continue;
-      if (!answeredToolCallIds.has(value.toolCallId)) return true;
-    }
-  }
-  return false;
+  return getActiveQuestionToolCallId(messages) !== null;
 }

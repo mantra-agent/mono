@@ -2465,6 +2465,7 @@ export const ChatTurn = memo(function ChatTurn({
   compactReferences = false,
   suppressedEmailDraftIds,
   questionResponses,
+  latestQuestionToolCallId,
   onQuestionSubmit,
   planOwnedChildBlocks,
   sessionTitleById,
@@ -2477,6 +2478,7 @@ export const ChatTurn = memo(function ChatTurn({
   compactReferences?: boolean;
   suppressedEmailDraftIds?: string;
   questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
+  latestQuestionToolCallId: string | null;
   onQuestionSubmit: (response: QuestionResponseMeta) => Promise<boolean>;
   planOwnedChildBlocks?: Map<string, ChildSessionBlockMeta>;
   sessionTitleById?: Record<string, string>;
@@ -2833,14 +2835,19 @@ export const ChatTurn = memo(function ChatTurn({
             {unpromotedDraftIds.map((id) => (
               <EmailDraftWidget key={`tool-draft-${id}`} draftId={id} />
             ))}
-            {questionPrompts.map((prompt) => (
-              <QuestionWidget
-                key={prompt.toolCallId}
-                prompt={prompt}
-                response={questionResponses?.get(prompt.toolCallId)}
-                onSubmit={onQuestionSubmit}
-              />
-            ))}
+            {questionPrompts
+              .filter((prompt) =>
+                prompt.toolCallId === latestQuestionToolCallId ||
+                questionResponses?.has(prompt.toolCallId),
+              )
+              .map((prompt) => (
+                <QuestionWidget
+                  key={prompt.toolCallId}
+                  prompt={prompt}
+                  response={questionResponses?.get(prompt.toolCallId)}
+                  onSubmit={onQuestionSubmit}
+                />
+              ))}
             {planWidgetIds.map((id) => (
               <InlinePlanWidget
                 key={`tool-plan-${id}`}
