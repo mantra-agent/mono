@@ -850,7 +850,7 @@ export function BottomBar({
             {/* More menu: Attach + Visibility + Session actions */}
             <BottomBarMenu
               onAttach={() => fileInputRef.current?.click()}
-              disabled={!isAgentRunning || voiceActive || turnAdmissionPending}
+              disabled={!isAgentRunning || voiceActive}
               focusedSessionId={focusedSessionId ?? null}
               onClearFocus={() => {
                 setFocusedSessionId(null);
