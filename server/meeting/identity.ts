@@ -4,9 +4,9 @@ import { listAllEvents, type CalendarEvent } from "../google-calendar";
 import { createLogger } from "../log";
 
 const log = createLogger("MeetingIdentityResolver");
-const LOOKBACK_MS = 15 * 60_000;
+const LOOKBACK_MS = 12 * 60 * 60_000;
 const LOOKAHEAD_MS = 8 * 60 * 60_000;
-const MAX_EVENTS = 25;
+const MAX_EVENTS = 100;
 import { extractMeetingUrl } from "./join";
 
 export interface ExplicitMeetingEventIdentity {
@@ -193,11 +193,18 @@ export async function resolveMeetingIdentity(input: ResolveMeetingIdentityInput)
   }
 
   const normalizedTarget = normalizeMeetingUrl(meetingUrl);
-  for (const event of events) {
-    if (event.status === "cancelled") continue;
+  const matchingEvents = events.filter((event) => {
+    if (event.status === "cancelled") return false;
     const eventUrl = meetingUrlForEvent(event);
-    if (!eventUrl || normalizeMeetingUrl(eventUrl) !== normalizedTarget) continue;
-    return fromEvent(event, meetingUrl, title, agenda, "manual_url_match");
+    return !!eventUrl && normalizeMeetingUrl(eventUrl) === normalizedTarget;
+  });
+  const nearestMatch = matchingEvents.sort((left, right) => {
+    const leftTime = new Date(eventDateTime(left.start) ?? 0).getTime();
+    const rightTime = new Date(eventDateTime(right.start) ?? 0).getTime();
+    return Math.abs(leftTime - now.getTime()) - Math.abs(rightTime - now.getTime());
+  })[0];
+  if (nearestMatch) {
+    return fromEvent(nearestMatch, meetingUrl, title, agenda, "manual_url_match");
   }
 
   return { meetingUrl, title, agenda, resolutionSource: "unresolved_url", participants: [], speakerPolicy: { mode: "participant_streams" } };

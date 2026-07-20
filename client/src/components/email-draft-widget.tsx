@@ -486,13 +486,6 @@ export function EmailDraftWidget({ draftId, isRecapDraft = false }: { draftId: s
       </div>
 
       {/* Fields */}
-
-      {/* Recap draft indicator */}
-      {isRecapDraft && (
-        <div className="px-3 py-1.5 text-xs bg-info/10 text-info border-b border-info/20">
-          <span>📎 Recipients are fixed for this recap email</span>
-        </div>
-      )}
       <div className="px-3 py-2 space-y-1.5">
         {/* From */}
         {accounts.length > 0 && (
@@ -524,7 +517,7 @@ export function EmailDraftWidget({ draftId, isRecapDraft = false }: { draftId: s
           label="To"
           values={merged.to}
           onChange={(val) => immediatePatch("to", val)}
-          disabled={isBusy || isRecapDraft}
+          disabled={isBusy}
         />
 
         {/* CC / BCC toggles */}
@@ -552,7 +545,7 @@ export function EmailDraftWidget({ draftId, isRecapDraft = false }: { draftId: s
             label="CC"
             values={merged.cc}
             onChange={(val) => immediatePatch("cc", val)}
-            disabled={isBusy || isRecapDraft}
+            disabled={isBusy}
           />
         )}
 
@@ -561,7 +554,7 @@ export function EmailDraftWidget({ draftId, isRecapDraft = false }: { draftId: s
             label="BCC"
             values={merged.bcc}
             onChange={(val) => immediatePatch("bcc", val)}
-            disabled={isBusy || isRecapDraft}
+            disabled={isBusy}
           />
         )}
 
@@ -595,7 +588,7 @@ export function EmailDraftWidget({ draftId, isRecapDraft = false }: { draftId: s
       <ThreadHistory messages={threadMessages} />
 
       {/* Actions */}
-      <div className="flex items-center gap-2 px-3 py-2 border-t border-border/40">
+      <div className="sticky bottom-0 z-10 flex items-center gap-2 border-t border-border/40 bg-card px-3 py-2">
         <Button
           size="sm"
           onClick={() => sendMutation.mutate()}
