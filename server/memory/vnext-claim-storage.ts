@@ -1015,6 +1015,78 @@ export class MemoryVnextClaimStorage {
     await this.advanceLifecycleStage(claimId, MEMORY_VNEXT_LIFECYCLE_STAGE.LINKED);
   }
 
+  async linkClaims(
+    fromClaimId: number,
+    toClaimId: number,
+    relationship: string,
+    strength = 0.5,
+  ): Promise<MemoryVnextClaimLink | null> {
+    const principal = getCurrentPrincipalOrSystem();
+    if (fromClaimId === toClaimId) {
+      log.debug(JSON.stringify({
+        event: "memory.vnext.claim_link_skipped",
+        reason: "self_link",
+        claimId: fromClaimId,
+        relationship,
+      }));
+      return null;
+    }
+
+    const writableClaims = await db
+      .select({ id: memoryVnextClaims.id })
+      .from(memoryVnextClaims)
+      .where(combineWithWritableScope(
+        principal,
+        vnextClaimScopeColumns,
+        inArray(memoryVnextClaims.id, [fromClaimId, toClaimId]),
+      ));
+    const writableClaimIds = new Set(writableClaims.map((claim) => claim.id));
+    if (!writableClaimIds.has(fromClaimId) || !writableClaimIds.has(toClaimId)) {
+      log.warn(JSON.stringify({
+        event: "memory.vnext.claim_link_rejected",
+        reason: "claim_not_writable",
+        fromClaimId,
+        toClaimId,
+        relationship,
+      }));
+      throw new Error(`Cannot link vNext claims ${fromClaimId} -> ${toClaimId}: claim not writable`);
+    }
+
+    const boundedStrength = Math.max(0, Math.min(1, Number.isFinite(strength) ? strength : 0.5));
+    const [link] = await db
+      .insert(memoryVnextClaimLinks)
+      .values({
+        fromClaimId,
+        toClaimId,
+        relationship,
+        strength: boundedStrength,
+        ...ownedInsertValues(principal, vnextClaimLinkScopeColumns),
+        createdByUserId: principal.userId ?? undefined,
+        updatedByUserId: principal.userId ?? undefined,
+      })
+      .onConflictDoNothing()
+      .returning();
+
+    await this.advanceLifecycleStage(fromClaimId, MEMORY_VNEXT_LIFECYCLE_STAGE.LINKED, {
+      reason: "claim_link_evidence_present",
+      metadata: { claimLink: { direction: "out", relationship, toClaimId } },
+    });
+    await this.advanceLifecycleStage(toClaimId, MEMORY_VNEXT_LIFECYCLE_STAGE.LINKED, {
+      reason: "claim_link_evidence_present",
+      metadata: { claimLink: { direction: "in", relationship, fromClaimId } },
+    });
+
+    log.info(JSON.stringify({
+      event: link ? "memory.vnext.claim_link_created" : "memory.vnext.claim_link_preserved",
+      linkId: link?.id ?? null,
+      fromClaimId,
+      toClaimId,
+      relationship,
+      strength: boundedStrength,
+    }));
+    return link ?? null;
+  }
+
   async listBridgeCandidates(limit = 50): Promise<VnextBridgeCandidate[]> {
     const principal = getCurrentPrincipalOrSystem();
     if (!principal.userId) {
@@ -1672,8 +1744,8 @@ export async function persistClaimCandidates(
     log.debug(`${logPrefix}: intra-batch dedup merged ${mergedInBatch} candidate(s)`);
   }
 
-  // Track created claim IDs by original batch index for intra-batch linking
-  const createdClaimIds = new Map<number, number>();
+  // Track persisted claim IDs by original batch index for sourceClaimIndex linking
+  const persistedClaimIds = new Map<number, number>();
 
   for (let i = 0; i < claims.length; i++) {
     // Skip candidates that were merged into another
@@ -1722,6 +1794,7 @@ export async function persistClaimCandidates(
         log.debug(
           `${logPrefix}: reinforced existing claim #${nearDuplicate.id} (similarity=${nearDuplicate.similarity.toFixed(3)}) for "${claim.content.slice(0, 60)}"`,
         );
+        persistedClaimIds.set(i, nearDuplicate.id);
         reinforced++;
         continue;
       }
@@ -1771,34 +1844,65 @@ export async function persistClaimCandidates(
         }
       }
 
-      // Intra-batch causal linking
-      if (claim.sourceClaimIndex != null && createdClaimIds.has(claim.sourceClaimIndex)) {
-        const parentClaimId = createdClaimIds.get(claim.sourceClaimIndex)!;
-        try {
-          const relationship =
-            claim.claimType === "action"
-              ? "caused_by"
-              : claim.claimType === "state"
-                ? "resulted_from"
-                : "related_to";
-          await memoryVnextClaimStorage.linkClaims(parentClaimId, claimEntry.id, relationship, 0.9);
-          log.debug(
-            `${logPrefix}: linked claim #${parentClaimId} → #${claimEntry.id} via ${relationship}`,
-          );
-        } catch (linkErr) {
-          log.debug(
-            `${logPrefix}: causal link failed #${parentClaimId} → #${claimEntry.id}: ${linkErr instanceof Error ? linkErr.message : String(linkErr)}`,
-          );
-        }
-      }
-
-      createdClaimIds.set(i, claimEntry.id);
+      persistedClaimIds.set(i, claimEntry.id);
       created++;
     } catch (err) {
       log.error(
         `${logPrefix}: Stage 1 admission failed candidateIndex=${i} preview="${claim.content.slice(0, 80)}": ${err instanceof Error ? (err.stack || err.message) : String(err)}`,
       );
       throw err;
+    }
+  }
+
+  const resolvePersistedClaimId = (index: number): number | undefined => {
+    const direct = persistedClaimIds.get(index);
+    if (direct) return direct;
+    const survivorIndex = mergedInto.get(index);
+    return survivorIndex == null ? undefined : persistedClaimIds.get(survivorIndex);
+  };
+
+  for (let i = 0; i < claims.length; i++) {
+    if (mergedInto.has(i)) continue;
+    const claim = claims[i];
+    if (claim.sourceClaimIndex == null) continue;
+    const parentClaimId = resolvePersistedClaimId(claim.sourceClaimIndex);
+    const childClaimId = resolvePersistedClaimId(i);
+    if (!parentClaimId || !childClaimId) {
+      log.warn(JSON.stringify({
+        event: "memory.vnext.claim_link_skipped",
+        reason: "source_claim_unresolved",
+        candidateIndex: i,
+        sourceClaimIndex: claim.sourceClaimIndex,
+      }));
+      continue;
+    }
+
+    try {
+      const relationship =
+        claim.claimType === "action"
+          ? "caused_by"
+          : claim.claimType === "state"
+            ? "resulted_from"
+            : "related_to";
+      await memoryVnextClaimStorage.linkClaims(parentClaimId, childClaimId, relationship, 0.9);
+      log.debug(JSON.stringify({
+        event: "memory.vnext.source_claim_link_processed",
+        parentClaimId,
+        childClaimId,
+        relationship,
+        candidateIndex: i,
+        sourceClaimIndex: claim.sourceClaimIndex,
+      }));
+    } catch (linkErr) {
+      log.error(JSON.stringify({
+        event: "memory.vnext.claim_link_failed",
+        parentClaimId,
+        childClaimId,
+        candidateIndex: i,
+        sourceClaimIndex: claim.sourceClaimIndex,
+        error: linkErr instanceof Error ? linkErr.message : String(linkErr),
+      }));
+      throw linkErr;
     }
   }
 
