@@ -10,6 +10,7 @@ import {
   type ContextUsageSemantics,
 } from "@shared/context-health";
 import { pool, withQueryAttributionAsync } from "./db";
+import { getModel } from "./model-registry";
 
 const CONTEXT_HEALTH_ROW_LIMIT = 10_000;
 
@@ -21,240 +22,284 @@ const CONTEXT_TOKEN_BUCKETS: Array<Omit<ContextHealthDistributionBucket, "count"
   { label: ">=128k", minTokens: 128_000, maxTokens: null },
 ];
 
-type ScalarRow = QueryResultRow & {
-  call_count: number;
-  comparable_call_count: number;
-  excluded_call_count: number;
-  success_count: number;
-  error_count: number;
-  aborted_count: number;
-  partial_count: number;
-  error_rate: string;
-  avg_context_tokens: string | null;
-  median_context_tokens: string | null;
-  p95_context_tokens: string | null;
-  max_context_tokens: number | null;
-  avg_output_tokens: string | null;
-  avg_total_tokens: string | null;
-  avg_duration_ms: string | null;
-  p95_duration_ms: string | null;
-  ttft_sample_count: number;
-  avg_ttft_ms: string | null;
-  p95_ttft_ms: string | null;
+type ApiCallContextRow = QueryResultRow & {
+  provider: string;
+  model: string;
+  profile: string | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  duration_ms: number | null;
+  metadata: Record<string, unknown> | null;
 };
 
-type ModelRow = QueryResultRow & {
+type ClassifiedContextRow = {
   provider: string;
   model: string;
   tier: string;
-  usage_semantics: ContextUsageSemantics;
-  call_count: number;
-  comparable_call_count: number;
-  excluded_call_count: number;
-  avg_context_tokens: string | null;
-  median_context_tokens: string | null;
-  p95_context_tokens: string | null;
-  max_context_tokens: number | null;
-  avg_ttft_ms: string | null;
+  status: string;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  durationMs: number | null;
+  providerTtftMs: number | null;
+  usageSemantics: ContextUsageSemantics;
+  contextTokens: number | null;
+  contextWindow: number | null;
+  contextWindowStatus: "known" | "unknown";
+  comparable: boolean;
+  exclusionReason: string | null;
 };
 
-type DistributionRow = QueryResultRow & {
-  bucket: string;
-  count: number;
+type Accumulator = {
+  callCount: number;
+  comparableCallCount: number;
+  excludedCallCount: number;
+  contextTokens: number[];
+  outputTokens: number[];
+  totalTokens: number[];
+  durations: number[];
+  ttfts: number[];
+  exclusions: Map<string, number>;
 };
 
-type ExclusionRow = QueryResultRow & {
-  reason: string;
-  count: number;
-};
-
-function nullableNumber(value: string | number | null | undefined): number | null {
-  if (value === null || value === undefined) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+function emptyAccumulator(): Accumulator {
+  return {
+    callCount: 0,
+    comparableCallCount: 0,
+    excludedCallCount: 0,
+    contextTokens: [],
+    outputTokens: [],
+    totalTokens: [],
+    durations: [],
+    ttfts: [],
+    exclusions: new Map(),
+  };
 }
 
-function distributionFromRows(rows: DistributionRow[]): ContextHealthDistributionBucket[] {
-  const counts = new Map(rows.map((row) => [row.bucket, row.count]));
+function addExclusion(acc: Accumulator, reason: string | null): void {
+  if (!reason) return;
+  acc.exclusions.set(reason, (acc.exclusions.get(reason) ?? 0) + 1);
+}
+
+function percentile(values: number[], p: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = (sorted.length - 1) * p;
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  if (lower === upper) return sorted[lower];
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
+}
+
+function average(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function max(values: number[]): number | null {
+  return values.length ? Math.max(...values) : null;
+}
+
+function increment(acc: Accumulator, row: ClassifiedContextRow): void {
+  acc.callCount++;
+  if (row.comparable) {
+    acc.comparableCallCount++;
+    if (row.contextTokens !== null) acc.contextTokens.push(row.contextTokens);
+    if (row.outputTokens !== null) acc.outputTokens.push(row.outputTokens);
+    if (row.totalTokens !== null) acc.totalTokens.push(row.totalTokens);
+  } else {
+    acc.excludedCallCount++;
+    addExclusion(acc, row.exclusionReason);
+  }
+  if (row.durationMs !== null) acc.durations.push(row.durationMs);
+  if (row.providerTtftMs !== null) acc.ttfts.push(row.providerTtftMs);
+}
+
+function exclusionReasonsFromMap(map: Map<string, number>): ContextHealthExclusionReason[] {
+  return [...map.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+}
+
+function tokenAccounting(metadata: Record<string, unknown> | null): Record<string, unknown> | null {
+  const value = metadata?.tokenAccounting;
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function inferUsageSemantics(provider: string, metadata: Record<string, unknown> | null): ContextUsageSemantics {
+  const accounting = tokenAccounting(metadata);
+  const explicit = metadata?.usageSemantics ?? accounting?.usageSemantics;
+  if (explicit === "per_call" || explicit === "cumulative_provider_session" || explicit === "unknown") return explicit;
+
+  const providerReportedUsage = accounting?.providerReportedUsage;
+  if (provider === "claude-cli") {
+    if (providerReportedUsage === "assistant.usage") return "cumulative_provider_session";
+    return "unknown";
+  }
+  if (provider === "anthropic" || provider === "openai" || provider === "openai-subscription" || provider === "local") return "per_call";
+  return "unknown";
+}
+
+function nullableMetadataNumber(metadata: Record<string, unknown> | null, path: string[]): number | null {
+  let current: unknown = metadata;
+  for (const key of path) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) return null;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return nullableNumber(current as string | number | null | undefined);
+}
+
+function classifyRow(row: ApiCallContextRow): ClassifiedContextRow {
+  const metadata = row.metadata ?? null;
+  const outputTokens = nullableNumber(row.output_tokens);
+  const totalTokens = nullableNumber(row.total_tokens);
+  const usageSemantics = inferUsageSemantics(row.provider, metadata);
+  const contextTokens = totalTokens !== null && outputTokens !== null && totalTokens > 0 && totalTokens >= outputTokens
+    ? Math.max(totalTokens - outputTokens, 0)
+    : null;
+  const modelInfo = getModel(row.model);
+  const contextWindow = modelInfo?.contextWindow ?? null;
+  const contextWindowStatus = contextWindow === null ? "unknown" : "known";
+
+  let exclusionReason: string | null = null;
+  if (usageSemantics === "cumulative_provider_session") exclusionReason = "cumulative_provider_session";
+  else if (usageSemantics === "unknown") exclusionReason = "unknown_usage_semantics";
+  else if (contextTokens === null) exclusionReason = "missing_or_invalid_token_usage";
+  else if (contextWindow === null) exclusionReason = "unknown_model_context_window";
+  else if (contextTokens > contextWindow) exclusionReason = "exceeds_model_context_window";
+
+  return {
+    provider: row.provider,
+    model: row.model,
+    tier: row.profile ?? "unknown",
+    status: typeof metadata?.status === "string" ? metadata.status : "success",
+    outputTokens,
+    totalTokens,
+    durationMs: nullableNumber(row.duration_ms),
+    providerTtftMs: nullableMetadataNumber(metadata, ["latency", "providerTtftMs"]),
+    usageSemantics,
+    contextTokens,
+    contextWindow,
+    contextWindowStatus,
+    comparable: exclusionReason === null,
+    exclusionReason,
+  };
+}
+
+function distributionFromValues(values: number[]): ContextHealthDistributionBucket[] {
   return CONTEXT_TOKEN_BUCKETS.map((bucket) => ({
     ...bucket,
-    count: counts.get(bucket.label) ?? 0,
+    count: values.filter((value) => (bucket.minTokens === null || value >= bucket.minTokens) && (bucket.maxTokens === null || value <= bucket.maxTokens)).length,
   }));
 }
 
-function exclusionReasonsFromRows(rows: ExclusionRow[]): ContextHealthExclusionReason[] {
-  return rows.map((row) => ({ reason: row.reason, count: row.count }));
+function summarizeModel(key: string, rows: ClassifiedContextRow[]): ContextHealthModelSummary {
+  const [provider, model, tier, usageSemantics, contextWindowPart] = key.split("\u0000");
+  const acc = emptyAccumulator();
+  rows.forEach((row) => increment(acc, row));
+  return {
+    provider,
+    model,
+    tier,
+    callCount: acc.callCount,
+    comparableCallCount: acc.comparableCallCount,
+    excludedCallCount: acc.excludedCallCount,
+    usageSemantics: usageSemantics as ContextUsageSemantics,
+    contextWindow: contextWindowPart === "unknown" ? null : Number(contextWindowPart),
+    contextWindowStatus: contextWindowPart === "unknown" ? "unknown" : "known",
+    avgContextTokens: average(acc.contextTokens),
+    medianContextTokens: percentile(acc.contextTokens, 0.5),
+    p95ContextTokens: percentile(acc.contextTokens, 0.95),
+    maxContextTokens: max(acc.contextTokens),
+    avgTtftMs: average(acc.ttfts),
+    exclusionReasons: exclusionReasonsFromMap(acc.exclusions),
+  };
 }
 
-const boundedTrackedCallsCte = `
-  WITH bounded_calls AS (
-    SELECT provider, model, profile, output_tokens, total_tokens, duration_ms, metadata
-    FROM api_calls
-    WHERE timestamp >= $1
-      AND metadata->>'trackedAtBoundary' = 'true'
-    ORDER BY timestamp DESC
-    LIMIT $2
-  ), normalized AS (
-    SELECT
-      provider,
-      model,
-      COALESCE(profile, 'unknown') AS tier,
-      output_tokens,
-      total_tokens,
-      duration_ms,
-      COALESCE(metadata->>'status', 'success') AS status,
-      COALESCE(
-        metadata->>'usageSemantics',
-        metadata->'tokenAccounting'->>'usageSemantics',
-        CASE
-          WHEN provider = 'claude-cli' AND metadata->'tokenAccounting'->>'providerReportedUsage' = 'assistant.usage'
-            THEN 'cumulative_provider_session'
-          WHEN provider IN ('anthropic', 'openai', 'openai-subscription', 'claude-cli', 'local')
-            THEN 'per_call'
-          ELSE 'unknown'
-        END
-      ) AS usage_semantics,
-      CASE
-        WHEN jsonb_typeof(metadata->'latency'->'providerTtftMs') = 'number'
-        THEN (metadata->'latency'->>'providerTtftMs')::double precision
-        ELSE NULL
-      END AS provider_ttft_ms,
-      CASE
-        WHEN total_tokens > 0 AND total_tokens >= output_tokens THEN GREATEST(total_tokens - output_tokens, 0)
-        ELSE NULL
-      END AS context_tokens
-    FROM bounded_calls
-  ), classified AS (
-    SELECT *,
-      CASE
-        WHEN usage_semantics <> 'per_call' THEN false
-        WHEN context_tokens IS NULL THEN false
-        ELSE true
-      END AS comparable,
-      CASE
-        WHEN usage_semantics = 'cumulative_provider_session' THEN 'cumulative_provider_session'
-        WHEN usage_semantics = 'unknown' THEN 'unknown_usage_semantics'
-        WHEN context_tokens IS NULL THEN 'missing_or_invalid_token_usage'
-        ELSE NULL
-      END AS exclusion_reason
-    FROM normalized
-  )`;
+function summarizeProvider(provider: string, rows: ClassifiedContextRow[]) {
+  const acc = emptyAccumulator();
+  rows.forEach((row) => increment(acc, row));
+  return {
+    provider,
+    callCount: acc.callCount,
+    comparableCallCount: acc.comparableCallCount,
+    excludedCallCount: acc.excludedCallCount,
+    exclusionReasons: exclusionReasonsFromMap(acc.exclusions),
+  };
+}
+
+const boundedTrackedCallsSql = `
+  SELECT provider, model, profile, output_tokens, total_tokens, duration_ms, metadata
+  FROM api_calls
+  WHERE timestamp >= $1
+    AND metadata->>'trackedAtBoundary' = 'true'
+  ORDER BY timestamp DESC
+  LIMIT $2
+`;
 
 export async function getContextHealthSummary(windowHours = 24): Promise<ContextHealthSummary> {
   const hours = Math.min(Math.max(Math.floor(windowHours), 1), 168);
   const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
 
-  const [scalarResult, modelResult, distributionResult, exclusionResult] = await withQueryAttributionAsync("general", () => Promise.all([
-    pool.query<ScalarRow>(`${boundedTrackedCallsCte}
-      SELECT
-        COUNT(*)::int AS call_count,
-        COUNT(*) FILTER (WHERE comparable)::int AS comparable_call_count,
-        COUNT(*) FILTER (WHERE NOT comparable)::int AS excluded_call_count,
-        COUNT(*) FILTER (WHERE status = 'success')::int AS success_count,
-        COUNT(*) FILTER (WHERE status = 'error')::int AS error_count,
-        COUNT(*) FILTER (WHERE status = 'aborted')::int AS aborted_count,
-        COUNT(*) FILTER (WHERE status = 'partial')::int AS partial_count,
-        COALESCE(COUNT(*) FILTER (WHERE status = 'error')::double precision / NULLIF(COUNT(*), 0), 0)::text AS error_rate,
-        AVG(context_tokens) FILTER (WHERE comparable)::text AS avg_context_tokens,
-        (percentile_cont(0.5) WITHIN GROUP (ORDER BY context_tokens) FILTER (WHERE comparable))::text AS median_context_tokens,
-        (percentile_cont(0.95) WITHIN GROUP (ORDER BY context_tokens) FILTER (WHERE comparable))::text AS p95_context_tokens,
-        MAX(context_tokens) FILTER (WHERE comparable)::int AS max_context_tokens,
-        AVG(output_tokens) FILTER (WHERE comparable)::text AS avg_output_tokens,
-        AVG(total_tokens) FILTER (WHERE comparable)::text AS avg_total_tokens,
-        AVG(duration_ms)::text AS avg_duration_ms,
-        (percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms IS NOT NULL))::text AS p95_duration_ms,
-        COUNT(provider_ttft_ms)::int AS ttft_sample_count,
-        AVG(provider_ttft_ms)::text AS avg_ttft_ms,
-        (percentile_cont(0.95) WITHIN GROUP (ORDER BY provider_ttft_ms) FILTER (WHERE provider_ttft_ms IS NOT NULL))::text AS p95_ttft_ms
-      FROM classified
-    `, [cutoff, CONTEXT_HEALTH_ROW_LIMIT]),
-    pool.query<ModelRow>(`${boundedTrackedCallsCte}
-      SELECT
-        provider,
-        model,
-        tier,
-        usage_semantics,
-        COUNT(*)::int AS call_count,
-        COUNT(*) FILTER (WHERE comparable)::int AS comparable_call_count,
-        COUNT(*) FILTER (WHERE NOT comparable)::int AS excluded_call_count,
-        AVG(context_tokens) FILTER (WHERE comparable)::text AS avg_context_tokens,
-        (percentile_cont(0.5) WITHIN GROUP (ORDER BY context_tokens) FILTER (WHERE comparable))::text AS median_context_tokens,
-        (percentile_cont(0.95) WITHIN GROUP (ORDER BY context_tokens) FILTER (WHERE comparable))::text AS p95_context_tokens,
-        MAX(context_tokens) FILTER (WHERE comparable)::int AS max_context_tokens,
-        AVG(provider_ttft_ms)::text AS avg_ttft_ms
-      FROM classified
-      GROUP BY provider, model, tier, usage_semantics
-      ORDER BY call_count DESC
-      LIMIT 8
-    `, [cutoff, CONTEXT_HEALTH_ROW_LIMIT]),
-    pool.query<DistributionRow>(`${boundedTrackedCallsCte}
-      SELECT
-        CASE
-          WHEN context_tokens < 8000 THEN '<8k'
-          WHEN context_tokens < 32000 THEN '8k-32k'
-          WHEN context_tokens < 64000 THEN '32k-64k'
-          WHEN context_tokens < 128000 THEN '64k-128k'
-          ELSE '>=128k'
-        END AS bucket,
-        COUNT(*)::int AS count
-      FROM classified
-      WHERE comparable
-      GROUP BY bucket
-    `, [cutoff, CONTEXT_HEALTH_ROW_LIMIT]),
-    pool.query<ExclusionRow>(`${boundedTrackedCallsCte}
-      SELECT exclusion_reason AS reason, COUNT(*)::int AS count
-      FROM classified
-      WHERE NOT comparable AND exclusion_reason IS NOT NULL
-      GROUP BY exclusion_reason
-      ORDER BY count DESC, reason ASC
-    `, [cutoff, CONTEXT_HEALTH_ROW_LIMIT]),
-  ]), "context-health.summary");
+  const result = await withQueryAttributionAsync("general", () => pool.query<ApiCallContextRow>(boundedTrackedCallsSql, [cutoff, CONTEXT_HEALTH_ROW_LIMIT]), "context-health.summary");
+  const rows = result.rows.map(classifyRow);
+  const global = emptyAccumulator();
+  let successCount = 0;
+  let errorCount = 0;
+  let abortedCount = 0;
+  let partialCount = 0;
+  const modelRows = new Map<string, ClassifiedContextRow[]>();
+  const providerRows = new Map<string, ClassifiedContextRow[]>();
 
-  const scalar = scalarResult.rows[0];
-  const callCount = scalar?.call_count ?? 0;
-  const byModel: ContextHealthModelSummary[] = modelResult.rows.map((row) => ({
-    provider: row.provider,
-    model: row.model,
-    tier: row.tier,
-    callCount: row.call_count,
-    comparableCallCount: row.comparable_call_count,
-    excludedCallCount: row.excluded_call_count,
-    usageSemantics: row.usage_semantics,
-    avgContextTokens: nullableNumber(row.avg_context_tokens),
-    medianContextTokens: nullableNumber(row.median_context_tokens),
-    p95ContextTokens: nullableNumber(row.p95_context_tokens),
-    maxContextTokens: nullableNumber(row.max_context_tokens),
-    avgTtftMs: nullableNumber(row.avg_ttft_ms),
-  }));
+  for (const row of rows) {
+    increment(global, row);
+    if (row.status === "error") errorCount++;
+    else if (row.status === "aborted") abortedCount++;
+    else if (row.status === "partial") partialCount++;
+    else successCount++;
+
+    const modelKey = [row.provider, row.model, row.tier, row.usageSemantics, row.contextWindow ?? "unknown"].join("\u0000");
+    modelRows.set(modelKey, [...(modelRows.get(modelKey) ?? []), row]);
+    providerRows.set(row.provider, [...(providerRows.get(row.provider) ?? []), row]);
+  }
+
+  const callCount = global.callCount;
+  const byModel = [...modelRows.entries()]
+    .map(([key, modelGroup]) => summarizeModel(key, modelGroup))
+    .sort((a, b) => b.callCount - a.callCount)
+    .slice(0, 8);
+  const byProvider = [...providerRows.entries()]
+    .map(([provider, providerGroup]) => summarizeProvider(provider, providerGroup))
+    .sort((a, b) => b.callCount - a.callCount || a.provider.localeCompare(b.provider));
 
   return {
     generatedAt: Date.now(),
     windowHours: hours,
     rowLimit: CONTEXT_HEALTH_ROW_LIMIT,
     callCount,
-    comparableCallCount: scalar?.comparable_call_count ?? 0,
-    excludedCallCount: scalar?.excluded_call_count ?? 0,
+    comparableCallCount: global.comparableCallCount,
+    excludedCallCount: global.excludedCallCount,
     callsPerHour: Math.round((callCount / hours) * 10) / 10,
-    successCount: scalar?.success_count ?? 0,
-    errorCount: scalar?.error_count ?? 0,
-    abortedCount: scalar?.aborted_count ?? 0,
-    partialCount: scalar?.partial_count ?? 0,
-    errorRate: nullableNumber(scalar?.error_rate) ?? 0,
-    avgContextTokens: nullableNumber(scalar?.avg_context_tokens),
-    medianContextTokens: nullableNumber(scalar?.median_context_tokens),
-    p95ContextTokens: nullableNumber(scalar?.p95_context_tokens),
-    maxContextTokens: nullableNumber(scalar?.max_context_tokens),
-    avgOutputTokens: nullableNumber(scalar?.avg_output_tokens),
-    avgTotalTokens: nullableNumber(scalar?.avg_total_tokens),
-    avgDurationMs: nullableNumber(scalar?.avg_duration_ms),
-    p95DurationMs: nullableNumber(scalar?.p95_duration_ms),
-    ttftSampleCount: scalar?.ttft_sample_count ?? 0,
-    avgTtftMs: nullableNumber(scalar?.avg_ttft_ms),
-    p95TtftMs: nullableNumber(scalar?.p95_ttft_ms),
-    contextTokenDistribution: distributionFromRows(distributionResult.rows),
-    exclusionReasons: exclusionReasonsFromRows(exclusionResult.rows),
+    successCount,
+    errorCount,
+    abortedCount,
+    partialCount,
+    errorRate: callCount > 0 ? errorCount / callCount : 0,
+    avgContextTokens: average(global.contextTokens),
+    medianContextTokens: percentile(global.contextTokens, 0.5),
+    p95ContextTokens: percentile(global.contextTokens, 0.95),
+    maxContextTokens: max(global.contextTokens),
+    avgOutputTokens: average(global.outputTokens),
+    avgTotalTokens: average(global.totalTokens),
+    avgDurationMs: average(global.durations),
+    p95DurationMs: percentile(global.durations, 0.95),
+    ttftSampleCount: global.ttfts.length,
+    avgTtftMs: average(global.ttfts),
+    p95TtftMs: percentile(global.ttfts, 0.95),
+    contextTokenDistribution: distributionFromValues(global.contextTokens),
+    exclusionReasons: exclusionReasonsFromMap(global.exclusions),
     measurementContract: CONTEXT_HEALTH_MEASUREMENT_CONTRACT,
     budgets: CONTEXT_HEALTH_BUDGETS,
+    byProvider,
     byModel,
   };
 }

@@ -11,8 +11,12 @@ export const CONTEXT_HEALTH_MEASUREMENT_CONTRACT = {
     "cumulative provider-session counters, including Claude CLI assistant.usage rows",
     "unknown usage semantics",
     "missing or invalid token usage",
+    "unknown model context window",
+    "context tokens above the configured model context window",
   ],
-  providerRows: "grouped by provider, model, tier, and usage semantics; token statistics are comparable-row only",
+  contextWindowSource: "server/model-registry.ts ModelInfo.contextWindow, matched by canonical api_calls.model",
+  providerRows: "grouped by provider with comparable/excluded coverage and observed exclusion reasons",
+  modelRows: "grouped by provider, model, tier, usage semantics, and context-window status; token statistics are comparable-row only",
   budgets: "provider TTFT p95 is the only health budget in this summary; context token distribution is informational until a real workload budget exists",
 } as const;
 
@@ -30,6 +34,14 @@ export interface ContextHealthExclusionReason {
   count: number;
 }
 
+export interface ContextHealthProviderSummary {
+  provider: string;
+  callCount: number;
+  comparableCallCount: number;
+  excludedCallCount: number;
+  exclusionReasons: ContextHealthExclusionReason[];
+}
+
 export interface ContextHealthModelSummary {
   provider: string;
   model: string;
@@ -38,11 +50,14 @@ export interface ContextHealthModelSummary {
   comparableCallCount: number;
   excludedCallCount: number;
   usageSemantics: ContextUsageSemantics;
+  contextWindow: number | null;
+  contextWindowStatus: "known" | "unknown";
   avgContextTokens: number | null;
   medianContextTokens: number | null;
   p95ContextTokens: number | null;
   maxContextTokens: number | null;
   avgTtftMs: number | null;
+  exclusionReasons: ContextHealthExclusionReason[];
 }
 
 export interface ContextHealthSummary {
@@ -73,5 +88,6 @@ export interface ContextHealthSummary {
   exclusionReasons: ContextHealthExclusionReason[];
   measurementContract: typeof CONTEXT_HEALTH_MEASUREMENT_CONTRACT;
   budgets: typeof CONTEXT_HEALTH_BUDGETS;
+  byProvider: ContextHealthProviderSummary[];
   byModel: ContextHealthModelSummary[];
 }

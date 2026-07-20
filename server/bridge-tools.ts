@@ -11927,7 +11927,8 @@ function formatContextHealthSummary(summary: import("@shared/context-health").Co
       p95: summary.p95ContextTokens,
       max: summary.maxContextTokens,
       display: `${formatContextHealthNumber(summary.medianContextTokens)} median / ${formatContextHealthNumber(summary.p95ContextTokens)} p95 / ${formatContextHealthNumber(summary.maxContextTokens)} max`,
-      note: "Non-comparable CLI cumulative counters are excluded and never reported as prompt/context size.",
+      note: "Only per-call rows with known context windows and in-window context tokens are included. Non-comparable CLI cumulative counters are excluded and never reported as prompt/context size.",
+      contextWindowSource: summary.measurementContract.contextWindowSource,
       distribution: summary.contextTokenDistribution,
     },
     exclusions: {
@@ -11950,11 +11951,21 @@ function formatContextHealthSummary(summary: import("@shared/context-health").Co
       partial: summary.partialCount,
       errorRate: summary.errorRate,
     },
-    providerRows: summary.byModel.map((row) => ({
+    providerCoverage: summary.byProvider.map((row) => ({
+      provider: row.provider,
+      rows: row.callCount,
+      comparableRows: row.comparableCallCount,
+      excludedRows: row.excludedCallCount,
+      exclusions: row.exclusionReasons.map((reason) => ({ reason: formatContextHealthLabel(reason.reason), count: reason.count })),
+    })),
+    modelRows: summary.byModel.map((row) => ({
       provider: row.provider,
       model: row.model,
       tier: row.tier,
       usageSemantics: row.usageSemantics,
+      contextWindow: row.contextWindow,
+      contextWindowStatus: row.contextWindowStatus,
+      exclusionReasons: row.exclusionReasons.map((reason) => ({ reason: formatContextHealthLabel(reason.reason), count: reason.count })),
       rows: row.callCount,
       comparableRows: row.comparableCallCount,
       excludedRows: row.excludedCallCount,

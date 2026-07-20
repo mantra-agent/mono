@@ -44,7 +44,10 @@ function providerUsageSemantics(provider: string, metadata?: Record<string, unkn
   }
 
   if (provider === "claude-cli") {
-    return providerReportedUsage === "assistant.usage" ? "cumulative_provider_session" : "per_call";
+    // Claude CLI assistant.usage counters are cumulative within the provider session,
+    // not demonstrably per request. Only an explicit producer-provided per_call
+    // semantic above can opt a future CLI source into comparable aggregation.
+    return providerReportedUsage === "assistant.usage" ? "cumulative_provider_session" : "unknown";
   }
 
   if (provider === "anthropic" || provider === "openai" || provider === "openai-subscription" || provider === "local") {
