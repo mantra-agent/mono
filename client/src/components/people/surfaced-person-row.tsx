@@ -90,7 +90,7 @@ export function SurfacedPersonRow({ item, onSurfaceChange, dateLabel }: Surfaced
 
   const discussMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/sessions", { title: item.title.slice(0, 80) || "Person" });
+      const res = await apiRequest("POST", "/api/sessions", { title: item.title.slice(0, 80) || "Person", personaName: "Strategist" });
       const session: CreatedSession = await res.json();
       const parts = [`Let's discuss this Simple item: **${item.title}**`, "Type: person", `Reason: ${reason || "No reason provided."}`];
       if (personId) parts.push(`Reference: @person:${personId}`);

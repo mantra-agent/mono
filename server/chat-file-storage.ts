@@ -1014,6 +1014,7 @@ export interface IChatFileStorage {
       pageContext?: PageContext;
       provenance?: SessionProvenanceInput;
       ftueWelcome?: boolean;
+      personaId?: number | null;
     },
   ): Promise<FileSession>;
   updatePageContext(id: string, pageContext: PageContext): Promise<void>;
@@ -1285,6 +1286,7 @@ export const chatFileStorage: IChatFileStorage = {
       pageContext?: PageContext;
       provenance?: SessionProvenanceInput;
       ftueWelcome?: boolean;
+      personaId?: number | null;
     },
   ) {
     const id = generateId();
@@ -1299,6 +1301,7 @@ export const chatFileStorage: IChatFileStorage = {
       status: "saved",
       sessionKey: sessionKey || null,
       modelTier: normalizeSessionModelTierOverride(modelTier),
+      personaId: options?.personaId ?? null,
       createdAt: now,
       updatedAt: now,
       messages: [],

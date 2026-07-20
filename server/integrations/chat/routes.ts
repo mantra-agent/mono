@@ -908,6 +908,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         sessionKey: customSessionKey,
         sessionType,
         pageContext,
+        personaName,
       } = req.body;
       const sessionKey =
         customSessionKey || `dashboard:${randomUUID().slice(0, 8)}`;
@@ -918,6 +919,16 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           ? (sessionType as "user" | "agent" | "autonomous" | "focus")
           : undefined;
       const safePageContext = normalizePageContext(pageContext);
+      let initialPersonaId: number | null = null;
+      if (typeof personaName === "string" && personaName.trim()) {
+        const { personaStorage } = await import("../../file-storage/persona-storage");
+        const persona = await personaStorage.getByName(personaName.trim());
+        if (!persona) {
+          res.status(400).json({ error: `Persona not found: ${personaName}` });
+          return;
+        }
+        initialPersonaId = persona.id;
+      }
       const session = await chatStorage.createSession(
         title || "New Session",
         sessionKey,
@@ -926,6 +937,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           sessionType: safeSessionType,
           pageContext: safePageContext,
           provenance: { triggerType: "user" },
+          personaId: initialPersonaId,
         },
       );
       res.status(201).json(session);

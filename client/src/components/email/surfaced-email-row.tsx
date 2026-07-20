@@ -115,15 +115,17 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
 
   const discussMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/sessions", { title: item.title.slice(0, 80) || "Email" });
+      const res = await apiRequest("POST", "/api/sessions", { title: item.title.slice(0, 80) || "Email", personaName: "Strategist" });
       const session: CreatedSession = await res.json();
       const emailThreadRef = sourceRef?.id ? `@email_thread:${sourceRef.id}` : null;
       const latestMessageId = messageIds[0];
       const emailMessageRef = latestMessageId ? `@email_message:${latestMessageId}` : null;
+      const personRef = senderReference?.id ? `@person:${senderReference.id}` : null;
       const parts = [
         `Let's discuss this email thread: **${item.title}**`,
         emailThreadRef ? `Email thread: ${emailThreadRef}` : null,
         emailMessageRef ? `Latest message: ${emailMessageRef}` : null,
+        personRef ? `Person: ${personRef}` : null,
         `From: ${sender}`,
         reason ? `Summary: ${reason}` : null,
         snippet ? `Snippet: ${snippet}` : null,
