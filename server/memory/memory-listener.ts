@@ -1,11 +1,8 @@
 import { eventBus, type BusEvent } from "../event-bus";
 import { getTimezone } from "../timezone";
 import { getUserName } from "../context-assembly";
-import { memoryEntries, type MemorySource } from "@shared/schema";
 import { createLogger } from "../log";
 import { storage } from "../storage";
-import { db, withQueryAttributionAsync } from "../db";
-import { memoryStorage } from "./memory-storage";
 import { eq, and } from "drizzle-orm";
 
 const log = createLogger("MemoryListener");
@@ -167,34 +164,8 @@ async function getOrCreateBuffer(sessionId: string, sessionKey: string, title?: 
   };
   exchangeBuffers.set(sessionId, buf);
 
-  // Recover prior turns from DB if this buffer was lost due to a server restart
-  try {
-    const sourceId = `exchange-${sessionId}`;
-    const [existing] = await db
-      .select({ content: memoryEntries.content, title: memoryEntries.title })
-      .from(memoryEntries)
-      .where(and(
-        eq(memoryEntries.layer, "short"),
-        eq(memoryEntries.source, "conversation"),
-        eq(memoryEntries.sourceId, sourceId),
-      ))
-      .limit(1);
+  // Legacy memory_entries exchange recovery retired. Active sessions rebuild from live stream state.
 
-    if (existing && existing.content) {
-      const { turns, startedAt } = parseTurnsFromContent(existing.content);
-      if (turns.length > 0) {
-        buf.turns = turns;
-        if (startedAt) buf.startedAt = startedAt;
-        if (existing.title && !buf.conversationTitle) {
-          buf.conversationTitle = existing.title;
-        }
-        log.debug(`Recovered ${turns.length} turns from DB for session ${sessionId}`);
-      }
-    }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.warn(`Failed to recover exchange buffer from DB for ${sessionId}: ${msg}`);
-  }
 
   return buf;
 }
@@ -255,18 +226,7 @@ async function handleVoiceXyzResponse(sessionId: string, content: string, sessio
 
 async function handleVoiceInsight(sessionId: string, content: string): Promise<void> {
   if (!content || content.length < 5) return;
-
-  const sourceId = `insight-${sessionId}-${Date.now()}`;
-  await withQueryAttributionAsync("memory-write", () => memoryStorage.ingest(
-    `[Insight] ${formatTimestamp()}\n${content}`,
-    "event" as MemorySource,
-    sourceId,
-    { sessionId, type: "voice_insight" },
-    ["insight", "voice"],
-  ), "voice-insight-ingest");
-
-  log.debug(`Voice insight stored: ${sourceId}`);
-  emitEntriesChanged("created", "short");
+  log.debug(`Legacy voice insight memory write retired: session=${sessionId}`);
 }
 
 async function handleChatStreamUserMessage(payload: Record<string, unknown>, sessionKey?: string): Promise<void> {
@@ -376,15 +336,9 @@ async function handleAgentToolResult(busEvent: BusEvent): Promise<void> {
   const displayTitle = query
     ? `${toolName}("${query.length > 60 ? query.slice(0, 60) + "..." : query}")`
     : toolName;
-  await withQueryAttributionAsync("memory-write", () => memoryStorage.ingest(
-    `[Tool: ${toolName}] (${status}) ${formatTimestamp()}\n${result}`,
-    "tool" as MemorySource,
-    sourceId,
-    { toolName, error: payload.error, runId: busEvent.runId },
-    undefined,
-    displayTitle,
-  ), "tool-result-ingest");
-  emitEntriesChanged("created", "short");
+  log.debug(
+    `Legacy tool result memory write retired: tool=${toolName} source=${sourceId} title=${displayTitle} status=${status}`,
+  );
 }
 
 async function handleEvent(busEvent: BusEvent): Promise<void> {

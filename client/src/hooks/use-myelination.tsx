@@ -84,7 +84,7 @@ export function MyelinationProvider({ children }: { children: React.ReactNode })
             description: `${data.result.summarized} summarized, ${data.result.embedded} embedded, ${data.result.linked} linked`,
           });
           stopPolling();
-          queryClient.invalidateQueries({ queryKey: ["/api/memory/palace"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/graph"] });
           queryClient.invalidateQueries({ queryKey: ["/api/memory/myelination/stats"] });
           return;
         }
