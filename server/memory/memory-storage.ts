@@ -986,7 +986,7 @@ export class MemoryStorage {
       entry = updated;
     } else {
       // Guard: never recall session summary entries through the exchange pipeline.
-      // Session summaries are managed exclusively by upsertSessionSummaryMemory at archive time.
+      // Session summaries feed vNext through the source queue at archive time.
       const isSessionSummary = await this.isSessionSummaryEntry(sourceId, source);
       const promoted = isSessionSummary
         ? null
