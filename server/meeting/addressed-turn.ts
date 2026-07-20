@@ -336,6 +336,7 @@ export async function inferMeetingParticipation(input: MeetingParticipationInput
       ],
       jsonMode: true,
       semanticTierOverride: "fast",
+      latencyBudgetMs: INFERENCE_TIMEOUT_MS,
       overrideReason: "meeting participation inference has a 1500ms latency budget",
       maxTokens: 96,
       temperature: 0,
