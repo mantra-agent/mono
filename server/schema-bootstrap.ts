@@ -5619,13 +5619,33 @@ export async function runSchemaBootstrap(
         send_method     TEXT NOT NULL DEFAULT 'gmail_draft',
         status          TEXT NOT NULL DEFAULT 'pending',
         error           TEXT,
+        sent_at         TIMESTAMPTZ,
+        discarded_at    TIMESTAMPTZ,
         created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await pool.query(`ALTER TABLE meeting_recap_distributions ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE meeting_recap_distributions ADD COLUMN IF NOT EXISTS discarded_at TIMESTAMPTZ`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_mrd_session ON meeting_recap_distributions(session_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_mrd_owner   ON meeting_recap_distributions(owner_user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_mrd_account ON meeting_recap_distributions(account_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_mrd_status_account ON meeting_recap_distributions(account_id, status)`);
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'unique_mrd_session_attendee'
+            AND conrelid = 'meeting_recap_distributions'::regclass
+        ) THEN
+          ALTER TABLE meeting_recap_distributions
+          ADD CONSTRAINT unique_mrd_session_attendee
+          UNIQUE (account_id, session_id, attendee_email);
+        END IF;
+      END $$;
+    `);
   });
 
   log(`schema bootstrap complete (reason=${reason})`, "migration");
