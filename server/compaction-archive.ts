@@ -7,6 +7,8 @@ export interface CompactionArchiveSourceMessage {
   toolCalls?: unknown[];
   publicRole?: "user" | "assistant";
   archiveRefId?: string;
+  /** Full persisted message record, when the archive is built from doc-store entries. Additive: parsers tolerate its absence. */
+  record?: unknown;
 }
 
 interface CompactionArchiveMessageEntry {
@@ -16,11 +18,13 @@ interface CompactionArchiveMessageEntry {
   thinking?: string;
   toolCalls?: unknown[];
   publicRole?: "user" | "assistant";
+  record?: unknown;
 }
 
 interface CompactionArchiveReferenceEntry {
   kind: "archive";
   archiveRefId: string;
+  record?: unknown;
 }
 
 type CompactionArchiveEntry =
@@ -56,7 +60,11 @@ export function encodeCompactionArchive(
 ): string {
   const entries: CompactionArchiveEntry[] = messages.map((message) => {
     if (message.archiveRefId) {
-      return { kind: "archive", archiveRefId: message.archiveRefId };
+      return {
+        kind: "archive",
+        archiveRefId: message.archiveRefId,
+        record: message.record,
+      };
     }
     return {
       kind: "message",
@@ -65,6 +73,7 @@ export function encodeCompactionArchive(
       thinking: message.thinking,
       toolCalls: message.toolCalls,
       publicRole: message.publicRole,
+      record: message.record,
     };
   });
   const archive: CompactionArchiveV1 = {

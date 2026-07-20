@@ -149,23 +149,75 @@ export async function runBetweenTurnCompaction(
 
   log.log(`betweenTurnCompaction: triggered sessionId=${sessionId} totalTokens=${totalTokens} threshold=${threshold} messages=${conversationHistory.length}`);
 
+  // The persisted doc is the coordinate space for the whole operation.
+  // The token trigger above is model-space (what the LLM actually saw), but
+  // the split, the archive, and the write-back all operate on the exact doc
+  // entries so losslessness and the widget counts are true by construction.
+  const { chatFileStorage } = await import("./chat-file-storage");
+  const docMessages = await chatFileStorage.getMessagesBySession(sessionId);
+
+  // Context-bearing entries are the ones rebuildConversationHistory projects
+  // into model space. Non-context entries (child_session_block, plan progress,
+  // diagnostics) ride along with whichever side of the boundary they fall on.
+  const isContextBearing = (m: (typeof docMessages)[number]): boolean =>
+    m.role === "user" ||
+    m.role === "assistant" ||
+    m.role === "system_prompt" ||
+    (m.role === "system" && m.model === "compaction-marker");
+
   const keepRecent = 2;
-  const olderMessages = conversationHistory.slice(0, -keepRecent);
-  if (olderMessages.length < 1) return false;
+  const contextIndices: number[] = [];
+  for (let i = 0; i < docMessages.length; i++) {
+    if (isContextBearing(docMessages[i])) contextIndices.push(i);
+  }
+  if (contextIndices.length <= keepRecent) return false;
+
+  // Boundary: everything before the last keepRecent context-bearing entries
+  // is removed; everything at/after the boundary (including interleaved
+  // non-context entries) is kept.
+  const boundaryIndex = contextIndices[contextIndices.length - keepRecent];
+  const removed = docMessages.slice(0, boundaryIndex);
+  if (removed.length < 1) return false;
+  const removedMessageIds = removed.map((m) => m.id);
 
   const { encodeCompactionArchive, COMPACTION_ARCHIVE_FORMAT } = await import("./compaction-archive");
-  const serialized = encodeCompactionArchive(sessionId, olderMessages);
-  const archiveDownloadable = olderMessages.every(
-    (message) => !message.archiveRefId || message.archiveDownloadable === true,
+  const serialized = encodeCompactionArchive(
+    sessionId,
+    removed.map((m) => ({
+      role: m.role,
+      content: m.content,
+      thinking: m.thinking ?? undefined,
+      toolCalls: Array.isArray(m.toolCalls) ? m.toolCalls : undefined,
+      publicRole:
+        m.role === "user" || m.role === "assistant" ? m.role : undefined,
+      archiveRefId: m.compaction?.archiveRefId,
+      record: m,
+    })),
+  );
+  const archiveDownloadable = removed.every(
+    (m) => !m.compaction?.archiveRefId || m.compaction?.archiveDownloadable === true,
   );
   if (serialized.length < 200) return false;
+
+  const estimateDocTokens = (m: (typeof docMessages)[number]): number => {
+    let tokens = estimateTokens(m.content);
+    if (m.thinking) tokens += estimateTokens(m.thinking);
+    if (Array.isArray(m.toolCalls)) {
+      for (const tc of m.toolCalls as Array<Record<string, unknown>>) {
+        const result = tc?.result ?? tc?.output;
+        if (typeof result === "string") tokens += estimateTokens(result);
+        else if (result != null) tokens += estimateTokens(JSON.stringify(result));
+      }
+    }
+    return tokens;
+  };
 
   try {
     const { indexAndArchiveHeuristic } = await import("./content-indexer");
     const archiveRef = await indexAndArchiveHeuristic({
       content: serialized,
       sourceType: "compaction",
-      sourceLabel: `session:${sessionId} (${olderMessages.length} messages)`,
+      sourceLabel: `session:${sessionId} (${removed.length} messages)`,
     });
     if (!archiveRef) {
       log.error(`betweenTurnCompaction: exact archive unavailable; preserving active history sessionId=${sessionId}`);
@@ -173,28 +225,33 @@ export async function runBetweenTurnCompaction(
     }
 
     const { buildContinuationCapsule, renderContinuationCapsule } = await import("./continuation-capsule");
-    const capsuleEntries = olderMessages.flatMap((message) => {
-      const entries: import("./continuation-capsule").ContinuationCapsuleEntry[] = message.capsule
-        ? []
-        : [{
-            role: message.role === "user" || message.role === "assistant" || message.role === "system"
-              ? message.role
-              : "system",
-            content: message.content,
-          }];
-      for (const toolCall of message.toolCalls || []) {
-        entries.push({
-          role: "tool",
-          toolName: toolCall.toolName,
-          toolArguments: toolCall.arguments,
-          toolResult: toolCall.result ?? toolCall.output,
-          toolCallId: toolCall.toolCallId,
-          isError: Boolean(toolCall.error),
-        });
+    const capsuleEntries = removed.flatMap((m) => {
+      const isMarker = m.role === "system" && m.model === "compaction-marker";
+      const entries: import("./continuation-capsule").ContinuationCapsuleEntry[] =
+        isMarker && m.compaction?.capsule
+          ? []
+          : [{
+              role:
+                m.role === "user" || m.role === "assistant" || m.role === "system"
+                  ? m.role
+                  : "system",
+              content: m.content,
+            }];
+      if (Array.isArray(m.toolCalls)) {
+        for (const toolCall of m.toolCalls as Array<Record<string, unknown>>) {
+          entries.push({
+            role: "tool",
+            toolName: toolCall?.toolName as string | undefined,
+            toolArguments: toolCall?.arguments as Record<string, unknown> | undefined,
+            toolResult: toolCall?.result ?? toolCall?.output,
+            toolCallId: toolCall?.toolCallId as string | undefined,
+            isError: Boolean(toolCall?.error),
+          });
+        }
       }
       return entries;
     });
-    const previousCapsule = olderMessages.find((message) => message.capsule)?.capsule;
+    const previousCapsule = removed.find((m) => m.compaction?.capsule)?.compaction?.capsule;
     const capsule = buildContinuationCapsule(capsuleEntries, previousCapsule);
     const capsuleContent = renderContinuationCapsule(capsule);
 
@@ -208,7 +265,20 @@ export async function runBetweenTurnCompaction(
       const { summarizeCompactedMessages } = await import("./compaction-summarizer");
       const narrative = await summarizeCompactedMessages({
         sessionId,
-        messages: olderMessages,
+        messages: removed.map((m) => ({
+          role: m.role,
+          content: `[${m.createdAt}] ${m.content}`,
+          thinking: m.thinking ?? undefined,
+          toolCalls: Array.isArray(m.toolCalls)
+            ? (m.toolCalls as Array<{
+                toolName?: string;
+                arguments?: Record<string, unknown>;
+                result?: unknown;
+                output?: string;
+                error?: boolean | string | Record<string, unknown>;
+              }>)
+            : undefined,
+        })),
         capsuleFacts: capsuleContent,
       });
       if (narrative) {
@@ -226,23 +296,20 @@ export async function runBetweenTurnCompaction(
 
 [Full original messages archived — ref:${archiveRef.id} — use indexed_content tool to retrieve]`;
     const summaryContent = `[Session Compaction] ${summaryBody}${archiveNote}`;
-    const replaceBeforeIndex = olderMessages.length;
 
-    const { chatFileStorage } = await import("./chat-file-storage");
     let tokensAfter = estimateTokens(summaryContent);
-    const recentMessages = conversationHistory.slice(-keepRecent);
-    for (const message of recentMessages) tokensAfter += estimateHistoryTokens(message);
+    for (const m of docMessages.slice(boundaryIndex)) {
+      if (isContextBearing(m)) tokensAfter += estimateDocTokens(m);
+    }
     const tokensSaved = totalTokens - tokensAfter;
 
-    const compactResult = await chatFileStorage.compactSession(sessionId, summaryContent, replaceBeforeIndex, {
+    const compactResult = await chatFileStorage.compactSession(sessionId, summaryContent, removedMessageIds, {
       type: "between_turn",
       summary: summaryBody,
       summaryKind,
       degradedSegments,
       capsuleVersion: capsule.version,
       capsule,
-      replacedMessageCount: olderMessages.length,
-      keptMessageCount: recentMessages.length,
       archiveRefId: archiveRef.id,
       archiveFormat: COMPACTION_ARCHIVE_FORMAT,
       archiveDownloadable,
@@ -257,6 +324,8 @@ export async function runBetweenTurnCompaction(
       const { eventBus } = await import("./event-bus");
       log.log(`betweenTurnCompaction: persisted sessionId=${sessionId} trigger=between-turn messagesBefore=${compactResult.messagesBefore} messagesAfter=${compactResult.messagesAfter} tokensBefore=${totalTokens} tokensAfter=${tokensAfter} tokensSaved=${tokensSaved} summaryKind=${summaryKind} summaryLen=${summaryBody.length}${degradedSegments ? ` degradedSegments=${degradedSegments}` : ""}`);
       eventBus.publish({ category: "system", event: "compaction.persisted", payload: { sessionId, trigger: "between-turn", messagesBefore: compactResult.messagesBefore, messagesAfter: compactResult.messagesAfter, tokensBefore: totalTokens, tokensAfter, tokensSaved, summaryLength: summaryBody.length, summaryKind, capsuleVersion: capsule.version } });
+    } else {
+      log.warn(`betweenTurnCompaction: write-back declined (prefix mismatch or empty removal) sessionId=${sessionId} removed=${removedMessageIds.length} — active history preserved`);
     }
 
     return compactResult.compacted;

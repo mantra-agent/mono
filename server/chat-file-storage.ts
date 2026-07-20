@@ -1184,7 +1184,7 @@ export interface IChatFileStorage {
   compactSession(
     sessionId: string,
     summaryContent: string,
-    replaceBeforeIndex: number,
+    removedMessageIds: string[],
     meta?: Partial<CompactionMeta>,
   ): Promise<{
     compacted: boolean;
@@ -2793,7 +2793,7 @@ export const chatFileStorage: IChatFileStorage = {
   async compactSession(
     sessionId: string,
     summaryContent: string,
-    replaceBeforeIndex: number,
+    removedMessageIds: string[],
     meta?: Partial<CompactionMeta>,
   ) {
     return withConvLock(sessionId, async () => {
@@ -2801,15 +2801,34 @@ export const chatFileStorage: IChatFileStorage = {
       if (!data)
         return { compacted: false, messagesBefore: 0, messagesAfter: 0 };
       const messagesBefore = data.messages.length;
-      if (replaceBeforeIndex <= 0 || replaceBeforeIndex > messagesBefore) {
+      if (
+        removedMessageIds.length <= 0 ||
+        removedMessageIds.length > messagesBefore
+      ) {
         return {
           compacted: false,
           messagesBefore,
           messagesAfter: messagesBefore,
         };
       }
+      // Identity boundary: the removed set must be the exact current prefix of
+      // the persisted doc. Any divergence (reordering, deletion, unexpected
+      // insertion before the boundary) means the archive no longer matches
+      // what would be removed — fail closed and preserve active history.
+      for (let i = 0; i < removedMessageIds.length; i++) {
+        if (data.messages[i]?.id !== removedMessageIds[i]) {
+          log.error(
+            `compactSession prefix mismatch sessionId=${sessionId} index=${i} expected=${removedMessageIds[i]} actual=${data.messages[i]?.id ?? "missing"} — failing closed`,
+          );
+          return {
+            compacted: false,
+            messagesBefore,
+            messagesAfter: messagesBefore,
+          };
+        }
+      }
       const markerId = generateId();
-      const kept = data.messages.slice(replaceBeforeIndex);
+      const kept = data.messages.slice(removedMessageIds.length);
       const compactionMarker: FileMessage = {
         id: markerId,
         sessionId,
@@ -2823,11 +2842,13 @@ export const chatFileStorage: IChatFileStorage = {
         compaction: {
           type: "between_turn",
           summary: summaryContent,
-          replacedMessageCount: replaceBeforeIndex,
-          keptMessageCount: kept.length,
           summaryLength: summaryContent.length,
           createdAt: new Date().toISOString(),
           ...meta,
+          // Doc-side truth: counts are computed from the persisted doc under
+          // the write lock, never trusted from the caller's coordinate space.
+          replacedMessageCount: removedMessageIds.length,
+          keptMessageCount: kept.length,
         },
       };
       data.messages = [compactionMarker, ...kept];
@@ -2836,7 +2857,7 @@ export const chatFileStorage: IChatFileStorage = {
       invalidateSessionsCache();
       const messagesAfter = data.messages.length;
       log.log(
-        `compactSession sessionId=${sessionId} messagesBefore=${messagesBefore} messagesAfter=${messagesAfter} replaced=${replaceBeforeIndex} summaryLen=${summaryContent.length}`,
+        `compactSession sessionId=${sessionId} messagesBefore=${messagesBefore} messagesAfter=${messagesAfter} replaced=${removedMessageIds.length} summaryLen=${summaryContent.length}`,
       );
       return { compacted: true, messagesBefore, messagesAfter, markerId };
     });
