@@ -227,7 +227,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
       id={`child-session-${meta.childSessionId}`}
       className={cn(
         "scroll-mt-20",
-        insidePlan ? "group my-0.5" : `border rounded-md my-1 ${tileClass}`,
+        insidePlan ? "group" : `border rounded-md my-1 ${tileClass}`,
         !expanded && "cursor-pointer",
       )}
       onClick={!expanded ? toggleExpanded : undefined}
@@ -290,7 +290,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
           {insidePlan && (
             <button
               type="button"
-              className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
               onClick={(event) => {
                 event.stopPropagation();
                 toggleExpanded();
@@ -309,7 +309,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
               <button
                 type="button"
                 className={cn(
-                  "flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground",
+                  "flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground",
                   insidePlan && "opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100",
                 )}
                 onClick={(event) => event.stopPropagation()}
