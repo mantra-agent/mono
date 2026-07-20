@@ -18,6 +18,8 @@ The server is a Node.js/Express/TypeScript monolith running all backend logic: A
 
 ---
 
+Email synchronization timers must fan out through explicit user principals and one Vault at a time. The system scheduler may page the global user identity table with a durable round-robin cursor, but connected-account discovery, token access, email cache mutation, triage, enrichment, and autonomous session creation must execute inside the exact owner's personal-account principal with exactly one owned, non-archived Vault visible. The whole timer pipeline uses a cross-process advisory lock; each connected account must match the outer user, personal account, and active Vault before any token or email access. Never authorize `timer:email-sync` for cross-Vault sensitive reads.
+
 ## Access Control
 
 Access control is server-owned and permission-based. Future code must plug into the existing principal/permission path instead of checking `user.role` or `isAdmin` directly.
