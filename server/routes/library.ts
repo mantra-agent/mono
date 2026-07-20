@@ -63,6 +63,7 @@ import {
   normalizeLibraryStructuralRole,
 } from "../library-domain";
 import { getLibraryPageNeighbors, runLibraryLint, syncEmbeddedLibraryPageLinks } from "../library-link-graph";
+import { compileLibraryPageToMantraWiki, queryMantraLibraryIndex } from "../library-compiler";
 
 const log = createLogger("InfoRoutes");
 
@@ -724,6 +725,29 @@ export async function registerLibraryRoutes(app: Express) {
       const report = await runLibraryLint(input, principalOrThrow(req));
       publishLibraryChanged("lint", report.reportPageId ? { id: report.reportPageId, title: "Library Lint Report", surface: true } : undefined);
       res.json(report);
+    } catch (err: any) {
+      if (err.name === "ZodError") return res.status(400).json({ error: "Invalid input", details: err.errors });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/info/library/compile", async (req, res) => {
+    try {
+      const input = z.object({ id: z.string().min(1) }).parse(req.body ?? {});
+      const result = await compileLibraryPageToMantraWiki(input.id, principalOrThrow(req));
+      publishLibraryChanged("compiled", { id: result.sourcePageId, title: result.sourceTitle });
+      res.json(result);
+    } catch (err: any) {
+      if (err.name === "ZodError") return res.status(400).json({ error: "Invalid input", details: err.errors });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/info/library/index-query", async (req, res) => {
+    try {
+      const input = z.object({ query: z.string().min(1) }).parse(req.body ?? {});
+      const result = await queryMantraLibraryIndex(input.query, principalOrThrow(req));
+      res.json(result);
     } catch (err: any) {
       if (err.name === "ZodError") return res.status(400).json({ error: "Invalid input", details: err.errors });
       res.status(500).json({ error: err.message });
