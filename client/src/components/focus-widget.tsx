@@ -308,7 +308,6 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
   const composing = panelView.mode === "composing";
 
   const voice = useVoiceStreaming(voiceSession, activeSession);
-  const { setShowVoiceToolsSafe, voiceStepsInsertIndexRef } = voice;
   const [searchQuery, setSearchQuery] = useState("");
 
 
@@ -543,15 +542,11 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
     }
 
     voiceSession?.clearTranscript();
-    setShowVoiceToolsSafe(false);
-    voiceStepsInsertIndexRef.current = -1;
     setPanelView({ mode: "session", sessionId: id });
-  }, [queryClient, sessions, voiceSession, setShowVoiceToolsSafe, voiceStepsInsertIndexRef]);
+  }, [queryClient, sessions, voiceSession]);
 
   const startNewChat = useCallback(async () => {
     voiceSession?.clearTranscript();
-    setShowVoiceToolsSafe(false);
-    voiceStepsInsertIndexRef.current = -1;
 
     try {
       const res = await apiRequest("POST", "/api/sessions", { title: "New Session" });
@@ -572,7 +567,7 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
       clearSessionForRoute(route);
       setPanelView({ mode: "list" });
     }
-  }, [voiceSession, setShowVoiceToolsSafe, voiceStepsInsertIndexRef, clearSessionForRoute, route, queryClient, toast, requestBottomBarFocus]);
+  }, [voiceSession, clearSessionForRoute, route, queryClient, toast, requestBottomBarFocus]);
 
   const sidebarDeleteConversation = useMutation({
     mutationFn: (id: string) => deleteSessionTree(id),

@@ -7,7 +7,6 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import {
   ArrowLeft,
-  Mic,
   MoreHorizontal,
   BookOpen,
   Users,
@@ -225,7 +224,7 @@ export function SessionTranscriptPanel({
   }, []);
 
   const {
-    voiceActive, showVoiceTools, voiceStepsInsertIndexRef, handleVoiceEnd,
+    voiceActive,
   } = voice;
 
   const { data: sessionData, isLoading: msgsLoading } = useQuery<{ messages: Message[] } & Session>({
@@ -644,12 +643,6 @@ export function SessionTranscriptPanel({
           </div>
         )}
         <div className="flex items-center gap-1 shrink-0">
-          {voiceActive && (
-            <span className="flex items-center gap-1 text-xs text-primary">
-              <Mic className="h-3 w-3 animate-pulse" />
-              Voice
-            </span>
-          )}
           {titlebarActions}
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
@@ -745,8 +738,7 @@ export function SessionTranscriptPanel({
         runActive={isSessionActive}
         msgsLoading={msgsLoading}
         voiceActive={voiceActive}
-        showVoiceTools={showVoiceTools}
-        voiceStepsInsertIndex={voiceStepsInsertIndexRef.current}
+        voiceSession={voiceTranscriptOwnsSession ? voiceSession : null}
         voiceStatus={voiceTranscriptOwnsSession ? voiceSession?.status ?? "idle" : "idle"}
         voiceTranscript={voiceTranscriptOwnsSession ? voiceSession?.transcript ?? [] : []}
         voiceThinking={voiceTranscriptOwnsSession ? voiceSession?.voiceThinking ?? false : false}
