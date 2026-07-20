@@ -743,48 +743,11 @@ async function handleTriggerGraphMyelination(
 }
 
 async function handleGetLog(req: Request, res: Response): Promise<void> {
-  try {
-    const start = req.query.start
-      ? new Date(req.query.start as string)
-      : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const end = req.query.end ? new Date(req.query.end as string) : new Date();
-    const eventType = req.query.eventType as string | undefined;
-    const limit = req.query.limit
-      ? parseInt(req.query.limit as string, 10)
-      : 200;
-
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      res.status(400).json({ error: "Invalid start or end date" });
-      return;
-    }
-
-    const events = await memoryStorage.getEventsByRange(start, end, {
-      eventType,
-      limit,
-    });
-    res.json(events);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/log", "Legacy memory event log is retired; inspect vNext claim sources or system events instead.");
 }
 
 async function handleGetLogSummary(req: Request, res: Response): Promise<void> {
-  try {
-    const start = req.query.start
-      ? new Date(req.query.start as string)
-      : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const end = req.query.end ? new Date(req.query.end as string) : new Date();
-
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      res.status(400).json({ error: "Invalid start or end date" });
-      return;
-    }
-
-    const summary = await memoryStorage.getEventSummaryByRange(start, end);
-    res.json(summary);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/log/summary", "Legacy memory activity summaries are retired; context activity uses neutral EventBus counts and vNext source data.");
 }
 
 async function handleGetEntryEvents(
@@ -798,22 +761,7 @@ async function handleGetDaysWithEvents(
   req: Request,
   res: Response,
 ): Promise<void> {
-  try {
-    const start = req.query.start
-      ? new Date(req.query.start as string)
-      : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const end = req.query.end ? new Date(req.query.end as string) : new Date();
-
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      res.status(400).json({ error: "Invalid start or end date" });
-      return;
-    }
-
-    const days = await memoryStorage.getDaysWithEvents(start, end);
-    res.json(days);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/log/days-with-events", "Legacy memory event calendar is retired; use vNext claim createdAt/source filters for memory timelines.");
 }
 
 async function handleGetEntriesByDay(

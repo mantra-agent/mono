@@ -1675,9 +1675,15 @@ async function resolveGraphMemory(request: ContextRequest): Promise<string> {
 
 async function resolveTemporalLog(): Promise<string> {
   try {
-    const now = new Date();
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const summaryMap = await memoryStorage.getEventSummaryByRange(sevenDaysAgo, now);
+    const now = Date.now();
+    const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
+    const principal = getCurrentPrincipalOrSystem();
+    const recentEvents = eventBus.getRecentEvents(500, { startTimestamp: sevenDaysAgo }, principal);
+    const summaryMap: Record<string, number> = {};
+    for (const event of recentEvents) {
+      const key = event.category || "system";
+      summaryMap[key] = (summaryMap[key] ?? 0) + 1;
+    }
     const summaryParts = Object.entries(summaryMap)
       .sort((a, b) => b[1] - a[1])
       .map(([type, count]) => `${type}: ${count}`)
@@ -1687,8 +1693,8 @@ async function resolveTemporalLog(): Promise<string> {
     const temporalContent = await assembleTemporalLog();
 
     const header = summaryParts
-      ? `Memory activity (last 7 days): ${summaryParts}`
-      : "Memory activity (last 7 days): none";
+      ? `Activity (last 7 days): ${summaryParts}`
+      : "Activity (last 7 days): none";
 
     if (!temporalContent) {
       return header;
