@@ -14,6 +14,7 @@ const log = createLogger("LibraryCorpusMigration");
 
 const INVENTORY_PAGE_LIMIT = 2_000;
 const APPLY_ITEM_LIMIT = 50;
+const PROPOSAL_CONCURRENCY_LIMIT = 4;
 
 const libraryScopeColumns = {
   scope: libraryPages.scope,
@@ -307,8 +308,8 @@ function buildReport(input: {
     `**Index used:** @page:${input.indexPageId}\n` +
     `**Mode:** proposal only. No destructive moves, deletions, merges, or ambiguous changes were applied.\n` +
     `**Human-review gate:** required before any application. Apply supports only explicitly reviewed placed items, bounded to ${APPLY_ITEM_LIMIT} per call.\n` +
-    `**Matching source:** title and tags are primary anchors; summary, one-liner, purpose, and page context provide bounded supporting terms. Destination body text is excluded.\n` +
-    `**Confidence policy:** destination must be a direct canonical Wiki child and match at least ${LIBRARY_PLACEMENT_POLICY.minimumMatchedTerms} anchored terms with score >= ${LIBRARY_PLACEMENT_POLICY.minimumScore}, margin >= ${LIBRARY_PLACEMENT_POLICY.minimumScoreMargin}, and ratio >= ${LIBRARY_PLACEMENT_POLICY.minimumScoreRatio}. Structural containers always require review.\n\n` +
+    `**Matching source:** title and tags are primary lexical anchors; summary, one-liner, purpose, and page context provide bounded supporting terms. Destination body text is excluded.\n` +
+    `**Confidence policy:** destination must be a direct canonical Wiki child and pass lexical admission with at least ${LIBRARY_PLACEMENT_POLICY.minimumMatchedTerms} anchored terms, score >= ${LIBRARY_PLACEMENT_POLICY.minimumScore}, margin >= ${LIBRARY_PLACEMENT_POLICY.minimumScoreMargin}, and ratio >= ${LIBRARY_PLACEMENT_POLICY.minimumScoreRatio}. A tracked bounded semantic adjudication call must then select exactly one of at most ${LIBRARY_PLACEMENT_POLICY.maximumSemanticCandidates} candidates with confidence >= ${LIBRARY_PLACEMENT_POLICY.minimumSemanticConfidence}, or the item remains ambiguous. Structural containers always require review.\n\n` +
     `## Counts\n\n` +
     `- Total inventoried exactly once: ${counts.total}\n` +
     `- Placed proposals: ${counts.placed}\n` +
@@ -371,10 +372,15 @@ export async function proposeLibraryCorpusMigration(input: { idempotencyKey?: st
   }
 
   const containerPageIds = new Set(pages.map(page => page.parentId).filter((id): id is string => Boolean(id)));
-  const proposals: LibraryCorpusMigrationItemProposal[] = [];
-  for (const page of pages) {
-    proposals.push(await proposePage(page, principal, containerPageIds));
-  }
+  const proposals: LibraryCorpusMigrationItemProposal[] = new Array(pages.length);
+  let nextPageIndex = 0;
+  const workers = Array.from({ length: Math.min(PROPOSAL_CONCURRENCY_LIMIT, pages.length) }, async () => {
+    while (nextPageIndex < pages.length) {
+      const pageIndex = nextPageIndex++;
+      proposals[pageIndex] = await proposePage(pages[pageIndex], principal, containerPageIds);
+    }
+  });
+  await Promise.all(workers);
   const counts = countOutcomes(proposals);
   const ambiguityClasses = countAmbiguityClasses(proposals);
 
