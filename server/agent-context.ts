@@ -197,10 +197,35 @@ export async function runBetweenTurnCompaction(
     const previousCapsule = olderMessages.find((message) => message.capsule)?.capsule;
     const capsule = buildContinuationCapsule(capsuleEntries, previousCapsule);
     const capsuleContent = renderContinuationCapsule(capsule);
+
+    // Narrative summary is the primary artifact for both agent context and UI.
+    // The deterministic capsule is grounding input and the degraded fallback;
+    // summarizer failure never blocks compaction.
+    let summaryBody = capsuleContent;
+    let summaryKind: "narrative" | "capsule" = "capsule";
+    let degradedSegments: number | undefined;
+    try {
+      const { summarizeCompactedMessages } = await import("./compaction-summarizer");
+      const narrative = await summarizeCompactedMessages({
+        sessionId,
+        messages: olderMessages,
+        capsuleFacts: capsuleContent,
+      });
+      if (narrative) {
+        summaryBody = narrative.narrative;
+        summaryKind = "narrative";
+        degradedSegments = narrative.degradedSegments > 0 ? narrative.degradedSegments : undefined;
+      } else {
+        log.warn(`betweenTurnCompaction: narrative summary unavailable, using capsule fallback sessionId=${sessionId}`);
+      }
+    } catch (summaryError: unknown) {
+      log.warn(`betweenTurnCompaction: narrative summarizer error, using capsule fallback sessionId=${sessionId} error=${summaryError instanceof Error ? summaryError.message : String(summaryError)}`);
+    }
+
     const archiveNote = `
 
 [Full original messages archived — ref:${archiveRef.id} — use indexed_content tool to retrieve]`;
-    const summaryContent = `[Session Compaction] ${capsuleContent}${archiveNote}`;
+    const summaryContent = `[Session Compaction] ${summaryBody}${archiveNote}`;
     const replaceBeforeIndex = olderMessages.length;
 
     const { chatFileStorage } = await import("./chat-file-storage");
@@ -211,7 +236,9 @@ export async function runBetweenTurnCompaction(
 
     const compactResult = await chatFileStorage.compactSession(sessionId, summaryContent, replaceBeforeIndex, {
       type: "between_turn",
-      summary: capsuleContent,
+      summary: summaryBody,
+      summaryKind,
+      degradedSegments,
       capsuleVersion: capsule.version,
       capsule,
       replacedMessageCount: olderMessages.length,
@@ -222,14 +249,14 @@ export async function runBetweenTurnCompaction(
       tokensBefore: totalTokens,
       tokensAfter,
       tokensSaved,
-      summaryLength: capsuleContent.length,
+      summaryLength: summaryBody.length,
       createdAt: new Date().toISOString(),
     });
 
     if (compactResult.compacted) {
       const { eventBus } = await import("./event-bus");
-      log.log(`betweenTurnCompaction: persisted sessionId=${sessionId} trigger=between-turn messagesBefore=${compactResult.messagesBefore} messagesAfter=${compactResult.messagesAfter} tokensBefore=${totalTokens} tokensAfter=${tokensAfter} tokensSaved=${tokensSaved} capsuleLen=${capsuleContent.length}`);
-      eventBus.publish({ category: "system", event: "compaction.persisted", payload: { sessionId, trigger: "between-turn", messagesBefore: compactResult.messagesBefore, messagesAfter: compactResult.messagesAfter, tokensBefore: totalTokens, tokensAfter, tokensSaved, summaryLength: capsuleContent.length, capsuleVersion: capsule.version } });
+      log.log(`betweenTurnCompaction: persisted sessionId=${sessionId} trigger=between-turn messagesBefore=${compactResult.messagesBefore} messagesAfter=${compactResult.messagesAfter} tokensBefore=${totalTokens} tokensAfter=${tokensAfter} tokensSaved=${tokensSaved} summaryKind=${summaryKind} summaryLen=${summaryBody.length}${degradedSegments ? ` degradedSegments=${degradedSegments}` : ""}`);
+      eventBus.publish({ category: "system", event: "compaction.persisted", payload: { sessionId, trigger: "between-turn", messagesBefore: compactResult.messagesBefore, messagesAfter: compactResult.messagesAfter, tokensBefore: totalTokens, tokensAfter, tokensSaved, summaryLength: summaryBody.length, summaryKind, capsuleVersion: capsule.version } });
     }
 
     return compactResult.compacted;

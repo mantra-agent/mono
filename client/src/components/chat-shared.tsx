@@ -2291,6 +2291,9 @@ function CompactionBoundary({
   const kept = meta?.keptMessageCount;
   const summary = meta?.summary || cleanCompactionSummary(message.content);
   const capsule = meta?.capsule;
+  // Narrative summaries are the primary artifact; the sectioned capsule view
+  // remains for fallback/legacy markers produced without a narrative.
+  const showCapsuleView = !!capsule && meta?.summaryKind !== "narrative";
   const tokensSaved = meta?.tokensSaved;
   const capsuleSections = capsule
     ? [
@@ -2382,9 +2385,9 @@ function CompactionBoundary({
         {expanded && (
           <div className="mt-3 border-t border-border/60 pt-3">
             <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {capsule ? "Continuation state" : "Compaction summary"}
+              {showCapsuleView ? "Continuation state" : "Compaction summary"}
             </div>
-            {capsule ? (
+            {showCapsuleView && capsule ? (
               <div className="space-y-3 text-sm">
                 {capsule.initiator && (
                   <div>
