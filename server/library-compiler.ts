@@ -3,7 +3,7 @@ import { and, asc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { syncContentFields } from "@shared/markdown-tiptap";
 import { libraryPageLinks, libraryPages } from "@shared/models/info";
 import { db } from "./db";
-import { ACTIVITY_WORK } from "./job-profiles";
+import { ACTIVITY_FRAMING } from "./job-profiles";
 import {
   ensureMantraLibraryVault,
   normalizeLibraryStructuralRole,
@@ -367,10 +367,10 @@ export async function compileLibraryPageToMantraWiki(
   const operationMarker = `<!-- library-compile-operation:${source.id}:${sourceHash} -->`;
 
   const result = await chatCompletion({
-    activity: ACTIVITY_WORK,
+    activity: ACTIVITY_FRAMING,
     metadata: {
       source: "library-compiler",
-      activity: ACTIVITY_WORK,
+      activity: ACTIVITY_FRAMING,
       sessionKey: `library-compiler:${source.id}`,
       budgets: {
         latencyMs: COMPILE_LATENCY_BUDGET_MS,
