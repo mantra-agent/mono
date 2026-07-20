@@ -80,6 +80,42 @@ function recordSkip(result: VnextLifecycleRunResult, reason: LifecycleSkipReason
   result.skippedByReason[reason] = (result.skippedByReason[reason] ?? 0) + 1;
 }
 
+function lifecycleRetryAttempts(claim: MemoryVnextClaim): number {
+  const metadata = (claim.metadata as Record<string, unknown> | null) ?? {};
+  const lifecycle = typeof metadata.lifecycle === "object" && metadata.lifecycle !== null
+    ? metadata.lifecycle as Record<string, unknown>
+    : {};
+  const retry = typeof lifecycle.retry === "object" && lifecycle.retry !== null
+    ? lifecycle.retry as Record<string, unknown>
+    : {};
+  if (retry.stage !== claim.lifecycleStage) return 0;
+  const attempts = typeof retry.attempts === "number" ? retry.attempts : 0;
+  return Number.isFinite(attempts) ? attempts : 0;
+}
+
+function nextLifecycleRetryAt(claim: MemoryVnextClaim): Date {
+  const attempts = lifecycleRetryAttempts(claim);
+  const hours = Math.min(24 * 7, 6 * (2 ** Math.min(attempts, 5)));
+  return new Date(Date.now() + hours * 60 * 60 * 1000);
+}
+
+async function scheduleLifecycleRetry(candidate: VnextLifecycleCandidate, runId: string, reason: LifecycleSkipReason): Promise<void> {
+  if (reason === "already_terminal") return;
+  const nextAttemptAt = nextLifecycleRetryAt(candidate.claim);
+  await memoryVnextClaimStorage.markLifecycleSkipped(candidate.claim.id, {
+    reason,
+    runId,
+    nextAttemptAt,
+  });
+  logLifecycle("memory.vnext.lifecycle_retry_scheduled", {
+    runId,
+    claimId: candidate.claim.id,
+    stage: candidate.claim.lifecycleStage,
+    reason,
+    nextAttemptAt: nextAttemptAt.toISOString(),
+  }, "debug");
+}
+
 function recordRetirement(result: VnextLifecycleRunResult, reason: string): void {
   result.retired++;
   result.retiredByReason[reason] = (result.retiredByReason[reason] ?? 0) + 1;
@@ -338,6 +374,7 @@ async function advanceSourced(candidate: VnextLifecycleCandidate, runId: string,
   if (candidate.claim.lifecycleStage !== MEMORY_VNEXT_LIFECYCLE_STAGE.EXTRACTED) return false;
   if (candidate.sourceRefCount < 1) {
     recordSkip(result, "no_source_refs");
+    await scheduleLifecycleRetry(candidate, runId, "no_source_refs");
     logLifecycle("memory.vnext.lifecycle_skipped", {
       runId,
       claimId: candidate.claim.id,
@@ -383,6 +420,7 @@ async function ensureLinks(candidate: VnextLifecycleCandidate, runId: string, re
       return true;
     }
     recordSkip(result, "unresolved_entities");
+    await scheduleLifecycleRetry(candidate, runId, "unresolved_entities");
     logLifecycle("memory.vnext.lifecycle_skipped", {
       runId,
       claimId: candidate.claim.id,
@@ -394,6 +432,7 @@ async function ensureLinks(candidate: VnextLifecycleCandidate, runId: string, re
   }
 
   recordSkip(result, "no_links");
+  await scheduleLifecycleRetry(candidate, runId, "no_links");
   logLifecycle("memory.vnext.lifecycle_skipped", {
     runId,
     claimId: candidate.claim.id,
@@ -441,6 +480,7 @@ async function finalizeClaim(candidate: VnextLifecycleCandidate, runId: string, 
   }
 
   recordSkip(result, "canonical_criteria_not_met");
+  await scheduleLifecycleRetry(candidate, runId, "canonical_criteria_not_met");
   logLifecycle("memory.vnext.lifecycle_skipped", {
     runId,
     claimId: candidate.claim.id,

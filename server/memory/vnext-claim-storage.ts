@@ -159,6 +159,12 @@ export interface VnextLifecycleTransitionInput {
   metadata?: Record<string, unknown>;
 }
 
+export interface VnextLifecycleSkipInput {
+  reason: string;
+  nextAttemptAt: Date;
+  runId?: string;
+}
+
 export interface VnextEmbeddingBackfillResult {
   scanned: number;
   updated: number;
@@ -623,68 +629,109 @@ export class MemoryVnextClaimStorage {
   }
 
   async listLifecycleCandidates(stages: MemoryVnextLifecycleStage[], limit = 50): Promise<VnextLifecycleCandidate[]> {
-    const normalizedStages = stages.map((stage) => normalizeLifecycleStage(stage));
+    const normalizedStages = Array.from(new Set(stages.map((stage) => normalizeLifecycleStage(stage))));
     if (normalizedStages.length === 0) return [];
+    const boundedLimit = Math.min(Math.max(limit, 1), 200);
     const principal = getCurrentPrincipalOrSystem();
-    const predicate = combineWithWritableScope(
-      principal,
-      vnextClaimScopeColumns,
-      inArray(memoryVnextClaims.lifecycleStage, normalizedStages),
-    );
+    const nowIso = new Date().toISOString();
+    const selected: VnextLifecycleCandidate[] = [];
+    const selectedIds = new Set<number>();
 
-    const rows = await db
-      .select({
-        claim: memoryVnextClaims,
-        sourceRefCount: sql<number>`count(DISTINCT ${memoryVnextSourceRefs.id})::int`,
-        entityLinkCount: sql<number>`count(DISTINCT ${memoryVnextEntityLinks.id})::int`,
-        claimLinkCount: sql<number>`count(DISTINCT ${memoryVnextClaimLinks.id})::int`,
-        duplicateCount: sql<number>`(
-          SELECT count(*)::int
-          FROM memory_vnext_claims duplicates
-          WHERE duplicates.content_hash = ${memoryVnextClaims.contentHash}
-            AND duplicates.id <> ${memoryVnextClaims.id}
-            AND ${combineWithWritableScope(principal, duplicateClaimScopeColumns, sql`TRUE`)}
-        )`,
-      })
-      .from(memoryVnextClaims)
-      .leftJoin(memoryVnextSourceRefs, and(
-        eq(memoryVnextSourceRefs.claimId, memoryVnextClaims.id),
-        writableScopePredicate(principal, vnextSourceScopeColumns),
-      ))
-      .leftJoin(memoryVnextEntityLinks, and(
-        eq(memoryVnextEntityLinks.claimId, memoryVnextClaims.id),
-        writableScopePredicate(principal, vnextEntityScopeColumns),
-      ))
-      .leftJoin(
-        memoryVnextClaimLinks,
-        and(
-          sql`${memoryVnextClaimLinks.fromClaimId} = ${memoryVnextClaims.id} OR ${memoryVnextClaimLinks.toClaimId} = ${memoryVnextClaims.id}`,
-          writableScopePredicate(principal, vnextClaimLinkScopeColumns),
-        ),
-      )
-      .where(predicate)
-      .groupBy(memoryVnextClaims.id)
-      .orderBy(
-        // Process higher lifecycle stages first so canonical claims get decay/retirement checks
-        // before early-stage claims that may be stuck at sourced/linked
-        sql`CASE ${memoryVnextClaims.lifecycleStage}
-          WHEN 'canonical' THEN 0
-          WHEN 'linked' THEN 1
-          WHEN 'sourced' THEN 2
-          WHEN 'extracted' THEN 3
-          ELSE 4
-        END`,
-        memoryVnextClaims.createdAt,
-      )
-      .limit(Math.min(Math.max(limit, 1), 200));
-
-    return rows.map((row) => ({
+    const mapRows = (rows: Array<{
+      claim: MemoryVnextClaim;
+      sourceRefCount: number;
+      entityLinkCount: number;
+      claimLinkCount: number;
+      duplicateCount: number;
+    }>): VnextLifecycleCandidate[] => rows.map((row) => ({
       claim: row.claim,
       sourceRefCount: Number(row.sourceRefCount ?? 0),
       entityLinkCount: Number(row.entityLinkCount ?? 0),
       claimLinkCount: Number(row.claimLinkCount ?? 0),
       duplicateCount: Number(row.duplicateCount ?? 0),
     }));
+
+    const fetchCandidates = async (stageBatch: MemoryVnextLifecycleStage[], batchLimit: number): Promise<VnextLifecycleCandidate[]> => {
+      if (stageBatch.length === 0 || batchLimit <= 0) return [];
+      const selectedIdPredicate = selectedIds.size > 0
+        ? sql`${memoryVnextClaims.id} NOT IN (${sql.join(Array.from(selectedIds).map((id) => sql`${id}`), sql`,`)})`
+        : sql`TRUE`;
+      const duePredicate = sql`(
+        NOT (COALESCE(${memoryVnextClaims.metadata}, '{}'::jsonb)->'lifecycle' ? 'retry')
+        OR COALESCE(${memoryVnextClaims.metadata}->'lifecycle'->'retry'->>'stage', '') <> ${memoryVnextClaims.lifecycleStage}
+        OR COALESCE(${memoryVnextClaims.metadata}->'lifecycle'->'retry'->>'nextAttemptAt', '') <= ${nowIso}
+      )`;
+      const predicate = combineWithWritableScope(
+        principal,
+        vnextClaimScopeColumns,
+        and(
+          inArray(memoryVnextClaims.lifecycleStage, stageBatch),
+          duePredicate,
+          selectedIdPredicate,
+        ),
+      );
+
+      const rows = await db
+        .select({
+          claim: memoryVnextClaims,
+          sourceRefCount: sql<number>`count(DISTINCT ${memoryVnextSourceRefs.id})::int`,
+          entityLinkCount: sql<number>`count(DISTINCT ${memoryVnextEntityLinks.id})::int`,
+          claimLinkCount: sql<number>`count(DISTINCT ${memoryVnextClaimLinks.id})::int`,
+          duplicateCount: sql<number>`(
+            SELECT count(*)::int
+            FROM memory_vnext_claims duplicates
+            WHERE duplicates.content_hash = ${memoryVnextClaims.contentHash}
+              AND duplicates.id <> ${memoryVnextClaims.id}
+              AND ${combineWithWritableScope(principal, duplicateClaimScopeColumns, sql`TRUE`)}
+          )`,
+        })
+        .from(memoryVnextClaims)
+        .leftJoin(memoryVnextSourceRefs, and(
+          eq(memoryVnextSourceRefs.claimId, memoryVnextClaims.id),
+          writableScopePredicate(principal, vnextSourceScopeColumns),
+        ))
+        .leftJoin(memoryVnextEntityLinks, and(
+          eq(memoryVnextEntityLinks.claimId, memoryVnextClaims.id),
+          writableScopePredicate(principal, vnextEntityScopeColumns),
+        ))
+        .leftJoin(
+          memoryVnextClaimLinks,
+          and(
+            sql`${memoryVnextClaimLinks.fromClaimId} = ${memoryVnextClaims.id} OR ${memoryVnextClaimLinks.toClaimId} = ${memoryVnextClaims.id}`,
+            writableScopePredicate(principal, vnextClaimLinkScopeColumns),
+          ),
+        )
+        .where(predicate)
+        .groupBy(memoryVnextClaims.id)
+        .orderBy(
+          sql`COALESCE(${memoryVnextClaims.metadata}->'lifecycle'->'retry'->>'nextAttemptAt', ${memoryVnextClaims.createdAt}::text)`,
+          memoryVnextClaims.lifecycleStageUpdatedAt,
+          memoryVnextClaims.createdAt,
+        )
+        .limit(batchLimit);
+
+      return mapRows(rows);
+    };
+
+    const perStageLimit = Math.max(1, Math.floor(boundedLimit / normalizedStages.length));
+    for (const stage of normalizedStages) {
+      if (selected.length >= boundedLimit) break;
+      const stageCandidates = await fetchCandidates([stage], Math.min(perStageLimit, boundedLimit - selected.length));
+      for (const candidate of stageCandidates) {
+        selected.push(candidate);
+        selectedIds.add(candidate.claim.id);
+      }
+    }
+
+    if (selected.length < boundedLimit) {
+      const fillCandidates = await fetchCandidates(normalizedStages, boundedLimit - selected.length);
+      for (const candidate of fillCandidates) {
+        selected.push(candidate);
+        selectedIds.add(candidate.claim.id);
+      }
+    }
+
+    return selected;
   }
 
   async getLifecycleEvidence(claimId: number): Promise<Omit<VnextLifecycleCandidate, "claim"> | null> {
@@ -913,13 +960,15 @@ export class MemoryVnextClaimStorage {
     const lifecycleHistory = Array.isArray(currentMetadata.lifecycleHistory)
       ? currentMetadata.lifecycleHistory
       : [];
+    const currentLifecycle = typeof currentMetadata.lifecycle === "object" && currentMetadata.lifecycle !== null
+      ? currentMetadata.lifecycle as Record<string, unknown>
+      : {};
+    const { retry: _clearedRetry, ...lifecycleWithoutRetry } = currentLifecycle;
     const metadata = {
       ...currentMetadata,
       ...(input?.metadata ?? {}),
       lifecycle: {
-        ...(typeof currentMetadata.lifecycle === "object" && currentMetadata.lifecycle !== null
-          ? currentMetadata.lifecycle as Record<string, unknown>
-          : {}),
+        ...lifecycleWithoutRetry,
         lastTransition: transition,
       },
       lifecycleHistory: [...lifecycleHistory.slice(-9), transition],
@@ -974,6 +1023,10 @@ export class MemoryVnextClaimStorage {
     const lifecycleHistory = Array.isArray(currentMetadata.lifecycleHistory)
       ? currentMetadata.lifecycleHistory
       : [];
+    const currentLifecycle = typeof currentMetadata.lifecycle === "object" && currentMetadata.lifecycle !== null
+      ? currentMetadata.lifecycle as Record<string, unknown>
+      : {};
+    const { retry: _clearedRetry, ...lifecycleWithoutRetry } = currentLifecycle;
     const metadata = {
       ...currentMetadata,
       ...(input.metadata ?? {}),
@@ -983,9 +1036,7 @@ export class MemoryVnextClaimStorage {
         ...(input.metadata ?? {}),
       },
       lifecycle: {
-        ...(typeof currentMetadata.lifecycle === "object" && currentMetadata.lifecycle !== null
-          ? currentMetadata.lifecycle as Record<string, unknown>
-          : {}),
+        ...lifecycleWithoutRetry,
         lastTransition: transition,
       },
       lifecycleHistory: [...lifecycleHistory.slice(-9), transition],
@@ -1010,6 +1061,56 @@ export class MemoryVnextClaimStorage {
       reason: input.reason,
     }));
     return updated;
+  }
+
+  async markLifecycleSkipped(id: number, input: VnextLifecycleSkipInput): Promise<MemoryVnextClaim | null> {
+    const principal = getCurrentPrincipalOrSystem();
+    const [current] = await db
+      .select()
+      .from(memoryVnextClaims)
+      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
+      .limit(1);
+
+    if (!current) return null;
+
+    const now = new Date();
+    const currentMetadata = (current.metadata as Record<string, unknown> | null) ?? {};
+    const lifecycle = typeof currentMetadata.lifecycle === "object" && currentMetadata.lifecycle !== null
+      ? currentMetadata.lifecycle as Record<string, unknown>
+      : {};
+    const retry = typeof lifecycle.retry === "object" && lifecycle.retry !== null
+      ? lifecycle.retry as Record<string, unknown>
+      : {};
+    const previousStage = retry.stage === current.lifecycleStage ? retry : {};
+    const previousAttempts = typeof previousStage.attempts === "number" && Number.isFinite(previousStage.attempts)
+      ? previousStage.attempts
+      : 0;
+    const metadata = {
+      ...currentMetadata,
+      lifecycle: {
+        ...lifecycle,
+        retry: {
+          reason: input.reason,
+          stage: current.lifecycleStage,
+          attempts: previousAttempts + 1,
+          lastAttemptAt: now.toISOString(),
+          nextAttemptAt: input.nextAttemptAt.toISOString(),
+          ...(input.runId ? { runId: input.runId } : {}),
+        },
+      },
+    };
+
+    const [updated] = await db
+      .update(memoryVnextClaims)
+      .set({
+        metadata,
+        updatedByUserId: principal.userId ?? undefined,
+        updatedAt: now,
+      })
+      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
+      .returning();
+
+    return updated ?? null;
   }
 
   async addSourceRef(claimId: number, input: VnextClaimSourceInput): Promise<MemoryVnextSourceRef | null> {
