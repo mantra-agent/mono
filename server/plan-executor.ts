@@ -273,19 +273,6 @@ export async function executePlan(
         completedCount++;
         totalDuration += stepResult.duration;
         priorOutcomes.push({ title: currentStep.title, outcome: stepResult.outcome });
-        const nextPendingStep = steps.slice(i + 1).find((candidate) => candidate.status === "pending");
-        if (nextPendingStep) {
-          const progressLines = steps.map((st, idx) => {
-            const icon = idx <= i ? "✅" : idx === nextPendingStep.position ? "▶️" : "⬜";
-            return `- ${icon} Step ${idx + 1}: ${st.title}`;
-          }).join("\n");
-          const outcomeText = stepResult.outcome ? `${stepResult.outcome.replace(/\n+$/, "")} ` : "";
-          await notifyPlanProgress(
-            originSessionId,
-            planId,
-            `${outcomeText}Step ${i + 1} complete. Moving on to Step ${nextPendingStep.position + 1}.\n\n${progressLines}`,
-          );
-        }
       } else if (stepResult.status === "halted") {
         totalDuration += stepResult.duration;
         const haltedPlanStatus: PlanStatus = stepResult.stepStatus === "needs_review" ? "needs_review" : "paused";
@@ -325,18 +312,6 @@ export async function executePlan(
         stepCount: finalSteps.length, completedSteps: completedCount,
       });
       log.log(`[${planId}] Plan ${finalStatus} — ${completedCount}/${finalSteps.length} steps in ${totalDuration}s`);
-
-      const durationStr = totalDuration < 60
-        ? `${Math.round(totalDuration)}s`
-        : `${Math.floor(totalDuration / 60)}m ${Math.round(totalDuration % 60)}s`;
-      const stepSummaryLines = finalSteps.map((st, i) => {
-        const icon = st.status === "completed" ? "✅" : st.status === "failed" ? "❌" : st.status === "skipped" ? "⏭️" : "⬜";
-        return `- ${icon} Step ${i + 1}: ${st.title}`;
-      }).join("\n");
-      const completionMsg = anyFailed
-        ? `⚠️ Plan **${planTitle}** finished with failures — ${completedCount}/${finalSteps.length} steps passed in ${durationStr}.\n\n${stepSummaryLines}`
-        : `✅ Plan **${planTitle}** completed — ${completedCount}/${finalSteps.length} steps in ${durationStr}.\n\n${stepSummaryLines}`;
-      await notifyPlanProgress(originSessionId, planId, completionMsg);
 
       await releaseActivePlan();
       return {
@@ -555,7 +530,6 @@ planId,
               planId, stepId: step.id, stepTitle: step.title,
               stepIndex, attempt, maxRetries, error: errorMsg, reason: "idle_timeout",
             });
-            await notifyPlanProgress(originSessionId, planId, `Failure on Step ${stepIndex + 1}: ${truncateOutcome(errorMsg, 180)}. Reattempting...`);
             continue;
           }
 
@@ -589,7 +563,6 @@ planId,
               planId, stepId: step.id, stepTitle: step.title,
               stepIndex, attempt, maxRetries, error: result.message, reason: result.reason,
             });
-            await notifyPlanProgress(originSessionId, planId, `Failure on Step ${stepIndex + 1}: ${truncateOutcome(result.message, 180)}. Reattempting...`);
             continue;
           }
 
@@ -625,7 +598,6 @@ planId,
         } catch (resetErr) {
           log.error(`[${planId}] Failed to reset step for retry: ${resetErr instanceof Error ? resetErr.message : String(resetErr)}`);
         }
-        await notifyPlanProgress(originSessionId, planId, `Failure on Step ${stepIndex + 1}: ${truncateOutcome(errorMsg, 180)}. Reattempting...`);
         continue;
       }
 
@@ -1019,26 +991,6 @@ export async function recoverInterruptedPlans(): Promise<number> {
 // Plan-local alias for backward compat with call sites using old name
 const truncateOutcome = truncateOutput;
 
-
-async function notifyPlanProgress(
-  originSessionId: string,
-  planId: string,
-  message: string,
-): Promise<void> {
-  try {
-    const { chatFileStorage } = await import("./chat-file-storage");
-    await chatFileStorage.createMessage(originSessionId, "assistant", message, undefined, undefined, "plan-executor");
-    // Notify connected clients so the message appears live
-    const { eventBus } = await import("./event-bus");
-    eventBus.publish({
-      category: "chat",
-      event: "data:session_messages_changed",
-      payload: { sessionId: originSessionId, source: "plan-progress", planId },
-    });
-  } catch (err) {
-    log.warn(`[${planId}] Failed to write plan progress message: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
 
 async function notifyOriginSession(
   originSessionId: string,
