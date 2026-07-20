@@ -3,6 +3,8 @@ import { cn } from "@/lib/utils";
 import { MessageList } from "@/components/message-list";
 import { MeetingHeaderBar } from "@/components/meeting-header-bar";
 import { DesktopVoiceSurface } from "@/components/desktop-voice-surface";
+import { MobileVoiceViewport } from "@/components/mobile-voice-viewport";
+import { isNativeVoiceBridge } from "@/lib/native-voice-bridge";
 import type { MeetingSessionMeta, QuestionResponseMeta } from "@shared/models/chat";
 import type { ChatMessage as Message } from "@/components/chat-shared";
 import type { PendingChatTurn } from "@/hooks/use-chat-send";
@@ -158,9 +160,10 @@ export function SessionTranscriptSurface({
           </div>
         );
 
-        return voiceActive && voiceSession
-          ? <DesktopVoiceSurface voiceSession={voiceSession} transcript={transcript} />
-          : transcript;
+        if (!voiceActive || !voiceSession) return transcript;
+        return isNativeVoiceBridge()
+          ? <MobileVoiceViewport voiceSession={voiceSession} />
+          : <DesktopVoiceSurface voiceSession={voiceSession} transcript={transcript} />;
       })()}
     </div>
   );

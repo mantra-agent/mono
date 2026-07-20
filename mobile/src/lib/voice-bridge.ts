@@ -102,6 +102,12 @@ export interface VoiceBridgeStatus {
   status: 'connecting' | 'active' | 'ending' | 'idle';
 }
 
+/** Whether the native host is foregrounded and should render live visuals. */
+export interface VoiceBridgeHostState {
+  type: 'voice.hostState';
+  active: boolean;
+}
+
 export type NativeToWebVoiceMessage =
   | VoiceBridgeConnected
   | VoiceBridgeDisconnected
@@ -109,7 +115,8 @@ export type NativeToWebVoiceMessage =
   | VoiceBridgeModeChange
   | VoiceBridgeUserTranscript
   | VoiceBridgeAgentTranscript
-  | VoiceBridgeStatus;
+  | VoiceBridgeStatus
+  | VoiceBridgeHostState;
 
 // ---------------------------------------------------------------------------
 // Helpers

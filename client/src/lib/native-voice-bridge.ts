@@ -98,6 +98,11 @@ export interface VoiceBridgeStatus {
   status: 'connecting' | 'active' | 'ending' | 'idle';
 }
 
+export interface VoiceBridgeHostState {
+  type: 'voice.hostState';
+  active: boolean;
+}
+
 export type NativeToWebVoiceMessage =
   | VoiceBridgeConnected
   | VoiceBridgeDisconnected
@@ -105,7 +110,8 @@ export type NativeToWebVoiceMessage =
   | VoiceBridgeModeChange
   | VoiceBridgeUserTranscript
   | VoiceBridgeAgentTranscript
-  | VoiceBridgeStatus;
+  | VoiceBridgeStatus
+  | VoiceBridgeHostState;
 
 // ---------------------------------------------------------------------------
 // Window type augmentation

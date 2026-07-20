@@ -255,6 +255,7 @@ export default function PrimaryScreen() {
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
+      sendToWebView({ type: 'voice.hostState', active: nextState === 'active' });
       if (nextState === 'active') {
         Logger.debug(LOG_TAG, 'App foregrounded');
       } else if (nextState === 'background') {
@@ -262,7 +263,7 @@ export default function PrimaryScreen() {
       }
     });
     return () => subscription.remove();
-  }, []);
+  }, [sendToWebView]);
 
   // ---------------------------------------------------------------------------
   // Voice message routing: web client → native voice session
@@ -360,8 +361,9 @@ export default function PrimaryScreen() {
 
   const handleLoadEnd = useCallback(() => {
     setIsLoading(false);
+    sendToWebView({ type: 'voice.hostState', active: AppState.currentState === 'active' });
     Logger.debug(LOG_TAG, 'WebView loaded');
-  }, []);
+  }, [sendToWebView]);
 
   // Preload the native voice module after the WebView is stable. Do not import
   // @elevenlabs/react-native at app/module startup: LiveKit/WebRTC globals must

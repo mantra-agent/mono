@@ -101,6 +101,8 @@ export interface VoiceSessionContextValue {
   transcriptSessionId: string | null;
   voiceThinking: boolean;
   visualState: AgentVisualState;
+  /** Native host visibility. Browser hosts remain active. */
+  isHostForeground: boolean;
   /** Reads the active SDK AnalyserNode level without driving context re-renders. */
   readAudioLevel: () => number;
   startSession: () => Promise<void>;
@@ -235,8 +237,18 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const [connectionPhases, setConnectionPhases] = useState<ConnectionPhase[]>([]);
   const [connectionStartTime, setConnectionStartTime] = useState<number | null>(null);
   const [phasePersisted, setPhasePersisted] = useState(false);
+  const [isHostForeground, setIsHostForeground] = useState(true);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!isNative) return;
+    return onNativeMessage((message) => {
+      if (message.type !== "voice.hostState") return;
+      log.debug("VOICE:NATIVE:HOST_STATE", { active: message.active });
+      setIsHostForeground(message.active);
+    });
+  }, [isNative]);
 
   const conversationRef = useRef<Awaited<ReturnType<typeof Conversation.startSession>> | null>(null);
   const transcriptRef = useRef<VoiceTranscriptEntry[]>([]);
@@ -859,6 +871,10 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             log.debug("VOICE:NATIVE:STATUS", { status: msg.status });
             break;
           }
+          case "voice.hostState":
+            // Host lifecycle is owned by the provider-level listener so it
+            // remains current between voice sessions.
+            break;
         }
       });
       nativeListenerCleanupRef.current = unsubscribe;
@@ -1753,6 +1769,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     transcriptSessionId,
     voiceThinking,
     visualState,
+    isHostForeground,
     readAudioLevel,
     startSession,
     endSession,
@@ -1769,7 +1786,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     addTranscriptEntry,
     setVoiceToolHandler,
     setVoiceDiagnosticHandler,
-  }), [status, agentMode, userSpeaking, isMuted, transcript, userComposition, transcriptSessionId, voiceThinking, visualState, readAudioLevel, startSession, endSession, toggleMute, latestMessage, setActiveConversationId, clearTranscript, activeConversationId, chatSessionKey, connectionPhases, connectionStartTime, phasePersisted, setVoiceThinking, addTranscriptEntry, setVoiceToolHandler, setVoiceDiagnosticHandler]);
+  }), [status, agentMode, userSpeaking, isMuted, transcript, userComposition, transcriptSessionId, voiceThinking, visualState, isHostForeground, readAudioLevel, startSession, endSession, toggleMute, latestMessage, setActiveConversationId, clearTranscript, activeConversationId, chatSessionKey, connectionPhases, connectionStartTime, phasePersisted, setVoiceThinking, addTranscriptEntry, setVoiceToolHandler, setVoiceDiagnosticHandler]);
 
   return (
     <VoiceSessionContext.Provider value={value}>

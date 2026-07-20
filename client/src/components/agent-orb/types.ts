@@ -13,6 +13,8 @@ export interface AgentOrbProps {
   audioLevel?: number;
   /** Maximum rendered frames per second. Recall Output Media streams at 15fps. */
   maxFrameRate?: number;
+  /** Pause frame production while preserving the mounted GPU scene. */
+  paused?: boolean;
   /** Additional CSS class for the container */
   className?: string;
 }
