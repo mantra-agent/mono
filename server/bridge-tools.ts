@@ -10630,6 +10630,39 @@ ${refs}` : ""),
         return { result: `# ${page.title}${tagsLine}${statusLine}${surfaceLine}\n\n${mdContent}${annotationText}\n\n**Parent ID:** ${page.parentId || "none"}` };
       }
 
+      if (action === "compile_library_page" || action === "compile") {
+        const id = args.id;
+        if (!id) return { result: "Provide a Source or Artifact page id or slug to compile.", error: true };
+        try {
+          const { compileLibraryPageToMantraWiki } = await import("./library-compiler");
+          const result = await compileLibraryPageToMantraWiki(String(id), principal);
+          publishLibraryChanged("compiled", { id: result.sourcePageId, title: result.sourceTitle });
+          return {
+            result: `Library compile complete for @page:${result.sourcePageId}. Created ${result.wikiPagesCreated.length}, updated ${result.wikiPagesUpdated.length}, unchanged ${result.wikiPagesUnchanged.length}, links added ${result.linksAdded}. Index: @page:${result.indexPageId}. Log: @page:${result.logPageId}.`,
+            compile: result,
+          };
+        } catch (err: any) {
+          return { result: err?.message || String(err), error: true };
+        }
+      }
+
+      if (action === "query_index" || action === "query_library_index") {
+        const q = args.query || args.contentSummary || args.title || "";
+        if (!q) return { result: "Provide a query for Index-first Library retrieval.", error: true };
+        try {
+          const { queryMantraLibraryIndex } = await import("./library-compiler");
+          const result = await queryMantraLibraryIndex(String(q), principal);
+          const wiki = result.wikiPages.map(p => `- @page:${p.id} **${p.title}** — ${p.summary || "compiled Wiki page"}\n  ${p.contentPreview.slice(0, 500)}`).join("\n");
+          const evidence = result.evidencePageIds.length ? `\n\nEvidence/neighbor refs: ${result.evidencePageIds.map(id => `@page:${id}`).join(", ")}` : "";
+          return {
+            result: `Index-first Library query for "${q}" read @page:${result.indexPageId} and selected ${result.wikiPages.length} Wiki page(s)${result.fallbackUsed ? " using bounded fallback" : ""}.\n${wiki}${evidence}`,
+            query: result,
+          };
+        } catch (err: any) {
+          return { result: err?.message || String(err), error: true };
+        }
+      }
+
       if (action === "resolve_parent") {
         const { resolveLibraryParentFromContext } = await import("./library-index");
         try {
@@ -10914,7 +10947,7 @@ ${refs}` : ""),
         return { result: `Annotation added to page [${page.id}] **${page.title}**: [${annotation.annotationType}] ${annotation.content}` };
       }
 
-      return { result: `Unknown library action: ${action}. Available: list_library_pages, get_library_page, resolve_parent, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate`, error: true };
+      return { result: `Unknown library action: ${action}. Available: list_library_pages, get_library_page, compile_library_page, query_index, resolve_parent, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate`, error: true };
     } catch (err: any) {
       return { result: `library tool error: ${err.message}`, error: true };
     }

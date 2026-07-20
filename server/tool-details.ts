@@ -262,11 +262,13 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: 'Use goals: { "action": "list", "filters": { "horizon": "today" } }',
   },
   library: {
-    description: "Manage library pages and annotations for knowledge management. Actions: list_library_pages, get_library_page, resolve_parent, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate. Pages support tags, status fields, and hierarchical parent/child structure.",
+    description: "Manage library pages and annotations for knowledge management. Actions: list_library_pages, get_library_page, compile_library_page, query_index, resolve_parent, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate. Pages support tags, status fields, and hierarchical parent/child structure.",
     whenToUse: "When the user wants to create, browse, or manage structured knowledge pages.",
     example: '{ "action": "search", "query": "architecture" }',
     actions: {
       resolve_parent: { description: "Resolve the canonical Library parent for an artifact from purpose, title, pageContext, contentSummary, and tags using the Library index.", requiredParams: ["purpose"], optionalParams: ["title", "pageContext", "contentSummary", "tags"] },
+      compile_library_page: { description: "Manually compile one Source or Artifact into the Mantra vault Wiki, refreshing the Index and appending the Log. Replay-safe for the same source content hash.", requiredParams: ["id"], optionalParams: [] },
+      query_index: { description: "Run compact Index-first retrieval against the Mantra vault without loading the full Library tree.", requiredParams: ["query"], optionalParams: [] },
       create_library_page: { description: "Create a new library page. System/tool-created pages must provide purpose/pageContext/contentSummary so the Library index resolves the parent; root or explicit-parent tool writes are rejected.", requiredParams: ["title"], optionalParams: ["plainTextContent", "purpose", "pageContext", "contentSummary", "parentId", "tags", "status", "surface", "surfaceDurationHours", "surfaceReason", "surfaceSection"] },
       edit_library_page: { description: "Surgical find-and-replace edit on a library page's content. Preferred over update_library_page for targeted changes — avoids re-transmitting the entire document. Uses old_string/new_string semantics (same as scratch edit).", requiredParams: ["id", "old_string", "new_string"], optionalParams: ["replace_all", "surface", "surfaceDurationHours", "surfaceReason", "surfaceSection"] },
       dismiss_library_page: { description: "Clear surfacing fields so a Library page disappears from Home/Simple Inbox without deleting the page.", requiredParams: ["id"], optionalParams: [] },
