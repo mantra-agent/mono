@@ -1,7 +1,7 @@
 // Use createLogger for logging ONLY
 import { chatBeacon } from "@/lib/chat-beacon";
 import { createLogger } from "@/lib/logger";
-import { recordTransportGap } from "@/lib/browser-telemetry";
+import { getBrowserTelemetryResumeGeneration, onBrowserTelemetryBaselineReset, recordTransportGap } from "@/lib/browser-telemetry";
 
 const log = createLogger("SharedWS");
 
@@ -47,6 +47,7 @@ export interface SharedWSDiagnostics {
   forcedReconnects: number;
   connectedAt: number | null;
   lastMessageAt: number | null;
+  resumeGeneration: number;
 }
 
 let instance: SharedWebSocket | null = null;
@@ -75,6 +76,7 @@ const EMPTY_DIAGNOSTICS: SharedWSDiagnostics = {
   forcedReconnects: 0,
   connectedAt: null,
   lastMessageAt: null,
+  resumeGeneration: 0,
 };
 let diagnosticSnapshot: SharedWSDiagnostics = EMPTY_DIAGNOSTICS;
 
@@ -124,6 +126,12 @@ function createSharedWebSocket(): SharedWebSocket {
   const openHandlers = new Map<string, LifecycleHandler>();
   const closeHandlers = new Map<string, CloseHandler>();
   const errorHandlers = new Map<string, LifecycleHandler>();
+  onBrowserTelemetryBaselineReset(() => {
+    const now = Date.now();
+    lastMessageTime = now;
+    if (ws?.readyState === WebSocket.OPEN) lastMessageAt = now;
+    emitDiagnostics();
+  });
 
   function doConnect() {
     if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
@@ -141,14 +149,16 @@ function createSharedWebSocket(): SharedWebSocket {
       reconnectAttempt = 0;
       connectTime = Date.now();
       connectedAt = connectTime;
-      lastMessageTime = connectTime;
-      lastMessageAt = connectTime;
       log.debug(`open wasReconnect=${wasReconnect} refCount=${refCount}`);
       hasEverConnected = true;
       if (wasReconnect) {
         reconnects++;
-        recordTransportGap("reconnect", Math.max(0, connectTime - lastMessageTime), { reconnectAttempt, refCount, streamActive: streamOwners.size > 0 });
+        const lastMessageBeforeReconnect = lastMessageTime;
+        const reconnectGap = Math.max(0, connectTime - lastMessageBeforeReconnect);
+        recordTransportGap("reconnect", reconnectGap, { reconnectAttempt, refCount, streamActive: streamOwners.size > 0 }, lastMessageBeforeReconnect);
       }
+      lastMessageTime = connectTime;
+      lastMessageAt = connectTime;
       startLivenessTimer();
       emitDiagnostics();
       for (const [id, handler] of openHandlers) {
@@ -244,7 +254,7 @@ function createSharedWebSocket(): SharedWebSocket {
     log.warn(`forceReconnect — socket OPEN but dead (no message in ${elapsed}ms), recycling`);
     forcedReconnects++;
     chatBeacon("ws_force_reconnect", { elapsedSinceLastMsg: elapsed, streamActive: streamOwners.size > 0 });
-    recordTransportGap("liveness_timeout", elapsed, { streamActive: streamOwners.size > 0 });
+    recordTransportGap("liveness_timeout", elapsed, { streamActive: streamOwners.size > 0 }, lastMessageTime);
     emitDiagnostics();
     ws.close(4000, "liveness-timeout");
   }
@@ -362,6 +372,7 @@ function createSharedWebSocket(): SharedWebSocket {
         forcedReconnects,
         connectedAt,
         lastMessageAt,
+        resumeGeneration: getBrowserTelemetryResumeGeneration(),
       };
     },
   };
