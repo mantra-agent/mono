@@ -1227,6 +1227,179 @@ function VnextEntityLinksSection({ claimId }: { claimId: number }) {
   );
 }
 
+function GraphTab({
+  inFullscreenModal = false,
+  onOpenFullscreen,
+}: {
+  inFullscreenModal?: boolean;
+  onOpenFullscreen?: () => void;
+} = {}) {
+  const { timezone } = useTimezone();
+  const isMobile = useIsMobile();
+  const graphRef = useRef<MemoryGraph3DHandle>(null);
+  const [selectedNode, setSelectedNode] = useState<MemoryEntry | null>(null);
+  const [hoveredNodeId, setHoveredNodeId] = useState<number | null>(null);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+
+  useFocusContext(
+    selectedNode
+      ? { entity: { type: "memory", id: String(selectedNode.id), label: selectedNode.title || undefined } }
+      : null,
+  );
+
+  const { data: graph, isLoading, isError } = useQuery<PalaceData>({
+    queryKey: ["/api/memory/vnext/graph"],
+    queryFn: async () => {
+      const response = await fetch("/api/memory/vnext/graph", { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to load the vNext memory graph");
+      return response.json();
+    },
+  });
+
+  const entryMap = useMemo(
+    () => new Map((graph?.entries ?? []).map((entry) => [entry.id, entry])),
+    [graph?.entries],
+  );
+
+  const graphNodes = useMemo<MemoryGraph3DNode[]>(() => {
+    const degree = new Map<number, number>();
+    for (const link of graph?.links ?? []) {
+      degree.set(link.fromId, (degree.get(link.fromId) ?? 0) + 1);
+      degree.set(link.toId, (degree.get(link.toId) ?? 0) + 1);
+    }
+    return (graph?.entries ?? []).map((entry) => {
+      const metadata = (entry.metadata ?? {}) as Record<string, unknown>;
+      const visual = getGraphNodeVisual(entry);
+      return {
+        id: entry.id,
+        source: visual.source,
+        label: entry.title?.trim() || entry.oneLiner?.trim() || firstLine(entry.content, 72) || visual.label,
+        degree: degree.get(entry.id) ?? 0,
+        decayScore: metadata.decay_score == null ? 1 : Number(metadata.decay_score),
+        pendingDeletion: false,
+      };
+    });
+  }, [graph]);
+
+  const graphLinks = useMemo<MemoryGraph3DLink[]>(
+    () => (graph?.links ?? []).map((link) => ({ ...link })),
+    [graph?.links],
+  );
+
+  const handleNodeSelect = useCallback((nodeId: number) => {
+    const entry = entryMap.get(nodeId);
+    if (entry) setSelectedNode(entry);
+  }, [entryMap]);
+
+  const handleNodeHover = useCallback((nodeId: number | null, position?: { x: number; y: number }) => {
+    setHoveredNodeId(nodeId);
+    if (position) setTooltipPos(position);
+  }, []);
+
+  useEffect(() => {
+    if (selectedNode && !entryMap.has(selectedNode.id)) setSelectedNode(null);
+  }, [entryMap, selectedNode]);
+
+  if (isLoading) {
+    return <div className="p-4"><Skeleton className="h-[400px] w-full" /></div>;
+  }
+
+  if (isError) {
+    return <div className="px-2 py-1.5 text-sm text-error" data-testid="memory-graph-error">The vNext memory graph could not be loaded.</div>;
+  }
+
+  if (!graph?.entries?.length) {
+    return <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="memory-graph-empty">No linked vNext claims yet.</div>;
+  }
+
+  const selectedMetadata = (selectedNode?.metadata ?? {}) as Record<string, unknown>;
+  const selectedIsClaim = selectedMetadata.nodeKind === "claim" || !selectedMetadata.nodeKind;
+
+  return (
+    <div className={cn("flex flex-col", MEMORY_SHELL_CLASS)} data-testid="memory-graph-tab">
+      <div className="relative flex flex-1 overflow-hidden min-h-0">
+        <div className="flex-1 relative overflow-hidden bg-background">
+          <MemoryGraph3D
+            ref={graphRef}
+            nodes={graphNodes}
+            links={graphLinks}
+            selectedNodeId={selectedNode?.id ?? null}
+            onNodeSelect={handleNodeSelect}
+            onNodeHover={handleNodeHover}
+          />
+
+          <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-md border border-card-border bg-card/80 px-3 py-2 text-xs text-muted-foreground backdrop-blur-sm">
+            Drag to orbit · Scroll to zoom · Select a node to inspect
+          </div>
+
+          {hoveredNodeId !== null && (() => {
+            const entry = entryMap.get(hoveredNodeId);
+            if (!entry) return null;
+            const visual = getGraphNodeVisual(entry);
+            const HoverIcon = visual.Icon;
+            return (
+              <div
+                className="absolute z-50 max-w-xs rounded-md border border-card-border bg-popover p-3 shadow-md"
+                style={{ left: tooltipPos.x, top: tooltipPos.y, transform: "translateY(-50%)" }}
+                data-testid={`memory-graph-tooltip-${hoveredNodeId}`}
+              >
+                <div className="flex items-center gap-2 text-sm font-semibold text-popover-foreground leading-tight">
+                  <HoverIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{entry.title || firstLine(entry.content)}</span>
+                </div>
+                {entry.content && <p className="mt-2 text-xs text-popover-foreground/80 line-clamp-4">{entry.content}</p>}
+              </div>
+            );
+          })()}
+
+          <div className="absolute bottom-3 left-3 z-10 flex flex-col gap-1" data-testid="memory-graph-controls">
+            <Button variant="outline" size="icon" onClick={() => graphRef.current?.zoomIn()} aria-label="Zoom in" title="Zoom in" data-testid="button-zoom-in">
+              <ZoomIn className="h-3.5 w-3.5" />
+            </Button>
+            <Button variant="outline" size="icon" onClick={() => graphRef.current?.zoomOut()} aria-label="Zoom out" title="Zoom out" data-testid="button-zoom-out">
+              <ZoomOut className="h-3.5 w-3.5" />
+            </Button>
+            <Button variant="outline" size="icon" onClick={() => graphRef.current?.fitToView()} aria-label="Fit graph to view" title="Fit graph to view" data-testid="button-graph-fit">
+              <CircleDot className="h-3.5 w-3.5" />
+            </Button>
+            {!isMobile && !inFullscreenModal && onOpenFullscreen && (
+              <Button variant="outline" size="icon" onClick={onOpenFullscreen} aria-label="Open graph fullscreen" title="Open graph fullscreen" data-testid="button-graph-fullscreen">
+                <Maximize2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {selectedNode && (
+          <div className={cn("absolute inset-x-2 bottom-2 z-20 max-h-[55%] overflow-y-auto scrollbar-thin border p-4 space-y-4 md:inset-y-2 md:left-auto md:right-2 md:w-80 md:max-h-none", MEMORY_PANEL_CLASS)} data-testid="memory-graph-detail">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <SourceIcon source={selectedNode.source} className="h-4 w-4 text-muted-foreground shrink-0" />
+                <h3 className="text-base font-semibold text-foreground truncate">{getDisplayTitle(selectedNode, 80)}</h3>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setSelectedNode(null)} aria-label="Close graph detail" data-testid="button-close-graph-detail">
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+              {selectedMetadata.lifecycleStage && <Badge variant="outline">{lifecycleLabel(String(selectedMetadata.lifecycleStage))}</Badge>}
+              {selectedMetadata.claimType && <Badge variant="outline">{claimTypeLabel(String(selectedMetadata.claimType))}</Badge>}
+              {selectedNode.createdAt && <span>{new Date(selectedNode.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}</span>}
+              <span>~{formatTokens(estimateTokens(selectedNode.content))} tok</span>
+            </div>
+
+            <SimpleTextFrame content={selectedNode.content} />
+            {selectedIsClaim && <VnextSourceRefsSection claimId={selectedNode.id} />}
+            {selectedIsClaim && <VnextEntityLinksSection claimId={selectedNode.id} />}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 function QueryTab() {
   const { toast } = useToast();
   const { timezone } = useTimezone();
