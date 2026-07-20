@@ -27,7 +27,9 @@ import {
 } from "../scoped-storage";
 import { emailDraftStorage } from "../email-draft-storage";
 import { sendNotification } from "../notifications";
-import { listGmailAccounts } from "../gmail";
+import { listGmailAccounts, type GmailAccount } from "../gmail";
+import type { CalendarEvent } from "../google-calendar";
+import { formatInTimezone } from "../timezone";
 import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
 import { eventBus } from "../event-bus";
@@ -50,7 +52,7 @@ const libraryScopeColumns = {
   vaultId: libraryPages.vaultId,
 };
 
-// Bound the editable draft body while preserving every recap section.
+// Bound the compact, editable recap email body.
 const EMAIL_BODY_CHAR_LIMIT = 30_000;
 
 // ─── Public entry point ───────────────────────────────────────────────────────
@@ -150,6 +152,45 @@ export async function distributeRecap(
   }
 }
 
+async function markDistributionBlocked(
+  sessionId: string,
+  recap: MeetingRecapMeta,
+  principal: Principal,
+  attendees: ResolvedAttendee[],
+  detail: string,
+  reason: string,
+): Promise<void> {
+  for (const attendee of attendees) {
+    const owned = ownedInsertValues(principal, scopeColumns);
+    await db
+      .insert(meetingRecapDistributions)
+      .values({
+        sessionId,
+        attendeeEmail: attendee.email,
+        attendeeName: attendee.name ?? null,
+        isMantraUser: false,
+        sendMethod: "blocked",
+        status: "failed",
+        error: detail,
+        ...owned,
+      })
+      .onConflictDoNothing();
+  }
+  await chatStorage.updateMeetingMeta(sessionId, {
+    recap: {
+      ...recap,
+      distributionStatus: "blocked",
+      distributionError: detail,
+      draftIds: [],
+    },
+  });
+  eventBus.publish({
+    category: "agent",
+    event: "meeting:recap_distribution_blocked",
+    payload: { sessionId, reason, attendeeCount: attendees.length },
+  });
+}
+
 // ─── Core distribution logic ─────────────────────────────────────────────────
 
 async function runDistribution(
@@ -163,70 +204,51 @@ async function runDistribution(
     recap: { ...recap, distributionStatus: "drafting" },
   });
 
-  // 2. Resolve recipients: calendar invitees, host included, host-only fallback.
-  const ownerEmail = await resolveOwnerEmail(principal);
-  const attendees = await resolveRecipients(meeting, ownerEmail);
+  // 2. Resolve the exact calendar event and its organizer-owned Gmail account.
+  // Gmail sends as the authenticated account; array order is never sender authority.
+  const emailContext = await resolveMeetingEmailContext(meeting);
+  const attendees = emailContext
+    ? await resolveRecipients(meeting, emailContext.event, emailContext.organizerAccount.email)
+    : [];
+
+  if (!emailContext) {
+    log.warn(`Meeting organizer Gmail account could not be resolved for session ${sessionId}; blocking distribution`);
+    await markDistributionBlocked(
+      sessionId,
+      recap,
+      principal,
+      [],
+      "Meeting organizer Gmail account is not connected",
+      "organizer_gmail_not_connected",
+    );
+    return;
+  }
 
   if (attendees.length === 0) {
-    log.warn(`No recipients resolved for session ${sessionId} (no calendar invitees and no Gmail account); skipping distribution`);
-    await chatStorage.updateMeetingMeta(sessionId, {
-      recap: { ...recap, distributionStatus: "ready", distributionSkipped: true, draftIds: [] },
-    });
+    log.warn(`No calendar invitees resolved for session ${sessionId}; blocking distribution`);
+    await markDistributionBlocked(
+      sessionId,
+      recap,
+      principal,
+      [],
+      "Meeting invitees could not be resolved from the calendar event",
+      "calendar_invitees_not_resolved",
+    );
     return;
   }
 
-  log.info(`Distributing recap for session ${sessionId} to ${attendees.length} attendee(s)`);
+  log.info(
+    `Distributing recap for session ${sessionId} from organizerAccount=${emailContext.organizerAccount.id} to ${attendees.length} attendee(s)`,
+  );
 
-  // 3. Require Gmail account. Never fall back to automatic send.
-  const gmailAccounts = await listGmailAccounts();
-  const gmailAccountId = gmailAccounts[0]?.id ?? null;
-
-  if (!gmailAccountId) {
-    log.warn(`No Gmail account connected for session ${sessionId}; blocking distribution`);
-
-    // Mark all attendees as blocked with visible error. Idempotent via future UNIQUE constraint.
-    for (const attendee of attendees) {
-      try {
-        const owned = ownedInsertValues(principal, scopeColumns);
-        await db
-          .insert(meetingRecapDistributions)
-          .values({
-            sessionId,
-            attendeeEmail: attendee.email,
-            attendeeName: attendee.name ?? null,
-            isMantraUser: false,
-            sendMethod: "blocked",
-            status: "failed",
-            error: "Gmail account not connected",
-            ...owned,
-          })
-          .onConflictDoNothing();  // Idempotent via UNIQUE constraint (planned)
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log.warn(`Failed to record blocked distribution for ${attendee.email}: ${msg}`);
-      }
-    }
-
-    await chatStorage.updateMeetingMeta(sessionId, {
-      recap: {
-        ...recap,
-        distributionStatus: "blocked",
-        distributionError: "Gmail account not connected; please connect an email account to create recap drafts",
-      },
-    });
-
-    eventBus.publish({
-      category: "agent",
-      event: "meeting:recap_distribution_blocked",
-      payload: { sessionId, reason: "gmail_not_connected", attendeeCount: attendees.length },
-    });
-
-    return;
-  }
+  // 3. The authenticated organizer Gmail account is the sender. Never fall
+  // back to another connected identity because that changes authorship.
+  const gmailAccountId = emailContext.organizerAccount.id;
 
   // 4. Render the user-owned canonical Library recap into the editable draft.
-  const subject = `Meeting recap: ${recap.pageTitle ?? meeting.title ?? "Our meeting"}`;
-  const body = await buildEmailContent(recap, meeting, principal);
+  const subjectMeetingName = meeting.title?.trim() || recap.pageTitle?.replace(/^Meeting:\s*/i, "").trim() || "Our meeting";
+  const subject = `Meeting recap: ${subjectMeetingName}`;
+  const body = await buildEmailContent(recap, meeting, attendees, emailContext.event, principal);
 
   // 5. Record one tracking row per invitee, then create one editable draft
   // addressed to the complete invitee set. The draft is the human decision
@@ -263,6 +285,7 @@ async function runDistribution(
         to: attendees.map((attendee) => attendee.email),
         subject,
         body,
+        bodyFormat: "markdown",
       });
       await db
         .update(meetingRecapDistributions)
@@ -338,87 +361,101 @@ interface ResolvedAttendee {
   name?: string;
 }
 
-/**
- * Resolve the owner's own email so we can exclude them from the attendee list.
- * Falls back to null if unavailable (we then skip the exclusion filter).
- */
-async function resolveOwnerEmail(principal: Principal): Promise<string | null> {
+interface MeetingEmailContext {
+  event: CalendarEvent;
+  organizerAccount: GmailAccount;
+}
+
+async function resolveMeetingEmailContext(
+  meeting: MeetingSessionMeta,
+): Promise<MeetingEmailContext | null> {
+  if (!meeting.providerEventId || !meeting.calendarAccountId || !meeting.calendarId) {
+    return null;
+  }
   try {
+    const { getEvent } = await import("../google-calendar");
+    const event = await getEvent(
+      meeting.calendarAccountId,
+      meeting.calendarId,
+      meeting.providerEventId,
+    );
     const accounts = await listGmailAccounts();
-    return accounts[0]?.email?.toLowerCase() ?? null;
-  } catch {
+    const organizerEmail = event.organizer?.email?.trim().toLowerCase();
+    let organizerAccount = organizerEmail
+      ? accounts.find((account) => account.email.trim().toLowerCase() === organizerEmail)
+      : undefined;
+    if (!organizerAccount && event.organizer?.self) {
+      organizerAccount = accounts.find((account) => account.id === event.accountId);
+    }
+    if (!organizerAccount) {
+      log.warn(
+        `Calendar organizer has no connected Gmail account event=${event.id} calendarAccount=${event.accountId}`,
+      );
+      return null;
+    }
+    return { event, organizerAccount };
+  } catch (error) {
+    log.warn(
+      `Meeting email context resolution failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return null;
   }
 }
 
 /**
- * Resolve recap recipients from the calendar event's invitee list.
- *
- * Invitees are the ground truth of who the meeting was with — not who joined
- * the call, and not which emails resolved to linked People. Linked People
- * only enrich names. The host is a legitimate recipient of their own recap;
- * when no invitees resolve (e.g. no calendar event), the list falls back to
- * the host so a recap always reaches at least them. Deduplicates by
- * normalized lowercase email.
+ * Resolve recap recipients from the exact calendar event invitee list.
+ * Linked People enrich display names, while the event remains email authority.
  */
 async function resolveRecipients(
   meeting: MeetingSessionMeta,
-  ownerEmail: string | null,
+  event: CalendarEvent,
+  organizerEmail: string,
 ): Promise<ResolvedAttendee[]> {
   const emailMap = new Map<string, ResolvedAttendee>();
-
-  if (meeting.providerEventId && meeting.calendarAccountId && meeting.calendarId) {
-    // Canonical source: raw calendar event invitees.
-    try {
-      const { getEvent } = await import("../google-calendar");
-      const event = await getEvent(
-        meeting.calendarAccountId,
-        meeting.calendarId,
-        meeting.providerEventId,
-      );
-      for (const invitee of event.attendees ?? []) {
-        const norm = invitee.email?.toLowerCase();
-        if (!norm || !isValidEmail(norm)) continue;
-        emailMap.set(norm, { email: norm, name: invitee.displayName || undefined });
-      }
-    } catch (err) {
-      log.warn(
-        `Calendar invitee resolution failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-
-    // Enrichment: linked People provide canonical person names for invitees.
-    try {
-      const { getMetadata, getLinkedPeople } = await import("../calendar-metadata");
-      const meta = await getMetadata(
-        meeting.providerEventId,
-        meeting.calendarAccountId,
-        meeting.calendarId,
-      );
-      if (meta) {
-        const people = await getLinkedPeople(meta.id);
-        for (const p of people) {
-          if (!p.attendeeEmail) continue;
-          const norm = p.attendeeEmail.toLowerCase();
-          if (!isValidEmail(norm)) continue;
-          const existing = emailMap.get(norm);
-          if (existing) {
-            existing.name = p.personName ?? existing.name;
-          } else {
-            emailMap.set(norm, { email: norm, name: p.personName ?? undefined });
-          }
-        }
-      }
-    } catch (err) {
-      log.warn(
-        `Calendar attendee enrichment failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+  for (const invitee of event.attendees ?? []) {
+    const normalized = invitee.email?.trim().toLowerCase();
+    if (!normalized || !isValidEmail(normalized)) continue;
+    emailMap.set(normalized, {
+      email: normalized,
+      name: invitee.displayName?.trim() || undefined,
+    });
   }
 
-  // Structural floor: the recap always reaches at least the host.
-  if (emailMap.size === 0 && ownerEmail && isValidEmail(ownerEmail)) {
-    emailMap.set(ownerEmail, { email: ownerEmail });
+  try {
+    const { getMetadata, getLinkedPeople } = await import("../calendar-metadata");
+    const meta = await getMetadata(
+      meeting.providerEventId!,
+      meeting.calendarAccountId!,
+      meeting.calendarId!,
+    );
+    if (meta) {
+      const people = await getLinkedPeople(meta.id);
+      for (const person of people) {
+        const normalized = person.attendeeEmail?.trim().toLowerCase();
+        if (!normalized || !isValidEmail(normalized)) continue;
+        const existing = emailMap.get(normalized);
+        if (existing) {
+          existing.name = person.personName?.trim() || existing.name;
+        } else {
+          emailMap.set(normalized, {
+            email: normalized,
+            name: person.personName?.trim() || undefined,
+          });
+        }
+      }
+    }
+  } catch (error) {
+    log.warn(
+      `Calendar attendee enrichment failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  const normalizedOrganizer = organizerEmail.trim().toLowerCase();
+  if (isValidEmail(normalizedOrganizer) && !emailMap.has(normalizedOrganizer)) {
+    emailMap.set(normalizedOrganizer, {
+      email: normalizedOrganizer,
+      name: event.organizer?.displayName?.trim() || undefined,
+    });
   }
 
   return [...emailMap.values()];
@@ -429,11 +466,11 @@ async function resolveRecipients(
 async function buildEmailContent(
   recap: MeetingRecapMeta,
   meeting: MeetingSessionMeta,
+  attendees: ResolvedAttendee[],
+  event: CalendarEvent,
   principal: Principal,
 ): Promise<string> {
-  if (!recap.pageId) {
-    throw new Error("Canonical recap page is missing");
-  }
+  if (!recap.pageId) throw new Error("Canonical recap page is missing");
 
   const [page] = await db
     .select({ plainTextContent: libraryPages.plainTextContent })
@@ -446,48 +483,81 @@ async function buildEmailContent(
       ),
     )
     .limit(1);
-
   const storedRecap = page?.plainTextContent.trim();
   if (!storedRecap) {
     throw new Error(`Canonical recap page ${recap.pageId} has no content`);
   }
-  const participantLabels = new Map(
-    meeting.participants
-      .filter((participant) => participant.personId)
-      .map((participant) => [participant.personId!, participant.label]),
-  );
-  const canonicalRecap = renderRecapEmailText(
-    storedRecap.replace(
-      /@person:([A-Za-z0-9_-]+)/g,
-      (reference, personId: string) => participantLabels.get(personId) ?? reference,
-    ),
-  );
-  if (canonicalRecap.length > EMAIL_BODY_CHAR_LIMIT) {
-    throw new Error(
-      `Canonical recap exceeds the ${EMAIL_BODY_CHAR_LIMIT}-character email budget`,
-    );
-  }
 
-  return [
-    "Hi,",
-    "",
-    "Here is the recap from our meeting.",
-    "",
-    canonicalRecap,
-    "",
-    "—",
-    "Sent via Mantra",
-  ].join("\n");
+  const meetingName = meeting.title?.trim() || recap.pageTitle?.replace(/^Meeting:\s*/i, "").trim() || "Meeting";
+  const startedAt = new Date(meeting.startedAt ?? meeting.eventStart ?? event.start.dateTime ?? event.start.date ?? "");
+  const timeLabel = Number.isNaN(startedAt.getTime())
+    ? "Time unavailable"
+    : `${formatInTimezone(startedAt, { hour: "numeric", minute: "2-digit", timeZoneName: "short" })} ${formatInTimezone(startedAt, { month: "short", day: "numeric", year: "numeric" })}`;
+  const participantLine = attendees
+    .map((attendee) => attendee.name
+      ? `${attendee.name} <${attendee.email}>`
+      : attendee.email)
+    .join(", ");
+  const organizerEmail = event.organizer?.email?.trim().toLowerCase();
+  const greetingNames = [...new Set(
+    attendees
+      .filter((attendee) => attendee.email !== organizerEmail)
+      .map((attendee) => firstName(attendee.name))
+      .filter((name): name is string => !!name),
+  )];
+  const greeting = greetingNames.length > 0
+    ? `Hi ${new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(greetingNames)},`
+    : "Hi,";
+
+  const summary = sectionContent(storedRecap, "Summary");
+  if (!summary) throw new Error("Canonical recap summary is missing");
+  const sections = [
+    { title: "KEY DECISIONS", items: sectionItems(storedRecap, "Key Decisions") },
+    { title: "OPEN QUESTIONS", items: sectionItems(storedRecap, "Open Questions") },
+    { title: "ACTION ITEMS", items: sectionItems(storedRecap, "Action Items") },
+  ].filter((section) => section.items.length > 0);
+
+  const blocks = [
+    greeting,
+    `**${meetingName}**\n- Time: ${timeLabel}\n- Participants: ${participantLine}`,
+    summary,
+    ...sections.map((section) =>
+      `**${section.title}**\n${section.items.map((item) => `- ${item}`).join("\n")}`,
+    ),
+    "Details and Transcript Available at [trymantra.ai](https://www.trymantra.ai).",
+  ];
+  const body = blocks.join("\n\n");
+  if (body.length > EMAIL_BODY_CHAR_LIMIT) {
+    throw new Error(`Canonical recap exceeds the ${EMAIL_BODY_CHAR_LIMIT}-character email budget`);
+  }
+  return body;
 }
 
-function renderRecapEmailText(markdown: string): string {
-  return markdown
-    .replace(/^#{1,6}\s+(.+)$/gm, (_match, heading: string) => heading.toUpperCase())
-    .replace(/^\*\*(.+?)\*\*$/gm, "$1")
-    .replace(/\*\*(.+?)\*\*/g, "$1")
-    .replace(/^[-*]\s+/gm, "• ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+function sectionContent(markdown: string, heading: string): string {
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = markdown.match(
+    new RegExp(`^##\\s+${escapedHeading}\\s*\n+([\\s\\S]*?)(?=\n##\\s+|$)`, "im"),
+  );
+  return match?.[1]
+    ?.trim()
+    .replace(/@person:[A-Za-z0-9_-]+/g, "")
+    .replace(/\n{3,}/g, "\n\n") ?? "";
+}
+
+function sectionItems(markdown: string, heading: string): string[] {
+  const content = sectionContent(markdown, heading);
+  if (!content || /^(?:[-*]\s*)?none\.?$/i.test(content.trim())) return [];
+  const bulletItems = content
+    .split("\n")
+    .map((line) => line.match(/^[-*]\s+(.+)$/)?.[1]?.trim())
+    .filter((item): item is string => !!item && !/^none\.?$/i.test(item));
+  return bulletItems.length > 0 ? bulletItems : [content.replace(/\s+/g, " ").trim()];
+}
+
+function firstName(name: string | undefined): string | null {
+  const normalized = name?.trim();
+  if (!normalized) return null;
+  return normalized.split(/\s+/)[0] || null;
 }
 
 function isValidEmail(value: string): boolean {

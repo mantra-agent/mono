@@ -922,6 +922,8 @@ export type InsertEmailSyncCursor = z.infer<typeof insertEmailSyncCursorSchema>;
 
 export const emailDraftStatuses = ["draft", "sent", "discarded"] as const;
 export const emailDraftStatusSchema = z.enum(emailDraftStatuses);
+export const emailDraftBodyFormats = ["text", "markdown"] as const;
+export const emailDraftBodyFormatSchema = z.enum(emailDraftBodyFormats);
 
 export const emailDrafts = pgTable("email_drafts", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -937,6 +939,7 @@ export const emailDrafts = pgTable("email_drafts", {
   bcc: text("bcc").array().notNull().default(sql`'{}'::text[]`),
   subject: text("subject").notNull().default(""),
   body: text("body").notNull().default(""),
+  bodyFormat: text("body_format", { enum: emailDraftBodyFormats }).notNull().default("text"),
   threadId: text("thread_id"),
   inReplyTo: text("in_reply_to"),
   status: text("status", { enum: emailDraftStatuses }).notNull().default("draft"),

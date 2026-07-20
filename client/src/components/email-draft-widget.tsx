@@ -35,6 +35,7 @@ interface EmailDraft {
   bcc: string[];
   subject: string;
   body: string;
+  bodyFormat: "text" | "markdown";
   threadId: string | null;
   inReplyTo: string | null;
   status: "draft" | "sent" | "discarded";

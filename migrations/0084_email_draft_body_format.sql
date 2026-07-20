@@ -1,0 +1,1 @@
+ALTER TABLE email_drafts ADD COLUMN IF NOT EXISTS body_format TEXT NOT NULL DEFAULT 'text';
