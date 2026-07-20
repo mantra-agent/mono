@@ -262,7 +262,7 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: 'Use goals: { "action": "list", "filters": { "horizon": "today" } }',
   },
   library: {
-    description: "Manage library pages and annotations for knowledge management. Actions: list_library_pages, get_library_page, compile_library_page, query_index, resolve_parent, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate. Pages support tags, status fields, and hierarchical parent/child structure.",
+    description: "Manage library pages and annotations for knowledge management. Actions: list_library_pages, get_library_page, compile_library_page, query_index, lint_library, resolve_parent, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate. Pages support tags, status fields, and hierarchical parent/child structure.",
     whenToUse: "When the user wants to create, browse, or manage structured knowledge pages.",
     example: '{ "action": "search", "query": "architecture" }',
     actions: {

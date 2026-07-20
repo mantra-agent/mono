@@ -62,6 +62,7 @@ import {
   ensureMantraLibraryVault,
   normalizeLibraryStructuralRole,
 } from "../library-domain";
+import { getLibraryPageNeighbors, runLibraryLint, syncEmbeddedLibraryPageLinks } from "../library-link-graph";
 
 const log = createLogger("InfoRoutes");
 
@@ -681,21 +682,50 @@ export async function registerLibraryRoutes(app: Express) {
 
   app.get("/api/info/library/:id/backlinks", async (req, res) => {
     try {
+      const principal = principalOrThrow(req);
       const links = await db
         .select({
           id: libraryPages.id,
           pageId: libraryPages.pageId,
           title: libraryPages.title,
           slug: libraryPages.slug,
+          summary: libraryPages.summary,
+          structuralRole: libraryPages.structuralRole,
         })
         .from(libraryPageLinks)
         .innerJoin(
           libraryPages,
           eq(libraryPageLinks.sourcePageId, libraryPages.id),
         )
-        .where(eq(libraryPageLinks.targetPageId, req.params.id));
+        .where(combineWithVisibleScope(principal, { scope: libraryPageLinks.scope, ownerUserId: libraryPageLinks.ownerUserId, accountId: libraryPageLinks.accountId }, eq(libraryPageLinks.targetPageId, req.params.id)));
       res.json(links);
     } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/info/library/:id/links", async (req, res) => {
+    try {
+      const principal = principalOrThrow(req);
+      const outbound = await db.select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug, summary: libraryPages.summary, structuralRole: libraryPages.structuralRole })
+        .from(libraryPageLinks)
+        .innerJoin(libraryPages, eq(libraryPageLinks.targetPageId, libraryPages.id))
+        .where(combineWithVisibleScope(principal, { scope: libraryPageLinks.scope, ownerUserId: libraryPageLinks.ownerUserId, accountId: libraryPageLinks.accountId }, eq(libraryPageLinks.sourcePageId, req.params.id)));
+      const inbound = await getLibraryPageNeighbors([req.params.id], principal, 50);
+      res.json({ outbound, neighbors: inbound });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/info/library/lint", async (req, res) => {
+    try {
+      const input = z.object({ repair: z.boolean().optional(), surfaceReport: z.boolean().optional() }).parse(req.body ?? {});
+      const report = await runLibraryLint(input, principalOrThrow(req));
+      publishLibraryChanged("lint", report.reportPageId ? { id: report.reportPageId, title: "Library Lint Report", surface: true } : undefined);
+      res.json(report);
+    } catch (err: any) {
+      if (err.name === "ZodError") return res.status(400).json({ error: "Invalid input", details: err.errors });
       res.status(500).json({ error: err.message });
     }
   });
@@ -1073,9 +1103,18 @@ export async function registerLibraryRoutes(app: Express) {
             .values({
               sourcePageId: req.params.id,
               targetPageId: targetId,
+              ...ownedInsertValues(principalOrThrow(req), { scope: libraryPageLinks.scope, ownerUserId: libraryPageLinks.ownerUserId, accountId: libraryPageLinks.accountId }),
+              createdByUserId: principalOrThrow(req).userId ?? undefined,
+              updatedByUserId: principalOrThrow(req).userId ?? undefined,
             })
             .onConflictDoNothing();
         }
+      }
+
+      if (updates.content !== undefined || updates.plainTextContent !== undefined) {
+        syncEmbeddedLibraryPageLinks(updated.id, principalOrThrow(req)).catch((e) =>
+          log.warn(`Library link sync failed for page ${updated.id}: ${e.message}`),
+        );
       }
 
       upsertLibraryPageMemory(updated).catch((e) =>
