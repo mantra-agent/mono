@@ -32,7 +32,7 @@
     "expo-build-properties": "~0.13.3",
     "expo-dev-client": "~5.0.0",
     "expo-keep-awake": "~14.0.0",
-    "expo-linking": "~7.0.0",
+    "expo-linking": "~7.1.7",
     "expo-router": "~4.0.0",
     "expo-status-bar": "~2.0.0",
     "livekit-client": "^2.19.0",
@@ -55,5 +55,23 @@
     "autolinking": {
       "nativeModulesDir": "./modules"
     }
+  },
+  "overrides": {
+    "@xmldom/xmldom": "0.8.13",
+    "ajv@8.x": "8.20.0",
+    "brace-expansion@1.x": "1.1.16",
+    "brace-expansion@2.x": "2.1.2",
+    "brace-expansion@>=3": "5.0.7",
+    "form-data": "4.0.6",
+    "js-yaml@3.x": "3.15.0",
+    "js-yaml@4.x": "4.3.0",
+    "minimatch@9.x": "9.0.7",
+    "postcss": "8.5.20",
+    "shell-quote": "1.10.0",
+    "tar": "7.5.20",
+    "uuid@8.x": "8.3.2",
+    "uuid@9.x": "9.0.1",
+    "uuid@11.x": "11.1.1",
+    "ws": "8.21.1"
   }
 }
