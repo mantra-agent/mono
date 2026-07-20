@@ -804,7 +804,7 @@ function MemoryPipelineRow({ entry, expanded, onToggle, timezone }: { entry: Mem
             {processed && <span>{new Date(processed).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}</span>}
           </div>
           <div><p className="text-xs font-medium text-muted-foreground mb-1 flex items-center gap-1"><FileText className="h-3 w-3" />Content</p><ExchangeContentRenderer content={entry.content} /></div>
-          <SourceRefsSection entryId={entry.id} />
+          <VnextSourceRefsSection claimId={entry.id} />
         </div>
       )}
     </div>
@@ -1002,165 +1002,191 @@ function VnextJournalTab() {
                 ariaLabel="Search journal"
               />
             </div>
-            <Button variant="outline" size="icon" onClick={() => graphRef.current?.zoomIn()} aria-label="Zoom in" title="Zoom in" data-testid="button-zoom-in">
-              <ZoomIn className="h-3.5 w-3.5" />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="ghost" className="h-7 w-7 shrink-0 p-0" title="Journal range" data-testid="button-journal-range">
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-28">
+                {(["day", "week", "month", "year"] as LogGranularity[]).map(g => (
+                  <DropdownMenuItem
+                    key={g}
+                    onClick={() => setGranularity(g)}
+                    className={cn("text-xs", granularity === g && "font-semibold text-foreground")}
+                    data-testid={`menu-journal-${g}`}
+                  >
+                    {g.toUpperCase()}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          <div className="mt-1 flex items-center gap-1" data-testid="log-nav-controls">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => setCurrentDate(navigateDate(currentDate, granularity, -1))}
+              data-testid="log-nav-prev"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="outline" size="icon" onClick={() => graphRef.current?.zoomOut()} aria-label="Zoom out" title="Zoom out" data-testid="button-zoom-out">
-              <ZoomOut className="h-3.5 w-3.5" />
+            <span className="flex-1 text-center text-xs font-medium text-muted-foreground" data-testid="log-period-label">
+              {formatPeriodLabel(currentDate, granularity, timezone)}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => setCurrentDate(navigateDate(currentDate, granularity, 1))}
+              data-testid="log-nav-next"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="outline" size="icon" onClick={() => graphRef.current?.fitToView()} aria-label="Fit graph to view" title="Fit graph to view" data-testid="button-graph-fit">
-              <CircleDot className="h-3.5 w-3.5" />
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              onClick={() => setCurrentDate(new Date())}
+              data-testid="log-nav-today"
+            >
+              Today
             </Button>
-            {!isMobile && !inFullscreenModal && onOpenFullscreen && (
-              <Button variant="outline" size="icon" onClick={onOpenFullscreen} aria-label="Open graph fullscreen" title="Open graph fullscreen" data-testid="button-graph-fullscreen">
-                <Maximize2 className="h-3.5 w-3.5" />
-              </Button>
-            )}
           </div>
         </div>
 
-        {selectedNode && (
-          <div className={cn("absolute inset-x-2 bottom-2 z-20 max-h-[55%] overflow-y-auto scrollbar-thin border p-4 space-y-4 md:inset-y-2 md:left-auto md:right-2 md:w-80 md:max-h-none", MEMORY_PANEL_CLASS)} data-testid="palace-detail-panel">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <SourceIcon source={selectedNode.source} className="h-4 w-4 text-muted-foreground shrink-0" />
-                <h3 className="text-base font-semibold text-foreground truncate" data-testid="graph-detail-title">
-                  {getDisplayTitle(selectedNode, 80)}
-                </h3>
+        <div className="flex-1 overflow-y-auto bg-background scrollbar-thin">
+          <div className="space-y-1 p-2">
+            {isLoading ? (
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading memories…</div>
+            ) : claimsByDay.size === 0 ? (
+              <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="log-empty-state">
+                {searchQuery.trim() ? "No matching memories." : "No memories in this period."}
               </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <Button variant="ghost" size="icon" onClick={() => setSelectedNode(null)} data-testid="button-close-detail">
-                  <X className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1" data-testid="graph-detail-time">
-                <Clock className="h-2.5 w-2.5" />
-                {selectedNode.createdAt
-                  ? new Date(selectedNode.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
-                  : "Unknown"}
-              </span>
-              <span className="flex items-center gap-1" data-testid="graph-detail-id">
-                <Hash className="h-2.5 w-2.5" />{selectedNode.id}
-              </span>
-              <span className="text-muted-foreground/50" data-testid="graph-detail-tokens">
-                ~{formatTokens(estimateTokens(selectedNode.content))} tok
-              </span>
-            </div>
-
-            {selectedNode.summary && (
-              <div>
-                <p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
-                  <FileText className="h-3 w-3" />
-                  Summary
-                </p>
-                <p className="text-sm text-foreground/80 leading-relaxed" data-testid="graph-detail-summary">{selectedNode.summary}</p>
-              </div>
-            )}
-
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <Badge variant="outline" className="text-xs">{selectedNode.source}</Badge>
-              <Badge variant="outline" className="text-xs">{((selectedNode.metadata || {}) as Record<string, unknown>).nodeKind as string || "claim"}</Badge>
-              {((selectedNode.metadata || {}) as Record<string, unknown>).lifecycleStage && (
-                <Badge variant="outline" className="text-xs" data-testid="graph-detail-lifecycle-stage">
-                  {lifecycleLabel(String(((selectedNode.metadata || {}) as Record<string, unknown>).lifecycleStage))}
-                </Badge>
-              )}
-              {isDeletionScheduled(selectedNode) && (
-                <Badge variant="outline" className="text-xs border-error/50 text-error bg-error/10" data-testid={`badge-pending-deletion-graph-${selectedNode.id}`}>
-                  <AlertTriangle className="h-2 w-2 mr-0.5" />
-                  Pending deletion
-                </Badge>
-              )}
-              {selectedNode.tags?.map(tag => (
-                <Badge key={tag} variant="outline" className="text-xs">{tag}</Badge>
-              ))}
-            </div>
-
-            {(() => {
-              const nodeLinks = (palace?.links || [])
-                .filter(l => l.fromId === selectedNode.id || l.toId === selectedNode.id)
-                .map(l => {
-                  const otherId = l.fromId === selectedNode.id ? l.toId : l.fromId;
-                  const otherEntry = entryMap.get(otherId);
-                  return otherEntry ? { link: l, entry: otherEntry } : null;
-                })
-                .filter(Boolean) as { link: MemoryLink; entry: MemoryEntry }[];
-              if (nodeLinks.length === 0) return null;
-              return (
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
-                    <Link2 className="h-3 w-3" />
-                    Links ({nodeLinks.length})
-                  </p>
-                  <div className="space-y-1">
-                    {nodeLinks.map(({ link, entry: linkedEntry }) => (
-                      <div
-                        key={link.id}
-                        className={cn("flex items-center gap-2 px-3 py-2 cursor-pointer", MEMORY_LIST_ROW_CLASS)}
-                        onClick={() => setSelectedNode(linkedEntry)}
-                        data-testid={`graph-detail-link-${link.id}`}
+            ) : (
+              Array.from(claimsByDay.entries())
+                .sort(([a], [b]) => b.localeCompare(a))
+                .map(([day, dayClaims]) => {
+                  const isSearching = searchQuery.trim().length > 0;
+                  const isOpen = isSearching || expandedDays.has(day);
+                  return (
+                    <Collapsible
+                      key={day}
+                      open={isOpen}
+                      onOpenChange={() => {
+                        if (!isSearching) toggleDay(day);
+                      }}
+                      data-testid={`log-day-${day}`}
+                    >
+                      <CollapsibleTrigger
+                        className={WORKING_SECTION_TRIGGER_CLASS}
+                        data-testid={`log-day-toggle-${day}`}
                       >
-                        <SourceIcon source={linkedEntry.source} className="h-3 w-3 text-muted-foreground/70 shrink-0" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm truncate text-foreground/80">{linkedEntry.title || firstLine(linkedEntry.content)}</p>
-                          <p className="text-xs text-muted-foreground truncate">{link.relationship}</p>
+                        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", isOpen && "rotate-90")} />
+                        <span className="min-w-0 flex-1 truncate">{formatDayHeader(day, timezone)}</span>
+                        <span className="shrink-0 text-xs font-normal tabular-nums text-muted-foreground/70">{dayClaims.length}</span>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <div className="ml-[11px] mt-0.5">
+                          {dayClaims.map((claim, index) => {
+                            const isLast = index === dayClaims.length - 1;
+                            const isSelected = selectedClaimId === claim.id;
+                            return (
+                              <div key={claim.id} className="min-w-0">
+                                <div className="flex min-w-0 items-stretch">
+                                  <div className="relative mr-1 w-5 shrink-0 self-stretch" aria-hidden="true">
+                                    <div className={cn("absolute left-1/2 top-0 -translate-x-px border-l border-border", isLast && !isSelected ? "bottom-1/2" : "bottom-0")} />
+                                    <div className="absolute left-1/2 right-0 top-1/2 border-t border-border" />
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className={cn(
+                                      WORKING_TREE_ROW_CLASS,
+                                      isSelected ? WORKING_TREE_SELECTED_CLASS : WORKING_TREE_IDLE_CLASS,
+                                    )}
+                                    onClick={() => setSelectedClaimId(isSelected ? null : claim.id)}
+                                    aria-expanded={isSelected}
+                                    data-testid={`log-claim-${claim.id}`}
+                                  >
+                                    <VnextClaimTypeIcon claimType={claim.claimType} />
+                                    <span className={cn("min-w-0 flex-1 truncate text-left", isSelected && "font-medium")}>
+                                      {claim.title || firstLine(claim.content, 70)}
+                                    </span>
+                                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">
+                                      {claim.createdAt ? eventTimeInTz(claim.createdAt, timezone) : ""}
+                                    </span>
+                                  </button>
+                                </div>
+                                {isSelected && (
+                                  <div className="ml-6 mr-2 border-l border-border/40 pl-2 py-2 space-y-3" data-testid={`log-claim-expanded-${claim.id}`}>
+                                    {selectedClaim ? (
+                                      <>
+                                        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                          <span className="flex items-center gap-1" data-testid="log-detail-time">
+                                            <Clock className="h-2.5 w-2.5" />
+                                            {selectedClaim.createdAt
+                                              ? new Date(selectedClaim.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
+                                              : "Unknown"}
+                                          </span>
+                                          <span className="flex items-center gap-1" data-testid="log-detail-id">
+                                            <Hash className="h-2.5 w-2.5" />{selectedClaim.id}
+                                          </span>
+                                          <Badge variant="outline">{claimTypeLabel(selectedClaim.claimType)}</Badge>
+                                          <Badge variant="outline">{lifecycleLabel(selectedClaim.lifecycleStage)}</Badge>
+                                          <span>{Math.round(Number(selectedClaim.confidence ?? 0) * 100)}% confidence</span>
+                                        </div>
+
+                                        {(selectedClaim.topics ?? []).length > 0 && (
+                                          <div className="flex flex-wrap items-center gap-1.5">
+                                            {(selectedClaim.topics ?? []).map(topic => (
+                                              <Badge key={topic} variant="outline" className="text-xs" data-testid={`log-detail-topic-${topic}`}>{topic}</Badge>
+                                            ))}
+                                          </div>
+                                        )}
+
+                                        <div>
+                                          <p className="mb-1.5 flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                                            <FileText className="h-3 w-3" />
+                                            Memory
+                                          </p>
+                                          <SimpleTextFrame content={selectedClaim.content} />
+                                        </div>
+
+                                        <VnextSourceRefsSection claimId={selectedClaim.id} />
+
+                                        {selectedClaim.metadata && Object.keys(selectedClaim.metadata).length > 0 && (
+                                          <div>
+                                            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Metadata</p>
+                                            <pre className="whitespace-pre-wrap rounded-md border border-card-border bg-muted/20 p-3 font-mono text-xs text-foreground/70" data-testid="log-detail-metadata">
+                                              {JSON.stringify(selectedClaim.metadata, null, 2)}
+                                            </pre>
+                                          </div>
+                                        )}
+                                      </>
+                                    ) : selectedClaimLoading ? (
+                                      <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading memory…</div>
+                                    ) : (
+                                      <div className="px-2 py-1.5 text-sm text-muted-foreground">Memory not found.</div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
-                        <span className="text-xs text-muted-foreground/50 shrink-0">
-                          {(link.strength * 100).toFixed(0)}%
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
-
-            <div>
-              <p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
-                <FileText className="h-3 w-3" />
-                Content
-              </p>
-              <div data-testid="graph-detail-content">
-                <ExchangeContentRenderer content={selectedNode.content} />
-              </div>
-            </div>
-
-            {selectedNode.metadata && Object.keys(selectedNode.metadata).length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-muted-foreground mb-1.5">Metadata</p>
-                <pre className="text-xs font-mono whitespace-pre-wrap text-foreground/70 bg-muted/20 border border-card-border rounded-md p-3" data-testid="graph-detail-metadata">
-                  {JSON.stringify(selectedNode.metadata, null, 2)}
-                </pre>
-              </div>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  );
+                })
             )}
-
-            <VnextEntityLinksSection claimId={selectedNode.id} />
-
-            <EventHistorySection entryId={selectedNode.id} timezone={timezone} />
           </div>
-        )}
+        </div>
       </div>
-
     </div>
   );
 }
 
-interface VnextEntityLink {
-  id: number;
-  claimId: number;
-  entityType: string;
-  entityId: string;
-  createdAt: string;
-}
-
-const entityTypeConfig: Record<string, { icon: typeof Users; label: string }> = {
-  person: { icon: Users, label: "Person" },
-  project: { icon: FolderKanban, label: "Project" },
-  strategy: { icon: Target, label: "Strategy" },
-};
 
 function VnextEntityLinksSection({ claimId }: { claimId: number }) {
   const { data, isLoading } = useQuery<{ entityLinks: VnextEntityLink[]; total: number }>({
@@ -1317,6 +1343,364 @@ function QueryTab() {
   );
 }
 
+function LayersTab() {
+  const { timezone } = useTimezone();
+  const [openStages, setOpenStages] = useState<Set<string>>(() => new Set(MEMORY_VNEXT_PIPELINE_STAGES.map(stage => stage.value)));
+  const [expandedClaimIds, setExpandedClaimIds] = useState<Set<number>>(new Set());
+  const { status: graphMyelinationStatus } = useGraphMyelinationStatus();
+  const [layersSearchQuery, setLayersSearchQuery] = useState("");
+
+  const { events } = useEventStream();
+  const lastSeenEventRef = useRef<string | null>(null);
+
+  const { data: vnextCounts, isLoading: vnextCountsLoading } = useQuery<VnextClaimCounts>({ queryKey: ["/api/memory/vnext/claims/counts"] });
+  const { data: vnextClaimsResponse, isLoading: vnextClaimsLoading } = useQuery<VnextClaimsResponse>({ queryKey: ["/api/memory/vnext/claims", "layers", 100], queryFn: async () => { const res = await fetch("/api/memory/vnext/claims?limit=100", { credentials: "include" }); if (!res.ok) throw new Error("Failed to load vNext claims"); return res.json(); } });
+  const { data: vnextSourcesResponse, isLoading: vnextSourcesLoading } = useQuery<VnextSourcesResponse>({ queryKey: ["/api/memory/vnext/sources", "layers", 100], queryFn: async () => { const res = await fetch("/api/memory/vnext/sources?limit=100", { credentials: "include" }); if (!res.ok) throw new Error("Failed to load vNext sources"); return res.json(); } });
+
+  useEffect(() => {
+    if (events.length === 0) return;
+    const latest = events[events.length - 1];
+    if (latest.id === lastSeenEventRef.current) return;
+    if (latest.event === "entries_changed") {
+      lastSeenEventRef.current = latest.id;
+      queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/claims"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/claims/counts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/memory/vnext/sources"] });
+    }
+  }, [events]);
+
+  const vnextClaims = vnextClaimsResponse?.claims ?? [];
+  const vnextSources = vnextSourcesResponse?.sources ?? [];
+  const isLoading = vnextClaimsLoading || vnextSourcesLoading || vnextCountsLoading;
+
+  const queryTokens = layersSearchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+
+  const filteredClaims = useMemo(() => {
+    if (queryTokens.length === 0) return vnextClaims;
+    return vnextClaims.filter(claim => {
+      const searchable = [claim.title, claim.content, claim.claimType, claim.lifecycleStage, ...(claim.topics ?? [])].filter(Boolean).join(" ").toLowerCase();
+      return queryTokens.every(token => searchable.includes(token));
+    });
+  }, [vnextClaims, queryTokens]);
+
+  const filteredSources = useMemo(() => {
+    if (queryTokens.length === 0) return vnextSources;
+    return vnextSources.filter(src => {
+      const searchable = [src.title, src.content, src.sourceType].filter(Boolean).join(" ").toLowerCase();
+      return queryTokens.every(token => searchable.includes(token));
+    });
+  }, [vnextSources, queryTokens]);
+
+  const toggleStage = (stage: string) => {
+    setOpenStages(prev => { const next = new Set(prev); if (next.has(stage)) next.delete(stage); else next.add(stage); return next; });
+  };
+
+  return (
+    <div className={cn("flex flex-col", MEMORY_SHELL_CLASS)} data-testid="layers-tab">
+      <GraphMyelinationProgressBar status={graphMyelinationStatus} />
+
+      <div className={cn("flex items-center gap-2", MEMORY_PANEL_HEADER_CLASS)}>
+        <div className="relative flex-1">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input value={layersSearchQuery} onChange={(e) => setLayersSearchQuery(e.target.value)} placeholder="Filter memories..." className="pl-8" data-testid="input-layers-search" />
+        </div>
+        {vnextCounts && (
+          <span className="text-xs text-muted-foreground shrink-0">
+            {vnextCounts.total} claims
+          </span>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-y-auto scrollbar-thin p-2 space-y-1" data-testid="layers-pipeline">
+        {isLoading && <div className="space-y-1 p-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-8 w-full rounded-md" />)}</div>}
+
+        {!isLoading && MEMORY_VNEXT_PIPELINE_STAGES.map(stage => {
+          const isSource = stage.value === "source_refs";
+          const items = isSource ? filteredSources : filteredClaims.filter(c => c.lifecycleStage === stage.value);
+          const count = isSource
+            ? (vnextCounts as Record<string, unknown>)?.sourceCount ?? items.length
+            : (vnextCounts?.stages as Record<string, number> | undefined)?.[stage.value] ?? items.length;
+          const isOpen = openStages.has(stage.value);
+          return (
+            <Collapsible key={stage.value} open={isOpen} onOpenChange={() => toggleStage(stage.value)}>
+              <CollapsibleTrigger className={WORKING_SECTION_TRIGGER_CLASS} data-testid={`stage-trigger-${stage.value}`}>
+                {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                <span>{stage.label}</span>
+                <Badge variant="outline" className="ml-auto text-xs">{String(count)}</Badge>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="space-y-px pl-4">
+                  {items.length === 0 && <p className="text-xs text-muted-foreground py-1">No items</p>}
+                  {isSource
+                    ? (items as typeof vnextSources).map(src => (
+                        <div key={src.id} className={cn(WORKING_TREE_ROW_CLASS, WORKING_TREE_IDLE_CLASS)} data-testid={`source-row-${src.id}`}>
+                          <Sparkles className="h-3 w-3 shrink-0 text-muted-foreground" />
+                          <span className="truncate text-xs">{src.title || src.content?.slice(0, 60) || `Source #${src.id}`}</span>
+                          <span className="ml-auto text-xs text-muted-foreground/50 shrink-0">{src.createdAt ? relativeTime(src.createdAt) : ""}</span>
+                        </div>
+                      ))
+                    : (items as typeof vnextClaims).map(claim => {
+                        const expanded = expandedClaimIds.has(claim.id);
+                        return (
+                          <div key={claim.id}>
+                            <VnextClaimRow
+                              claim={claim}
+                              expanded={expanded}
+                              onToggle={() => setExpandedClaimIds(prev => { const next = new Set(prev); if (next.has(claim.id)) next.delete(claim.id); else next.add(claim.id); return next; })}
+                              timezone={timezone}
+                            />
+                          </div>
+                        );
+                      })
+                  }
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
+function GraphTab({ inFullscreenModal = false, onOpenFullscreen }: { inFullscreenModal?: boolean; onOpenFullscreen?: () => void } = {}) {
+  const { timezone } = useTimezone();
+  const isMobile = useIsMobile();
+  const graphRef = useRef<MemoryGraph3DHandle>(null);
+  const [selectedNode, setSelectedNode] = useState<MemoryEntry | null>(null);
+  const [hoveredNodeId, setHoveredNodeId] = useState<number | null>(null);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+  const myelination = useMyelination();
+
+  useFocusContext(
+    selectedNode
+      ? { entity: { type: "memory", id: String(selectedNode.id), label: selectedNode.title || undefined } }
+      : null,
+  );
+
+  const { data: palace, isLoading } = useQuery<PalaceData>({
+    queryKey: ["/api/memory/graph", "vnext"],
+    queryFn: async () => {
+      const response = await fetch("/api/memory/vnext/graph");
+      if (!response.ok) throw new Error("Failed to fetch vNext graph");
+      return response.json();
+    },
+  });
+
+  const entryMap = useMemo(
+    () => new Map((palace?.entries || []).map((entry) => [entry.id, entry])),
+    [palace?.entries],
+  );
+
+  const graphNodes = useMemo<MemoryGraph3DNode[]>(() => {
+    const degree = new Map<number, number>();
+    for (const link of palace?.links || []) {
+      degree.set(link.fromId, (degree.get(link.fromId) || 0) + 1);
+      degree.set(link.toId, (degree.get(link.toId) || 0) + 1);
+    }
+    return (palace?.entries || []).map((entry) => {
+      const metadata = (entry.metadata || {}) as Record<string, unknown>;
+      const visual = getGraphNodeVisual(entry);
+      const label = entry.title?.trim() || entry.oneLiner?.trim() || entry.content.trim().slice(0, 72) || visual.label;
+      return {
+        id: entry.id,
+        source: visual.source,
+        label,
+        degree: degree.get(entry.id) || 0,
+        decayScore: metadata.decay_score == null ? 1 : Number(metadata.decay_score),
+        pendingDeletion: Boolean(metadata.deletionScheduled),
+      };
+    });
+  }, [palace]);
+
+  const graphLinks = useMemo<MemoryGraph3DLink[]>(
+    () => (palace?.links || []).map((link) => ({ ...link })),
+    [palace?.links],
+  );
+
+  const handleNodeSelect = useCallback((nodeId: number) => {
+    const entry = entryMap.get(nodeId);
+    if (entry) setSelectedNode(entry);
+  }, [entryMap]);
+
+  const handleNodeHover = useCallback((nodeId: number | null, position?: { x: number; y: number }) => {
+    setHoveredNodeId(nodeId);
+    if (position) setTooltipPos(position);
+  }, []);
+
+  useEffect(() => {
+    if (selectedNode && !entryMap.has(selectedNode.id)) setSelectedNode(null);
+  }, [entryMap, selectedNode]);
+
+  if (isLoading) {
+    return <div className="p-4"><Skeleton className="h-[400px] w-full" /></div>;
+  }
+
+  if (!palace?.entries?.length) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center py-12 px-6 text-center" data-testid="palace-empty">
+        <Share2 className="h-6 w-6 text-muted-foreground/30 mb-4" />
+        <h3 className="text-sm font-medium text-foreground mb-1">No memories in graph yet</h3>
+        <p className="text-sm text-muted-foreground/70 max-w-sm">
+          vNext claims appear here after extraction creates claim links or entity links.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn("flex flex-col", MEMORY_SHELL_CLASS)} data-testid="palace-tab">
+      {(myelination.isMyelinating || myelination.isPaused) && (
+        <div className={MEMORY_PANEL_HEADER_CLASS}>
+          <MyelinationProgressBar />
+        </div>
+      )}
+
+      <div className="relative flex flex-1 overflow-hidden min-h-0">
+        <div className="flex-1 relative overflow-hidden bg-background">
+          <MemoryGraph3D
+            ref={graphRef}
+            nodes={graphNodes}
+            links={graphLinks}
+            selectedNodeId={selectedNode?.id ?? null}
+            onNodeSelect={handleNodeSelect}
+            onNodeHover={handleNodeHover}
+          />
+
+          <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-md border border-card-border bg-card/80 px-3 py-2 text-xs text-muted-foreground backdrop-blur-sm">
+            Drag to orbit · Scroll to zoom · Select a node to inspect
+          </div>
+
+          {hoveredNodeId !== null && (() => {
+            const hovEntry = entryMap.get(hoveredNodeId);
+            if (!hovEntry) return null;
+            const displayTitle = hovEntry.title || hovEntry.summary?.split("\n")[0]?.slice(0, 60) || `Entry #${hovEntry.id}`;
+            const visual = getGraphNodeVisual(hovEntry);
+            const nodeType = visual.source;
+            const referenceType = nodeType === "person" ? "person" : nodeType === "page" ? "page" : nodeType === "session" ? "session" : null;
+            const summaryText = hovEntry.content || hovEntry.summary;
+            const dateText = hovEntry.updatedAt || hovEntry.createdAt;
+            const HoverIcon = visual.Icon;
+            return (
+              <div
+                className="absolute z-50 max-w-xs rounded-md border border-card-border bg-popover p-3 shadow-md"
+                style={{ left: tooltipPos.x, top: tooltipPos.y, transform: "translateY(-50%)" }}
+                data-testid={`palace-node-tooltip-${hoveredNodeId}`}
+              >
+                <div className="flex items-center gap-2 text-sm font-semibold text-popover-foreground leading-tight mb-2" data-testid="tooltip-title">
+                  <HoverIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{displayTitle}</span>
+                </div>
+                {referenceType && hovEntry.sourceId && (
+                  <div className="mb-2" data-testid="tooltip-reference">
+                    <ReferenceRenderer refValue={createReferenceRef({ type: referenceType, id: hovEntry.sourceId })} surface="simple-chip" />
+                  </div>
+                )}
+                {summaryText && <p className="text-xs text-popover-foreground/80 leading-relaxed line-clamp-4" data-testid="tooltip-summary">{summaryText}</p>}
+                {dateText && <p className="mt-2 text-xs text-muted-foreground" data-testid="tooltip-date">{new Date(dateText).toLocaleDateString()}</p>}
+              </div>
+            );
+          })()}
+
+          <div className="absolute bottom-3 left-3 z-10 flex flex-col gap-1" data-testid="palace-zoom-controls">
+            <Button variant="outline" size="icon" onClick={() => graphRef.current?.zoomIn()} aria-label="Zoom in" title="Zoom in" data-testid="button-zoom-in">
+              <ZoomIn className="h-3.5 w-3.5" />
+            </Button>
+            <Button variant="outline" size="icon" onClick={() => graphRef.current?.zoomOut()} aria-label="Zoom out" title="Zoom out" data-testid="button-zoom-out">
+              <ZoomOut className="h-3.5 w-3.5" />
+            </Button>
+            <Button variant="outline" size="icon" onClick={() => graphRef.current?.fitToView()} aria-label="Fit graph to view" title="Fit graph to view" data-testid="button-graph-fit">
+              <CircleDot className="h-3.5 w-3.5" />
+            </Button>
+            {!isMobile && !inFullscreenModal && onOpenFullscreen && (
+              <Button variant="outline" size="icon" onClick={onOpenFullscreen} aria-label="Open graph fullscreen" title="Open graph fullscreen" data-testid="button-graph-fullscreen">
+                <Maximize2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {selectedNode && (
+          <div className={cn("absolute inset-x-2 bottom-2 z-20 max-h-[55%] overflow-y-auto scrollbar-thin border p-4 space-y-4 md:inset-y-2 md:left-auto md:right-2 md:w-80 md:max-h-none", MEMORY_PANEL_CLASS)} data-testid="palace-detail-panel">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <SourceIcon source={selectedNode.source} className="h-4 w-4 text-muted-foreground shrink-0" />
+                <h3 className="text-base font-semibold text-foreground truncate" data-testid="graph-detail-title">
+                  {getDisplayTitle(selectedNode, 80)}
+                </h3>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <Button variant="ghost" size="icon" onClick={() => setSelectedNode(null)} data-testid="button-close-detail">
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1" data-testid="graph-detail-time">
+                <Clock className="h-2.5 w-2.5" />
+                {selectedNode.createdAt
+                  ? new Date(selectedNode.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
+                  : "Unknown"}
+              </span>
+              <span className="flex items-center gap-1" data-testid="graph-detail-id">
+                <Hash className="h-2.5 w-2.5" />{selectedNode.id}
+              </span>
+              <span className="text-muted-foreground/50" data-testid="graph-detail-tokens">
+                ~{formatTokens(estimateTokens(selectedNode.content))} tok
+              </span>
+            </div>
+
+            {selectedNode.summary && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
+                  <FileText className="h-3 w-3" />
+                  Summary
+                </p>
+                <p className="text-sm text-foreground/80 leading-relaxed" data-testid="graph-detail-summary">{selectedNode.summary}</p>
+              </div>
+            )}
+
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <Badge variant="outline" className="text-xs">{selectedNode.source}</Badge>
+              <Badge variant="outline" className="text-xs">{((selectedNode.metadata || {}) as Record<string, unknown>).nodeKind as string || "claim"}</Badge>
+              {((selectedNode.metadata || {}) as Record<string, unknown>).lifecycleStage && (
+                <Badge variant="outline" className="text-xs" data-testid="graph-detail-lifecycle-stage">
+                  {lifecycleLabel(String(((selectedNode.metadata || {}) as Record<string, unknown>).lifecycleStage))}
+                </Badge>
+              )}
+              {selectedNode.title && (
+                <Badge variant="outline" className="text-xs" data-testid="graph-detail-title-badge">
+                  {selectedNode.title}
+                </Badge>
+              )}
+              {displayTags(selectedNode.tags).map((tag) => (
+                <Badge key={tag} variant="outline" className="text-xs">{tag}</Badge>
+              ))}
+            </div>
+
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-1.5">Content</p>
+              <SimpleTextFrame content={selectedNode.content} />
+            </div>
+
+            {selectedNode.metadata && Object.keys(selectedNode.metadata).length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1.5">Metadata</p>
+                <pre className="text-xs font-mono whitespace-pre-wrap text-foreground/70 bg-muted/20 border border-card-border rounded-md p-3" data-testid="graph-detail-metadata">
+                  {JSON.stringify(selectedNode.metadata, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 export default function MemoryPageFull() {
   const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const rawInitialTab = urlParams.get("tab") || "memories";
@@ -1333,8 +1717,6 @@ export default function MemoryPageFull() {
 
   return (
     <div className={cn("flex flex-col min-w-0", MEMORY_SHELL_CLASS)} data-testid="memory-page-full">
-
-
       <Dialog open={graphFullscreenOpen} onOpenChange={setGraphFullscreenOpen}>
         <DialogContent className="h-screen max-h-screen w-screen max-w-none gap-0 overflow-hidden border-0 p-0 sm:rounded-none">
           <DialogHeader className="sr-only">
