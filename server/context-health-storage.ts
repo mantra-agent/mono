@@ -139,6 +139,12 @@ function inferUsageSemantics(provider: string, metadata: Record<string, unknown>
   return "unknown";
 }
 
+function nullableNumber(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function nullableMetadataNumber(metadata: Record<string, unknown> | null, path: string[]): number | null {
   let current: unknown = metadata;
   for (const key of path) {
