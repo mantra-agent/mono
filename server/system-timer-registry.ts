@@ -25,8 +25,6 @@ export const SYSTEM_TIMER_SKILL_ALIASES: Record<string, string> = {
   "reflect-annual": "reflect",
   "sleep-cycle": "sleep",
   "memory-sleep": "sleep",
-  "memory-consolidate": "consolidate",
-  "memory-integrate": "integrate",
   "idea-generation": "ideate",
   "landscape-scan": "scan",
 };
@@ -475,18 +473,12 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
 ];
 
 const TIMER_NAME_RENAMES: Record<string, string> = {
-  "Memory: Short-term Consolidation": "Consolidate",
-  "Memory: Mid-to-Long Integration": "Integrate",
   "Nightly Sleep": "Sleep",
   "Memory Sleep": "Sleep",
   "Memory Hygiene": "Wonder",
-  "Hourly Consolidate": "Consolidate",
-  "4-Hourly Integrate": "Integrate",
   "Morning Introspect": "Reflect Daily",
   "Evening Introspect": "Reflect Daily",
   "Daily Capability Audit": "Reflect Daily",
-  "Memory Consolidate": "Consolidate",
-  "Memory Integrate": "Integrate",
 };
 
 
