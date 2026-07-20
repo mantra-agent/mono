@@ -564,6 +564,12 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 - Finance user data must fail closed: if the finance ownership schema cannot be ensured, return an error rather than falling back to unscoped reads.
 - New finance tables that contain balances, transactions, assets, liabilities, income, or goals must be added to the finance sensitive table registry and queried through `visibleFinance` / `writableFinance` or the current-principal helper.
 
+## Workflow orchestration
+
+- Workflow stage children execute exactly one assigned stage. They must never create or start another workflow; `createWorkflowRun` enforces this from durable `workflow_sessions.role = stage_attempt` ownership so tool and HTTP callers share one boundary.
+- Stage results follow the template transition. A result with a named recovery destination keeps the run active and starts that destination; `blocked` pauses only when the transition has no destination, while `needs_review` remains a review gate.
+- Workflow state and its inline widget own progress. Do not write stage-start, stage-completion, retry, or transition prose into the parent session.
+
 ## Platform environment publishing
 
 Production publishing is addressed as an explicit `sourcePlatformEnvironmentId -> targetPlatformEnvironmentId` promotion. `server/integrations/railway/publish.ts` resolves source and target GitHub bindings, Railway hosting bindings/connectors, and enabled lifecycle configuration before any branch or deployment mutation. The target lifecycle must be `manual_promote`, bind the exact source and target branches, use `platform_binding` auth, and require human approval. Publish runs persist both environment IDs so retries cannot silently switch targets. Railway API calls receive the target connector credential explicitly. The live branch remains human-promoted, and Railway deployment rollback remains the provider rollback path.
