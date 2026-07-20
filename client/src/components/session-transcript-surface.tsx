@@ -125,7 +125,36 @@ export function SessionTranscriptSurface({
           >
             <div className={cn("space-y-6 p-4 pb-4 overflow-hidden", listClassName)}>
               <MessageList
-                messages={messages}
+                messages={(() => {
+                  const recapDraftIds = meeting?.recap?.draftIds ?? [];
+                  if (recapDraftIds.length === 0) return messages;
+                  const referencedDraftIds = new Set(
+                    messages.flatMap((message) =>
+                      message.content.match(/@email_draft:([^\s\]<>]+)/g)?.map((reference) =>
+                        reference.slice("@email_draft:".length).replace(/[.,;:!?)]+$/, ""),
+                      ) ?? [],
+                    ),
+                  );
+                  const legacyDraftIds = recapDraftIds.filter(
+                    (draftId) => !referencedDraftIds.has(draftId),
+                  );
+                  if (legacyDraftIds.length === 0) return messages;
+                  const createdAt = meeting.endedAt ?? meeting.startedAt ?? new Date().toISOString();
+                  return [
+                    ...messages,
+                    ...legacyDraftIds.map((draftId, index): Message => ({
+                      id: `meeting-recap-draft-${draftId}`,
+                      sessionId: activeSession,
+                      role: "assistant",
+                      content: `@email_draft:${draftId}`,
+                      thinking: null,
+                      toolCalls: null,
+                      systemSteps: null,
+                      model: null,
+                      createdAt: new Date(new Date(createdAt).getTime() + index).toISOString(),
+                    })),
+                  ];
+                })()}
                 streaming={streaming}
                 isSessionStreaming={isSessionStreaming}
                 runActive={runActive}

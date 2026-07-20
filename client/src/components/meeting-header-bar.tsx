@@ -4,19 +4,15 @@
  * Shows the referenced meeting title, elapsed time, participant references,
  * and linked Agenda/Recap pages. Bot status is encoded on the title icon.
  * Renders above the transcript, mirroring the sticky-bar pattern used by plans/workflows.
- *
- * When a recap is ready, the recap row always renders. Its invitee-addressed
- * EmailDraftWidget auto-expands for human review; the Review email button
- * collapses/expands it. When no draft was created, a quiet skipped line says
- * so — absence of drafts is never silent.
+ * The header owns meeting identity, transport controls, speaker assignment,
+ * and recap status. Email composition renders in the Session transcript through
+ * the canonical inline draft widget path.
  */
-import { useEffect, useState, useCallback } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   AlertCircle,
-  ChevronDown,
-  ChevronRight,
   Ear,
   Hourglass,
   Loader2,
@@ -27,7 +23,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { EmailDraftWidget } from "@/components/email-draft-widget";
 import { useToast } from "@/hooks/use-toast";
 import { createLogger } from "@/lib/logger";
 import type { MeetingSessionMeta, MeetingBotStatus } from "@shared/models/chat";
@@ -81,142 +76,6 @@ function useElapsed(startedAt?: string, endedAt?: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Distribution row type (mirrors the backend API response)
-// ---------------------------------------------------------------------------
-
-interface DistributionRow {
-  id: string;
-  attendeeEmail: string;
-  attendeeName: string | null;
-  draftId: string | null;
-  status: string;
-  sendMethod: string;
-  error: string | null;
-  isMantraUser: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// Recap distribution panel
-// ---------------------------------------------------------------------------
-
-/**
- * RecapDistributionPanel — fetches per-invitee distribution provenance and
- * renders each shared Gmail draft once. The draft's editable To field is the
- * canonical human review surface. Non-draft rows remain compact status chips.
- */
-function RecapDistributionPanel({ sessionId }: { sessionId: string }) {
-  const { data, isLoading, error } = useQuery<{ distributions: DistributionRow[] }>({
-    queryKey: ["/api/meetings", sessionId, "recap-distributions"],
-    queryFn: async () => {
-      log.debug("RECAP_DISTRIBUTION_PANEL:LOAD_START", { sessionId });
-      const res = await fetch(`/api/meetings/${sessionId}/recap-distributions`, {
-        credentials: "include",
-      });
-      if (!res.ok) {
-        log.error("RECAP_DISTRIBUTION_PANEL:LOAD_FAILED", { sessionId, status: res.status });
-        throw new Error(`Failed to load distributions (${res.status})`);
-      }
-      const payload = await res.json();
-      log.debug("RECAP_DISTRIBUTION_PANEL:LOAD_SUCCESS", {
-        sessionId,
-        count: payload?.distributions?.length ?? 0,
-      });
-      return payload;
-    },
-    // Refetch while any draft is still in a non-terminal state
-    refetchInterval: (query) => {
-      const rows: DistributionRow[] = query.state.data?.distributions ?? [];
-      const hasPending = rows.some(
-        (r) => r.status === "pending" || r.status === "draft_creating",
-      );
-      return hasPending ? 3_000 : false;
-    },
-  });
-
-  if (isLoading) {
-    return (
-      <div
-        className="flex items-center gap-2 px-4 py-2 text-xs text-muted-foreground"
-        data-testid="banner-distribution-loading"
-      >
-        <Loader2 className="h-3 w-3 animate-spin shrink-0" />
-        <span>Loading draft emails…</span>
-      </div>
-    );
-  }
-
-  if (error || !data) {
-    return (
-      <div
-        className="flex items-center gap-2 px-4 py-1.5 text-xs text-destructive bg-destructive/10"
-        data-testid="banner-distribution-error"
-      >
-        <AlertCircle className="h-3 w-3 shrink-0" />
-        <span>Failed to load draft emails</span>
-      </div>
-    );
-  }
-
-  const distributions = data.distributions;
-  if (distributions.length === 0) {
-    return (
-      <div
-        className="px-4 py-2 text-xs text-muted-foreground"
-        data-testid="banner-distribution-empty"
-      >
-        No attendee drafts found.
-      </div>
-    );
-  }
-
-  const draftIds = [...new Set(
-    distributions
-      .map((row) => row.draftId)
-      .filter((draftId): draftId is string => !!draftId),
-  )];
-  const nonDraftRows = distributions.filter((row) => !row.draftId);
-
-  return (
-    <div
-      className="max-h-[calc(100dvh-12rem)] space-y-2 overflow-y-auto overscroll-contain px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] scrollbar-thin"
-      data-testid="panel-distribution-drafts"
-    >
-      {draftIds.map((draftId) => (
-        <EmailDraftWidget key={draftId} draftId={draftId} isRecapDraft />
-      ))}
-
-      {nonDraftRows.map((row) => (
-        <div
-          key={row.id}
-          className={cn(
-            "flex items-center gap-2 rounded-md border px-3 py-2 text-xs",
-            row.status === "sent"
-              ? "border-success/40 bg-success/5 text-success"
-              : row.status === "failed"
-                ? "border-destructive/30 bg-destructive/10 text-destructive"
-                : "border-border/40 bg-muted/20 text-muted-foreground",
-          )}
-          data-testid={`distribution-row-${row.id}`}
-        >
-          <Mail className="h-3 w-3 shrink-0" />
-          <span className="min-w-0 truncate font-medium">
-            {row.attendeeName
-              ? `${row.attendeeName} (${row.attendeeEmail})`
-              : row.attendeeEmail}
-          </span>
-          <span className="ml-auto shrink-0 capitalize">{row.status}</span>
-          {row.error && (
-            <span className="max-w-[12rem] truncate text-destructive/80" title={row.error}>
-              {row.error}
-            </span>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // MeetingHeaderBar
 // ---------------------------------------------------------------------------
 
@@ -226,7 +85,7 @@ export function MeetingHeaderBar({
   sessionTitle,
 }: {
   meeting: MeetingSessionMeta;
-  /** Owning session ID — required for the distribution panel API call. */
+  /** Owning session ID for meeting controls and recap retry actions. */
   sessionId?: string;
   sessionTitle?: string;
 }) {
@@ -323,13 +182,6 @@ export function MeetingHeaderBar({
     },
   });
 
-  // Distribution panel open/close state
-  // Drafts auto-show when ready; the button is a collapse toggle.
-  const [distributionOpen, setDistributionOpen] = useState(true);
-  const toggleDistribution = useCallback(
-    () => setDistributionOpen((open) => !open),
-    [],
-  );
   const retryDistribution = useMutation({
     mutationFn: async () => {
       if (!sessionId) throw new Error("Meeting session unavailable");
@@ -341,9 +193,6 @@ export function MeetingHeaderBar({
     },
     onSuccess: () => {
       if (!sessionId) return;
-      queryClient.invalidateQueries({
-        queryKey: ["/api/meetings", sessionId, "recap-distributions"],
-      });
       queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
     },
@@ -358,15 +207,7 @@ export function MeetingHeaderBar({
   });
 
   const recap = meeting.recap;
-  const draftIds = recap?.draftIds ?? [];
-  const draftCount = draftIds.length;
-
-  // Derive whether to render the distribution UI
   const showDistributionSpinner = recap?.distributionStatus === "drafting";
-  const showDistributionButton =
-    recap?.distributionStatus === "ready" &&
-    draftCount > 0 &&
-    !!sessionId;
   const showDistributionFailed =
     (recap?.distributionStatus === "failed" || recap?.distributionStatus === "blocked")
     && !recap.distributionSkipped;
@@ -584,28 +425,6 @@ export function MeetingHeaderBar({
             </span>
           )}
 
-          {/* Distribution: ready — send button */}
-          {showDistributionButton && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 gap-1.5 text-xs"
-              onClick={toggleDistribution}
-              data-testid="button-send-recap-emails"
-              aria-expanded={distributionOpen}
-            >
-              <Mail className="h-3.5 w-3.5 shrink-0" />
-              <span>
-                Review email
-              </span>
-              {distributionOpen ? (
-                <ChevronDown className="h-3 w-3 shrink-0" />
-              ) : (
-                <ChevronRight className="h-3 w-3 shrink-0" />
-              )}
-            </Button>
-          )}
-
           {/* Distribution: failed or blocked with retry button */}
           {showDistributionFailed && (
             <Button
@@ -642,16 +461,6 @@ export function MeetingHeaderBar({
             </span>
           )}
           </div>
-        </div>
-      )}
-
-      {/* ── Distribution panel (expanded) ── */}
-      {showDistributionButton && distributionOpen && sessionId && (
-        <div
-          className="border-t border-border/20"
-          data-testid="panel-distribution"
-        >
-          <RecapDistributionPanel sessionId={sessionId} />
         </div>
       )}
 

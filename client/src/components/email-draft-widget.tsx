@@ -214,7 +214,7 @@ function ThreadHistory({ messages }: { messages: ThreadMessage[] }) {
 // Main widget
 // ---------------------------------------------------------------------------
 
-export function EmailDraftWidget({ draftId, isRecapDraft = false }: { draftId: string; isRecapDraft?: boolean }) {
+export function EmailDraftWidget({ draftId }: { draftId: string }) {
   const [showCc, setShowCc] = useState(false);
   const [showBcc, setShowBcc] = useState(false);
   const [sentExpanded, setSentExpanded] = useState(false);
@@ -494,7 +494,7 @@ export function EmailDraftWidget({ draftId, isRecapDraft = false }: { draftId: s
             <Select
               value={merged.gmailAccountId || ""}
               onValueChange={(val) => immediatePatch("gmailAccountId", val)}
-              disabled={isBusy || isRecapDraft}
+              disabled={isBusy}
             >
               <SelectTrigger className="h-7 text-xs flex-1">
                 <SelectValue placeholder="Select account">

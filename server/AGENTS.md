@@ -225,6 +225,7 @@ Generic EventBus events are process-local operational signals. `chat.stream` is 
 - State is in-memory only — lost on restart. Clients resubscribe and get a fresh snapshot on reconnect
 - Reducers are pure functions — all side effects (broadcast, status tracking) live in SessionManager
 - Assistant persistence validates that `segmentChronology` content entries equal the exact final message body. `agent-executor.ts` owns both visible multi-iteration text merging and chronology separators; `chat-file-storage.ts` applies the same boundary-preserving sanitation to body and content entries, then guards equality. Synthesized or rewritten final text becomes one explicit terminal content segment; chat, voice, and recovery writers must not implement separate chronology repair.
+- Server-produced inline artifacts use `chatFileStorage.createAssistantArtifactMessageOnce(sessionId, content, artifactKey)`. The storage boundary deduplicates under the session lock and publishes `data:session_messages_changed`; producers persist canonical references such as `@email_draft:<id>` instead of building feature-specific widget containers.
 
 ### Event-Carried State for Session List
 
