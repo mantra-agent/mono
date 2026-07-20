@@ -481,8 +481,12 @@ function formatDayHeader(dayKey: string, timezone: string) {
 
 function navigateDate(date: Date, granularity: LogGranularity, delta: number, timezone: string): Date {
   const tz = getConfiguredTimezone(timezone);
-  const parts = getZonedDateParts(date, tz);
-  const next = addCivilPeriod({ year: parts.year, month: parts.month, day: parts.day }, granularity, delta);
+  const rangeStartParts = getZonedDateParts(getDateRange(date, granularity, tz).start, tz);
+  const next = addCivilPeriod(
+    { year: rangeStartParts.year, month: rangeStartParts.month, day: rangeStartParts.day },
+    granularity,
+    delta,
+  );
   return zonedMidnightToUtc(next.year, next.month, next.day, tz);
 }
 
