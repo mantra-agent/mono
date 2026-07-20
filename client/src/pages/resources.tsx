@@ -806,6 +806,7 @@ function ResourcesView({
                             items={[
                               contextHealth.measurementContract.comparablePopulation,
                               contextHealth.measurementContract.contextTokenDefinition,
+                              `Context window source: ${contextHealth.measurementContract.contextWindowSource}`,
                               ...contextHealth.exclusionReasons.map(reason => `Excluded ${reason.count}: ${formatExclusionReason(reason.reason)}`),
                               ...(contextHealth.exclusionReasons.length ? [] : ["No excluded rows in this window."]),
                             ]}
@@ -827,6 +828,7 @@ function ResourcesView({
                           <DetailList
                             items={[
                               "median / p95 / max across comparable rows only",
+                              "Only per-call rows with known context windows and in-window context tokens are included.",
                               "Non-comparable CLI cumulative counters are excluded and never displayed as prompt/context size.",
                               contextHealth.measurementContract.budgets,
                               ...contextHealth.contextTokenDistribution.map(bucket => `${bucket.label}: ${bucket.count}`),
@@ -854,14 +856,29 @@ function ResourcesView({
                         testId="tile-context-errors"
                       />
                       <MetricRow
-                        label="Provider rows"
+                        label="Provider coverage"
+                        value={String(contextHealth.byProvider.length)}
+                        detail={(
+                          <DetailList
+                            items={contextHealth.byProvider.length
+                              ? [
+                                contextHealth.measurementContract.providerRows,
+                                ...contextHealth.byProvider.map(item => `${item.provider} · rows ${item.callCount} (${item.comparableCallCount} comparable, ${item.excludedCallCount} excluded)${item.exclusionReasons.length ? ` · excluded: ${item.exclusionReasons.map(reason => `${formatExclusionReason(reason.reason)} ${reason.count}`).join(", ")}` : ""}`),
+                              ]
+                              : ["No provider calls in this window."]}
+                          />
+                        )}
+                        testId="tile-context-providers"
+                      />
+                      <MetricRow
+                        label="Model rows"
                         value={String(contextHealth.byModel.length)}
                         detail={(
                           <DetailList
                             items={contextHealth.byModel.length
                               ? [
-                                contextHealth.measurementContract.providerRows,
-                                ...contextHealth.byModel.map(item => `${item.provider} · ${item.model} · ${item.tier} · ${formatUsageSemantics(item.usageSemantics)} · rows ${item.callCount} (${item.comparableCallCount} comparable, ${item.excludedCallCount} excluded) · p95 context ${formatTokens(item.p95ContextTokens)} · max ${formatTokens(item.maxContextTokens)} · avg TTFT ${formatMs(item.avgTtftMs)}`),
+                                contextHealth.measurementContract.modelRows,
+                                ...contextHealth.byModel.map(item => `${item.provider} · ${item.model} · ${item.tier} · ${formatUsageSemantics(item.usageSemantics)} · window ${item.contextWindowStatus === "known" ? formatTokens(item.contextWindow) : "unknown"} · rows ${item.callCount} (${item.comparableCallCount} comparable, ${item.excludedCallCount} excluded)${item.exclusionReasons.length ? ` · excluded: ${item.exclusionReasons.map(reason => `${formatExclusionReason(reason.reason)} ${reason.count}`).join(", ")}` : ""} · p95 context ${formatTokens(item.p95ContextTokens)} · max ${formatTokens(item.maxContextTokens)} · avg TTFT ${formatMs(item.avgTtftMs)}`),
                               ]
                               : ["No model calls in this window."]}
                           />

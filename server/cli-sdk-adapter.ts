@@ -1485,7 +1485,9 @@ export async function* cliSdkStream(
           providerReportedUsage: usageSource,
           cacheReadTokens,
           cacheWriteTokens,
+          usageSemantics: usageSource === "assistant.usage" ? "cumulative_provider_session" : "unknown",
         },
+        usageSemantics: usageSource === "assistant.usage" ? "cumulative_provider_session" : "unknown",
         claudeConnectorConfig: connectorConfig ?? { model },
       },
     };
@@ -1599,7 +1601,9 @@ export async function* cliSdkStream(
               providerReportedUsage: usageSource,
               cacheReadTokens,
               cacheWriteTokens,
+              usageSemantics: usageSource === "assistant.usage" ? "cumulative_provider_session" : "unknown",
             },
+            usageSemantics: usageSource === "assistant.usage" ? "cumulative_provider_session" : "unknown",
           },
         };
       } else if (errMsg.includes("expired") || errMsg.includes("invalid") || errMsg.includes("unauthorized") || errMsg.includes("401")) {
