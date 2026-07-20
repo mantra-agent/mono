@@ -120,8 +120,8 @@ const nodeFragmentShader = `
     float highlight = pow(max(dot(normalize(vNormal), normalize(vec3(-0.42, 0.66, 0.61))), 0.0), 10.0);
     float emphasis = 1.0 + vEmphasis * 0.45;
     vec3 color = vTint * (0.56 + core * 0.38 + rim * 0.68 + highlight * 0.55) * emphasis;
-    float alpha = (0.44 + core * 0.34 + rim * 0.28 + highlight * 0.16) * vVisibility;
-    gl_FragColor = vec4(color, clamp(alpha, 0.3, 1.0));
+    float alpha = (0.28 + core * 0.30 + rim * 0.24 + highlight * 0.14) * vVisibility;
+    gl_FragColor = vec4(color, clamp(alpha, 0.15, 0.88));
   }
 `;
 
@@ -332,7 +332,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const signalColor = colorFromToken("--cta");
     const activeColor = colorFromToken("--active");
     const deletionColor = colorFromToken("--destructive");
-    const nodeGeometry = new THREE.IcosahedronGeometry(1, 0);
+    const nodeGeometry = new THREE.IcosahedronGeometry(1, 2);
     const visibility = new Float32Array(sceneNodes.length);
     const emphasis = new Float32Array(sceneNodes.length);
     const tints = new Float32Array(sceneNodes.length * 3);
@@ -360,7 +360,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const linkPositions = new Float32Array(renderedLinks.length * CURVE_SEGMENTS * 6);
     const linkColors = new Float32Array(renderedLinks.length * CURVE_SEGMENTS * 6);
     const linkGeometry = new THREE.BufferGeometry();
-    const baseLinkColor = signalColor.clone().multiplyScalar(0.34);
+    const baseLinkColor = signalColor.clone().multiplyScalar(0.58);
     renderedLinks.forEach((link, linkIndex) => {
       const brightness = 0.32 + Math.pow(Math.max(0, link.strength), 2.4) * 0.68;
       for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
@@ -378,7 +378,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const linkMaterial = new THREE.LineBasicMaterial({
       vertexColors: true,
       transparent: true,
-      opacity: 0.18,
+      opacity: 0.52,
       depthWrite: false,
     });
     const linkLines = new THREE.LineSegments(linkGeometry, linkMaterial);
@@ -537,7 +537,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           if (!element) return;
           const forced = selectedNodeIdRef.current === node.id;
           const labelWidth = Math.min(200, 44 + Math.min(node.label.length, 26) * 6.2);
-          const rect = new DOMRect(x + 14, y - 14, labelWidth, 28);
+          const rect = new DOMRect(x - labelWidth / 2, y + 8, labelWidth, 24);
           const show = forced || !labelsOverlap(rect, occupied);
           element.style.display = show ? "flex" : "none";
           if (show) occupied.push(rect);
@@ -725,13 +725,13 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
               if (element) labelRefs.current.set(node.id, element);
               else labelRefs.current.delete(node.id);
             }}
-            className="absolute left-0 top-0 flex items-center gap-1.5 will-change-transform"
+            className="absolute left-0 top-0 flex flex-col items-center will-change-transform"
             title={node.label}
           >
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-cta/30 bg-card/90 text-active shadow-sm">
-              <MemorySourceIcon source={node.source} className="h-3.5 w-3.5" />
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center text-active drop-shadow-md">
+              <MemorySourceIcon source={node.source} className="h-4 w-4" />
             </span>
-            <span className="max-w-[200px] truncate whitespace-nowrap rounded-md border border-card-border bg-card/90 px-2 py-1 text-xs font-medium text-foreground shadow-sm">
+            <span className="mt-0.5 max-w-[180px] truncate whitespace-nowrap rounded-md bg-card/80 px-1.5 py-0.5 text-[10px] font-medium text-foreground/90 shadow-sm backdrop-blur-sm">
               {node.label}
             </span>
           </div>
