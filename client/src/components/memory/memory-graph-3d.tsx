@@ -370,10 +370,13 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     const linkPositions = new Float32Array(renderedLinks.length * CURVE_SEGMENTS * 6);
     const linkColors = new Float32Array(renderedLinks.length * CURVE_SEGMENTS * 6);
+    const linkBrightness = new Float32Array(renderedLinks.length);
+    const nodeLinkVisibility = new Float32Array(sceneNodes.length);
     const linkGeometry = new LineSegmentsGeometry();
     const baseLinkColor = signalColor.clone().multiplyScalar(0.65);
     renderedLinks.forEach((link, linkIndex) => {
-      const brightness = (0.15 + Math.pow(Math.max(0, link.strength), 1.6) * 0.85) * 0.5;
+      const brightness = (0.15 + Math.pow(Math.max(0, link.strength), 1.6) * 0.85) * 0.25;
+      linkBrightness[linkIndex] = brightness;
       for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
         const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
         linkColors[offset] = baseLinkColor.r * brightness;
@@ -460,7 +463,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         const perpendicularLength = Math.max(0.001, Math.sqrt(
           perpendicularX * perpendicularX + perpendicularY * perpendicularY + perpendicularZ * perpendicularZ,
         ));
-        const arc = 0.9 + seededUnit(link.id, 21) * 2.1;
+        const arc = Math.min(14, 2 + distance * 0.05) * (0.75 + seededUnit(link.id, 21) * 0.5);
         const controlX = (fromX + toX) * 0.5 + perpendicularX / perpendicularLength * arc;
         const controlY = (fromY + toY) * 0.5 + perpendicularY / perpendicularLength * arc;
         const controlZ = (fromZ + toZ) * 0.5 + perpendicularZ / perpendicularLength * arc;
@@ -472,6 +475,37 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       });
       const instanceStartAttr = linkGeometry.getAttribute("instanceStart");
       if (instanceStartAttr && "data" in instanceStartAttr) (instanceStartAttr as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
+    }
+
+    function syncLinkVisibility() {
+      camera.updateMatrixWorld();
+      const viewportHeight = Math.max(1, host.clientHeight);
+      const pixelsPerRadian = viewportHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+      sceneNodes.forEach((node, index) => {
+        cameraSpace.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
+        const depth = -cameraSpace.z;
+        const projectedRadius = depth > 0 ? node.radius * pixelsPerRadian / depth : 0;
+        const distanceVisibility = THREE.MathUtils.smoothstep(projectedRadius, 0.75, 3.5);
+        nodeLinkVisibility[index] = distanceVisibility * visibility[index];
+      });
+
+      renderedLinks.forEach((link, linkIndex) => {
+        const endpointVisibility = Math.min(nodeLinkVisibility[link.fromIndex], nodeLinkVisibility[link.toIndex]);
+        const brightness = linkBrightness[linkIndex] * endpointVisibility;
+        for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
+          const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
+          linkColors[offset] = baseLinkColor.r * brightness;
+          linkColors[offset + 1] = baseLinkColor.g * brightness;
+          linkColors[offset + 2] = baseLinkColor.b * brightness;
+          linkColors[offset + 3] = baseLinkColor.r * brightness;
+          linkColors[offset + 4] = baseLinkColor.g * brightness;
+          linkColors[offset + 5] = baseLinkColor.b * brightness;
+        }
+      });
+      const instanceColorStart = linkGeometry.getAttribute("instanceColorStart");
+      if (instanceColorStart && "data" in instanceColorStart) {
+        (instanceColorStart as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
+      }
     }
 
     function syncNodeAppearance(indices: Array<number | null>) {
@@ -566,6 +600,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         refreshVisibleLabels();
       }
       syncLabels();
+      syncLinkVisibility();
       renderer.render(scene, camera);
     }
 
@@ -704,6 +739,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       simulationTick += 1;
       syncNodeMatrices();
       syncLinkPositions();
+      syncLinkVisibility();
       if (simulationTick % LABEL_REFRESH_TICKS === 0) refreshVisibleLabels();
       if (simulationTick % LABEL_POSITION_TICKS === 0) syncLabels();
       renderer.render(scene, camera);
@@ -730,6 +766,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     syncNodeMatrices();
     syncLinkPositions();
     fitCamera(camera, controls, sceneNodes);
+    syncLinkVisibility();
     syncNodeAppearance([selectedIndex]);
     runtimeRef.current = { camera, controls, nodes: sceneNodes, requestRender, setSelectedNodeId };
     refreshVisibleLabels();
