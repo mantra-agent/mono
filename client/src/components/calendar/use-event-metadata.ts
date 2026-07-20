@@ -15,7 +15,8 @@ export interface EventMetadataRecord {
   capacityType: string | null;
   notes: string | null;
   agenda: string | null;
-  speakerPolicy: { mode: "participant_streams" } | {
+  speakerPolicy: { mode: "participant_streams" } | { mode: "shared_room" } | {
+    /** @deprecated Read-only compatibility for existing metadata. */
     mode: "selected_shared_streams";
     sharedStreams: Array<{
       selector: { attendeeEmail?: string; participantLabel?: string };

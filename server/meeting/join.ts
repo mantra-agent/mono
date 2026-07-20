@@ -111,7 +111,7 @@ export async function joinMeetingByUrl(opts: {
   const { outputMediaPageUrl, syncMeetingVisualizerBotStatus } = await import("./output-media");
   const outputMediaUrl = outputMediaPageUrl(publicUrl, session.id);
   const { canonicalMeetingSTTEnabled, issueMeetingSTTAudioToken } = await import("./stt");
-  const participantAudioUrl = canonicalMeetingSTTEnabled()
+  const participantAudioUrl = canonicalMeetingSTTEnabled(identity.speakerPolicy)
     ? `${publicUrl.replace(/^http/, "ws")}/ws/recall-participant-audio/?sessionId=${encodeURIComponent(session.id)}&token=${encodeURIComponent(issueMeetingSTTAudioToken(session.id))}`
     : undefined;
   let botId: string;
@@ -135,8 +135,12 @@ export async function joinMeetingByUrl(opts: {
   await chatStorage.updateMeetingMeta(session.id, {
     botId,
     outputMediaUrl,
-    sttProvider: participantAudioUrl ? "scribe_realtime" : "recallai_streaming",
-    sttModel: participantAudioUrl ? "scribe_v2_realtime" : "prioritize_low_latency",
+    sttProvider: participantAudioUrl
+      ? identity.speakerPolicy.mode === "shared_room" ? "deepgram" : "scribe_realtime"
+      : "recallai_streaming",
+    sttModel: participantAudioUrl
+      ? identity.speakerPolicy.mode === "shared_room" ? "nova-3" : "scribe_v2_realtime"
+      : "prioritize_low_latency",
     sttSource: participantAudioUrl ? "recall_participant_audio" : "recall_transcript_webhook",
     sttFallback: !participantAudioUrl,
     sttStatus: participantAudioUrl ? "inactive" : "fallback",

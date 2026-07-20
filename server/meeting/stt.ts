@@ -18,6 +18,7 @@ import type {
   MeetingSessionMeta,
   MeetingSpeakerPolicy,
 } from "@shared/models/chat";
+import { normalizeMeetingSpeakerPolicy } from "@shared/models/chat";
 import type { MeetingIngestFn } from "../routes/recall";
 import { runWithMeetingOwnerPrincipal } from "./owner-principal";
 import { publishMeetingAudioLevel, syncMeetingVisualizerBotStatus } from "./output-media";
@@ -25,23 +26,47 @@ import { publishMeetingAudioLevel, syncMeetingVisualizerBotStatus } from "./outp
 const log = createLogger("MeetingSTT");
 const MAX_PARTICIPANT_STREAMS = 16;
 const MAX_PENDING_AUDIO_BYTES = 512 * 1024;
-const AUDIO_TOKEN_BYTES = 32;
-const audioTokensBySession = new Map<string, string>();
+const AUDIO_TOKEN_TTL_MS = 12 * 60 * 60_000;
+const AUDIO_TOKEN_PURPOSE = "meeting-participant-audio";
 
-export function issueMeetingSTTAudioToken(sessionId: string): string {
-  const token = crypto.randomBytes(AUDIO_TOKEN_BYTES).toString("base64url");
-  audioTokensBySession.set(sessionId, token);
-  return token;
+function audioTokenSignature(sessionId: string, expiresAt: number): string {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) throw new Error("SESSION_SECRET is required for meeting participant audio");
+  return crypto
+    .createHmac("sha256", secret)
+    .update(`${AUDIO_TOKEN_PURPOSE}.${sessionId}.${expiresAt}`)
+    .digest("base64url");
 }
 
-function consumeMeetingSTTAudioToken(sessionId: string, suppliedToken: string | null): boolean {
-  const expectedToken = audioTokensBySession.get(sessionId);
-  if (!expectedToken || !suppliedToken) return false;
-  const expected = Buffer.from(expectedToken);
-  const supplied = Buffer.from(suppliedToken);
-  const authorized = expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
-  if (authorized) audioTokensBySession.delete(sessionId);
-  return authorized;
+/** Stateless grant survives Recall reconnects and multi-process routing. */
+export function issueMeetingSTTAudioToken(
+  sessionId: string,
+  expiresAt = Date.now() + AUDIO_TOKEN_TTL_MS,
+): string {
+  return Buffer.from(JSON.stringify({
+    sessionId,
+    expiresAt,
+    signature: audioTokenSignature(sessionId, expiresAt),
+  })).toString("base64url");
+}
+
+function validateMeetingSTTAudioToken(sessionId: string, suppliedToken: string | null): boolean {
+  if (!suppliedToken) return false;
+  try {
+    const grant = JSON.parse(Buffer.from(suppliedToken, "base64url").toString("utf8")) as {
+      sessionId?: string;
+      expiresAt?: number;
+      signature?: string;
+    };
+    if (grant.sessionId !== sessionId || !grant.expiresAt || grant.expiresAt <= Date.now() || !grant.signature) {
+      return false;
+    }
+    const expected = Buffer.from(audioTokenSignature(sessionId, grant.expiresAt));
+    const supplied = Buffer.from(grant.signature);
+    return expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
+  } catch {
+    return false;
+  }
 }
 
 interface RecallAudioPayload {
@@ -85,21 +110,25 @@ function participantId(payload: RecallAudioPayload): string | null {
   return value == null ? null : String(value);
 }
 
-function normalize(value: string | undefined): string {
-  return value?.trim().toLowerCase() || "";
-}
+const RECALL_OUTPUT_PARTICIPANT_ID = "2147483647";
 
-function isSharedStream(policy: MeetingSpeakerPolicy | undefined, identity: StreamIdentity): boolean {
-  if (policy?.mode !== "selected_shared_streams") return false;
-  return policy.sharedStreams.some(({ selector }) => {
-    const emailMatches = selector.attendeeEmail
-      ? normalize(selector.attendeeEmail) === normalize(identity.email)
-      : true;
-    const labelMatches = selector.participantLabel
-      ? normalize(selector.participantLabel) === normalize(identity.label)
-      : true;
-    return emailMatches && labelMatches;
-  });
+type StreamRoute =
+  | { kind: "excluded"; detail: string }
+  | { kind: "diarized"; provider: STTProvider }
+  | { kind: "participant"; provider: STTProvider };
+
+function routeStream(
+  policy: MeetingSpeakerPolicy | undefined,
+  identity: StreamIdentity,
+  providers: { scribe: STTProvider; deepgram: STTProvider },
+): StreamRoute {
+  const normalizedLabel = identity.label?.trim().toLowerCase();
+  if (identity.transportId === RECALL_OUTPUT_PARTICIPANT_ID || normalizedLabel === "mantra agent") {
+    return { kind: "excluded", detail: "Mantra output excluded from human transcript ingestion" };
+  }
+  return normalizeMeetingSpeakerPolicy(policy).mode === "shared_room"
+    ? { kind: "diarized", provider: providers.deepgram }
+    : { kind: "participant", provider: providers.scribe };
 }
 
 function recognitionStatus(streams: MeetingRecognitionStream[], closing = false): MeetingRecognitionState["status"] {
@@ -124,7 +153,7 @@ async function persistRecognition(
   await runWithMeetingOwnerPrincipal(meeting, () =>
     chatStorage.updateMeetingMeta(sessionId, {
       recognition: {
-        mode: meeting.speakerPolicy?.mode || "participant_streams",
+        mode: normalizeMeetingSpeakerPolicy(meeting.speakerPolicy).mode,
         status: recognitionStatus(recognitionStreams, closing),
         streams: recognitionStreams,
       },
@@ -141,7 +170,7 @@ async function persistRecognition(
           : anyActive ? "active" : "inactive",
       sttStatusDetail: closing
         ? "Recall participant audio stream closed"
-        : `${recognitionStreams.filter((stream) => stream.status === "active").length}/${recognitionStreams.length} participant streams active`,
+        : `${recognitionStreams.filter((stream) => stream.status === "active").length} active, ${recognitionStreams.filter((stream) => stream.status === "excluded").length} excluded, ${recognitionStreams.length} total audio streams`,
     }),
   );
 }
@@ -153,7 +182,7 @@ async function ingestFinalUtterance(
   diarized: boolean,
 ): Promise<void> {
   const clusterKey = diarized
-    ? `${utterance.participant.transportId}:deepgram:${utterance.providerSpeakerId || "unknown"}`
+    ? `stream:${utterance.streamId}:deepgram:${utterance.providerSpeakerId || "unknown"}`
     : `recall:${utterance.participant.transportId}`;
   const result = await ingestMeetingEvent({
     sessionId,
@@ -207,6 +236,7 @@ export function registerMeetingSTTAudioTransport(
 
   wss.on("connection", (socket: WebSocket) => {
     const streams = new Map<string, ParticipantStream>();
+    const streamInitializations = new Map<string, Promise<ParticipantStream>>();
     const meetings = new Map<string, MeetingSessionMeta>();
     let closed = false;
 
@@ -233,9 +263,10 @@ export function registerMeetingSTTAudioTransport(
     const connectStream = (
       identity: StreamIdentity,
       meeting: MeetingSessionMeta,
-      provider: STTProvider,
-      diarized: boolean,
+      route: Extract<StreamRoute, { kind: "participant" | "diarized" }>,
     ): ParticipantStream => {
+      const provider = route.provider;
+      const diarized = route.kind === "diarized";
       const recognition: MeetingRecognitionStream = {
         streamKey: identity.streamId,
         transportParticipantId: identity.transportId,
@@ -284,6 +315,50 @@ export function registerMeetingSTTAudioTransport(
       return stream;
     };
 
+    const excludeStream = (identity: StreamIdentity, detail: string): ParticipantStream => ({
+      identity,
+      recognition: {
+        streamKey: identity.streamId,
+        transportParticipantId: identity.transportId,
+        transportLabel: identity.label,
+        attribution: "excluded",
+        provider: "none",
+        model: "bot_output_exclusion",
+        status: "excluded",
+        detail,
+      },
+      pendingAudio: [],
+      pendingBytes: 0,
+      connectPromise: Promise.resolve(),
+    });
+
+    const initializeStream = async (
+      sessionId: string,
+      transportId: string,
+      payload: RecallAudioPayload,
+    ): Promise<ParticipantStream> => {
+      const participant = payload.data?.data?.participant;
+      const identity: StreamIdentity = {
+        sessionId,
+        transportId,
+        streamId: `${payload.data?.audio_separate?.id || payload.data?.realtime_endpoint?.id || `recall:${sessionId}`}:participant:${transportId}`,
+        label: participant?.name || undefined,
+        email: participant?.email || undefined,
+      };
+      const meeting = await loadMeeting(sessionId);
+      const route = routeStream(meeting.speakerPolicy, identity, {
+        scribe: scribeProvider,
+        deepgram: deepgramProvider,
+      });
+      const stream = route.kind === "excluded"
+        ? excludeStream(identity, route.detail)
+        : connectStream(identity, meeting, route);
+      streams.set(`${sessionId}:${transportId}`, stream);
+      await persistRecognition(sessionId, meeting, streams);
+      log.info(`meeting audio stream routed sessionId=${sessionId} participantId=${transportId} route=${route.kind} stream=${identity.streamId}`);
+      return stream;
+    };
+
     socket.on("message", async (raw) => {
       try {
         const payload = JSON.parse(raw.toString()) as RecallAudioPayload;
@@ -295,27 +370,22 @@ export function registerMeetingSTTAudioTransport(
           log.warn("Recall participant audio packet missing session, participant, or buffer");
           return;
         }
-        let stream = streams.get(`${sessionId}:${transportId}`);
+        const streamKey = `${sessionId}:${transportId}`;
+        let stream = streams.get(streamKey);
         if (!stream) {
-          if (streams.size >= MAX_PARTICIPANT_STREAMS) {
-            log.warn(`meeting participant stream cap reached sessionId=${sessionId} cap=${MAX_PARTICIPANT_STREAMS}`);
-            return;
+          let initialization = streamInitializations.get(streamKey);
+          if (!initialization) {
+            if (streams.size + streamInitializations.size >= MAX_PARTICIPANT_STREAMS) {
+              log.warn(`meeting participant stream cap reached sessionId=${sessionId} cap=${MAX_PARTICIPANT_STREAMS}`);
+              return;
+            }
+            initialization = initializeStream(sessionId, transportId, payload)
+              .finally(() => streamInitializations.delete(streamKey));
+            streamInitializations.set(streamKey, initialization);
           }
-          const participant = payload.data?.data?.participant;
-          const identity: StreamIdentity = {
-            sessionId,
-            transportId,
-            streamId: payload.data?.audio_separate?.id || payload.data?.realtime_endpoint?.id || `recall:${sessionId}:${transportId}`,
-            label: participant?.name || undefined,
-            email: participant?.email || undefined,
-          };
-          const meeting = await loadMeeting(sessionId);
-          const diarized = isSharedStream(meeting.speakerPolicy, identity);
-          const provider = diarized ? deepgramProvider : scribeProvider;
-          stream = connectStream(identity, meeting, provider, diarized);
-          streams.set(`${sessionId}:${transportId}`, stream);
-          await persistRecognition(sessionId, meeting, streams);
+          stream = await initialization;
         }
+        if (stream.recognition.status === "excluded") return;
         const bytes = Buffer.from(audioBase64, "base64");
         publishMeetingAudioLevel(sessionId, pcm16Rms(bytes));
         if (stream.stt) stream.stt.sendAudio(bytes);
@@ -340,9 +410,9 @@ export function registerMeetingSTTAudioTransport(
   return (request, socket, head) => {
     const query = new URL(request.url || "", "http://localhost").searchParams;
     const sessionId = query.get("sessionId");
-    const authorized = Boolean(sessionId && consumeMeetingSTTAudioToken(sessionId, query.get("token")));
-    if (!canonicalMeetingSTTEnabled() || !authorized) {
-      log.warn(`Recall audio upgrade rejected configured=${canonicalMeetingSTTEnabled()} authorized=${authorized} fallback=recall_transcript_webhook policy=${HIGH_QUALITY_SCRIBE_POLICY.model}`);
+    const authorized = Boolean(sessionId && validateMeetingSTTAudioToken(sessionId, query.get("token")));
+    if (!authorized) {
+      log.warn("Recall audio upgrade rejected authorized=false fallback=recall_transcript_webhook");
       socket.destroy();
       return;
     }
@@ -350,6 +420,8 @@ export function registerMeetingSTTAudioTransport(
   };
 }
 
-export function canonicalMeetingSTTEnabled(): boolean {
-  return new ScribeRealtimeSTTProvider().isConfigured();
+export function canonicalMeetingSTTEnabled(policy?: MeetingSpeakerPolicy): boolean {
+  return normalizeMeetingSpeakerPolicy(policy).mode === "shared_room"
+    ? new DeepgramDiarizingSTTProvider().isConfigured()
+    : new ScribeRealtimeSTTProvider().isConfigured();
 }

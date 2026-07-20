@@ -5300,11 +5300,15 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         return { result: `Invalid eventType "${eventType}". Valid types: ${EVENT_TYPES.join(", ")}`, error: true };
       }
 
-      const speakerPolicy = args.sharedAudioAttendeeEmail
-        ? { mode: "selected_shared_streams" as const, sharedStreams: [{ selector: { attendeeEmail: args.sharedAudioAttendeeEmail } }] }
-        : args.sharedAudioAttendeeEmail === null
-          ? { mode: "participant_streams" as const }
-          : undefined;
+      const speakerPolicy = typeof args.sharedRoom === "boolean"
+        ? { mode: args.sharedRoom ? "shared_room" as const : "participant_streams" as const }
+        // Legacy attendee-email input now toggles the meeting-level topology.
+        // The room occupants never need to match a calendar identity.
+        : args.sharedAudioAttendeeEmail
+          ? { mode: "shared_room" as const }
+          : args.sharedAudioAttendeeEmail === null
+            ? { mode: "participant_streams" as const }
+            : undefined;
       const meta = await setMetadata(googleEventId, accountId, calendarId, eventType, args.notes, attendeeEmails, undefined, undefined, speakerPolicy);
       if (args.agendaLibraryPageId || args.agenda !== undefined) {
         const { setMeetingAgendaPage } = await import("./calendar-metadata");

@@ -466,6 +466,7 @@ export function registerCalendarRoutes(app: Express): void {
     attendeeEmails: z.array(z.string()).optional(),
     speakerPolicy: z.discriminatedUnion("mode", [
       z.object({ mode: z.literal("participant_streams") }),
+      z.object({ mode: z.literal("shared_room") }),
       z.object({
         mode: z.literal("selected_shared_streams"),
         sharedStreams: z.array(z.object({
