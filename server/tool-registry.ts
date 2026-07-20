@@ -474,13 +474,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   library: {
-    description: "Manage Library wiki pages and Notes scratchpad. Anything the user may share externally, including drafts, specs, research, bug reports, and analysis, belongs in a Library page rather than scratch. Actions: list_library_pages, get_library_page, resolve_parent, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate. Any page can have child pages, optional tags, and an optional status. Use 'browse_tree' or 'tree' to see the full page hierarchy as an indented outline. Use canonical @page:slug syntax in messages to link to library pages. Legacy [page:slug] syntax is accepted during migration. Prefer edit_library_page over update_library_page for targeted changes to existing page content — it avoids re-transmitting the entire document.",
+    description: "Manage Library wiki pages and Notes scratchpad. Anything the user may share externally, including drafts, specs, research, bug reports, and analysis, belongs in a Library page rather than scratch. Actions: list_library_pages, get_library_page, compile_library_page, query_index, resolve_parent, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate. Any page can have child pages, optional tags, and an optional status. Use 'browse_tree' or 'tree' to see the full page hierarchy as an indented outline. Use canonical @page:slug syntax in messages to link to library pages. Legacy [page:slug] syntax is accepted during migration. Prefer edit_library_page over update_library_page for targeted changes to existing page content — it avoids re-transmitting the entire document.",
     category: "knowledge",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list_library_pages", "get_library_page", "resolve_parent", "create_library_page", "update_library_page", "edit_library_page", "dismiss_library_page", "delete_library_page", "search_library_pages", "search", "browse_tree", "tree", "link_pages", "annotate"], description: "The action to perform" },
+        action: { type: "string", enum: ["list_library_pages", "get_library_page", "compile_library_page", "query_index", "resolve_parent", "create_library_page", "update_library_page", "edit_library_page", "dismiss_library_page", "delete_library_page", "search_library_pages", "search", "browse_tree", "tree", "link_pages", "annotate"], description: "The action to perform" },
         id: { type: "string", description: "Page ID/slug" },
         title: { type: "string", description: "Title (for create/update)" },
         plainTextContent: { type: "string", description: "Markdown content for pages (automatically converted to rich TipTap JSON and stored as the single source of truth)" },
