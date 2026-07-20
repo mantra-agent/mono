@@ -97,6 +97,7 @@ export const libraryPages = pgTable(
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
     vaultId: text("vault_id"),
+    structuralRole: text("structural_role").notNull().default("artifact"),
     createdByUserId: text("created_by_user_id"),
     updatedByUserId: text("updated_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -115,6 +116,7 @@ export const libraryPages = pgTable(
     index("idx_library_pages_scope_owner").on(table.scope, table.ownerUserId),
     index("idx_library_pages_account").on(table.accountId),
     index("idx_library_pages_vault").on(table.vaultId),
+    index("idx_library_pages_structural_role").on(table.structuralRole),
   ],
 );
 
@@ -139,6 +141,7 @@ export const insertLibraryPageSchema = createInsertSchema(libraryPages)
     surfaceUntil: z.date().nullable().optional(),
     surfaceReason: z.string().nullable().optional(),
     surfaceSection: z.string().nullable().optional(),
+    structuralRole: z.enum(["source", "artifact", "wiki", "meta"]).optional(),
   });
 
 export type LibraryPage = typeof libraryPages.$inferSelect;
