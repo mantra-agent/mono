@@ -128,9 +128,19 @@ const nodeFragmentShader = `
 
 function colorFromToken(token: string): THREE.Color {
   const rootStyles = getComputedStyle(document.documentElement);
-  const value = rootStyles.getPropertyValue(token).trim();
+  const raw = rootStyles.getPropertyValue(token).trim();
   const fallback = rootStyles.getPropertyValue("--foreground").trim() || getComputedStyle(document.body).color;
-  return new THREE.Color(value ? `hsl(${value})` : fallback.startsWith("rgb") ? fallback : `hsl(${fallback})`);
+  const value = raw || fallback;
+  // Tailwind stores HSL as "217 91% 60%" — THREE.Color needs comma-separated "hsl(h, s%, l%)"
+  const hslMatch = value.match(/^([\d.]+)\s+([\d.]+)%\s+([\d.]+)%$/);
+  if (hslMatch) {
+    const c = new THREE.Color();
+    c.setHSL(parseFloat(hslMatch[1]) / 360, parseFloat(hslMatch[2]) / 100, parseFloat(hslMatch[3]) / 100);
+    return c;
+  }
+  // Fallback: try direct CSS parse (hex, rgb, named, etc.)
+  try { return new THREE.Color(value.startsWith("rgb") ? value : `hsl(${value})`); }
+  catch { return new THREE.Color(0x3b82f6); }
 }
 
 function seededUnit(id: number, salt: number): number {
@@ -380,7 +390,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       vertexColors: true,
       transparent: true,
       opacity: 0.62,
-      linewidth: 2,
+      linewidth: 1,
       depthWrite: false,
       resolution: new THREE.Vector2(host.clientWidth, host.clientHeight),
     });
