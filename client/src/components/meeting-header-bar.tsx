@@ -23,6 +23,7 @@ import {
   Ear,
   Hourglass,
   Loader2,
+  LogOut,
   Mail,
   Radio,
   Users,
@@ -45,6 +46,7 @@ const log = createLogger("MeetingHeaderBar");
 
 /** Ray-facing explanation per terminal/waiting state. Never a silent fail. */
 const STATUS_BANNER: Partial<Record<MeetingBotStatus, string>> = {
+  leaving: "Mantra is leaving the meeting. Waiting for Recall to confirm departure.",
   in_lobby:
     "Waiting to be admitted — admit 'Mantra Agent' from the meeting participants panel.",
   denied:
@@ -255,6 +257,8 @@ export function MeetingHeaderBar({
 }) {
   const elapsed = useElapsed(meeting.startedAt, meeting.endedAt);
   const isLive = meeting.botStatus === "live";
+  const isTransportActive = isLive || meeting.botStatus === "leaving";
+  const departureMeaningful = ["dialing", "in_lobby", "live", "leaving"].includes(meeting.botStatus);
   const title = meeting.title || sessionTitle || "Meeting";
   const meetingReference = meeting.calendarAccountId && meeting.calendarId && meeting.providerEventId
     ? createReferenceRef({
@@ -291,6 +295,30 @@ export function MeetingHeaderBar({
       log.error("Listen mode toggle failed", { sessionId, error });
       toast({
         title: "Listen mode update failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const leaveMeeting = useMutation({
+    mutationFn: async () => {
+      if (!sessionId) throw new Error("Meeting session unavailable");
+      const response = await apiRequest(
+        "POST",
+        `/api/meetings/${encodeURIComponent(sessionId)}/leave`,
+      );
+      return response.json();
+    },
+    onSuccess: () => {
+      if (!sessionId) return;
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+    },
+    onError: (error: Error) => {
+      log.error("Meeting leave failed", { sessionId, error });
+      toast({
+        title: "Could not leave meeting",
         description: error.message,
         variant: "destructive",
       });
@@ -381,12 +409,12 @@ export function MeetingHeaderBar({
               refValue={meetingReference}
               surface="card"
               IconOverride={Radio}
-              className={isLive ? "min-w-0 !text-active hover:!text-active" : "min-w-0 !text-muted-foreground hover:!text-muted-foreground"}
-              iconClassName={isLive ? "text-active animate-pulse" : "text-muted-foreground"}
+              className={isTransportActive ? "min-w-0 !text-active hover:!text-active" : "min-w-0 !text-muted-foreground hover:!text-muted-foreground"}
+              iconClassName={isTransportActive ? "text-active animate-pulse" : "text-muted-foreground"}
             />
           ) : (
-            <span className={cn("inline-flex min-w-0 items-center gap-1 text-sm font-medium", isLive ? "text-active" : "text-muted-foreground")}>
-              <Radio className={cn("h-3.5 w-3.5 shrink-0", isLive && "animate-pulse")} />
+            <span className={cn("inline-flex min-w-0 items-center gap-1 text-sm font-medium", isTransportActive ? "text-active" : "text-muted-foreground")}>
+              <Radio className={cn("h-3.5 w-3.5 shrink-0", isTransportActive && "animate-pulse")} />
               <span className="truncate">{title}</span>
             </span>
           )}
@@ -424,31 +452,53 @@ export function MeetingHeaderBar({
             ))}
           </div>
         )}
-        {isLive && sessionId && (
-          <Button
-            variant="outline"
-            size="sm"
-            className={cn(
-              "ml-auto h-6 gap-1.5 px-2 text-xs",
-              isListenOnly && "border-active/40 text-active hover:text-active",
+        {sessionId && (isLive || departureMeaningful) && (
+          <div className="ml-auto flex items-center gap-1.5">
+            {isLive && (
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn(
+                  "h-6 gap-1.5 px-2 text-xs",
+                  isListenOnly && "border-active/40 text-active hover:text-active",
+                )}
+                onClick={() => toggleListenMode.mutate()}
+                disabled={toggleListenMode.isPending || leaveMeeting.isPending}
+                data-testid="button-toggle-listen-mode"
+                title={
+                  isListenOnly
+                    ? "Mantra is listening only — click to let it speak again"
+                    : "Mute Mantra for this meeting — it keeps transcribing and will still build the recap"
+                }
+                aria-pressed={isListenOnly}
+              >
+                {toggleListenMode.isPending ? (
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                ) : (
+                  <Ear className="h-3 w-3 shrink-0" />
+                )}
+                <span>{isListenOnly ? "Listen mode on" : "Listen mode"}</span>
+              </Button>
             )}
-            onClick={() => toggleListenMode.mutate()}
-            disabled={toggleListenMode.isPending}
-            data-testid="button-toggle-listen-mode"
-            title={
-              isListenOnly
-                ? "Mantra is listening only — click to let it speak again"
-                : "Mute Mantra for this meeting — it keeps transcribing and will still build the recap"
-            }
-            aria-pressed={isListenOnly}
-          >
-            {toggleListenMode.isPending ? (
-              <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-            ) : (
-              <Ear className="h-3 w-3 shrink-0" />
+            {departureMeaningful && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 gap-1.5 border-destructive/30 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                onClick={() => leaveMeeting.mutate()}
+                disabled={leaveMeeting.isPending || meeting.botStatus === "leaving"}
+                data-testid="button-leave-meeting"
+                title="Remove Mantra Agent from this meeting"
+              >
+                {leaveMeeting.isPending || meeting.botStatus === "leaving" ? (
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                ) : (
+                  <LogOut className="h-3 w-3 shrink-0" />
+                )}
+                <span>{leaveMeeting.isPending || meeting.botStatus === "leaving" ? "Leaving…" : "Leave"}</span>
+              </Button>
             )}
-            <span>{isListenOnly ? "Listen mode on" : "Listen mode"}</span>
-          </Button>
+          </div>
         )}
       </div>
 
@@ -618,7 +668,9 @@ export function MeetingHeaderBar({
             "flex items-center gap-2 px-4 py-1.5 text-xs",
             meeting.botStatus === "in_lobby"
               ? "text-warning-foreground bg-warning/10"
-              : "text-destructive bg-destructive/10",
+              : meeting.botStatus === "leaving"
+                ? "text-muted-foreground bg-muted/20"
+                : "text-destructive bg-destructive/10",
           )}
           data-testid="banner-meeting-status"
         >

@@ -693,6 +693,7 @@ export type MeetingBotStatus =
   | "dialing"
   | "in_lobby"
   | "live"
+  | "leaving"
   | "denied"
   | "failed"
   | "ended";
@@ -906,7 +907,7 @@ export function isDurablyActiveSession(session: Pick<ChatSession, "status" | "ty
   return session.status === "streaming" ||
     !!session.hasActiveDescendant ||
     !!session.hasActivePlan ||
-    (session.type === "meeting" && session.meeting?.botStatus === "live");
+    (session.type === "meeting" && (session.meeting?.botStatus === "live" || session.meeting?.botStatus === "leaving"));
 }
 
 export type ToolCallStatus = "running" | "done" | "error";

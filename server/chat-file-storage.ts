@@ -145,6 +145,12 @@ export interface FileSession extends ChatSession {
   personaId?: number | null;
 }
 
+export type MeetingLeaveClaim =
+  | { outcome: "claimed"; session: FileSession; previousStatus: MeetingSessionMeta["botStatus"] }
+  | { outcome: "already_leaving"; session: FileSession }
+  | { outcome: "not_leaveable"; session: FileSession }
+  | { outcome: "not_meeting" };
+
 export type MeetingRecapClaim =
   | { outcome: "claimed"; session: FileSession }
   | { outcome: "already_generating"; session: FileSession }
@@ -1085,6 +1091,12 @@ export interface IChatFileStorage {
     sessionId: string,
     patch: Partial<MeetingSessionMeta>,
   ): Promise<FileSession | null>;
+  claimMeetingLeave(sessionId: string): Promise<MeetingLeaveClaim>;
+  restoreMeetingLeave(
+    sessionId: string,
+    previousStatus: MeetingSessionMeta["botStatus"],
+    statusDetail?: string,
+  ): Promise<FileSession | null>;
   claimMeetingRecap(sessionId: string): Promise<MeetingRecapClaim>;
   registerMeetingParticipant(
     sessionId: string,
@@ -1418,7 +1430,7 @@ export const chatFileStorage: IChatFileStorage = {
         data.title = title;
       }
       const previousStatus = data.status;
-      data.status = data.type === "meeting" && data.meeting?.botStatus === "live"
+      data.status = data.type === "meeting" && (data.meeting?.botStatus === "live" || data.meeting?.botStatus === "leaving")
         ? "streaming"
         : "saved";
       data.updatedAt = new Date().toISOString();
@@ -1798,7 +1810,7 @@ export const chatFileStorage: IChatFileStorage = {
         ...patch,
         participants: patch.participants ?? existing.participants,
       };
-      if (patch.botStatus === "live") data.status = "streaming";
+      if (patch.botStatus === "live" || patch.botStatus === "leaving") data.status = "streaming";
       if (patch.botStatus === "failed") data.status = "failed";
       if (patch.botStatus === "ended" || patch.botStatus === "denied") data.status = "saved";
       data.updatedAt = new Date().toISOString();
@@ -1810,6 +1822,50 @@ export const chatFileStorage: IChatFileStorage = {
         session: meta,
       });
       return meta;
+    });
+  },
+
+  /** Atomically claim departure so concurrent callers dispatch Recall once. */
+  async claimMeetingLeave(sessionId: string): Promise<MeetingLeaveClaim> {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data || data.type !== "meeting" || !data.meeting) {
+        return { outcome: "not_meeting" };
+      }
+      const existing = convToMeta(data);
+      if (data.meeting.botStatus === "leaving") {
+        return { outcome: "already_leaving", session: existing };
+      }
+      if (!["dialing", "in_lobby", "live"].includes(data.meeting.botStatus)) {
+        return { outcome: "not_leaveable", session: existing };
+      }
+      const previousStatus = data.meeting.botStatus;
+      data.meeting = {
+        ...data.meeting,
+        botStatus: "leaving",
+        statusDetail: "Departure requested",
+      };
+      data.status = "streaming";
+      data.updatedAt = new Date().toISOString();
+      await writeConv(data);
+      const session = convToMeta(data);
+      invalidateSessionsCache({ action: "updated", sessionId, session });
+      return { outcome: "claimed", session, previousStatus };
+    });
+  },
+
+  /** Restore a failed departure claim only while it still owns the leaving state. */
+  async restoreMeetingLeave(sessionId, previousStatus, statusDetail) {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data?.meeting || data.meeting.botStatus !== "leaving") return null;
+      data.meeting = { ...data.meeting, botStatus: previousStatus, statusDetail };
+      data.status = "streaming";
+      data.updatedAt = new Date().toISOString();
+      await writeConv(data);
+      const session = convToMeta(data);
+      invalidateSessionsCache({ action: "updated", sessionId, session });
+      return session;
     });
   },
 

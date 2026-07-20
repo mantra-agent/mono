@@ -3253,6 +3253,19 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       );
     }
 
+    // A persisted departure claim owns lifecycle until Recall confirms a
+    // terminal state. Delayed joining/live events must not resurrect the bot.
+    if (
+      meeting.botStatus === "leaving" &&
+      event.botStatus &&
+      !["ended", "failed", "denied"].includes(event.botStatus)
+    ) {
+      chatLog.debug(
+        `meeting ingest: ignored lifecycle regression while leaving sessionId=${sessionId} status=${event.botStatus}`,
+      );
+      return { ok: true, sessionId, sessionKey, queued: false };
+    }
+
     // M2: fire end-of-meeting finalization exactly once on the ended
     // transition. The recap claim in storage is atomic, so duplicate end
     // events (e.g. Recall bot.call_ended + bot.done) are no-ops.

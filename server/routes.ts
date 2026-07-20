@@ -35,6 +35,7 @@ import { registerBackupRoutes } from "./routes/backup";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerMeetingDistributionRoutes } from "./routes/meeting-distributions";
 import { registerMeetingPolicyRoutes } from "./routes/meeting-policy";
+import { registerMeetingLifecycleRoutes } from "./routes/meeting-lifecycle";
 import { requireAuth, requireAdmin } from "./auth";
 import { findOrphanedChildren, cleanupOrphanedChildren } from "./session-tree-cleanup";
 import { resolveUserPrincipalForSessionRequest } from "./client-presence";
@@ -187,6 +188,7 @@ export async function registerRoutes(
   registerAdminRoutes(app);
   registerMeetingDistributionRoutes(app);
   registerMeetingPolicyRoutes(app);
+  registerMeetingLifecycleRoutes(app);
   (async () => {
     try {
       const { documentStorage } = await import("./memory/document-storage");

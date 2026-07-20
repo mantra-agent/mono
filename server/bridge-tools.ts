@@ -8602,20 +8602,30 @@ ${refs}` : ""),
           data: { draftIds },
         };
       }
-      // leave
-      const botId = session.meeting.botId;
-      if (!botId) return { result: "This meeting session has no Recall bot attached.", error: true };
-      try {
-        const { leaveRecallBot } = await import("./integrations/recall/client");
-        await leaveRecallBot(botId);
-      } catch (err) {
-        return { result: `Failed to remove bot from call: ${err instanceof Error ? err.message : String(err)}`, error: true };
+      // leave — delegate to the same owner-scoped lifecycle boundary as HTTP.
+      const { getCurrentPrincipal } = await import("./principal-context");
+      const principal = getCurrentPrincipal();
+      if (!principal) {
+        return { result: "A user principal is required to remove a meeting bot.", error: true };
       }
-      await chatStorage.updateMeetingMeta(sessionId, {
-        botStatus: "ended",
-        endedAt: new Date().toISOString(),
-      });
-      return { result: JSON.stringify({ sessionId, botStatus: "ended", left: true }) };
+      const { requestMeetingBotLeave } = await import("./meeting/leave");
+      const leave = await requestMeetingBotLeave(sessionId, principal);
+      if (leave.outcome === "not_found") {
+        return { result: `No meeting session found for id ${sessionId}`, error: true };
+      }
+      if (leave.outcome === "not_leaveable") {
+        return { result: `The meeting bot is no longer active (${leave.session.meeting?.botStatus ?? "unknown"}).`, error: true };
+      }
+      if (leave.outcome === "failed") {
+        return { result: `Failed to remove bot from call: ${leave.error}`, error: true };
+      }
+      return {
+        result: JSON.stringify({
+          sessionId,
+          botStatus: leave.session.meeting?.botStatus,
+          outcome: leave.outcome,
+        }),
+      };
     }
 
     // join — delegates to the canonical join path in server/meeting/join.ts
