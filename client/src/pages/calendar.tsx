@@ -510,7 +510,7 @@ export default function CalendarPage() {
   const [, navigate] = useLocation();
   const { timezone } = useTimezone();
 
-  usePageHeader({ title: "Schedule" });
+  usePageHeader({ title: "Schedule", skip: Boolean(detailEventId) });
 
   const sections = useMemo(() => makeScheduleSections(view), [view]);
   const range = useMemo(() => ({
