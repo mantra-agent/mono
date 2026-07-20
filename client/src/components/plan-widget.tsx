@@ -374,7 +374,7 @@ export function PlanWidget({
   return (
     <>
       <div className={cn("min-w-0", className)}>
-        <div className="flex min-w-0 items-center gap-2 px-2 py-1.5">
+        <div className="group flex min-w-0 items-center gap-2 px-2 py-1.5">
           <div className="min-w-0 flex-1">
             {plan.pageSlug ? (
               <ReferenceRenderer
@@ -396,7 +396,7 @@ export function PlanWidget({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8 shrink-0"
+                  className="h-8 w-8 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
                 >
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
@@ -442,7 +442,7 @@ export function PlanWidget({
           )}
         </div>
 
-        <div className="max-h-[28rem] space-y-0.5 overflow-y-auto pr-2 scrollbar-thin">
+        <div className="max-h-[28rem] overflow-y-auto pr-2 scrollbar-thin">
           {plan.steps.map((step, stepIndex) => (
             <PlanStepCheckbox
               key={step.id}
