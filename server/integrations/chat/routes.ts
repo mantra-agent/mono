@@ -2130,7 +2130,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
               name: "orientation_apply",
               status: "done",
               elapsedMs: Math.max(0, orientEndedAt - orientation.llm.endedAt),
-              detail: "title · topics · persona · context",
+              detail: orientation.personaPreserved
+                ? "title · topics · persona preserved · context"
+                : "title · topics · persona assigned · context",
               parentId: orientationStepId,
               startedAt: orientation.llm.endedAt,
               endedAt: orientEndedAt,

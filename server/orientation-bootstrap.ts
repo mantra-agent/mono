@@ -9,15 +9,16 @@
 // routing resolves for a chat turn, an unoriented session gets a single
 // fixed-template fast-tier classification call (no context assembly) that
 // picks title, topics, and persona from the persona definitions. The result
-// is applied through the canonical `orient` mutation path, so persona
-// activation, session events, and context flags all flow through the same
-// enforcement boundary as a model-issued orient call. Model routing then
-// resolves from the newly activated persona, and the main turn runs with
+// is applied through the canonical `orient` mutation path. Bootstrap persona
+// selection is conditional: a persona already owned by the session
+// is preserved atomically, while sessions without one receive the routed
+// persona. Model routing then resolves from the effective session persona, and
+// the main turn runs with
 // full context on the correct tier. The handoff is invisible to the user.
 //
-// Fail-closed: if the classification call or parse fails, the Default
-// persona is activated (never left on a stale fast-tier persona) and the
-// session stays untitled so the next turn retries.
+// Fail-closed: if the classification call or parse fails, a preselected
+// session persona is preserved; otherwise Default is activated. The session
+// stays untitled so the next turn retries.
 import { createLogger } from "./log";
 import { chatCompletion } from "./model-client";
 import { resolveModelCandidates, type ModelRoutingDecision } from "./model-routing";
@@ -58,6 +59,7 @@ export interface OrientationBootstrapResult {
   title?: string;
   topics?: string[];
   personaName?: string;
+  personaPreserved?: boolean;
   fallback?: boolean;
   fallbackReason?: "classification-unparseable" | "orient-apply-failed" | "bootstrap-failed";
   elapsedMs: number;
@@ -143,7 +145,12 @@ async function applyOrient(
 ): Promise<{ error?: boolean; result: string }> {
   const { executeTool } = await import("./bridge-tools");
   const toolCallId = `orientation-bootstrap-${Date.now()}`;
-  return executeTool("orient", toolCallId, { ...args, reasoning: "Orientation bootstrap routed this session before model selection." }, { sessionId, sessionKey });
+  return executeTool(
+    "orient",
+    toolCallId,
+    { ...args, reasoning: "Orientation bootstrap routed this session before model selection." },
+    { sessionId, sessionKey, orientationPersonaPolicy: "preserve_existing" },
+  );
 }
 
 async function loadOrientationInputs(userMessage: string): Promise<{
@@ -274,13 +281,18 @@ export async function ensureSessionOriented(options: {
       });
     }
 
-    log.info(`bootstrap oriented sessionId=${sessionId} title="${classification.title}" persona=${classification.persona} topics=${classification.topics.length} elapsedMs=${Date.now() - startedAt}`);
+    const { resolveSessionPersona } = await import("./session-persona");
+    const effectivePersona = await resolveSessionPersona(sessionId, { persistFallback: false });
+    const effectivePersonaName = effectivePersona?.name ?? classification.persona;
+    const personaPreserved = Boolean(session.personaId) || effectivePersonaName !== classification.persona;
+    log.info(`bootstrap oriented sessionId=${sessionId} title="${classification.title}" routedPersona=${classification.persona} effectivePersona=${effectivePersonaName} personaPreserved=${personaPreserved} topics=${classification.topics.length} elapsedMs=${Date.now() - startedAt}`);
     return {
       applied: true,
       skipped: null,
       title: classification.title,
       topics: classification.topics,
-      personaName: classification.persona,
+      personaName: effectivePersonaName,
+      personaPreserved,
       elapsedMs: Date.now() - startedAt,
       llm,
     };
@@ -292,7 +304,7 @@ export async function ensureSessionOriented(options: {
   }
 }
 
-/** Fail closed: activate the Default persona so the turn never runs on a stale fast-tier persona. Session stays untitled and retries next turn. */
+/** Fail closed: preserve a preselected persona, otherwise activate Default. Session stays untitled and retries next turn. */
 async function failClosed(
   sessionId: string,
   sessionKey: string | undefined,
@@ -305,10 +317,12 @@ async function failClosed(
     if (fallback) {
       const applied = await applyOrient(sessionId, sessionKey, { persona: fallback.name });
       if (applied.error) log.warn(`bootstrap fail-closed orient failed sessionId=${sessionId}: ${applied.result}`);
+      const { resolveSessionPersona } = await import("./session-persona");
+      const effectivePersona = await resolveSessionPersona(sessionId, { persistFallback: false });
       return {
         applied: false,
         skipped: null,
-        personaName: fallback.name,
+        personaName: effectivePersona?.name ?? fallback.name,
         fallback: true,
         fallbackReason: diagnostic.fallbackReason,
         elapsedMs: Date.now() - startedAt,

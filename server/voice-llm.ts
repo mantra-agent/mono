@@ -606,7 +606,12 @@ async function executeVoiceTurn(
           session.cachedSystemPrompt = null;
           session.cachedSystemPromptFocusKey = null;
           session.cachedAt = 0;
-          publishVoiceDiagnostic(session, "orientation_bootstrap", `Oriented "${orientation.title}" → ${orientation.personaName}`, { turn: currentTurn, elapsedMs: orientation.elapsedMs });
+          publishVoiceDiagnostic(
+            session,
+            "orientation_bootstrap",
+            `Oriented "${orientation.title}" → ${orientation.personaName}${orientation.personaPreserved ? " (preserved)" : ""}`,
+            { turn: currentTurn, elapsedMs: orientation.elapsedMs },
+          );
         } else if (orientation.fallback) {
           publishVoiceDiagnostic(session, "orientation_bootstrap", `Orientation fell back (${orientation.fallbackReason})`, { turn: currentTurn, status: "error", elapsedMs: orientation.elapsedMs });
         }
