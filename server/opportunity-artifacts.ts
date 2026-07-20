@@ -15,7 +15,7 @@
  *           ├── Cover Letter — {Opp Title}  (kind: cover_letter, per-opportunity)
  *           └── Resume — {Opp Title}        (kind: resume, per-opportunity)
  */
-import { db, acquireLibraryParentLocks } from "./db";
+import { db } from "./db";
 import { eq, and } from "drizzle-orm";
 import { libraryPages, type ArtifactKind, type OpportunityRow } from "@shared/schema";
 import { opportunityStorage } from "./opportunity-storage";
@@ -23,26 +23,19 @@ import { createLogger } from "./log";
 
 const log = createLogger("OpportunityArtifacts");
 
-function slugify(title: string): string {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "page";
-}
 
 async function createPage(title: string, parentId: string | null, placeholder: string): Promise<{ id: string; slug: string }> {
-  const { syncContentFields } = await import("@shared/markdown-tiptap");
-  const synced = syncContentFields({ markdown: placeholder });
-  const page = await db.transaction(async (tx) => {
-    await acquireLibraryParentLocks(tx, [parentId]);
-    const [row] = await tx.insert(libraryPages).values({
-      title,
-      slug: slugify(title),
-      content: synced.content,
-      plainTextContent: synced.plainTextContent,
-      parentId,
-      tags: ["opportunity-artifact"],
-    }).returning();
-    return row;
+  const { createFiledLibraryPage } = await import("./library-save");
+  const page = await createFiledLibraryPage({
+    title,
+    markdown: placeholder,
+    purpose: "opportunities",
+    explicitParentId: parentId,
+    pageContext: "/exec",
+    contentSummary: `Opportunity artifact hierarchy page: ${title}`,
+    tags: ["opportunity-artifact"],
   });
-  log.log(`created page "${title}" id=${page.id} parent=${parentId ?? "root"}`);
+  log.log(`created page "${title}" id=${page.id} parent=${parentId ?? "semantic"}`);
   return { id: page.id, slug: page.slug };
 }
 
@@ -54,10 +47,15 @@ async function findChildByTitle(parentId: string, title: string): Promise<{ id: 
   return row;
 }
 
-/** Resolve the Opportunities root through the canonical Library index. */
+/** Resolve/create the Opportunities root through the vault-aware Library lifecycle. */
 async function ensureOpportunitiesRoot(): Promise<string> {
-  const { resolveLibraryParent } = await import("./library-index");
-  return resolveLibraryParent("opportunities");
+  const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+  const { ensureMantraLibraryVault } = await import("./library-domain");
+  const principal = getCurrentPrincipalOrSystem();
+  const vault = await ensureMantraLibraryVault(principal);
+  const existing = await findChildByTitle(vault.rootPageId, "Opportunities");
+  if (existing) return existing.id;
+  return (await createPage("Opportunities", vault.rootPageId, "Opportunity pipeline artifacts and research.")).id;
 }
 
 export function artifactPageTitle(kind: ArtifactKind, opportunity: OpportunityRow, company: string): string {

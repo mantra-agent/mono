@@ -2,17 +2,19 @@ import { sql } from "drizzle-orm";
 import { acquireLibraryParentLocks, db } from "./db";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
-import { resolveLibraryParentFromContext, type LibraryParentResolution } from "./library-index";
+import { placeLibraryPageSemantically, type LibrarySemanticPlacementResult } from "./library-placement";
+import { markSourceChanged } from "./memory/vnext-source-queue";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { ownedInsertValues } from "./scoped-storage";
 import { libraryPages } from "@shared/models/info";
 import { syncContentFields } from "@shared/markdown-tiptap";
-import { normalizeLibraryStructuralRole, type LibraryStructuralRole } from "./library-domain";
+import type { LibraryStructuralRole } from "./library-domain";
 
 export interface CreateFiledLibraryPageInput {
   title: string;
   markdown: string;
-  purpose: string;
+  purpose?: string | null;
+  explicitParentId?: string | null;
   pageContext?: string | null;
   contentSummary?: string | null;
   tags?: string[];
@@ -27,7 +29,7 @@ export interface CreateFiledLibraryPageInput {
 }
 
 export type CreatedFiledLibraryPage = typeof libraryPages.$inferSelect & {
-  filingResolution: LibraryParentResolution;
+  filingResolution: LibrarySemanticPlacementResult;
 };
 
 const log = createLogger("LibrarySave");
@@ -79,15 +81,18 @@ export function publishLibraryChanged(action: string, page?: { id?: string | nul
 }
 
 export async function createFiledLibraryPage(input: CreateFiledLibraryPageInput): Promise<CreatedFiledLibraryPage> {
-  const filingResolution = await resolveLibraryParentFromContext({
-    purpose: input.purpose,
+  const principal = getCurrentPrincipalOrSystem();
+  const filingResolution = await placeLibraryPageSemantically({
+    purpose: input.purpose ?? null,
     pageContext: input.pageContext ?? null,
     title: input.title,
     contentSummary: input.contentSummary ?? input.markdown.slice(0, 500),
     tags: input.tags ?? [],
-  });
+    structuralRole: input.structuralRole ?? null,
+    explicitParentId: input.explicitParentId ?? null,
+  }, principal);
   const synced = syncContentFields({ markdown: input.markdown });
-  const slugBase = slugifyLibraryTitle(input.title, filingResolution.filingKey || "page");
+  const slugBase = slugifyLibraryTitle(input.title, "page");
   const slug = input.slugSuffix ? `${slugBase}-${input.slugSuffix}` : slugBase;
 
   const page = await db.transaction(async (tx) => {
@@ -98,20 +103,20 @@ export async function createFiledLibraryPage(input: CreateFiledLibraryPageInput)
       content: synced.content,
       plainTextContent: synced.plainTextContent,
       parentId: filingResolution.parentId,
-      tags: input.tags ?? [],
-      status: input.status ?? null,
-      structuralRole: normalizeLibraryStructuralRole(input.structuralRole),
+      tags: Array.from(new Set([...(input.tags ?? []), ...(filingResolution.lint.requiresReview ? ["library-placement-review"] : [])])),
+      status: filingResolution.lint.requiresReview ? (input.status ?? "needs_review") : (input.status ?? null),
+      structuralRole: filingResolution.structuralRole,
       createdBySessionId: input.createdBySessionId ?? null,
       ...buildLibrarySurfaceSet(input),
-      ...ownedInsertValues(getCurrentPrincipalOrSystem(), libraryScopeColumns),
+      ...ownedInsertValues(principal, libraryScopeColumns),
+      vaultId: filingResolution.vaultId,
       updatedAt: sql`CURRENT_TIMESTAMP`,
     }).returning();
     return row;
   });
 
   try {
-    const { upsertLibraryPageMemory } = await import("./routes/library");
-    await upsertLibraryPageMemory(page);
+    await markSourceChanged("library_page", page.id, principal);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     log.warn(`[ingest] error source=library sourceId=${page.id} reason=filed_create_sync_failed error=${message}`);

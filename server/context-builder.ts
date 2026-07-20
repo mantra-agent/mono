@@ -1947,32 +1947,20 @@ async function resolveSkills(): Promise<string> {
 }
 
 async function resolveLibraryIndex(): Promise<string> {
-  try {
-    const { getLibraryIndex } = await import("./library-index");
-    const index = await getLibraryIndex();
-    const canonicalLines = Object.entries(index).map(([type, entry]) => {
-      return `- ${type} → "${entry.title}" — naming: ${entry.namingConvention}`;
-    });
+  return `## Library Reference
 
-    return `## Library Reference
-
-The Library is durable, searchable knowledge storage. Do not load the full tree into boot context.
+The Library is durable, searchable knowledge storage. It is organized by vault-aware semantic placement, not by artifact-purpose folders.
 
 Use Library tools on demand:
-- search_library_pages/search: find relevant pages by query.
-- browse_tree/tree: inspect hierarchy when filing or browsing.
+- query_index: read the Mantra vault Index first for documentary knowledge questions.
+- compile_library_page: integrate a Source or Artifact into the vault Wiki and refresh the Index.
+- search_library_pages/search: fallback when Index navigation is insufficient.
+- browse_tree/tree: inspect hierarchy only when the physical tree itself matters.
 - get_library_page: load full page content.
-- resolve_parent: preview which canonical parent the Library index will use for an artifact.
-- create_library_page/edit_library_page: create or modify durable artifacts. For create_library_page, provide purpose/pageContext/contentSummary so the Library index resolves the parent; do not browse the tree or supply raw parentId for system-created pages. Pass surface=true with surfaceDurationHours to show a page in Home/Simple Inbox; use dismiss_library_page or surface=false to de-surface it.
+- resolve_parent: preview the semantic placement outcome for a proposed page.
+- create_library_page/edit_library_page: create or modify durable artifacts. For create_library_page, provide title plus purpose/pageContext/contentSummary when available; purpose is compatibility context only. The save lifecycle determines vault, structural role, and meaningful location from explicit context and the vault Index. Ambiguous placement is saved with explicit review/lint metadata, not silently filed as final.
 
-When creating externally shareable artifacts, use a Library page rather than scratch. The Library save flow owns filing: describe the artifact purpose and context, and let the Library index choose the parent.
-
-### Filing references
-${canonicalLines.join("\n")}`;
-  } catch (err: any) {
-    log.warn(`resolveLibraryIndex error: ${err.message}`);
-    return "Library reference unavailable. Use library.search_library_pages or library.browse_tree when Library context is needed.";
-  }
+When creating externally shareable artifacts, use a Library page rather than scratch. The Library save lifecycle owns placement and vNext source signaling.`;
 }
 
 function getContextWindowForModel(model: string): number {

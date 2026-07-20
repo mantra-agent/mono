@@ -10463,7 +10463,7 @@ ${refs}` : ""),
 
     const action = args.action;
     const principal = getCurrentPrincipalOrSystem();
-    const libScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId };
+    const libScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
     const visibleLib = (predicate?: SQL) => combineWithVisibleScope(principal, libScopeColumns, predicate);
     const writableLib = (predicate?: SQL) => combineWithWritableScope(principal, libScopeColumns, predicate);
 
@@ -10664,17 +10664,21 @@ ${refs}` : ""),
       }
 
       if (action === "resolve_parent") {
-        const { resolveLibraryParentFromContext } = await import("./library-index");
+        const { placeLibraryPageSemantically } = await import("./library-placement");
         try {
-          const resolution = await resolveLibraryParentFromContext({
+          const resolution = await placeLibraryPageSemantically({
             purpose: args.purpose || null,
             pageContext: args.pageContext || null,
-            title: args.title || null,
+            title: args.title || "Untitled",
             contentSummary: args.contentSummary || args.summary || null,
             tags: Array.isArray(args.tags) ? args.tags : null,
-          });
+            structuralRole: args.structuralRole || null,
+            explicitParentId: args.parentId || null,
+          }, principal);
           return {
-            result: `Resolved Library parent: ${resolution.parentTitle} (${resolution.parentId}) via filing key "${resolution.filingKey}". Naming: ${resolution.namingConvention}.`,
+            result: resolution.lint.requiresReview
+              ? `Library placement requires review: ${resolution.reason}`
+              : `Resolved Library parent: ${resolution.parentTitle} (${resolution.parentId}) via vault Index.`,
             resolution,
           };
         } catch (err: any) {
@@ -10693,35 +10697,33 @@ ${refs}` : ""),
         const tags: string[] = Array.isArray(args.tags) ? args.tags : (action === "create_spec" ? ["spec"] : []);
         const status = args.status || null;
         const plain = args.plainTextContent || "";
-        let resolvedFilingKey: string | null = null;
-
-        if (!args.purpose) {
-          return { result: "create_library_page requires purpose so the Library index can resolve a parent. Root-level or explicit-parent tool writes are not allowed.", error: true };
-        }
-
         const { createFiledLibraryPage } = await import("./library-save");
         try {
           const page = await createFiledLibraryPage({
             title,
             markdown: plain,
-            purpose: args.purpose,
+            purpose: args.purpose || null,
+            explicitParentId: args.parentId || null,
             pageContext: args.pageContext || null,
             contentSummary: args.contentSummary || args.summary || null,
             tags,
             status,
+            structuralRole: args.structuralRole || null,
             createdBySessionId: args._sessionId || null,
             surface: args.surface,
             surfaceDurationHours: args.surfaceDurationHours,
             surfaceReason: args.surfaceReason,
             surfaceSection: args.surfaceSection,
           });
-          resolvedFilingKey = page.filingResolution.filingKey;
           const linkSyntax = ` [page:${page.slug}]`;
 
           // Record session artifact link
           const { recordSessionArtifact } = await import("./session-artifacts");
           recordSessionArtifact(args._sessionId, "library_page", page.slug, { title: page.title, pageId: page.id });
-          return { result: `Page created: [${page.id}] **${page.title}** (/${page.slug})${linkSyntax}${resolvedFilingKey ? ` under filing key "${resolvedFilingKey}"` : ""}` };
+          return {
+            result: `Page created: [${page.id}] **${page.title}** (/${page.slug})${linkSyntax} under ${page.filingResolution.parentTitle}${page.filingResolution.lint.requiresReview ? " — placement requires review" : ""}`,
+            resolution: page.filingResolution,
+          };
         } catch (err: any) {
           if (isSerializationConflict(err)) {
             toolExec.warn(`create_library_page: serialization conflict — retryable: ${err.message}`);

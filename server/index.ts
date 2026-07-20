@@ -381,12 +381,9 @@ app.use((req, res, next) => {
   bootTracker.completePhase("database");
 
   bootTracker.startPhase("skills_library");
-  try {
-    const { seedLibraryIndex } = await import("./library-index");
-    await seedLibraryIndex();
-  } catch (err: unknown) {
-    log(`[startup] library index seed failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
-  }
+  // The former purpose-to-folder registry is retained only as a deprecated
+  // compatibility resolver. It is no longer seeded or exposed as a Library
+  // knowledge index; vault-aware Index pages are user/account scoped.
 
   try {
     const { ensureEmailTriageLibraryPage } = await import("./skill-seed");
