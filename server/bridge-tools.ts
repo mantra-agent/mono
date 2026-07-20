@@ -81,6 +81,7 @@ function isSpecChildSpawnRequest(...values: unknown[]): boolean {
 export interface BridgeToolContext {
   sessionKey: string;
   sessionId: string;
+  orientationPersonaPolicy?: "replace" | "preserve_existing";
 }
 
 export interface ToolResult {
@@ -4025,6 +4026,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
 
     let resolvedPersona: { id: number; name: string } | undefined;
+    let effectivePersonaName: string | undefined;
     if (hasPersona) {
       const { personaStorage } = await import("./file-storage/persona-storage");
       const numId = Number(args.persona);
@@ -4072,15 +4074,26 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
 
     if (resolvedPersona) {
-      const { setSessionPersona } = await import("./session-persona");
-      const activated = await setSessionPersona(sessionId, resolvedPersona.id);
+      const preserveExisting = args._orientationPersonaPolicy === "preserve_existing";
+      const { setSessionPersona, setSessionPersonaIfUnset } = await import("./session-persona");
+      const selection = preserveExisting
+        ? await setSessionPersonaIfUnset(sessionId, resolvedPersona.id)
+        : null;
+      const activated = preserveExisting
+        ? selection?.persona ?? null
+        : await setSessionPersona(sessionId, resolvedPersona.id);
       if (!activated) return { result: `Persona with id ${resolvedPersona.id} not found`, error: true };
-      eventBus.publish({
-        category: "agent",
-        event: "cognition.persona.switched",
-        payload: { sessionId, personaId: activated.id, personaName: activated.name },
-      });
-      results.push(`Persona activated for this session: ${activated.name} (id=${activated.id})`);
+      effectivePersonaName = activated.name;
+      if (!preserveExisting || selection?.applied) {
+        eventBus.publish({
+          category: "agent",
+          event: "cognition.persona.switched",
+          payload: { sessionId, personaId: activated.id, personaName: activated.name },
+        });
+        results.push(`Persona activated for this session: ${activated.name} (id=${activated.id})`);
+      } else {
+        results.push(`Persona preserved for this session: ${activated.name} (id=${activated.id})`);
+      }
     }
 
     // --- Context flags ---
@@ -4096,7 +4109,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const recommendedFlags = recommendSemanticContextFlags({
         title: validatedTitle,
         topics: cleanedTopics,
-        personaName: resolvedPersona?.name,
+        personaName: effectivePersonaName ?? resolvedPersona?.name,
       });
       const mergedFlags: Record<string, unknown> = { ...recommendedFlags, ...providedFlags };
       const validatedFlags: Record<string, boolean> = {};
@@ -15414,6 +15427,9 @@ export async function executeTool(
   // Universal _sessionId/_sessionKey injection — all tools get session context
   if (context?.sessionId) enrichedArgs._sessionId = context.sessionId;
   if (context?.sessionKey) enrichedArgs._sessionKey = context.sessionKey;
+  if (resolvedName === "orient" && context?.orientationPersonaPolicy) {
+    enrichedArgs._orientationPersonaPolicy = context.orientationPersonaPolicy;
+  }
   if (toolName === "converse" && enrichedArgs.action === "set_attention" && !enrichedArgs.sessionId && context?.sessionId) {
     enrichedArgs.sessionId = context.sessionId;
   }

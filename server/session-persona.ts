@@ -49,6 +49,20 @@ export async function setSessionPersona(
   return persona;
 }
 
+export async function setSessionPersonaIfUnset(
+  sessionId: string,
+  personaId: number,
+): Promise<{ persona: PersonaEntry; applied: boolean } | null> {
+  const requested = await personaStorage.get(personaId);
+  if (!requested) return null;
+  const selection = await chatFileStorage.setSessionPersonaIfUnset(sessionId, requested.id);
+  if (!selection) return null;
+  const persona = selection.personaId === requested.id
+    ? requested
+    : await personaStorage.get(selection.personaId);
+  return persona ? { persona, applied: selection.applied } : null;
+}
+
 export async function resolveSessionPersonaSnapshot(
   sessionId?: string | null,
   options?: { persistFallback?: boolean },

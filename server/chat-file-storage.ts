@@ -1036,6 +1036,7 @@ export interface IChatFileStorage {
   updateSessionSessionKey(id: string, sessionKey: string): Promise<void>;
   updateSessionTopics(id: string, topics: string[]): Promise<void>;
   updateSessionPersona(id: string, personaId: number): Promise<void>;
+  setSessionPersonaIfUnset(id: string, personaId: number): Promise<{ personaId: number; applied: boolean } | null>;
   clearSession(sessionKey: string): Promise<boolean>;
   updateModelTier(sessionKey: string, tier: string): Promise<boolean>;
   updateSessionStatus(id: string, status: string, summary?: string): Promise<void>;
@@ -1484,6 +1485,19 @@ export const chatFileStorage: IChatFileStorage = {
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
       invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
+    });
+  },
+
+  async setSessionPersonaIfUnset(id: string, personaId: number) {
+    return withConvLock(id, async () => {
+      const data = await readConv(id);
+      if (!data) return null;
+      if (data.personaId) return { personaId: data.personaId, applied: false };
+      data.personaId = personaId;
+      data.updatedAt = new Date().toISOString();
+      await writeConv(data);
+      invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
+      return { personaId, applied: true };
     });
   },
 
