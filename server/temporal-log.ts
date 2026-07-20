@@ -1,13 +1,23 @@
 import { db } from "./db";
 import { setSetting, getSettings } from "./system-settings";
-import { memoryStorage } from "./memory";
 import { getTimezone } from "./timezone";
 import { sanitizeSummary } from "./utils/sanitize-summary";
 import { userDateStr, userNoon } from "./utils/user-time";
 import { createLogger } from "./log";
-import { getCurrentPrincipal } from "./principal-context";
+import { getCurrentPrincipal, getCurrentPrincipalOrSystem } from "./principal-context";
+import { combineWithVisibleScope } from "./scoped-storage";
 
 const log = createLogger("TemporalLog");
+async function visibleLibraryPredicate(predicate: import("drizzle-orm").SQL): Promise<import("drizzle-orm").SQL> {
+  const { libraryPages } = await import("@shared/models/info");
+  return combineWithVisibleScope(getCurrentPrincipalOrSystem(), {
+    scope: libraryPages.scope,
+    ownerUserId: libraryPages.ownerUserId,
+    accountId: libraryPages.accountId,
+    vaultId: libraryPages.vaultId,
+  }, predicate);
+}
+
 
 // --- Primary user cache for system-context fallback ---
 let cachedPrimaryUserId: string | null = null;
@@ -287,58 +297,13 @@ export async function assembleTemporalLog(): Promise<string> {
   return sections.join("\n\n");
 }
 
-const MID_CONTEXT_LIMIT = 10;
-
 export async function updateTodayLayer(): Promise<void> {
-  try {
-    const now = new Date();
-    const startMs = startOfDayInTz(now).getTime();
-
-    // Clear stale today layer if it was last written on a prior local day.
-    const existing = await readAllLayers();
-    const existingToday = existing.get("today");
-    if (existingToday && existingToday.content.trim()) {
-      const updatedAt = toDate(existingToday.updatedAt);
-      if (!Number.isNaN(updatedAt.getTime()) && !isSameDayInTz(updatedAt, now)) {
-        await clearLayer("today", "consolidation");
-      }
-    }
-
-    // Pull mid entries; exclude IDs already rendered in live short/mid/long context.
-    const [allMid, shownShort, shownMid, shownLong] = await Promise.all([
-      memoryStorage.getLayer("mid", 50, 0),
-      memoryStorage.getLayer("short", MID_CONTEXT_LIMIT, 0),
-      memoryStorage.getLayer("mid", MID_CONTEXT_LIMIT, 0),
-      memoryStorage.getLayer("long", 20, 0),
-    ]);
-    const shown = new Set<number>([
-      ...shownShort.map((e) => e.id),
-      ...shownMid.map((e) => e.id),
-      ...shownLong.map((e) => e.id),
-    ]);
-    const todays = allMid.filter(
-      (e) => toDate(e.createdAt).getTime() >= startMs && !shown.has(e.id),
-    );
-    if (todays.length === 0) {
-      await clearLayer("today", "consolidation");
-      return;
-    }
-
-    const sorted = [...todays].sort((a, b) => toDate(a.createdAt).getTime() - toDate(b.createdAt).getTime());
-    const tz = getTimezone();
-    const timeFmt = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" });
-    const items: string[] = [];
-    for (const e of sorted) {
-      const rawTitle = e.title || e.content.slice(0, 60).replace(/\n/g, " ").trim() || `Entry ${e.id}`;
-      const title = sanitizeSummary(rawTitle).slice(0, 60);
-      const time = timeFmt.format(toDate(e.createdAt));
-      items.push(`#${e.id} ${title} (${time})`);
-    }
-    const content = `${sorted.length} earlier entries today: ${items.join(" · ")}`;
-    await writeLayer("today", content, "consolidation");
-  } catch (err: unknown) {
-    log.warn(`updateTodayLayer failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  // Retired with the legacy memory reader exit. Today/period layers are now
+  // written directly from review artifacts through write*TemporalLayers(), and
+  // context activity counts come from the neutral EventBus rather than
+  // memory_entries-backed mid-layer summaries. Archived memory rows remain
+  // untouched.
+  log.debug("updateTodayLayer skipped: legacy memory_entries temporal summary retired");
 }
 
 /**
@@ -396,7 +361,7 @@ async function aggregateThisWeekFromDailyReviews(excludeYesterday: boolean, excl
     const pages = await db
       .select({ title: libraryPages.title, plainTextContent: libraryPages.plainTextContent, createdAt: libraryPages.createdAt })
       .from(libraryPages)
-      .where(eq(libraryPages.parentId, parentId))
+      .where(await visibleLibraryPredicate(eq(libraryPages.parentId, parentId)))
       .orderBy(desc(libraryPages.createdAt))
       .limit(7);
 
@@ -437,7 +402,7 @@ async function aggregateThisMonthFromWeekly(excludeCurrentWeek: boolean, exclude
     const pages = await db
       .select({ title: libraryPages.title, plainTextContent: libraryPages.plainTextContent, createdAt: libraryPages.createdAt })
       .from(libraryPages)
-      .where(eq(libraryPages.parentId, parentId))
+      .where(await visibleLibraryPredicate(eq(libraryPages.parentId, parentId)))
       .orderBy(desc(libraryPages.createdAt))
       .limit(6);
 
@@ -494,7 +459,7 @@ async function latestLibraryPageInfo(
     const rows = await db
       .select({ id: libraryPages.id, slug: libraryPages.slug, createdAt: libraryPages.createdAt })
       .from(libraryPages)
-      .where(eq(libraryPages.parentId, parentId))
+      .where(await visibleLibraryPredicate(eq(libraryPages.parentId, parentId)))
       .orderBy(desc(libraryPages.createdAt))
       .limit(1);
     const page = rows[0];
@@ -517,7 +482,7 @@ async function aggregateThisQuarterFromMonthly(): Promise<string> {
     const pages = await db
       .select({ title: libraryPages.title, plainTextContent: libraryPages.plainTextContent, createdAt: libraryPages.createdAt })
       .from(libraryPages)
-      .where(eq(libraryPages.parentId, parentId))
+      .where(await visibleLibraryPredicate(eq(libraryPages.parentId, parentId)))
       .orderBy(desc(libraryPages.createdAt))
       .limit(6);
 

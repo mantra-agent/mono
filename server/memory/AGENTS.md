@@ -403,7 +403,7 @@ Memory/myelination prompt templates live in Prompt Modules, not Skills. They hav
 
 ### Retired Beliefs subsystem
 
-- The standalone Beliefs tool, API, context section, storage model, reflection reads, export, capture target, and confidence lifecycle are removed. Existing rows are intentionally purged without migration because the user classified them as noise.
+- The standalone Beliefs tool, API, context section, storage model, reflection reads, export, capture target, and confidence lifecycle are removed. Existing rows are archival-only and must not be read, migrated, or deleted by runtime retirement code.
 - Probabilistic person/world knowledge belongs in vNext claims. Deliberate explanatory positions with evidence and predictions belong in Theses. Do not recreate a generic Beliefs abstraction.
 - Quick-capture memory writes a filed Library source artifact so normal ingestion can decide whether it yields a vNext claim.
 - Generic long-title repair lives in `long-title-maintenance.ts`; it must not be coupled to a cognitive domain.
