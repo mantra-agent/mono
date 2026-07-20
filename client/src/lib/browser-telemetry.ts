@@ -40,6 +40,44 @@ function captureVisibility(): "visible" | "hidden" | undefined {
   return document.visibilityState === "visible" ? "visible" : "hidden";
 }
 
+export type ResumeReason = "visibilitychange" | "pageshow" | "focus";
+
+export type BaselineReset = (resumeGeneration: number, reason: ResumeReason) => void;
+
+const baselineResetListeners = new Set<BaselineReset>();
+let pageSuspendedAt: number | null = typeof document !== "undefined" && document.visibilityState === "hidden" ? Date.now() : null;
+let lastResumeAt = 0;
+let resumeGeneration = 0;
+
+export function onBrowserTelemetryBaselineReset(listener: BaselineReset): () => void {
+  baselineResetListeners.add(listener);
+  return () => baselineResetListeners.delete(listener);
+}
+
+function notePageSuspended(): void {
+  pageSuspendedAt = Date.now();
+}
+
+function notePageResumed(reason: ResumeReason): void {
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+  if (pageSuspendedAt === null) return;
+  const now = Date.now();
+  if (now - lastResumeAt < 1_000) return;
+  pageSuspendedAt = null;
+  lastResumeAt = now;
+  resumeGeneration += 1;
+  for (const listener of baselineResetListeners) listener(resumeGeneration, reason);
+}
+
+function elapsedIntervalSpansResume(startedAtEpochMs: number | undefined, endedAtEpochMs = Date.now()): boolean {
+  if (!startedAtEpochMs || lastResumeAt === 0) return false;
+  return startedAtEpochMs < lastResumeAt && endedAtEpochMs >= lastResumeAt;
+}
+
+export function getBrowserTelemetryResumeGeneration(): number {
+  return resumeGeneration;
+}
+
 function scheduleFlush(): void {
   if (flushTimer || typeof window === "undefined") return;
   flushTimer = setTimeout(() => void flushBrowserTelemetry(), FLUSH_INTERVAL_MS);
@@ -129,8 +167,16 @@ export function markChatStreamProgress(sessionId: string, hasAssistantContent: b
   }
 }
 
-export function recordTransportGap(name: string, value: number, metadata: Record<string, unknown> = {}): void {
-  recordBrowserTelemetry({ kind: "transport_gap", name, value, unit: "ms", bucket: bucketDuration(value), metadata });
+export function recordTransportGap(name: string, value: number, metadata: Record<string, unknown> = {}, intervalStartedAtEpochMs?: number): void {
+  if (elapsedIntervalSpansResume(intervalStartedAtEpochMs)) return;
+  recordBrowserTelemetry({
+    kind: "transport_gap",
+    name,
+    value,
+    unit: "ms",
+    bucket: bucketDuration(value),
+    metadata: { ...metadata, resumeGeneration },
+  });
 }
 
 function hasContentSegment(content: unknown): boolean {
@@ -212,25 +258,54 @@ function observeEventLoopResponsiveness(): void {
   if (Math.random() > RESPONSIVENESS_SAMPLE_RATE) return;
   const interval = 5_000;
   let expected = Date.now() + interval;
+  onBrowserTelemetryBaselineReset(() => {
+    expected = Date.now() + interval;
+  });
   window.setInterval(() => {
     const now = Date.now();
     const lag = now - expected;
+    const intervalStartedAt = expected - interval;
     expected = now + interval;
+    if (elapsedIntervalSpansResume(intervalStartedAt, now)) return;
     if (lag >= EVENT_LOOP_LAG_THRESHOLD_MS && now - lastEventLoopProbeAt > interval) {
       lastEventLoopProbeAt = now;
-      recordBrowserTelemetry({ kind: "event_loop_responsiveness", name: "timer_lag", value: lag, unit: "ms", bucket: bucketDuration(lag) });
+      recordBrowserTelemetry({
+        kind: "event_loop_responsiveness",
+        name: "timer_lag",
+        value: lag,
+        unit: "ms",
+        bucket: bucketDuration(lag),
+        metadata: { resumeGeneration },
+      });
     }
   }, interval);
 }
 
 function observeFrameContention(): void {
   let previous = safeNow();
+  let skipNextFrame = false;
+  onBrowserTelemetryBaselineReset(() => {
+    previous = safeNow();
+    skipNextFrame = true;
+  });
   const tick = (now: number) => {
     const delta = now - previous;
     previous = now;
+    if (skipNextFrame) {
+      skipNextFrame = false;
+      window.requestAnimationFrame(tick);
+      return;
+    }
     if (delta >= FRAME_CONTENTION_THRESHOLD_MS && Date.now() - lastFrameContentionAt >= FRAME_CONTENTION_MIN_INTERVAL_MS) {
       lastFrameContentionAt = Date.now();
-      recordBrowserTelemetry({ kind: "frame_contention", name: "slow_frame", value: delta, unit: "ms", bucket: bucketDuration(delta) });
+      recordBrowserTelemetry({
+        kind: "frame_contention",
+        name: "slow_frame",
+        value: delta,
+        unit: "ms",
+        bucket: bucketDuration(delta),
+        metadata: { resumeGeneration },
+      });
     }
     window.requestAnimationFrame(tick);
   };
@@ -245,8 +320,18 @@ export function initializeBrowserTelemetry(): void {
   observeLongTasks();
   observeEventLoopResponsiveness();
   observeFrameContention();
-  window.addEventListener("pagehide", () => void flushBrowserTelemetry(true));
+  window.addEventListener("pagehide", () => {
+    notePageSuspended();
+    void flushBrowserTelemetry(true);
+  });
+  window.addEventListener("pageshow", () => notePageResumed("pageshow"));
+  window.addEventListener("focus", () => notePageResumed("focus"));
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") void flushBrowserTelemetry(true);
+    if (document.visibilityState === "hidden") {
+      notePageSuspended();
+      void flushBrowserTelemetry(true);
+    } else {
+      notePageResumed("visibilitychange");
+    }
   });
 }
