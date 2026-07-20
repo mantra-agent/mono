@@ -11,6 +11,9 @@ import {
 } from "@/lib/d3-force-3d";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { MemorySourceIcon } from "@/components/memory/memory-source-icon";
 
 export interface MemoryGraph3DNode {
