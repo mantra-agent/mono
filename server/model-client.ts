@@ -315,6 +315,14 @@ export interface ChatCompletionOptions {
   maxTokens?: number;
   temperature?: number;
   jsonMode?: boolean;
+  /**
+   * Hard latency budget the caller enforces (typically via an AbortSignal).
+   * Routing skips connectors whose provider has a structural floor latency
+   * above this budget, so a doomed first attempt cannot consume the whole
+   * window and starve failover. Falls back to the full candidate pool when
+   * no connector fits the budget.
+   */
+  latencyBudgetMs?: number;
   signal?: AbortSignal;
   tools?: ToolDefinition[];
   /**
@@ -486,19 +494,53 @@ function enrichModelError(err: unknown, routing: ModelRoutingDecision, metadata?
   return base;
 }
 
+/**
+ * Structural minimum latency per provider. claude-cli runs a subprocess whose
+ * spin-up alone exceeds sub-2s budgets, so it can never satisfy a
+ * tight-latency call regardless of model speed.
+ */
+const PROVIDER_FLOOR_LATENCY_MS: Record<string, number> = { "claude-cli": 4000 };
+
+/**
+ * Filter routing candidates to those whose provider floor latency fits the
+ * caller's budget. Degrades gracefully to the full pool when nothing fits,
+ * which matches pre-budget behavior instead of failing routing outright.
+ */
+function latencyEligibleCandidates(
+  candidates: ModelRoutingDecision[],
+  latencyBudgetMs: number | undefined,
+): ModelRoutingDecision[] {
+  if (!latencyBudgetMs) return candidates;
+  const eligible = candidates.filter(
+    (candidate) => (PROVIDER_FLOOR_LATENCY_MS[candidate.provider] ?? 0) <= latencyBudgetMs,
+  );
+  if (!eligible.length) {
+    log.warn(`no connector fits latencyBudgetMs=${latencyBudgetMs}; using full candidate pool providers=${candidates.map((candidate) => candidate.provider).join(",")}`);
+    return candidates;
+  }
+  if (eligible.length < candidates.length) {
+    const skipped = candidates.filter((candidate) => !eligible.includes(candidate));
+    log.debug(`skipped latency-ineligible connectors budgetMs=${latencyBudgetMs} skipped=${skipped.map((candidate) => `${candidate.provider}/${candidate.model}`).join(",")}`);
+  }
+  return eligible;
+}
+
 export async function chatCompletion(options: ChatCompletionOptions): Promise<ChatCompletionResult> {
   const activity = options.activity || options.metadata?.activity || ACTIVITY_FRAMING;
   const sessionTierOverride = !options.model && !options.routingDecision && !options.semanticTierOverride
     ? await resolveSessionModelTierOverride(options.metadata)
     : null;
-  const candidates = options.routingDecision
-    ? [options.routingDecision, ...(options.routingDecision.fallbackCandidates || [])]
-    : await resolveModelCandidates(activity, {
-        model: options.model,
-        overrideReason: options.overrideReason || (sessionTierOverride ? "session model tier override" : undefined),
-        semanticTierOverride: options.semanticTierOverride || sessionTierOverride || undefined,
-        sessionId: options.metadata?.sessionId,
-      });
+  const candidates = latencyEligibleCandidates(
+    options.routingDecision
+      ? [options.routingDecision, ...(options.routingDecision.fallbackCandidates || [])]
+      : await resolveModelCandidates(activity, {
+          model: options.model,
+          overrideReason: options.overrideReason || (sessionTierOverride ? "session model tier override" : undefined),
+          semanticTierOverride: options.semanticTierOverride || sessionTierOverride || undefined,
+          sessionId: options.metadata?.sessionId,
+        }),
+    options.latencyBudgetMs,
+  );
   let failures = candidates[0]?.attempts ?? [];
   let lastError: unknown;
   for (let index = 0; index < candidates.length; index++) {
