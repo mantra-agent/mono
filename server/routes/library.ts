@@ -58,6 +58,10 @@ import {
 import { WORKSPACE_DIR } from "../paths";
 import { eventBus } from "../event-bus";
 import { markSourceChanged, registerSourceIfAbsent } from "../memory/vnext-source-queue";
+import {
+  ensureMantraLibraryVault,
+  normalizeLibraryStructuralRole,
+} from "../library-domain";
 
 const log = createLogger("InfoRoutes");
 
@@ -307,6 +311,18 @@ export async function registerLibraryRoutes(app: Express) {
       `ALTER TABLE library_pages ADD COLUMN IF NOT EXISTS summary TEXT`,
     );
     await pool.query(
+      `ALTER TABLE library_pages ADD COLUMN IF NOT EXISTS structural_role TEXT NOT NULL DEFAULT 'artifact'`,
+    );
+    await pool.query(
+      `ALTER TABLE library_pages DROP CONSTRAINT IF EXISTS chk_library_pages_structural_role`,
+    );
+    await pool.query(
+      `ALTER TABLE library_pages ADD CONSTRAINT chk_library_pages_structural_role CHECK (structural_role IN ('source', 'artifact', 'wiki', 'meta'))`,
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_library_pages_structural_role ON library_pages(structural_role)`,
+    );
+    await pool.query(
       `ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS one_liner TEXT`,
     );
 
@@ -466,7 +482,26 @@ export async function registerLibraryRoutes(app: Express) {
     );
   }
 
+  try {
+    const principal = getCurrentPrincipalOrSystem();
+    if (principal.accountId) {
+      await ensureMantraLibraryVault(principal);
+    }
+  } catch (e: any) {
+    log.warn(`[bootstrap] Mantra Library vault bootstrap skipped/failed: ${e.message}`);
+  }
+
   // ─── Library Pages CRUD ───────────────────────────────────────────────
+
+  app.post("/api/library/vaults/mantra/ensure", async (req, res) => {
+    try {
+      const result = await ensureMantraLibraryVault(principalOrThrow(req));
+      res.json(result);
+    } catch (err: any) {
+      log.error(`Mantra Library vault ensure failed: ${err.message}`);
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   app.get("/api/info/library", async (req, res) => {
     try {
@@ -488,6 +523,8 @@ export async function registerLibraryRoutes(app: Express) {
         surfaceReason: libraryPages.surfaceReason,
         surfaceSection: libraryPages.surfaceSection,
         sortOrder: libraryPages.sortOrder,
+        vaultId: libraryPages.vaultId,
+        structuralRole: libraryPages.structuralRole,
         scope: libraryPages.scope,
         createdAt: libraryPages.createdAt,
         updatedAt: libraryPages.updatedAt,
@@ -534,6 +571,8 @@ export async function registerLibraryRoutes(app: Express) {
           surfaceUntil: libraryPages.surfaceUntil,
           surfaceReason: libraryPages.surfaceReason,
           surfaceSection: libraryPages.surfaceSection,
+          vaultId: libraryPages.vaultId,
+          structuralRole: libraryPages.structuralRole,
           scope: libraryPages.scope,
           updatedAt: libraryPages.updatedAt,
         })
@@ -925,6 +964,7 @@ export async function registerLibraryRoutes(app: Express) {
     tags: z.array(z.string()).default([]),
     status: z.string().nullable().optional(),
     emoji: z.string().nullable().optional(),
+    structuralRole: z.enum(["source", "artifact", "wiki", "meta"]).optional(),
     ...librarySurfaceInput,
   });
 
@@ -975,6 +1015,7 @@ export async function registerLibraryRoutes(app: Express) {
           parentId,
           tags: data.tags,
           emoji: data.emoji ?? null,
+          structuralRole: normalizeLibraryStructuralRole(data.structuralRole),
           ...buildLibrarySurfaceSet(data),
           sortOrder: nextSortOrder,
           createdByUserId: principal.userId ?? undefined,
@@ -1011,6 +1052,7 @@ export async function registerLibraryRoutes(app: Express) {
     tags: z.array(z.string()).optional(),
     status: z.string().nullable().optional(),
     emoji: z.string().nullable().optional(),
+    structuralRole: z.enum(["source", "artifact", "wiki", "meta"]).optional(),
     linkPages: z.array(z.string()).optional(),
     ...librarySurfaceInput,
   });
@@ -1048,6 +1090,8 @@ export async function registerLibraryRoutes(app: Express) {
       }
       if (updates.tags !== undefined) setData.tags = updates.tags;
       if (updates.emoji !== undefined) setData.emoji = updates.emoji;
+      if (updates.structuralRole !== undefined)
+        setData.structuralRole = normalizeLibraryStructuralRole(updates.structuralRole);
       Object.assign(setData, buildLibrarySurfaceSet(updates));
 
       const [updated] = await db

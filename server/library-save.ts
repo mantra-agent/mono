@@ -7,6 +7,7 @@ import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { ownedInsertValues } from "./scoped-storage";
 import { libraryPages } from "@shared/models/info";
 import { syncContentFields } from "@shared/markdown-tiptap";
+import { normalizeLibraryStructuralRole, type LibraryStructuralRole } from "./library-domain";
 
 export interface CreateFiledLibraryPageInput {
   title: string;
@@ -16,6 +17,7 @@ export interface CreateFiledLibraryPageInput {
   contentSummary?: string | null;
   tags?: string[];
   status?: string | null;
+  structuralRole?: LibraryStructuralRole | null;
   createdBySessionId?: string | null;
   slugSuffix?: string | null;
   surface?: boolean;
@@ -98,6 +100,7 @@ export async function createFiledLibraryPage(input: CreateFiledLibraryPageInput)
       parentId: filingResolution.parentId,
       tags: input.tags ?? [],
       status: input.status ?? null,
+      structuralRole: normalizeLibraryStructuralRole(input.structuralRole),
       createdBySessionId: input.createdBySessionId ?? null,
       ...buildLibrarySurfaceSet(input),
       ...ownedInsertValues(getCurrentPrincipalOrSystem(), libraryScopeColumns),
