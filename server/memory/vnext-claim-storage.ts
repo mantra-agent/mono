@@ -43,6 +43,12 @@ const bridgeClaimScopeColumns = {
   accountId: sql`c.account_id`,
 };
 
+const duplicateClaimScopeColumns = {
+  scope: sql`duplicates.scope`,
+  ownerUserId: sql`duplicates.owner_user_id`,
+  accountId: sql`duplicates.account_id`,
+};
+
 const vnextSourceScopeColumns = {
   scope: memoryVnextSourceRefs.scope,
   ownerUserId: memoryVnextSourceRefs.ownerUserId,
@@ -102,6 +108,13 @@ export interface VnextClaimWriteBudgetInput {
   candidateScore: number;
   candidateReasons: string[];
   existingAcceptedAtStart: number;
+}
+
+export interface VnextConfidenceDecayInput {
+  decayedAt: Date;
+  expectedLastDecayedAt: Date | null;
+  elapsedPeriods: number;
+  intervalDays: number;
 }
 
 
@@ -613,7 +626,7 @@ export class MemoryVnextClaimStorage {
     const normalizedStages = stages.map((stage) => normalizeLifecycleStage(stage));
     if (normalizedStages.length === 0) return [];
     const principal = getCurrentPrincipalOrSystem();
-    const predicate = combineWithVisibleScope(
+    const predicate = combineWithWritableScope(
       principal,
       vnextClaimScopeColumns,
       inArray(memoryVnextClaims.lifecycleStage, normalizedStages),
@@ -630,14 +643,24 @@ export class MemoryVnextClaimStorage {
           FROM memory_vnext_claims duplicates
           WHERE duplicates.content_hash = ${memoryVnextClaims.contentHash}
             AND duplicates.id <> ${memoryVnextClaims.id}
+            AND ${combineWithWritableScope(principal, duplicateClaimScopeColumns, sql`TRUE`)}
         )`,
       })
       .from(memoryVnextClaims)
-      .leftJoin(memoryVnextSourceRefs, eq(memoryVnextSourceRefs.claimId, memoryVnextClaims.id))
-      .leftJoin(memoryVnextEntityLinks, eq(memoryVnextEntityLinks.claimId, memoryVnextClaims.id))
+      .leftJoin(memoryVnextSourceRefs, and(
+        eq(memoryVnextSourceRefs.claimId, memoryVnextClaims.id),
+        writableScopePredicate(principal, vnextSourceScopeColumns),
+      ))
+      .leftJoin(memoryVnextEntityLinks, and(
+        eq(memoryVnextEntityLinks.claimId, memoryVnextClaims.id),
+        writableScopePredicate(principal, vnextEntityScopeColumns),
+      ))
       .leftJoin(
         memoryVnextClaimLinks,
-        sql`${memoryVnextClaimLinks.fromClaimId} = ${memoryVnextClaims.id} OR ${memoryVnextClaimLinks.toClaimId} = ${memoryVnextClaims.id}`,
+        and(
+          sql`${memoryVnextClaimLinks.fromClaimId} = ${memoryVnextClaims.id} OR ${memoryVnextClaimLinks.toClaimId} = ${memoryVnextClaims.id}`,
+          writableScopePredicate(principal, vnextClaimLinkScopeColumns),
+        ),
       )
       .where(predicate)
       .groupBy(memoryVnextClaims.id)
@@ -675,14 +698,24 @@ export class MemoryVnextClaimStorage {
           FROM memory_vnext_claims duplicates
           WHERE duplicates.content_hash = ${memoryVnextClaims.contentHash}
             AND duplicates.id <> ${memoryVnextClaims.id}
+            AND ${combineWithWritableScope(getCurrentPrincipalOrSystem(), duplicateClaimScopeColumns, sql`TRUE`)}
         )`,
       })
       .from(memoryVnextClaims)
-      .leftJoin(memoryVnextSourceRefs, eq(memoryVnextSourceRefs.claimId, memoryVnextClaims.id))
-      .leftJoin(memoryVnextEntityLinks, eq(memoryVnextEntityLinks.claimId, memoryVnextClaims.id))
+      .leftJoin(memoryVnextSourceRefs, and(
+        eq(memoryVnextSourceRefs.claimId, memoryVnextClaims.id),
+        writableScopePredicate(getCurrentPrincipalOrSystem(), vnextSourceScopeColumns),
+      ))
+      .leftJoin(memoryVnextEntityLinks, and(
+        eq(memoryVnextEntityLinks.claimId, memoryVnextClaims.id),
+        writableScopePredicate(getCurrentPrincipalOrSystem(), vnextEntityScopeColumns),
+      ))
       .leftJoin(
         memoryVnextClaimLinks,
-        sql`${memoryVnextClaimLinks.fromClaimId} = ${memoryVnextClaims.id} OR ${memoryVnextClaimLinks.toClaimId} = ${memoryVnextClaims.id}`,
+        and(
+          sql`${memoryVnextClaimLinks.fromClaimId} = ${memoryVnextClaims.id} OR ${memoryVnextClaimLinks.toClaimId} = ${memoryVnextClaims.id}`,
+          writableScopePredicate(getCurrentPrincipalOrSystem(), vnextClaimLinkScopeColumns),
+        ),
       )
       .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), vnextClaimScopeColumns, eq(memoryVnextClaims.id, claimId)))
       .groupBy(memoryVnextClaims.id)
@@ -836,14 +869,16 @@ export class MemoryVnextClaimStorage {
   }
 
   async reinforceClaim(id: number): Promise<void> {
+    const principal = getCurrentPrincipalOrSystem();
     await db
       .update(memoryVnextClaims)
       .set({
         recallCount: sql`${memoryVnextClaims.recallCount} + 1`,
         lastRecalledAt: new Date(),
+        updatedByUserId: principal.userId ?? undefined,
         updatedAt: new Date(),
       })
-      .where(eq(memoryVnextClaims.id, id));
+      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)));
   }
 
   async advanceLifecycleStage(
@@ -851,10 +886,11 @@ export class MemoryVnextClaimStorage {
     stage: MemoryVnextLifecycleStage,
     input?: VnextLifecycleTransitionInput,
   ): Promise<MemoryVnextClaim> {
+    const principal = getCurrentPrincipalOrSystem();
     const [current] = await db
       .select()
       .from(memoryVnextClaims)
-      .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
+      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
       .limit(1);
 
     if (!current) {
@@ -894,10 +930,11 @@ export class MemoryVnextClaimStorage {
       .set({
         lifecycleStage: targetStage,
         lifecycleStageUpdatedAt: now,
+        updatedByUserId: principal.userId ?? undefined,
         updatedAt: now,
         metadata,
       })
-      .where(eq(memoryVnextClaims.id, id))
+      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
       .returning();
 
     log.info(JSON.stringify({
@@ -911,10 +948,11 @@ export class MemoryVnextClaimStorage {
   }
 
   async retireClaim(id: number, input: VnextLifecycleTransitionInput): Promise<MemoryVnextClaim> {
+    const principal = getCurrentPrincipalOrSystem();
     const [current] = await db
       .select()
       .from(memoryVnextClaims)
-      .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
+      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
       .limit(1);
 
     if (!current) {
@@ -958,10 +996,11 @@ export class MemoryVnextClaimStorage {
       .set({
         lifecycleStage: MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED,
         lifecycleStageUpdatedAt: now,
+        updatedByUserId: principal.userId ?? undefined,
         updatedAt: now,
         metadata,
       })
-      .where(eq(memoryVnextClaims.id, id))
+      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
       .returning();
 
     log.info(JSON.stringify({
@@ -1001,6 +1040,14 @@ export class MemoryVnextClaimStorage {
 
   async linkClaimToEntity(claimId: number, entityType: string, entityId: string): Promise<void> {
     const principal = getCurrentPrincipalOrSystem();
+    const [claim] = await db
+      .select({ id: memoryVnextClaims.id })
+      .from(memoryVnextClaims)
+      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, claimId)))
+      .limit(1);
+    if (!claim) {
+      throw new Error(`Cannot link vNext claim ${claimId} to entity: claim not writable`);
+    }
     await db
       .insert(memoryVnextEntityLinks)
       .values({
@@ -1318,7 +1365,7 @@ export class MemoryVnextClaimStorage {
           sourceKey: sql<string>`${memoryVnextSourceRefs.sourceType} || ':' || ${memoryVnextSourceRefs.sourceId}`,
         })
         .from(memoryVnextSourceRefs)
-        .where(combineWithVisibleScope(
+        .where(combineWithWritableScope(
           principal,
           vnextSourceScopeColumns,
           inArray(memoryVnextSourceRefs.claimId, endpointIds),
@@ -1469,20 +1516,44 @@ export class MemoryVnextClaimStorage {
   async decayClaimConfidence(
     id: number,
     delta: number,
+    input?: VnextConfidenceDecayInput,
   ): Promise<MemoryVnextClaim | null> {
+    const principal = getCurrentPrincipalOrSystem();
     const minConfidence = 0.1;
+    const now = input?.decayedAt ?? new Date();
+    const boundedDelta = Math.max(0, delta);
+    if (boundedDelta <= 0) return this.getClaim(id);
+    const decayedAt = now.toISOString();
+    const expectedLastDecayedAt = input?.expectedLastDecayedAt?.toISOString() ?? null;
+    const replayGuard = input
+      ? expectedLastDecayedAt
+        ? sql`${memoryVnextClaims.metadata}->>'lastDecayedAt' = ${expectedLastDecayedAt}`
+        : sql`NOT (COALESCE(${memoryVnextClaims.metadata}, '{}'::jsonb) ? 'lastDecayedAt')`
+      : sql`TRUE`;
     const [updated] = await db
       .update(memoryVnextClaims)
       .set({
-        confidence: sql`GREATEST(${minConfidence}, ${memoryVnextClaims.confidence} - ${delta})`,
-        updatedAt: new Date(),
+        confidence: sql`GREATEST(${minConfidence}, ${memoryVnextClaims.confidence} - ${boundedDelta})`,
+        updatedByUserId: principal.userId ?? undefined,
+        updatedAt: now,
         metadata: sql`jsonb_set(
-          COALESCE(${memoryVnextClaims.metadata}, '{}'),
-          '{lastDecayedAt}',
-          to_jsonb(now()::text)
+          jsonb_set(
+            COALESCE(${memoryVnextClaims.metadata}, '{}'::jsonb),
+            '{lastDecayedAt}',
+            to_jsonb(${decayedAt}::text),
+            true
+          ),
+          '{lifecycle,confidenceDecay}',
+          jsonb_build_object(
+            'lastMaintainedAt', ${decayedAt},
+            'elapsedPeriods', ${input?.elapsedPeriods ?? 1},
+            'intervalDays', ${input?.intervalDays ?? null},
+            'delta', ${boundedDelta}
+          ),
+          true
         )`,
       })
-      .where(eq(memoryVnextClaims.id, id))
+      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, and(eq(memoryVnextClaims.id, id), replayGuard)))
       .returning();
     return updated ?? null;
   }
