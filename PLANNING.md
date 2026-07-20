@@ -53,6 +53,7 @@ Before creating a plan, work through these silently:
 - Split when outcomes are separable and can each survive an independent fresh context. Merge when splitting would force one deliverable across two contexts.
 - A final verification step is legitimate only when it checks cross-cutting, whole-system behavior no single step could see — never a re-run of per-step mechanics.
 - Each step must be independently executable in a spawned child session
+- Assign each mission its execution persona: **Engineer** for implementation, debugging, migrations, builds, deployments, and PR work; **Architect** for structural design, domain modeling, interfaces, and specifications where code is not the primary deliverable; **Default** for other missions. Choose from the primary deliverable, not incidental verbs.
 - Step instructions include what context to load and what "done" looks like
 - Order steps by dependency, not importance
 - Begin execution immediately after creation. Do not wait for permission unless you surfaced blocking questions above

@@ -345,6 +345,7 @@ Four interacting layers: intention stack (what), timer scheduler (when), skill r
 
 - The parent plan executor is the sole owner of managed step completion, failure, retry, and attempt finalization. Plan-spawned children may report only `blocked` or `needs_review`; ending the child session is the completion signal.
 - A completed child attempt is replay-safe. If legacy behavior already marked the same step complete for the same child session, the executor reconciles that owned completion instead of rerunning successful work.
+- Each plan step owns a durable persona name. The executor applies that persona through `session-persona.ts` before context assembly and first inference; retries reuse it. Legacy NULL persona rows are inferred once from the mission and persisted before spawn.
 
 ### Admission Controller
 - **4 tiers:** communication (highest, always granted), realtime, request, background (lowest)

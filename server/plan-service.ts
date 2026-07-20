@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import type { PlanStepPersona } from "./plan-persona";
 import { and, eq, isNull, lt, or, type SQL } from "drizzle-orm";
 import { db } from "./db";
 import { createLogger } from "./log";
@@ -328,6 +329,7 @@ function planRowsToMeta(plan: PlanExecutionRow, steps: PlanStepRow[]): PlanMeta 
     steps: steps.map(s => ({
       id: s.id,
       title: s.title,
+      persona: s.persona as PlanStepPersona | undefined,
       status: s.status as PlanStep["status"],
       duration: s.durationSeconds ?? undefined,
       sessionId: s.sessionId ?? undefined,

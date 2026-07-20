@@ -5,6 +5,7 @@
  * and a markdown body containing human-readable step instructions.
  */
 import { createLogger } from "../log";
+import type { PlanStepPersona } from "../plan-persona";
 
 const log = createLogger("PlanUtils");
 
@@ -17,6 +18,7 @@ export interface PlanStep {
   id: string;
   title: string;
   status: StepStatus;
+  persona?: PlanStepPersona;
   duration?: number;       // seconds
   sessionId?: string;
   outcome?: string;
@@ -41,7 +43,7 @@ export interface PlanMeta {
 
 export interface PlanCreateInput {
   title: string;
-  steps: Array<{ title: string; instructions: string }>;
+  steps: Array<{ title: string; instructions: string; persona: PlanStepPersona }>;
   originSessionId: string;
   goalId?: string;
   projectId?: number;
@@ -107,6 +109,7 @@ export function serializePlanYaml(meta: PlanMeta): string {
     lines.push(`    - id: ${step.id}`);
     lines.push(`      title: ${yamlEscape(step.title)}`);
     lines.push(`      status: ${step.status}`);
+    if (step.persona) lines.push(`      persona: ${step.persona}`);
     if (step.duration != null) lines.push(`      duration: ${step.duration}`);
     if (step.sessionId) lines.push(`      sessionId: ${step.sessionId}`);
     if (step.outcome) lines.push(`      outcome: ${yamlEscape(step.outcome)}`);
@@ -251,6 +254,7 @@ function setStepField(step: Partial<PlanStep>, key: string, value: string): void
     case "id": step.id = value; break;
     case "title": step.title = value; break;
     case "status": step.status = value as StepStatus; break;
+    case "persona": step.persona = value as PlanStepPersona; break;
     case "duration": step.duration = parseInt(value, 10) || undefined; break;
     case "sessionId": step.sessionId = value; break;
     case "outcome": step.outcome = value; break;
