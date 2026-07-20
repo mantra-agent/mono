@@ -264,6 +264,10 @@ export const lifecycleEvidenceConfigSchema = z.object({
 export const lifecycleDocsConfigSchema = z.object({
   updateWorkflowPage: z.boolean().optional(),
   artifactPageId: z.string().trim().optional().nullable(),
+  versionDocument: z.object({
+    enabled: z.boolean(),
+    path: z.literal("VERSION.md"),
+  }).optional(),
 }).passthrough();
 
 export const upsertBuildLifecycleConfigSchema = z.object({

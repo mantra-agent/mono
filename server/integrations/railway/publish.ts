@@ -723,6 +723,7 @@ export async function startRun(
     let releaseDraft: ReleaseDraft;
     try {
       releaseDraft = await buildReleaseDraft(
+        targetPlatformEnvironmentId,
         summary.commits,
         increment,
         runId,
@@ -735,6 +736,7 @@ export async function startRun(
         reason,
       });
       releaseDraft = await buildReleaseDraft(
+        targetPlatformEnvironmentId,
         summary.commits,
         increment,
         runId,
@@ -1542,6 +1544,7 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
     let releaseMetadataRecorded = false;
     try {
       await recordSuccessfulRelease({
+        environmentId: run.targetPlatformEnvironmentId,
         publishRunId: run.id,
         actorUserId: run.startedBy,
         draft: releaseDraft,

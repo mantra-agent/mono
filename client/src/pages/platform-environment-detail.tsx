@@ -43,6 +43,7 @@ import { markEnvironmentBuildSeen } from "@/lib/environment-build-seen";
 import { BuildStatusPanel, detailedStatusLabel, familyClasses, relativeTime, statusFamily, type DevDeploymentSummary } from "@/components/build-status-panel";
 import { DevPublishTab } from "@/components/dev-publish-tab";
 import { MobileBuildCard } from "@/components/mobile-build-card";
+import { SimpleTextFrame } from "@/components/home/simple-text-frame";
 
 // --- Types ---
 
@@ -98,6 +99,10 @@ interface PlatformTreeEnvironment { id: number; name: string }
 interface PlatformTreeProduct { id: number; environments: PlatformTreeEnvironment[] }
 interface PlatformTree { id: number; products: PlatformTreeProduct[] }
 
+type EnvironmentVersionDocument =
+  | { available: false; path: "VERSION.md"; reason: "not_configured" | "not_generated" }
+  | { available: true; path: "VERSION.md"; content: string; releaseCount: number; truncated: boolean; updatedAt: string };
+
 interface EnvironmentDetails {
   platform: { id: number; name: string };
   product: { id: number; name: string };
@@ -146,6 +151,8 @@ interface BuildLifecycleConfigDraft {
   requireProviderStatus: boolean;
   updateWorkflowPage: boolean;
   artifactPageId: string;
+  versionDocumentEnabled: boolean;
+  versionDocumentPath: string;
   enabled: boolean;
 }
 
@@ -1051,6 +1058,9 @@ function configDraft(config: BuildLifecycleConfig | null | undefined, details: E
   const gatePolicy = configRecord(config?.gatePolicy);
   const evidenceConfig = configRecord(config?.evidenceConfig);
   const docsConfig = configRecord(config?.docsConfig);
+  const versionDocument = typeof docsConfig.versionDocument === "object" && docsConfig.versionDocument !== null
+    ? docsConfig.versionDocument as Record<string, unknown>
+    : {};
 
   return {
     workflowTemplateId: config?.workflowTemplateId || "build-v1",
@@ -1072,6 +1082,8 @@ function configDraft(config: BuildLifecycleConfig | null | undefined, details: E
     requireProviderStatus: booleanValue(evidenceConfig.requireProviderStatus, true),
     updateWorkflowPage: booleanValue(docsConfig.updateWorkflowPage, true),
     artifactPageId: stringValue(docsConfig.artifactPageId, ""),
+    versionDocumentEnabled: booleanValue(versionDocument.enabled, false),
+    versionDocumentPath: stringValue(versionDocument.path, "VERSION.md"),
     enabled: config?.enabled ?? true,
   };
 }
@@ -1110,6 +1122,7 @@ function draftPayload(draft: BuildLifecycleConfigDraft) {
     docsConfig: {
       updateWorkflowPage: draft.updateWorkflowPage,
       artifactPageId: draft.artifactPageId.trim() || null,
+      ...(draft.versionDocumentEnabled ? { versionDocument: { enabled: true, path: draft.versionDocumentPath } } : {}),
     },
     enabled: draft.enabled,
   };
@@ -1994,9 +2007,26 @@ function EnvironmentSection({
   );
 }
 
+function VersionDocumentSection({ environmentId }: { environmentId: number }) {
+  const { data } = useQuery<EnvironmentVersionDocument>({
+    queryKey: ["/api/platforms/environments", environmentId, "version-document"],
+    enabled: Number.isFinite(environmentId),
+    staleTime: 30_000,
+  });
+
+  if (!data?.available) return null;
+
+  return (
+    <EnvironmentSection label="Version" storageKey={`platform-environment:${environmentId}:section:version`}>
+      <SimpleTextFrame content={data.content} />
+    </EnvironmentSection>
+  );
+}
+
 function EnvironmentDetailsConfigureCard({ details, environmentId }: { details: EnvironmentDetails; environmentId: number }) {
   return (
     <div className="space-y-1">
+      <VersionDocumentSection environmentId={environmentId} />
       <EnvironmentSection label="Source" defaultOpen={false} storageKey={`platform-environment:${environmentId}:section:source`}>
         <SourceBindingCard binding={details.source} environmentId={environmentId} />
       </EnvironmentSection>

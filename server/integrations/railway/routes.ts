@@ -295,7 +295,7 @@ export function registerRailwayRoutes(app: Express) {
       if (!context.success) return res.status(400).json({ error: "sourcePlatformEnvironmentId and targetPlatformEnvironmentId are required." });
       const prereqs = await checkPrereqs(context.data.sourcePlatformEnvironmentId, context.data.targetPlatformEnvironmentId);
       const run = await getDisplayRun();
-      const versioning = await getReleaseVersionSummary();
+      const versioning = await getReleaseVersionSummary(context.data.targetPlatformEnvironmentId);
 
       const summary: PublishSummaryResponse = {
         ready: prereqs.ready,
