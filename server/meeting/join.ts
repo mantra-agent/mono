@@ -101,16 +101,14 @@ export async function joinMeetingByUrl(opts: {
       "Recall.ai is not configured. Enter the RECALL_API_KEY and RECALL_REGION in Settings → Integrations → Recall.ai, then retry.",
     );
   }
-  const { getRuntimePublicBaseUrl, getRuntimeIdentity } = await import("../runtime-identity");
+  const { getRuntimePublicBaseUrl } = await import("../runtime-identity");
   const publicUrl = await getRuntimePublicBaseUrl();
   if (!publicUrl) {
     return failSession(
       "No public base URL available. Bind this deployment to a Platform Environment with a hosting binding publicUrl, or deploy behind a Railway public domain, then retry.",
     );
   }
-  const runtime = await getRuntimeIdentity();
-
-  const { outputMediaPageUrl } = await import("./output-media");
+  const { outputMediaPageUrl, syncMeetingVisualizerBotStatus } = await import("./output-media");
   const outputMediaUrl = outputMediaPageUrl(publicUrl, session.id);
   const { canonicalMeetingSTTEnabled, issueMeetingSTTAudioToken } = await import("./stt");
   const participantAudioUrl = canonicalMeetingSTTEnabled()
@@ -151,6 +149,7 @@ export async function joinMeetingByUrl(opts: {
       streams: [],
     },
   });
+  syncMeetingVisualizerBotStatus(session.id, "dialing");
   log.log(`Bot ${botId} dispatched to ${platform} meeting "${title}" (session ${session.id})`);
 
   return { sessionId: session.id, botId, platform, title };

@@ -1,5 +1,7 @@
-/** Agent orb voice visualizer state machine */
-export type OrbState = 'idle' | 'listening' | 'thinking' | 'tool_call' | 'speaking' | 'degraded';
+import type { AgentVisualState } from '@shared/agent-visualizer';
+
+/** Agent orb voice visualizer state machine. */
+export type OrbState = AgentVisualState;
 
 export interface AgentOrbProps {
   /** Current agent state driving the visual signature */
@@ -9,6 +11,8 @@ export interface AgentOrbProps {
    * is generated for states that need audio reactivity (speaking, listening).
    */
   audioLevel?: number;
+  /** Maximum rendered frames per second. Recall Output Media streams at 15fps. */
+  maxFrameRate?: number;
   /** Additional CSS class for the container */
   className?: string;
 }
