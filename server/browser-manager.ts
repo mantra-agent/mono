@@ -302,8 +302,8 @@ export async function screenshotPage(
       // External target: authenticate via bearer token, no cookie injection
       let extraHTTPHeaders: Record<string, string> = {};
       try {
-        const { getSetting } = await import("./system-settings");
-        const token = await getSetting<string>("system.automation_auth_token");
+        const { getAutomationAuthToken } = await import("./automation-auth-token");
+        const token = await getAutomationAuthToken();
         if (token) {
           extraHTTPHeaders["Authorization"] = `Bearer ${token}`;
         }

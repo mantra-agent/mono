@@ -13,6 +13,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { storage } from "./storage";
 import { getSetting, setSetting } from "./system-settings";
+import { getAutomationAuthToken } from "./automation-auth-token";
 import { loginSchema, registerSchema, type User } from "@shared/schema";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
@@ -130,6 +131,57 @@ declare module "express-session" {
 
 const PgStore = connectPgSimple(session);
 const SESSION_TABLE_NAME = "session";
+const SESSION_COOKIE_NAME = "connect.sid";
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const CAPABILITY_HASH_PREFIX = "h1:";
+const AUTH_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const AUTH_LIMIT_MAX_KEYS = 10_000;
+const authBudgets = new Map<string, { count: number; resetAt: number }>();
+
+function capabilityDigest(token: string): string {
+  if (!process.env.SESSION_SECRET) throw new Error("SESSION_SECRET is required for capability hashing");
+  return `${CAPABILITY_HASH_PREFIX}${crypto.createHmac("sha256", process.env.SESSION_SECRET).update(token).digest("hex")}`;
+}
+
+function regenerateSession(req: Request): Promise<void> {
+  return new Promise((resolve, reject) => req.session.regenerate((error) => error ? reject(error) : resolve()));
+}
+
+function enforceAuthBudget(bucket: string, limit: number) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const now = Date.now();
+    if (authBudgets.size >= AUTH_LIMIT_MAX_KEYS) {
+      for (const [key, value] of authBudgets) if (value.resetAt <= now) authBudgets.delete(key);
+      if (authBudgets.size >= AUTH_LIMIT_MAX_KEYS) authBudgets.delete(authBudgets.keys().next().value as string);
+    }
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const key = `${bucket}:${req.ip}:${shortHash(email) ?? "none"}`;
+    const current = authBudgets.get(key);
+    const budget = !current || current.resetAt <= now
+      ? { count: 1, resetAt: now + AUTH_LIMIT_WINDOW_MS }
+      : { count: current.count + 1, resetAt: current.resetAt };
+    authBudgets.set(key, budget);
+    if (budget.count > limit) {
+      res.setHeader("Retry-After", String(Math.ceil((budget.resetAt - now) / 1000)));
+      return res.status(429).json({ error: "Too many attempts. Try again later." });
+    }
+    next();
+  };
+}
+
+function requireSameOriginForSession(req: Request, res: Response, next: NextFunction) {
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method) || req.headers.authorization?.startsWith("Bearer ")) return next();
+  const isAuthMutation = req.path.startsWith("/api/auth/");
+  if (!isAuthMutation && !req.session?.userId && req.session?.servicePrincipal?.actorType !== "service") return next();
+  const origin = req.get("origin");
+  const host = req.get("x-forwarded-host")?.split(",")[0]?.trim() || req.get("host");
+  let sameOrigin = req.get("sec-fetch-site") !== "cross-site";
+  if (origin && host) {
+    try { sameOrigin = new URL(origin).host === host; } catch { sameOrigin = false; }
+  }
+  if (!sameOrigin) return res.status(403).json({ error: "Cross-site request rejected" });
+  next();
+}
 
 function shortHash(value: string | undefined): string | null {
   if (!value) return null;
@@ -248,6 +300,7 @@ function userResponse(user: User, principal?: Principal | null) {
 
 async function completeUserAuth(req: Request, res: Response, user: User, context: string) {
   await ensureUserIdentityFoundation(user);
+  await regenerateSession(req);
   delete req.session.servicePrincipal;
   req.session.userId = user.id;
   const principal = await attachUserPrincipal(req, user);
@@ -313,8 +366,7 @@ async function resolveRequestPrincipal(req: Request): Promise<PrincipalResolutio
     const bearerToken = authHeader.slice(7);
     if (bearerToken.length >= 32) {
       try {
-        const { getSetting } = await import("./system-settings");
-        const storedToken = await getSetting<string>("system.automation_auth_token");
+        const storedToken = await getAutomationAuthToken();
         if (storedToken && bearerToken.length === storedToken.length) {
           const a = Buffer.from(bearerToken);
           const b = Buffer.from(storedToken);
@@ -374,7 +426,16 @@ export function setupAuth(app: Express) {
     statement_timeout: 10000,
   });
 
-  const sessionTableReady = ensureSessionTable(pool).catch((error) => {
+  const capabilityMigrationReady = (async () => {
+    for (const user of await storage.getUsers()) {
+      const updates: Partial<Omit<User, "id">> = {};
+      if (user.inviteToken && !user.inviteToken.startsWith(CAPABILITY_HASH_PREFIX)) updates.inviteToken = capabilityDigest(user.inviteToken);
+      if (user.resetToken && !user.resetToken.startsWith(CAPABILITY_HASH_PREFIX)) updates.resetToken = capabilityDigest(user.resetToken);
+      if (Object.keys(updates).length) await storage.updateUser(user.id, updates);
+    }
+  })();
+
+  const sessionTableReady = Promise.all([ensureSessionTable(pool), capabilityMigrationReady]).catch((error) => {
     log.error("[AuthSession] Failed to ensure PostgreSQL session table", {
       tableName: SESSION_TABLE_NAME,
       createTableIfMissing: false,
@@ -406,10 +467,10 @@ export function setupAuth(app: Express) {
     resave: false,
     saveUninitialized: false,
     cookie: {
-      maxAge: 30 * 24 * 60 * 60 * 1000,
+      maxAge: SESSION_TTL_MS,
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      sameSite: "lax",
       // partitioned (CHIPS) is for third-party iframe cookies.
       // WKWebView loads the server as first-party, and silently
       // drops Partitioned cookies — breaking all auth on iOS.
@@ -427,6 +488,8 @@ export function setupAuth(app: Express) {
         next(error);
       });
   });
+
+  app.use(requireSameOriginForSession);
 
   app.use((req: Request, _res: Response, next: NextFunction) => {
     if (!req.path.startsWith("/api") || req.path.startsWith("/api/voice/llm/")) {
@@ -454,7 +517,7 @@ export function setupAuth(app: Express) {
       });
   });
 
-  app.post("/api/auth/login", async (req: Request, res: Response) => {
+  app.post("/api/auth/login", enforceAuthBudget("login", 8), async (req: Request, res: Response) => {
     try {
       const parsed = loginSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -485,7 +548,7 @@ export function setupAuth(app: Express) {
       res.json(userResponse(user, principal));
     } catch (error: any) {
       log.error("[AuthLogin] Login failed", {
-        email: typeof req.body?.email === "string" ? req.body.email : undefined,
+        emailHash: typeof req.body?.email === "string" ? shortHash(req.body.email.trim().toLowerCase()) : undefined,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
@@ -496,7 +559,7 @@ export function setupAuth(app: Express) {
   app.post("/api/auth/logout", (req: Request, res: Response) => {
     req.session.destroy((err) => {
       if (err) return res.status(500).json({ error: "Logout failed" });
-      res.clearCookie("connect.sid");
+      res.clearCookie(SESSION_COOKIE_NAME, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax" });
       res.json({ ok: true });
     });
   });
@@ -523,7 +586,7 @@ export function setupAuth(app: Express) {
     res.json(userResponse(user, principal));
   });
 
-  app.post("/api/auth/setup", async (req: Request, res: Response) => {
+  app.post("/api/auth/setup", enforceAuthBudget("setup", 5), async (req: Request, res: Response) => {
     try {
       const count = await storage.getUserCount();
       if (count > 0) {
@@ -542,13 +605,8 @@ export function setupAuth(app: Express) {
       const { email, password } = parsed.data;
 
       const hashed = await bcrypt.hash(password, 12);
-      const user = await storage.createUser({
-        email,
-        password: hashed,
-      });
-      const adminUser = await storage.updateUser(user.id, { role: "admin" });
-
-      const authenticatedUser = adminUser ?? { ...user, role: "admin" as const };
+      const authenticatedUser = await storage.createInitialAdmin({ email, password: hashed });
+      if (!authenticatedUser) return res.status(403).json({ error: "Setup already completed" });
       const principal = await completeUserAuth(req, res, authenticatedUser, "setup");
       res.json(userResponse(authenticatedUser, principal));
     } catch (error: any) {
@@ -590,7 +648,7 @@ export function setupAuth(app: Express) {
         await ensureUserIdentityFoundation(user);
         await setUserPermissionOverrides(user.id, []);
         await storage.updateUser(user.id, {
-          inviteToken: token,
+          inviteToken: capabilityDigest(token),
           inviteExpires: expires,
         });
 
@@ -601,11 +659,9 @@ export function setupAuth(app: Express) {
     },
   );
 
-  app.get("/api/auth/invite/:token", async (req: Request, res: Response) => {
+  app.get("/api/auth/invite/:token", enforceAuthBudget("invite-verify", 20), async (req: Request, res: Response) => {
     try {
-      const user = await storage.getUserByInviteToken(
-        req.params.token as string,
-      );
+      const user = await storage.getUserByInviteToken(capabilityDigest(req.params.token as string));
       if (!user || !user.inviteExpires || user.inviteExpires < new Date()) {
         return res.status(404).json({ error: "Invalid or expired invite" });
       }
@@ -615,7 +671,7 @@ export function setupAuth(app: Express) {
     }
   });
 
-  app.post("/api/auth/register", async (req: Request, res: Response) => {
+  app.post("/api/auth/register", enforceAuthBudget("register", 8), async (req: Request, res: Response) => {
     try {
       const parsed = registerSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -633,7 +689,7 @@ export function setupAuth(app: Express) {
       let user;
 
       if (inviteToken) {
-        const invitedUser = await storage.getUserByInviteToken(inviteToken);
+        const invitedUser = await storage.getUserByInviteToken(capabilityDigest(inviteToken));
         if (!invitedUser || !invitedUser.inviteExpires || invitedUser.inviteExpires < new Date()) {
           return res.status(400).json({ error: "Invalid or expired invite" });
         }
@@ -648,10 +704,8 @@ export function setupAuth(app: Express) {
           inviteExpires: null,
         });
       } else {
-        user = await storage.createUser({
-          email,
-          password: hashed,
-        });
+        if (process.env.PUBLIC_REGISTRATION_ENABLED !== "true") return res.status(403).json({ error: "An invitation is required" });
+        user = await storage.createUser({ email, password: hashed });
       }
 
       if (!user) {
@@ -663,7 +717,7 @@ export function setupAuth(app: Express) {
     } catch (error: any) {
       const message = error instanceof Error ? error.message : String(error);
       log.error("[AuthRegister] Registration failed", {
-        email: typeof req.body?.email === "string" ? req.body.email : undefined,
+        emailHash: typeof req.body?.email === "string" ? shortHash(req.body.email.trim().toLowerCase()) : undefined,
         error: message,
         stack: error instanceof Error ? error.stack : undefined,
       });
@@ -690,7 +744,7 @@ export function setupAuth(app: Express) {
         const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
         await storage.updateUser(user.id, {
-          resetToken: token,
+          resetToken: capabilityDigest(token),
           resetExpires: expires,
         });
         res.json({ token, email, expiresAt: expires.toISOString() });
@@ -700,11 +754,9 @@ export function setupAuth(app: Express) {
     },
   );
 
-  app.get("/api/auth/reset/:token", async (req: Request, res: Response) => {
+  app.get("/api/auth/reset/:token", enforceAuthBudget("reset-verify", 20), async (req: Request, res: Response) => {
     try {
-      const user = await storage.getUserByResetToken(
-        req.params.token as string,
-      );
+      const user = await storage.getUserByResetToken(capabilityDigest(req.params.token as string));
       if (!user || !user.resetExpires || user.resetExpires < new Date()) {
         return res.status(404).json({ error: "Invalid or expired reset link" });
       }
@@ -714,7 +766,7 @@ export function setupAuth(app: Express) {
     }
   });
 
-  app.post("/api/auth/reset", async (req: Request, res: Response) => {
+  app.post("/api/auth/reset", enforceAuthBudget("reset", 8), async (req: Request, res: Response) => {
     try {
       const { token, password } = req.body;
       if (!token || !password)
@@ -726,7 +778,7 @@ export function setupAuth(app: Express) {
           .status(400)
           .json({ error: "Password must be at least 8 characters" });
 
-      const user = await storage.getUserByResetToken(token);
+      const user = await storage.getUserByResetToken(capabilityDigest(token));
       if (!user || !user.resetExpires || user.resetExpires < new Date()) {
         return res.status(400).json({ error: "Invalid or expired reset link" });
       }
@@ -737,6 +789,7 @@ export function setupAuth(app: Express) {
         resetToken: null,
         resetExpires: null,
       });
+      await pool.query(`DELETE FROM "session" WHERE sess->>'userId' = $1`, [user.id]);
 
       res.json({ ok: true });
     } catch {
@@ -804,7 +857,9 @@ export function setupAuth(app: Express) {
 
         const hashed = await bcrypt.hash(newPassword, 12);
         await storage.updateUser(user.id, { password: hashed });
-        res.json({ ok: true });
+        await pool.query(`DELETE FROM "session" WHERE sess->>'userId' = $1`, [user.id]);
+        const refreshedPrincipal = await completeUserAuth(req, res, user, "change-password");
+        res.json({ ok: true, principal: userResponse(user, refreshedPrincipal).principal });
       } catch {
         res.status(500).json({ error: "Failed to change password" });
       }
@@ -934,6 +989,7 @@ export function setupAuth(app: Express) {
         const user = await storage.getUser(targetId);
         if (!user) return res.status(404).json({ error: "User not found" });
         const overrides = await setUserPermissionOverrides(targetId, permissions);
+        await pool.query(`DELETE FROM "session" WHERE sess->>'userId' = $1`, [targetId]);
         const effective = await getUserEffectivePermissions(targetId);
         res.json({ userId: targetId, permissionOverrides: overrides, permissions: effective, availablePermissions: PERMISSIONS });
       } catch {
@@ -966,6 +1022,7 @@ export function setupAuth(app: Express) {
         const { db } = await import("./db");
         const { users: usersTable } = await import("@shared/schema");
         const { eq } = await import("drizzle-orm");
+        await pool.query(`DELETE FROM "session" WHERE sess->>'userId' = $1`, [targetId]);
         await db.delete(usersTable).where(eq(usersTable.id, targetId));
         res.json({ ok: true });
       } catch {
