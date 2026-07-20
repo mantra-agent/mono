@@ -9,6 +9,7 @@ import { VoiceDiagnostics } from '../src/components/voice-diagnostics';
 import { Logger } from '../src/lib/logger';
 import { glassesTheme } from '../src/theme/glasses';
 import { AGENT_NATIVE_MARKER_SCRIPT, AGENT_WEBVIEW_USER_AGENT_SUFFIX } from '../src/lib/webview-native-marker';
+import { SECURE_WEBVIEW_PROPS } from '../src/lib/webview-security';
 import {
   isWebToNativeVoiceMessage,
   type NativeToWebVoiceMessage,
@@ -403,6 +404,7 @@ export default function PrimaryScreen() {
         ]}
       >
         <WebView
+          {...SECURE_WEBVIEW_PROPS}
           ref={webViewRef}
           source={{ uri: `${Config.SERVER_URL}/home` }}
           sharedCookiesEnabled

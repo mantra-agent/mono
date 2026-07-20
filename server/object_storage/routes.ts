@@ -12,7 +12,7 @@ const log = createLogger("ObjectStorage");
 
 const fileUpload = multer({
   dest: "/tmp/media-uploads/",
-  limits: { fileSize: 2 * 1024 * 1024 * 1024 }, // 2 GB
+  limits: { fileSize: 100 * 1024 * 1024, files: 1, fields: 8 }, // 100 MB proxy budget; larger media uses presigned upload
 });
 
 export function registerObjectStorageRoutes(app: Express): void {

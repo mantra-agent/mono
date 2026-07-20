@@ -151,18 +151,37 @@ declare module "http" {
   }
 }
 
-// CSP frame-ancestors emission for the dev Railway instance.
-// When CSP_FRAME_ANCESTORS is set (e.g., on the dev instance to allow embedding
-// from the prod domain), emit a Content-Security-Policy header on every response.
-// Prod instance leaves this unset.
-const cspFrameAncestors = process.env.CSP_FRAME_ANCESTORS?.trim();
-if (cspFrameAncestors) {
-  serverLog.log(`CSP frame-ancestors enabled: ${cspFrameAncestors}`);
-  app.use((_req, res, next) => {
-    res.setHeader("Content-Security-Policy", `frame-ancestors ${cspFrameAncestors}`);
-    next();
-  });
-}
+// Global browser boundary. Keep this small enough for the current SPA while
+// denying framing, MIME confusion, ambient device APIs, and insecure transport.
+const configuredFrameAncestors = process.env.CSP_FRAME_ANCESTORS?.trim();
+const frameAncestors = configuredFrameAncestors || "'self'";
+app.use((_req, res, next) => {
+  res.setHeader("Content-Security-Policy", [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' blob:",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' blob: https:",
+    "connect-src 'self' https: wss:",
+    "frame-src 'self' https:",
+    "worker-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    `frame-ancestors ${frameAncestors}`,
+    "form-action 'self'",
+    "upgrade-insecure-requests",
+  ].join("; "));
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(self), microphone=(self), geolocation=(), payment=(), usb=()");
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
+  if (process.env.NODE_ENV === "production") {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+  next();
+});
 
 app.use((req, _res, next) => {
   if (req.path.startsWith("/api/voice/llm/")) {
@@ -453,7 +472,7 @@ app.use((req, res, next) => {
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+    const message = status >= 500 ? "Internal Server Error" : (err.message || "Request failed");
 
     serverLog.error("Internal Server Error:", err);
 

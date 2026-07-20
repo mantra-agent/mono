@@ -405,18 +405,14 @@ export async function registerPlaidRoutes(app: Express) {
       log.log(`Webhook received: ${webhookType}/${webhookCode} for item ${itemId}`);
 
       const { verifyWebhook, isWebhookDuplicate } = await import("../plaid-service");
-      const { getSecretSync: _getPlaidSecret } = await import("../secrets-store");
-      const env = _getPlaidSecret("PLAID_ENV") || "sandbox";
-      if (env !== "sandbox") {
-        const headers: Record<string, string> = {};
-        for (const [key, value] of Object.entries(req.headers)) {
-          if (typeof value === "string") headers[key] = value;
-        }
-        const valid = await verifyWebhook(rawBody, headers);
-        if (!valid) {
-          log.warn("Webhook verification failed");
-          return res.status(401).json({ error: "Webhook verification failed" });
-        }
+      const headers: Record<string, string> = {};
+      for (const [key, value] of Object.entries(req.headers)) {
+        if (typeof value === "string") headers[key] = value;
+      }
+      const valid = await verifyWebhook(rawBody, headers);
+      if (!valid) {
+        log.warn("Webhook verification failed");
+        return res.status(401).json({ error: "Webhook verification failed" });
       }
 
       if (isWebhookDuplicate(webhookEventId)) {

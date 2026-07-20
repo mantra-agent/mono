@@ -22,8 +22,10 @@ interface ApiPolicyEvaluation {
 }
 
 const PUBLIC_RULES: ApiPolicyRule[] = [
-  { classification: "public", exact: ["/api/health", "/api/version", "/api/boot-status", "/api/client-error"], reason: "health and safe diagnostics" },
-  { classification: "public", prefixes: ["/api/auth/login", "/api/auth/logout", "/api/auth/setup", "/api/auth/register", "/api/auth/invite/", "/api/auth/reset"], reason: "authentication and setup flow" },
+  { classification: "public", exact: ["/api/health", "/api/version", "/api/boot-status", "/api/boot/status", "/api/client-error", "/api/auth/status", "/api/auth/automation-login"], reason: "health, boot, and authentication bootstrap" },
+  { classification: "public", prefixes: ["/api/public", "/api/meeting-output"], reason: "explicit public capability-token or acquisition route" },
+  { classification: "public", exact: ["/api/auth/login", "/api/auth/logout", "/api/auth/setup", "/api/auth/register", "/api/auth/reset"], reason: "authentication and setup flow" },
+  { classification: "public", pattern: /^\/api\/auth\/(?:invite|reset)\/[^/]+$/, reason: "single-use authentication capability redemption" },
   { classification: "public", prefixes: ["/api/voice/llm/"], reason: "voice provider callback ingress" },
   { classification: "public", prefixes: ["/api/objects/", "/objects"], methods: ["GET"], reason: "object read path with object ACL checks downstream" },
   { classification: "personal", prefixes: ["/api/uploads"], reason: "authenticated user upload path" },
@@ -32,7 +34,7 @@ const PUBLIC_RULES: ApiPolicyRule[] = [
 ];
 
 const ADMIN_RULES: ApiPolicyRule[] = [
-  { classification: "admin", prefixes: ["/api/admin", "/api/backup", "/api/backups", "/api/db-sync", "/api/schema", "/api/logs", "/api/events", "/api/tool-stats", "/api/secrets", "/api/diag", "/api/diagnostics", "/api/workspace", "/api/railway", "/api/expo", "/api/integrations/github", "/api/gitnexus", "/api/gitnexus-status", "/api/encryption", "/api/performance", "/api/gateway", "/api/models", "/api/settings", "/api/maintenance", "/api/mobile", "/api/setup", "/api/server", "/api/boot-info", "/api/config", "/api/design-doc", "/api/trust-config", "/api/openai-subscription", "/api/claude-cli", "/api/elevenlabs", "/api/integrations/expo", "/api/integrations/automation-auth"], reason: "system administration route" },
+  { classification: "admin", prefixes: ["/api/admin", "/api/backup", "/api/backups", "/api/db-sync", "/api/schema", "/api/logs", "/api/events", "/api/tool-stats", "/api/secrets", "/api/diag", "/api/diagnostics", "/api/workspace", "/api/railway", "/api/expo", "/api/integrations/github", "/api/gitnexus", "/api/gitnexus-status", "/api/encryption", "/api/performance", "/api/gateway", "/api/models", "/api/settings", "/api/maintenance", "/api/mobile", "/api/setup", "/api/server", "/api/boot-info", "/api/config", "/api/design-doc", "/api/trust-config", "/api/openai-subscription", "/api/claude-cli", "/api/elevenlabs", "/api/integrations/expo", "/api/integrations/automation-auth", "/api/platforms", "/api/provider-connections", "/api/prompt-modules", "/api/communications", "/api/notifications", "/api/auth/users", "/api/auth/meeting-join-policy", "/api/auth/dev-login", "/api/dev"], reason: "system administration route" },
   { classification: "admin", prefixes: ["/api/auth/invite", "/api/auth/reset-request"], reason: "user administration route" },
 ];
 
@@ -119,13 +121,31 @@ const PERSONAL_RULES: ApiPolicyRule[] = [
       "/api/media",
       "/api/magic-demo",
       "/api/glasses-agent",
+      "/api/glasses",
+      "/api/companies",
+      "/api/observations",
+      "/api/dashboard",
+      "/api/generate-image",
+      "/api/auth/profile",
+      "/api/auth/ui-prefs",
+      "/api/auth/change-password",
     ],
     reason: "personal user data route",
   },
 ];
 
 const API_POLICY_RULES = [...PUBLIC_RULES, ...ADMIN_RULES, ...SERVICE_RULES, ...PERSONAL_RULES];
-const REPORT_ONLY = process.env.API_POLICY_ENFORCEMENT !== "enforce";
+const REPORT_ONLY = process.env.API_POLICY_ENFORCEMENT === "report";
+const RATE_WINDOW_MS = 60_000;
+const RATE_BUCKET_LIMIT = 20_000;
+const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMITS: Record<ApiPolicyClassification | "unclassified", number> = {
+  public: 120,
+  personal: 300,
+  admin: 120,
+  service: 600,
+  unclassified: 0,
+};
 
 function apiPathFromRequest(req: Request): string {
   const raw = req.originalUrl || req.url || req.path;
@@ -187,6 +207,34 @@ function warningPayload(req: Request, res: Response, evaluation: ApiPolicyEvalua
   };
 }
 
+
+function clientAddress(req: Request): string {
+  return req.ip || req.socket.remoteAddress || "unknown";
+}
+
+function enforceAbuseBudget(req: Request, res: Response, evaluation: ApiPolicyEvaluation): boolean {
+  const limit = RATE_LIMITS[evaluation.classification];
+  if (limit <= 0) return false;
+  const now = Date.now();
+  if (rateBuckets.size >= RATE_BUCKET_LIMIT) {
+    for (const [key, value] of rateBuckets) if (value.resetAt <= now) rateBuckets.delete(key);
+    if (rateBuckets.size >= RATE_BUCKET_LIMIT) rateBuckets.delete(rateBuckets.keys().next().value as string);
+  }
+  const key = `${evaluation.classification}:${clientAddress(req)}`;
+  const current = rateBuckets.get(key);
+  const bucket = !current || current.resetAt <= now
+    ? { count: 1, resetAt: now + RATE_WINDOW_MS }
+    : { count: current.count + 1, resetAt: current.resetAt };
+  rateBuckets.set(key, bucket);
+  res.setHeader("RateLimit-Limit", String(limit));
+  res.setHeader("RateLimit-Remaining", String(Math.max(0, limit - bucket.count)));
+  res.setHeader("RateLimit-Reset", String(Math.ceil(bucket.resetAt / 1000)));
+  if (bucket.count <= limit) return true;
+  res.setHeader("Retry-After", String(Math.ceil((bucket.resetAt - now) / 1000)));
+  res.status(429).json({ error: "Request budget exceeded" });
+  return false;
+}
+
 export function apiPolicyReportMiddleware(req: Request, res: Response, next: NextFunction) {
   const requestPath = apiPathFromRequest(req);
   if (!requestPath.startsWith("/api")) return next();
@@ -202,9 +250,12 @@ export function apiPolicyReportMiddleware(req: Request, res: Response, next: Nex
   });
 
   const evaluation = classifyApiRequest(req.method, requestPath);
-  if (!REPORT_ONLY && evaluation.classification !== "public" && !principalSatisfies(evaluation, getPrincipal(req))) {
-    return res.status(401).json({ error: "Authentication required" });
+  const principal = getPrincipal(req);
+  if (!REPORT_ONLY && !principalSatisfies(evaluation, principal)) {
+    const status = evaluation.classification === "unclassified" ? 404 : 401;
+    return res.status(status).json({ error: status === 404 ? "Not found" : "Authentication required" });
   }
+  if (!enforceAbuseBudget(req, res, evaluation)) return;
 
   next();
 }

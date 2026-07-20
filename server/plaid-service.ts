@@ -1370,8 +1370,7 @@ export async function verifyWebhook(rawBody: string, headers: Record<string, str
     const plaidVerification = headers["plaid-verification"];
     if (!plaidVerification) {
       log.warn("No Plaid verification header present");
-      const env = getSecretSync("PLAID_ENV") || "sandbox";
-      return env === "sandbox";
+      return false;
     }
 
     const { decodeProtectedHeader, importJWK, jwtVerify } = await import("jose");
@@ -1409,8 +1408,7 @@ export async function verifyWebhook(rawBody: string, headers: Record<string, str
     return true;
   } catch (err: unknown) {
     log.warn(`Webhook verification failed: ${err instanceof Error ? err.message : String(err)}`);
-    const env = getSecretSync("PLAID_ENV") || "sandbox";
-    return env === "sandbox";
+    return false;
   }
 }
 

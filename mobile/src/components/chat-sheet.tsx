@@ -6,6 +6,7 @@ import Config from '../config';
 import { Logger } from '../lib/logger';
 import { glassesTheme } from '../theme/glasses';
 import { AGENT_NATIVE_MARKER_SCRIPT, AGENT_WEBVIEW_USER_AGENT_SUFFIX } from '../lib/webview-native-marker';
+import { SECURE_WEBVIEW_PROPS } from '../lib/webview-security';
 import { VoiceDiagnostics } from './voice-diagnostics';
 
 export function ChatSheet({ sheetRef }: { sheetRef: React.RefObject<BottomSheet> }) {
@@ -56,6 +57,7 @@ export function ChatSheet({ sheetRef }: { sheetRef: React.RefObject<BottomSheet>
             </View>
           )}
           <WebView
+            {...SECURE_WEBVIEW_PROPS}
             source={{ uri: `${Config.SERVER_URL}/chat` }}
             sharedCookiesEnabled
             injectedJavaScriptBeforeContentLoaded={AGENT_NATIVE_MARKER_SCRIPT}
