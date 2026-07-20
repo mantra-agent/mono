@@ -5,13 +5,10 @@
  * and linked Agenda/Recap pages. Bot status is encoded on the title icon.
  * Renders above the transcript, mirroring the sticky-bar pattern used by plans/workflows.
  *
- * When a recap is ready, the recap row always renders. Distribution drafts
- * auto-expand into per-attendee EmailDraftWidget panels (one per draftId);
- * the "Send recap to N attendees" button collapses/expands them. When no
- * drafts were created, a quiet skipped line says so — absence of drafts is
- * never silent. Follows the Sessions Draft widget motif: fixed attendee
- * recipients, editable content, explicit send control (human presses Send),
- * and a read-only expandable recap page.
+ * When a recap is ready, the recap row always renders. Its invitee-addressed
+ * EmailDraftWidget auto-expands for human review; the Review email button
+ * collapses/expands it. When no draft was created, a quiet skipped line says
+ * so — absence of drafts is never silent.
  */
 import { useEffect, useState, useCallback } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -102,20 +99,11 @@ interface DistributionRow {
 // ---------------------------------------------------------------------------
 
 /**
- * RecapDistributionPanel — fetches per-attendee distribution rows for a
- * session and renders one EmailDraftWidget per Gmail-draft row.
- *
- * Uses the standard EmailDraftWidget motif: editable content, fixed
- * attendee recipients visible in the draft, explicit Send control.
- * SendGrid-sent rows (no draftId) show a compact read-only status chip.
+ * RecapDistributionPanel — fetches per-invitee distribution provenance and
+ * renders each shared Gmail draft once. The draft's editable To field is the
+ * canonical human review surface. Non-draft rows remain compact status chips.
  */
-function RecapDistributionPanel({
-  sessionId,
-  draftCount,
-}: {
-  sessionId: string;
-  draftCount: number;
-}) {
+function RecapDistributionPanel({ sessionId }: { sessionId: string }) {
   const { data, isLoading, error } = useQuery<{ distributions: DistributionRow[] }>({
     queryKey: ["/api/meetings", sessionId, "recap-distributions"],
     queryFn: async () => {
@@ -180,63 +168,49 @@ function RecapDistributionPanel({
     );
   }
 
+  const draftIds = [...new Set(
+    distributions
+      .map((row) => row.draftId)
+      .filter((draftId): draftId is string => !!draftId),
+  )];
+  const nonDraftRows = distributions.filter((row) => !row.draftId);
+
   return (
-    <div className="px-4 pb-3 space-y-2" data-testid="panel-distribution-drafts">
-      <p className="text-xs text-muted-foreground pt-1">
-        Review and send recap emails to{" "}
-        <span className="text-foreground font-medium">{distributions.length}</span>{" "}
-        attendee{distributions.length === 1 ? "" : "s"}. Each recipient receives their
-        own copy — Action Items and key decisions included.
-      </p>
+    <div
+      className="max-h-[calc(100dvh-12rem)] space-y-2 overflow-y-auto overscroll-contain px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] scrollbar-thin"
+      data-testid="panel-distribution-drafts"
+    >
+      {draftIds.map((draftId) => (
+        <EmailDraftWidget key={draftId} draftId={draftId} isRecapDraft />
+      ))}
 
-      {distributions.map((row) => {
-        // Gmail draft path: render editable EmailDraftWidget
-        if (row.draftId) {
-          return (
-            <div key={row.id} data-testid={`distribution-row-${row.id}`}>
-              {/* Attendee label above widget */}
-              <div className="flex items-center gap-1.5 mb-1">
-                <Mail className="h-3 w-3 text-muted-foreground shrink-0" />
-                <span className="text-xs text-muted-foreground">
-                  {row.attendeeName
-                    ? `${row.attendeeName} (${row.attendeeEmail})`
-                    : row.attendeeEmail}
-                </span>
-              </div>
-              <EmailDraftWidget draftId={row.draftId} isRecapDraft={true} />
-            </div>
-          );
-        }
-
-        // SendGrid sent path: compact read-only status chip
-        return (
-          <div
-            key={row.id}
-            className={cn(
-              "flex items-center gap-2 rounded-md border px-3 py-2 text-xs",
-              row.status === "sent"
-                ? "border-success/40 bg-success/5 text-success"
-                : row.status === "failed"
-                  ? "border-destructive/30 bg-destructive/10 text-destructive"
-                  : "border-border/40 bg-muted/20 text-muted-foreground",
-            )}
-            data-testid={`distribution-row-${row.id}`}
-          >
-            <Mail className="h-3 w-3 shrink-0" />
-            <span className="min-w-0 truncate font-medium">
-              {row.attendeeName
-                ? `${row.attendeeName} (${row.attendeeEmail})`
-                : row.attendeeEmail}
+      {nonDraftRows.map((row) => (
+        <div
+          key={row.id}
+          className={cn(
+            "flex items-center gap-2 rounded-md border px-3 py-2 text-xs",
+            row.status === "sent"
+              ? "border-success/40 bg-success/5 text-success"
+              : row.status === "failed"
+                ? "border-destructive/30 bg-destructive/10 text-destructive"
+                : "border-border/40 bg-muted/20 text-muted-foreground",
+          )}
+          data-testid={`distribution-row-${row.id}`}
+        >
+          <Mail className="h-3 w-3 shrink-0" />
+          <span className="min-w-0 truncate font-medium">
+            {row.attendeeName
+              ? `${row.attendeeName} (${row.attendeeEmail})`
+              : row.attendeeEmail}
+          </span>
+          <span className="ml-auto shrink-0 capitalize">{row.status}</span>
+          {row.error && (
+            <span className="max-w-[12rem] truncate text-destructive/80" title={row.error}>
+              {row.error}
             </span>
-            <span className="ml-auto shrink-0 capitalize">{row.status}</span>
-            {row.error && (
-              <span className="text-destructive/80 truncate max-w-[12rem]" title={row.error}>
-                {row.error}
-              </span>
-            )}
-          </div>
-        );
-      })}
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -574,7 +548,7 @@ export function MeetingHeaderBar({
             >
               <Mail className="h-3.5 w-3.5 shrink-0" />
               <span>
-                Send recap to {draftCount} attendee{draftCount === 1 ? "" : "s"}
+                Review email
               </span>
               {distributionOpen ? (
                 <ChevronDown className="h-3 w-3 shrink-0" />
@@ -629,7 +603,7 @@ export function MeetingHeaderBar({
           className="border-t border-border/20"
           data-testid="panel-distribution"
         >
-          <RecapDistributionPanel sessionId={sessionId} draftCount={draftCount} />
+          <RecapDistributionPanel sessionId={sessionId} />
         </div>
       )}
 

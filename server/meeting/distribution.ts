@@ -217,19 +217,16 @@ async function runDistribution(
     return;
   }
 
-  const useGmail = true;  // Explicit: Gmail is required and verified above.
-
-
   // 4. Render the user-owned canonical Library recap into the editable draft.
   const subject = `Meeting recap: ${recap.pageTitle ?? meeting.title ?? "Our meeting"}`;
   const body = await buildEmailContent(recap, meeting, principal);
 
-  // 5. Per-attendee loop with error isolation.
-  const draftIds: string[] = [];
-
+  // 5. Record one tracking row per invitee, then create one editable draft
+  // addressed to the complete invitee set. The draft is the human decision
+  // surface; distribution rows preserve per-recipient provenance.
+  const distributionRowIds: string[] = [];
   for (const attendee of attendees) {
     try {
-      // Insert tracking row (pending).
       const owned = ownedInsertValues(principal, scopeColumns);
       const [row] = await db
         .insert(meetingRecapDistributions)
@@ -238,35 +235,51 @@ async function runDistribution(
           attendeeEmail: attendee.email,
           attendeeName: attendee.name ?? null,
           isMantraUser: false,
-          sendMethod: "gmail_draft",  // Gmail is required; verified above.
+          sendMethod: "gmail_draft",
           status: "pending",
           ...owned,
         })
         .returning();
-
-      if (useGmail) {
-        // Gmail draft path — human sends via EmailDraftWidget.
-        const draft = await emailDraftStorage.create(principal, {
-          sessionId,
-          gmailAccountId: gmailAccountId!,
-          to: [attendee.email],
-          subject,
-          body,
-        });
-
-        await db
-          .update(meetingRecapDistributions)
-          .set({ draftId: draft.id, status: "draft_created", updatedAt: new Date() })
-          .where(eq(meetingRecapDistributions.id, row.id));
-
-        draftIds.push(draft.id);
-        log.debug(`Gmail draft created for ${attendee.email} (draftId=${draft.id})`);
-      }
+      distributionRowIds.push(row.id);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      log.warn(`Recap distribution failed for attendee ${attendee.email} (session=${sessionId}): ${msg}`);
-      // Per-attendee errors are non-fatal — the loop continues.
-      // Row may or may not have been inserted; don't throw.
+      log.warn(`Failed to record recap recipient ${attendee.email} (session=${sessionId}): ${msg}`);
+    }
+  }
+
+  const draftIds: string[] = [];
+  if (distributionRowIds.length > 0) {
+    try {
+      const draft = await emailDraftStorage.create(principal, {
+        sessionId,
+        gmailAccountId: gmailAccountId!,
+        to: attendees.map((attendee) => attendee.email),
+        subject,
+        body,
+      });
+      await db
+        .update(meetingRecapDistributions)
+        .set({ draftId: draft.id, status: "draft_created", updatedAt: new Date() })
+        .where(
+          and(
+            eq(meetingRecapDistributions.sessionId, sessionId),
+            writableScopePredicate(principal, scopeColumns) as SQL,
+          ),
+        );
+      draftIds.push(draft.id);
+      log.debug(`Gmail recap draft created for ${attendees.length} invitee(s) (draftId=${draft.id})`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`Recap draft creation failed for session ${sessionId}: ${msg}`);
+      await db
+        .update(meetingRecapDistributions)
+        .set({ status: "failed", error: msg.slice(0, 500), updatedAt: new Date() })
+        .where(
+          and(
+            eq(meetingRecapDistributions.sessionId, sessionId),
+            writableScopePredicate(principal, scopeColumns) as SQL,
+          ),
+        );
     }
   }
 
