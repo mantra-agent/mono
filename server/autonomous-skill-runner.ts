@@ -658,12 +658,21 @@ export async function executeAutonomousSkillRun(
     }
   }
 
+  const { personaStorage } = await import("./file-storage/persona-storage");
   const explicitRunPersona = options.personaName
-    ? await (await import("./file-storage/persona-storage")).personaStorage.getByName(options.personaName)
+    ? await personaStorage.getByName(options.personaName)
     : null;
   if (options.personaName && !explicitRunPersona) {
     throw new Error(`Explicit run persona "${options.personaName}" is not visible to the current principal`);
   }
+  const recommendedRunPersona = !explicitRunPersona && resolvedPersona
+    ? await personaStorage.get(resolvedPersona.personaId)
+    : null;
+  if (resolvedPersona && !recommendedRunPersona) {
+    logger.warn(`[SkillChat] Recommended persona ${resolvedPersona.personaId} (source=${resolvedPersona.source}) not found — creating the run without a persona`);
+  }
+  const initialRunPersona = explicitRunPersona ?? recommendedRunPersona;
+  const initialPersonaSource = explicitRunPersona ? "explicit_run" : resolvedPersona?.source;
 
   let conversation: FileSession;
   // Top-level runs (hooks, timers, skills.run) default to "autonomous" so they
@@ -697,6 +706,7 @@ export async function executeAutonomousSkillRun(
       undefined,
       options.parentSessionId
         ? {
+            personaId: initialRunPersona?.id,
             parentSessionId: options.parentSessionId,
             spawnReason: effectiveSpawnReason,
             spawnerTool: effectiveSpawnerTool,
@@ -706,6 +716,7 @@ export async function executeAutonomousSkillRun(
             triggerName: (options as any).hookTriggerName || config.label,
           }
         : {
+            personaId: initialRunPersona?.id,
             triggerType: (options as any).hookTriggerId ? "hook" as const : "skill" as const,
             triggerId: (options as any).hookTriggerId || skillId || undefined,
             triggerName: (options as any).hookTriggerName || config.label,
@@ -735,25 +746,13 @@ export async function executeAutonomousSkillRun(
     }
   }
 
-  // Apply explicit run persona before context assembly and first inference.
-  // Skill recommendations remain the fallback for ordinary skill runs.
-  if (explicitRunPersona) {
-    const { setSessionPersona } = await import("./session-persona");
-    const persona = await setSessionPersona(sessionId, explicitRunPersona.id);
-    if (!persona) throw new Error(`Failed to apply explicit run persona "${options.personaName}"`);
-    logger.log(`[SkillChat] [${sessionId}] Applied persona "${persona.name}" (id=${persona.id}, source=explicit_run)`);
-  } else if (resolvedPersona) {
-    try {
-      const { setSessionPersona } = await import("./session-persona");
-      const persona = await setSessionPersona(sessionId, resolvedPersona.personaId);
-      if (persona) {
-        logger.log(`[SkillChat] [${sessionId}] Applied persona "${persona.name}" (id=${persona.id}, source=${resolvedPersona.source})`);
-      } else {
-        logger.warn(`[SkillChat] [${sessionId}] Skill persona ${resolvedPersona.personaId} (source=${resolvedPersona.source}) not found — falling back to default persona resolution`);
-      }
-    } catch (personaErr: unknown) {
-      logger.warn(`[SkillChat] [${sessionId}] Failed to apply skill persona: ${personaErr instanceof Error ? personaErr.message : String(personaErr)}`);
+  // Persona is part of the creation write so the first session snapshot, child
+  // block, context assembly, and model route all observe the same identity.
+  if (initialRunPersona) {
+    if (conversation.personaId !== initialRunPersona.id) {
+      throw new Error(`Session ${sessionId} was created without persona ${initialRunPersona.id}`);
     }
+    logger.log(`[SkillChat] [${sessionId}] Created with persona "${initialRunPersona.name}" (id=${initialRunPersona.id}, source=${initialPersonaSource})`);
   }
 
   if (options.onSessionCreated) {
