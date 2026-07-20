@@ -15,9 +15,9 @@ function InboxItemInline({ item }: { item: SimpleFeedItem }) {
   const showKind = kind && kind !== "email_review";
 
   const inner = completed ? (
-    <div className="flex min-w-0 items-center gap-2">
+    <div className="mx-1 flex min-w-0 items-center gap-1">
       <Inbox className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      <span className="truncate text-xs font-medium text-neutral line-through transition-all duration-200">
+      <span className="truncate border-b border-current text-xs font-medium text-neutral transition-all duration-200">
         {item.title}
       </span>
     </div>
