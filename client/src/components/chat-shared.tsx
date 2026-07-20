@@ -31,6 +31,7 @@ import {
   Zap,
   CheckCircle2,
   Download,
+  ChevronDown,
   ChevronRight,
   Users,
   BookOpen,
@@ -2459,36 +2460,60 @@ function SystemPromptBlock({
     ? content.slice(firstLineMatch[0].length).replace(/^\s+/, "")
     : content;
 
+  const previewLine = useMemo(() => {
+    const lines = body.split("\n").map(l => l.trim()).filter(Boolean);
+    const first = lines[0] ?? "";
+    return first.length > 120 ? first.slice(0, 120) + "…" : first;
+  }, [body]);
+
+  const toggleExpanded = useCallback(() => setExpanded(prev => !prev), []);
+
   return (
     <div
-      className="border border-border/60 bg-muted/20 rounded-md my-1"
+      className={`border rounded-md my-1 border-border/60 bg-muted/20 ${expanded ? "" : "cursor-pointer"}`}
+      onClick={!expanded ? toggleExpanded : undefined}
       data-testid={`message-system-prompt-${message.id}`}
     >
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 px-3 py-2 text-left"
-        onClick={() => setExpanded(!expanded)}
+      <div
+        className="flex items-center gap-2 px-3 py-2"
         data-testid={`button-toggle-system-prompt-${message.id}`}
       >
-        <ChevronRight
-          className={cn(
-            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
-            expanded && "rotate-90",
-          )}
-        />
-        <ScrollText className="h-3.5 w-3.5 shrink-0 text-cat-system" />
-        <span
-          className="min-w-0 flex-1 truncate text-sm text-foreground/90"
-          data-testid="text-system-prompt-label"
-        >
-          Skill Instructions{skillLabel ? ` — ${skillLabel}` : ""}
-        </span>
+        <div className="flex items-center gap-2 flex-1 min-w-0 text-sm text-foreground/90">
+          <button
+            type="button"
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+            onClick={(e) => { e.stopPropagation(); toggleExpanded(); }}
+            aria-label={expanded ? "Collapse skill instructions" : "Expand skill instructions"}
+          >
+            {expanded ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            )}
+          </button>
+          <ScrollText className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+          <span
+            className="min-w-0 truncate flex-1"
+            data-testid="text-system-prompt-label"
+          >
+            Skill Instructions{skillLabel ? ` — ${skillLabel}` : ""}
+          </span>
+        </div>
         <span className="shrink-0 text-xs text-muted-foreground/70">
           {body.length.toLocaleString()} chars
         </span>
-      </button>
+      </div>
+
+      {!expanded && previewLine && (
+        <div className="px-8 pb-2 min-h-7">
+          <div className="text-xs leading-6 text-muted-foreground truncate">
+            {previewLine}
+          </div>
+        </div>
+      )}
+
       {expanded && (
-        <div className="max-h-96 overflow-y-auto border-t border-border/60 px-4 py-3">
+        <div className="border-t border-border/40 max-h-96 overflow-y-auto scrollbar-thin px-4 py-3">
           <MarkdownContent content={body} stripTags={stripTags} />
           <div
             className="mt-2 text-xs text-muted-foreground/50"
