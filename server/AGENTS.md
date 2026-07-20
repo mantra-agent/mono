@@ -409,6 +409,7 @@ Runnable workflow skills are stored in the DB, executed by the autonomous runner
 ## Comms / Email System
 
 - Email draft creation and editing are the only LLM-facing write operations; sending remains human-only through the authenticated widget route.
+- Writing style is resolved before Gmail invocation from the current user's Personal Rules and referenced Library standard, optionally through the draft Skill. Gmail and `EmailDraftStorage` persist supplied prose verbatim; never add a second style-generation or rewriting layer to email storage.
 - Gmail `update_draft` body edits are patch-first and mutually exclusive: exact `findReplace`, hash-guarded `rangePatch`, or explicit `replaceBody`. Route every mode through `EmailDraftStorage.mutateBody`; never perform handler-side read/modify/write.
 
 Gmail OAuth sync into a 7-table PostgreSQL cache, with triage classification, thread enrichment, and People import.

@@ -371,148 +371,64 @@ Return a compact operational report:
   {
     name: "draft",
     recommendedPersona: "Creative",
-    description: "Draft writing in Ray's voice. Loads the Voice Standard from Library, applies all rules, runs Kill List Sweep, presents for review. Works for any context: X posts, LinkedIn, email, investor updates, board comms, team Slack, personal messages.",
+    description: "Draft writing in the current user's canonical voice. Resolves the user's writing standard from active Rules and Library, applies the correct register, runs the standard's required sweep, and persists through the native draft surface when available.",
     category: "communication",
     activity: ACTIVITY_WORK,
     author: getInstanceName(),
-    version: "1.0",
+    version: "1.1",
     addToMemory: true,
     pinnedToContext: true,
     whenToUse: "Used for communication operations",
-    outputSpec: "A draft written in Ray's voice with audience/intent/wall stated, Kill List Sweep results, self-score against the Acid Test, and any flags for Ray's review. Presented in a conversation for approval.",
+    outputSpec: "A native editable draft in the appropriate tool surface, written in the user's canonical voice and ready for review. Gmail drafts and replies are persisted through the Gmail tool with only the message in the body.",
     checklist: [
-      { check: "Who/Shift/Wall explicitly stated before draft text", weight: 1 },
-      { check: "Kill List Sweep reported with specific rewrite notes for any violations found", weight: 2 },
-      { check: "Zero em dashes in the draft body text", weight: 1 },
-      { check: "Zero 'not X, it is Y' constructions in the draft body text", weight: 1 },
-      { check: "First line creates a hook that earns the second sentence", weight: 1 },
-      { check: "Close gives the reader something to carry without self-positioning", weight: 1 },
-      { check: "Self-score against Acid Test included with item-by-item pass/fail", weight: 1 },
+      { check: "Resolved and loaded the user's full canonical writing standard before drafting", weight: 2 },
+      { check: "Selected the correct register for the actual recipient and medium", weight: 1 },
+      { check: "Applied relevant Personal Rules and recipient context without inventing facts", weight: 1 },
+      { check: "Completed the canonical standard's mandatory style sweep with zero surviving violations", weight: 2 },
+      { check: "Draft sounds specifically like the user rather than generic competent prose", weight: 1 },
+      { check: "Used the native draft tool when available and kept process metadata out of the message body", weight: 1 },
+      { check: "Did not send or publish automatically", weight: 1 },
     ],
-    process: `## Ray Voice Writer — Skill Process
+    process: `## Canonical Voice Writer — Skill Process
 
-### Step 0: Load the Voice Standard
+### Step 0: Resolve the user's canonical writing standard
 
-Before doing ANYTHING else, load the Voice Standard from the Library:
+Read the active Personal Rules first. If a Rule for drafting in the user's voice references a Library page, load that exact page with \`library.get_library_page\` and read it in full before composing.
 
-\`\`\`
-library.get_library_page(id: "ray-s-voice-standard-living-writing-spec-v1-0")
-\`\`\`
+If no active Rule identifies a page, search the user's Library once for an explicitly canonical voice or writing standard. Use an unambiguous result. If no canonical standard exists, apply the active communication Rules and known user preferences, then tell the user the writing profile is not yet configured. Never guess another user's page ID and never substitute a remembered summary for an available canonical page.
 
-Read the ENTIRE spec. Every rule, every kill-list item, every principle. This is your operating constraint for the entire run. Do not skip this step. Do not summarize it from memory. Load it fresh every time.
+### Step 1: Parse the brief
 
-### Step 1: Parse the Brief
+Extract:
+- What to write
+- Context or medium
+- Specific recipient or audience
+- Intended reader shift
+- Larger objective this message advances
 
-The preContext will contain the writing brief. Extract:
+Make the strongest reasonable inference from available context. Ask only when a wrong choice would materially change the message.
 
-- **What to write** (topic, message, argument)
-- **Context** (X post, LinkedIn, email, investor update, board update, team Slack, personal message)
-- **Who it's for** (specific audience, not "everyone")
-- **What shift** (what should the reader think or do after reading)
-- **What wall** (what larger goal does this build toward)
+### Step 2: Select the register
 
-If any of the three questions from Part 0 of the Voice Standard are missing from the brief, make your best judgment from context. State your assumptions at the top of the output.
-
-### Step 2: Select Register
-
-Based on the context, select the appropriate voice register from Part III of the Voice Standard:
-
-- Internal Team → loosest, humor on, teaching mode
-- Social Media (X) → conviction-forward, compressed, hook first
-- Social Media (LinkedIn) → conviction-forward, more developed, analogies heavy
-- Investor Comms → biggest story, zero jargon, 11-year-old repitch test
-- Board Comms → most rigorous, numbers sharp, steward mode
-- Personal Messages → warmest, names included, specific gratitude
+Use the register defined by the canonical standard for the actual medium, relationship, and stakes. Email is not one register. Distinguish internal leadership, investor, board, strategic outreach, and personal messages when the standard does.
 
 ### Step 3: Draft
 
-Write the piece applying ALL rules from Parts I and II of the Voice Standard:
+Apply the full canonical standard, relevant Personal Rules, recipient context, and thread facts. Preserve factual accuracy. Never invent commitments, dates, claims, or emotional history.
 
-**Part I checklist (How It Sounds):**
-- Style deliberate and matched to register
-- Every word carrying load
-- Specific over abstract
-- Rhythm varied (short conviction, long reasoning)
-- Belief unhedged
-- Passion visible
-- Current language
-- Zero jargon (unless Board/Investor where technical specificity is warranted)
-- Maximum compression
+### Step 4: Run the canonical style sweep
 
-**Part II checklist (How It Builds Understanding):**
-- Responsibility Principle: every sentence grabs, teaches, or lands
-- Rule of Three Lenses: key points triangulated
-- Analogies earned and load-bearing
-- Hook in first line
-- Teaching posture
-- Wrong notes inside, not at the end
-- No forced "we" before the case is made
-- Bach Principle: open and close mirror at different octaves
-- Close gives the reader something to carry
+Complete every mandatory check defined by the canonical standard. Rewrite every violation before presenting or persisting the draft. Do not leave known violations for the user to fix.
 
-### Step 4: Kill List Sweep (MANDATORY)
+### Step 5: Self-check
 
-After drafting, run a mechanical check through EVERY item on the Kill List. Check for:
+Use the canonical standard's final quality test for the selected register. Confirm the opening earns attention, every word carries load, the close lands cleanly, and the message sounds specifically like the user.
 
-1. **"Not X / it's Y"** in ANY variant (including split across two sentences like "That's not a prediction. That's a pattern.")
-2. **Em dashes (—)** anywhere in the text
-3. **Meta-narration** ("Let's start there," "Here's the thing," "Let me explain," "I want to talk about")
-4. **Kill-list vocabulary** ("hits different," "delve into," "tapestry," "at the end of the day," "it goes without saying," "I want to express")
-5. **Unearned closing metaphors** (metaphor in the last 2 sentences that wasn't built in the body)
-6. **Self-positioning closes** ("I'm already swimming," "I know which side I'm on," "That's what I'm building")
-7. **Jargon** ("downstream," "macro," "leverage," "net-net," "at scale," "synergy")
+### Step 6: Persist or present
 
-If ANY violation is found, REWRITE the offending sentence. Do not flag it and leave it in. Do not present the draft with known violations. Fix it first.
+For Gmail email drafts or replies, use \`gmail.draft\` or \`gmail.reply\` so the result appears as a native editable draft widget. Put only the actual message in the email body. Use plain chat text only for explicit brainstorming or copy-only requests.
 
-### Step 5: Self-Score
-
-Score the draft against the Acid Test from the Voice Standard:
-
-- [ ] Smile audible in the serious parts (when appropriate to context)
-- [ ] Anna or Thea by name when relevant
-- [ ] Honest self-awareness that could have been omitted
-- [ ] Belief without a safety net
-- [ ] Specifics doing the emotional work
-- [ ] Style chosen, not defaulted to
-- [ ] Important ideas from multiple angles
-- [ ] Reader learned something
-- [ ] First line earns the second
-- [ ] Last line mirrors the first at a different octave
-- [ ] No word without load
-- [ ] Closing metaphors earned in the body
-- [ ] Close gives reader something to carry
-- [ ] Kill List Sweep: zero violations
-
-Not every item applies to every context (a board update won't mention Thea). Score only what's relevant.
-
-### Step 6: Present Output
-
-Surface the draft in a conversation using this format:
-
-\`\`\`
-**[Context] — [Topic]**
-
-**Who:** [target audience]
-**Shift:** [intended reader shift]
-**Wall:** [strategic sequence position]
-
----
-
-[THE DRAFT]
-
----
-
-**Kill List Sweep:** [PASS/FAIL — detail any rewrites made]
-**Self-Score:** [X/Y relevant items passed]
-**Flags:** [anything the writer is uncertain about]
-\`\`\`
-
-### Important Notes
-
-- This skill NEVER auto-sends or auto-posts. All output is for Ray's review.
-- When writing X posts, respect the character limit. If the idea needs more room, format as a thread with clear breaks.
-- When writing multiple pieces (e.g., "give me 5 X posts"), each one gets its own Who/Shift/Wall and its own Kill List Sweep.
-- If the brief is vague ("write something about AI"), use the Strategic Sequence from Part 0 to pick the right angle and state the assumption.`,
+For other formats, use the appropriate native draft surface when one exists. Never send or publish automatically. Include process metadata or scoring only when the user asks to review the writing process; keep it outside the actual message.`,
   },
 
   {
