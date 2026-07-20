@@ -174,21 +174,48 @@ export function makeThoughtHeader(type: string): string {
   return `[${label} — ${formattedDate} ${formattedTime}]`;
 }
 
+
+export interface JournalEntryForContext {
+  date: string;
+  title: string | null;
+  content: string;
+}
+
+export async function getJournalEntriesSince(days: number, tags: string[] = ["journal", "daily-review", "weekly-reflection", "monthly-reflection"]): Promise<JournalEntryForContext[]> {
+  const { libraryPages } = await import("@shared/models/info");
+  const cutoff = new Date(Date.now() - Math.max(1, days) * 24 * 60 * 60 * 1000);
+  const visible = combineWithVisibleScope(
+    getCurrentPrincipalOrSystem(),
+    { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId },
+    and(
+      gte(libraryPages.createdAt, cutoff),
+      tags.length > 0 ? sql`${libraryPages.tags} && ${tags}` : undefined,
+    ),
+  );
+  const rows = await db
+    .select({ title: libraryPages.title, plainTextContent: libraryPages.plainTextContent, createdAt: libraryPages.createdAt })
+    .from(libraryPages)
+    .where(visible)
+    .orderBy(desc(libraryPages.createdAt))
+    .limit(50);
+
+  return rows
+    .filter((row) => (row.plainTextContent || "").trim().length > 0)
+    .map((row) => ({
+      date: row.createdAt ? row.createdAt.toISOString().split("T")[0] : "unknown",
+      title: row.title ?? null,
+      content: (row.plainTextContent || "").slice(0, 4000),
+    }));
+}
+
 export async function saveWeeklyReflectionToMemory(content: string): Promise<void> {
-  try {
-    const { memoryStorage } = await import("./memory/memory-storage");
-    const sourceId = `weekly-reflect-${Date.now().toString(36)}`;
-    await memoryStorage.upsertExchange(
-      sourceId,
-      content,
-      "manual",
-      { type: "weekly_reflection", date: new Date().toISOString().split("T")[0] },
-      ["weekly_reflection"]
-    );
-    log.log(`[weekly_reflect] Saved reflection summary to memory sourceId=${sourceId}`);
-  } catch (err: unknown) {
-    log.error(`[weekly_reflect] Failed to save to memory:`, err instanceof Error ? err.message : String(err));
-  }
+  await saveJournalToLibrary(
+    content,
+    `Weekly Reflection — ${new Date().toISOString().split("T")[0]}`,
+    ["weekly_reflection"],
+    "weekly-reflections",
+  );
+  log.log(`[weekly_reflect] Saved reflection summary to Library; legacy memory_entries write retired`);
 }
 
 export async function saveJournalToLibrary(
@@ -211,131 +238,43 @@ export async function saveJournalToLibrary(
 }
 
 export async function buildDreamPreContext(): Promise<{ preContext: string } | null> {
-  const { memoryStorage } = await import("./memory/memory-storage");
-  const { walkGraph } = await import("./memory/graph-walker");
-
-  const longEntries = await memoryStorage.getLayer("long", 50);
-  if (longEntries.length < 2) {
-    log.log(`[dream] Not enough long-term memories for dream mode`);
+  const { memoryVnextClaimStorage } = await import("./memory/vnext-claim-storage");
+  const claims = await memoryVnextClaimStorage.listRandomActiveClaims(8);
+  if (claims.length < 2) {
+    log.log(`[dream] Not enough active vNext claims for dream mode`);
     return null;
   }
+  const fragments = claims.map((claim) => `- ${claim.title ? `${claim.title}: ` : ""}${claim.content}`).join("\n");
+  return {
+    preContext: `## Dream Seeds
 
-  const entriesWithEmbeddings = longEntries.filter(e => e.embedding != null);
+These are non-authoritative vNext memory claim fragments. Weave connections without treating any single fragment as complete truth.
 
-  let sample: typeof longEntries;
-
-  if (entriesWithEmbeddings.length >= 2) {
-    const shuffled = [...entriesWithEmbeddings].sort(() => Math.random() - 0.5);
-    const seedA = shuffled[0];
-    const seedB = shuffled[Math.floor(shuffled.length / 2)];
-
-    const clusterA = await walkGraph({
-      seedEntryIds: [seedA.id],
-      focusEmbedding: seedB.embedding as number[],
-      maxHops: 3,
-      minRelevance: 0.15,
-      maxResults: 5,
-      excludeIds: new Set([seedB.id]),
-    });
-
-    const excludeFromB = new Set([seedA.id, ...clusterA.map(r => r.entry.id)]);
-    const clusterB = await walkGraph({
-      seedEntryIds: [seedB.id],
-      focusEmbedding: seedA.embedding as number[],
-      maxHops: 3,
-      minRelevance: 0.15,
-      maxResults: 5,
-      excludeIds: excludeFromB,
-    });
-
-    const combined = new Map<number, typeof longEntries[0]>();
-    combined.set(seedA.id, seedA);
-    combined.set(seedB.id, seedB);
-    for (const r of clusterA) combined.set(r.entry.id, r.entry);
-    for (const r of clusterB) combined.set(r.entry.id, r.entry);
-
-    sample = Array.from(combined.values()).slice(0, 10);
-
-    log.log(`[dream] Graph walker found ${clusterA.length} entries in cluster A, ${clusterB.length} in cluster B, ${sample.length} total`);
-  } else {
-    const shuffled = [...longEntries].sort(() => Math.random() - 0.5);
-    sample = shuffled.slice(0, Math.min(8, shuffled.length));
-    log.log(`[dream] Not enough embeddings for graph walk, using random sample of ${sample.length}`);
-  }
-
-  const preContext = sample.map(e =>
-    `[Memory #${e.id}] "${e.title || '(untitled)'}":\n${e.summary || e.content.slice(0, 300)}\nTags: ${(e.tags || []).join(', ')}`
-  ).join("\n\n");
-
-  return { preContext };
-}
-
-export interface JournalEntry {
-  id: string;
-  date: string;
-  title: string;
-  content: string;
-  createdAt: string;
-}
-
-export async function getJournalEntriesSince(daysAgo: number, tagFilter?: string[]): Promise<JournalEntry[]> {
-  const { db: database } = await import("./db");
-  const { libraryPages } = await import("@shared/models/info");
-  const { eq, and, gte, desc, sql: dsql } = await import("drizzle-orm");
-
-  let parentId: string;
-  try {
-    const { resolveLibraryParent } = await import("./library-index");
-    parentId = await resolveLibraryParent("journals");
-  } catch {
-    return [];
-  }
-
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - daysAgo);
-
-  const filterTags = tagFilter || ["daily"];
-
-  const cutoffDateStr = cutoff.toISOString().split("T")[0];
-
-  const pages = await database.select().from(libraryPages).where(
-    and(
-      eq(libraryPages.parentId, parentId),
-      dsql`${libraryPages.tags} @> ARRAY[${dsql.join(filterTags.map(t => dsql`${t}`), dsql`, `)}]::text[]`,
-    )
-  ).orderBy(desc(libraryPages.createdAt));
-
-  return pages
-    .map(p => {
-      const dateMatch = p.title.match(/^\d{4}-\d{2}-\d{2}/);
-      const date = dateMatch ? dateMatch[0] : p.createdAt.toISOString().split("T")[0];
-      const titleSuffix = p.title.replace(/^\d{4}-\d{2}-\d{2}\s*—?\s*/, "").trim();
-      return {
-        id: p.id,
-        date,
-        title: titleSuffix || date,
-        content: p.plainTextContent || "",
-        createdAt: p.createdAt.toISOString(),
-      };
-    })
-    .filter(e => e.date >= cutoffDateStr);
+${fragments}`,
+  };
 }
 
 export async function buildDailyReflectPreContext(): Promise<{ preContext: string } | null> {
   const sections: string[] = [];
 
   try {
-    const { memoryStorage } = await import("./memory/memory-storage");
+    const { memoryVnextClaimStorage } = await import("./memory/vnext-claim-storage");
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const recentEntries = await memoryStorage.getLayer("short", 50);
-    const todayEntries = recentEntries.filter(e => new Date(e.createdAt).getTime() >= today.getTime());
-    if (todayEntries.length > 0) {
-      sections.push(`## Today's Memory Entries\n\n${todayEntries.map(e => `- ${e.title || e.content.slice(0, 200)}`).join("\n")}`);
+    const recentClaims = await memoryVnextClaimStorage.searchClaims({
+      createdAfter: today.toISOString(),
+      limit: 50,
+    });
+    if (recentClaims.length > 0) {
+      const claimLines = recentClaims
+        .map((claim) => `- ${claim.title || claim.content.slice(0, 200)}`)
+        .join("\n");
+      sections.push(`## Today's vNext Memory Claims\n\n${claimLines}`);
     }
   } catch (err: unknown) {
-    log.warn(`[daily_reflect] Failed to gather memory entries: ${err instanceof Error ? err.message : String(err)}`);
+    log.warn(`[daily_reflect] Failed to gather vNext memory claims: ${err instanceof Error ? err.message : String(err)}`);
   }
+
 
   try {
     const recentThoughts = await getRecentThoughts(24 * 60 * 60 * 1000, 20);
@@ -468,29 +407,12 @@ export async function buildMonthlyReflectPreContext(): Promise<{ preContext: str
 
   let weeklyReflectionsSection = "No recent weekly reflections found.";
   try {
-    const { db } = await import("./db");
-    const { sql } = await import("drizzle-orm");
-    const result = await db.execute(sql`
-      SELECT content, created_at
-      FROM memory_entries
-      WHERE 'weekly_reflection' = ANY(tags)
-      ORDER BY created_at DESC
-      LIMIT 4
-    `);
-    const rows = result.rows as Array<{ content: string; created_at: Date }>;
-    if (rows.length > 0) {
-      weeklyReflectionsSection = rows.map(r =>
-        `[${new Date(r.created_at).toISOString().split("T")[0]}] ${r.content}`
-      ).join("\n\n");
-    }
-  } catch { }
-
-  let principlesSection = "No principles document found.";
-  try {
-    const { documentStorage } = await import("./memory/document-storage");
-    const principlesDoc = await documentStorage.getDocument("workspace_file" as any, "PRINCIPLES.md");
-    if (principlesDoc) {
-      principlesSection = principlesDoc.content;
+    const weeklyEntries = await getJournalEntriesSince(45, ["weekly_reflection", "weekly-reflections"]);
+    if (weeklyEntries.length > 0) {
+      weeklyReflectionsSection = weeklyEntries.slice(0, 4).map((entry) => {
+        const title = entry.title ? ` — ${entry.title}` : "";
+        return `[${entry.date}${title}] ${entry.content}`;
+      }).join("\n\n");
     }
   } catch { }
 

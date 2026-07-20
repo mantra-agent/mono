@@ -7504,189 +7504,15 @@ ${lines.join("\n")}` };
 
 
   async memory_graph(args) {
-    const { memoryStorage } = await import("./memory/memory-storage");
-    const { createLogger } = await import("./log");
-    const memLog = createLogger("Memory");
-    const action = args.action || "create_link";
-
-    interface DeletePreviewResult {
-      status: "preview";
-      entryId: number;
-      title: string;
-      layer: string;
-      source: string;
-      summary: string;
-      linkCount: number;
-      entityLinkCount: number;
-      warning: string;
-      confirmCall: string;
-    }
-
-    interface DeleteConfirmResult {
-      status: "deleted";
-      entryId: number;
-      title: string;
-      reason: string;
-      linksRemoved: number;
-      cleanupStatus: "complete" | "partial_failure";
-      cleanupNote?: string;
-    }
-
-    interface DeleteErrorResult {
-      status: "error";
-      code: "not_found" | "missing_reason" | "delete_failed" | "not_deleted";
-      entryId: number;
-      message: string;
-    }
-
-    async function previewDelete(id: number): Promise<{ result: string; error?: boolean }> {
-      const entry = await memoryStorage.getEntry(id);
-      if (!entry) {
-        const err: DeleteErrorResult = { status: "error", code: "not_found", entryId: id, message: `Memory entry ${id} not found` };
-        return { result: JSON.stringify(err), error: true };
-      }
-
-      const links = await memoryStorage.getLinks(id);
-      const entityLinks = await memoryStorage.getEntityLinksForMemory(id);
-
-      const title = entry.title || entry.summary?.slice(0, 60) || `Entry #${id}`;
-      memLog.log(`delete_entry preview — id:${id} "${title}" links:${links.length} entityLinks:${entityLinks.length}`);
-
-      const preview: DeletePreviewResult = {
-        status: "preview",
-        entryId: id,
-        title,
-        layer: entry.layer,
-        source: entry.source,
-        summary: (entry.summary || entry.content || "").slice(0, 200),
-        linkCount: links.length,
-        entityLinkCount: entityLinks.length,
-        warning: `This will permanently delete entry #${id} and remove ${links.length} link(s) and ${entityLinks.length} entity link(s). This cannot be undone.`,
-        confirmCall: `memory({ action: "delete_entry", id: ${id}, confirm: true, reason: "..." })`,
-      };
-      return { result: JSON.stringify(preview) };
-    }
-
-    function deleteError(code: DeleteErrorResult["code"], id: number, message: string): { result: string; error: true } {
-      const err: DeleteErrorResult = { status: "error", code, entryId: id, message };
-      return { result: JSON.stringify(err), error: true };
-    }
-
-    function resolveCleanupStatus(deleteResult: { linksRemoved: number; peerCleanupScheduled: number; cleanupErrors?: string[] }, id: number, title: string, reason: string): { cleanupStatus: "complete" | "partial_failure"; cleanupNote?: string } {
-      if (deleteResult.cleanupErrors && deleteResult.cleanupErrors.length > 0) {
-        memLog.warn(`delete_entry partial — id:${id} "${title}" reason:"${reason}" cleanupErrors:${deleteResult.cleanupErrors.length}/${deleteResult.peerCleanupScheduled}`);
-        return {
-          cleanupStatus: "partial_failure",
-          cleanupNote: `Entry deleted but neighborhood recomputation failed for ${deleteResult.cleanupErrors.length} of ${deleteResult.peerCleanupScheduled} peer(s): ${deleteResult.cleanupErrors.join("; ")}`,
-        };
-      }
-      if (deleteResult.peerCleanupScheduled > 0) {
-        memLog.log(`delete_entry confirmed — id:${id} "${title}" reason:"${reason}" linksRemoved:${deleteResult.linksRemoved} peerCleanup:complete(${deleteResult.peerCleanupScheduled})`);
-        return { cleanupStatus: "complete", cleanupNote: `${deleteResult.linksRemoved} link(s) removed. Neighborhood recomputation completed for ${deleteResult.peerCleanupScheduled} peer(s).` };
-      }
-      memLog.log(`delete_entry confirmed — id:${id} "${title}" reason:"${reason}" cleanup:complete (no peers)`);
-      return { cleanupStatus: "complete" };
-    }
-
-    async function confirmDelete(id: number, reason: string): Promise<{ result: string; error?: boolean }> {
-      if (!reason || typeof reason !== "string" || reason.trim().length === 0) {
-        return deleteError("missing_reason", id, "A reason is required to confirm deletion");
-      }
-
-      const entry = await memoryStorage.getEntry(id);
-      if (!entry) {
-        memLog.warn(`delete_entry not_found — id:${id}`);
-        return deleteError("not_found", id, `Memory entry ${id} not found — it may have already been deleted`);
-      }
-
-      const title = entry.title || entry.summary?.slice(0, 60) || `Entry #${id}`;
-      let deleteResult: { deleted: boolean; linksRemoved: number; peerCleanupScheduled: number; cleanupErrors?: string[] };
-
-      try {
-        deleteResult = await memoryStorage.deleteEntry(id, { awaitCleanup: true });
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        memLog.error(`delete_entry failed — id:${id} reason:"${reason}" error:${msg}`);
-        return deleteError("delete_failed", id, `Failed to delete entry ${id}: ${msg}`);
-      }
-
-      if (!deleteResult.deleted) {
-        memLog.warn(`delete_entry not_deleted — id:${id} 0 rows affected (concurrent deletion)`);
-        return deleteError("not_deleted", id, `Entry ${id} was not deleted — it may have been removed by a concurrent operation`);
-      }
-
-      const { cleanupStatus, cleanupNote } = resolveCleanupStatus(deleteResult, id, title, reason);
-      const result: DeleteConfirmResult = { status: "deleted", entryId: id, title, reason: reason.trim(), linksRemoved: deleteResult.linksRemoved, cleanupStatus, ...(cleanupNote && { cleanupNote }) };
-      return { result: JSON.stringify(result) };
-    }
-
-    try {
-      switch (action) {
-        case "create_link": {
-          const rawFromId = args.fromId;
-          const rawToId = args.toId;
-          const relationship = args.relationship;
-          if (!rawFromId || !rawToId || !relationship) return { result: "Missing fromId, toId, or relationship", error: true };
-          const fromId = Number(rawFromId);
-          const toId = Number(rawToId);
-          if (!Number.isFinite(fromId) || !Number.isInteger(fromId)) return { result: "fromId must be an integer", error: true };
-          if (!Number.isFinite(toId) || !Number.isInteger(toId)) return { result: "toId must be an integer", error: true };
-          const strength = args.strength != null ? Number(args.strength) : undefined;
-          const link = await memoryStorage.createLink(fromId, toId, relationship, strength);
-          return { result: `Link created: ${fromId} —[${relationship}]→ ${toId} (link ID: ${link.id})` };
-        }
-        case "update_entry": {
-          const rawId = args.id;
-          if (!rawId) return { result: "Missing memory entry id", error: true };
-          const id = Number(rawId);
-          if (!Number.isFinite(id) || !Number.isInteger(id)) return { result: "id must be an integer", error: true };
-          const updates: Record<string, any> = {};
-          if (args.content) updates.content = args.content;
-          if (args.summary) updates.summary = args.summary;
-          if (args.oneLiner !== undefined) updates.oneLiner = args.oneLiner;
-          if (args.tags) updates.tags = args.tags;
-          if (args.layer) updates.layer = args.layer;
-          if (args.integrationStage) updates.integrationStage = args.integrationStage;
-          if (args.metadata) updates.metadata = args.metadata;
-          if (Object.keys(updates).length === 0) return { result: "No updates provided", error: true };
-          const updated = await memoryStorage.updateEntry(id, updates);
-          if (!updated) return { result: `Memory entry ${id} not found`, error: true };
-          return { result: `Memory entry ${id} updated — ${Object.keys(updates).join(", ")}` };
-        }
-        case "get": {
-          const rawId = args.id;
-          if (!rawId) return { result: "Missing memory entry id", error: true };
-          const id = Number(rawId);
-          if (!Number.isFinite(id) || !Number.isInteger(id)) return { result: "id must be an integer", error: true };
-          const entry = await memoryStorage.getEntry(id);
-          if (!entry) return { result: `Memory entry ${id} not found`, error: true };
-          const parts = [
-            `Title: ${entry.title || "(untitled)"}`,
-            `Layer: ${entry.layer}`,
-            `Integration stage: ${entry.integrationStage}`,
-            `Source: ${entry.source}`,
-            `Summary: ${entry.summary || "(none)"}`,
-            `Tags: ${entry.tags?.length ? entry.tags.join(", ") : "none"}`,
-            `Links: ${entry.links?.length || 0}`,
-          ];
-          return { result: parts.join("\n") };
-        }
-        case "delete_entry": {
-          const rawId = args.id;
-          if (!rawId) return { result: "Missing memory entry id", error: true };
-          const id = Number(rawId);
-          if (!Number.isFinite(id) || !Number.isInteger(id)) return { result: "id must be an integer", error: true };
-          if (args.confirm === true) {
-            return confirmDelete(id, args.reason as string);
-          }
-          return previewDelete(id);
-        }
-        default:
-          return { result: `Unknown memory_graph action: ${action}. Available: create_link, update_entry, delete_entry, get`, error: true };
-      }
-    } catch (err: any) {
-      return { result: `Memory write tool error: ${err.message}`, error: true };
-    }
+    return {
+      result: JSON.stringify({
+        deprecated: true,
+        storage: "memory_entries",
+        message: "Legacy memory_graph is retired. Use vNext claim graph endpoints and memory tool actions: search_claims, vnext_claim_detail, get_entity_links, and run_vnext_lifecycle.",
+        requestedAction: args?.action || "create_link",
+      }),
+      error: true,
+    };
   },
   async list_amortizations(_args: Record<string, any>): Promise<ToolHandlerResult> {
     const log = createLogger("BridgeTools:list_amortizations");
@@ -10272,17 +10098,13 @@ ${refs}` : ""),
 
   async get_system_state(_args: Record<string, any>): Promise<ToolHandlerResult> {
     try {
-      const { memoryStorage } = await import("./memory");
-
-
       const parts: string[] = ["## System State Summary"];
 
       try {
-        const stats = await memoryStorage.getStats();
-        const total = stats.short + stats.mid + stats.long;
-        const graphedTotal = stats.shortGraphed + stats.midGraphed + stats.longGraphed;
-        parts.push(`**Memory:** ${total} total entries — short: ${stats.short}, mid: ${stats.mid}, long: ${stats.long} (graphed: ${graphedTotal}, links: ${stats.links})`);
-      } catch { parts.push("**Memory:** unavailable"); }
+        const { memoryVnextClaimStorage } = await import("./memory/vnext-claim-storage");
+        const counts = await memoryVnextClaimStorage.getCounts();
+        parts.push(`**Memory:** ${counts.total} vNext claims — source refs: ${counts.sourceRefs}, entity links: ${counts.entityLinks}, claim links: ${counts.claimLinks}`);
+      } catch { parts.push("**Memory:** vNext unavailable"); }
 
       try {
         const { storage } = await import("./storage");

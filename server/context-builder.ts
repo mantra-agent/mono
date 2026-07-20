@@ -5,7 +5,7 @@ import { safeStringify } from "./utils/safe-stringify";
 import { db, withQueryAttributionAsync, getInFlightStats } from "./db";
 import { getInstanceName, getInstanceNameLower } from "@shared/instance-config";
 import { TTLCache } from "./utils/ttl-cache";
-import { memoryEntries, memorySourceRefs, getNeighborhoodCache, sessionOutputBuffer } from "@shared/schema";
+import { sessionOutputBuffer } from "@shared/schema";
 import { sql, or, and, eq, desc, gte, inArray } from "drizzle-orm";
 import type {
   ContextCallType,
@@ -31,7 +31,6 @@ import { fileEmotionalStateStorage } from "./file-storage/emotional-state";
 import { personaStorage } from "./file-storage/persona-storage";
 import { renderFocusContextBlock } from "@shared/models/chat";
 import { peopleStorage } from "./people-storage";
-import { memoryStorage, MEMORY_THRESHOLDS } from "./memory";
 import { chatFileStorage } from "./chat-file-storage";
 import { listAllEvents, isHighPrepEvent, hasCalendarAccess } from "./google-calendar";
 import { listGmailAccounts } from "./gmail";
