@@ -19,7 +19,6 @@ import {
   LogOut,
   Mail,
   Radio,
-  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -30,6 +29,7 @@ import { createReferenceRef } from "@shared/references";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
 import { MeetingSpeakerAssignments } from "@/components/meeting-speaker-assignments";
+import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 
 const log = createLogger("MeetingHeaderBar");
 
@@ -73,6 +73,24 @@ function useElapsed(startedAt?: string, endedAt?: string): string | null {
   if (!startedAt) return null;
   const end = endedAt ? new Date(endedAt).getTime() : now;
   return formatElapsed(end - new Date(startedAt).getTime());
+}
+
+function formatRecognitionStreamSummary(stream: NonNullable<MeetingSessionMeta["recognition"]>["streams"][number]): string {
+  const segments = [
+    stream.transportLabel || `Stream ${stream.transportParticipantId}`,
+    stream.attribution === "diarized"
+      ? "Shared room"
+      : stream.attribution === "excluded"
+        ? "Excluded"
+        : "Participant",
+    stream.status === "excluded"
+      ? "Excluded"
+      : stream.status.charAt(0).toUpperCase() + stream.status.slice(1),
+  ];
+
+  return segments.filter((segment, index) => (
+    segments.findIndex((candidate) => candidate.toLowerCase() === segment.toLowerCase()) === index
+  )).join(" · ");
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +229,9 @@ export function MeetingHeaderBar({
   const showDistributionFailed =
     (recap?.distributionStatus === "failed" || recap?.distributionStatus === "blocked")
     && !recap.distributionSkipped;
+  const visibleParticipants = meeting.participants.filter(
+    (participant) => participant.source !== "machine_diarization",
+  );
 
   return (
     <div className="border-b border-border bg-card/60">
@@ -242,33 +263,6 @@ export function MeetingHeaderBar({
           >
             {elapsed}
           </span>
-        )}
-        {meeting.participants.some((participant) => participant.source !== "machine_diarization") && (
-          <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-            {meeting.participants
-              .filter((participant) => participant.source !== "machine_diarization")
-              .map((participant) => participant.personId ? (
-              <ReferenceRenderer
-                key={participant.personId}
-                refValue={createReferenceRef({
-                  type: "person",
-                  id: participant.personId,
-                  metadata: { label: participant.label, href: `/people/${participant.personId}` },
-                })}
-                surface="chat-inline"
-                className="max-w-full"
-              />
-            ) : (
-              <span
-                key={participant.label}
-                className="inline-flex items-center rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground"
-                title={participant.label}
-                data-testid={`chip-participant-${participant.label.replace(/\s+/g, "-").toLowerCase()}`}
-              >
-                {participant.label}
-              </span>
-            ))}
-          </div>
         )}
         {sessionId && (isLive || departureMeaningful) && (
           <div className="ml-auto flex items-center gap-1.5">
@@ -320,6 +314,38 @@ export function MeetingHeaderBar({
         )}
       </div>
 
+      {visibleParticipants.length > 0 && (
+        <div className="pb-2 pr-4" data-testid="meeting-participant-tree">
+          {visibleParticipants.map((participant, index) => (
+            <HierarchyTreeRow
+              key={participant.key || participant.personId || `${participant.label}-${index}`}
+              continues={index < visibleParticipants.length - 1}
+            >
+              <div
+                className="flex min-h-7 min-w-0 items-center px-2 py-1"
+                data-testid={`participant-${participant.label.replace(/\s+/g, "-").toLowerCase()}`}
+              >
+                {participant.personId ? (
+                  <ReferenceRenderer
+                    refValue={createReferenceRef({
+                      type: "person",
+                      id: participant.personId,
+                      metadata: { label: participant.label, href: `/people/${participant.personId}` },
+                    })}
+                    surface="simple-row"
+                    className="max-w-full"
+                  />
+                ) : (
+                  <span className="truncate text-sm text-muted-foreground" title={participant.label}>
+                    {participant.label}
+                  </span>
+                )}
+              </div>
+            </HierarchyTreeRow>
+          ))}
+        </div>
+      )}
+
       {sessionId && (
         <MeetingSpeakerAssignments
           participants={meeting.participants}
@@ -353,13 +379,7 @@ export function MeetingHeaderBar({
               ) : (
                 <Radio className="h-3 w-3 shrink-0" />
               )}
-              <span className="truncate">
-                {stream.transportLabel || `Stream ${stream.transportParticipantId}`} · {stream.attribution === "diarized"
-                  ? "Shared room"
-                  : stream.attribution === "excluded"
-                    ? "Excluded"
-                    : "Participant"} · {stream.status}
-              </span>
+              <span className="truncate">{formatRecognitionStreamSummary(stream)}</span>
             </span>
           ))}
         </div>
@@ -402,18 +422,6 @@ export function MeetingHeaderBar({
             readOnly
           />
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            {/* Interaction log chip */}
-            {(recap.interactionsLogged ?? 0) > 0 && (
-            <span
-              className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground"
-              data-testid="chip-meeting-recap-interactions"
-            >
-              <Users className="h-3 w-3 shrink-0" />
-              {recap.interactionsLogged} interaction
-              {recap.interactionsLogged === 1 ? "" : "s"} logged
-            </span>
-          )}
-
           {/* Distribution: preparing */}
           {showDistributionSpinner && (
             <span
