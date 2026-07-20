@@ -1,9 +1,10 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SimpleFeedItem } from "@shared/models/simple";
 import type { LibraryPage } from "@/pages/library/types";
 import { createReferenceRef } from "@shared/references";
-import { ChevronRight, Loader2, MessageSquare, MoreHorizontal, X } from "lucide-react";
+import { ChevronRight, Loader2, MessageSquare, MessageSquarePlus, MoreHorizontal, X } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
@@ -58,6 +59,7 @@ function isCloseConnection(item: SimpleFeedItem): boolean {
 
 export function SurfacedPersonRow({ item, onSurfaceChange, dateLabel }: SurfacedPersonRowProps) {
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
   const { route, setSessionForRoute, setWidgetOpen } = useFocusSession();
   const [open, setOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -165,6 +167,19 @@ export function SurfacedPersonRow({ item, onSurfaceChange, dateLabel }: Surfaced
                 {discussMutation.isPending ? <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> : <MessageSquare className="h-3.5 w-3.5 mr-2" />}
                 Discuss
               </DropdownMenuItem>
+              {personId && (
+                <DropdownMenuItem
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setMenuOpen(false);
+                    navigate(`/people/${personId}?action=log-interaction`);
+                  }}
+                  data-testid={`menu-log-interaction-${personId}`}
+                >
+                  <MessageSquarePlus className="h-3.5 w-3.5 mr-2" />
+                  Log an interaction
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               {personId && reasonKey && (
                 <ReminderPopover

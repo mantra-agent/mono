@@ -2030,7 +2030,13 @@ function ConnectionsCard({ person }: { person: Person }) {
   );
 }
 
-function PersonDetailView({ personId, onClose, onDelete }: { personId: string; onClose: () => void; onDelete: () => void }) {
+function PersonDetailView({ personId, onClose, onDelete, openNewInteraction, onNewInteractionOpened }: {
+  personId: string;
+  onClose: () => void;
+  onDelete: () => void;
+  openNewInteraction?: boolean;
+  onNewInteractionOpened?: () => void;
+}) {
   const { toast } = useToast();
   const [editingName, setEditingName] = useState(false);
   const [editName, setEditName] = useState("");
@@ -2081,6 +2087,12 @@ function PersonDetailView({ personId, onClose, onDelete }: { personId: string; o
   useEffect(() => {
     setShowEmptyProfileRows(false);
   }, [personId]);
+
+  useEffect(() => {
+    if (!openNewInteraction) return;
+    setShowNewLog(true);
+    onNewInteractionOpened?.();
+  }, [onNewInteractionOpened, openNewInteraction]);
 
   const introducedByPerson = useMemo(() => {
     if (!person?.introducedBy || !allPeopleData?.people) return null;
@@ -3800,7 +3812,7 @@ function DesktopPlaceholder() {
 export default function PeoplePage() {
   const { toast } = useToast();
   const [, params] = useRoute("/people/:id");
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const [selectedPersonId, setSelectedPersonIdRaw] = useState<string | null>(params?.id && params.id !== "import" && params.id !== "network" ? params.id : null);
   const [activeTab, setActiveTabRaw] = useState("contacts");
   const [selectedImportEmail, setSelectedImportEmail] = useState<string | null>(null);
@@ -3873,6 +3885,16 @@ export default function PeoplePage() {
     if (!selectedPersonId) return null;
     return headerPeopleData?.people.find(person => person.id === selectedPersonId)?.name ?? null;
   }, [headerPeopleData?.people, selectedPersonId]);
+
+  const shouldOpenNewInteraction = useMemo(() => {
+    if (!selectedPersonId || typeof window === "undefined") return false;
+    return new URLSearchParams(window.location.search).get("action") === "log-interaction";
+  }, [location, selectedPersonId]);
+
+  const handleNewInteractionOpened = useCallback(() => {
+    if (!selectedPersonId) return;
+    setLocation(`/people/${selectedPersonId}`, { replace: true });
+  }, [selectedPersonId, setLocation]);
 
   const peopleTabs = useMemo(() => [
     { value: "contacts", label: "Contacts", testId: "tab-contacts", icon: <ContactRound className="h-3.5 w-3.5" /> },
@@ -3997,7 +4019,13 @@ export default function PeoplePage() {
           <>
             <div className="flex-1 overflow-y-auto scrollbar-thin">
               <div className="p-4">
-                <PersonDetailView personId={selectedPersonId} onClose={() => setSelectedPersonId(null)} onDelete={() => setSelectedPersonId(null)} />
+                <PersonDetailView
+                  personId={selectedPersonId}
+                  onClose={() => setSelectedPersonId(null)}
+                  onDelete={() => setSelectedPersonId(null)}
+                  openNewInteraction={shouldOpenNewInteraction}
+                  onNewInteractionOpened={handleNewInteractionOpened}
+                />
               </div>
             </div>
           </>
