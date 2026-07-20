@@ -157,6 +157,8 @@ import type { ReferenceSurface } from "@/components/references/reference-rendere
 import { EmailDraftWidget } from "@/components/email-draft-widget";
 import { QuestionWidget, questionPromptFromToolCall } from "@/components/question-widget";
 import { PlanWidget } from "@/components/plan-widget";
+import { WorkflowWidget } from "@/components/workflow-widget";
+import type { WorkflowWidgetRun } from "@/components/workflow-shared";
 import type { PlanData } from "@/components/plan-shared";
 import { parseReferenceText } from "@shared/reference-parser";
 
@@ -2186,6 +2188,48 @@ function InlinePlanWidget({
   );
 }
 
+function InlineWorkflowWidget({
+  workflowId,
+  sessionId,
+  sessionTitleById,
+  sessionStreams,
+}: {
+  workflowId: string;
+  sessionId?: string;
+  sessionTitleById?: Record<string, string>;
+  sessionStreams?: SessionStreamMap;
+}) {
+  const { data: workflow, isLoading, error } = useQuery<WorkflowWidgetRun>({
+    queryKey: ["/api/workflows/runs", workflowId],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/workflows/runs/${encodeURIComponent(workflowId)}`);
+      if (!res.ok) throw new Error("Workflow not found");
+      return res.json();
+    },
+    staleTime: 2_000,
+    refetchInterval: (query) => {
+      const status = query.state.data?.run.status;
+      return status === "completed" || status === "failed" || status === "canceled" ? false : 5_000;
+    },
+  });
+
+  if (isLoading) {
+    return <div className="my-2 px-2 py-1.5 text-xs text-muted-foreground">Loading workflow…</div>;
+  }
+  if (error || !workflow) {
+    return <div className="my-2 px-2 py-1.5 text-xs text-muted-foreground">@workflow:{workflowId}</div>;
+  }
+  return (
+    <WorkflowWidget
+      workflow={workflow}
+      sessionId={sessionId}
+      className="my-2"
+      sessionTitleById={sessionTitleById}
+      sessionStreams={sessionStreams}
+    />
+  );
+}
+
 function formatLocalTime(dateStr: string): string {
   const d = new Date(dateStr);
   return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -2662,6 +2706,17 @@ export const ChatTurn = memo(function ChatTurn({
         (action === "create" || action === "associate_session");
     },
   );
+  const { fromToolResults: workflowWidgetIds } = referenceIdsFromSegments(
+    segments,
+    "workflow",
+    (tool) => {
+      const action = typeof tool.arguments?.action === "string"
+        ? tool.arguments.action
+        : null;
+      return (tool.toolName === "workflows" && action === "create_run") ||
+        (tool.toolName === "platforms" && action === "start_build_workflow");
+    },
+  );
 
   useEffect(() => {
     if (visibleEmailDraftIds.length === 0) return;
@@ -2929,6 +2984,15 @@ export const ChatTurn = memo(function ChatTurn({
                 planId={id}
                 sessionId={message.sessionId}
                 ownedChildBlocks={planOwnedChildBlocks}
+                sessionTitleById={sessionTitleById}
+                sessionStreams={sessionStreams}
+              />
+            ))}
+            {workflowWidgetIds.map((id) => (
+              <InlineWorkflowWidget
+                key={`tool-workflow-${id}`}
+                workflowId={id}
+                sessionId={message.sessionId}
                 sessionTitleById={sessionTitleById}
                 sessionStreams={sessionStreams}
               />

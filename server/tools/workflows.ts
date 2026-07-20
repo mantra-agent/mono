@@ -36,10 +36,11 @@ export async function handleWorkflows(args: Record<string, any>): Promise<ToolHa
       case "get_run": return json(await getWorkflowRun(String(args.runId || args.id || "")));
       case "create_run": {
         const sessionId = typeof args._sessionId === "string" ? args._sessionId.trim() : "";
-        return json(await createWorkflowRun({
+        const run = await createWorkflowRun({
           ...args,
           ...(sessionId ? { parentSessionId: sessionId, createdBySessionId: sessionId } : {}),
-        }));
+        });
+        return { result: `${JSON.stringify(run, null, 2)}\n\n@workflow:${run.run.id}` };
       }
       case "start_run": return json(await startWorkflowRun(String(args.runId || args.id || "")));
       case "pause_run": return json(await pauseWorkflowRun(String(args.runId || args.id || ""), args.reason));

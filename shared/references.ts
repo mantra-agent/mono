@@ -10,6 +10,7 @@ export const REFERENCE_TYPES = [
   "meeting",
   "session",
   "plan",
+  "workflow",
 
   "decision",
   "wellness_activity",

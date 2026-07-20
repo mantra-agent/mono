@@ -48,7 +48,6 @@ import { useVoiceStreaming } from "@/hooks/use-voice-streaming";
 import { SessionTranscriptSurface } from "@/components/session-transcript-surface";
 import type { ChatSession as Session } from "@shared/models/chat";
 import { useVoiceSessionOptional } from "@/hooks/use-voice-session";
-import { useWorkflowForSession } from "@/hooks/use-workflow-for-session";
 import { usePinnedScroll } from "@/hooks/use-pinned-scroll";
 import { useQuestionResponse } from "@/hooks/use-question-response";
 import { ActiveStatusSpinner } from "@/components/nav-dot";
@@ -236,7 +235,6 @@ export function SessionTranscriptPanel({
 
   const ownedSessionData = sessionData?.id === activeSession ? sessionData : undefined;
   const persistedMessages = ownedSessionData?.messages || [];
-  const activeWorkflowId = (ownedSessionData as any)?.activeWorkflow?.id ?? null;
 
   useEffect(() => {
     if (!sessionData || sessionData.id === activeSession) return;
@@ -245,8 +243,6 @@ export function SessionTranscriptPanel({
       receivedSessionId: sessionData.id,
     });
   }, [activeSession, sessionData]);
-  const { workflow } = useWorkflowForSession(persistedMessages, activeWorkflowId);
-
   useEffect(() => {
     if (!activeSession) return;
     const refreshDurableSession = (reason: string) => {
@@ -749,7 +745,6 @@ export function SessionTranscriptPanel({
         sessionStreams={sessionStreams}
         wsConnected={wsConnected}
         sessionStatus={ownedSessionData?.status}
-        workflow={workflow}
         meeting={ownedSessionData?.meeting}
         sessionTitle={ownedSessionData?.title}
         scrollContainerRef={scrollContainerRef}

@@ -143,6 +143,8 @@ export interface ChildSessionBlockMeta {
   outputTokens?: number | null;
   spawnReason?: string | null;
   planPageRef?: string | null;
+  workflowRunId?: string | null;
+  workflowStageAttemptId?: number | null;
   error?: string | null;
 }
 

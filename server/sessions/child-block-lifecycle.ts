@@ -59,6 +59,8 @@ export async function onChildSessionSpawned(
     attemptId?: number;
     attemptNumber?: number;
     planPageRef?: string;
+    workflowRunId?: string;
+    workflowStageAttemptId?: number;
   },
 ): Promise<void> {
   const { chatFileStorage } = await import("../chat-file-storage");
@@ -84,6 +86,8 @@ export async function onChildSessionSpawned(
     planAttemptId: opts.attemptId ?? null,
     planAttemptNumber: opts.attemptNumber ?? null,
     planPageRef: opts.planPageRef || null,
+    workflowRunId: opts.workflowRunId || null,
+    workflowStageAttemptId: opts.workflowStageAttemptId ?? null,
   };
 
   // Persist to parent session for historical views
@@ -154,6 +158,8 @@ export async function onChildSessionCompleted(
   let planAttemptId: number | null = null;
   let planAttemptNumber: number | null = null;
   let planPageRef: string | null = null;
+  let workflowRunId: string | null = null;
+  let workflowStageAttemptId: number | null = null;
   try {
     const parent = await chatFileStorage.getSession(parentSessionId);
     if (parent?.sessionKey) parentSessionKey = parent.sessionKey;
@@ -177,6 +183,8 @@ export async function onChildSessionCompleted(
         planAttemptId = typeof existing.childSession.planAttemptId === "number" ? existing.childSession.planAttemptId : null;
         planAttemptNumber = existing.childSession.planAttemptNumber ?? null;
         planPageRef = existing.childSession.planPageRef || null;
+        workflowRunId = existing.childSession.workflowRunId || null;
+        workflowStageAttemptId = existing.childSession.workflowStageAttemptId ?? null;
       }
     }
   } catch { /* best effort */ }
@@ -216,6 +224,8 @@ export async function onChildSessionCompleted(
     planAttemptId,
     planAttemptNumber,
     planPageRef,
+    workflowRunId,
+    workflowStageAttemptId,
   };
   publishChildSessionBlockEvent(parentSessionKey, block);
 

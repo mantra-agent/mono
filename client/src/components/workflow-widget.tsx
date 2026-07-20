@@ -9,8 +9,8 @@ import {
   Play,
   Square,
 } from "lucide-react";
-import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,6 +33,7 @@ import { ChildSessionBlock } from "@/components/inline-session-blocks";
 import { ActiveStatusSpinner } from "@/components/nav-dot";
 import type { ChildSessionBlockMeta } from "@shared/models/chat";
 import type { SessionStreamMap } from "@/hooks/use-session-subscription";
+import { createReferenceRef } from "@shared/references";
 
 interface WorkflowWidgetProps {
   workflow: WorkflowWidgetRun;
@@ -341,15 +342,17 @@ export function WorkflowWidget({
   return (
     <div className={cn("min-w-0", className)}>
       <div className="group flex min-w-0 items-center gap-2 px-2 py-1.5">
-        <Link
-          href={`/workflows/${runId}`}
-          className={cn(
-            "min-w-0 flex-1 truncate text-sm font-medium hover:underline underline-offset-2",
-            isActive && "text-active animate-pulse",
-          )}
-        >
-          {workflow.run.title || runId}
-        </Link>
+        <div className="min-w-0 flex-1">
+          <ReferenceRenderer
+            refValue={createReferenceRef({
+              type: "workflow",
+              id: runId,
+              metadata: { label: workflow.run.title || runId },
+            })}
+            surface="card"
+            className={cn(isActive && "text-active animate-pulse")}
+          />
+        </div>
 
         {showMenu && (
           <DropdownMenu>

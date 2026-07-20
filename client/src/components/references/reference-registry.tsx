@@ -21,6 +21,7 @@ import {
   Paperclip,
   Route,
   Scale,
+  Workflow,
   Target,
   User,
   type LucideIcon,
@@ -138,6 +139,11 @@ const registry: Record<string, RegistryEntry> = {
     Icon: Route,
     fallbackLabel: ref => metadataString(ref, "label") || `Plan ${ref.id}`,
     href: ref => metadataString(ref, "href") || `/plans/${encodeURIComponent(ref.id)}`,
+  },
+  workflow: {
+    Icon: Workflow,
+    fallbackLabel: ref => metadataString(ref, "label") || `Workflow ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/workflows/${encodeURIComponent(ref.id)}`,
   },
 
   file: {

@@ -11,7 +11,7 @@ import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { libraryPages } from "@shared/models/info";
 import { wellnessActivities } from "@shared/models/health";
-import { emailMessages, planExecutions } from "@shared/schema";
+import { emailMessages, planExecutions, workflowRuns } from "@shared/schema";
 import { decisionsStorage } from "./decisions-storage";
 import { and, desc, eq, or } from "drizzle-orm";
 import { getEvent, listAllEvents } from "./google-calendar";
@@ -103,6 +103,16 @@ export function registerReferenceRoutes(app: Express) {
                 .where(combineWithVisibleScope(principal, planScope, or(eq(planExecutions.id, id), eq(planExecutions.pageId, id))))
                 .limit(1);
               if (rows[0]?.pageTitle) results[key] = rows[0].pageTitle.replace(/^Plan:\s*/, "");
+              break;
+            }
+            case "workflow": {
+              const workflowScope = { ownerUserId: workflowRuns.ownerUserId, accountId: workflowRuns.accountId, scope: workflowRuns.scope };
+              const rows = await db
+                .select({ title: workflowRuns.title })
+                .from(workflowRuns)
+                .where(combineWithVisibleScope(principal, workflowScope, eq(workflowRuns.id, id)))
+                .limit(1);
+              if (rows[0]?.title) results[key] = rows[0].title;
               break;
             }
             case "company": {

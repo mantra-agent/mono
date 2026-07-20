@@ -488,25 +488,7 @@ async function ensureWorkflowParentSession(detail: WorkflowRunDetail): Promise<s
   );
   await db.update(workflowRuns).set({ parentSessionId: session.id, updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, detail.run.id)));
   await linkWorkflowSession({ workflowRunId: detail.run.id, sessionId: session.id, role: "parent" });
-  const isDraft = detail.run.status === "draft";
-  await notifyWorkflowProgress(
-    session.id,
-    detail.run.id,
-    isDraft
-      ? `Workflow draft created: **${detail.run.title}**. Preview only. No stages, implementation, builds, deploys, or acceptance actions are running until the workflow is started.`
-      : `Workflow started: **${detail.run.title}**. Progress will checkpoint to the workflow run artifact.`,
-  );
   return session.id;
-}
-
-async function notifyWorkflowProgress(parentSessionId: string | null | undefined, runId: string, message: string): Promise<void> {
-  if (!parentSessionId) return;
-  try {
-    const { chatFileStorage } = await import("../chat-file-storage");
-    await chatFileStorage.createMessage(parentSessionId, "assistant", message, undefined, undefined, "workflow-executor");
-  } catch (err) {
-    log.warn(`[${runId}] Failed to write workflow progress message: ${err instanceof Error ? err.message : String(err)}`);
-  }
 }
 
 function acceptanceStageContext(detail: WorkflowRunDetail): Record<string, unknown> | undefined {
@@ -578,6 +560,8 @@ async function spawnWorkflowStageChild(parentSessionId: string, detail: Workflow
     sessionKeyOverride: `workflow:${detail.run.id}:${stageKey}`,
     admissionTier: "realtime",
     lineageId: parentSessionId,
+    workflowRunId: detail.run.id,
+    workflowStageAttemptId: inputContext.stageAttemptId,
   });
   return result.sessionId;
 }
@@ -1048,10 +1032,9 @@ export async function startWorkflowRun(runId: string): Promise<WorkflowRunDetail
   if (hasAcceptanceStage && !detail.run.linkedEnvironmentId) {
     throw new Error(`Workflow template "${detail.template.name}" includes an acceptance stage but no linkedEnvironmentId is set. Link a platform environment before starting.`);
   }
-  const parentSessionId = await ensureWorkflowParentSession(detail);
+  await ensureWorkflowParentSession(detail);
   await db.update(workflowRuns).set({ status: "active", updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, runId)));
   const stageKey = detail.run.currentStageKey;
-  await notifyWorkflowProgress(parentSessionId, runId, `Workflow active: **${detail.run.title}** at stage ${stageKey || "none"}.`);
   await renderWorkflowRunPage(runId);
 
   // Auto-kick the current stage if no active attempt exists yet
@@ -1142,7 +1125,6 @@ export async function startStageAttempt(runId: string, stageKey?: string, option
     }
   }
   await db.update(workflowRuns).set({ status: "active", currentStageKey: key, updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, runId)));
-  await notifyWorkflowProgress(parentSessionId, runId, `Started workflow stage **${stage.title}** attempt ${attemptNumber}/${maxAttempts}${childSessionId ? ` in child session ${childSessionId}` : ""}.`);
   await renderWorkflowRunPage(runId);
 
   // Fire-and-forget: monitor the child session and auto-complete the stage
@@ -1233,13 +1215,6 @@ export async function completeStageAttempt(workflowRunId: string, attemptId: num
   if (failurePacket) await db.update(workflowRuns).set({ failurePacket, updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, attempt.workflowRunId)));
   if (resultInput.evidence) await attachWorkflowArtifact({ workflowRunId: attempt.workflowRunId, stageAttemptId: attempt.id, kind: attempt.stageKey === "calibration" ? "calibration" : attempt.stageKey === "acceptance" ? "acceptance" : result === "passed" ? "acceptance" : "other", title: `${attempt.stageTitle} attempt ${result}`, summary: resultInput.outputSummary || "", metadata: resultInput.evidence, createdBySessionId: resultInput.createdBySessionId, render: false });
 
-  const maxAttempts = getMaxAttempts(beforeDetail);
-  const parentSessionId = beforeDetail.run.parentSessionId || null;
-  await notifyWorkflowProgress(parentSessionId, attempt.workflowRunId, `Completed workflow stage **${attempt.stageTitle}** attempt ${attempt.attemptNumber}/${maxAttempts}: ${result}${resultInput.outputSummary ? ` — ${truncateText(resultInput.outputSummary, 180)}` : ""}.`);
-  if ((status === "failed" || status === "blocked") && attempt.attemptNumber < maxAttempts) {
-    await notifyWorkflowProgress(parentSessionId, attempt.workflowRunId, `Retry available for **${attempt.stageTitle}**. Next attempt will spawn a fresh child session with the failure packet and a different-approach instruction.`);
-  }
-
   return advanceWorkflowRun(workflowRunId, result === "passed" ? "autonomous" : "system", attempt.id, result, resultInput.outputSummary || "");
 }
 
@@ -1268,7 +1243,6 @@ export async function advanceWorkflowRun(runId: string, trigger: WorkflowTransit
   await db.update(workflowRuns).set({ status: nextStatus, completedAt: next ? null : new Date(), updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, runId)));
   await renderWorkflowRunPage(runId);
   const updated = (await getWorkflowRun(runId))!;
-  await notifyWorkflowProgress(updated.run.parentSessionId, runId, next ? `Workflow moved to stage ${next}. Status: ${nextStatus}.` : `Workflow ${nextStatus}: **${updated.run.title}**.`);
 
   // Auto-kick the next stage if advancing forward and no active attempt exists
   if (next && nextStatus === "active") {

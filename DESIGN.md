@@ -541,6 +541,8 @@ Supported reference examples:
 - `@page:design`
 - `@pr:mantra-agent/mono/1928`
 
+`@workflow:wf_123`
+
 #### Reference rules
 
 - Persist canonical `@type:id` references.
