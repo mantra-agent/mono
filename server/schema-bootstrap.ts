@@ -3396,6 +3396,7 @@ export async function runSchemaBootstrap(
         bcc TEXT[] NOT NULL DEFAULT '{}',
         subject TEXT NOT NULL DEFAULT '',
         body TEXT NOT NULL DEFAULT '',
+        body_format TEXT NOT NULL DEFAULT 'text',
         thread_id TEXT,
         in_reply_to TEXT,
         status TEXT NOT NULL DEFAULT 'draft',
@@ -3406,6 +3407,7 @@ export async function runSchemaBootstrap(
       )
     `);
     await pool.query(`ALTER TABLE email_drafts ADD COLUMN IF NOT EXISTS vault_id TEXT`);
+    await pool.query(`ALTER TABLE email_drafts ADD COLUMN IF NOT EXISTS body_format TEXT NOT NULL DEFAULT 'text'`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_drafts_owner ON email_drafts (owner_user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_drafts_account ON email_drafts (account_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_drafts_session ON email_drafts (session_id)`);

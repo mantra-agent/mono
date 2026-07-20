@@ -27,6 +27,7 @@ export interface CreateEmailDraftInput {
   bcc?: string[];
   subject: string;
   body: string;
+  bodyFormat?: "text" | "markdown";
   threadId?: string;
   inReplyTo?: string;
 }
@@ -138,6 +139,7 @@ export class EmailDraftStorage {
         bcc: input.bcc ?? [],
         subject: input.subject,
         body: input.body,
+        bodyFormat: input.bodyFormat ?? "text",
         threadId: input.threadId ?? null,
         inReplyTo: input.inReplyTo ?? null,
         status: "draft",

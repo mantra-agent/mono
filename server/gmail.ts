@@ -545,6 +545,54 @@ async function resolveReplyContext(
   return { inReplyTo: messageId || inReplyTo, references, quotedHistory };
 }
 
+function escapeEmailHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderEmailMarkdownInline(value: string): string {
+  const escaped = escapeEmailHtml(value);
+  return escaped
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(
+      /\[([^\]]+)\]\((https:\/\/[^\s)]+)\)/g,
+      '<a href="$2" style="color:#2563eb;text-decoration:underline">$1</a>',
+    );
+}
+
+/** Bounded Markdown subset for human-editable email drafts. */
+function renderEmailMarkdown(markdown: string): string {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const html: string[] = [];
+  let bullets: string[] = [];
+  const flushBullets = () => {
+    if (bullets.length === 0) return;
+    html.push(`<ul style="margin:0 0 16px 20px;padding:0">${bullets.join("")}</ul>`);
+    bullets = [];
+  };
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index].trim();
+    const bullet = line.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      bullets.push(`<li>${renderEmailMarkdownInline(bullet[1])}</li>`);
+      continue;
+    }
+    flushBullets();
+    if (!line) continue;
+    const nextLineStartsList = /^[-*]\s+/.test(lines[index + 1]?.trim() ?? "");
+    html.push(
+      `<p style="margin:0 0 ${nextLineStartsList ? "0" : "16px"} 0">${renderEmailMarkdownInline(line)}</p>`,
+    );
+  }
+  flushBullets();
+  return `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#111827">${html.join("")}</div>`;
+}
+
 /**
  * Send an email from a persisted EmailDraft record.
  * Supports threading via threadId, In-Reply-To, and References headers.
@@ -558,6 +606,7 @@ export async function sendEmailFromDraft(draft: {
   bcc: string[];
   subject: string;
   body: string;
+  bodyFormat: "text" | "markdown";
   threadId: string | null;
   inReplyTo: string | null;
 }) {
@@ -583,11 +632,14 @@ export async function sendEmailFromDraft(draft: {
     headers.push(`References: ${replyContext.references || replyContext.inReplyTo}`);
   }
   headers.push("MIME-Version: 1.0");
-  headers.push("Content-Type: text/plain; charset=utf-8");
+  const isMarkdown = draft.bodyFormat === "markdown" && !draft.threadId;
+  headers.push(`Content-Type: ${isMarkdown ? "text/html" : "text/plain"}; charset=utf-8`);
 
-  const outgoingBody = replyContext.quotedHistory
-    ? `${draft.body}\r\n\r\n${replyContext.quotedHistory}`
-    : draft.body;
+  const outgoingBody = isMarkdown
+    ? renderEmailMarkdown(draft.body)
+    : replyContext.quotedHistory
+      ? `${draft.body}\r\n\r\n${replyContext.quotedHistory}`
+      : draft.body;
 
   const rawMimeMessage = `${headers.join("\r\n")}\r\n\r\n${outgoingBody}`;
   const rawMessage = Buffer.from(rawMimeMessage)
