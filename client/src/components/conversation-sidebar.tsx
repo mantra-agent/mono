@@ -32,6 +32,7 @@ import {
   Pin,
   MessageCircleQuestion,
   MessageSquare,
+  Mic,
   Radio,
   Timer,
 } from "lucide-react";
@@ -65,15 +66,21 @@ export function sortByUpdated(a: ChatSession, b: ChatSession): number {
   return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
 }
 
-export function groupSessions(sessions: ChatSession[], opts?: { activeVoiceSessionId?: string | null; recentStickyIds?: Set<string> }): SessionGroup[] {
+export function isLiveTransportSession(session: ChatSession, liveVoiceConversationId?: string | null): boolean {
+  return (session.type === "meeting" && session.meeting?.botStatus === "live") ||
+    (session.type === "voice" && !!liveVoiceConversationId && session.id === liveVoiceConversationId);
+}
+
+export function groupSessions(sessions: ChatSession[], opts?: { liveVoiceConversationId?: string | null; recentStickyIds?: Set<string> }): SessionGroup[] {
   const sorted = [...sessions].sort(sortByUpdated);
   const now = new Date();
   const oneHourAgo = now.getTime() - 60 * 60 * 1000;
-  const voiceId = opts?.activeVoiceSessionId ?? null;
+  const liveVoiceConversationId = opts?.liveVoiceConversationId ?? null;
   const stickyIds = opts?.recentStickyIds ?? new Set<string>();
 
   const pinned: ChatSession[] = [];
   const review: ChatSession[] = [];
+  const live: ChatSession[] = [];
   const active: ChatSession[] = [];
   const recentUrgent: ChatSession[] = []; // "Recent" — unread or < 1h old
   const today: ChatSession[] = [];
@@ -83,9 +90,9 @@ export function groupSessions(sessions: ChatSession[], opts?: { activeVoiceSessi
   const archive: ChatSession[] = [];
 
   for (const conv of sorted) {
-    // Classification precedence is structural: Archive → Snooze → Review →
+    // Classification precedence is structural: Archive → Snooze → Live → Review →
     // Active → Pinned → recency buckets. A reminder is an explicit deferral,
-    // so Review or runtime activity must not pull the session forward early.
+    // while transport liveness wins over review and durable active execution.
     if (conv.archivedAt) {
       archive.push(conv);
       continue;
@@ -94,14 +101,18 @@ export function groupSessions(sessions: ChatSession[], opts?: { activeVoiceSessi
       snooze.push(conv);
       continue;
     }
+    if (isLiveTransportSession(conv, liveVoiceConversationId)) {
+      live.push(conv);
+      continue;
+    }
     if (conv.awaitingQuestionResponse) {
       review.push(conv);
       continue;
     }
-    // Streaming, actively running, plan-executing, or voice-connected sessions go to "Active".
+    // Streaming, actively running, or plan-executing sessions go to "Active".
     // hasActivePlan keeps a session in Active during the gap between plan steps,
-    // when no child session is streaming yet.
-    if (isDurablyActiveSession(conv) || (voiceId && conv.id === voiceId)) {
+    // when no child session is streaming yet. Live transports were already removed above.
+    if (isDurablyActiveSession(conv)) {
       active.push(conv);
       continue;
     }
@@ -135,6 +146,7 @@ export function groupSessions(sessions: ChatSession[], opts?: { activeVoiceSessi
 
   const groups: SessionGroup[] = [];
   if (review.length > 0) groups.push({ label: "Review", sessions: review, defaultOpen: true });
+  if (live.length > 0) groups.push({ label: "Live", sessions: live, defaultOpen: true });
   if (active.length > 0) groups.push({ label: "Active", sessions: active, defaultOpen: true });
   if (pinned.length > 0) groups.push({ label: "Pinned", sessions: pinned, defaultOpen: true });
   if (recentUrgent.length > 0) groups.push({ label: "Recent", sessions: recentUrgent, defaultOpen: true });
@@ -190,6 +202,7 @@ export function ConversationItem({
   conv,
   isActive,
   isLive,
+  isTransportLive,
   childCount = 0,
   sessions,
   onSelect,
@@ -202,6 +215,7 @@ export function ConversationItem({
   conv: ChatSession;
   isActive: boolean;
   isLive: boolean;
+  isTransportLive: boolean;
   childCount?: number;
   sessions: ChatSession[];
   onSelect: (id: string) => void;
@@ -260,11 +274,11 @@ export function ConversationItem({
   const statusTextClass = conv.errorSeverity === "error" && !isLive
     ? "text-error"
     : isLive
-      ? "text-active font-medium animate-pulse"
+      ? "text-active font-medium motion-safe:animate-pulse"
       : isAwaitingQuestion
         ? "text-active font-medium"
         : conv.hasActiveDescendant || conv.hasActivePlan
-          ? "text-active font-medium animate-pulse"
+          ? "text-active font-medium motion-safe:animate-pulse"
           : hasUnreadResult
             ? "text-foreground font-medium"
             : "text-muted-foreground";
@@ -281,8 +295,9 @@ export function ConversationItem({
   // - Hovering icon area OR pinned (when not live): pin icon (clickable)
   // - Default: Bot or User icon
   const isWaiting = conv.status === "waiting";
-  const isActiveMeeting = conv.type === "meeting" && conv.meeting?.botStatus === "live";
-  const isSpinning = !isWaiting && !isActiveMeeting && !isAwaitingQuestion && (isLive || !!conv.hasActiveDescendant || !!conv.hasActivePlan);
+  const isMeeting = conv.type === "meeting";
+  const isVoice = conv.type === "voice";
+  const isSpinning = !isWaiting && !isMeeting && !isVoice && !isAwaitingQuestion && (isLive || !!conv.hasActiveDescendant || !!conv.hasActivePlan);
   const showPinIcon = (isPinned && !isSpinning && !isWaiting) || iconHovered;
   const isIconInteractive = iconHovered || (isPinned && !isSpinning);
 
@@ -312,14 +327,25 @@ export function ConversationItem({
         />
       );
     }
-    if (conv.type === "meeting") {
+    if (isMeeting) {
       return (
         <Radio
           className={cn(
             "h-3.5 w-3.5 shrink-0",
-            isActiveMeeting ? "text-active animate-pulse" : "text-muted-foreground",
+            isTransportLive ? "text-active motion-safe:animate-pulse" : "text-muted-foreground",
           )}
           data-testid={`icon-conversation-meeting-${conv.id}`}
+        />
+      );
+    }
+    if (isVoice) {
+      return (
+        <Mic
+          className={cn(
+            "h-3.5 w-3.5 shrink-0",
+            isTransportLive ? "text-active motion-safe:animate-pulse" : "text-muted-foreground",
+          )}
+          data-testid={`icon-conversation-voice-${conv.id}`}
         />
       );
     }
@@ -485,6 +511,7 @@ export function SessionTreeNode({
   sessions,
   depth,
   activeSession,
+  liveVoiceConversationId,
   onSelect,
   onDelete,
   onRename,
@@ -495,6 +522,7 @@ export function SessionTreeNode({
   sessions: ChatSession[];
   depth: number;
   activeSession: string | null;
+  liveVoiceConversationId?: string | null;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
@@ -515,6 +543,8 @@ export function SessionTreeNode({
     refetchOnReconnect: false,
   });
 
+  const isTransportLive = isLiveTransportSession(conv, liveVoiceConversationId);
+
   return (
     <div className="min-w-0" data-testid={`tree-node-${conv.id}`}>
       <div className="flex min-w-0 items-stretch" style={{ paddingLeft: indentPx }}>
@@ -528,7 +558,8 @@ export function SessionTreeNode({
           <ConversationItem
             conv={conv}
             isActive={activeSession === conv.id}
-            isLive={conv.status === "streaming" || (conv.type === "meeting" && conv.meeting?.botStatus === "live")}
+            isLive={conv.status === "streaming" || isTransportLive}
+            isTransportLive={isTransportLive}
             childCount={childCount}
             sessions={sessions}
             onSelect={onSelect}
@@ -574,6 +605,7 @@ export function SessionTreeNode({
                   sessions={sessions}
                   depth={depth + 1}
                   activeSession={activeSession}
+                  liveVoiceConversationId={liveVoiceConversationId}
                   onSelect={onSelect}
                   onDelete={onDelete}
                   onRename={onRename}
@@ -592,6 +624,7 @@ export function SessionGroupSection({
   group,
   sessions,
   activeSession,
+  liveVoiceConversationId,
   onSelect,
   onDelete,
   onRename,
@@ -601,6 +634,7 @@ export function SessionGroupSection({
   group: SessionGroup;
   sessions: ChatSession[];
   activeSession: string | null;
+  liveVoiceConversationId?: string | null;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
@@ -633,6 +667,7 @@ export function SessionGroupSection({
               sessions={sessions}
               depth={0}
               activeSession={activeSession}
+              liveVoiceConversationId={liveVoiceConversationId}
               onSelect={onSelect}
               onDelete={onDelete}
               onRename={onRename}
@@ -766,7 +801,7 @@ export function ConversationSidebar({
   const { toast } = useToast();
   const scrollAreaRef = useRef<HTMLDivElement | null>(null);
   const voiceSession = useVoiceSessionOptional();
-  const activeVoiceSessionId = voiceSession && voiceSession.status !== "idle"
+  const liveVoiceConversationId = voiceSession?.status === "active"
     ? voiceSession.activeConversationId
     : null;
 
@@ -839,7 +874,7 @@ export function ConversationSidebar({
     }
   }, [filteredConversations]);
 
-  const groups = groupSessions(filteredConversations, { activeVoiceSessionId, recentStickyIds: recentStickyIds.current });
+  const groups = groupSessions(filteredConversations, { liveVoiceConversationId, recentStickyIds: recentStickyIds.current });
 
   useEffect(() => {
     if (scrollResetKey === undefined) return;
@@ -898,6 +933,7 @@ export function ConversationSidebar({
                 group={group}
                 sessions={sessionsWithChildCounts}
                 activeSession={activeSession}
+                liveVoiceConversationId={liveVoiceConversationId}
                 onSelect={onSelect}
                 onDelete={(id) => onDelete(id)}
                 onRename={(id, title) => onRename(id, title)}
