@@ -1,4 +1,5 @@
 import { chatCompletion } from "./model-client";
+import type { SemanticTier } from "@shared/model-connectors";
 import { ACTIVITY_FRAMING } from "./job-profiles";
 import { estimateTokens } from "./context-builder";
 import { safeStringify } from "./utils/safe-stringify";
@@ -151,10 +152,15 @@ async function timedCompletion(options: {
   timeoutMs: number;
   sessionId: string;
   purpose: string;
+  /** Optional semantic tier override; map calls stay on the activity's default routing. */
+  tier?: SemanticTier;
 }): Promise<string> {
   const result = await Promise.race([
     chatCompletion({
       activity: ACTIVITY_FRAMING,
+      ...(options.tier
+        ? { semanticTierOverride: options.tier, overrideReason: "compaction narrative synthesis quality" }
+        : {}),
       messages: [
         { role: "system", content: options.system },
         { role: "user", content: options.user },
@@ -229,6 +235,7 @@ export async function summarizeCompactedMessages(input: {
           timeoutMs: REDUCE_TIMEOUT_MS,
           sessionId: input.sessionId,
           purpose: "single",
+          tier: "balanced",
         }),
         "single-segment summary",
         input.sessionId,
@@ -265,6 +272,7 @@ export async function summarizeCompactedMessages(input: {
         timeoutMs: REDUCE_TIMEOUT_MS,
         sessionId: input.sessionId,
         purpose: "reduce",
+        tier: "balanced",
       }),
       "reduce summary",
       input.sessionId,
