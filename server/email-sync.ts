@@ -1,18 +1,19 @@
 import { createLogger } from './log';
 import { db } from './db';
 import { pool } from './db';
-import { accounts, connectedAccounts, emailMessages, emailSyncCursors, emailDismissals, emailSyncLog, emailEnrichments, emailDrafts, users } from '@shared/schema';
+import { connectedAccounts, emailMessages, emailSyncCursors, emailDismissals, emailSyncLog, emailEnrichments, emailDrafts, vaults } from '@shared/schema';
 import { eq, and, sql, inArray, or, isNull } from 'drizzle-orm';
 import { listGmailAccounts, listMessages, getMessage, getHistoryList, normalizeGmailMessage, getAccountLabelMap } from './gmail';
 import type { NormalizedMessage } from './gmail';
 import { storage } from './storage';
-import { runWithPrincipal } from './principal-context';
+import { requireCurrentUserPrincipal } from './principal-context';
 import { sensitiveOwnershipValues } from './sensitive-scope';
 import type { Principal } from './principal';
 
 const log = createLogger("EmailSync");
 
 const FULL_SYNC_CAP = 500;
+const MAX_ACCOUNTS_PER_VAULT = 20;
 const EMAIL_SYNC_STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000;
 
 type EmailPipelineAccountStatus = "healthy" | "stale" | "degraded" | "failed";
@@ -25,77 +26,53 @@ interface EmailAccountOwner {
   principal: Principal;
 }
 
-async function repairConnectedAccountOwnership(accountId: string): Promise<{ ownerUserId: string; principalAccountId: string } | null> {
-  const [row] = await db.select({
-    ownerUserId: users.id,
-    principalAccountId: accounts.id,
-  })
-    .from(connectedAccounts)
-    .innerJoin(users, eq(users.email, connectedAccounts.email))
-    .innerJoin(accounts, and(eq(accounts.ownerUserId, users.id), eq(accounts.kind, 'personal')))
-    .where(and(eq(connectedAccounts.accountId, accountId), eq(connectedAccounts.provider, 'google')))
-    .limit(1);
-
-  if (!row?.ownerUserId || !row?.principalAccountId) return null;
-
-  await db.update(connectedAccounts)
-    .set({
-      ownerUserId: row.ownerUserId,
-      principalAccountId: row.principalAccountId,
-      updatedAt: sql`CURRENT_TIMESTAMP`,
-    })
-    .where(and(eq(connectedAccounts.accountId, accountId), eq(connectedAccounts.provider, 'google')));
-
-  log.warn(`[connectedAccountOwnershipBackfill] account=${accountId} ownerUserId=${row.ownerUserId} principalAccountId=${row.principalAccountId}`);
-  return row;
-}
-
 async function resolveEmailAccountOwner(accountId: string): Promise<EmailAccountOwner> {
-  let [account] = await db.select({
-    accountId: connectedAccounts.accountId,
-    ownerUserId: connectedAccounts.ownerUserId,
-    principalAccountId: connectedAccounts.principalAccountId,
-    provider: connectedAccounts.provider,
-    vaultId: connectedAccounts.vaultId,
-  })
+  const principal = requireCurrentUserPrincipal();
+  if (principal.visibleVaultIds.length !== 1 || !principal.activeVaultId) {
+    throw new Error("Email account sync requires exactly one active visible Vault");
+  }
+
+  const [account] = await db
+    .select({
+      accountId: connectedAccounts.accountId,
+      ownerUserId: connectedAccounts.ownerUserId,
+      principalAccountId: connectedAccounts.principalAccountId,
+      vaultId: connectedAccounts.vaultId,
+    })
     .from(connectedAccounts)
-    .where(and(eq(connectedAccounts.accountId, accountId), eq(connectedAccounts.provider, 'google')))
+    .innerJoin(
+      vaults,
+      and(
+        eq(vaults.id, connectedAccounts.vaultId),
+        eq(vaults.accountId, connectedAccounts.principalAccountId),
+        eq(vaults.isArchived, false),
+      ),
+    )
+    .where(
+      and(
+        eq(connectedAccounts.accountId, accountId),
+        eq(connectedAccounts.provider, "google"),
+        eq(connectedAccounts.ownerUserId, principal.userId),
+        eq(connectedAccounts.principalAccountId, principal.accountId),
+        eq(connectedAccounts.vaultId, principal.activeVaultId),
+      ),
+    )
     .limit(1);
 
-  if (!account) {
-    throw new Error(`No connected Google account found for accountId=${accountId}`);
-  }
-  if (!account.vaultId) {
-    throw new Error(`Connected Google account accountId=${accountId} requires a Vault assignment`);
-  }
-  if (!account.ownerUserId || !account.principalAccountId) {
-    const repaired = await repairConnectedAccountOwnership(accountId);
-    if (!repaired) {
-      throw new Error(`Connected Google account accountId=${accountId} is missing sensitive ownership and could not be repaired`);
-    }
-    account = { ...account, ...repaired };
+  if (
+    !account ||
+    account.ownerUserId !== principal.userId ||
+    account.principalAccountId !== principal.accountId ||
+    account.vaultId !== principal.activeVaultId
+  ) {
+    throw new Error(`Connected Google account is outside the active owner/Vault scope: accountId=${accountId}`);
   }
 
   return {
     accountId,
-    ownerUserId: account.ownerUserId,
-    principalAccountId: account.principalAccountId,
-    principal: {
-      actorType: 'user',
-      userId: account.ownerUserId,
-      accountId: account.principalAccountId,
-      role: 'owner',
-      scopes: ['user:read', 'user:write'],
-      permissions: [],
-      visibleVaultIds: [account.vaultId],
-      activeVaultId: account.vaultId,
-      isAdmin: false,
-      impersonation: {
-        impersonatedByActorType: 'system',
-        reason: 'email-sync connected account ownership',
-      },
-      source: 'system',
-    },
+    ownerUserId: principal.userId,
+    principalAccountId: principal.accountId,
+    principal,
   };
 }
 
@@ -629,7 +606,7 @@ async function reconcileEmailAttentionState(accountId: string): Promise<number> 
 
 async function syncAccount(accountId: string): Promise<{ ok: boolean; error?: string }> {
   const owner = await resolveEmailAccountOwner(accountId);
-  return runWithPrincipal(owner.principal, async () => syncAccountForOwner(accountId, owner));
+  return syncAccountForOwner(accountId, owner);
 }
 
 async function syncAccountForOwner(accountId: string, owner: EmailAccountOwner): Promise<{ ok: boolean; error?: string }> {
@@ -700,13 +677,18 @@ async function syncAccountForOwner(accountId: string, owner: EmailAccountOwner):
   }
 }
 
-export async function runEmailSync(): Promise<{ accountsSynced: number; errors: string[] }> {
-  log.log(`[runEmailSync] Starting email sync cycle`);
+export async function runEmailSync(): Promise<{ accountsDiscovered: number; accountsSynced: number; errors: string[] }> {
+  requireCurrentUserPrincipal();
+
+  log.log(`[runEmailSync] Starting owner-scoped email sync cycle`);
   const accounts = await listGmailAccounts();
+  if (accounts.length > MAX_ACCOUNTS_PER_VAULT) {
+    throw new Error(`Email sync exceeds ${MAX_ACCOUNTS_PER_VAULT} accounts in one Vault`);
+  }
 
   if (accounts.length === 0) {
-    log.log(`[runEmailSync] No Gmail accounts connected, skipping sync`);
-    return { accountsSynced: 0, errors: [] };
+    log.debug(`[runEmailSync] No Gmail accounts visible to owner, skipping sync`);
+    return { accountsDiscovered: 0, accountsSynced: 0, errors: [] };
   }
 
   const errors: string[] = [];
@@ -728,7 +710,7 @@ export async function runEmailSync(): Promise<{ accountsSynced: number; errors: 
   }
 
   log.log(`[runEmailSync] Completed: ${synced}/${accounts.length} accounts synced, ${errors.length} errors`);
-  return { accountsSynced: synced, errors };
+  return { accountsDiscovered: accounts.length, accountsSynced: synced, errors };
 }
 
 export async function getSyncStatus() {

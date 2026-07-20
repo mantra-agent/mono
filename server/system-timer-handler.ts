@@ -43,114 +43,33 @@ const SYSTEM_COMMAND_HANDLERS: Record<string, SystemCommandHandler> = {
   },
 
   "email-sync": async (_timer, _run) => {
-    log.debug(`Executing email-sync system command (tier: realtime)`);
-    const { runEmailSync } = await import("./email-sync");
-    const { withAdmissionTier } = await import("./db");
-    const result = await withAdmissionTier("realtime", () => runEmailSync());
-    log.log(
-      `email-sync complete: ${result.accountsSynced} accounts synced, ${result.errors.length} errors`,
-    );
+    log.debug(`Executing owner-scoped email-sync system command (tier: realtime)`);
+    const { runEmailSyncTimer } = await import("./email-sync-timer");
+    const result = await runEmailSyncTimer();
 
-    if (result.accountsSynced === 0) {
-      log.debug(`email-sync downstream skipped: no accounts synced`);
+    if (result.status === "already_running") {
       return {
-        outcome: "skipped",
-        reason: "no_accounts_synced",
+        outcome: "deferred",
+        reason: "email_sync_already_running",
         output: result,
       };
     }
-
-    try {
-      const { storage } = await import("./storage");
-      const before = await storage.getEmailPipelineCounts();
-
-      // Diagnostic: when counts say 0 awaiting but unenriched query returns rows, log the divergence
-      if (before.awaitingEnrichment === 0) {
-        const unenrichedRows = await storage.getUnenrichedTriagedEmails(10);
-        if (unenrichedRows.length > 0) {
-          log.warn(
-            `email-sync downstream DIVERGENCE: getEmailPipelineCounts says awaitingEnrichment=0 but getUnenrichedTriagedEmails returned ${unenrichedRows.length} rows: ${unenrichedRows.map((e) => `id=${e.id} thread=${e.providerThreadId} status=${e.triageStatus} isDone=${e.isDone}`).join(", ")}`,
-          );
-        }
-      }
-
-      if (before.untriaged === 0 && before.awaitingEnrichment === 0) {
-        log.debug(
-          `email-sync downstream skipped: untriaged=0 awaitingEnrichment=0 reviewReady=${before.reviewReady}`,
-        );
-        return {
-          outcome: "skipped",
-          reason: "email_pipeline_no_pending_work",
-          output: { sync: result, counts: before },
-        };
-      }
-
-      let downstreamDegradedReason: string | null = null;
-      let triageProcessed = 0;
-      let triageTriaged = 0;
-      let triageDismissed = 0;
-      if (before.untriaged > 0) {
-        const { runTriagePipeline } = await import("./triage-runner");
-        const triage = await runTriagePipeline();
-        triageProcessed = triage.processed;
-        triageTriaged = triage.triaged;
-        triageDismissed = triage.dismissed;
-        if (triage.status !== "succeeded") {
-          downstreamDegradedReason = triage.error || "triage_failed";
-          log.warn(
-            `email-sync downstream triage failed: processed=${triage.processed} triaged=${triage.triaged} error=${triage.error || "unknown"}`,
-          );
-        }
-      }
-
-      const afterTriage = await storage.getEmailPipelineCounts();
-      let enrichmentRunStatus: "not_needed" | "completed" | "deferred" | "failed" = "not_needed";
-      let enrichmentDismissed = 0;
-      if (afterTriage.awaitingEnrichment > 0) {
-        const { runEnrichment } = await import("./email-enrichment");
-        const enrichment = await runEnrichment();
-        enrichmentRunStatus = enrichment.runStatus;
-        enrichmentDismissed = enrichment.dismissed;
-        if (enrichmentRunStatus !== "completed") {
-          downstreamDegradedReason = `enrichment_${enrichmentRunStatus}`;
-        }
-      }
-
-      const output = {
-        sync: result,
-        countsBefore: before,
-        countsAfterTriage: afterTriage,
-        triageProcessed,
-        triageTriaged,
-        triageDismissed,
-        enrichmentRunStatus,
-        enrichmentDismissed,
-      };
-
-      log.log(
-        `email-sync downstream complete: untriagedBefore=${before.untriaged} awaitingBefore=${before.awaitingEnrichment} triageProcessed=${triageProcessed} triaged=${triageTriaged} triageDismissed=${triageDismissed} awaitingAfter=${afterTriage.awaitingEnrichment} enrichmentRunStatus=${enrichmentRunStatus} enrichmentDismissed=${enrichmentDismissed}`,
-      );
-
-      if (downstreamDegradedReason) {
-        return {
-          outcome: "degraded",
-          reason: downstreamDegradedReason,
-          output,
-        };
-      }
-
-      return { outcome: "success", output };
-    } catch (err: any) {
-      const reason = err?.message || String(err);
-      log.warn(`email-sync downstream failed after successful sync: ${reason}`);
+    if (result.errors.length > 0) {
       return {
         outcome: "degraded",
-        reason,
-        output: { sync: result },
+        reason: "owner_scoped_email_pipeline_errors",
+        output: result,
       };
     }
+    if (result.ownersWithAccounts === 0) {
+      return {
+        outcome: "skipped",
+        reason: "no_connected_gmail_accounts",
+        output: result,
+      };
+    }
+    return { outcome: "success", output: result };
   },
-
 
   "plaid-refresh": async (_timer, _run) => {
     log.debug(`Executing plaid-refresh system command`);

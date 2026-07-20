@@ -288,8 +288,11 @@ export function registerEmailRoutes(app: Express) {
 
   app.post("/api/email/sync", async (_req: Request, res: Response) => {
     try {
-      const { runEmailSync } = await import("../email-sync");
-      const result = await runEmailSync();
+      const { runCurrentUserEmailSync } = await import("../email-sync-timer");
+      const result = await runCurrentUserEmailSync();
+      if (result.status === "already_running") {
+        return res.status(409).json({ error: "Email sync is already running", ...result });
+      }
       res.json(result);
     } catch (err: any) {
       log.error(`POST /api/email/sync error: ${err.message}`);
