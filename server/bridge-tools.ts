@@ -10686,6 +10686,34 @@ ${refs}` : ""),
         }
       }
 
+      if (action === "propose_corpus_migration") {
+        try {
+          const { proposeLibraryCorpusMigration } = await import("./library-corpus-migration");
+          const result = await proposeLibraryCorpusMigration({ idempotencyKey: args.idempotencyKey || null }, principal);
+          return {
+            result: `Library corpus migration proposal complete. Inventoried ${result.counts.total} pages exactly once: ${result.counts.placed} placed, ${result.counts.unchanged} unchanged, ${result.counts.ambiguous} ambiguous, ${result.counts.invalid} invalid. Report surfaced for review: ${result.reportRef}. Human-review gate: ${result.reviewGate}.`,
+            migration: result,
+          };
+        } catch (err: any) {
+          return { result: err?.message || String(err), error: true };
+        }
+      }
+
+      if (action === "apply_reviewed_corpus_migration") {
+        try {
+          const runId = String(args.runId || "");
+          const itemIds = Array.isArray(args.itemIds) ? args.itemIds.map(String) : [];
+          const { applyReviewedLibraryCorpusMigration } = await import("./library-corpus-migration");
+          const result = await applyReviewedLibraryCorpusMigration({ runId, itemIds }, principal);
+          return {
+            result: `Reviewed Library corpus migration apply complete for run ${result.runId}: applied ${result.applied}, skipped ${result.skipped}, remaining placed proposals ${result.remainingPlaced}. Ambiguous and invalid items were not applied.`,
+            migrationApply: result,
+          };
+        } catch (err: any) {
+          return { result: err?.message || String(err), error: true };
+        }
+      }
+
       // ─── Library page mutations ────────────────────────────────────────
       // create/update/edit/delete coordinate through the Library service or
       // direct transactions that acquire the same parent advisory locks used
