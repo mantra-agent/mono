@@ -182,6 +182,37 @@ function cleanDescription(desc: string): string {
   return desc.replace(/\n?\[prep-required\]/g, "").replace(/\n?\[no-prep\]/g, "").trim();
 }
 
+interface MeetingConnectionOption {
+  email: string;
+  label: string;
+}
+
+function getMeetingConnectionOptions(
+  event: CalendarEvent | undefined,
+  selectedEmail?: string,
+): MeetingConnectionOption[] {
+  const options = new Map<string, MeetingConnectionOption>();
+  const addOption = (email: string | undefined, label?: string, isSelf = false) => {
+    const trimmedEmail = email?.trim();
+    if (!trimmedEmail) return;
+    const key = trimmedEmail.toLowerCase();
+    const displayLabel = isSelf
+      ? `Your connection (${trimmedEmail})`
+      : label?.trim() || trimmedEmail;
+    const existing = options.get(key);
+    if (!existing || isSelf) options.set(key, { email: trimmedEmail, label: displayLabel });
+  };
+
+  addOption(event?.accountEmail, undefined, true);
+  addOption(event?.organizer?.email, event?.organizer?.displayName, event?.organizer?.self);
+  for (const attendee of event?.attendees || []) {
+    addOption(attendee.email, attendee.displayName, attendee.self);
+  }
+  addOption(selectedEmail);
+
+  return Array.from(options.values());
+}
+
 // --- Component ---
 
 interface EventDetailViewProps {
@@ -230,6 +261,10 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
         linkedPeople: metadataData.people,
       }
     : null;
+  const selectedSharedAudioEmail = metadata?.speakerPolicy?.mode === "selected_shared_streams"
+    ? metadata.speakerPolicy.sharedStreams[0]?.selector.attendeeEmail
+    : undefined;
+  const meetingConnectionOptions = getMeetingConnectionOptions(eventData, selectedSharedAudioEmail);
 
   // --- Email map for people linking ---
   const { data: emailMapData } = useQuery<{ emailMap: Record<string, { id: string; name: string }> }>({
@@ -957,9 +992,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
                     <div className="grid grid-cols-[92px_1fr] items-center gap-2">
                       <label className="text-xs text-muted-foreground">Shared Audio</label>
                       <Select
-                        value={metadata?.speakerPolicy?.mode === "selected_shared_streams"
-                          ? metadata.speakerPolicy.sharedStreams[0]?.selector.attendeeEmail || "participant_streams"
-                          : "participant_streams"}
+                        value={selectedSharedAudioEmail || "participant_streams"}
                         onValueChange={(value) => setSpeakerPolicyMutation.mutate(value)}
                         disabled={setSpeakerPolicyMutation.isPending || isReadOnly}
                       >
@@ -968,9 +1001,9 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="participant_streams">One person per connection</SelectItem>
-                          {(eventData?.attendees || []).filter(attendee => attendee.email).map(attendee => (
-                            <SelectItem key={attendee.email} value={attendee.email}>
-                              Multiple speakers via {attendee.displayName || attendee.email}
+                          {meetingConnectionOptions.map(connection => (
+                            <SelectItem key={connection.email.toLowerCase()} value={connection.email}>
+                              Multiple speakers via {connection.label}
                             </SelectItem>
                           ))}
                         </SelectContent>
