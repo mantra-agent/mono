@@ -106,6 +106,8 @@ export interface SessionProvenanceInput {
 }
 
 interface SpawnMetaInput extends Partial<SessionProvenanceInput> {
+  /** Persona selected before creation so initial session snapshots are truthful. */
+  personaId?: number;
   parentSessionId?: string;
   spawnReason?: string;
   spawnerTool?: string;
@@ -2389,6 +2391,7 @@ export const chatFileStorage: IChatFileStorage = {
       status: "saved",
       sessionKey: sessionKey || null,
       modelTier: normalizeSessionModelTierOverride(modelTier),
+      personaId: spawnMeta?.personaId ?? null,
       createdAt: now,
       updatedAt: now,
       messages: [],
