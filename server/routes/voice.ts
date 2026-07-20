@@ -6,6 +6,7 @@ import { registerVoiceSessionRoutes } from "./voice-session";
 import { registerVoiceConfigRoutes } from "./voice-config";
 import { registerVoiceEngineRoutes } from "./voice-engine";
 import { ACTIVITY_CHAT } from "../job-profiles";
+import { requireAuth } from "../auth";
 
 const voiceLog = createLogger("Voice");
 
@@ -14,7 +15,7 @@ export async function registerVoiceRoutes(app: Express) {
   await registerVoiceConfigRoutes(app);
   registerVoiceEngineRoutes(app);
 
-  app.post("/api/agent/query", async (req, res) => {
+  app.post("/api/agent/query", requireAuth, async (req, res) => {
     try {
       const { message } = req.body;
       if (!message || typeof message !== "string") {
@@ -31,7 +32,8 @@ export async function registerVoiceRoutes(app: Express) {
       const { executeTool } = await import("../bridge-tools");
       const { contextBuilder } = await import("../context-builder");
 
-      const toolDefs = getToolDefinitions();
+      const { filterToolSchemasForAuthority } = await import("../agent-authority");
+      const toolDefs = filterToolSchemasForAuthority(getToolDefinitions(), { origin: "voice" });
       const resolvedSpine = await contextBuilder.resolve({
         callType: "full",
         llmMode: "voice",
@@ -44,7 +46,7 @@ export async function registerVoiceRoutes(app: Express) {
         parameters: { type: "object" as const, properties: t.parameters.properties || {}, required: t.parameters.required },
       }));
       const toolExecutor = async (name: string, args: Record<string, any>) => {
-        const r = await executeTool(name, `query-${Date.now()}`, args);
+        const r = await executeTool(name, `query-${Date.now()}`, args, { sessionKey: "voice-query", sessionId: "", authority: { origin: "voice" } });
         return { result: r.result, error: r.error, sideEffectOnly: r.sideEffectOnly, continuation: r.continuation };
       };
 

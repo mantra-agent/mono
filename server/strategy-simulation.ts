@@ -506,7 +506,11 @@ export async function evaluateMoveWithAgent(
 
       const toolExecutor = async (name: string, args: Record<string, any>) => {
         log.log(`evaluateMoveWithAgent toolCall runId=${runId} tool=${name} action=${args.action}`);
-        const result = await executeBridgeTool(name, `eval-${runId}-${Date.now()}`, args);
+        const result = await executeBridgeTool(name, `eval-${runId}-${Date.now()}`, args, {
+          sessionKey: sessionKey || `strategy-eval:${runId}`,
+          sessionId: "",
+          authority: { origin: "autonomous", activity: ACTIVITY_STRATEGY },
+        });
         return { result: result.result, error: result.error, sideEffectOnly: (result as any).sideEffectOnly };
       };
 

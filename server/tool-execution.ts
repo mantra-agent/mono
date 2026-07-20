@@ -18,6 +18,8 @@ export interface ToolExecutionContext {
   voiceSessionId?: string;
   activity: string;
   runId: string;
+  origin?: import("./agent-authority").ToolInvocationOrigin;
+  trustedDelegation?: "plan" | "workflow";
 }
 
 export interface ToolResult {
@@ -84,6 +86,11 @@ export function createToolExecutor(
       const result = await executeTool(name, callId || `exec-${Date.now()}`, args, {
         sessionId: ctx.sessionId || "",
         sessionKey: ctx.sessionKey,
+        authority: {
+          origin: ctx.origin ?? (ctx.voiceSessionId ? "voice" : "interactive"),
+          trustedDelegation: ctx.trustedDelegation,
+          activity: ctx.activity,
+        },
       });
       const durationMs = Date.now() - start;
       const teLevel = (!result.error && durationMs < 5000) ? log.debug.bind(log) : log.log.bind(log);

@@ -419,3 +419,28 @@ Update this document when a change adds or alters:
 Run a focused threat review on each such change and a full baseline review at least monthly or after a material incident. Every fourth Security Sentinel run performs the full baseline review once that skill exists.
 
 This internal model cannot establish absence of vulnerabilities. It can establish that Mantra has named its assets and boundaries, made authority deterministic, assigned risks, and collected evidence. External human penetration testing becomes warranted before broad public access, before handling material regulated/high-value data at scale, after a major identity/execution redesign, or when customer assurance requires independent evidence.
+
+## 11.3 Agent authority cure, July 20, 2026
+
+### Audit scope and framework mapping
+
+This cure traced context assembly, vNext retrieval, tool schema generation, the canonical `executeTool` dispatch, chat/voice/timer/skill/plan/workflow execution, hooks, session-tree messaging, shell/Git/platform operations, and model-controlled URL fetches. All retrieved and generated content remains untrusted. Authority is derived only from the active `Principal`, immutable invocation origin, and structured plan/workflow provenance.
+
+Coverage maps to OWASP LLM Top 10 2025 LLM01 Prompt Injection, LLM02 Sensitive Information Disclosure, LLM04 Data and Model Poisoning, LLM05 Improper Output Handling, LLM06 Excessive Agency, LLM07 System Prompt Leakage, LLM08 Vector and Embedding Weaknesses, and LLM10 Unbounded Consumption. Agentic AI coverage includes goal/instruction manipulation, tool misuse, identity and privilege abuse, memory/context poisoning, unsafe inter-agent communication, cascading failure, and repudiation. The controls are capability boundaries, not prompt claims.
+
+### Closed or contained findings
+
+| ID | Result and evidence | Framework coverage | Closure |
+|---|---|---|---|
+| SEC-2026-013 | Closed. `/api/agent/tools/:toolName` exposed direct bridge dispatch without an explicit authentication boundary or invocation origin. It now requires authentication and enters the canonical authority policy as HTTP-originated work. | LLM01, LLM06; agent identity/privilege abuse, confused deputy | `server/routes/events.ts`, `server/agent-authority.ts`; production build passed. |
+| SEC-2026-014 | Closed. Every model path previously received the complete tool registry and `executeTool` had no central capability authorization. The new boundary filters schemas and re-authorizes every call using principal permissions, invocation origin, structured delegation, human gates, and autonomous external-effect policy. | LLM01, LLM05, LLM06; tool misuse, excessive agency | `server/agent-authority.ts`, `server/bridge-tools.ts`, chat/voice/timer/autonomous callers; production build passed. |
+| SEC-2026-015 | Closed. Shell accepted arbitrary `/bin/sh -c` commands behind a destructive denylist. It is now allowlist-only, denies command substitution, arbitrary interpreters/network clients/secret paths/redirection/mutating find or sed, permits only read-only shell Git and `npm run build`, and requires trusted plan/workflow provenance plus `build:write`. | LLM01, LLM02, LLM05, LLM06; arbitrary command execution and exfiltration | `server/agent-authority.ts`, `server/bridge-tools.ts`; production build passed. |
+| SEC-2026-016 | Closed for model-controlled generic and image fetches. URL egress now rejects credentials, local/internal names, private/reserved IPs, and revalidates every redirect after DNS resolution. | LLM01, LLM02, LLM05, LLM06; tool misuse and exfiltration | `server/untrusted-url.ts`, `server/bridge-tools.ts`; production build passed. |
+| SEC-2026-017 | Closed. Hooks were globally enumerated and dispatched from boot context, action interpolation accepted event payloads, and hook CRUD was not owner-scoped. Hook storage is principal-scoped, scheduler enumeration requires a named system principal, event audience must match the restored durable owner, execution re-enters that owner principal, and hook management requires `system:write`. | LLM01, LLM04, LLM06; identity/privilege abuse, replay, repudiation | `server/hook-storage.ts`, `server/hook-executor.ts`, `server/routes/hooks.ts`; production build passed. |
+| SEC-2026-018 | Closed. The generic session `send_message` path could target an arbitrary visible session while the dedicated tools correctly enforced tree topology. Generic delivery now accepts only a direct parent, child, or sibling and preserves the chain-depth cap. | LLM01, LLM04, LLM06; unsafe inter-agent communication, cascading failure | `server/bridge-tools.ts`, existing `server/session-tree.ts`; production build passed. |
+
+### Preserved controls and residual risk
+
+The Claude SDK keeps built-in Bash/file/web/task tools disabled and exposes only Mantra MCP definitions. Tool-call idempotency remains `(runId, toolCallId)` scoped; write ordering, plan/workflow terminal ownership, admission budgets, session spawn idempotency, session chain-depth caps, principal-scoped vNext retrieval, bounded tool-output artifacts, and human-only Gmail sending remain in force.
+
+Residual medium risks are tracked for later application/platform review: domain-specific URL adapters and provider callbacks need complete egress/replay verification; the bridge monolith still has uneven action schemas and some tools default conservatively to external-effect; hook names remain globally unique, which is a tenancy usability constraint rather than an authority bypass; shell allowlisting is intentionally narrow and may require explicit expansion as trusted engineering workflows evolve. No known unowned critical/high finding remains in the audited agent-authority plane.

@@ -270,6 +270,7 @@ export async function runExecutorPhase(
       voiceSessionId: session.id,
       activity: ACTIVITY_VOICE,
       runId: `voice-${session.id}-t${currentTurn}`,
+      origin: "voice",
     },
   );
 

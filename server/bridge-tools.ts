@@ -82,6 +82,7 @@ export interface BridgeToolContext {
   sessionKey: string;
   sessionId: string;
   orientationPersonaPolicy?: "replace" | "preserve_existing";
+  authority?: import("./agent-authority").AgentAuthorityContext;
 }
 
 export interface ToolResult {
@@ -3687,6 +3688,14 @@ export async function handleAnySessionMessage(
   }
   if (!target) {
     return { result: `Target session ${toSessionId} not found.`, error: true };
+  }
+
+  const { validateCrossSessionScope } = await import("./session-tree");
+  const directions: Array<"parent" | "child" | "sibling"> = ["parent", "child", "sibling"];
+  const scopedDirection = directions.find(direction => validateCrossSessionScope(caller, target, direction).ok);
+  if (!scopedDirection) {
+    toolExec.warn(`[CrossSessionMsg] event=scope-reject from=${fromSessionId} to=${target.id} direction=direct reason=not_direct_relative`);
+    return { result: "Direct session messaging is limited to a parent, child, or sibling in the same session tree.", error: true };
   }
 
   const recentInbound = await inboundFetch(fromSessionId);
@@ -11032,7 +11041,8 @@ ${refs}` : ""),
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 30000);
             try {
-              const resp = await fetch(a.url, { signal: controller.signal });
+              const { fetchUntrustedUrl } = await import("./untrusted-url");
+              const resp = await fetchUntrustedUrl(a.url, { signal: controller.signal });
               clearTimeout(timeout);
               if (!resp.ok) {
                 return { result: `Failed to fetch image from URL: ${resp.status} ${resp.statusText}`, error: true };
@@ -11910,6 +11920,13 @@ const systemTools: Record<string, ToolHandler> = {
 
     const timeoutMs = Math.min(args.timeout || 30000, 120000);
 
+    const { validateShellCommand } = await import("./agent-authority");
+    const shellPolicy = validateShellCommand(command);
+    if (!shellPolicy.allowed) {
+      eventBus.publish({ category: "agent", event: "tool:shell_denied", payload: { reason: shellPolicy.reason } });
+      return { result: `Shell command blocked by deterministic allowlist: ${shellPolicy.reason}`, error: true };
+    }
+
     const deniedPattern = SHELL_DENYLIST.find(pat => pat.test(command));
     if (deniedPattern) {
       eventBus.publish({
@@ -12270,6 +12287,8 @@ const webTools: Record<string, ToolHandler> = {
     if (!url) return { result: "Missing URL", error: true };
 
     try {
+      const { assertSafeUntrustedHttpUrl, fetchUntrustedUrl } = await import("./untrusted-url");
+      await assertSafeUntrustedHttpUrl(url);
       // --- Smart URL Router: try domain-specific extraction first ---
       const { routeUrl } = await import("./url-routers");
       const routed = await routeUrl(url);
@@ -12311,7 +12330,7 @@ const webTools: Record<string, ToolHandler> = {
 
       let response: Response;
       try {
-        response = await fetch(url, {
+        response = await fetchUntrustedUrl(url, {
           signal: controller.signal,
           headers: REALISTIC_HEADERS,
         });
@@ -15410,6 +15429,22 @@ export async function executeTool(
     return { result: `Unknown tool: ${toolName}`, error: true, sideEffectOnly: true, durationMs };
   }
   const normalizedArgs = normalizeToolArgs(resolvedName, args);
+  const { authorizeToolInvocation } = await import("./agent-authority");
+  const authority = authorizeToolInvocation(resolvedName, normalizedArgs, {
+    ...context?.authority,
+    sessionId: context?.sessionId,
+    sessionKey: context?.sessionKey,
+  });
+  if (!authority.allowed) {
+    const durationMs = Date.now() - startTime;
+    toolExec.warn(`rejected tool=${toolName} callId=${toolCallId} reason=authority_denied detail=${authority.reason}`);
+    eventBus.publish({
+      category: "agent",
+      event: "tool:authority_denied",
+      payload: { toolName, action: normalizedArgs.action || null, reason: authority.reason, sessionId: context?.sessionId || null },
+    });
+    return { result: `Tool execution denied by deterministic authority policy: ${authority.reason}`, error: true, sideEffectOnly: true, durationMs };
+  }
   const droppedEmptyKeys = Object.keys(args ?? {}).filter((key) => !(key in normalizedArgs));
   if (droppedEmptyKeys.length > 0) {
     toolExec.verbose(() => `normalized tool=${toolName} callId=${toolCallId} droppedEmptyKeys=${droppedEmptyKeys.join(",")}`);
