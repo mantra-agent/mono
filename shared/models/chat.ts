@@ -167,6 +167,10 @@ export interface ContinuationCapsule {
 export interface CompactionMeta {
   type: "between_turn";
   summary: string;
+  /** How `summary` was produced: LLM narrative (primary) or deterministic capsule (fallback/legacy). */
+  summaryKind?: "narrative" | "capsule";
+  /** Number of transcript segments that fell back to mechanical excerpts during narrative summarization. */
+  degradedSegments?: number;
   capsuleVersion?: 1;
   capsule?: ContinuationCapsule;
   replacedMessageCount: number;
