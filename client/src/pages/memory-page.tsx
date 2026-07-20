@@ -144,7 +144,6 @@ import { useEventStream } from "@/hooks/use-event-stream";
 import { useTimezone } from "@/hooks/use-timezone";
 import { useMyelination } from "@/hooks/use-myelination";
 import { cn } from "@/lib/utils";
-import { fromCivilDate } from "@shared/civil-date";
 
 const log = createLogger("MemoryPage");
 
@@ -331,6 +330,183 @@ interface VnextSearchResponse {
   storage: "memory_vnext_claims";
   total: number;
   results: VnextSearchResult[];
+}
+
+type LogGranularity = "day" | "week" | "month" | "year";
+
+interface DateRange {
+  start: Date;
+  end: Date;
+  startIso: string;
+  endIso: string;
+}
+
+interface ZonedDateParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+}
+
+function getConfiguredTimezone(timezone: string | null | undefined) {
+  return timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Chicago";
+}
+
+function getZonedDateParts(value: string | Date, timezone: string): ZonedDateParts {
+  const date = typeof value === "string" ? new Date(value) : value;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: getConfiguredTimezone(timezone),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const getPart = (type: string) => Number(parts.find(part => part.type === type)?.value ?? 0);
+  const hour = getPart("hour");
+  return {
+    year: getPart("year"),
+    month: getPart("month"),
+    day: getPart("day"),
+    hour: hour === 24 ? 0 : hour,
+    minute: getPart("minute"),
+    second: getPart("second"),
+  };
+}
+
+function civilDayIndex(parts: Pick<ZonedDateParts, "year" | "month" | "day">) {
+  return Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day) / 86_400_000);
+}
+
+function zonedMidnightToUtc(year: number, month: number, day: number, timezone: string): Date {
+  const target = { year, month, day, hour: 0, minute: 0, second: 0 };
+  let timestamp = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const actual = getZonedDateParts(new Date(timestamp), timezone);
+    const dayDelta = civilDayIndex(target) - civilDayIndex(actual);
+    const millisDelta =
+      dayDelta * 86_400_000 +
+      (target.hour - actual.hour) * 3_600_000 +
+      (target.minute - actual.minute) * 60_000 +
+      (target.second - actual.second) * 1_000;
+
+    if (millisDelta === 0) return new Date(timestamp);
+    timestamp += millisDelta;
+  }
+
+  return new Date(timestamp);
+}
+
+function addCivilPeriod(parts: Pick<ZonedDateParts, "year" | "month" | "day">, granularity: LogGranularity, delta: number) {
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  switch (granularity) {
+    case "day":
+      date.setUTCDate(date.getUTCDate() + delta);
+      break;
+    case "week":
+      date.setUTCDate(date.getUTCDate() + delta * 7);
+      break;
+    case "month":
+      date.setUTCMonth(date.getUTCMonth() + delta);
+      break;
+    case "year":
+      date.setUTCFullYear(date.getUTCFullYear() + delta);
+      break;
+  }
+  return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate() };
+}
+
+function getWeekStart(parts: Pick<ZonedDateParts, "year" | "month" | "day">) {
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  const day = date.getUTCDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  date.setUTCDate(date.getUTCDate() + mondayOffset);
+  return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate() };
+}
+
+function getDateRange(date: Date, granularity: LogGranularity, timezone: string): DateRange {
+  const tz = getConfiguredTimezone(timezone);
+  const parts = getZonedDateParts(date, tz);
+  let startParts: Pick<ZonedDateParts, "year" | "month" | "day">;
+  let endParts: Pick<ZonedDateParts, "year" | "month" | "day">;
+
+  switch (granularity) {
+    case "day":
+      startParts = { year: parts.year, month: parts.month, day: parts.day };
+      endParts = addCivilPeriod(startParts, "day", 1);
+      break;
+    case "week":
+      startParts = getWeekStart(parts);
+      endParts = addCivilPeriod(startParts, "week", 1);
+      break;
+    case "month":
+      startParts = { year: parts.year, month: parts.month, day: 1 };
+      endParts = addCivilPeriod(startParts, "month", 1);
+      break;
+    case "year":
+      startParts = { year: parts.year, month: 1, day: 1 };
+      endParts = addCivilPeriod(startParts, "year", 1);
+      break;
+  }
+
+  const start = zonedMidnightToUtc(startParts.year, startParts.month, startParts.day, tz);
+  const end = zonedMidnightToUtc(endParts.year, endParts.month, endParts.day, tz);
+  return { start, end, startIso: start.toISOString(), endIso: end.toISOString() };
+}
+
+function eventDateKeyInTz(value: string | Date, timezone: string) {
+  const parts = getZonedDateParts(value, timezone);
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+function eventTimeInTz(value: string | Date, timezone: string) {
+  return new Date(value).toLocaleTimeString("en-US", { timeZone: getConfiguredTimezone(timezone), hour: "numeric", minute: "2-digit", hour12: true });
+}
+
+function formatDayHeader(dayKey: string, timezone: string) {
+  const [year, month, day] = dayKey.split("-").map(Number);
+  return zonedMidnightToUtc(year, month, day, timezone).toLocaleDateString("en-US", {
+    timeZone: getConfiguredTimezone(timezone),
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function navigateDate(date: Date, granularity: LogGranularity, delta: number, timezone: string): Date {
+  const tz = getConfiguredTimezone(timezone);
+  const parts = getZonedDateParts(date, tz);
+  const next = addCivilPeriod({ year: parts.year, month: parts.month, day: parts.day }, granularity, delta);
+  return zonedMidnightToUtc(next.year, next.month, next.day, tz);
+}
+
+function formatPeriodLabel(date: Date, granularity: LogGranularity, timezone: string) {
+  const tz = getConfiguredTimezone(timezone);
+  const range = getDateRange(date, granularity, tz);
+  const compactDate = new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "short", day: "numeric" });
+  const compactDateWithYear = new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "short", day: "numeric", year: "numeric" });
+
+  switch (granularity) {
+    case "day":
+      return range.start.toLocaleDateString("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric", year: "numeric" });
+    case "week": {
+      const endInclusive = new Date(range.end.getTime() - 1);
+      const startYear = getZonedDateParts(range.start, tz).year;
+      const endYear = getZonedDateParts(endInclusive, tz).year;
+      const startLabel = startYear === endYear ? compactDate.format(range.start) : compactDateWithYear.format(range.start);
+      return `${startLabel}–${compactDateWithYear.format(endInclusive)}`;
+    }
+    case "month":
+      return range.start.toLocaleDateString("en-US", { timeZone: tz, month: "long", year: "numeric" });
+    case "year":
+      return String(getZonedDateParts(range.start, tz).year);
+  }
 }
 
 
@@ -903,12 +1079,10 @@ function VnextJournalTab() {
       : null
   );
 
-  const { start, end } = useMemo(() => getDateRange(currentDate, granularity), [currentDate, granularity]);
-  const startISO = start.toISOString();
-  const endISO = end.toISOString();
+  const { startIso, endIso } = useMemo(() => getDateRange(currentDate, granularity, timezone), [currentDate, granularity, timezone]);
 
   const { data: claims = [], isLoading } = useQuery<VnextClaim[]>({
-    queryKey: ["/api/memory/vnext/claims", "journal", startISO, endISO],
+    queryKey: ["/api/memory/vnext/claims", "journal", startIso, endIso],
     queryFn: async () => {
       const pageSize = 100;
       const collected: VnextClaim[] = [];
@@ -916,8 +1090,8 @@ function VnextJournalTab() {
 
       while (true) {
         const params = new URLSearchParams({
-          createdAfter: startISO,
-          createdBefore: endISO,
+          createdAfter: startIso,
+          createdBefore: endIso,
           limit: String(pageSize),
           offset: String(offset),
         });
@@ -1027,7 +1201,7 @@ function VnextJournalTab() {
               variant="ghost"
               size="icon"
               className="h-6 w-6"
-              onClick={() => setCurrentDate(navigateDate(currentDate, granularity, -1))}
+              onClick={() => setCurrentDate(navigateDate(currentDate, granularity, -1, timezone))}
               data-testid="log-nav-prev"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
@@ -1039,7 +1213,7 @@ function VnextJournalTab() {
               variant="ghost"
               size="icon"
               className="h-6 w-6"
-              onClick={() => setCurrentDate(navigateDate(currentDate, granularity, 1))}
+              onClick={() => setCurrentDate(navigateDate(currentDate, granularity, 1, timezone))}
               data-testid="log-nav-next"
             >
               <ChevronRight className="h-3.5 w-3.5" />
