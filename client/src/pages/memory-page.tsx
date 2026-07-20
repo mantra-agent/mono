@@ -1188,6 +1188,13 @@ function VnextJournalTab() {
 }
 
 
+const entityTypeConfig: Record<string, { icon: typeof Users; label: string }> = {
+  person: { icon: Users, label: "Person" },
+  project: { icon: FolderKanban, label: "Project" },
+  goal: { icon: Target, label: "Goal" },
+  strategy: { icon: Target, label: "Strategy" },
+};
+
 function VnextEntityLinksSection({ claimId }: { claimId: number }) {
   const { data, isLoading } = useQuery<{ entityLinks: VnextEntityLink[]; total: number }>({
     queryKey: ["/api/memory/vnext/claims", claimId, "entity-links"],
