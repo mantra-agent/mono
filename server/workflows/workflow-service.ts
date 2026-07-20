@@ -468,7 +468,13 @@ function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: u
     }
   }
 
-  lines.push("", "## Completion", `Workflow run: ${context.workflowRunId}. Attempt ${context.attemptNumber}/${context.maxAttempts}.`, "State the outcome, cite the evidence created, and name the next required action for any failure or blocker.");
+  lines.push(
+    "",
+    "## Completion",
+    `Workflow run: ${context.workflowRunId}. Attempt ${context.attemptNumber}/${context.maxAttempts}.`,
+    "Execute only this assigned stage. Do not create or start another workflow; this workflow owns downstream orchestration.",
+    "State the outcome, cite the evidence created, and name the next required action for any failure or blocker.",
+  );
   return lines.join("\n");
 }
 
@@ -918,6 +924,27 @@ export async function getWorkflowEnvironmentTruth(runIdOrEnvironmentId: string |
   };
 }
 
+async function assertWorkflowCreationSessionsCanOrchestrate(sessionIds: Array<string | undefined>): Promise<void> {
+  const normalizedSessionIds = [...new Set(sessionIds.map((id) => id?.trim()).filter((id): id is string => Boolean(id)))];
+  if (normalizedSessionIds.length === 0) return;
+  const [stageSession] = await db
+    .select({
+      sessionId: workflowSessions.sessionId,
+      workflowRunId: workflowSessions.workflowRunId,
+    })
+    .from(workflowSessions)
+    .where(visible(sessionScopeColumns, and(
+      inArray(workflowSessions.sessionId, normalizedSessionIds),
+      eq(workflowSessions.role, "stage_attempt"),
+    )))
+    .limit(1);
+  if (!stageSession) return;
+  throw new Error(
+    `Workflow stage session ${stageSession.sessionId} cannot create a nested workflow. ` +
+    `Complete its assigned stage in workflow ${stageSession.workflowRunId} instead.`,
+  );
+}
+
 export async function createWorkflowRun(input: {
   templateId?: string;
   title: string;
@@ -938,6 +965,7 @@ export async function createWorkflowRun(input: {
   if (!template) throw new Error(`Workflow template not found: ${templateId}`);
   if (!input.title?.trim()) throw new Error("Workflow title is required");
   if (!input.objective?.trim()) throw new Error("Workflow objective is required");
+  await assertWorkflowCreationSessionsCanOrchestrate([input.parentSessionId, input.createdBySessionId]);
 
   const id = generateWorkflowRunId();
   const initialContent = `# Workflow: ${input.title}\n\nCreating checkpoint...`;
@@ -1294,7 +1322,11 @@ export async function advanceWorkflowRun(runId: string, trigger: WorkflowTransit
   if (!transitionDef) throw new Error(`No transition for ${current} on ${event}`);
   const next = transitionDef.toStageKey;
   await recordTransition({ workflowRunId: runId, fromStageKey: current, toStageKey: next, fromAttemptId, trigger, reason: reason || transitionDef.reason || event });
-  const nextStatus = next ? (result === "blocked" || result === "needs_review" ? result : "active") : (result === "passed" ? "completed" : result === "blocked" ? "blocked" : "failed");
+  // A named destination is a recovery transition. Keep the run active so the
+  // destination can start; only destination-less blocks and review gates pause.
+  const nextStatus = next
+    ? result === "needs_review" ? "needs_review" : "active"
+    : result === "passed" ? "completed" : result === "blocked" ? "blocked" : result === "needs_review" ? "needs_review" : "failed";
   await db.update(workflowRuns).set({ status: nextStatus, completedAt: next ? null : new Date(), updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, runId)));
   await renderWorkflowRunPage(runId);
   const updated = (await getWorkflowRun(runId))!;
