@@ -12752,6 +12752,20 @@ const memoryTools: Record<string, ToolHandler> = {
   },
 };
 
+
+function retiredLegacyMemoryAction(action: string, replacement: string): ToolHandlerResult {
+  return {
+    result: JSON.stringify({
+      status: "retired",
+      action,
+      storage: "memory_entries",
+      message: `Legacy memory action "${action}" has been retired because memory_entries is archived and no longer a runtime read/write surface.`,
+      migration: replacement,
+    }),
+    error: true,
+  };
+}
+
 async function getMondayOfCurrentWeek(): Promise<string> {
   const { getDateInTimezone, getTimezone } = await import("./timezone");
   const today = getDateInTimezone(getTimezone());
@@ -13083,11 +13097,17 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       }
       return result;
     }
-    const graphActions = new Set(["create_link", "update_entry", "delete_entry", "get"]);
-    if (graphActions.has(action)) {
-      const bridge = bridgeHandlers.memory_graph;
-      if (bridge) return bridge(args);
-      return { result: `memory_graph bridge handler not found`, error: true };
+    if (action === "get") {
+      args.action = "vnext_claim_detail";
+      return bridgeHandlers.memory(args);
+    }
+    const retiredLegacyCrudActions: Record<string, string> = {
+      create_link: "No faithful generic vNext equivalent exists for arbitrary memory_links writes. Use run_vnext_lifecycle to create source/entity/claim links, or use vnext_claim_detail to inspect existing graph provenance.",
+      update_entry: "memory_entries updates are retired. vNext claims are extracted, sourced, linked, canonicalized, or retired through run_vnext_lifecycle; inspect them with vnext_claim_detail.",
+      delete_entry: "memory_entries deletion is retired. Archived rows are preserved. For vNext, use lifecycle retirement through vNext maintenance rather than deleting source-backed claims.",
+    };
+    if (Object.prototype.hasOwnProperty.call(retiredLegacyCrudActions, action)) {
+      return retiredLegacyMemoryAction(action, retiredLegacyCrudActions[action]);
     }
     const retiredLegacyMaintenanceActions = new Set([
       "consolidate_short",
@@ -13111,31 +13131,31 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       return { result: `memory_ops bridge handler not found`, error: true };
     }
     if (action === "link_entity") {
-      const memoryId = args.id as number;
+      const claimId = typeof args.id === "number" ? args.id : typeof args.claimId === "number" ? args.claimId : null;
       const entityType = args.entityType as string;
       const entityId = args.entityId as string;
-      if (!memoryId) return { result: "Missing 'id' parameter (memory entry ID)", error: true };
+      if (claimId === null) return { result: "Missing 'id' parameter (vNext claim ID)", error: true };
       if (!entityType) return { result: "Missing 'entityType' parameter", error: true };
       if (!entityId) return { result: "Missing 'entityId' parameter", error: true };
       try {
-        const { memoryStorage } = await import("./memory/memory-storage");
-        const link = await memoryStorage.linkMemoryToEntity(memoryId, entityType, entityId);
-        return { result: JSON.stringify({ linked: true, linkId: link.id, memoryId, entityType, entityId }) };
+        const { memoryVnextClaimStorage } = await import("./memory/vnext-claim-storage");
+        await memoryVnextClaimStorage.linkClaimToEntity(claimId, entityType, entityId);
+        return { result: JSON.stringify({ linked: true, storage: "memory_vnext_claims", claimId, entityType, entityId }) };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { result: `Failed to link entity: ${msg}`, error: true };
+        return { result: `Failed to link vNext claim entity: ${msg}`, error: true };
       }
     }
     if (action === "get_entity_links") {
-      const memoryId = args.id as number;
-      if (!memoryId) return { result: "Missing 'id' parameter (memory entry ID)", error: true };
+      const claimId = typeof args.id === "number" ? args.id : typeof args.claimId === "number" ? args.claimId : null;
+      if (claimId === null) return { result: "Missing 'id' parameter (vNext claim ID)", error: true };
       try {
-        const { memoryStorage } = await import("./memory/memory-storage");
-        const links = await memoryStorage.getEntityLinksForMemory(memoryId);
-        return { result: JSON.stringify({ memoryId, total: links.length, links }) };
+        const { memoryVnextClaimStorage } = await import("./memory/vnext-claim-storage");
+        const links = await memoryVnextClaimStorage.listEntityLinks(claimId);
+        return { result: JSON.stringify({ storage: "memory_vnext_claims", claimId, total: links.length, links }) };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { result: `Failed to get entity links: ${msg}`, error: true };
+        return { result: `Failed to get vNext claim entity links: ${msg}`, error: true };
       }
     }
     if (action === "get_many") {
@@ -13143,227 +13163,69 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       if (!ids || !Array.isArray(ids) || ids.length === 0) return { result: "Missing or empty 'ids' array", error: true };
       if (ids.length > 100) return { result: "Too many IDs — max 100 per call", error: true };
       try {
-        const { memoryStorage } = await import("./memory/memory-storage");
+        const { memoryVnextClaimStorage } = await import("./memory/vnext-claim-storage");
         const numericIds = ids.map((id: unknown) => Number(id)).filter((id: number) => Number.isFinite(id) && Number.isInteger(id));
-        if (numericIds.length === 0) return { result: "No valid numeric IDs provided", error: true };
-        const entries = await memoryStorage.getMany(numericIds);
-        const results = entries.map((entry) => ({
-          id: entry.id,
-          title: entry.title || "(untitled)",
-          layer: entry.layer,
-          source: entry.source,
-          summary: entry.summary || null,
-          tags: entry.tags || [],
-          contentLength: (entry.content || "").length,
-          createdAt: entry.createdAt ? new Date(entry.createdAt).toISOString() : null,
-          content: entry.content,
-          metadata: entry.metadata,
+        if (numericIds.length === 0) return { result: "No valid numeric vNext claim IDs provided", error: true };
+        const details = await Promise.all(numericIds.map((id: number) => memoryVnextClaimStorage.getClaimDetail(id)));
+        const claims = details.filter(Boolean).map((detail: any) => ({
+          id: detail.claim.id,
+          storage: "memory_vnext_claims",
+          title: detail.claim.title || detail.claim.content,
+          content: detail.claim.content,
+          claimType: detail.claim.claimType,
+          confidence: detail.claim.confidence,
+          lifecycleStage: detail.claim.lifecycleStage,
+          source: detail.claim.source,
+          sourceId: detail.claim.sourceId,
+          topics: detail.claim.topics || [],
+          createdAt: detail.claim.createdAt?.toISOString?.() ?? null,
+          sourceCount: detail.sources.length,
+          entityLinkCount: detail.entityLinks.length,
+          claimLinkCount: detail.claimLinks.length,
         }));
-        return { result: JSON.stringify({ total: results.length, requested: numericIds.length, entries: results }) };
+        return { result: JSON.stringify({ storage: "memory_vnext_claims", total: claims.length, requested: numericIds.length, claims }) };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { result: `Failed to get entries: ${msg}`, error: true };
+        return { result: `Failed to get vNext claims: ${msg}`, error: true };
       }
     }
     if (action === "count") {
       try {
-        const { memoryStorage } = await import("./memory/memory-storage");
-        const filterLayer = typeof args.layer === "string" ? args.layer : undefined;
-        const filterSource = typeof args.source === "string" ? args.source : undefined;
-        const createdAfter = typeof args.createdAfter === "string" ? args.createdAfter : undefined;
-        const createdBefore = typeof args.createdBefore === "string" ? args.createdBefore : undefined;
-
-        const counts = await memoryStorage.countEntries({
-          layer: filterLayer,
-          source: filterSource,
-          createdAfter,
-          createdBefore,
-        });
-
-        return { result: JSON.stringify({
-          total: counts.total,
-          byLayer: counts.byLayer,
-          graphed: counts.graphed,
-          ungraphed: counts.ungraphed,
-          filters: {
-            layer: filterLayer || null,
-            source: filterSource || null,
-            createdAfter: createdAfter || null,
-            createdBefore: createdBefore || null,
-          },
-        }) };
+        const { memoryVnextClaimStorage } = await import("./memory/vnext-claim-storage");
+        const counts = await memoryVnextClaimStorage.getCounts();
+        return { result: JSON.stringify({ storage: "memory_vnext_claims", ...counts }) };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { result: `Failed to count entries: ${msg}`, error: true };
+        return { result: `Failed to count vNext claims: ${msg}`, error: true };
       }
     }
-    if (action === "bulk_delete") {
-      try {
-        const { memoryStorage } = await import("./memory/memory-storage");
-        const { createLogger } = await import("./log");
-        const memLog = createLogger("Memory");
-
-        const rawIds = args.ids;
-        if (!rawIds || !Array.isArray(rawIds) || rawIds.length === 0) {
-          return { result: JSON.stringify({ status: "error", code: "missing_ids", message: "Missing or empty 'ids' array" }), error: true };
-        }
-        if (rawIds.length > 500) {
-          return { result: JSON.stringify({ status: "error", code: "too_many", message: "Too many IDs — max 500 per call" }), error: true };
-        }
-
-        const numericIds = rawIds.map((id: unknown) => Number(id)).filter((id: number) => Number.isFinite(id) && Number.isInteger(id));
-        if (numericIds.length === 0) {
-          return { result: JSON.stringify({ status: "error", code: "invalid_ids", message: "No valid numeric IDs provided" }), error: true };
-        }
-
-        if (args.confirm !== true) {
-          // Preview mode
-          const entries = await memoryStorage.getMany(numericIds);
-          const sample = entries.slice(0, 10).map(e => ({
-            id: e.id,
-            title: e.title || "(untitled)",
-            layer: e.layer,
-            source: e.source,
-          }));
-          memLog.log(`bulk_delete preview — requested:${numericIds.length} found:${entries.length}`);
-          return { result: JSON.stringify({
-            status: "preview",
-            requestedCount: numericIds.length,
-            foundCount: entries.length,
-            notFoundCount: numericIds.length - entries.length,
-            sample,
-            warning: `This will permanently delete ${entries.length} entries and remove all their links. This cannot be undone.`,
-            confirmCall: `memory({ action: "bulk_delete", ids: [...], confirm: true, reason: "..." })`,
-          }) };
-        }
-
-        const reason = typeof args.reason === "string" ? args.reason.trim() : "";
-        if (!reason) {
-          return { result: JSON.stringify({ status: "error", code: "missing_reason", message: "A reason is required to confirm bulk deletion" }), error: true };
-        }
-
-        const result = await memoryStorage.bulkDeleteEntries(numericIds);
-        const cleanupStatus = result.cleanupErrors && result.cleanupErrors.length > 0 ? "partial_failure" : "complete";
-
-        if (cleanupStatus === "partial_failure") {
-          memLog.warn(`bulk_delete partial — deleted:${result.deletedCount}/${result.requestedCount} reason:"${reason}" cleanupErrors:${result.cleanupErrors!.length}/${result.peerCleanupScheduled}`);
-        } else {
-          memLog.log(`bulk_delete confirmed — deleted:${result.deletedCount}/${result.requestedCount} reason:"${reason}" linksRemoved:${result.linksRemoved} peerCleanup:complete(${result.peerCleanupScheduled})`);
-        }
-
-        return { result: JSON.stringify({
-          status: "deleted",
-          reason,
-          requestedCount: result.requestedCount,
-          deletedCount: result.deletedCount,
-          notFoundIds: result.notFoundIds,
-          linksRemoved: result.linksRemoved,
-          peerCleanupScheduled: result.peerCleanupScheduled,
-          cleanupStatus,
-          ...(result.cleanupErrors && result.cleanupErrors.length > 0 ? { cleanupErrors: result.cleanupErrors } : {}),
-        }) };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { result: `Failed to bulk delete: ${msg}`, error: true };
-      }
-    }
-    if (action === "find_duplicates") {
-      try {
-        const { memoryStorage } = await import("./memory/memory-storage");
-        const filterLayer = typeof args.layer === "string" ? args.layer : undefined;
-        const filterSource = typeof args.source === "string" ? args.source : undefined;
-        const createdAfter = typeof args.createdAfter === "string" ? args.createdAfter : undefined;
-        const createdBefore = typeof args.createdBefore === "string" ? args.createdBefore : undefined;
-        const dupLimit = typeof args.limit === "number" ? Math.min(args.limit, 50) : 20;
-
-        const clusters = await memoryStorage.findDuplicateClusters({
-          layer: filterLayer,
-          source: filterSource,
-          createdAfter,
-          createdBefore,
-          limit: dupLimit,
-        });
-
-        if (clusters.length === 0) return { result: JSON.stringify({ total: 0, clusters: [] }) };
-
-        return { result: JSON.stringify({
-          total: clusters.length,
-          clusters: clusters.map((c) => ({
-            members: c.members.map((m) => ({
-              id: m.id,
-              title: m.title || null,
-              layer: m.layer,
-              contentLength: m.contentLength,
-            })),
-            embeddingSimilarity: parseFloat(c.embeddingSimilarity.toFixed(4)),
-            contentSimilarity: parseFloat(c.contentSimilarity.toFixed(4)),
-            titleSimilarity: parseFloat(c.titleSimilarity.toFixed(4)),
-            exactMatch: c.exactMatch,
-            recommendedAction: c.recommendedAction,
-          })),
-        }) };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { result: `Failed to find duplicates: ${msg}`, error: true };
-      }
+    const retiredNoFaithfulEquivalent: Record<string, string> = {
+      bulk_delete: "Legacy bulk deletion is retired and archived memory_entries are preserved. vNext claims should be retired by lifecycle policy rather than bulk-deleted through this tool.",
+      find_duplicates: "Legacy duplicate cluster inspection is retired. vNext claim deduplication runs inside extraction and lifecycle maintenance; use search_claims/search plus vnext_claim_detail for inspection.",
+    };
+    if (Object.prototype.hasOwnProperty.call(retiredNoFaithfulEquivalent, action)) {
+      return retiredLegacyMemoryAction(action, retiredNoFaithfulEquivalent[action]);
     }
     if (action === "list_sources") {
+      const claimId = typeof args.memoryId === "number" ? args.memoryId : typeof args.id === "number" ? args.id : null;
+      if (claimId === null) return { result: "Missing 'memoryId' or 'id' parameter (vNext claim ID)", error: true };
       try {
-        const { memoryStorage } = await import("./memory/memory-storage");
-        const { db } = await import("./db");
-        const { memorySourceRefs } = await import("../shared/models/memory");
-        const { eq, and, desc } = await import("drizzle-orm");
-
-        const conditions: any[] = [];
-        if (typeof args.memoryId === "number") {
-          conditions.push(eq(memorySourceRefs.memoryId, args.memoryId));
-        }
-        if (typeof args.sourceType === "string") {
-          conditions.push(eq(memorySourceRefs.sourceType, args.sourceType));
-        }
-        if (typeof args.sourceId === "string") {
-          conditions.push(eq(memorySourceRefs.sourceId, args.sourceId));
-        }
-        if (typeof args.relationship === "string") {
-          conditions.push(eq(memorySourceRefs.relationship, args.relationship));
-        }
-        const lim = typeof args.limit === "number" ? Math.min(args.limit, 200) : 50;
-
-        const rows = await db
-          .select()
-          .from(memorySourceRefs)
-          .where(conditions.length > 0 ? and(...conditions) : undefined)
-          .orderBy(desc(memorySourceRefs.createdAt))
-          .limit(lim);
-
-        return { result: JSON.stringify({
-          total: rows.length,
-          sources: rows.map(r => ({
-            id: r.id,
-            memoryId: r.memoryId,
-            sourceType: r.sourceType,
-            sourceId: r.sourceId,
-            relationship: r.relationship,
-            context: r.context || null,
-            quote: r.quote || null,
-            strength: r.strength,
-            createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : null,
-          })),
-        }) };
+        const { memoryVnextClaimStorage } = await import("./memory/vnext-claim-storage");
+        const sources = await memoryVnextClaimStorage.listSourceRefs(claimId);
+        return { result: JSON.stringify({ storage: "memory_vnext_claims", claimId, total: sources.length, sources }) };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { result: `Failed to list sources: ${msg}`, error: true };
+        return { result: `Failed to list vNext claim sources: ${msg}`, error: true };
       }
     }
     if (action === "add_source") {
-      const memoryId = args.memoryId ?? args.id;
-      if (typeof memoryId !== "number") return { result: "Missing 'memoryId' (or 'id') parameter", error: true };
-      if (typeof args.sourceType !== "string") return { result: "Missing 'sourceType' parameter (e.g. 'memory', 'library', 'session')", error: true };
+      const claimId = typeof args.memoryId === "number" ? args.memoryId : typeof args.id === "number" ? args.id : null;
+      if (claimId === null) return { result: "Missing 'memoryId' or 'id' parameter (vNext claim ID)", error: true };
+      if (typeof args.sourceType !== "string") return { result: "Missing 'sourceType' parameter (e.g. 'library', 'session', 'chat_journal')", error: true };
       if (typeof args.sourceId !== "string") return { result: "Missing 'sourceId' parameter", error: true };
       try {
-        const { memoryStorage } = await import("./memory/memory-storage");
-        const ref = await memoryStorage.addSourceRef({
-          memoryId: memoryId as number,
+        const { memoryVnextClaimStorage } = await import("./memory/vnext-claim-storage");
+        const ref = await memoryVnextClaimStorage.addSourceRef(claimId, {
           sourceType: args.sourceType as string,
           sourceId: args.sourceId as string,
           relationship: (args.relationship as string) ?? "extracted_from",
@@ -13371,10 +13233,10 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           quote: (args.quote as string | null) ?? null,
           strength: typeof args.strength === "number" ? args.strength : 1,
         });
-        return { result: JSON.stringify({ created: true, id: ref.id, memoryId: ref.memoryId, sourceType: ref.sourceType, sourceId: ref.sourceId, relationship: ref.relationship }) };
+        return { result: JSON.stringify({ created: Boolean(ref), storage: "memory_vnext_claims", claimId, source: ref }) };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { result: `Failed to add source: ${msg}`, error: true };
+        return { result: `Failed to add vNext claim source: ${msg}`, error: true };
       }
     }
     if (action === "delete_source") {
@@ -13382,14 +13244,20 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       if (sourceRefId === null) return { result: "Missing 'sourceRefId' (or 'id') parameter", error: true };
       try {
         const { db } = await import("./db");
-        const { memorySourceRefs } = await import("../shared/models/memory");
+        const { memoryVnextSourceRefs } = await import("../shared/models/memory");
         const { eq } = await import("drizzle-orm");
-        const deleted = await db.delete(memorySourceRefs).where(eq(memorySourceRefs.id, sourceRefId)).returning();
-        if (deleted.length === 0) return { result: JSON.stringify({ deleted: false, reason: "not_found" }) };
-        return { result: JSON.stringify({ deleted: true, id: sourceRefId }) };
+        const { combineWithWritableScope } = await import("./scoped-storage");
+        const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+        const deleted = await db.delete(memoryVnextSourceRefs).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), {
+          scope: memoryVnextSourceRefs.scope,
+          ownerUserId: memoryVnextSourceRefs.ownerUserId,
+          accountId: memoryVnextSourceRefs.accountId,
+        }, eq(memoryVnextSourceRefs.id, sourceRefId))).returning();
+        if (deleted.length === 0) return { result: JSON.stringify({ deleted: false, storage: "memory_vnext_claims", reason: "not_found" }) };
+        return { result: JSON.stringify({ deleted: true, storage: "memory_vnext_claims", id: sourceRefId }) };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { result: `Failed to delete source: ${msg}`, error: true };
+        return { result: `Failed to delete vNext claim source: ${msg}`, error: true };
       }
     }
     if (action === "run_vnext_lifecycle") {
