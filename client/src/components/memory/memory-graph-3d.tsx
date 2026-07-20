@@ -120,9 +120,9 @@ const nodeFragmentShader = `
     float edge = 1.0 - facing;
     float rim = pow(edge, 1.6);
     float emphasis = 1.0 + vEmphasis * 0.5;
-    vec3 color = vTint * (0.4 + rim * 0.85) * emphasis;
-    float alpha = (0.22 + rim * 0.58) * vVisibility;
-    gl_FragColor = vec4(color, clamp(alpha, 0.1, 0.92));
+    vec3 color = vTint * (0.72 + rim * 0.45) * emphasis;
+    float alpha = (0.5 + rim * 0.32) * vVisibility;
+    gl_FragColor = vec4(color, clamp(alpha, 0.3, 0.92));
   }
 `;
 
@@ -523,7 +523,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         const dz = camera.position.z - node.z;
         const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
         element.style.display = "flex";
-        element.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%)`;
+        element.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -12px)`;
         element.style.opacity = selectedNodeIdRef.current === node.id ? "1" : String(THREE.MathUtils.clamp(1.18 - distance / 520, 0.66, 0.94));
         element.style.zIndex = String(Math.max(1, Math.round(1_000 - distance)));
         projectedLabels.push({ node, x, y, distance });
