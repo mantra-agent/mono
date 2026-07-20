@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -27,23 +34,24 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  ArrowLeft,
   Calendar as CalendarIcon,
   Clock,
   Brain,
   MapPin,
   Users,
   Star,
-  ExternalLink,
   Trash2,
   Loader2,
   UserPlus,
   Link as LinkIcon,
   X,
   Plus,
+  MoreHorizontal,
+  Shapes,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useTimezone } from "@/hooks/use-timezone";
+import { usePageHeader } from "@/hooks/use-page-header";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import {
@@ -52,6 +60,7 @@ import {
   type LinkedPersonRef,
 } from "@/components/calendar/use-event-metadata";
 import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 
 // --- Shared types (duplicated from calendar.tsx for now, will extract later) ---
 
@@ -182,6 +191,21 @@ function cleanDescription(desc: string): string {
   return desc.replace(/\n?\[prep-required\]/g, "").replace(/\n?\[no-prep\]/g, "").trim();
 }
 
+function resolveEventCalendar(
+  calendars: CalendarInfo[],
+  selectedCalendarId: string,
+  selectedAccountId?: string,
+): CalendarInfo | undefined {
+  return calendars.find(calendar =>
+    calendar.id === selectedCalendarId &&
+    (!selectedAccountId || calendar.accountId === selectedAccountId),
+  ) ?? (
+    selectedCalendarId === "primary"
+      ? calendars.find(calendar => calendar.primary && (!selectedAccountId || calendar.accountId === selectedAccountId))
+      : undefined
+  );
+}
+
 interface MeetingConnectionOption {
   email: string;
   label: string;
@@ -234,7 +258,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
     queryKey: ["/api/calendar/calendars"],
   });
   const calendars = calendarsData?.calendars || [];
-  const calendarMap = new Map(calendars.map(c => [c.id, c]));
 
   // --- Fetch event data (edit mode only) ---
   const { data: eventData, isLoading: eventLoading } = useQuery<CalendarEvent>({
@@ -305,6 +328,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   const [recurrenceWeekdays, setRecurrenceWeekdays] = useState<string[]>([]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showRecurringScopeDialog, setShowRecurringScopeDialog] = useState(false);
+  const [headerTarget, setHeaderTarget] = useState<HTMLElement | null>(null);
   const agendaPage = metadataData?.artifacts.find(artifact => artifact.artifactKind === "agenda") ?? null;
   const [initialized, setInitialized] = useState(isCreate);
 
@@ -325,6 +349,11 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
 
   // Agenda content is hydrated directly from the linked Library page.
 
+  useEffect(() => {
+    const nextTarget = document.getElementById("schedule-event-header-slot");
+    if (nextTarget !== headerTarget) setHeaderTarget(nextTarget);
+  });
+
   // Set default calendar when calendars load for create mode
   useEffect(() => {
     if (isCreate && calendars.length > 0 && !selectedCalendarId) {
@@ -332,9 +361,52 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
     }
   }, [isCreate, calendars, selectedCalendarId]);
 
-  const selectedCal = calendars.find(c => c.id === selectedCalendarId);
-  const selectedAccountId = selectedCal?.accountId || accountId || "";
-  const isReadOnly = !isCreate && selectedCal && !["owner", "writer"].includes(selectedCal.accessRole);
+  const selectedCal = resolveEventCalendar(calendars, selectedCalendarId, accountId || eventData?.accountId);
+  const selectedAccountId = selectedCal?.accountId || accountId || eventData?.accountId || "";
+  const isReadOnly = !isCreate && Boolean(selectedCal && !["owner", "writer"].includes(selectedCal.accessRole));
+  const calendarLabel = selectedCal?.summary || eventData?.accountEmail || selectedCalendarId;
+  const calendarAccountLabel = selectedCal?.accountEmail || eventData?.accountEmail;
+
+  const detailHeaderContent = useMemo(() => {
+    if (isCreate) {
+      return (
+        <div className="flex min-w-0 items-center gap-1 text-sm font-medium text-foreground">
+          <button
+            type="button"
+            className="shrink-0 text-muted-foreground transition-colors hover:text-cta focus-visible:outline-none focus-visible:text-cta"
+            onClick={() => navigate("/schedule")}
+            aria-label="Back to Schedule"
+            data-testid="button-schedule-breadcrumb"
+          >
+            Schedule
+          </button>
+          <span className="shrink-0 text-muted-foreground/60">/</span>
+          <span className="truncate">New Event</span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex min-w-0 items-center gap-1 text-sm font-medium text-foreground">
+        <button
+          type="button"
+          className="shrink-0 text-muted-foreground transition-colors hover:text-cta focus-visible:outline-none focus-visible:text-cta"
+          onClick={() => navigate("/schedule")}
+          aria-label="Back to Schedule"
+          data-testid="button-schedule-breadcrumb"
+        >
+          Schedule
+        </button>
+        <span className="shrink-0 text-muted-foreground/60">/</span>
+        <div id="schedule-event-header-slot" className="flex min-w-0 flex-1 items-center" />
+      </div>
+    );
+  }, [isCreate, navigate]);
+
+  usePageHeader({
+    title: `Schedule / ${isCreate ? "New Event" : title || "Event"}`,
+    customContent: detailHeaderContent,
+  });
 
   // --- Save mutation (create or update) ---
   const saveMutation = useMutation({
@@ -488,12 +560,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   if (!isCreate && (eventLoading || !initialized)) {
     return (
       <div className="flex h-full flex-col overflow-hidden" data-testid="event-detail-loading">
-        <div className="border-b border-border p-3 flex items-center gap-2">
-          <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => navigate("/schedule")}>
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <Skeleton className="h-5 w-48" />
-        </div>
         <div className="p-4 space-y-4">
           <Skeleton className="h-8 w-full" />
           <Skeleton className="h-8 w-full" />
@@ -506,130 +572,163 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
 
   return (
     <div className="flex h-full flex-col overflow-hidden" data-testid="event-detail-view">
-      {/* Header */}
-      <div className="border-b border-border p-2 flex items-center gap-2">
-        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 shrink-0" onClick={() => navigate("/schedule")} data-testid="button-back">
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <span className="text-sm font-medium truncate flex-1">
-          {isCreate ? "New Event" : (title || "Event")}
-        </span>
-        <div className="flex items-center gap-1 shrink-0">
-          {!isCreate && eventData?.htmlLink && (
-            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" asChild data-testid="button-open-google">
-              <a href={eventData.htmlLink} target="_blank" rel="noopener noreferrer" title="Open in Google Calendar">
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
-            </Button>
-          )}
-          {!isCreate && !isReadOnly && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-              onClick={() => setShowDeleteConfirm(true)}
-              disabled={deleteMutation.isPending}
-              data-testid="button-delete-event"
+      {!isCreate && headerTarget && createPortal(
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          {eventData?.htmlLink ? (
+            <a
+              href={eventData.htmlLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="min-w-0 flex-1 truncate text-left text-sm font-medium text-foreground transition-colors hover:text-cta"
+              title={`Open ${title || "Event"} in Google Calendar`}
+              data-testid="link-event-title"
             >
-              {deleteMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-            </Button>
+              {title || "Event"}
+            </a>
+          ) : (
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground" data-testid="event-title">
+              {title || "Event"}
+            </span>
           )}
-        </div>
-      </div>
+          {!isReadOnly && (
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 w-7 p-0 text-muted-foreground"
+                  disabled={deleteMutation.isPending}
+                  aria-label="Event actions"
+                  data-testid="button-event-actions-menu"
+                >
+                  {deleteMutation.isPending
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <MoreHorizontal className="h-3.5 w-3.5" />}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[140px]" onCloseAutoFocus={event => event.preventDefault()}>
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  data-testid="menu-delete-event"
+                >
+                  <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>,
+        headerTarget,
+      )}
 
-      {/* Content */}
       <ScrollArea className="flex-1">
         <div className="p-3 space-y-4 max-w-lg">
-          {/* Badges (edit mode) */}
-          {!isCreate && eventData && (
+          {!isCreate && eventData && isPersonalAccount(eventData.accountEmail) && (
             <div className="flex items-center gap-2 flex-wrap">
-              {isHighPrep(eventData) && (
-                <Badge variant="secondary" className="bg-cat-alert/15 text-cat-alert-foreground border border-cat-alert/30 rounded-sm text-xs font-medium px-2 py-0.5 no-default-hover-elevate no-default-active-elevate" data-testid="badge-prep-required">
-                  <Star className="h-3 w-3 mr-1 text-warning fill-warning" />
-                  Prep Required
-                </Badge>
-              )}
-              {isPersonalAccount(eventData.accountEmail) && (
-                <Badge variant="outline" className="no-default-hover-elevate no-default-active-elevate text-info-foreground border-info/30 dark:text-info dark:border-info/50" data-testid="badge-personal">
-                  Personal
-                </Badge>
-              )}
+              <Badge variant="outline" className="no-default-hover-elevate no-default-active-elevate text-info-foreground border-info/30 dark:text-info dark:border-info/50" data-testid="badge-personal">
+                Personal
+              </Badge>
             </div>
           )}
 
-          {/* Title */}
-          <div>
-            {isReadOnly ? (
-              <h2 className="text-lg font-semibold" data-testid="event-title">{title}</h2>
-            ) : (
-              <Input
-                value={title}
-                onChange={e => setTitle(e.target.value)}
-                placeholder="Event title"
-                className="text-lg font-semibold h-auto py-1.5 px-2 border-transparent hover:border-border focus:border-border transition-colors"
-                data-testid="input-event-title"
-              />
+          {isCreate && (
+            <Input
+              value={title}
+              onChange={event => setTitle(event.target.value)}
+              placeholder="Event title"
+              className="text-lg font-semibold h-auto py-1.5 px-2 border-transparent hover:border-border focus:border-border transition-colors"
+              data-testid="input-event-title"
+            />
+          )}
+
+          <div className="overflow-hidden rounded-md border border-border/20" data-testid="event-core-fields">
+            {!isCreate && (
+              <ProfileTreeRow
+                label="Event Type"
+                icon={<Shapes className="h-3.5 w-3.5" />}
+                hasValue
+                showEmpty
+                mobileLayout="inline"
+                testId="row-event-type"
+              >
+                <Select
+                  value={isEventTypeValue(metadata?.eventType) ? metadata.eventType : undefined}
+                  onValueChange={value => setTypeMutation.mutate({ eventType: value as EventTypeValue })}
+                  disabled={setTypeMutation.isPending || isReadOnly}
+                >
+                  <SelectTrigger data-testid="select-event-type">
+                    <SelectValue placeholder="Classify" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EVENT_TYPES.map(type => (
+                      <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </ProfileTreeRow>
             )}
+
+            <ProfileTreeRow label="Start" icon={<Clock className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-event-start">
+              {isReadOnly ? (
+                <span data-testid="event-start-readonly">
+                  {eventData?.start.date && !eventData.start.dateTime
+                    ? eventData.start.date
+                    : new Date(start).toLocaleString([], { dateStyle: "medium", timeStyle: "short", timeZone: timezone })}
+                </span>
+              ) : (
+                <Input type="datetime-local" value={start} onChange={event => setStart(event.target.value)} data-testid="input-event-start" />
+              )}
+            </ProfileTreeRow>
+
+            <ProfileTreeRow label="End" icon={<Clock className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-event-end">
+              {isReadOnly ? (
+                <span data-testid="event-end-readonly">
+                  {eventData?.end.date && !eventData.end.dateTime
+                    ? eventData.end.date
+                    : new Date(end).toLocaleString([], { dateStyle: "medium", timeStyle: "short", timeZone: timezone })}
+                </span>
+              ) : (
+                <Input type="datetime-local" value={end} onChange={event => setEnd(event.target.value)} data-testid="input-event-end" />
+              )}
+            </ProfileTreeRow>
+
+            <ProfileTreeRow label="Location" icon={<MapPin className="h-3.5 w-3.5" />} hasValue={Boolean(location)} showEmpty={!isReadOnly} mobileLayout="inline" testId="row-event-location">
+              {isReadOnly ? (
+                <span data-testid="event-location-readonly">{location}</span>
+              ) : (
+                <Input value={location} onChange={event => setLocation(event.target.value)} placeholder="Add location" data-testid="input-event-location" />
+              )}
+            </ProfileTreeRow>
+
+            <ProfileTreeRow label="Calendar" icon={<CalendarIcon className="h-3.5 w-3.5" />} hasValue={Boolean(calendarLabel)} showEmpty mobileLayout="inline" testId="row-event-calendar">
+              {isCreate ? (
+                <Select value={selectedCalendarId} onValueChange={setSelectedCalendarId}>
+                  <SelectTrigger data-testid="select-calendar">
+                    <SelectValue placeholder="Select calendar" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {calendars.map(calendar => (
+                      <SelectItem key={`${calendar.accountId}:${calendar.id}`} value={calendar.id} data-testid={`calendar-option-${calendar.id}`}>
+                        <span className="flex items-center gap-2">
+                          <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: calendar.backgroundColor }} />
+                          {calendar.summary}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <span className="flex min-w-0 items-center justify-end gap-1.5" data-testid="event-calendar-value">
+                  {selectedCal && <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: selectedCal.backgroundColor }} />}
+                  <span className="truncate">{calendarLabel}</span>
+                  {calendarAccountLabel && calendarAccountLabel !== calendarLabel && (
+                    <span className="truncate text-muted-foreground">({calendarAccountLabel})</span>
+                  )}
+                </span>
+              )}
+            </ProfileTreeRow>
           </div>
 
-          {/* Date/Time */}
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Clock className="h-4 w-4 shrink-0" />
-              <span className="text-xs font-medium uppercase tracking-wider">Time</span>
-            </div>
-            {isReadOnly ? (
-              <div className="text-sm pl-6" data-testid="event-time-readonly">
-                {eventData?.start.date && !eventData?.start.dateTime
-                  ? "All day"
-                  : `${new Date(start).toLocaleString([], { dateStyle: "medium", timeStyle: "short", timeZone: timezone })} – ${new Date(end).toLocaleString([], { timeStyle: "short", timeZone: timezone })}`}
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-2 pl-6">
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Start</label>
-                  <Input
-                    type="datetime-local"
-                    value={start}
-                    onChange={e => setStart(e.target.value)}
-                    className="text-xs"
-                    data-testid="input-event-start"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">End</label>
-                  <Input
-                    type="datetime-local"
-                    value={end}
-                    onChange={e => setEnd(e.target.value)}
-                    className="text-xs"
-                    data-testid="input-event-end"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Location */}
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <MapPin className="h-4 w-4 shrink-0" />
-              <span className="text-xs font-medium uppercase tracking-wider">Location</span>
-            </div>
-            {isReadOnly ? (
-              location ? <div className="text-sm pl-6" data-testid="event-location-readonly">{location}</div> : null
-            ) : (
-              <Input
-                value={location}
-                onChange={e => setLocation(e.target.value)}
-                placeholder="Add location"
-                className="pl-6 border-transparent hover:border-border focus:border-border transition-colors text-sm"
-                data-testid="input-event-location"
-              />
-            )}
-          </div>
-
-          {/* Description */}
           <div className="space-y-1">
             {isReadOnly ? (
               description ? (
@@ -640,7 +739,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
             ) : (
               <Textarea
                 value={description}
-                onChange={e => setDescription(e.target.value)}
+                onChange={event => setDescription(event.target.value)}
                 placeholder="Add description"
                 rows={3}
                 className="resize-none border-transparent hover:border-border focus:border-border transition-colors text-sm"
@@ -648,51 +747,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
               />
             )}
           </div>
-
-          {/* Divider */}
-          <div className="border-t" />
-
-          {/* Calendar picker */}
-          {!isReadOnly && calendars.length > 0 && (
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <CalendarIcon className="h-4 w-4 shrink-0" />
-                <span className="text-xs font-medium uppercase tracking-wider">Calendar</span>
-              </div>
-              {isCreate ? (
-                <Select value={selectedCalendarId} onValueChange={setSelectedCalendarId}>
-                  <SelectTrigger className="ml-6 text-xs" data-testid="select-calendar">
-                    <SelectValue placeholder="Select calendar" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {calendars.map(c => (
-                      <SelectItem key={c.id} value={c.id} data-testid={`calendar-option-${c.id}`}>
-                        <span className="flex items-center gap-2">
-                          <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: c.backgroundColor }} />
-                          {c.summary}
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <div className="text-sm pl-6 flex items-center gap-1.5">
-                  {selectedCal && <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: selectedCal.backgroundColor }} />}
-                  <span>{selectedCal?.summary || "Unknown"}</span>
-                  <span className="text-xs text-muted-foreground">({eventData?.accountEmail})</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Read-only calendar display */}
-          {isReadOnly && selectedCal && (
-            <div className="flex items-center gap-2 text-sm">
-              <CalendarIcon className="h-4 w-4 text-muted-foreground shrink-0" />
-              <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: selectedCal.backgroundColor }} />
-              <span>{selectedCal.summary}</span>
-            </div>
-          )}
 
           {/* Attendees */}
           <div className="space-y-2">
@@ -889,9 +943,8 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
 
           {!isCreate && (
             <div className="space-y-2" data-testid="private-agenda-section">
-              <div>
-                <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Private Agenda</h4>
-                <p className="text-xs text-muted-foreground">A Library page visible only in Mantra. The meeting agent receives its current content when joining.</p>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span className="text-xs">Private Agenda</span>
               </div>
               {agendaPage ? (
                 <ExpandableLibraryPage
@@ -900,11 +953,10 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
                   defaultOpen
                 />
               ) : (
-                <Button
+                <button
                   type="button"
-                  variant="outline"
-                  size="sm"
                   disabled={metaLoading || !eventData || Boolean(isReadOnly)}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80 disabled:cursor-not-allowed disabled:opacity-50"
                   onClick={async () => {
                     try {
                       await apiRequest("POST", "/api/calendar/metadata", {
@@ -919,54 +971,26 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
                       toast({ title: "Failed to create agenda", description: String(error), variant: "destructive" });
                     }
                   }}
+                  data-testid="button-add-agenda"
                 >
-                  <Plus className="h-3.5 w-3.5" /> Create agenda page
-                </Button>
+                  <Plus className="h-3.5 w-3.5 shrink-0" />
+                  <span>Add Agenda</span>
+                </button>
               )}
             </div>
           )}
 
-          {/* Event Details metadata (edit mode only) */}
           {!isCreate && (
-            <div className="space-y-2" data-testid="event-details-metadata">
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Event Details</h4>
+            <div className="overflow-hidden rounded-md border border-border/20" data-testid="event-details-metadata">
               {metaLoading ? (
-                <div className="space-y-2 pl-3 border-l border-border/60">
+                <div className="space-y-2 p-2">
                   <Skeleton className="h-8 w-full" />
                   <Skeleton className="h-8 w-full" />
                 </div>
               ) : (
-                <div className="space-y-2 pl-3 border-l border-border/60">
-                  {!metadata && (
-                    <div className="text-xs text-muted-foreground italic" data-testid="classify-prompt">
-                      Classify this event
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-[92px_1fr] items-center gap-2">
-                    <label className="text-xs text-muted-foreground">Event Type</label>
-                    <Select
-                      value={isEventTypeValue(metadata?.eventType) ? metadata.eventType : undefined}
-                      onValueChange={(value) => setTypeMutation.mutate({ eventType: value as EventTypeValue })}
-                      disabled={setTypeMutation.isPending || isReadOnly}
-                    >
-                      <SelectTrigger className="h-8 text-xs" data-testid="select-event-type">
-                        <SelectValue placeholder="Classify" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {EVENT_TYPES.map(type => (
-                          <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
+                <>
                   {metadata?.eventType === "focus_block" && (
-                    <div className="grid grid-cols-[92px_1fr] items-center gap-2">
-                      <label className="flex items-center gap-1 text-xs text-muted-foreground">
-                        <Brain className="h-3 w-3" />
-                        Capacity
-                      </label>
+                    <ProfileTreeRow label="Capacity" icon={<Brain className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-event-capacity">
                       <Select
                         value={metadata.capacityType ?? "untyped"}
                         onValueChange={(value: CapacitySelectValue) => setTypeMutation.mutate({
@@ -975,7 +999,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
                         })}
                         disabled={setTypeMutation.isPending || isReadOnly}
                       >
-                        <SelectTrigger className="h-8 text-xs" data-testid="select-capacity-type">
+                        <SelectTrigger data-testid="select-capacity-type">
                           <SelectValue placeholder="Untyped" />
                         </SelectTrigger>
                         <SelectContent>
@@ -985,18 +1009,17 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
                           ))}
                         </SelectContent>
                       </Select>
-                    </div>
+                    </ProfileTreeRow>
                   )}
 
                   {(metadata?.eventType || "meeting") === "meeting" && (
-                    <div className="grid grid-cols-[92px_1fr] items-center gap-2">
-                      <label className="text-xs text-muted-foreground">Shared Audio</label>
+                    <ProfileTreeRow label="Shared Audio" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-event-shared-audio">
                       <Select
                         value={selectedSharedAudioEmail || "participant_streams"}
-                        onValueChange={(value) => setSpeakerPolicyMutation.mutate(value)}
+                        onValueChange={value => setSpeakerPolicyMutation.mutate(value)}
                         disabled={setSpeakerPolicyMutation.isPending || isReadOnly}
                       >
-                        <SelectTrigger className="h-8 text-xs" data-testid="select-shared-room-audio">
+                        <SelectTrigger data-testid="select-shared-room-audio">
                           <SelectValue placeholder="One person per connection" />
                         </SelectTrigger>
                         <SelectContent>
@@ -1008,13 +1031,9 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
                           ))}
                         </SelectContent>
                       </Select>
-                    </div>
+                    </ProfileTreeRow>
                   )}
-
-                  {metadata?.eventType === "focus_block" && !metadata.capacityType && (
-                    <p className="pl-[100px] text-xs text-muted-foreground">Untagged focus blocks count as ambiguous capacity.</p>
-                  )}
-                </div>
+                </>
               )}
             </div>
           )}
