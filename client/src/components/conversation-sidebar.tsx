@@ -67,7 +67,7 @@ export function sortByUpdated(a: ChatSession, b: ChatSession): number {
 }
 
 export function isLiveTransportSession(session: ChatSession, liveVoiceConversationId?: string | null): boolean {
-  return (session.type === "meeting" && session.meeting?.botStatus === "live") ||
+  return (session.type === "meeting" && (session.meeting?.botStatus === "live" || session.meeting?.botStatus === "leaving")) ||
     (session.type === "voice" && !!liveVoiceConversationId && session.id === liveVoiceConversationId);
 }
 
