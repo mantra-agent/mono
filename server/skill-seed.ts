@@ -25,8 +25,6 @@ const SKILL_RENAMES: Record<string, string> = {
   "plan-weekly": "plan",
   "plan-monthly": "plan",
   "idea-generation": "ideate",
-  "memory-integrate": "integrate",
-  "memory-consolidate": "consolidate",
   "landscape-scan": "scan",
   "opportunity-research": "research",
   "council-advocate": "advocate",

@@ -11,6 +11,12 @@ type Logger = ReturnType<typeof createLogger>;
 const log = createLogger("Consolidation");
 const intLog = createLogger("Integration");
 const sweepLog = createLogger("StageOneSweep");
+const LEGACY_LIFECYCLE_RETIRED_MESSAGE = "Legacy memory tier lifecycle mutation is retired; use run_vnext_lifecycle or runFullSleepCycle for vNext claim maintenance.";
+
+function logRetiredLifecycleAttempt(phase: string): void {
+  log.warn(`${phase} blocked: ${LEGACY_LIFECYCLE_RETIRED_MESSAGE}`);
+}
+
 
 async function resolveDuplicateEntry(
   entry: MemoryEntry,
@@ -640,6 +646,9 @@ async function processStageOneSweepEntry(
 }
 
 export async function runStageOneAdvancementSweep(options: Partial<typeof STAGE_ONE_SWEEP_DEFAULTS> = {}): Promise<StageOneSweepResult> {
+  logRetiredLifecycleAttempt("stage_one_sweep");
+  return { status: "completed", claimed: 0, advanced: 0, failed: 0, skipped: 0, elapsedMs: 0, runtimeCapped: false };
+
   const config = { ...STAGE_ONE_SWEEP_DEFAULTS, ...options };
   const started = Date.now();
   const runId = buildStageOneSweepRunId();
@@ -721,6 +730,10 @@ export async function runStageOneAdvancementSweep(options: Partial<typeof STAGE_
 }
 
 export async function runConsolidation(layer: "short" = "short"): Promise<void> {
+  logRetiredLifecycleAttempt(`consolidation:${layer}`);
+  resetState();
+  return;
+
   const mutexToken = tryAcquireConsolidationMutex();
   if (!mutexToken) {
     state.pendingRecheck = true;
@@ -1106,6 +1119,10 @@ export interface IntegrationResult {
 }
 
 export async function runIntegration(options: { force?: boolean } = {}): Promise<IntegrationResult> {
+  logRetiredLifecycleAttempt("integration");
+  resetIntegrationState();
+  return { status: "skipped", succeeded: 0, failed: 0, attempted: 0, tokensBefore: 0, tokensAfter: 0, elapsedMs: 0, reason: LEGACY_LIFECYCLE_RETIRED_MESSAGE };
+
   if (integrationState.running) {
     integrationState.pendingRecheck = true;
     intLog.log(`Integration already in progress — flagged for re-check`);
@@ -1334,6 +1351,10 @@ export async function getGraphMyelinationStatus(): Promise<GraphMyelinationStatu
 }
 
 export async function runGraphEnrichment(): Promise<void> {
+  logRetiredLifecycleAttempt("graph_enrichment");
+  resetGraphMyelinationState();
+  return;
+
   if (graphMyelinationState.running) {
     graphLog.log(`Already running — skipping`);
     return;

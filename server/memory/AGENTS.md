@@ -311,7 +311,7 @@ All vNext claim logic lives in `server/memory/vnext-*` modules with zero imports
 | `vnext-content-chunking.ts` | Content loading (sessions, library pages) and chunking helpers |
 | `vnext-source-queue.ts` | Source queue DB operations (poll, mark processing/completed, reset stuck) |
 
-`memory-enrichment.ts` re-exports `ClaimCandidate` for backward compatibility but owns only legacy enrichment: title/summary/tags generation, myelination (summarize/embed/link), and batch processing. `consolidation.ts` owns legacy memory tier transitions (short→mid→long), the Stage-1 advancement sweep, and graph enrichment.
+`memory-enrichment.ts` re-exports `ClaimCandidate` and preserves `generateTitleSummaryTags` for summarization call sites, but legacy myelination entry points are fail-closed archival compatibility only. `consolidation.ts` preserves legacy status/types for rollback visibility, but short→mid, mid→long, Stage-1 advancement, and graph enrichment runtime entry points are fail-closed and must not mutate `memory_entries`.
 
 ### Ingestion paths
 

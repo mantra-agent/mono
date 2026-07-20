@@ -83,43 +83,28 @@ export function getMyelinationStatus(): MyelinationStatus {
   return { ...myelinationStatus };
 }
 
-export function startMyelinationBackground(phase: "all" | "summarize" | "embed" | "link" = "all") {
-  if (myelinationStatus.running) {
-    return { alreadyRunning: true };
-  }
+const LEGACY_MYELINATION_RETIRED_MESSAGE = "Legacy memory entry myelination is retired; use run_vnext_lifecycle or runFullSleepCycle for vNext claim maintenance.";
 
-  myelinationStatus.running = true;
-  myelinationStatus.phase = "starting";
+function retiredMyelinationResult(phase: "all" | "summarize" | "embed" | "link", startedAt = Date.now()): MyelinationResult {
+  return {
+    summarized: 0,
+    embedded: 0,
+    linked: 0,
+    errors: [LEGACY_MYELINATION_RETIRED_MESSAGE],
+    durationMs: Date.now() - startedAt,
+  };
+}
+
+export function startMyelinationBackground(_phase: "all" | "summarize" | "embed" | "link" = "all") {
+  log.warn(LEGACY_MYELINATION_RETIRED_MESSAGE);
+  myelinationStatus.running = false;
+  myelinationStatus.phase = "retired";
   myelinationStatus.current = 0;
   myelinationStatus.total = 0;
-  myelinationStatus.detail = "Starting memory enrichment...";
-  myelinationStatus.result = null;
-  myelinationStatus.error = null;
-
-  runMemoryEnrichment({
-    phase,
-    onProgress: (progress) => {
-      myelinationStatus.phase = progress.phase;
-      myelinationStatus.current = progress.current;
-      myelinationStatus.total = progress.total;
-      myelinationStatus.detail = progress.detail || "";
-    },
-  })
-    .then((result) => {
-      myelinationStatus.running = false;
-      myelinationStatus.phase = "complete";
-      myelinationStatus.detail = `Done: ${result.summarized} summarized, ${result.embedded} embedded, ${result.linked} linked`;
-      myelinationStatus.result = result;
-    })
-    .catch((err) => {
-      myelinationStatus.running = false;
-      myelinationStatus.phase = "error";
-      myelinationStatus.detail = err.message;
-      myelinationStatus.error = err.message;
-      log.error(`Background memory enrichment failed:`, err);
-    });
-
-  return { alreadyRunning: false };
+  myelinationStatus.detail = LEGACY_MYELINATION_RETIRED_MESSAGE;
+  myelinationStatus.result = retiredMyelinationResult("all");
+  myelinationStatus.error = LEGACY_MYELINATION_RETIRED_MESSAGE;
+  return { alreadyRunning: false, retired: true };
 }
 
 // --- Decomposed summarization pipeline ---
@@ -699,6 +684,10 @@ export async function runMemoryEnrichment(
   const startTime = Date.now();
   const phase = options.phase || "all";
   const onProgress = options.onProgress;
+  log.warn(`${LEGACY_MYELINATION_RETIRED_MESSAGE} phase=${phase}`);
+  onProgress?.({ phase: "retired", current: 0, total: 0, detail: LEGACY_MYELINATION_RETIRED_MESSAGE });
+  return retiredMyelinationResult(phase, startTime);
+
   const allErrors: string[] = [];
   let totalSummarized = 0;
   let totalEmbedded = 0;

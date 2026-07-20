@@ -42,6 +42,23 @@ export class SkillTimerHandler implements TimerHandler {
       skillId = SYSTEM_TIMER_SKILL_ALIASES[skillId];
     }
 
+    const retiredLegacyMemorySkillIds = new Set([
+      "consolidate",
+      "integrate",
+      "memory-consolidate",
+      "memory-integrate",
+    ]);
+    if (retiredLegacyMemorySkillIds.has(skillId)) {
+      log.warn(
+        `Retired legacy memory lifecycle timer blocked: timer="${timer.name}" skillId=${skillId}`,
+      );
+      return {
+        outcome: "skipped",
+        reason: "retired_legacy_memory_lifecycle",
+        output: { skillId },
+      };
+    }
+
     log.debug(`Executing skill timer "${timer.name}" skillId=${skillId}`);
 
     if (skillId === "scan") {
