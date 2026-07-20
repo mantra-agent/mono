@@ -76,25 +76,28 @@ function getAttemptChildSessionId(attempt: PlanStepAttempt): string | null {
   return attempt.childSessionId || null;
 }
 
-function PlanAttemptChild({ planId, parentSessionId, step, attempt, ownedChildBlocks, sessionTitleById, sessionStreams }: { planId: string; parentSessionId?: string; step: PlanStep; attempt: PlanStepAttempt; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string>; sessionStreams?: SessionStreamMap }) {
+function PlanAttemptChild({ planId, parentSessionId, step, attempt, ownedChildBlocks, sessionTitleById, sessionStreams }: { planId: string; parentSessionId: string; step: PlanStep; attempt: PlanStepAttempt; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string>; sessionStreams?: SessionStreamMap }) {
   const stepCompleted = isProgressedStep(step);
   const childSessionId = getAttemptChildSessionId(attempt);
   if (!childSessionId) return null;
   const startedAt = attempt.startedAt || attempt.updatedAt || attempt.completedAt || new Date().toISOString();
-  const meta: ChildSessionBlockMeta = ownedChildBlocks?.get(childSessionId) ?? {
-    childSessionId,
-    parentSessionId: parentSessionId ?? "",
-    role: `Attempt ${attempt.attemptNumber}`,
-    startedAt,
-    updatedAt: attempt.updatedAt ?? attempt.completedAt ?? startedAt,
-    summary: attempt.outcome ?? null,
-    error: attempt.error ?? null,
-    elapsedMs: attempt.durationSeconds != null ? attempt.durationSeconds * 1000 : null,
-    planId,
-    planStepId: step.id,
-    planAttemptId: attempt.id ?? null,
-    planAttemptNumber: attempt.attemptNumber,
-  };
+  const ownedMeta = ownedChildBlocks?.get(childSessionId);
+  const meta: ChildSessionBlockMeta = ownedMeta
+    ? { ...ownedMeta, parentSessionId: ownedMeta.parentSessionId || parentSessionId }
+    : {
+        childSessionId,
+        parentSessionId,
+        role: `Attempt ${attempt.attemptNumber}`,
+        startedAt,
+        updatedAt: attempt.updatedAt ?? attempt.completedAt ?? startedAt,
+        summary: attempt.outcome ?? null,
+        error: attempt.error ?? null,
+        elapsedMs: attempt.durationSeconds != null ? attempt.durationSeconds * 1000 : null,
+        planId,
+        planStepId: step.id,
+        planAttemptId: attempt.id ?? null,
+        planAttemptNumber: attempt.attemptNumber,
+      };
   return (
     <ChildSessionBlock
       meta={meta}
@@ -106,7 +109,7 @@ function PlanAttemptChild({ planId, parentSessionId, step, attempt, ownedChildBl
   );
 }
 
-function PlanStepCheckbox({ step, stepIndex, continues, planId, parentSessionId, ownedChildBlocks, sessionTitleById, sessionStreams }: { step: PlanStep; stepIndex: number; continues: boolean; planId: string; parentSessionId?: string; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string>; sessionStreams?: SessionStreamMap }) {
+function PlanStepCheckbox({ step, stepIndex, continues, planId, parentSessionId, ownedChildBlocks, sessionTitleById, sessionStreams }: { step: PlanStep; stepIndex: number; continues: boolean; planId: string; parentSessionId: string; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string>; sessionStreams?: SessionStreamMap }) {
   const checked = isProgressedStep(step);
   const isBlocked = step.status === "blocked";
   const needsReview = step.status === "needs_review";
@@ -404,7 +407,7 @@ export function PlanWidget({
               stepIndex={stepIndex}
               continues={stepIndex < plan.steps.length - 1}
               planId={plan.id}
-              parentSessionId={sessionId}
+              parentSessionId={sessionId ?? plan.originSessionId}
               ownedChildBlocks={ownedChildBlocks}
               sessionTitleById={sessionTitleById}
               sessionStreams={sessionStreams}
