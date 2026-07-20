@@ -53,14 +53,14 @@ export const STATE_VISUALS: Record<OrbState, OrbVisuals> = {
     waveEnergy: 1.0, coreDarkness: 0.58,
   },
   degraded: {
-    rimPower: 3.6, rimIntensity: 0.28, coreGlow: 0.018,
+    rimPower: 3.2, rimIntensity: 0.44, coreGlow: 0.028,
     audioReactivity: 0, swirlSpeed: 0.04, swirlAmount: 0.02,
     tickCount: 0, tickSpeed: 0, breathSpeed: 3.0, breathDepth: 0.05,
-    pulseStrength: 0, dimming: 0.52,
-    fieldEnergy: 0.4, filamentDensity: 0.62, cloudDensity: 0.38,
+    pulseStrength: 0, dimming: 0.68,
+    fieldEnergy: 0.56, filamentDensity: 0.62, cloudDensity: 0.38,
     flowSpeed: 0.05, flowStrength: 0.12, coherence: 0.22,
     attractorStrength: 0, knotStrength: 0, orbitPrecision: 0,
-    waveEnergy: 0, coreDarkness: 0.9,
+    waveEnergy: 0, coreDarkness: 0.82,
   },
 };
 
