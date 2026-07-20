@@ -120,9 +120,9 @@ const nodeFragmentShader = `
     float edge = 1.0 - facing;
     float rim = pow(edge, 1.6);
     float emphasis = 1.0 + vEmphasis * 0.5;
-    vec3 color = vTint * (0.72 + rim * 0.45) * emphasis;
-    float alpha = (0.5 + rim * 0.32) * vVisibility;
-    gl_FragColor = vec4(color, clamp(alpha, 0.3, 0.92));
+    vec3 color = vTint * (0.12 + rim * 0.88) * emphasis;
+    float alpha = (0.04 + rim * 0.82) * vVisibility;
+    gl_FragColor = vec4(color, clamp(alpha, 0.0, 0.92));
   }
 `;
 
