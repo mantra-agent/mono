@@ -106,6 +106,17 @@ function serializeVnextClaimLink(link: MemoryVnextClaimLink) {
   return { id: link.id, fromClaimId: link.fromClaimId, toClaimId: link.toClaimId, relationship: link.relationship, strength: link.strength, createdAt: serializeDate(link.createdAt) };
 }
 
+
+function sendRetiredLegacyMemoryRoute(res: Response, route: string, migration: string): void {
+  res.status(410).json({
+    deprecated: true,
+    storage: "memory_entries",
+    route,
+    error: "Legacy memory_entries runtime access is retired.",
+    migration,
+  });
+}
+
 function parsePositiveInt(value: unknown): number | null {
   const parsed = typeof value === "string" ? parseInt(value, 10) : typeof value === "number" ? value : NaN;
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
@@ -303,159 +314,28 @@ function errorDetail(error: unknown): string {
 }
 
 async function handleGetEntries(req: Request, res: Response): Promise<void> {
-  try {
-    const layer = req.query.layer as string | undefined;
-    const limit = req.query.limit
-      ? parseInt(req.query.limit as string, 10)
-      : 50;
-    const offset = req.query.offset
-      ? parseInt(req.query.offset as string, 10)
-      : 0;
-
-    if (layer && !memoryLayers.includes(layer as MemoryLayer)) {
-      res
-        .status(400)
-        .json({
-          error: "Invalid layer. Must be one of: " + memoryLayers.join(", "),
-        });
-      return;
-    }
-
-    if (layer) {
-      const entries = await memoryStorage.getLayer(
-        layer as MemoryLayer,
-        limit,
-        offset,
-      );
-      res.json(await attachSourceCounts(entries));
-      return;
-    }
-
-    const [short, mid, long] = await Promise.all([
-      memoryStorage.getLayer("short", limit, offset),
-      memoryStorage.getLayer("mid", limit, offset),
-      memoryStorage.getLayer("long", limit, offset),
-    ]);
-    res.json(await attachSourceCounts([...short, ...mid, ...long]));
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/entries", "Use /api/memory/vnext/claims?limit=... or POST /api/memory/search for vNext claim search.");
 }
 
 async function handleGetEntry(req: Request, res: Response): Promise<void> {
-  try {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) {
-      res.status(400).json({ error: "Invalid id" });
-      return;
-    }
-
-    const entry = await memoryStorage.getEntry(id);
-    if (!entry) {
-      res.status(404).json({ error: "Entry not found" });
-      return;
-    }
-    const [withSources] = await attachSourceCounts([entry]);
-    const sourceRefs = await getSourceRefsForEntry(id);
-    res.json({ ...withSources, sourceRefs });
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/entries/:id", "Use /api/memory/vnext/claims/:id for vNext claim detail.");
 }
 
 
 async function handleGetEntrySources(req: Request, res: Response): Promise<void> {
-  try {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) {
-      res.status(400).json({ error: "Invalid id" });
-      return;
-    }
-    const entry = await memoryStorage.getEntry(id);
-    if (!entry) {
-      res.status(404).json({ error: "Entry not found" });
-      return;
-    }
-    res.json(await getSourceRefsForEntry(id));
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/entries/:id/sources", "Use /api/memory/vnext/claims/:id/sources for vNext claim source refs.");
 }
 
 async function handleCreateEntry(req: Request, res: Response): Promise<void> {
-  try {
-    const parsed = createEntrySchema.safeParse(req.body);
-    if (!parsed.success) {
-      res
-        .status(400)
-        .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
-      return;
-    }
-    const { content, source, sourceId, metadata, tags } = parsed.data;
-    const entry = await memoryStorage.ingest(
-      content,
-      source,
-      sourceId,
-      metadata,
-      tags,
-    );
-    res.status(201).json(entry);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/entries", "Direct legacy entry creation is retired. Create source artifacts and run /api/memory/vnext/lifecycle/run.");
 }
 
 async function handleUpdateEntry(req: Request, res: Response): Promise<void> {
-  try {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) {
-      res.status(400).json({ error: "Invalid id" });
-      return;
-    }
-
-    const parsed = updateEntrySchema.safeParse(req.body);
-    if (!parsed.success) {
-      res
-        .status(400)
-        .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
-      return;
-    }
-
-    const oldEntry = parsed.data.layer
-      ? await memoryStorage.getEntry(id)
-      : null;
-
-    const updated = await memoryStorage.updateEntry(id, parsed.data);
-    if (!updated) {
-      res.status(404).json({ error: "Entry not found" });
-      return;
-    }
-
-    if (parsed.data.layer && oldEntry && oldEntry.layer !== parsed.data.layer) {
-      log.debug(
-        `MemoryTransition PATCH #${id} "${oldEntry.title || oldEntry.content.slice(0, 40)}" ${oldEntry.layer} → ${parsed.data.layer} (manual edit)`,
-      );
-    }
-
-    res.json(updated);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/entries/:id", "Legacy entry updates are retired. vNext claims progress through lifecycle maintenance.");
 }
 
 async function handleDeleteEntry(req: Request, res: Response): Promise<void> {
-  try {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) {
-      res.status(400).json({ error: "Invalid id" });
-      return;
-    }
-
-    await memoryStorage.deleteEntry(id);
-    res.json({ message: "Entry deleted" });
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/entries/:id", "Legacy entry deletion is retired; archived memory_entries rows are preserved.");
 }
 
 async function handleSearchEntries(req: Request, res: Response): Promise<void> {
@@ -489,81 +369,26 @@ async function handleSearchEntries(req: Request, res: Response): Promise<void> {
 }
 
 async function handleGetLinks(req: Request, res: Response): Promise<void> {
-  try {
-    const entryId = parseInt(req.params.entryId as string, 10);
-    if (isNaN(entryId)) {
-      res.status(400).json({ error: "Invalid entryId" });
-      return;
-    }
-
-    const links = await memoryStorage.getLinks(entryId);
-    res.json(links);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/links/:entryId", "Use /api/memory/vnext/claims/:id/claim-links for vNext claim links.");
 }
 
 async function handleCreateLink(req: Request, res: Response): Promise<void> {
-  try {
-    const parsed = createLinkSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res
-        .status(400)
-        .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
-      return;
-    }
-    const { fromId, toId, relationship, strength, relationshipType } =
-      parsed.data;
-    const link = await memoryStorage.createLink(
-      fromId,
-      toId,
-      relationship,
-      strength,
-      relationshipType,
-    );
-    res.status(201).json(link);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/links", "Legacy memory_links writes are retired. Use /api/memory/vnext/lifecycle/run to build vNext links.");
 }
 
 async function handleDeleteLink(req: Request, res: Response): Promise<void> {
-  try {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) {
-      res.status(400).json({ error: "Invalid id" });
-      return;
-    }
-
-    await memoryStorage.deleteLink(id);
-    res.json({ message: "Link deleted" });
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/links/:id", "Legacy memory_links deletion is retired. vNext claim links are lifecycle-managed.");
 }
 
 async function handleGetStats(req: Request, res: Response): Promise<void> {
-  try {
-    const stats = await memoryStorage.getStats({ archiveMode: req.query.archiveMode === "true" });
-    res.json(stats);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/stats", "Use /api/memory/vnext/claims/counts for active vNext claim counts.");
 }
 
 async function handleGetTransitions(
   req: Request,
   res: Response,
 ): Promise<void> {
-  try {
-    const limit = req.query.limit
-      ? parseInt(req.query.limit as string, 10)
-      : 50;
-    const transitions = await memoryStorage.getTransitions(limit);
-    res.json(transitions);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/transitions", "Legacy layer transition history is retired. Use vNext claim lifecycle endpoints.");
 }
 
 async function handleTriggerTransition(
@@ -578,178 +403,44 @@ async function handleTriggerTransition(
 }
 
 async function handleGetPalace(req: Request, res: Response): Promise<void> {
-  try {
-    const linkSource = req.query.linkSource === "sources" ? "sources" : "links";
-    const palace = await memoryStorage.getPalace(linkSource);
-    res.json(palace);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/palace", "Use /api/memory/vnext/graph for the active memory graph.");
 }
 
 async function handleClearGraph(_req: Request, res: Response): Promise<void> {
-  try {
-    const result = await memoryStorage.clearGraph();
-    log.debug(
-      `Graph cleared: ${result.entriesReset} entries reset, ${result.linksDeleted} links deleted`,
-    );
-    res.json(result);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/graph/clear", "Legacy graph reset is retired. Use vNext lifecycle maintenance instead.");
 }
 
 async function handleUpdateEntryGraph(
   req: Request,
   res: Response,
 ): Promise<void> {
-  try {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) {
-      res.status(400).json({ error: "Invalid id" });
-      return;
-    }
-
-    const { graphed } = req.body;
-    if (typeof graphed !== "boolean") {
-      res.status(400).json({ error: "graphed must be a boolean" });
-      return;
-    }
-
-    const entry = await memoryStorage.getEntry(id);
-    if (!entry) {
-      res.status(404).json({ error: "Entry not found" });
-      return;
-    }
-
-    if (graphed) {
-      if (entry.layer !== "long") {
-        res
-          .status(400)
-          .json({ error: "Only long-term entries can be promoted to graph" });
-        return;
-      }
-
-      await memoryStorage.deleteLinksForEntry(id);
-      await memoryStorage.setGraphed(id, true);
-
-      try {
-        if (!entry.embedding) {
-          await memoryStorage.ensureEmbedding(id);
-        }
-
-        const candidates = await memoryStorage.findSimilarEntries(id, 8);
-        if (candidates.length > 0) {
-          const { evaluateLinks } = await import("./graph-discovery");
-          const { links } = await evaluateLinks(entry, candidates);
-          for (const link of links) {
-            await memoryStorage.createLink(
-              link.from,
-              link.to,
-              link.relationship,
-              link.strength,
-              link.relationshipType,
-            );
-          }
-        }
-      } catch (err: unknown) {
-        log.warn(
-          `Graph discovery during promote failed for #${id}: ${errorMessage(err)}`,
-        );
-      }
-
-      const updated = await memoryStorage.getEntry(id);
-      res.json(updated);
-      return;
-    } else {
-      await memoryStorage.deleteLinksForEntry(id);
-      await memoryStorage.setGraphed(id, false);
-      const updated = await memoryStorage.getEntry(id);
-      res.json(updated);
-      return;
-    }
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/entries/:id/graph", "Legacy graph promotion is retired. Use vNext lifecycle maintenance instead.");
 }
 
 async function handleGetBlocks(req: Request, res: Response): Promise<void> {
-  try {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) {
-      res.status(400).json({ error: "Invalid entry ID" });
-      return;
-    }
-    const blocks = await memoryStorage.getContentBlocks(id);
-    res.json(blocks);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/entries/:id/blocks", "No faithful vNext equivalent exists for legacy content blocks; use /api/memory/vnext/claims/:id.");
 }
 
 async function handleGetLinkedEntries(
   req: Request,
   res: Response,
 ): Promise<void> {
-  try {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) {
-      res.status(400).json({ error: "Invalid entry ID" });
-      return;
-    }
-    const entries = await memoryStorage.getLinkedEntries(id);
-    res.json(entries);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/entries/:id/linked", "Use /api/memory/vnext/claims/:id/claim-links for linked vNext claims.");
 }
 
 async function handleGetLinksWithEntries(
   req: Request,
   res: Response,
 ): Promise<void> {
-  try {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) {
-      res.status(400).json({ error: "Invalid entry ID" });
-      return;
-    }
-    const linksWithEntries = await memoryStorage.getLinksWithEntries(id);
-    res.json(linksWithEntries);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/entries/:id/links", "Use /api/memory/vnext/claims/:id/claim-links for linked vNext claims.");
 }
 
 async function handleFlushLayer(req: Request, res: Response): Promise<void> {
-  try {
-    const layer = req.params.layer;
-    if (!memoryLayers.includes(layer as MemoryLayer)) {
-      res
-        .status(400)
-        .json({
-          error: "Invalid layer. Must be one of: " + memoryLayers.join(", "),
-        });
-      return;
-    }
-    const result = await memoryStorage.flushLayer(layer as MemoryLayer);
-    log.debug(`Flushed ${layer}: deleted=${result.deleted}`);
-    res.json(result);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/flush/:layer", "Legacy layer flush is retired; archived memory_entries rows are preserved.");
 }
 
 async function handleDedup(_req: Request, res: Response): Promise<void> {
-  try {
-    const result = await memoryStorage.deduplicateMidTerm();
-    log.debug(
-      `Dedup complete: removed=${result.removed}, remaining=${result.remaining}`,
-    );
-    res.json(result);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/dedup", "Legacy dedup is retired. vNext deduplication runs in extraction/lifecycle.");
 }
 
 async function handleGetWorkspace(req: Request, res: Response): Promise<void> {
@@ -890,66 +581,14 @@ async function handleMigrateToUnified(
   _req: Request,
   res: Response,
 ): Promise<void> {
-  try {
-    const { workspaceDocuments } = await import("@shared/schema");
-    const { db: dbInstance } = await import("../db");
-
-    const allDocs = await dbInstance.select().from(workspaceDocuments);
-    let migrated = 0;
-    let skipped = 0;
-
-    for (const doc of allDocs) {
-      const existing = await dbInstance
-        .select({ id: memoryEntries.id })
-        .from(memoryEntries)
-        .where(
-          and(
-            eq(memoryEntries.layer, "workspace"),
-            eq(memoryEntries.source, doc.docType),
-            eq(memoryEntries.sourceId, doc.docId),
-          ),
-        )
-        .limit(1);
-
-      if (existing.length > 0) {
-        skipped++;
-        continue;
-      }
-
-      await dbInstance.insert(memoryEntries).values({
-        layer: "workspace",
-        content: doc.content,
-        source: doc.docType,
-        sourceId: doc.docId,
-        path: doc.path,
-        title: null,
-        metadata: doc.metadata || {},
-        tags: [],
-        createdAt: doc.createdAt,
-        processedAt: doc.updatedAt,
-      });
-      migrated++;
-    }
-
-    log.debug(
-      `Unified migration: migrated=${migrated}, skipped=${skipped}, total=${allDocs.length}`,
-    );
-    res.json({ migrated, skipped, total: allDocs.length });
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/migrate-to-unified", "Legacy workspace-to-memory_entries migration is retired. Workspace documents remain in document storage and vNext extraction is source-backed.");
 }
 
 async function handleGetMyelinationStats(
   _req: Request,
   res: Response,
 ): Promise<void> {
-  try {
-    const stats = await memoryStorage.getMyelinationStats();
-    res.json(stats);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/myelination/stats", "Legacy myelination stats are retired. Use /api/memory/vnext/claims/counts and /api/memory/vnext/graph.");
 }
 
 async function handleTriggerMyelination(
@@ -1152,18 +791,7 @@ async function handleGetEntryEvents(
   req: Request,
   res: Response,
 ): Promise<void> {
-  try {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) {
-      res.status(400).json({ error: "Invalid entry ID" });
-      return;
-    }
-
-    const events = await memoryStorage.getEventsForEntry(id);
-    res.json(events);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/entries/:id/events", "Legacy entry event lookup is retired; inspect source refs through /api/memory/vnext/claims/:id/sources.");
 }
 
 async function handleGetDaysWithEvents(
@@ -1192,55 +820,21 @@ async function handleGetEntriesByDay(
   req: Request,
   res: Response,
 ): Promise<void> {
-  try {
-    const start = req.query.start
-      ? new Date(req.query.start as string)
-      : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const end = req.query.end ? new Date(req.query.end as string) : new Date();
-
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      res.status(400).json({ error: "Invalid start or end date" });
-      return;
-    }
-
-    const entries = await memoryStorage.getMemoryEntriesByDay(start, end);
-    res.json(entries);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/log/entries-by-day", "Use /api/memory/vnext/claims with createdAfter/createdBefore filters.");
 }
 
 async function handleGetEntityLinks(
   req: Request,
   res: Response,
 ): Promise<void> {
-  try {
-    const { entityType, entityId } = req.params;
-    const memories = await memoryStorage.getMemoriesForEntity(
-      entityType as string,
-      entityId as string,
-    );
-    res.json(memories);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/entity-links/:entityType/:entityId", "Legacy memory entity lookups are retired. Use /api/memory/vnext/claims with entity filters or search_claims with entityId.");
 }
 
 async function handleGetEntryEntityLinks(
   req: Request,
   res: Response,
 ): Promise<void> {
-  try {
-    const id = parseInt(req.params.id as string, 10);
-    if (isNaN(id)) {
-      res.status(400).json({ error: "Invalid id" });
-      return;
-    }
-    const links = await memoryStorage.getEntityLinksForMemory(id);
-    res.json(links);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/entries/:id/entity-links", "Use /api/memory/vnext/claims/:id/entity-links for vNext claim entity links.");
 }
 
 
@@ -1704,56 +1298,21 @@ async function handleCreateEntityLink(
   req: Request,
   res: Response,
 ): Promise<void> {
-  try {
-    const parsed = entityLinkSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res
-        .status(400)
-        .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
-      return;
-    }
-    const { memoryId, entityType, entityId } = parsed.data;
-    const link = await memoryStorage.linkMemoryToEntity(
-      memoryId,
-      entityType,
-      entityId,
-    );
-    res.status(201).json(link);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/entity-links", "Legacy memory entity links are retired. Link entities to vNext claims via the memory tool link_entity action.");
 }
 
 async function handleDeleteEntityLink(
   req: Request,
   res: Response,
 ): Promise<void> {
-  try {
-    const memoryId = parseInt(req.params.memoryId as string, 10);
-    if (isNaN(memoryId)) {
-      res.status(400).json({ error: "Invalid memoryId" });
-      return;
-    }
-    const { entityType, entityId } = req.params;
-    await memoryStorage.unlinkMemoryFromEntity(
-      memoryId,
-      entityType as string,
-      entityId as string,
-    );
-    res.json({ success: true });
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/entity-links/:memoryId/:entityType/:entityId", "Legacy memory entity link deletion is retired.");
 }
 
 async function handleBackfillLongTitles(
   _req: Request,
   res: Response,
 ): Promise<void> {
-  res.status(410).json({
-    deprecated: true,
-    message: "Legacy memory title maintenance is disabled",
-  });
+  sendRetiredLegacyMemoryRoute(res, "/api/memory/backfill-long-titles", "Legacy long-title maintenance is retired. vNext claim titles are generated at extraction.");
 }
 
 export function registerMemoryRoutes(app: Express) {
