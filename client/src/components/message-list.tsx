@@ -49,8 +49,6 @@ interface MessageListProps {
   activeSession: string | null;
   sessionKey?: string | null;
   voiceActive: boolean;
-  showVoiceTools: boolean;
-  voiceStepsInsertIndex: number;
   voiceStatus: string;
   voiceTranscript: VoiceTranscriptEntry[];
   /** @deprecated voiceThinking is now voice control chrome only; transcript uses canonical server projection. */
@@ -208,8 +206,6 @@ export function MessageList({
   activeSession,
   sessionKey,
   voiceActive,
-  showVoiceTools,
-  voiceStepsInsertIndex,
   voiceStatus,
   voiceTranscript,
   voiceThinking,

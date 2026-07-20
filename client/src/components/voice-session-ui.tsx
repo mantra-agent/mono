@@ -10,9 +10,6 @@ import {
 } from "@/components/ui/collapsible";
 import {
   Mic,
-  MicOff,
-  Bot,
-  Loader2,
   ArrowLeft,
   ChevronRight,
   Clock,
@@ -28,7 +25,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { resolvePersonaIcon } from "@/lib/persona-icons";
 import { useTimezone, formatTime, formatDate } from "@/hooks/use-timezone";
-import type { VoiceSessionContextValue, VoiceTranscriptEntry } from "@/hooks/use-voice-session";
+import type { VoiceTranscriptEntry } from "@/hooks/use-voice-session";
 
 interface VoiceSessionSummary {
   id: string;
@@ -164,92 +161,6 @@ export function VoiceTranscriptBubble({ entry, index }: { entry: VoiceTranscript
             <>
               <span className="text-xs text-muted-foreground/50">·</span>
               <span className="text-xs text-muted-foreground/50" data-testid={`voice-timestamp-ai-${index}`}>{formattedTime}</span>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export function VoiceControlBar({ voiceSession, onEnd, transportHealthy = true }: { voiceSession: VoiceSessionContextValue; onEnd: () => void; transportHealthy?: boolean }) {
-  const isConnecting = voiceSession.status === "connecting";
-  const isReconnecting = voiceSession.status === "reconnecting";
-  const isEnding = voiceSession.status === "ending";
-  const isActive = voiceSession.status === "active";
-  const isListening = voiceSession.agentMode === "listening";
-  const isUserSpeaking = voiceSession.userSpeaking;
-  // Unified status (task-923 step 3). The bubble cannot say "Speaking..."
-  // while the transport is interrupted — that's the disagreement bug
-  // shown in the screenshot. When transportHealthy is false during an
-  // otherwise-active session, surface a single honest state.
-  const showAsReconnecting = isReconnecting || (isActive && !transportHealthy);
-
-  return (
-    <div className="border-t p-4" data-testid="voice-control-bar">
-      <div className="">
-        <div className={`flex items-center gap-3 bg-muted/50 rounded-lg px-4 py-3`}>
-          {isConnecting ? (
-            <div className="flex items-center justify-between w-full">
-              <span className="text-xs text-muted-foreground">Connecting voice session...</span>
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={onEnd}
-                disabled={isEnding}
-                data-testid="button-voice-end"
-              >
-                Cancel
-              </Button>
-            </div>
-          ) : (
-            <>
-              <div className={`flex h-10 w-10 items-center justify-center rounded-full shrink-0 ${
-                isActive
-                  ? (isListening
-                    ? (isUserSpeaking ? "bg-error/20 animate-pulse" : "bg-primary/15")
-                    : "bg-success/15")
-                  : "bg-muted"
-              }`}>
-                {showAsReconnecting ? (
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                ) : isActive ? (
-                  isListening ? <Mic className={`h-5 w-5 ${isUserSpeaking ? "text-error" : "text-primary"}`} /> : <Bot className="h-5 w-5 text-success" />
-                ) : (
-                  <MicOff className="h-5 w-5 text-muted-foreground" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <span className="text-sm font-medium">
-                  {showAsReconnecting ? "Reconnecting..." : isEnding ? "Ending..." : isListening ? (isUserSpeaking ? "Hearing you..." : "Listening...") : "Speaking..."}
-                </span>
-                {isActive && (
-                  <span className="text-xs text-muted-foreground block">
-                    {voiceSession.transcript.length} messages
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-1">
-                {isActive && (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={voiceSession.toggleMute}
-                    data-testid="button-voice-mute"
-                  >
-                    {voiceSession.isMuted ? <MicOff className="h-4 w-4 text-destructive" /> : <Mic className="h-4 w-4" />}
-                  </Button>
-                )}
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  onClick={onEnd}
-                  disabled={isEnding}
-                  data-testid="button-voice-end"
-                >
-                  End
-                </Button>
-              </div>
             </>
           )}
         </div>

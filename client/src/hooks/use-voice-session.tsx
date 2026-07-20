@@ -6,6 +6,7 @@ import { emitSessionListChanged, emitSessionChanged } from "@/hooks/use-data-syn
 
 import { stripExpressionTags } from "@/components/chat-shared";
 import { Conversation } from "@elevenlabs/client";
+import type { AgentVisualState } from "@shared/agent-visualizer";
 import { createLogger } from "@/lib/logger";
 import { buildDisconnectReason } from "@/lib/ws-close-codes";
 import {
@@ -99,6 +100,9 @@ export interface VoiceSessionContextValue {
   /** Session identity that owns the ephemeral transcript aggregate. */
   transcriptSessionId: string | null;
   voiceThinking: boolean;
+  visualState: AgentVisualState;
+  /** Reads the active SDK AnalyserNode level without driving context re-renders. */
+  readAudioLevel: () => number;
   startSession: () => Promise<void>;
   endSession: () => Promise<void>;
   toggleMute: () => void;
@@ -223,6 +227,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const [agentMode, setAgentMode] = useState<"listening" | "speaking">("listening");
   const [isMuted, setIsMuted] = useState(false);
   const [voiceThinking, setVoiceThinking] = useState(false);
+  const [activeVoiceToolCount, setActiveVoiceToolCount] = useState(0);
   const [userSpeaking, setUserSpeaking] = useState(false);
   const [transcript, setTranscript] = useState<VoiceTranscriptEntry[]>([]);
   const [userComposition, setUserComposition] = useState("");
@@ -254,6 +259,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const [activeConversationId, setActiveConversationIdState] = useState<string | null>(null);
   const [chatSessionKey, setChatSessionKey] = useState<string | null>(null);
   const voiceToolHandlerRef = useRef<((action: VoiceToolEventAction, payload: VoiceToolEventPayload) => void) | null>(null);
+  const activeVoiceToolIdsRef = useRef(new Set<string>());
   const voiceDiagnosticHandlerRef = useRef<((payload: VoiceDiagnosticPayload) => void) | null>(null);
   const accumulatedVoiceStepsRef = useRef<Array<{ name: string; status: "done" | "error"; detail?: string }>>([]);
   const firstUserSpeechFiredRef = useRef(false);
@@ -287,6 +293,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     setAgentMode("listening");
     setUserSpeaking(false);
     setVoiceThinking(false);
+    activeVoiceToolIdsRef.current.clear();
+    setActiveVoiceToolCount(0);
     setUserComposition("");
     lastActivityRef.current = Date.now();
 
@@ -809,7 +817,11 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             phoneDiag("mode_change", { mode: newMode });
             setAgentMode(newMode);
             setUserSpeaking(false);
-            if (newMode === "speaking") setVoiceThinking(false);
+            if (newMode === "speaking") {
+              setVoiceThinking(false);
+              activeVoiceToolIdsRef.current.clear();
+              setActiveVoiceToolCount(0);
+            }
             break;
           }
           case "voice.userTranscript": {
@@ -1027,6 +1039,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
         setUserSpeaking(false);
         if (newMode === "speaking") {
           setVoiceThinking(false);
+          activeVoiceToolIdsRef.current.clear();
+          setActiveVoiceToolCount(0);
         }
       },
     });
@@ -1303,6 +1317,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
                 }];
               });
               setVoiceThinking(true);
+              activeVoiceToolIdsRef.current.clear();
+              setActiveVoiceToolCount(0);
               voiceToolHandlerRef.current?.("clear", { callId: "", toolName: "" });
               if (conversationRef.current) {
                 try {
@@ -1480,6 +1496,10 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             const activeChatSessionId = chatConversationIdRef.current;
             if (activeChatSessionId && (!p.chatSessionId || p.chatSessionId === activeChatSessionId)) {
               setVoiceThinking(false);
+              if (typeof p.callId === "string" && p.callId) {
+                activeVoiceToolIdsRef.current.add(p.callId);
+                setActiveVoiceToolCount(activeVoiceToolIdsRef.current.size);
+              }
               voiceToolHandlerRef.current?.("start", {
                 callId: p.callId,
                 toolName: p.toolName,
@@ -1492,6 +1512,11 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             const p = event.payload;
             const activeChatSessionId = chatConversationIdRef.current;
             if (activeChatSessionId && (!p.chatSessionId || p.chatSessionId === activeChatSessionId)) {
+              if (typeof p.callId === "string" && p.callId) {
+                activeVoiceToolIdsRef.current.delete(p.callId);
+                setActiveVoiceToolCount(activeVoiceToolIdsRef.current.size);
+                if (activeVoiceToolIdsRef.current.size === 0) setVoiceThinking(true);
+              }
               voiceToolHandlerRef.current?.("done", {
                 callId: p.callId,
                 toolName: p.toolName,
@@ -1506,6 +1531,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
             const activeChatSessionId = chatConversationIdRef.current;
             if (activeChatSessionId && (!p.chatSessionId || p.chatSessionId === activeChatSessionId)) {
               log.debug("VOICE:TOOLS:CLEARED", { reason: String(p.reason || "unknown").slice(0, 80), turn: p.turn });
+              activeVoiceToolIdsRef.current.clear();
+              setActiveVoiceToolCount(0);
               voiceToolHandlerRef.current?.("clear", { callId: "", toolName: "" });
             }
           }
@@ -1671,6 +1698,43 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
 
   const latestMessage = transcript.length > 0 ? transcript[transcript.length - 1] : null;
 
+  const visualState = useMemo<AgentVisualState>(() => {
+    if (status === "reconnecting") return "degraded";
+    if (status !== "active") return "idle";
+    if (agentMode === "speaking") return "speaking";
+    if (activeVoiceToolCount > 0) return "tool_call";
+    if (voiceThinking) return "thinking";
+    return "listening";
+  }, [activeVoiceToolCount, agentMode, status, voiceThinking]);
+
+  const readAudioLevel = useCallback((): number => {
+    if (isNative || status !== "active") return 0;
+    const conversation = conversationRef.current;
+    if (!conversation) return 0;
+
+    try {
+      // ElevenLabs owns the live WebAudio graph. These methods expose its
+      // mic/TTS AnalyserNode data, so visualization never opens a second stream.
+      const frequencyData = agentModeRef.current === "speaking"
+        ? conversation.getOutputByteFrequencyData()
+        : conversation.getInputByteFrequencyData();
+      if (frequencyData.length > 0) {
+        let energy = 0;
+        for (const bin of frequencyData) {
+          const normalized = bin / 255;
+          energy += normalized * normalized;
+        }
+        return Math.min(1, Math.sqrt(energy / frequencyData.length) * 2.4);
+      }
+      const volume = agentModeRef.current === "speaking"
+        ? conversation.getOutputVolume()
+        : conversation.getInputVolume();
+      return Math.max(0, Math.min(1, volume));
+    } catch {
+      return 0;
+    }
+  }, [isNative, status]);
+
   const setVoiceToolHandler = useCallback((handler: ((action: VoiceToolEventAction, payload: VoiceToolEventPayload) => void) | null) => {
     voiceToolHandlerRef.current = handler;
   }, []);
@@ -1688,6 +1752,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     userComposition,
     transcriptSessionId,
     voiceThinking,
+    visualState,
+    readAudioLevel,
     startSession,
     endSession,
     toggleMute,
@@ -1703,7 +1769,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     addTranscriptEntry,
     setVoiceToolHandler,
     setVoiceDiagnosticHandler,
-  }), [status, agentMode, userSpeaking, isMuted, transcript, userComposition, transcriptSessionId, voiceThinking, startSession, endSession, toggleMute, latestMessage, setActiveConversationId, clearTranscript, activeConversationId, chatSessionKey, connectionPhases, connectionStartTime, phasePersisted, setVoiceThinking, addTranscriptEntry, setVoiceToolHandler, setVoiceDiagnosticHandler]);
+  }), [status, agentMode, userSpeaking, isMuted, transcript, userComposition, transcriptSessionId, voiceThinking, visualState, readAudioLevel, startSession, endSession, toggleMute, latestMessage, setActiveConversationId, clearTranscript, activeConversationId, chatSessionKey, connectionPhases, connectionStartTime, phasePersisted, setVoiceThinking, addTranscriptEntry, setVoiceToolHandler, setVoiceDiagnosticHandler]);
 
   return (
     <VoiceSessionContext.Provider value={value}>

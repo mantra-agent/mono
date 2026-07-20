@@ -3,12 +3,13 @@ import { cn } from "@/lib/utils";
 import { MessageList } from "@/components/message-list";
 import { MeetingHeaderBar } from "@/components/meeting-header-bar";
 import { WorkflowStickyBar } from "@/components/workflow-sticky-bar";
+import { DesktopVoiceSurface } from "@/components/desktop-voice-surface";
 import type { MeetingSessionMeta, QuestionResponseMeta } from "@shared/models/chat";
 import type { ChatMessage as Message } from "@/components/chat-shared";
 import type { PendingChatTurn } from "@/hooks/use-chat-send";
 import type { SessionStreamMap } from "@/hooks/use-session-subscription";
 import type { StreamingContent } from "@shared/streaming-types";
-import type { VoiceTranscriptEntry } from "@/hooks/use-voice-session";
+import type { VoiceSessionContextValue, VoiceTranscriptEntry } from "@/hooks/use-voice-session";
 
 type ActiveWorkflow = React.ComponentProps<
   typeof WorkflowStickyBar
@@ -23,8 +24,7 @@ export interface SessionTranscriptSurfaceProps {
   runActive?: boolean;
   msgsLoading: boolean;
   voiceActive: boolean;
-  showVoiceTools: boolean;
-  voiceStepsInsertIndex: number;
+  voiceSession?: VoiceSessionContextValue | null;
   voiceStatus: string;
   voiceTranscript: VoiceTranscriptEntry[];
   voiceThinking?: boolean;
@@ -59,8 +59,7 @@ export function SessionTranscriptSurface({
   runActive,
   msgsLoading,
   voiceActive,
-  showVoiceTools,
-  voiceStepsInsertIndex,
+  voiceSession,
   voiceStatus,
   voiceTranscript,
   voiceThinking,
@@ -108,41 +107,45 @@ export function SessionTranscriptSurface({
         </div>
       )}
       {showWorkflow && <WorkflowStickyBar workflow={workflow} />}
-      <div
-        ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [overflow-anchor:none] scrollbar-thin"
-        onWheel={onUserScrollIntent}
-        onTouchMove={onUserScrollIntent}
-        onScroll={onScroll}
-      >
-        <div
-          className={cn("space-y-6 p-4 pb-4 overflow-hidden", listClassName)}
-        >
-          <MessageList
-            messages={messages}
-            streaming={streaming}
-            isSessionStreaming={isSessionStreaming}
-            runActive={runActive}
-            msgsLoading={msgsLoading}
-            activeSession={activeSession}
-            sessionKey={sessionKey}
-            voiceActive={voiceActive}
-            showVoiceTools={showVoiceTools}
-            voiceStepsInsertIndex={voiceStepsInsertIndex}
-            voiceStatus={voiceStatus}
-            voiceTranscript={voiceTranscript}
-            voiceThinking={voiceThinking}
-            sessionTitleById={sessionTitleById}
-            pendingTurn={pendingTurn}
-            optimisticUserTurn={optimisticUserTurn}
-            liveStreamRenderId={liveStreamRenderId}
-            sessionStreams={sessionStreams}
-            compactReferences={compactReferences}
-            questionResponses={questionResponses}
-            onQuestionSubmit={onQuestionSubmit}
-          />
-        </div>
-      </div>
+      {(() => {
+        const transcript = (
+          <div
+            ref={scrollContainerRef}
+            className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [overflow-anchor:none] scrollbar-thin"
+            onWheel={onUserScrollIntent}
+            onTouchMove={onUserScrollIntent}
+            onScroll={onScroll}
+          >
+            <div className={cn("space-y-6 p-4 pb-4 overflow-hidden", listClassName)}>
+              <MessageList
+                messages={messages}
+                streaming={streaming}
+                isSessionStreaming={isSessionStreaming}
+                runActive={runActive}
+                msgsLoading={msgsLoading}
+                activeSession={activeSession}
+                sessionKey={sessionKey}
+                voiceActive={voiceActive}
+                voiceStatus={voiceStatus}
+                voiceTranscript={voiceTranscript}
+                voiceThinking={voiceThinking}
+                sessionTitleById={sessionTitleById}
+                pendingTurn={pendingTurn}
+                optimisticUserTurn={optimisticUserTurn}
+                liveStreamRenderId={liveStreamRenderId}
+                sessionStreams={sessionStreams}
+                compactReferences={compactReferences}
+                questionResponses={questionResponses}
+                onQuestionSubmit={onQuestionSubmit}
+              />
+            </div>
+          </div>
+        );
+
+        return voiceActive && voiceSession
+          ? <DesktopVoiceSurface voiceSession={voiceSession} transcript={transcript} />
+          : transcript;
+      })()}
     </div>
   );
 }
