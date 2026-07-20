@@ -48,6 +48,7 @@ import {
 import { ChildSessionBlock } from "@/components/inline-session-blocks";
 import type { ChildSessionBlockMeta } from "@shared/models/chat";
 import type { SessionStreamMap } from "@/hooks/use-session-subscription";
+import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 
 export interface PlanWidgetPlan extends PlanData {
   createdAt?: string;
@@ -69,54 +70,7 @@ function isProgressedStep(step: PlanStep): boolean {
   return step.status === "completed" || step.status === "skipped" || step.status === "failed" || step.status === "needs_review";
 }
 
-// Match the Project task tree geometry. Derive the connector from row padding
-// and completion-control size so the branch terminates at the center of the check.
-const PLAN_ROW_PADDING_PX = 8;
-const PLAN_COMPLETION_SIZE_PX = 16;
-const PLAN_CONNECTOR_STROKE_PX = 1;
-const PLAN_INDENT_STEP_PX = 24;
-const PLAN_CONNECTOR_SPINE_PX = PLAN_INDENT_STEP_PX - PLAN_ROW_PADDING_PX - PLAN_COMPLETION_SIZE_PX / 2;
-const PLAN_CONNECTOR_BRANCH_PX = PLAN_ROW_PADDING_PX + PLAN_COMPLETION_SIZE_PX / 2 - PLAN_CONNECTOR_SPINE_PX;
-
-function PlanTreeConnector({ continues }: { continues: boolean }) {
-  const spineStyle = {
-    left: PLAN_CONNECTOR_SPINE_PX,
-    width: PLAN_CONNECTOR_STROKE_PX,
-  };
-  const branchStyle = {
-    left: PLAN_CONNECTOR_SPINE_PX,
-    width: PLAN_CONNECTOR_BRANCH_PX,
-    height: PLAN_CONNECTOR_STROKE_PX,
-  };
-
-  return (
-    <div className="relative w-4 shrink-0 self-stretch" aria-hidden="true">
-      <div
-        className={cn("absolute top-0 bg-border", continues ? "bottom-0" : "bottom-1/2")}
-        style={spineStyle}
-      />
-      <div className="absolute top-1/2 bg-border" style={branchStyle} />
-    </div>
-  );
-}
-
-function PlanTreeRow({
-  continues,
-  children,
-}: {
-  continues: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className="flex min-w-0 items-stretch"
-      style={{ paddingLeft: PLAN_INDENT_STEP_PX }}
-    >
-      <PlanTreeConnector continues={continues} />
-      <div className="min-w-0 flex-1">{children}</div>
-    </div>
-  );
-}
+// Tree geometry is shared with the inline workflow widget.
 
 function getAttemptChildSessionId(attempt: PlanStepAttempt): string | null {
   return attempt.childSessionId || null;
@@ -147,7 +101,7 @@ function PlanAttemptChild({ planId, parentSessionId, step, attempt, ownedChildBl
       depth={1}
       sessionTitleById={sessionTitleById}
       childStream={sessionStreams?.[childSessionId]}
-      planStepCompleted={stepCompleted}
+      hierarchyStepCompleted={stepCompleted}
     />
   );
 }
@@ -188,12 +142,12 @@ function PlanStepCheckbox({ step, stepIndex, continues, planId, parentSessionId,
   const stepLabel = `Step ${stepIndex + 1}: ${step.title}`;
 
   // When a step has a child session, replace the step row entirely with the
-  // child session widget. The child renders its own check icon via planStepCompleted.
+  // child session widget. The child renders its own hierarchy status icon.
   if (attempts.length > 0) {
     return (
       <>
         {attempts.map((attempt, attemptIndex) => (
-          <PlanTreeRow
+          <HierarchyTreeRow
             key={attempt.id ?? `${step.id}-${attempt.attemptNumber}`}
             continues={continues || attemptIndex < attempts.length - 1}
           >
@@ -206,7 +160,7 @@ function PlanStepCheckbox({ step, stepIndex, continues, planId, parentSessionId,
               sessionTitleById={sessionTitleById}
               sessionStreams={sessionStreams}
             />
-          </PlanTreeRow>
+          </HierarchyTreeRow>
         ))}
       </>
     );
@@ -214,7 +168,7 @@ function PlanStepCheckbox({ step, stepIndex, continues, planId, parentSessionId,
 
   // Pending step row with "Step N: title" prefix.
   return (
-    <PlanTreeRow continues={continues}>
+    <HierarchyTreeRow continues={continues}>
       <div
         className={cn(
           "group relative flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-foreground",
@@ -256,7 +210,7 @@ function PlanStepCheckbox({ step, stepIndex, continues, planId, parentSessionId,
           )}
         </div>
       </div>
-    </PlanTreeRow>
+    </HierarchyTreeRow>
   );
 }
 

@@ -86,16 +86,17 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
   depth = 0,
   sessionTitleById,
   childStream,
-  planStepCompleted,
+  hierarchyStepCompleted,
 }: {
   meta: ChildSessionBlockMeta;
   sessionKey?: string | null;
   depth?: number;
   sessionTitleById?: Record<string, string>;
   childStream?: SessionStreamState;
-  planStepCompleted?: boolean;
+  hierarchyStepCompleted?: boolean;
 }) {
-  const insidePlan = planStepCompleted !== undefined;
+  const stepCompleted = hierarchyStepCompleted;
+  const insideHierarchy = stepCompleted !== undefined;
   const { layer } = useVisibilityLayer();
   const { toast } = useToast();
   const [expanded, setExpanded] = useState(false);
@@ -227,19 +228,19 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
       id={`child-session-${meta.childSessionId}`}
       className={cn(
         "scroll-mt-20",
-        insidePlan ? "group" : `border rounded-md my-1 ${tileClass}`,
+        insideHierarchy ? "group" : `border rounded-md my-1 ${tileClass}`,
         !expanded && "cursor-pointer",
       )}
       onClick={!expanded ? toggleExpanded : undefined}
       data-testid={`child-session-block-${meta.childSessionId}`}
     >
       <div
-        className={cn("flex items-center gap-2", insidePlan ? "px-2 py-1.5" : "px-3 py-2")}
+        className={cn("flex items-center gap-2", insideHierarchy ? "px-2 py-1.5" : "px-3 py-2")}
         data-testid={`button-toggle-child-${meta.childSessionId}`}
         aria-expanded={expanded}
       >
         <div className="flex items-center gap-2 flex-1 min-w-0 text-sm text-foreground/90">
-          {!insidePlan && (
+          {!insideHierarchy && (
             <button
               type="button"
               className="shrink-0 text-muted-foreground hover:text-foreground"
@@ -256,8 +257,8 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
               )}
             </button>
           )}
-          {insidePlan ? (
-            planStepCompleted ? (
+          {insideHierarchy ? (
+            stepCompleted ? (
               <CircleCheck className="h-3.5 w-3.5 shrink-0 text-success" />
             ) : isChildStreaming ? (
               <ActiveStatusSpinner className="h-3.5 w-3.5" />
@@ -287,7 +288,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {insidePlan && (
+          {insideHierarchy && (
             <button
               type="button"
               className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -310,7 +311,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
                 type="button"
                 className={cn(
                   "flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground",
-                  insidePlan && "opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100",
+                  insideHierarchy && "opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100",
                 )}
                 onClick={(event) => event.stopPropagation()}
                 aria-label="Child session actions"
@@ -347,7 +348,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
         </div>
       )}
 
-      {!expanded && !insidePlan && (
+      {!expanded && !insideHierarchy && (
         <div className="px-8 pb-2 min-h-7" data-testid={`text-child-summary-${meta.childSessionId}`}>
           <div className="text-xs leading-6 text-muted-foreground truncate">
             {latestLine}
@@ -360,7 +361,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
           ref={turnsRef}
           className={cn(
             "max-h-32 overflow-y-auto scrollbar-thin px-3 py-2",
-            insidePlan
+            insideHierarchy
               ? "ml-6 mt-1 rounded-md border border-border/60 bg-muted/20"
               : "border-t border-border/40",
           )}
