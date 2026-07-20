@@ -114,14 +114,12 @@ const nodeFragmentShader = `
 
   void main() {
     float facing = abs(dot(normalize(vNormal), normalize(vViewDirection)));
-    float fresnel = 1.0 - facing;
-    float rim = smoothstep(0.02, 0.92, pow(fresnel, 0.72));
-    float core = smoothstep(0.12, 0.92, facing);
-    float highlight = pow(max(dot(normalize(vNormal), normalize(vec3(-0.42, 0.66, 0.61))), 0.0), 10.0);
-    float emphasis = 1.0 + vEmphasis * 0.45;
-    vec3 color = vTint * (0.56 + core * 0.38 + rim * 0.68 + highlight * 0.55) * emphasis;
-    float alpha = (0.28 + core * 0.30 + rim * 0.24 + highlight * 0.14) * vVisibility;
-    gl_FragColor = vec4(color, clamp(alpha, 0.15, 0.88));
+    float edge = 1.0 - facing;
+    float rim = pow(edge, 1.6);
+    float emphasis = 1.0 + vEmphasis * 0.5;
+    vec3 color = vTint * (0.4 + rim * 0.85) * emphasis;
+    float alpha = (0.22 + rim * 0.58) * vVisibility;
+    gl_FragColor = vec4(color, clamp(alpha, 0.1, 0.92));
   }
 `;
 
@@ -359,10 +357,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     const linkPositions = new Float32Array(renderedLinks.length * CURVE_SEGMENTS * 6);
     const linkColors = new Float32Array(renderedLinks.length * CURVE_SEGMENTS * 6);
-    const linkGeometry = new THREE.BufferGeometry();
-    const baseLinkColor = signalColor.clone().multiplyScalar(0.58);
+    const linkGeometry = new LineSegmentsGeometry();
+    const baseLinkColor = signalColor.clone().multiplyScalar(0.65);
     renderedLinks.forEach((link, linkIndex) => {
-      const brightness = 0.32 + Math.pow(Math.max(0, link.strength), 2.4) * 0.68;
+      const brightness = 0.15 + Math.pow(Math.max(0, link.strength), 1.6) * 0.85;
       for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
         const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
         linkColors[offset] = baseLinkColor.r * brightness;
@@ -373,15 +371,17 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         linkColors[offset + 5] = baseLinkColor.b * brightness;
       }
     });
-    linkGeometry.setAttribute("position", new THREE.BufferAttribute(linkPositions, 3).setUsage(THREE.DynamicDrawUsage));
-    linkGeometry.setAttribute("color", new THREE.BufferAttribute(linkColors, 3));
-    const linkMaterial = new THREE.LineBasicMaterial({
+    linkGeometry.setPositions(linkPositions);
+    linkGeometry.setColors(linkColors);
+    const linkMaterial = new LineMaterial({
       vertexColors: true,
       transparent: true,
-      opacity: 0.52,
+      opacity: 0.62,
+      linewidth: 2,
       depthWrite: false,
+      resolution: new THREE.Vector2(host.clientWidth, host.clientHeight),
     });
-    const linkLines = new THREE.LineSegments(linkGeometry, linkMaterial);
+    const linkLines = new LineSegments2(linkGeometry, linkMaterial);
     linkLines.frustumCulled = false;
     scene.add(linkLines);
 
@@ -456,7 +456,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           writeQuadraticPoint(linkPositions, offset + 3, fromX, fromY, fromZ, controlX, controlY, controlZ, toX, toY, toZ, (segment + 1) / CURVE_SEGMENTS);
         }
       });
-      (linkGeometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+      const instanceStartAttr = linkGeometry.getAttribute("instanceStart");
+      if (instanceStartAttr && "data" in instanceStartAttr) (instanceStartAttr as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
     }
 
     function syncNodeAppearance(indices: Array<number | null>) {
@@ -573,6 +574,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
+      linkMaterial.resolution.set(width, height);
       requestRender(true);
     }
 
