@@ -1,6 +1,6 @@
 import { documentStorage } from "./memory";
 import { db } from "./db";
-import { accounts, users, memoryEntries, documentStoreDocuments, sessionArtifacts, sessionTree } from "@shared/schema";
+import { accounts, users, memoryEntries, documentStoreDocuments, planStepAttempts, planSteps, sessionArtifacts, sessionTree } from "@shared/schema";
 import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { combineWithVisibleScope, combineWithWritableScope } from "./scoped-storage";
 import { documentStoreIndependentWritesEnabled } from "./memory/document-store-cutover";
@@ -659,6 +659,16 @@ const targetChatDocumentScopeColumns = {
   vaultId: documentStoreDocuments.vaultId,
 };
 
+const planStepScopeColumns = {
+  ownerUserId: planSteps.ownerUserId,
+  accountId: planSteps.accountId,
+};
+
+const planAttemptScopeColumns = {
+  ownerUserId: planStepAttempts.ownerUserId,
+  accountId: planStepAttempts.accountId,
+};
+
 async function deleteSessionSubtree(rootSessionId: string): Promise<SessionDeletionResult> {
   const principal = getCurrentPrincipalOrSystem();
   const sessions = await chatFileStorage.getAllSessions();
@@ -718,6 +728,23 @@ async function deleteSessionSubtree(rootSessionId: string): Promise<SessionDelet
       throw new Error(`Session is not writable: ${rootSessionId}`);
     }
 
+    const detachedAt = new Date();
+    await tx
+      .update(planSteps)
+      .set({ sessionId: null, updatedAt: detachedAt })
+      .where(combineWithWritableScope(
+        principal,
+        planStepScopeColumns,
+        inArray(planSteps.sessionId, deletedSessionIds),
+      ));
+    await tx
+      .update(planStepAttempts)
+      .set({ childSessionId: null, updatedAt: detachedAt })
+      .where(combineWithWritableScope(
+        principal,
+        planAttemptScopeColumns,
+        inArray(planStepAttempts.childSessionId, deletedSessionIds),
+      ));
     await tx.delete(sessionArtifacts).where(inArray(sessionArtifacts.sessionId, deletedSessionIds));
     await tx.delete(sessionTree).where(inArray(sessionTree.sessionId, deletedSessionIds));
   });

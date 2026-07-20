@@ -47,6 +47,7 @@ import { ActiveStatusSpinner } from "@/components/nav-dot";
 interface ChildSessionPayload {
   title?: string | null;
   status?: string | null;
+  parentSessionId?: string | null;
   messages?: ChatMessage[];
 }
 
@@ -138,13 +139,18 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
     queryClient.invalidateQueries({ queryKey: ["/api/sessions", meta.childSessionId] });
   }, [childSub.status, childSub.runActive, childSub.updatedAt, meta.childSessionId]);
 
+  const parentSessionId = childSession?.parentSessionId || meta.parentSessionId;
   const deleteChildSession = useMutation({
-    mutationFn: () => deleteSessionTree(
-      meta.childSessionId,
-      `/api/sessions/${encodeURIComponent(meta.parentSessionId)}/child-blocks/${encodeURIComponent(meta.childSessionId)}`,
-    ),
+    mutationFn: () => {
+      if (!parentSessionId) throw new Error("Child session is missing its parent session identity");
+      return deleteSessionTree(
+        meta.childSessionId,
+        `/api/sessions/${encodeURIComponent(parentSessionId)}/child-blocks/${encodeURIComponent(meta.childSessionId)}`,
+      );
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/sessions", meta.parentSessionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions", parentSessionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
       queryClient.removeQueries({ queryKey: ["/api/sessions", meta.childSessionId] });
       emitSessionListChanged("inline-child-delete");
       setDeleted(true);
