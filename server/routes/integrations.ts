@@ -242,13 +242,20 @@ export async function registerIntegrationsRoutes(app: Express) {
     }
   });
 
-  app.delete("/api/gmail/accounts/:id", async (req, res) => {
+  app.delete("/api/gmail/accounts/:id", requireAuth, async (req, res) => {
     try {
+      const confirmationEmail = typeof req.body?.confirmationEmail === "string"
+        ? req.body.confirmationEmail
+        : "";
+      if (!confirmationEmail) {
+        return res.status(400).json({ error: "confirmationEmail is required" });
+      }
       const { removeGmailAccount } = await import("../gmail");
-      await removeGmailAccount(req.params.id);
+      await removeGmailAccount(req.params.id, confirmationEmail);
       res.json({ removed: true });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      const status = error.message === "Google account not found" ? 404 : 400;
+      res.status(status).json({ error: error.message });
     }
   });
 

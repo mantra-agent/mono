@@ -1973,6 +1973,8 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
   const { toast } = useToast();
   const [showAddForm, setShowAddForm] = useState(false);
   const [selectedVaultId, setSelectedVaultId] = useState("");
+  const [accountPendingRemoval, setAccountPendingRemoval] = useState<{ id: string; email: string } | null>(null);
+  const [removalConfirmation, setRemovalConfirmation] = useState("");
   const { vaults } = useVaults();
 
   const { data: accountsData, isLoading } = useQuery<{
@@ -2000,11 +2002,14 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
   });
 
   const removeMutation = useMutation({
-    mutationFn: async (accountId: string) => {
-      await apiRequest("DELETE", `/api/gmail/accounts/${accountId}`);
+    mutationFn: async ({ accountId, confirmationEmail }: { accountId: string; confirmationEmail: string }) => {
+      await apiRequest("DELETE", `/api/gmail/accounts/${accountId}`, { confirmationEmail });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/connected-accounts", "google"] });
+      setAccountPendingRemoval(null);
+      setRemovalConfirmation("");
       toast({ title: "Account removed" });
     },
     onError: (err: Error) => {
@@ -2121,7 +2126,10 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => removeMutation.mutate(account.id)}
+                    onClick={() => {
+                      setAccountPendingRemoval({ id: account.id, email: account.email });
+                      setRemovalConfirmation("");
+                    }}
                     disabled={removeMutation.isPending}
                     data-testid={`button-remove-account-${account.id}`}
                   >
@@ -2229,6 +2237,54 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
           </div>
         )
       ) : null}
+      <AlertDialog
+        open={Boolean(accountPendingRemoval)}
+        onOpenChange={(open) => {
+          if (!open && !removeMutation.isPending) {
+            setAccountPendingRemoval(null);
+            setRemovalConfirmation("");
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove Google account?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes the cached emails, enrichment, triage history, drafts, dismissals, and sync cursor for {accountPendingRemoval?.email}. Reconnect instead if you only need to replace OAuth credentials.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="google-account-removal-confirmation">
+              Type <span className="font-mono text-foreground">{accountPendingRemoval?.email}</span> to confirm
+            </Label>
+            <Input
+              id="google-account-removal-confirmation"
+              value={removalConfirmation}
+              onChange={(event) => setRemovalConfirmation(event.target.value)}
+              autoComplete="off"
+              data-testid="input-confirm-google-account-removal"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removeMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={!accountPendingRemoval || removalConfirmation !== accountPendingRemoval.email || removeMutation.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                if (!accountPendingRemoval || removalConfirmation !== accountPendingRemoval.email) return;
+                removeMutation.mutate({
+                  accountId: accountPendingRemoval.id,
+                  confirmationEmail: removalConfirmation,
+                });
+              }}
+              data-testid="button-confirm-google-account-removal"
+            >
+              {removeMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Remove account"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </IntegrationTreeSection>
   );
 }

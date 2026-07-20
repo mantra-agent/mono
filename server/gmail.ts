@@ -81,7 +81,14 @@ export async function handleAccountOAuthCallback(code: string, stateToken: strin
   return { id: account.accountId, email: account.email || '', label: account.label, addedAt: account.addedAt.toISOString() };
 }
 
-export async function removeGmailAccount(accountId: string): Promise<void> {
+export async function removeGmailAccount(accountId: string, confirmationEmail: string): Promise<void> {
+  const account = await getAccount(accountId);
+  if (!account || account.provider !== 'google' || !account.email) {
+    throw new Error('Google account not found');
+  }
+  if (confirmationEmail !== account.email) {
+    throw new Error('Type the exact Google account email to confirm removal');
+  }
   const cleanup = await storage.cleanupEmailAccountState(accountId);
   await deleteAccount(accountId);
   clearHealthCache(accountId);
