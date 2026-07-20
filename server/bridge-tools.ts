@@ -10331,20 +10331,7 @@ ${refs}` : ""),
       });
     }
 
-    function buildLibrarySurfaceSet(input: { surface?: boolean; surfaceDurationHours?: number; surfaceReason?: string | null; surfaceSection?: string | null }): Partial<typeof libraryPages.$inferInsert> {
-      if (input.surface === false) {
-        return { surface: false, surfaceUntil: null, surfaceReason: null, surfaceSection: null };
-      }
-      if (input.surface === true && typeof input.surfaceDurationHours === "number" && input.surfaceDurationHours > 0) {
-        return {
-          surface: true,
-          surfaceUntil: new Date(Date.now() + input.surfaceDurationHours * 60 * 60 * 1000),
-          surfaceReason: input.surfaceReason ?? null,
-          surfaceSection: input.surfaceSection ?? "inbox",
-        };
-      }
-      return {};
-    }
+    const { buildLibrarySurfaceSet } = await import("./library-save");
 
     try {
       // ── Breadcrumb helper ──────────────────────────────────────

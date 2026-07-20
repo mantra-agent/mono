@@ -33,7 +33,8 @@ export class ReminderTimerHandler implements TimerHandler {
       const { eq } = await import("drizzle-orm");
       const { requireCurrentUserPrincipal } = await import("./principal-context");
       const { combineWithWritableScope } = await import("./scoped-storage");
-      await db
+      const { publishLibraryChanged } = await import("./library-save");
+      const [updatedPage] = await db
         .update(libraryPages)
         .set({
           surface: true,
@@ -47,7 +48,12 @@ export class ReminderTimerHandler implements TimerHandler {
           ownerUserId: libraryPages.ownerUserId,
           accountId: libraryPages.accountId,
           vaultId: libraryPages.vaultId,
-        }, eq(libraryPages.id, libraryPageId)));
+        }, eq(libraryPages.id, libraryPageId)))
+        .returning();
+      if (!updatedPage) {
+        throw new Error(`Library reminder target was not writable: page=${libraryPageId}`);
+      }
+      publishLibraryChanged("reminder_fired", updatedPage);
       log.debug(`library reminder fired for page=${libraryPageId}`);
       return {
         outcome: "success",
