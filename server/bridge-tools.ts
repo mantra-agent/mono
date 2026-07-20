@@ -9428,7 +9428,7 @@ ${refs}` : ""),
             start: typeof args.start === "boolean" ? args.start : undefined,
             ...(sessionId ? { parentSessionId: sessionId, createdBySessionId: sessionId } : {}),
           });
-          return { result: JSON.stringify(result, null, 2) };
+          return { result: `${JSON.stringify(result, null, 2)}\n\n@workflow:${result.run.id}` };
         }
         if (action === "list_environment_workflows") {
           const result = await lifecycle.listEnvironmentBuildWorkflows(envId, typeof args.limit === "number" ? args.limit : 20);

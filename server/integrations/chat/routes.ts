@@ -62,9 +62,9 @@ import {
 } from "@shared/models/chat";
 import { BOOT_ID, db } from "../../db";
 import { and, eq, inArray, isNull, notInArray, sql as drizzleSql, type SQL } from "drizzle-orm";
-import { combineWithVisibleScope, visibleScopePredicate } from "../../scoped-storage";
+import { combineWithVisibleScope } from "../../scoped-storage";
 import { libraryPages } from "@shared/models/info";
-import { planExecutions, workflowRuns } from "@shared/schema";
+import { planExecutions } from "@shared/schema";
 import { createLogger } from "../../log";
 import { requireAuth } from "../../auth";
 import { getCurrentPrincipalOrSystem } from "../../principal-context";
@@ -672,12 +672,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         return res.status(404).json({ error: "Session not found" });
       }
       const TERMINAL_PLAN_STATUSES = ["completed", "completed_with_failures", "failed", "aborted"];
-      const TERMINAL_WORKFLOW_STATUSES = ["completed", "failed", "canceled"];
-      const principal = getPrincipal(req);
-      const workflowScopePredicate = principal
-        ? visibleScopePredicate(principal, { ownerUserId: workflowRuns.ownerUserId, accountId: workflowRuns.accountId, scope: workflowRuns.scope })
-        : drizzleSql`FALSE`;
-      const [messages, activePlan, activeWorkflow] = await Promise.all([
+      const [messages, activePlan] = await Promise.all([
         chatStorage.getMessagesBySession(id),
         db.select({
           id: planExecutions.id,
@@ -692,22 +687,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         .orderBy(planExecutions.createdAt)
         .limit(1)
         .then(r => r[0] || null),
-        db.select({
-          id: workflowRuns.id,
-          status: workflowRuns.status,
-          linkedLibraryPageId: workflowRuns.linkedLibraryPageId,
-        })
-        .from(workflowRuns)
-        .where(and(
-          eq(workflowRuns.parentSessionId, id),
-          notInArray(workflowRuns.status, TERMINAL_WORKFLOW_STATUSES),
-          workflowScopePredicate,
-        ))
-        .orderBy(workflowRuns.createdAt)
-        .limit(1)
-        .then(r => r[0] || null),
       ]);
-      res.json({ ...session, messages, activePlan, activeWorkflow });
+      res.json({ ...session, messages, activePlan });
     } catch (error) {
       chatLog.error("Error fetching session:", error);
       res.status(500).json({ error: "Failed to fetch session" });

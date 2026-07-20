@@ -305,6 +305,8 @@ export function MessageList({
     }
   }
   const isPlanOwnedChildBlock = (meta: ChildSessionBlockMeta): boolean => Boolean(meta.planId);
+  const isWorkflowOwnedChildBlock = (meta: ChildSessionBlockMeta): boolean =>
+    Boolean(meta.workflowRunId) || Boolean(meta.spawnReason?.startsWith("workflow:"));
   const persistedCrossKeys = new Set(
     messages
       .filter(m => m.role === "cross_session" && m.crossSession)
@@ -326,7 +328,7 @@ export function MessageList({
     if (msg.role === "cross_session" && isOutgoingChildMessage(msg, activeSession)) continue;
     if (msg.role === "cross_session" && layer < 2) continue;
     if (msg.role === "child_session_block" && hasChildSessionId(msg.childSession)) {
-      if (isPlanOwnedChildBlock(msg.childSession)) continue;
+      if (isPlanOwnedChildBlock(msg.childSession) || isWorkflowOwnedChildBlock(msg.childSession)) continue;
       if (latestPersistedChildMessageId.get(msg.childSession.childSessionId) !== msg.id) continue;
     }
     const childStream = msg.role === "child_session_block" && hasChildSessionId(msg.childSession)
@@ -351,7 +353,7 @@ export function MessageList({
       continue;
     }
     if (persistedChildIds.has(lc.meta.childSessionId)) continue;
-    if (isPlanOwnedChildBlock(lc.meta)) continue;
+    if (isPlanOwnedChildBlock(lc.meta) || isWorkflowOwnedChildBlock(lc.meta)) continue;
     items.push({ kind: "live_child", meta: lc.meta, ts: getChildSessionChronologyTs(lc.meta, lc.receivedAt, sessionStreams?.[lc.meta.childSessionId]) });
   }
   if (layer >= 2) {

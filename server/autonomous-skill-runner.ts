@@ -500,6 +500,8 @@ export async function executeAutonomousSkillRun(
     attemptId?: number;
     attemptNumber?: number;
     planPageRef?: string;
+    workflowRunId?: string;
+    workflowStageAttemptId?: number;
   } = {}
 ): Promise<AutonomousRunResult | null> {
   // ── Ensure user principal context ───────────────────────────────────
@@ -784,6 +786,8 @@ export async function executeAutonomousSkillRun(
         attemptId: options.attemptId,
         attemptNumber: options.attemptNumber,
         planPageRef: options.planPageRef,
+        workflowRunId: options.workflowRunId,
+        workflowStageAttemptId: options.workflowStageAttemptId,
       });
     } catch (lcErr: unknown) {
       logger.warn(`[SkillChat] [${sessionId}] Failed to emit child session block: ${lcErr instanceof Error ? lcErr.message : String(lcErr)}`);
