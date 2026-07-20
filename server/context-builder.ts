@@ -6,6 +6,9 @@ import { db, withQueryAttributionAsync, getInFlightStats } from "./db";
 import { getInstanceName, getInstanceNameLower } from "@shared/instance-config";
 import { TTLCache } from "./utils/ttl-cache";
 import { sessionOutputBuffer } from "@shared/schema";
+import { libraryPages } from "@shared/models/info";
+import { parseReferenceText } from "@shared/reference-parser";
+import { tiptapToMarkdown } from "@shared/markdown-tiptap";
 import { sql, or, and, eq, desc, gte, inArray } from "drizzle-orm";
 import type {
   ContextCallType,
@@ -42,6 +45,7 @@ import { withTimeout, isTimeoutError, SECTION_RESOLVE_TIMEOUT_MS } from "./timeo
 import { createLogger } from "./log";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { eventBus } from "./event-bus";
+import { combineWithVisibleScope } from "./scoped-storage";
 import { sanitizeSummary } from "./utils/sanitize-summary";
 import { isSessionOrientationEstablished } from "./session-orientation";
 import {
@@ -701,6 +705,73 @@ async function resolveActivePersona(request: ContextRequest): Promise<string> {
   }
 }
 
+const MAX_RULE_LINKED_PAGES = 5;
+
+function getRuleLinkedPageIds(ruleTexts: string[]): { pageIds: string[]; overflow: number } {
+  const uniquePageIds = new Set<string>();
+  for (const ruleText of ruleTexts) {
+    for (const part of parseReferenceText(ruleText)) {
+      if (part.kind === "reference" && part.ref.type === "page") {
+        uniquePageIds.add(part.ref.id);
+      }
+    }
+  }
+
+  const allPageIds = [...uniquePageIds];
+  return {
+    pageIds: allPageIds.slice(0, MAX_RULE_LINKED_PAGES),
+    overflow: Math.max(0, allPageIds.length - MAX_RULE_LINKED_PAGES),
+  };
+}
+
+async function resolveRuleLinkedPages(ruleTexts: string[]): Promise<string> {
+  const { pageIds, overflow } = getRuleLinkedPageIds(ruleTexts);
+  if (pageIds.length === 0) return "";
+
+  const principal = getCurrentPrincipalOrSystem();
+  const visiblePages = await db.select({
+    id: libraryPages.id,
+    title: libraryPages.title,
+    content: libraryPages.content,
+    plainTextContent: libraryPages.plainTextContent,
+  }).from(libraryPages).where(combineWithVisibleScope(
+    principal,
+    {
+      scope: libraryPages.scope,
+      ownerUserId: libraryPages.ownerUserId,
+      accountId: libraryPages.accountId,
+      vaultId: libraryPages.vaultId,
+    },
+    inArray(libraryPages.id, pageIds),
+  ));
+
+  const pagesById = new Map(visiblePages.map((page) => [page.id, page]));
+  const renderedPages = pageIds.map((pageId) => {
+    const page = pagesById.get(pageId);
+    if (!page) {
+      log.warn(`Rule-linked Library page unavailable ref=@page:${pageId}`);
+      return `### @page:${pageId}
+[Required Rule source unavailable. Do not claim to have applied it.]`;
+    }
+
+    const markdown = page.content
+      ? tiptapToMarkdown(page.content as Parameters<typeof tiptapToMarkdown>[0]).trim()
+      : "";
+    const content = markdown || page.plainTextContent.trim() || "[Page has no content.]";
+    return `### ${page.title} (@page:${page.id})
+${content}`;
+  });
+
+  if (overflow > 0) {
+    log.warn(`Rule-linked Library page limit exceeded loaded=${pageIds.length} omitted=${overflow}`);
+    renderedPages.push(`[${overflow} additional Rule-linked page(s) omitted by the ${MAX_RULE_LINKED_PAGES}-page context budget. Do not claim to have applied omitted sources.]`);
+  }
+
+  return `Canonical source documents required by the Rules above:
+
+${renderedPages.join("\n\n")}`;
+}
+
 async function resolveActiveRules(): Promise<string> {
   try {
     const rules = await fileRuleStorage.getAll();
@@ -710,11 +781,19 @@ async function resolveActiveRules(): Promise<string> {
       const scope = rule.scope === "always" ? " [always]" : rule.context ? ` [context: ${rule.context}]` : "";
       return `- ${rule.rule}${scope}`;
     });
+    let linkedPages = "";
+    try {
+      linkedPages = await resolveRuleLinkedPages(rules.map((rule) => rule.rule));
+    } catch (err) {
+      log.warn(`resolveRuleLinkedPages failed: ${safeStringify(err, { maxBytes: 4 * 1024, label: "ctx.resolveRuleLinkedPages.err" })}`);
+      linkedPages = "Canonical source documents required by the Rules above are temporarily unavailable. Do not claim to have applied them.";
+    }
 
     return `Personal Rules that override default behavior for this user:
 
-${lines.join("\n")}`;
-  } catch {
+${lines.join("\n")}${linkedPages ? `\n\n${linkedPages}` : ""}`;
+  } catch (err) {
+    log.warn(`resolveActiveRules failed: ${safeStringify(err, { maxBytes: 4 * 1024, label: "ctx.resolveActiveRules.err" })}`);
     return "Personal Rules unavailable.";
   }
 }
