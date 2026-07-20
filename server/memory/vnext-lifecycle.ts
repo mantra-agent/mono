@@ -21,6 +21,7 @@ const RETIREMENT_STALE_DAYS = 21;
 /** Per-run confidence decay applied to canonical claims with no recall in DECAY_UNREINFORCED_DAYS */
 const DECAY_UNREINFORCED_DAYS = 14;
 const DECAY_DELTA = 0.05;
+const DECAY_INTERVAL_MS = DECAY_UNREINFORCED_DAYS * 24 * 60 * 60 * 1000;
 
 export interface VnextLifecycleRunOptions {
   limit?: number;
@@ -98,6 +99,31 @@ function parseEntityMentions(claim: MemoryVnextClaim): Array<{ name: string; ent
 
 function isOlderThanDays(date: Date, days: number): boolean {
   return Date.now() - date.getTime() > days * 24 * 60 * 60 * 1000;
+}
+
+function metadataDate(value: unknown): Date | null {
+  if (typeof value !== "string") return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function confidenceMaintenanceAnchor(claim: MemoryVnextClaim): { anchor: Date; lastDecayedAt: Date | null } {
+  const metadata = (claim.metadata as Record<string, unknown> | null) ?? {};
+  const lifecycle = typeof metadata.lifecycle === "object" && metadata.lifecycle !== null
+    ? metadata.lifecycle as Record<string, unknown>
+    : {};
+  const confidenceDecay = typeof lifecycle.confidenceDecay === "object" && lifecycle.confidenceDecay !== null
+    ? lifecycle.confidenceDecay as Record<string, unknown>
+    : {};
+  const lastDecayedAt = metadataDate(metadata.lastDecayedAt) ?? metadataDate(confidenceDecay.lastMaintainedAt);
+  const anchor = [
+    lastDecayedAt,
+    claim.lastRecalledAt,
+    claim.lifecycleStageUpdatedAt,
+    claim.createdAt,
+  ].filter((date): date is Date => date instanceof Date && Number.isFinite(date.getTime()))
+    .sort((a, b) => b.getTime() - a.getTime())[0] ?? claim.createdAt;
+  return { anchor, lastDecayedAt };
 }
 
 function hasContradictionOrSupersession(candidate: VnextLifecycleCandidate): boolean {
@@ -187,14 +213,28 @@ async function decayCanonicalConfidence(candidate: VnextLifecycleCandidate, runI
   // Don't decay below minimum (decayClaimConfidence already floors at 0.1)
   if (candidate.claim.confidence <= 0.1) return false;
 
-  await memoryVnextClaimStorage.decayClaimConfidence(candidate.claim.id, DECAY_DELTA);
+  const now = new Date();
+  const { anchor, lastDecayedAt } = confidenceMaintenanceAnchor(candidate.claim);
+  const elapsedPeriods = Math.floor((now.getTime() - anchor.getTime()) / DECAY_INTERVAL_MS);
+  if (elapsedPeriods < 1) return false;
+
+  const delta = DECAY_DELTA * elapsedPeriods;
+  const updated = await memoryVnextClaimStorage.decayClaimConfidence(candidate.claim.id, delta, {
+    decayedAt: now,
+    expectedLastDecayedAt: lastDecayedAt,
+    elapsedPeriods,
+    intervalDays: DECAY_UNREINFORCED_DAYS,
+  });
+  if (!updated) return false;
   logLifecycle("memory.vnext.confidence_decayed", {
     runId,
     claimId: candidate.claim.id,
     from: candidate.claim.confidence,
-    to: Math.max(0.1, candidate.claim.confidence - DECAY_DELTA),
-    delta: DECAY_DELTA,
+    to: updated.confidence,
+    delta,
+    elapsedPeriods,
     unreinforcedDays: DECAY_UNREINFORCED_DAYS,
+    anchor: anchor.toISOString(),
   }, "debug");
   return true;
 }
