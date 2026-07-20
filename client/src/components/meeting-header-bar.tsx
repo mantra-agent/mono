@@ -5,11 +5,13 @@
  * and linked Agenda/Recap pages. Bot status is encoded on the title icon.
  * Renders above the transcript, mirroring the sticky-bar pattern used by plans/workflows.
  *
- * When a recap is ready and distribution drafts exist, renders a
- * "Send recap to N attendees" button that expands per-attendee
- * EmailDraftWidget panels (one per draftId). Follows the Sessions Draft
- * widget motif: fixed attendee recipients, editable content, explicit send
- * control (human presses Send), and a read-only expandable recap page.
+ * When a recap is ready, the recap row always renders. Distribution drafts
+ * auto-expand into per-attendee EmailDraftWidget panels (one per draftId);
+ * the "Send recap to N attendees" button collapses/expands them. When no
+ * drafts were created, a quiet skipped line says so — absence of drafts is
+ * never silent. Follows the Sessions Draft widget motif: fixed attendee
+ * recipients, editable content, explicit send control (human presses Send),
+ * and a read-only expandable recap page.
  */
 import { useEffect, useState, useCallback } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -292,7 +294,8 @@ export function MeetingHeaderBar({
   });
 
   // Distribution panel open/close state
-  const [distributionOpen, setDistributionOpen] = useState(false);
+  // Drafts auto-show when ready; the button is a collapse toggle.
+  const [distributionOpen, setDistributionOpen] = useState(true);
   const toggleDistribution = useCallback(
     () => setDistributionOpen((open) => !open),
     [],
@@ -501,6 +504,17 @@ export function MeetingHeaderBar({
               </span>
               <span className="text-xs text-destructive/70">Retry</span>
             </Button>
+          )}
+
+          {/* Distribution: skipped — absence of drafts is never silent */}
+          {recap.distributionStatus === "ready" && recap.distributionSkipped && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground"
+              data-testid="chip-distribution-skipped"
+            >
+              <Mail className="h-3 w-3 shrink-0" />
+              No recipients resolved — no drafts created
+            </span>
           )}
           </div>
         </div>
