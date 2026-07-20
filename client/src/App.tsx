@@ -85,6 +85,7 @@ const GlassesStandalone = lazyWithRetry(() => import("@/pages/glasses-standalone
 const InterfacePreviewPage = lazyWithRetry(() => import("@/pages/interface-preview"));
 const AudiencesPage = lazyWithRetry(() => import("@/pages/audiences"));
 const CampaignsPage = lazyWithRetry(() => import("@/pages/campaigns"));
+const DevOrbPage = lazyWithRetry(() => import("@/pages/dev-orb"));
 
 function serializeCaughtValue(value: unknown): unknown {
   if (value instanceof Error) {
@@ -295,6 +296,7 @@ function Router() {
         <Route path="/pipelines" component={PipelinesPage} />
         <Route path="/zero" component={ZeroPage} />
         <Route path="/interface-preview" component={InterfacePreviewPage} />
+        <Route path="/dev/orb">{() => <RequirePermission permission="system:read"><DevOrbPage /></RequirePermission>}</Route>
         <Route path="/library" component={InfoPage} />
         <Route path="/info" component={InfoPage} />
         <Route path="/audiences">{() => <RequirePermission permission="system:read"><AudiencesPage /></RequirePermission>}</Route>
