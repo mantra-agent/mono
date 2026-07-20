@@ -8,31 +8,17 @@ import { libraryPages } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { requireCurrentUserPrincipal } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope } from "../scoped-storage";
+import { publishLibraryChanged } from "../library-save";
+import {
+  findActiveLibraryReminder,
+  LIBRARY_REMINDER_PREFIX,
+} from "../library-reminders";
 
 const log = createLogger("LibraryReminder");
-
-export const LIBRARY_REMINDER_PREFIX = "library-reminder:";
 
 function buildReminderName(pageId: string, pageTitle?: string): string {
   const label = pageTitle?.slice(0, 40) || pageId;
   return `Library Reminder (${label})`;
-}
-
-export function extractLibraryPageId(timer: { description: string }): string | null {
-  if (timer.description.startsWith(LIBRARY_REMINDER_PREFIX)) {
-    return timer.description.slice(LIBRARY_REMINDER_PREFIX.length);
-  }
-  return null;
-}
-
-async function findActiveReminder(pageId: string) {
-  const allTimers = await timerStorage.getAll();
-  return allTimers.find(
-    (t) =>
-      t.type === "reminder" &&
-      t.enabled &&
-      t.description === `${LIBRARY_REMINDER_PREFIX}${pageId}`
-  );
 }
 
 export function registerLibraryReminderRoutes(app: Express): void {
@@ -52,7 +38,7 @@ export function registerLibraryReminderRoutes(app: Express): void {
         res.status(404).json({ error: "Library page not found" });
         return;
       }
-      const timer = await findActiveReminder(pageId);
+      const timer = await findActiveLibraryReminder(pageId);
       if (!timer) {
         res.json({ active: false });
         return;
@@ -81,7 +67,7 @@ export function registerLibraryReminderRoutes(app: Express): void {
       const [page] = await db
         .select({ id: libraryPages.id, title: libraryPages.title })
         .from(libraryPages)
-        .where(combineWithVisibleScope(requireCurrentUserPrincipal(), {
+        .where(combineWithWritableScope(requireCurrentUserPrincipal(), {
           scope: libraryPages.scope,
           ownerUserId: libraryPages.ownerUserId,
           accountId: libraryPages.accountId,
@@ -126,14 +112,7 @@ export function registerLibraryReminderRoutes(app: Express): void {
         };
       }
 
-      // Remove any existing reminder for this page
-      const existing = await findActiveReminder(pageId);
-      if (existing) {
-        await timerStorage.delete(existing.id);
-        log.log(`Deleted existing reminder timerId=${existing.id} for page=${pageId}`);
-      }
-
-      // Create the reminder timer
+      const existing = await findActiveLibraryReminder(pageId);
       const timer = await timerStorage.create({
         name: buildReminderName(pageId, page.title ?? undefined),
         description: `${LIBRARY_REMINDER_PREFIX}${pageId}`,
@@ -144,12 +123,11 @@ export function registerLibraryReminderRoutes(app: Express): void {
         timezone: "UTC",
       });
 
-      // Move to snoozed section instead of dismissing
       if (dismiss !== false) {
         const snoozedUntil = fireAtIso
           ? new Date(fireAtIso)
-          : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000); // nextBoot/nextBuild: snooze for a year
-        await db
+          : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+        const [updatedPage] = await db
           .update(libraryPages)
           .set({
             surface: true,
@@ -162,7 +140,23 @@ export function registerLibraryReminderRoutes(app: Express): void {
             ownerUserId: libraryPages.ownerUserId,
             accountId: libraryPages.accountId,
             vaultId: libraryPages.vaultId,
-          }, eq(libraryPages.id, pageId)));
+          }, eq(libraryPages.id, pageId)))
+          .returning();
+        if (!updatedPage) {
+          await timerStorage.delete(timer.id);
+          res.status(404).json({ error: "Library page not found or not writable" });
+          return;
+        }
+        publishLibraryChanged("snoozed", updatedPage);
+      }
+
+      if (existing) {
+        const deleted = await timerStorage.delete(existing.id);
+        if (!deleted) {
+          await timerStorage.delete(timer.id);
+          throw new Error(`Failed to replace existing reminder ${existing.id}`);
+        }
+        log.log(`Replaced existing reminder timerId=${existing.id} for page=${pageId}`);
       }
 
       log.log(`Created library reminder timerId=${timer.id} page=${pageId} ${nextBuild ? "nextBuild=true" : nextBoot ? "nextBoot=true" : `fireAt=${fireAtIso}`}`);
@@ -186,9 +180,9 @@ export function registerLibraryReminderRoutes(app: Express): void {
     try {
       const pageId = req.params.id;
       const [page] = await db
-        .select({ id: libraryPages.id })
+        .select({ id: libraryPages.id, surfaceUntil: libraryPages.surfaceUntil })
         .from(libraryPages)
-        .where(combineWithVisibleScope(requireCurrentUserPrincipal(), {
+        .where(combineWithWritableScope(requireCurrentUserPrincipal(), {
           scope: libraryPages.scope,
           ownerUserId: libraryPages.ownerUserId,
           accountId: libraryPages.accountId,
@@ -198,14 +192,41 @@ export function registerLibraryReminderRoutes(app: Express): void {
         res.status(404).json({ error: "Library page not found" });
         return;
       }
-      const timer = await findActiveReminder(pageId);
+      const timer = await findActiveLibraryReminder(pageId);
       if (!timer) {
         res.status(404).json({ error: "No active reminder found" });
         return;
       }
 
-      await timerStorage.delete(timer.id);
+      const now = Date.now();
+      const existingUntil = page.surfaceUntil?.getTime() ?? 0;
+      const inboxUntil = new Date(Math.max(existingUntil, now + 24 * 60 * 60 * 1000));
+      const [updatedPage] = await db
+        .update(libraryPages)
+        .set({
+          surface: true,
+          surfaceUntil: inboxUntil,
+          surfaceSection: "inbox",
+          updatedAt: new Date(),
+        })
+        .where(combineWithWritableScope(requireCurrentUserPrincipal(), {
+          scope: libraryPages.scope,
+          ownerUserId: libraryPages.ownerUserId,
+          accountId: libraryPages.accountId,
+          vaultId: libraryPages.vaultId,
+        }, eq(libraryPages.id, pageId)))
+        .returning();
+      if (!updatedPage) {
+        res.status(404).json({ error: "Library page not found or not writable" });
+        return;
+      }
+
+      const deleted = await timerStorage.delete(timer.id);
+      if (!deleted) {
+        throw new Error(`Failed to cancel reminder ${timer.id}`);
+      }
       await timerScheduler.rescheduleAll();
+      publishLibraryChanged("reminder_cancelled", updatedPage);
       log.log(`Cancelled library reminder timerId=${timer.id} page=${pageId}`);
 
       res.json({ success: true });

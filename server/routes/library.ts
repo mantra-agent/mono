@@ -65,6 +65,8 @@ import {
 } from "../library-domain";
 import { getLibraryPageNeighbors, runLibraryLint, syncEmbeddedLibraryPageLinks } from "../library-link-graph";
 import { compileLibraryPageToMantraWiki, queryMantraLibraryIndex } from "../library-compiler";
+import { projectActiveLibraryReminders } from "../library-reminders";
+import { buildLibrarySurfaceSet } from "../library-save";
 
 const log = createLogger("InfoRoutes");
 
@@ -152,33 +154,6 @@ const librarySurfaceInput = {
   surfaceReason: z.string().nullable().optional(),
   surfaceSection: z.string().nullable().optional(),
 };
-
-function buildLibrarySurfaceSet(input: {
-  surface?: boolean;
-  surfaceDurationHours?: number;
-  surfaceReason?: string | null;
-  surfaceSection?: string | null;
-}): Partial<typeof libraryPages.$inferInsert> {
-  if (input.surface === false) {
-    return {
-      surface: false,
-      surfaceUntil: null,
-      surfaceReason: null,
-      surfaceSection: null,
-    };
-  }
-
-  if (input.surface === true && typeof input.surfaceDurationHours === "number" && input.surfaceDurationHours > 0) {
-    return {
-      surface: true,
-      surfaceUntil: new Date(Date.now() + input.surfaceDurationHours * 60 * 60 * 1000),
-      surfaceReason: input.surfaceReason ?? null,
-      surfaceSection: input.surfaceSection ?? "inbox",
-    };
-  }
-
-  return {};
-}
 
 function visibleMemory(req: any, predicate?: SQL): SQL {
   return combineWithVisibleScope(
@@ -569,7 +544,7 @@ export async function registerLibraryRoutes(app: Express) {
             .where(visibleLibrary(req))
             .orderBy(desc(libraryPages.updatedAt));
       const pages = await query;
-      res.json(pages);
+      res.json(await projectActiveLibraryReminders(pages));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -577,7 +552,7 @@ export async function registerLibraryRoutes(app: Express) {
 
   app.get("/api/info/library/tree", async (req, res) => {
     try {
-      const pages = await db
+      const rawPages = await db
         .select({
           id: libraryPages.id,
           pageId: libraryPages.pageId,
@@ -599,6 +574,7 @@ export async function registerLibraryRoutes(app: Express) {
         .from(libraryPages)
         .where(visibleLibrary(req))
         .orderBy(asc(libraryPages.sortOrder), asc(libraryPages.title));
+      const pages = await projectActiveLibraryReminders(rawPages);
 
       type PageWithChildren = (typeof pages)[number] & {
         children: PageWithChildren[];
