@@ -106,7 +106,14 @@ export function SessionTranscriptSurface({
           <span>Real-time connection interrupted — updates may be delayed</span>
         </div>
       )}
-      {showWorkflow && <WorkflowStickyBar workflow={workflow} />}
+      {showWorkflow && (
+        <WorkflowStickyBar
+          workflow={workflow}
+          sessionId={activeSession}
+          sessionTitleById={sessionTitleById}
+          sessionStreams={sessionStreams}
+        />
+      )}
       {(() => {
         const transcript = (
           <div

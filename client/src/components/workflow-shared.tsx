@@ -9,7 +9,7 @@ export interface WorkflowWidgetAttempt { id: number; attemptNumber: number; stat
 export interface WorkflowWidgetStage { key: string; title: string; autonomyMode?: string; status: WorkflowStageStatus; attempts: WorkflowWidgetAttempt[]; latestAttempt?: WorkflowWidgetAttempt; }
 export interface WorkflowWidgetArtifact { id: number; stageAttemptId?: number | null; kind: string; title: string; refType: string; refId?: string | null; url?: string | null; summary?: string | null; createdAt?: string | null; }
 export interface WorkflowWidgetGate { id: number; stageAttemptId?: number | null; status: WorkflowGateStatus; prompt: string; }
-export interface WorkflowWidgetSession { id: number; stageAttemptId?: number | null; sessionId: string; role: string; spawnReason?: string | null; }
+export interface WorkflowWidgetSession { id: number; stageAttemptId?: number | null; sessionId: string; role: string; spawnReason?: string | null; createdAt?: string | null; }
 export interface WorkflowWidgetRun { run: { id: string; title: string; objective: string; status: WorkflowRunStatus; currentStageKey: string | null; linkedLibraryPageId?: string | null; failurePacket?: unknown; updatedAt?: string | null; }; template?: { id: string; name: string }; stages: WorkflowWidgetStage[]; artifacts?: WorkflowWidgetArtifact[]; gates?: WorkflowWidgetGate[]; sessions?: WorkflowWidgetSession[]; linked?: { libraryPageId?: string | null; planId?: string | null }; }
 
 export const TERMINAL_WORKFLOW_STATUSES = new Set<WorkflowRunStatus>(["completed", "failed", "canceled"]);
