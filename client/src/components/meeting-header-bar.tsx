@@ -476,6 +476,44 @@ export function MeetingHeaderBar({
         )}
       </div>
 
+      {meeting.recognition && meeting.recognition.streams.length > 0 && (
+        <div
+          className="flex flex-wrap items-center gap-1.5 border-t border-border/20 px-4 py-1.5"
+          data-testid="meeting-recognition-streams"
+        >
+          {meeting.recognition.streams.map((stream) => (
+            <span
+              key={stream.streamKey}
+              className={cn(
+                "inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-xs",
+                stream.status === "failed" || stream.status === "fallback"
+                  ? "border-destructive/30 bg-destructive/10 text-destructive"
+                  : stream.status === "active"
+                    ? "border-active/30 bg-active/5 text-active"
+                    : "border-border bg-muted/50 text-muted-foreground",
+              )}
+              title={[stream.transportLabel, stream.provider, stream.model, stream.detail].filter(Boolean).join(" · ")}
+              data-testid={`chip-recognition-stream-${stream.transportParticipantId}`}
+            >
+              {stream.status === "connecting" ? (
+                <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+              ) : stream.status === "failed" || stream.status === "fallback" ? (
+                <AlertCircle className="h-3 w-3 shrink-0" />
+              ) : (
+                <Radio className="h-3 w-3 shrink-0" />
+              )}
+              <span className="truncate">
+                {stream.transportLabel || `Stream ${stream.transportParticipantId}`} · {stream.attribution === "diarized"
+                  ? "Shared room"
+                  : stream.attribution === "excluded"
+                    ? "Excluded"
+                    : "Participant"} · {stream.status}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* ── Agenda ── */}
       {meeting.agendaPage ? (
         <div className="border-t border-border/20 px-4 py-2">

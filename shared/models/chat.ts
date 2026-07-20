@@ -711,9 +711,14 @@ export interface MeetingParticipant {
   providerSpeakerId?: string;
 }
 
-export type MeetingSpeakerPolicy =
+export type CanonicalMeetingSpeakerPolicy =
   | { mode: "participant_streams" }
+  | { mode: "shared_room" };
+
+export type MeetingSpeakerPolicy =
+  | CanonicalMeetingSpeakerPolicy
   | {
+      /** @deprecated Legacy attendee-scoped policy. Read as shared_room. */
       mode: "selected_shared_streams";
       sharedStreams: Array<{
         selector: { attendeeEmail?: string; participantLabel?: string };
@@ -721,14 +726,23 @@ export type MeetingSpeakerPolicy =
       }>;
     };
 
+/** Existing attendee-scoped metadata migrates at the read boundary. */
+export function normalizeMeetingSpeakerPolicy(
+  policy: MeetingSpeakerPolicy | null | undefined,
+): CanonicalMeetingSpeakerPolicy {
+  return policy?.mode === "shared_room" || policy?.mode === "selected_shared_streams"
+    ? { mode: "shared_room" }
+    : { mode: "participant_streams" };
+}
+
 export interface MeetingRecognitionStream {
   streamKey: string;
   transportParticipantId: string;
   transportLabel?: string;
-  attribution: "participant" | "diarized";
+  attribution: "participant" | "diarized" | "excluded";
   provider: string;
   model: string;
-  status: "connecting" | "active" | "fallback" | "closed" | "failed";
+  status: "connecting" | "active" | "fallback" | "closed" | "failed" | "excluded";
   detail?: string;
 }
 

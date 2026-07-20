@@ -15,7 +15,7 @@ import { eventBus } from "./event-bus";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwnershipValues } from "./sensitive-scope";
-import type { MeetingSpeakerPolicy } from "@shared/models/chat";
+import { normalizeMeetingSpeakerPolicy, type MeetingSpeakerPolicy } from "@shared/models/chat";
 
 const log = createLogger("CalendarMetadata");
 
@@ -191,7 +191,9 @@ export async function setMetadata(
     : null;
   const storedNotes = hasNotesPatch ? notes ?? null : existing?.notes ?? null;
   const storedAgenda = hasAgendaPatch ? agenda ?? null : existing?.agenda ?? null;
-  const storedSpeakerPolicy = hasSpeakerPolicyPatch ? speakerPolicy : existing?.speakerPolicy ?? null;
+  const storedSpeakerPolicy = hasSpeakerPolicyPatch
+    ? normalizeMeetingSpeakerPolicy(speakerPolicy)
+    : existing?.speakerPolicy ?? null;
 
   const rows = await db
     .insert(calendarEventMetadata)

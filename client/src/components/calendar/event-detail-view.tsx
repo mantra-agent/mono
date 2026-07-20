@@ -129,7 +129,8 @@ interface CalendarMetadata {
   capacityType: CapacityTypeValue | null;
   notes: string | null;
   agenda: string | null;
-  speakerPolicy: { mode: "participant_streams" } | {
+  speakerPolicy: { mode: "participant_streams" } | { mode: "shared_room" } | {
+    /** @deprecated Read-only compatibility for existing metadata. */
     mode: "selected_shared_streams";
     sharedStreams: Array<{ selector: { attendeeEmail?: string; participantLabel?: string } }>;
   } | null;
@@ -206,37 +207,6 @@ function resolveEventCalendar(
   );
 }
 
-interface MeetingConnectionOption {
-  email: string;
-  label: string;
-}
-
-function getMeetingConnectionOptions(
-  event: CalendarEvent | undefined,
-  selectedEmail?: string,
-): MeetingConnectionOption[] {
-  const options = new Map<string, MeetingConnectionOption>();
-  const addOption = (email: string | undefined, label?: string, isSelf = false) => {
-    const trimmedEmail = email?.trim();
-    if (!trimmedEmail) return;
-    const key = trimmedEmail.toLowerCase();
-    const displayLabel = isSelf
-      ? `Your connection (${trimmedEmail})`
-      : label?.trim() || trimmedEmail;
-    const existing = options.get(key);
-    if (!existing || isSelf) options.set(key, { email: trimmedEmail, label: displayLabel });
-  };
-
-  addOption(event?.accountEmail, undefined, true);
-  addOption(event?.organizer?.email, event?.organizer?.displayName, event?.organizer?.self);
-  for (const attendee of event?.attendees || []) {
-    addOption(attendee.email, attendee.displayName, attendee.self);
-  }
-  addOption(selectedEmail);
-
-  return Array.from(options.values());
-}
-
 // --- Component ---
 
 interface EventDetailViewProps {
@@ -284,10 +254,8 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
         linkedPeople: metadataData.people,
       }
     : null;
-  const selectedSharedAudioEmail = metadata?.speakerPolicy?.mode === "selected_shared_streams"
-    ? metadata.speakerPolicy.sharedStreams[0]?.selector.attendeeEmail
-    : undefined;
-  const meetingConnectionOptions = getMeetingConnectionOptions(eventData, selectedSharedAudioEmail);
+  const sharedRoomEnabled = metadata?.speakerPolicy?.mode === "shared_room"
+    || metadata?.speakerPolicy?.mode === "selected_shared_streams";
 
   // --- Email map for people linking ---
   const { data: emailMapData } = useQuery<{ emailMap: Record<string, { id: string; name: string }> }>({
@@ -522,18 +490,13 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
 
   // --- Metadata mutations ---
   const setSpeakerPolicyMutation = useMutation({
-    mutationFn: async (attendeeEmail: string) => {
+    mutationFn: async (sharedRoom: boolean) => {
       await apiRequest("POST", "/api/calendar/metadata", {
         googleEventId: eventId,
         accountId: accountId || selectedAccountId,
         calendarId: calendarId || selectedCalendarId,
         eventType: metadata?.eventType || "meeting",
-        speakerPolicy: attendeeEmail === "participant_streams"
-          ? { mode: "participant_streams" }
-          : {
-              mode: "selected_shared_streams",
-              sharedStreams: [{ selector: { attendeeEmail } }],
-            },
+        speakerPolicy: { mode: sharedRoom ? "shared_room" : "participant_streams" },
       });
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: metadataQueryKey }),
@@ -1013,24 +976,19 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
                   )}
 
                   {(metadata?.eventType || "meeting") === "meeting" && (
-                    <ProfileTreeRow label="Shared Audio" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-event-shared-audio">
-                      <Select
-                        value={selectedSharedAudioEmail || "participant_streams"}
-                        onValueChange={value => setSpeakerPolicyMutation.mutate(value)}
-                        disabled={setSpeakerPolicyMutation.isPending || isReadOnly}
-                      >
-                        <SelectTrigger data-testid="select-shared-room-audio">
-                          <SelectValue placeholder="One person per connection" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="participant_streams">One person per connection</SelectItem>
-                          {meetingConnectionOptions.map(connection => (
-                            <SelectItem key={connection.email.toLowerCase()} value={connection.email}>
-                              Multiple speakers via {connection.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                    <ProfileTreeRow label="Shared room" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-event-shared-room">
+                      <div className="flex items-center justify-end gap-2">
+                        <span className="text-xs text-muted-foreground">
+                          {sharedRoomEnabled ? "Diarize room speakers" : "One speaker per connection"}
+                        </span>
+                        <Switch
+                          checked={sharedRoomEnabled}
+                          onCheckedChange={checked => setSpeakerPolicyMutation.mutate(checked)}
+                          disabled={setSpeakerPolicyMutation.isPending || isReadOnly}
+                          aria-label="Shared room"
+                          data-testid="switch-shared-room"
+                        />
+                      </div>
                     </ProfileTreeRow>
                   )}
                 </>

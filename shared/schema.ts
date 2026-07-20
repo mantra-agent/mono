@@ -975,7 +975,7 @@ export const calendarEventMetadata = pgTable("calendar_event_metadata", {
   notes: text("notes"),
   /** Private agenda visible only through Mantra's user-scoped meeting metadata. */
   agenda: text("agenda"),
-  /** Physical audio topology policy for selective meeting diarization. */
+  /** Meeting-level physical audio topology policy for acoustic diarization. */
   speakerPolicy: jsonb("speaker_policy"),
   // Meeting agent auto-join materialization. Status discriminant computed at
   // the source: scheduled | no_link | joined | failed. Detail carries the
