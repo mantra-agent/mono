@@ -94,10 +94,10 @@ export const fieldFragmentShader = /* glsl */ `
     float d2 = ringDistance(p + vec3(0.08, -0.03, 0.02), vec3(1.0, -0.28, 0.48), 0.53);
     float d3 = ringDistance(p - vec3(0.04, 0.06, 0.01), vec3(-0.34, 0.46, 1.0), 0.48);
 
-    float width = mix(0.075, 0.035, uCoherence);
+    float width = mix(0.13, 0.075, uCoherence);
     float currents = exp(-min(d1, min(d2, d3)) * min(d1, min(d2, d3)) / (width * width));
 
-    float preciseOrbit = exp(-d2 * d2 / 0.0012) * uOrbitPrecision;
+    float preciseOrbit = exp(-d2 * d2 / 0.0048) * uOrbitPrecision;
     return max(currents, preciseOrbit);
   }
 
@@ -109,20 +109,21 @@ export const fieldFragmentShader = /* glsl */ `
     float filaments = linkedCurrents(advected, phase);
     float cloudA = valueNoise(advected * 2.35 + vec3(phase * 0.7, -phase * 0.4, phase * 0.25));
     float cloudB = valueNoise(advected * 4.7 - vec3(phase * 0.2, phase * 0.35, -phase * 0.3));
-    float cloud = smoothstep(0.48, 0.78, cloudA * 0.72 + cloudB * 0.28);
+    float cloud = smoothstep(0.4, 0.7, cloudA * 0.72 + cloudB * 0.28);
 
     float radius = length(p);
     float audio = uAudioLevel * uWaveEnergy;
     float wave = sin(radius * 24.0 - uTime * (4.5 + audio * 4.0));
     float damping = exp(-radius * 1.65);
-    float pressure = max(0.0, wave) * damping * audio;
+    float pressure = smoothstep(0.28, 0.88, wave * 0.5 + 0.5) * damping * audio;
 
-    float coreMask = mix(1.0, smoothstep(0.12, 0.48, radius), uCoreDarkness);
+    float coreLight = 0.22 + 0.78 * smoothstep(0.08, 0.42, radius);
+    float coreMask = mix(1.0, coreLight, uCoreDarkness);
     float edgeMask = smoothstep(1.0, 0.72, radius);
     float density = (
-      filaments * uFilamentDensity * 1.45
-      + cloud * uCloudDensity * 0.72
-      + pressure * 0.52
+      filaments * uFilamentDensity * 2.25
+      + cloud * uCloudDensity * 1.05
+      + pressure * 1.15
     ) * coreMask * edgeMask * uFieldEnergy * uDimming;
 
     return vec2(density, filaments + pressure);
@@ -149,7 +150,7 @@ export const fieldFragmentShader = /* glsl */ `
       if (i >= uQualitySteps) break;
       vec3 p = ro + rd * travel;
       vec2 sampleField = fieldDensity(p);
-      float density = clamp(sampleField.x * stepSize * 3.1, 0.0, 0.72);
+      float density = clamp(sampleField.x * stepSize * 5.2, 0.0, 0.78);
       vec3 sampleColor = mix(DEEP_BLUE, CTA_BLUE, clamp(sampleField.y * 0.78, 0.0, 1.0));
       accumulated += transmittance * density * sampleColor;
       transmittance *= 1.0 - density;
@@ -158,7 +159,7 @@ export const fieldFragmentShader = /* glsl */ `
     }
 
     float alpha = clamp(1.0 - transmittance, 0.0, 0.82);
-    gl_FragColor = vec4(accumulated * 1.35, alpha);
+    gl_FragColor = vec4(accumulated * 1.85, alpha);
   }
 `;
 

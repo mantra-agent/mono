@@ -14,7 +14,7 @@ import { createAnimationState, tickAnimation } from './orb-state';
 
 const log = createLogger('AgentOrb');
 const MAX_DPR = 1.5;
-const SPHERE_DETAIL = [32, 24] as const;
+const SPHERE_DETAIL = [48, 36] as const;
 const FIELD_DETAIL = [24, 18] as const;
 const HALO_SCALE = 1.35;
 
