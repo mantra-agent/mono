@@ -156,12 +156,12 @@ async function runDistribution(
     recap: { ...recap, distributionStatus: "drafting" },
   });
 
-  // 2. Resolve attendees.
+  // 2. Resolve recipients: calendar invitees, host included, host-only fallback.
   const ownerEmail = await resolveOwnerEmail(principal);
-  const attendees = await resolveAttendees(meeting, ownerEmail);
+  const attendees = await resolveRecipients(meeting, ownerEmail);
 
   if (attendees.length === 0) {
-    log.info(`No eligible attendees for session ${sessionId}; skipping distribution`);
+    log.warn(`No recipients resolved for session ${sessionId} (no calendar invitees and no Gmail account); skipping distribution`);
     await chatStorage.updateMeetingMeta(sessionId, {
       recap: { ...recap, distributionStatus: "ready", distributionSkipped: true, draftIds: [] },
     });
@@ -308,17 +308,42 @@ async function resolveOwnerEmail(principal: Principal): Promise<string | null> {
 }
 
 /**
- * Resolve attendees from calendar event people + meeting participants.
- * Deduplicates by normalized lowercase email. Excludes the owner's email.
+ * Resolve recap recipients from the calendar event's invitee list.
+ *
+ * Invitees are the ground truth of who the meeting was with — not who joined
+ * the call, and not which emails resolved to linked People. Linked People
+ * only enrich names. The host is a legitimate recipient of their own recap;
+ * when no invitees resolve (e.g. no calendar event), the list falls back to
+ * the host so a recap always reaches at least them. Deduplicates by
+ * normalized lowercase email.
  */
-async function resolveAttendees(
+async function resolveRecipients(
   meeting: MeetingSessionMeta,
   ownerEmail: string | null,
 ): Promise<ResolvedAttendee[]> {
   const emailMap = new Map<string, ResolvedAttendee>();
 
-  // Path A: calendarEventPeople (best: has personId → name mapping).
   if (meeting.providerEventId && meeting.calendarAccountId && meeting.calendarId) {
+    // Canonical source: raw calendar event invitees.
+    try {
+      const { getEvent } = await import("../google-calendar");
+      const event = await getEvent(
+        meeting.calendarAccountId,
+        meeting.calendarId,
+        meeting.providerEventId,
+      );
+      for (const invitee of event.attendees ?? []) {
+        const norm = invitee.email?.toLowerCase();
+        if (!norm || !isValidEmail(norm)) continue;
+        emailMap.set(norm, { email: norm, name: invitee.displayName || undefined });
+      }
+    } catch (err) {
+      log.warn(
+        `Calendar invitee resolution failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    // Enrichment: linked People provide canonical person names for invitees.
     try {
       const { getMetadata, getLinkedPeople } = await import("../calendar-metadata");
       const meta = await getMetadata(
@@ -331,34 +356,28 @@ async function resolveAttendees(
         for (const p of people) {
           if (!p.attendeeEmail) continue;
           const norm = p.attendeeEmail.toLowerCase();
-          if (isValidEmail(norm)) {
+          if (!isValidEmail(norm)) continue;
+          const existing = emailMap.get(norm);
+          if (existing) {
+            existing.name = p.personName ?? existing.name;
+          } else {
             emailMap.set(norm, { email: norm, name: p.personName ?? undefined });
           }
         }
       }
     } catch (err) {
       log.warn(
-        `Calendar attendee resolution failed: ${err instanceof Error ? err.message : String(err)}`,
+        `Calendar attendee enrichment failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
 
-  // Path B: Participants with known personId.
-  for (const p of meeting.participants) {
-    if (!p.personId) continue;
-    // Participants don't carry emails directly; we rely on Path A for email addresses.
-    // This path exists as a future extension point.
+  // Structural floor: the recap always reaches at least the host.
+  if (emailMap.size === 0 && ownerEmail && isValidEmail(ownerEmail)) {
+    emailMap.set(ownerEmail, { email: ownerEmail });
   }
 
-  // Exclude the meeting bot label (Mantra Agent) — no email to send to anyway.
-  // Exclude owner's own email.
-  const result: ResolvedAttendee[] = [];
-  for (const [norm, attendee] of emailMap) {
-    if (ownerEmail && norm === ownerEmail) continue;
-    result.push(attendee);
-  }
-
-  return result;
+  return [...emailMap.values()];
 }
 
 // ─── Email content ────────────────────────────────────────────────────────────
