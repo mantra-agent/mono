@@ -831,7 +831,7 @@ export interface MeetingRecapMeta {
   error?: string;
   /** Distribution lifecycle — set after recap status reaches "ready". */
   distributionStatus?: MeetingRecapDistributionStatus;
-  /** email_drafts.id per attendee drafted via Gmail path. */
+  /** Gmail draft IDs surfaced as inline @email_draft artifacts in the session. */
   draftIds?: string[];
   distributionError?: string;
   /** true when distribution was skipped (no eligible attendees or no send method). */

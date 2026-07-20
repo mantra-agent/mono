@@ -274,6 +274,8 @@ export interface FileMessage {
   speaker?: MessageSpeakerMeta;
   /** Structured response to an inline question tool call. */
   questionResponse?: QuestionResponseMeta;
+  /** Replay-safe identity for a server-produced inline artifact message. */
+  artifactKey?: string;
   /** Canonical per-turn correlation ID. Used for replay-safe user-message acceptance and voice turn pairing. */
   turnId?: string;
   /** Visibility discriminant — absent or 'chat' = normal; 'diagnostic' = hidden from transcript */
@@ -1075,6 +1077,14 @@ export interface IChatFileStorage {
     turnId?: string,
     persona?: PersonaSnapshot,
   ): Promise<FileMessage | null>;
+  createAssistantArtifactMessageOnce(
+    sessionId: string,
+    content: string,
+    artifactKey: string,
+  ): Promise<
+    | { outcome: "created" | "duplicate"; message: FileMessage }
+    | { outcome: "session_not_found" }
+  >;
   createUserMessageOnce(
     sessionId: string,
     content: string,
@@ -1702,6 +1712,59 @@ export const chatFileStorage: IChatFileStorage = {
       await writeConv(data);
       invalidateSessionsCache();
       return msg;
+    });
+  },
+
+
+  async createAssistantArtifactMessageOnce(
+    sessionId: string,
+    content: string,
+    artifactKey: string,
+  ) {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data) return { outcome: "session_not_found" as const };
+
+      const existing = data.messages.find(
+        (message) =>
+          message.role === "assistant" && message.artifactKey === artifactKey,
+      );
+      if (existing) {
+        log.debug(
+          `[ChatFileStorage] duplicate assistant artifact ignored session=${sessionId} artifactKey=${artifactKey}`,
+        );
+        return { outcome: "duplicate" as const, message: existing };
+      }
+
+      const sanitizedContent = stripRoleMarkers(content, sessionId);
+      if (!hasRenderableAssistantPayload({ content: sanitizedContent })) {
+        throw new Error(`Assistant artifact ${artifactKey} has no renderable content`);
+      }
+      const now = new Date().toISOString();
+      const message: FileMessage = {
+        id: generateId(),
+        sessionId,
+        role: "assistant",
+        content: sanitizedContent,
+        thinking: null,
+        toolCalls: null,
+        systemSteps: null,
+        model: null,
+        createdAt: now,
+        updatedAt: now,
+        artifactKey,
+        persona: await resolvePersonaSnapshot(data.personaId),
+      };
+      data.messages.push(message);
+      data.updatedAt = now;
+      await writeConv(data);
+      invalidateSessionsCache();
+      eventBus.publish({
+        category: "system",
+        event: "data:session_messages_changed",
+        payload: { source: "chat_storage", sessionId, messageId: message.id },
+      });
+      return { outcome: "created" as const, message };
     });
   },
 

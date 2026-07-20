@@ -2,8 +2,8 @@
  * Meeting recap distribution routes.
  *
  * GET /api/meetings/:sessionId/recap-distributions
- *   Returns per-attendee distribution rows for a session. Principal-scoped.
- *   Used by MeetingHeaderBar to render EmailDraftWidget chips per attendee draft.
+ *   Returns owner-scoped per-attendee distribution provenance. Email drafts
+ *   render through canonical @email_draft references in the Session transcript.
  */
 import { type Express } from "express";
 import { eq, and } from "drizzle-orm";

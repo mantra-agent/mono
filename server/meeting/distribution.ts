@@ -99,6 +99,7 @@ export async function distributeRecap(
       .select({
         id: meetingRecapDistributions.id,
         status: meetingRecapDistributions.status,
+        draftId: meetingRecapDistributions.draftId,
       })
       .from(meetingRecapDistributions)
       .where(
@@ -110,7 +111,13 @@ export async function distributeRecap(
 
     const hasCompletedOrPending = existing.some((row) => row.status !== "failed");
     if (hasCompletedOrPending) {
-      log.debug(`Distribution already started for session ${sessionId}; skipping`);
+      const existingDraftIds = [...new Set(
+        existing
+          .map((row) => row.draftId)
+          .filter((draftId): draftId is string => !!draftId),
+      )];
+      await surfaceRecapDraftsInline(sessionId, existingDraftIds);
+      log.debug(`Distribution already started for session ${sessionId}; ensured inline draft surface`);
       return;
     }
     if (existing.length > 0 && !options.retryFailed) {
@@ -288,7 +295,11 @@ async function runDistribution(
     recap: { ...recap, distributionStatus: "ready", draftIds },
   });
 
-  // 7. Publish event for hooks/listeners.
+  // 7. Surface the draft through the same canonical session-message
+  // renderer used by Gmail draft and reply tool results.
+  await surfaceRecapDraftsInline(sessionId, draftIds);
+
+  // 8. Publish event for hooks/listeners.
   eventBus.publish({
     category: "agent",
     event: "meeting:recap_distributed",
@@ -298,6 +309,26 @@ async function runDistribution(
   log.info(
     `Recap distribution complete for session ${sessionId}: ${attendees.length} attendee(s), ${draftIds.length} draft(s)`,
   );
+}
+
+async function surfaceRecapDraftsInline(
+  sessionId: string,
+  draftIds: string[],
+): Promise<void> {
+  for (const draftId of draftIds) {
+    const artifactKey = `meeting-recap-draft:${draftId}`;
+    const result = await chatStorage.createAssistantArtifactMessageOnce(
+      sessionId,
+      `@email_draft:${draftId}`,
+      artifactKey,
+    );
+    if (result.outcome === "session_not_found") {
+      throw new Error(`Meeting session ${sessionId} disappeared while surfacing recap draft`);
+    }
+    log.debug(
+      `Recap draft inline surface ${result.outcome} session=${sessionId} draftId=${draftId}`,
+    );
+  }
 }
 
 // ─── Attendee resolution ──────────────────────────────────────────────────────
