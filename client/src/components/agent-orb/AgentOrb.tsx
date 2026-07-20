@@ -147,6 +147,8 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, className }: Ag
       const h = container.clientHeight;
       if (w === 0 || h === 0) return;
       camera.aspect = w / h;
+      // Keep the complete halo inside narrow Recall/mobile viewports.
+      camera.position.z = 4 * Math.max(1, h / w);
       camera.updateProjectionMatrix();
       renderer.setSize(w, h, false);
     }
