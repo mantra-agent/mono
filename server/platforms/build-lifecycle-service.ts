@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { db } from "../db";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { getProviderCredential } from "../provider-credential-store";
+import { getBranchHead } from "../integrations/github-pr";
 import { combineWithVisibleScope, combineWithWritableScope } from "../scoped-storage";
 import { getLatestDeploymentByToken } from "../integrations/railway/client";
 import { getCloudflareLatestDeployment } from "../services/provider-connection-service";
@@ -504,9 +505,17 @@ function deriveBuildLifecycleGatePolicy(environmentName: string, config: Environ
   };
 }
 
-function buildLifecycleSnapshot(lifecycle: EnvironmentBuildLifecycleContext, bindings: Awaited<ReturnType<typeof getBindingContext>>) {
+async function buildLifecycleSnapshot(lifecycle: EnvironmentBuildLifecycleContext, bindings: Awaited<ReturnType<typeof getBindingContext>>) {
   const config = lifecycle.config;
   if (!config) throw new Error("Cannot snapshot missing build lifecycle config");
+  let targetCommit: { sha: string; message: string; resolvedAt: string } | null = null;
+  if (bindings.source?.provider === "github" && bindings.source.owner && bindings.source.repo && bindings.source.branch) {
+    const head = await getBranchHead({ owner: bindings.source.owner, repo: bindings.source.repo }, bindings.source.branch);
+    if (!head) {
+      throw new Error(`Build lifecycle source invariant failed: could not resolve ${bindings.source.owner}/${bindings.source.repo}@${bindings.source.branch}`);
+    }
+    targetCommit = { ...head, resolvedAt: new Date().toISOString() };
+  }
   return {
     snapshottedAt: new Date().toISOString(),
     platform: { id: lifecycle.platform.id, name: lifecycle.platform.name },
@@ -527,7 +536,7 @@ function buildLifecycleSnapshot(lifecycle: EnvironmentBuildLifecycleContext, bin
       enabled: config.enabled,
       updatedAt: config.updatedAt,
     },
-    source: bindings.source ? { id: bindings.source.id, provider: bindings.source.provider, connectionId: bindings.source.connectionId, owner: bindings.source.owner, repo: bindings.source.repo, branch: bindings.source.branch, autoDeploy: bindings.source.autoDeploy, codeIndexingEnabled: bindings.source.codeIndexingEnabled } : null,
+    source: bindings.source ? { id: bindings.source.id, provider: bindings.source.provider, connectionId: bindings.source.connectionId, owner: bindings.source.owner, repo: bindings.source.repo, branch: bindings.source.branch, autoDeploy: bindings.source.autoDeploy, codeIndexingEnabled: bindings.source.codeIndexingEnabled, targetCommitSha: targetCommit?.sha || null, targetCommitMessage: targetCommit?.message || null, targetCommitResolvedAt: targetCommit?.resolvedAt || null } : null,
     hosting: bindings.hosting ? { id: bindings.hosting.id, provider: bindings.hosting.provider, connectionId: bindings.hosting.connectionId, projectId: bindings.hosting.projectId, projectName: bindings.hosting.projectName, providerEnvironmentId: bindings.hosting.providerEnvironmentId, providerEnvironmentName: bindings.hosting.providerEnvironmentName, serviceId: bindings.hosting.serviceId, serviceName: bindings.hosting.serviceName, publicUrl: bindings.hosting.publicUrl, staticUrl: bindings.hosting.staticUrl } : null,
     deploySemantics: {
       mode: deploymentPolicyMode(config),
@@ -549,7 +558,7 @@ export async function startEnvironmentBuildWorkflow(environmentId: number, input
   if (!lifecycle.config?.enabled) throw new Error(`Environment ${environmentId} has no enabled build lifecycle config`);
   await seedBuildWorkflowTemplate();
   const bindings = await getBindingContext(environmentId);
-  const snapshot = buildLifecycleSnapshot(lifecycle, bindings);
+  const snapshot = await buildLifecycleSnapshot(lifecycle, bindings);
   const gatePolicy = snapshot.config.gatePolicy;
   const title = input.title?.trim() || `Build ${lifecycle.platform.name} / ${lifecycle.product.name} / ${lifecycle.environment.name}`;
   const objective = input.objective?.trim() || `Run ${lifecycle.config.workflowTemplateId} for ${lifecycle.platform.name} / ${lifecycle.product.name} / ${lifecycle.environment.name}. Deploy policy: ${snapshot.deploySemantics.mode}${snapshot.deploySemantics.manualPromoteHardGate ? " with manual promotion hard gate" : ""}.`;

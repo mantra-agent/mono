@@ -43,7 +43,8 @@ import {
 import { libraryPages } from "@shared/models/info";
 import { isParseableReferenceType, serializeReference } from "@shared/references";
 import { getProviderCredential } from "../provider-credential-store";
-import { extractDeploymentMeta, fetchDeployments, getLatestDeploymentByToken } from "../integrations/railway/client";
+import { extractDeploymentMeta, fetchDeploymentsForEnvironment, getLatestDeploymentByToken, type LatestDeployment } from "../integrations/railway/client";
+import { compareRefs } from "../integrations/github-pr";
 import { getCloudflareLatestDeployment } from "../services/provider-connection-service";
 import { buildWorkflowRunPageContent, buildWorkflowStages, parseWorkflowDefinition, type WorkflowEnvironmentTruth, type WorkflowRunDetail } from "./workflow-renderer";
 import { monitorChildSession, truncateOutput, type MonitorResult } from "../child-session-monitor";
@@ -735,7 +736,7 @@ export async function getWorkflowTemplate(templateId: string): Promise<WorkflowT
   return template || null;
 }
 
-export async function getWorkflowEnvironmentTruth(runIdOrEnvironmentId: string | number, expectedCommitSha?: string | null): Promise<WorkflowEnvironmentTruth | null> {
+export async function getWorkflowEnvironmentTruth(runIdOrEnvironmentId: string | number, expectedCommitSha?: string | null, notBefore?: Date | null): Promise<WorkflowEnvironmentTruth | null> {
   let environmentId: number | null = typeof runIdOrEnvironmentId === "number" ? runIdOrEnvironmentId : null;
   if (typeof runIdOrEnvironmentId === "string") {
     const [run] = await db.select({ environmentId: workflowRuns.linkedEnvironmentId }).from(workflowRuns).where(visible(runScopeColumns, eq(workflowRuns.id, runIdOrEnvironmentId))).limit(1);
@@ -818,31 +819,85 @@ export async function getWorkflowEnvironmentTruth(runIdOrEnvironmentId: string |
           if (!hostingRow.projectId || !hostingRow.serviceId || !hostingRow.providerEnvironmentId) {
             deployment = unavailableDeployment("Railway hosting binding is incomplete");
           } else {
-            let latest = await getLatestDeploymentByToken(token, hostingRow.projectId, hostingRow.serviceId, hostingRow.providerEnvironmentId);
-            if (expectedCommitSha && !commitMatches(expectedCommitSha, latest?.commitHash || null)) {
-              const deployments = await fetchDeployments(hostingRow.projectId, hostingRow.serviceId, 25, token);
-              const matching = deployments.find((candidate) => {
-                if (candidate.environmentId !== hostingRow.providerEnvironmentId) return false;
-                const meta = extractDeploymentMeta(candidate.meta);
-                return commitMatches(expectedCommitSha, meta.commitHash || null);
-              });
-              if (matching) {
-                const meta = extractDeploymentMeta(matching.meta);
-                latest = {
-                  id: matching.id,
-                  status: matching.status,
-                  commitHash: meta.commitHash || null,
-                  commitMessage: meta.commitMessage || null,
-                  createdAt: matching.createdAt,
-                };
+            const latestProviderDeployment = await getLatestDeploymentByToken(token, hostingRow.projectId, hostingRow.serviceId, hostingRow.providerEnvironmentId);
+            let selected = latestProviderDeployment;
+            let attribution: Record<string, unknown> | null = null;
+            if (expectedCommitSha || notBefore) {
+              const deployments = await fetchDeploymentsForEnvironment(hostingRow.projectId, hostingRow.serviceId, hostingRow.providerEnvironmentId, 25, token);
+              const candidates = deployments
+                .map((candidate) => {
+                  const meta = extractDeploymentMeta(candidate.meta);
+                  return {
+                    deployment: candidate,
+                    latest: {
+                      id: candidate.id,
+                      status: candidate.status,
+                      commitHash: meta.commitHash || null,
+                      commitMessage: meta.commitMessage || null,
+                      createdAt: candidate.createdAt || null,
+                    } satisfies LatestDeployment,
+                  };
+                })
+                .sort((left, right) => {
+                  const rank = (status: string) => deploymentStatusCategory(status) === "green" ? 0 : deploymentStatusCategory(status) === "pending" ? 1 : 2;
+                  return rank(left.latest.status) - rank(right.latest.status) || Date.parse(right.latest.createdAt || "") - Date.parse(left.latest.createdAt || "");
+                });
+
+              selected = null;
+              let ancestryError: string | null = null;
+              for (const candidate of candidates) {
+                const candidateSha = candidate.latest.commitHash;
+                let containsExpectedCommit = !expectedCommitSha;
+                let containmentMethod = expectedCommitSha ? "unproven" : "deployment_time";
+                if (expectedCommitSha && candidateSha) {
+                  if (commitMatches(expectedCommitSha, candidateSha)) {
+                    containsExpectedCommit = true;
+                    containmentMethod = "exact_commit";
+                  } else if (sourceRow?.owner && sourceRow.repo) {
+                    try {
+                      const comparison = await compareRefs({ owner: sourceRow.owner, repo: sourceRow.repo }, expectedCommitSha, candidateSha);
+                      containsExpectedCommit = comparison.status === "ahead" || comparison.status === "identical";
+                      containmentMethod = containsExpectedCommit ? "github_ancestry" : `github_${comparison.status}`;
+                    } catch (error) {
+                      ancestryError = error instanceof Error ? error.message : String(error);
+                      containmentMethod = "github_compare_failed";
+                    }
+                  }
+                }
+                const createdAtMs = Date.parse(candidate.latest.createdAt || "");
+                const afterBoundary = expectedCommitSha
+                  ? true
+                  : !notBefore || (Number.isFinite(createdAtMs) && createdAtMs >= notBefore.getTime());
+                if (containsExpectedCommit && afterBoundary) {
+                  selected = candidate.latest;
+                  attribution = {
+                    expectedCommitSha: expectedCommitSha || null,
+                    selectedCommitSha: candidateSha,
+                    containsExpectedCommit,
+                    method: containmentMethod,
+                    notBefore: notBefore?.toISOString() || null,
+                    selectedDeploymentId: candidate.latest.id,
+                    latestProviderDeploymentId: latestProviderDeployment?.id || null,
+                  };
+                  break;
+                }
+              }
+              if (!selected) {
+                deployment = unavailableDeployment(
+                  expectedCommitSha
+                    ? `No bounded Railway deployment can be proven to contain workflow commit ${expectedCommitSha}. Checked ${deployments.length} deployments for ${sourceRow?.owner || "unknown"}/${sourceRow?.repo || "unknown"}.${ancestryError ? ` GitHub ancestry check failed: ${ancestryError}` : ""}`
+                    : `No bounded Railway deployment was created after workflow boundary ${notBefore?.toISOString() || "unknown"}.`,
+                );
               }
             }
-            deployment = {
-              ...deploymentBase,
-              available: true,
-              latest: latest ? { id: latest.id, status: latest.status, commitSha: latest.commitHash, commitMessage: latest.commitMessage, deployedAt: latest.createdAt } : null,
-              urlReachable,
-            };
+            if (!deployment) {
+              deployment = {
+                ...deploymentBase,
+                available: true,
+                latest: selected ? { id: selected.id, status: selected.status, commitSha: selected.commitHash, commitMessage: selected.commitMessage, deployedAt: selected.createdAt, attribution } : null,
+                urlReachable,
+              };
+            }
           }
         } else {
           deployment = unavailableDeployment(`Deployment status is unsupported for hosting provider ${hostingProvider}`);
@@ -1119,7 +1174,7 @@ export async function startStageAttempt(runId: string, stageKey?: string, option
   if (childSessionId) await linkWorkflowSession({ workflowRunId: runId, stageAttemptId: attempt.id, sessionId: childSessionId, role: "stage_attempt", spawnReason: `workflow:${runId}:${key}:attempt-${attemptNumber}` });
   if (key === "acceptance" && childSessionId) {
     const expected = expectedAcceptanceDeployment(detail);
-    const truth = await getWorkflowEnvironmentTruth(runId, expected.commitSha);
+    const truth = await getWorkflowEnvironmentTruth(runId, expected.commitSha, expected.notBefore);
     if (!deploymentIsCurrent(truth?.deployment, expected) || deploymentStatusCategory(normalizedDeploymentStatus(truth?.deployment)) === "pending") {
       await chatFileStorage.updateSessionStatus(childSessionId, "waiting");
     }
@@ -1325,7 +1380,8 @@ export async function attachWorkflowArtifact(input: AttachWorkflowArtifactInput)
 export async function capturePublishToStageEvidence(input: { workflowRunId: string; stageAttemptId?: number | null; createdBySessionId?: string; summary?: string }): Promise<WorkflowArtifact> {
   const detail = await getWorkflowRun(input.workflowRunId);
   if (!detail) throw new Error(`Workflow run not found: ${input.workflowRunId}`);
-  const truth = detail.environmentTruth || await getWorkflowEnvironmentTruth(input.workflowRunId);
+  const expected = expectedAcceptanceDeployment(detail);
+  const truth = await getWorkflowEnvironmentTruth(input.workflowRunId, expected.commitSha, expected.notBefore);
   if (!truth?.environment) throw new Error(`Workflow run ${input.workflowRunId} has no linked platform environment.`);
   const stage = detail.stages.find((item) => item.key === "acceptance") || detail.stages.find((item) => item.key === "publish_stage");
   const stageAttemptId = input.stageAttemptId ?? stage?.latestAttempt?.id ?? null;
@@ -1418,16 +1474,23 @@ function findCommitSha(value: unknown): string | null {
   return null;
 }
 
-function expectedAcceptanceDeployment(detail: WorkflowRunDetail): { commitSha: string | null; notBefore: Date | null } {
+function expectedAcceptanceDeployment(detail: WorkflowRunDetail): { commitSha: string | null; notBefore: Date | null; source: string } {
   const review = detail.stages.find((stage) => stage.key === "code_review")?.attempts
     .filter((attempt) => attempt.result === "passed" && attempt.completedAt)
     .sort((a, b) => (b.completedAt?.getTime() || 0) - (a.completedAt?.getTime() || 0))[0];
   const implement = detail.stages.find((stage) => stage.key === "implement")?.attempts
     .filter((attempt) => attempt.result === "passed" && attempt.completedAt)
     .sort((a, b) => (b.completedAt?.getTime() || 0) - (a.completedAt?.getTime() || 0))[0];
+  const evidenceCommit = findCommitSha(review?.evidence) || findCommitSha(implement?.evidence);
+  const snapshot = detail.lifecycleSnapshot && typeof detail.lifecycleSnapshot === "object" ? detail.lifecycleSnapshot as Record<string, unknown> : {};
+  const source = snapshot.source && typeof snapshot.source === "object" ? snapshot.source as Record<string, unknown> : {};
+  const snapshottedCommit = typeof source.targetCommitSha === "string" && /^[a-f0-9]{7,40}$/i.test(source.targetCommitSha.trim())
+    ? source.targetCommitSha.trim().toLowerCase()
+    : null;
   return {
-    commitSha: findCommitSha(review?.evidence) || findCommitSha(implement?.evidence),
-    notBefore: review?.completedAt || implement?.completedAt || null,
+    commitSha: evidenceCommit || snapshottedCommit,
+    notBefore: evidenceCommit ? review?.completedAt || implement?.completedAt || null : source.targetCommitResolvedAt ? new Date(String(source.targetCommitResolvedAt)) : detail.run.createdAt,
+    source: evidenceCommit ? "stage_evidence" : snapshottedCommit ? "lifecycle_snapshot" : "time_boundary",
   };
 }
 
@@ -1436,7 +1499,9 @@ function deploymentIsCurrent(
   expected: { commitSha: string | null; notBefore: Date | null },
 ): boolean {
   const observedCommit = deploymentCommitSha(deployment);
-  if (expected.commitSha) return commitMatches(expected.commitSha, observedCommit);
+  const latest = deployment?.latest && typeof deployment.latest === "object" ? deployment.latest as Record<string, unknown> : {};
+  const attribution = latest.attribution && typeof latest.attribution === "object" ? latest.attribution as Record<string, unknown> : {};
+  if (expected.commitSha) return commitMatches(expected.commitSha, observedCommit) || attribution.containsExpectedCommit === true;
   const deployedAt = deployment?.latest?.deployedAt;
   if (!expected.notBefore || typeof deployedAt !== "string") return false;
   const deployedAtMs = Date.parse(deployedAt);
@@ -1455,7 +1520,7 @@ async function waitForAcceptanceDeploymentTruth(runId: string, initialTruth: Wor
   const initialStatus = normalizedDeploymentStatus(truth?.deployment) || null;
   while (true) {
     attempts += 1;
-    if (attempts > 1 || !truth) truth = await getWorkflowEnvironmentTruth(runId, expected.commitSha);
+    truth = await getWorkflowEnvironmentTruth(runId, expected.commitSha, expected.notBefore);
     const deployment = truth?.deployment || null;
     const status = normalizedDeploymentStatus(deployment);
     const category = deploymentStatusCategory(status);
@@ -1560,6 +1625,34 @@ function configuredAuthMode(snapshot: unknown): string {
 }
 
 
+function lifecycleHostingBinding(snapshot: unknown): Record<string, unknown> {
+  if (!snapshot || typeof snapshot !== "object") return {};
+  const hosting = (snapshot as Record<string, unknown>).hosting;
+  return hosting && typeof hosting === "object" ? hosting as Record<string, unknown> : {};
+}
+
+async function resolvePlatformBindingSessionSecret(snapshot: unknown): Promise<string> {
+  const hosting = lifecycleHostingBinding(snapshot);
+  const provider = typeof hosting.provider === "string" ? hosting.provider : "unknown";
+  const connectionId = Number(hosting.connectionId);
+  const projectId = typeof hosting.projectId === "string" ? hosting.projectId : null;
+  const environmentId = typeof hosting.providerEnvironmentId === "string" ? hosting.providerEnvironmentId : null;
+  const serviceId = typeof hosting.serviceId === "string" ? hosting.serviceId : null;
+  if (provider !== "railway" || !Number.isInteger(connectionId) || !projectId || !environmentId || !serviceId) {
+    throw new Error("Platform-binding auth invariant failed: lifecycle snapshot lacks a complete Railway hosting binding");
+  }
+  const [connection] = await db.select().from(providerConnections).where(visible({ scope: providerConnections.scope, ownerUserId: providerConnections.ownerUserId, accountId: providerConnections.accountId }, eq(providerConnections.id, connectionId))).limit(1);
+  const token = connection?.credentialRef ? await getProviderCredential(connection.credentialRef) : null;
+  if (!token) throw new Error(`Platform-binding auth invariant failed: Railway connection ${connectionId} has no decryptable credential`);
+  const { fetchServiceVariables } = await import("../integrations/railway/client");
+  const variables = await fetchServiceVariables(projectId, environmentId, serviceId, token);
+  const sessionSecret = variables.SESSION_SECRET;
+  if (!sessionSecret) {
+    throw new Error(`Platform-binding auth invariant failed: bound Railway environment ${environmentId}/${serviceId} does not expose SESSION_SECRET`);
+  }
+  return sessionSecret;
+}
+
 
 async function checkUrlHealthy(url: string): Promise<{ ok: boolean; status?: number; error?: string }> {
   try {
@@ -1641,7 +1734,21 @@ export async function captureAcceptanceEvidence(input: { workflowRunId: string; 
       const { captureBrowserSessionEvidence, screenshotPage } = await import("../browser-manager");
       if (auth.attempted) {
         const directUrl = joinUrl(targetUrl, screenshotRoutePath);
-        const sessionEvidence = await captureBrowserSessionEvidence(directUrl, { expectedRoutePath: screenshotRoutePath, viewport: "desktop", fullPage: true, delay: 1500, authenticate: true });
+        if (authMode !== "platform_binding") {
+          throw new Error(`Acceptance auth invariant failed: auth mode '${authMode}' has no browser-session establishment contract`);
+        }
+        if (!detail.run.ownerUserId) {
+          throw new Error("Platform-binding auth invariant failed: workflow run has no owner user ID");
+        }
+        const sessionSecret = await resolvePlatformBindingSessionSecret(lifecycleSnapshot);
+        const sessionEvidence = await captureBrowserSessionEvidence(directUrl, {
+          expectedRoutePath: screenshotRoutePath,
+          viewport: "desktop",
+          fullPage: true,
+          delay: 1500,
+          authenticate: true,
+          authentication: { mode: "platform_binding", userId: detail.run.ownerUserId, sessionSecret },
+        });
         browserSession = sessionEvidence as unknown as Record<string, unknown>;
         screenshot = sessionEvidence.screenshot;
         browserError = sessionEvidence.error;
@@ -1649,7 +1756,7 @@ export async function captureAcceptanceEvidence(input: { workflowRunId: string; 
         auth.verified = sessionEvidence.authVerified;
         auth.status = sessionEvidence.authStatus;
         auth.userId = sessionEvidence.authUserId;
-        auth.error = auth.established ? null : sessionEvidence.error || `Auth verification failed with status ${sessionEvidence.authStatus ?? "unknown"}`;
+        auth.error = auth.established ? null : sessionEvidence.authError || sessionEvidence.error || `Auth verification failed with status ${sessionEvidence.authStatus ?? "unknown"}`;
       } else {
         screenshot = await screenshotPage(targetRouteUrl, { viewport: "desktop", fullPage: true, delay: 1500 });
         auth.established = true;

@@ -212,7 +212,7 @@ interface ScreenshotSession {
   cleanup: () => Promise<void>;
 }
 
-async function createScreenshotSession(): Promise<ScreenshotSession> {
+async function createScreenshotSession(userId: string, sessionSecret?: string): Promise<ScreenshotSession> {
   // Dynamic imports for CJS deps (transitive from express-session)
   const uidSafe = await import("uid-safe") as unknown as { default?: { sync: (len: number) => string }; sync?: (len: number) => string };
   const uidSync = (uidSafe.default?.sync ?? uidSafe.sync) as (len: number) => string;
@@ -221,23 +221,31 @@ async function createScreenshotSession(): Promise<ScreenshotSession> {
   const cookieSign = (cookieSig.default?.sign ?? cookieSig.sign) as (val: string, secret: string) => string;
 
   const sid = uidSync(24);
-  const secret = process.env.SESSION_SECRET || "dev-secret";
+  const secret = sessionSecret || process.env.SESSION_SECRET;
+  if (!secret) {
+    throw new Error("Platform-binding auth invariant failed: SESSION_SECRET is unavailable to sign the acceptance session cookie");
+  }
+  if (!userId.trim()) {
+    throw new Error("Platform-binding auth invariant failed: workflow owner user ID is missing");
+  }
 
-  // Look up the first admin user via raw pg pool
   const { pool } = await import("./db");
   const usersResult = await pool.query(
-    "SELECT id FROM \"users\" WHERE role = 'admin' LIMIT 1"
+    'SELECT id FROM "users" WHERE id = $1 LIMIT 1',
+    [userId],
   );
-  const adminId: number | undefined = usersResult.rows[0]?.id;
-  if (!adminId) throw new Error("No admin user found for screenshot session");
+  const sessionUserId: string | undefined = usersResult.rows[0]?.id;
+  if (!sessionUserId) {
+    throw new Error(`Platform-binding auth invariant failed: workflow owner ${userId} does not exist in the shared user store`);
+  }
 
-  // Insert a short-lived session row (60s TTL).
+  // Insert a short-lived session row (120s TTL).
   // connect-pg-simple reads sessions with `expire >= to_timestamp(epoch_seconds)`
   // so we must store expire via to_timestamp() too — a JS Date lands as
   // `timestamp without time zone` which silently drops timezone context and
   // causes comparison mismatches when the server TZ differs from UTC.
-  const expireEpochSeconds = Math.ceil((Date.now() + 60_000) / 1000);
-  const sess = JSON.stringify({ cookie: { maxAge: 60000 }, userId: adminId });
+  const expireEpochSeconds = Math.ceil((Date.now() + 120_000) / 1000);
+  const sess = JSON.stringify({ cookie: { maxAge: 120000 }, userId: sessionUserId });
   await pool.query(
     'INSERT INTO "session" (sid, sess, expire) VALUES ($1, $2, to_timestamp($3))',
     [sid, sess, expireEpochSeconds]
@@ -263,6 +271,7 @@ export async function screenshotPage(
     fullPage?: boolean;
     delay?: number;
     outputPath?: string;
+    userId?: string;
   }
 ): Promise<{ path: string; width: number; height: number; truncated: boolean }> {
   await acquirePageSlot();
@@ -271,7 +280,13 @@ export async function screenshotPage(
 
   // Determine if URL targets an external host (not localhost)
   const isExternal = !url.includes("localhost") && !url.includes("127.0.0.1");
-  const session = isExternal ? null : await createScreenshotSession();
+  let session: ScreenshotSession | null = null;
+  if (!isExternal) {
+    const { getCurrentPrincipal } = await import("./principal-context");
+    const userId = options?.userId || getCurrentPrincipal()?.userId;
+    if (!userId) throw new Error("Local screenshot authentication requires a user principal");
+    session = await createScreenshotSession(userId);
+  }
 
   try {
     await ensureBrowser();
@@ -318,8 +333,10 @@ export async function screenshotPage(
         {
           name: "connect.sid",
           value: session!.signedCookie,
-          domain: "localhost",
-          path: "/",
+          url: new URL(url).origin,
+          httpOnly: true,
+          secure: url.startsWith("https://"),
+          sameSite: "Lax",
         },
       ]);
     }
@@ -400,6 +417,7 @@ export interface BrowserSessionEvidence {
   authVerified: boolean;
   authStatus: number | null;
   authUserId: string | null;
+  authError: string | null;
   loginScreenDetected: boolean;
   screenshot: { path: string; width: number; height: number; truncated: boolean } | null;
   steps: BrowserSessionEvidenceStep[];
@@ -420,6 +438,11 @@ export async function captureBrowserSessionEvidence(
     delay?: number;
     outputPath?: string;
     authenticate?: boolean;
+    authentication?: {
+      mode: "platform_binding";
+      userId: string;
+      sessionSecret: string;
+    };
   },
 ): Promise<BrowserSessionEvidence> {
   await acquirePageSlot();
@@ -436,22 +459,30 @@ export async function captureBrowserSessionEvidence(
   let authVerified = false;
   let authStatus: number | null = null;
   let authUserId: string | null = null;
+  let authError: string | null = null;
   let loginScreenDetected = false;
   let screenshot: BrowserSessionEvidence["screenshot"] = null;
   let error: string | null = null;
 
-  // Determine if we should inject DB session auth (localhost targets only)
-  const shouldAuthenticate = (options.authenticate ?? true) &&
-    (entryUrl.includes("localhost") || entryUrl.includes("127.0.0.1"));
+  const entryOrigin = new URL(entryUrl).origin;
+  const isLocalTarget = entryUrl.includes("localhost") || entryUrl.includes("127.0.0.1");
+  const shouldAuthenticate = options.authenticate ?? true;
+  const platformBindingAuth = options.authentication?.mode === "platform_binding" ? options.authentication : null;
   let session: ScreenshotSession | null = null;
 
   try {
     await ensureBrowser();
     if (!browser) throw new Error("Browser not available");
 
-    // Create DB session for cookie injection when authenticating localhost
     if (shouldAuthenticate) {
-      session = await createScreenshotSession();
+      if (!isLocalTarget && !platformBindingAuth) {
+        throw new Error("Platform-binding auth invariant failed: external acceptance target has no bound user-session identity");
+      }
+      const userId = platformBindingAuth?.userId;
+      if (!userId) {
+        throw new Error("Platform-binding auth invariant failed: authenticated acceptance requires the workflow owner user ID");
+      }
+      session = await createScreenshotSession(userId, platformBindingAuth.sessionSecret);
     }
 
     let viewportSize: { width: number; height: number };
@@ -477,8 +508,10 @@ export async function captureBrowserSessionEvidence(
         {
           name: "connect.sid",
           value: session.signedCookie,
-          domain: "localhost",
-          path: "/",
+          url: entryOrigin,
+          httpOnly: true,
+          secure: entryOrigin.startsWith("https://"),
+          sameSite: "Lax",
         },
       ]);
     }
@@ -495,6 +528,13 @@ export async function captureBrowserSessionEvidence(
     const routeMatched = finalPath === expectedPath || finalPath.startsWith(`${expectedPath}/`);
     mark("route", `Verify browser reached ${expectedPath}`, routeMatched ? "passed" : "failed", { url: finalUrl, error: routeMatched ? null : `Final path was ${finalPath}` });
 
+    const sessionCookiePresent = shouldAuthenticate
+      ? (await screenshotContext.cookies(entryOrigin)).some((cookie) => cookie.name === "connect.sid")
+      : true;
+    if (!sessionCookiePresent) {
+      throw new Error(`Platform-binding auth invariant failed: Chromium did not retain the signed session cookie for ${entryOrigin}`);
+    }
+
     const authResult = await page.evaluate(async () => {
       try {
         const response = await fetch("/api/auth/me", { credentials: "include" });
@@ -508,7 +548,12 @@ export async function captureBrowserSessionEvidence(
     authStatus = authResult.status || null;
     authVerified = Boolean(authResult.ok && authResult.userId);
     authUserId = authResult.userId || null;
-    mark("auth", "Verify authenticated user session with /api/auth/me", authVerified ? "passed" : "failed", { url: finalUrl, error: authVerified ? null : `Auth status ${authResult.status}` });
+    authError = authVerified
+      ? null
+      : shouldAuthenticate
+        ? `Platform-binding auth invariant failed: injected workflow-owner session was rejected by ${entryOrigin}/api/auth/me with status ${authResult.status}. Verify the bound environment shares the canonical PostgreSQL session store and SESSION_SECRET.`
+        : `Auth status ${authResult.status}`;
+    mark("auth", "Verify authenticated user session with /api/auth/me", authVerified ? "passed" : "failed", { url: finalUrl, error: authError });
 
     const bodyText = await page.locator("body").innerText({ timeout: 3000 }).catch(() => "");
     loginScreenDetected = detectLoginScreenText(bodyText, finalUrl);
@@ -565,6 +610,7 @@ export async function captureBrowserSessionEvidence(
     authVerified,
     authStatus,
     authUserId,
+    authError,
     loginScreenDetected,
     screenshot,
     steps,
