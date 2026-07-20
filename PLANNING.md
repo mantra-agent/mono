@@ -46,10 +46,15 @@ Before creating a plan, work through these silently:
 
 ## Creating a Plan
 
+**Decompose by deliverable, not pipeline phase.** Steps are missions, not stages. Every child session boots with the full standard operating procedure for its domain — a coding child already carries CODING.md's implement → build → PR → merge path inside every step. Never create steps for work the child's ambient instructions already mandate.
+
+- One step = one shippable, verifiable outcome: a merged PR, a written spec, a completed analysis. Never a stage of one.
+- Anti-example: "Step 4: Build and submit PR" is wrong — every coding step that wrote code already built, submitted, and merged its own change. Same failure class: "write tests", "verify it compiles", "create the PR".
+- Split when outcomes are separable and can each survive an independent fresh context. Merge when splitting would force one deliverable across two contexts.
+- A final verification step is legitimate only when it checks cross-cutting, whole-system behavior no single step could see — never a re-run of per-step mechanics.
 - Each step must be independently executable in a spawned child session
 - Step instructions include what context to load and what "done" looks like
 - Order steps by dependency, not importance
-- For code work, reference CODING.md's Standard Ship Path in step instructions
 - Begin execution immediately after creation. Do not wait for permission unless you surfaced blocking questions above
 
 ## During Execution
