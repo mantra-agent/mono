@@ -95,7 +95,6 @@ export async function runREMPhase(parentSignal?: AbortSignal): Promise<DreamResu
 
       const prompt = `Tonight's memory fragments (beliefs and observations from a living memory graph):
 ${claimBlock}
-${bridgeBlock ? `\nUnexpected connections discovered between distant memories:\n${bridgeBlock}` : ""}
 ${sessionBlock ? `\nRecent waking experiences (session titles):\n${sessionBlock}` : ""}
 
 Weave these fragments into a single dream.`;

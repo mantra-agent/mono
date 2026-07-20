@@ -57,8 +57,6 @@ const vaultsMigrationReady = objectAclsMigrationReady.then(() => ensureVaults())
 import { registerSessionOutputBufferListener } from "./session-output-buffer-listener";
 registerSessionOutputBufferListener();
 
-import { registerSessionMemorySyncListener } from "./memory/session-memory-status-listener";
-registerSessionMemorySyncListener();
 
 import { loadEncryptionKeys } from "./encryption";
 loadEncryptionKeys();

@@ -760,72 +760,6 @@ function publishSessionStatusChanged(data: SessionData, previousStatus: string |
 }
 
 
-async function syncSessionMemoryMirrorIfReady(data: SessionData, options?: { writeBackMemoryEntryId?: boolean }): Promise<void> {
-  if (data.status !== "saved") {
-    memoryMirrorLog.debug(`[ingest] skip source=chat_journal sessionId=${data.id} reason=status_not_saved status=${data.status}`);
-    return;
-  }
-
-  const fallback = extractFallbackSessionSummary(data);
-  if (!fallback.summary) {
-    memoryMirrorLog.warn(
-      `[ingest] skip source=chat_journal sessionId=${data.id} reason=${fallback.reason} ` +
-      `messageCount=${data.messages.length} hasMemorySummary=${Boolean(data.memorySummary?.trim())} hasTopics=${Boolean(data.topics?.length)}`,
-    );
-    return;
-  }
-
-  memoryMirrorLog.info(
-    `[ingest] start source=chat_journal sessionId=${data.id} summarySource=${fallback.reason} ` +
-    `summaryLength=${fallback.summary.length} messageCount=${data.messages.length} memoryEntryId=${data.memoryEntryId || "none"}`,
-  );
-
-  const { upsertSessionSummaryMemory } = await import("./memory/session-memory-sync");
-  const memEntryId = await upsertSessionSummaryMemory({
-    id: data.id,
-    title: data.title,
-    summary: fallback.summary,
-    status: data.status,
-    sessionType: data.sessionType,
-    type: data.type || "text",
-    archivedAt: data.archivedAt || null,
-    createdAt: data.createdAt,
-    updatedAt: data.updatedAt,
-    topics: data.topics || [],
-    memoryOneLiner: data.memoryOneLiner || null,
-    memorySummary: data.memorySummary || null,
-    messageCount: data.messages.length,
-    parentSessionId: data.parentSessionId || null,
-    spawnReason: data.spawnReason || null,
-    triggerType: data.triggerType || null,
-    triggerId: data.triggerId || null,
-    triggerName: data.triggerName || null,
-  });
-
-  if (memEntryId == null) {
-    memoryMirrorLog.warn(`[ingest] skip source=chat_journal sessionId=${data.id} reason=upsert_returned_null`);
-    return;
-  }
-
-  if (data.memoryEntryId !== memEntryId) {
-    const previousMemoryEntryId = data.memoryEntryId || null;
-    data.memoryEntryId = memEntryId;
-    if (options?.writeBackMemoryEntryId !== false) {
-      await writeConv(data);
-      memoryMirrorLog.info(
-        `[ingest] writeback source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId} previousMemoryEntryId=${previousMemoryEntryId || "none"}`,
-      );
-    } else {
-      memoryMirrorLog.info(
-        `[ingest] writeback_deferred source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId} previousMemoryEntryId=${previousMemoryEntryId || "none"}`,
-      );
-    }
-  } else {
-    memoryMirrorLog.debug(`[ingest] writeback_unchanged source=chat_journal sessionId=${data.id} memoryEntryId=${memEntryId}`);
-  }
-
-}
-
 async function syncVnextSessionSourceIfReady(data: SessionData, context: string): Promise<void> {
   if (data.status !== "saved") {
     memoryMirrorLog.debug(
@@ -853,36 +787,9 @@ function queueVnextSessionSource(data: SessionData, context: string): void {
 }
 
 function queueSessionMemoryMirror(data: SessionData, context: string): void {
-  if (data.status !== "saved") {
-    memoryMirrorLog.debug(
-      `[ingest] async_skip source=chat_journal sessionId=${data.id} context=${context} reason=status_not_saved status=${data.status}`,
-    );
-    return;
-  }
-
-  const snapshot = structuredClone(data) as SessionData;
-  void syncSessionMemoryMirrorIfReady(snapshot, { writeBackMemoryEntryId: false })
-    .then(() => {
-      if (snapshot.memoryEntryId && snapshot.memoryEntryId !== data.memoryEntryId) {
-        return withConvLock(snapshot.id, async () => {
-          const latest = await readConv(snapshot.id);
-          if (!latest || latest.memoryEntryId === snapshot.memoryEntryId) return;
-          latest.memoryEntryId = snapshot.memoryEntryId;
-          latest.updatedAt = new Date().toISOString();
-          await writeConv(latest);
-          invalidateSessionsCache({ action: "updated", sessionId: latest.id, session: convToMeta(latest) });
-          memoryMirrorLog.info(
-            `[ingest] async_writeback source=chat_journal sessionId=${latest.id} context=${context} memoryEntryId=${snapshot.memoryEntryId}`,
-          );
-        });
-      }
-    })
-    .catch((err) => {
-      memoryMirrorLog.warn(
-        `[ingest] async_failed source=chat_journal sessionId=${snapshot.id} context=${context} ` +
-        `error=${err instanceof Error ? err.message : String(err)}`,
-      );
-    });
+  // Compatibility alias during legacy retirement. Session sources feed vNext
+  // directly; no memory_entries mirror is created or updated.
+  queueVnextSessionSource(data, `${context}:compat_alias`);
 }
 
 function convToMeta(data: SessionData): FileSession {
@@ -2725,9 +2632,7 @@ export const chatFileStorage: IChatFileStorage = {
         memoryMirrorLog.warn(`[ingest] skip source=chat_journal sessionId=${id} reason=session_not_found`);
         return;
       }
-      await syncVnextSessionSourceIfReady(data, "syncSessionMemoryMirror");
-      await syncSessionMemoryMirrorIfReady(data);
-      invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
+      await syncVnextSessionSourceIfReady(data, "syncSessionMemoryMirror:compat_alias");
     });
   },
 
