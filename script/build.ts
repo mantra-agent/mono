@@ -546,33 +546,49 @@ async function bundleGitnexusRuntime() {
 }
 
 async function bundleClaudeCliRuntime() {
-  const src = "node_modules/@anthropic-ai/claude-code";
+  const packageName = "@anthropic-ai/claude-code";
+  const src = `node_modules/${packageName}`;
   if (!existsSync(src)) {
-    console.warn("@anthropic-ai/claude-code not installed — skipping claude CLI bundle");
+    console.warn(`${packageName} not installed — skipping claude CLI bundle`);
     return;
   }
 
   console.log("bundling claude CLI runtime for production...");
 
-  const dest = "dist/claude-cli-runtime/node_modules/@anthropic-ai/claude-code";
-  const binDir = "dist/claude-cli-runtime/node_modules/.bin";
+  const packageJson = JSON.parse(await readFile(join(src, "package.json"), "utf-8")) as {
+    bin?: string | Record<string, string>;
+  };
+  const declaredBin = typeof packageJson.bin === "string" ? packageJson.bin : packageJson.bin?.claude;
+  if (!declaredBin || declaredBin.includes("..")) {
+    throw new Error("bundleClaudeCliRuntime: package does not declare a safe claude binary");
+  }
 
+  const runtimeRoot = "dist/claude-cli-runtime";
+  const dest = join(runtimeRoot, "node_modules", packageName);
+  const binDir = join(runtimeRoot, "node_modules", ".bin");
+
+  await rmIfExists(runtimeRoot, { recursive: true });
   await cp(src, dest, { recursive: true, errorOnExist: false });
   await mkdir(binDir, { recursive: true });
 
+  const destEntry = join(dest, declaredBin);
+  if (!existsSync(destEntry)) {
+    throw new Error(`bundleClaudeCliRuntime: declared binary missing after copy (${declaredBin})`);
+  }
+  await chmod(destEntry, 0o755);
+
   const binLink = join(binDir, "claude");
   try { await unlink(binLink); } catch {}
-  await symlink("../@anthropic-ai/claude-code/cli.js", binLink);
-
-  await chmod(join(dest, "cli.js"), 0o755);
+  const relativeEntry = join("..", packageName, declaredBin);
+  await symlink(relativeEntry, binLink);
 
   if (!existsSync(binLink)) {
     throw new Error("bundleClaudeCliRuntime: .bin/claude symlink not created");
   }
 
-  const totalKb = parseInt(execSync(`du -sk dist/claude-cli-runtime`, { encoding: "utf-8" }).split("\t")[0], 10);
+  const totalKb = parseInt(execSync(`du -sk ${runtimeRoot}`, { encoding: "utf-8" }).split("\t")[0], 10);
   const totalMb = totalKb / 1024;
-  console.log(`claude CLI runtime bundled to dist/claude-cli-runtime/ (${totalMb.toFixed(1)} MB)`);
+  console.log(`claude CLI runtime bundled to ${runtimeRoot}/ (${totalMb.toFixed(1)} MB, entry=${declaredBin})`);
 }
 
 async function buildAll() {

@@ -84,15 +84,36 @@ function parseExitCodeAndSignal(raw: string): { exitCode: number | null; signal:
   return { exitCode, signal };
 }
 
-function resolveCliPath(): string {
-  // Prefer the bundled production runtime when present; fall back to the
-  // node_modules copy. Existence-based (not NODE_ENV-based) so the dev
-  // Railway image can skip the claude CLI bundle while still running with
-  // NODE_ENV=production.
-  const bundled = path.resolve(process.cwd(), "dist", "claude-cli-runtime", "node_modules", "@anthropic-ai", "claude-code", "cli.js");
-  if (existsSync(bundled)) return bundled;
-  return path.resolve(process.cwd(), "node_modules", "@anthropic-ai", "claude-code", "cli.js");
+function resolveDeclaredClaudeBin(packageDir: string): string | null {
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf-8")) as {
+      bin?: string | Record<string, string>;
+    };
+    const declaredBin = typeof packageJson.bin === "string" ? packageJson.bin : packageJson.bin?.claude;
+    if (!declaredBin || declaredBin.includes("..")) return null;
+    const candidate = path.resolve(packageDir, declaredBin);
+    return candidate.startsWith(`${path.resolve(packageDir)}${path.sep}`) && existsSync(candidate) ? candidate : null;
+  } catch {
+    return null;
+  }
 }
+
+function resolveCliPath(): string {
+  // Package bin metadata is the executable contract. Claude Code 2.1.216
+  // moved from cli.js to bin/claude.exe, while older installations retain
+  // cli.js. Resolve the declared entry in the bundled runtime first, then
+  // the development node_modules copy.
+  const packageRoots = [
+    path.resolve(process.cwd(), "dist", "claude-cli-runtime", "node_modules", "@anthropic-ai", "claude-code"),
+    path.resolve(process.cwd(), "node_modules", "@anthropic-ai", "claude-code"),
+  ];
+  for (const packageRoot of packageRoots) {
+    const declared = resolveDeclaredClaudeBin(packageRoot);
+    if (declared) return declared;
+  }
+  return path.resolve(packageRoots[0], "bin", "claude.exe");
+}
+
 
 export interface CliRuntimeProbe {
   cliPath: string;
@@ -120,7 +141,7 @@ export function probeCliRuntime(): CliRuntimeProbe {
     cliPathExists = true;
     cliPathSizeBytes = st.size;
   } catch { /* ignore */ }
-  // Runtime dir = parent of cli.js (the `claude-code` package dir). Bounded
+  // Runtime dir = parent of the declared CLI entry. Bounded
   // depth-1 listing only — never recurse — so this stays O(1) at boot.
   try {
     const runtimeDir = path.dirname(cliPath);
