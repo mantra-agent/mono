@@ -583,9 +583,9 @@ async function spawnWorkflowStageChild(parentSessionId: string, detail: Workflow
 }
 
 /**
- * Monitor a workflow stage child session for executor failures.
- * Successful child completion is not stage completion. The explicit
- * completeStageAttempt checkpoint is the sole transition owner.
+ * Reconcile every terminal workflow child through the canonical stage-attempt
+ * completion boundary. The child may checkpoint first, but it never owns the
+ * invariant that a terminal child must have a terminal attempt.
  */
 async function monitorWorkflowChild(
   attemptId: number,
@@ -615,7 +615,16 @@ async function monitorWorkflowChild(
 
   switch (result.status) {
     case "completed": {
-      log.warn(`[monitor] Workflow child ${childSessionId} completed without checkpointing ${stageTitle} #${attemptNumber}; leaving attempt ${attemptId} active for explicit completion`);
+      log.warn(`[monitor] Workflow child ${childSessionId} completed without checkpointing ${stageTitle} #${attemptNumber}; reconciling attempt ${attemptId} as passed`);
+      await completeStageAttempt(runId, attemptId, {
+        result: "passed",
+        outputSummary: truncateOutput(result.output, 500),
+        failureContext: {
+          reason: "terminal_child_without_checkpoint",
+          source: "child-session-monitor",
+          childSessionId,
+        },
+      });
       break;
     }
     case "failed": {
@@ -1175,6 +1184,10 @@ export async function completeStageAttempt(workflowRunId: string, attemptId: num
   if (!attempt) throw new Error(`Stage attempt ${attemptId} not found in workflow run ${workflowRunId}`);
   const beforeDetail = await getWorkflowRun(workflowRunId);
   if (!beforeDetail) throw new Error(`Workflow run not found: ${workflowRunId}`);
+  if (attempt.status !== "active" || attempt.completedAt) {
+    log.log(`completeStageAttempt received replay for terminal attempt ${attemptId}; returning current workflow state.`);
+    return beforeDetail;
+  }
   if (beforeDetail.run.currentStageKey !== attempt.stageKey) throw new Error(`Stage attempt ${attemptId} is stale for workflow run ${workflowRunId}: attempt stage ${attempt.stageKey}, current stage ${beforeDetail.run.currentStageKey || "none"}`);
   const forcedAcceptanceFailure = acceptanceGateFailureFromEvidence(attempt, requestedResult, resultInput.evidence || attempt.evidence || {});
   const result = forcedAcceptanceFailure ? "failed" : requestedResult;

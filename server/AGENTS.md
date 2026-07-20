@@ -351,6 +351,10 @@ Four interacting layers: intention stack (what), timer scheduler (when), skill r
 - A completed child attempt is replay-safe. If legacy behavior already marked the same step complete for the same child session, the executor reconciles that owned completion instead of rerunning successful work.
 - Each plan step owns a durable persona name. The autonomous session creation write must include the resolved persona so the initial child snapshot, context assembly, and first inference agree; never create the child persona-less and patch it afterward. Retries reuse the step persona. Legacy NULL persona rows are inferred once from the mission and persisted before spawn.
 
+### Workflow Execution
+
+- The workflow parent monitor owns terminal child reconciliation. Every terminal workflow child must cross `completeStageAttempt`, so child completion can never leave an active stage attempt or zombie run. Child-triggered completion and monitor-triggered recovery race through the same atomic claim and are replay-safe.
+
 ### Admission Controller
 - **4 tiers:** communication (highest, always granted), realtime, request, background (lowest)
 - **Partitioned budget:** `RUN_ADMISSION_FOREGROUND_BUDGET` defaults to 7 and caps communication/realtime/request work; `RUN_ADMISSION_BACKGROUND_BUDGET` defaults to 3 and caps background work. Total concurrency is their sum, default 10.
