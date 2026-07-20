@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "async_hooks";
-import { createSystemPrincipal, type Principal } from "./principal";
+import { createServicePrincipal, type Principal } from "./principal";
 
 const principalALS = new AsyncLocalStorage<Principal>();
 
@@ -11,8 +11,9 @@ export function getCurrentPrincipal(): Principal | null {
   return principalALS.getStore() ?? null;
 }
 
+/** Missing context fails closed. Real system jobs must enter with a named system principal. */
 export function getCurrentPrincipalOrSystem(): Principal {
-  return getCurrentPrincipal() ?? createSystemPrincipal();
+  return getCurrentPrincipal() ?? createServicePrincipal([], []);
 }
 
 export function requireCurrentUserPrincipal(): Principal & { actorType: "user"; userId: string; accountId: string } {

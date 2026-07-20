@@ -74,6 +74,7 @@ export interface IStorage {
   getUserByResetToken(token: string): Promise<User | undefined>;
   getUsers(): Promise<User[]>;
   createUser(user: InsertUser): Promise<User>;
+  createInitialAdmin(user: InsertUser): Promise<User | null>;
   updateUser(id: string, updates: Partial<Omit<User, "id">>): Promise<User | undefined>;
   getUserCount(): Promise<number>;
 
@@ -226,6 +227,16 @@ export class HybridStorage implements IStorage {
   async createUser(insertUser: InsertUser): Promise<User> {
     const [user] = await db.insert(users).values(insertUser).returning();
     return user;
+  }
+
+  async createInitialAdmin(insertUser: InsertUser): Promise<User | null> {
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('mantra.initial-admin'))`);
+      const [existing] = await tx.select({ id: users.id }).from(users).limit(1);
+      if (existing) return null;
+      const [user] = await tx.insert(users).values({ ...insertUser, role: "admin" }).returning();
+      return user ?? null;
+    });
   }
 
   async updateUser(id: string, updates: Partial<Omit<User, "id">>): Promise<User | undefined> {

@@ -352,6 +352,41 @@ The following entries were verified from source and stage environment metadata o
 - Recall webhooks use Svix-style verification and Plaid verifies non-sandbox webhooks with duplicate detection; these controls narrow those surfaces but do not prove the whole callback plane.
 - Setup does refuse creation after a user exists. The residual issue is atomic first-user bootstrap and the intended policy for public registration.
 
+## 11.2 Identity and data authority cure, July 20, 2026
+
+The identity/data audit traced browser auth, session persistence, service bearer resolution, dashboard and event WebSockets, principal AsyncLocalStorage propagation, scoped SQL/document storage, connected accounts, object ACLs, exports, backups, context assembly, cross-session messaging, encryption, and stage/live bindings. The source and runtime metadata reviewed did not expose secret values and no active exploit was attempted.
+
+### Closed or contained findings
+
+| ID | Result and evidence | Framework coverage | Closure |
+|---|---|---|---|
+| SEC-2026-004 | Closed. `/ws` now resolves the signed session before upgrade, requires `system:read`, rejects cross-origin upgrades, and binds the principal to the socket. `/ws/events` retained its user/account binding and per-session visibility check. | ASVS V4/V7/V13; API1, API5 | Canonical upgrade boundary in `server/routes.ts`; production build passed. |
+| SEC-2026-005 | Closed. First-admin setup now serializes through a PostgreSQL advisory transaction lock. Registration is invite-only unless `PUBLIC_REGISTRATION_ENABLED=true` is set deliberately. Auth ingress has bounded per-IP/email attempt budgets. | ASVS V2/V4/V11/V13; API2, API4, API6 | `server/storage.ts`, `server/auth.ts`; production build passed. |
+| SEC-2026-006 | Closed for the confirmed high-risk behaviors. Authentication and password change regenerate the session ID. Password reset, password change, permission change, and account deletion revoke persisted sessions. The cookie is `HttpOnly`, production `Secure`, `SameSite=Lax`, and 12 hours. Session-authenticated unsafe requests and auth mutations reject cross-site origins. | ASVS V2/V3/V4/V13; API2 | `server/auth.ts`; production build passed. |
+| SEC-2026-007 | Closed. Invite and reset capabilities are HMAC-digested before storage and lookup, with one-time clearing and expiry preserved. Legacy plaintext capabilities migrate to digests at boot. Reset completion revokes all user sessions. | ASVS V2/V6/V8; API2 | `server/auth.ts`; production build passed. |
+| SEC-2026-008 | Closed for implicit escalation. Missing principal context now falls back to an unbound, permissionless service principal, so scoped reads fail closed and owned writes reject missing ownership. Explicit system jobs must enter with a named/system principal. | ASVS V1/V4/V8; API1, API5 | Canonical compatibility boundary in `server/principal-context.ts`; 69 source consumers inherit the fail-closed behavior. |
+| SEC-2026-011 | Contained. The legacy archive exporter used unscoped raw SQL across user domains and job IDs were not owner-authorized. `/api/export` now returns a security hold rather than generating or serving an archive. | ASVS V4/V8/V14; API1, API3 | Canonical export ingress disabled in `server/export-routes.ts`; rebuild remains tracked below. |
+| SEC-2026-012 | Closed. The reusable automation bearer token now persists as an AES-256-GCM envelope under `ENCRYPTION_KEY`, lazily migrates legacy plaintext, and rotates envelopes through `ENCRYPTION_KEY_PREVIOUS`. | ASVS V6/V8; API2 | `server/automation-auth-token.ts` and all known consumers; production build passed. |
+
+### Coverage narrowed or verified
+
+- Connected accounts use owner/account predicates, vault checks, encrypted token envelopes, and current/previous key rotation.
+- Object reads fail closed without an ACL. Private ACLs authorize by owner or account; system/admin access is explicit.
+- Backup routes require authenticated admin permission plus privileged-mode elevation. Stage and live resolve to separate Railway environments and different deployed commits. Variable names show independent database, session, encryption, and object-storage bindings, but values were intentionally not inspected.
+- Cross-session message handlers resolve the caller and target through principal-scoped session storage and enforce direct parent, child, or sibling relationships.
+- PostgreSQL RLS remains defense-in-depth only. The pooled application connection has no transaction-local user/account variables, so enabling RLS now would either break legitimate background jobs or create a misleading bypass through the database role. Application principal scoping remains authoritative until a dedicated transaction-scoped database identity design exists.
+
+### Explicit residuals
+
+| ID | Severity | Owner | Rationale and required cure | Expiry |
+|---|---|---|---|---|
+| SEC-2026-013 | Medium | Identity and Data Owner, @task:1130 | Rebuild data export with owner/account columns on jobs, principal-scoped queries for every domain, opaque artifact storage, bounded retention, and owner-checked status/download. Export stays disabled until then. | 2026-08-03 |
+| SEC-2026-014 | Medium | Identity and Data Owner, @task:1131 | Replace process-local auth budgets with a shared store before horizontal scale or public registration. Current single-instance limits are an immediate control, not distributed enforcement. | 2026-08-03 |
+| SEC-2026-015 | Medium | Identity and Data Owner, @task:1132 | Inventory active sessions per user and add explicit device/session revocation UI plus idle timestamps. Current 12-hour expiry and event-driven revocation close the confirmed high issue. | 2026-08-03 |
+| SEC-2026-016 | Medium | Identity and Data Owner, @task:1133 | Design transaction-local PostgreSQL identity and restricted DB roles before evaluating RLS rollout. Do not enable RLS under the current pooled ambient role. | 2026-08-03 |
+| SEC-2026-017 | Medium | Identity and Data Owner, @task:1134 | Finish replacing compatibility calls named `getCurrentPrincipalOrSystem` with explicit user or named-system entry points. The canonical fallback is fail-closed, so this is clarity and observability debt rather than ambient authority. | 2026-08-03 |
+| SEC-2026-018 | Low | Identity and Data Owner, @task:1135 | Add formal retention/deletion schedules for session rows, expired capabilities, temporary export artifacts after the rebuild, and derived caches. | 2026-09-03 |
+
 ## 12. Security review and verification policy
 
 The repository's no-test policy remains in force. Do not add or run test harnesses, unit/integration/end-to-end tests, Playwright test mode, ad hoc exploit scripts, or typecheck-only gates unless Ray explicitly changes that policy for the current work.

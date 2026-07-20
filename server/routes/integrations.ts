@@ -1,3 +1,4 @@
+import { getAutomationAuthToken, setAutomationAuthToken } from "../automation-auth-token";
 // Use createLogger for logging ONLY
 import type { Express } from "express";
 import { storage } from "../storage";
@@ -1471,11 +1472,11 @@ export async function registerIntegrationsRoutes(app: Express) {
   app.get("/api/integrations/automation-auth", requireAuth, requireAdmin, async (_req, res) => {
     try {
       // One-time migration from old setting key
-      let token = await getSetting<string>("system.automation_auth_token");
+      let token = await getAutomationAuthToken();
       if (!token) {
         const oldToken = await getSetting<string>("system.screenshot_auth_token");
         if (oldToken) {
-          await setSetting("system.automation_auth_token", oldToken);
+          await setAutomationAuthToken(oldToken);
           await setSetting("system.screenshot_auth_token", null as any);
           token = oldToken;
         }
@@ -1499,7 +1500,7 @@ export async function registerIntegrationsRoutes(app: Express) {
       if (typeof finalToken !== "string" || finalToken.length < 32) {
         return res.status(400).json({ error: "Token must be at least 32 characters" });
       }
-      await setSetting("system.automation_auth_token", finalToken);
+      await setAutomationAuthToken(finalToken);
       res.json({
         configured: true,
         lastChars: finalToken.slice(-8),

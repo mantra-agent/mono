@@ -41,6 +41,7 @@ import { requireAuth, requireAdmin } from "./auth";
 import { findOrphanedChildren, cleanupOrphanedChildren } from "./session-tree-cleanup";
 import { resolveUserPrincipalForSessionRequest } from "./client-presence";
 import type { Principal } from "./principal";
+import { principalHasPermission } from "./permissions";
 
 const wsLog = createLogger("WS");
 
@@ -58,10 +59,22 @@ export async function registerRoutes(
     wsLog.log(`upgrade path=${pathname} url=${request.url}`);
 
     if (pathname === "/ws") {
-      wsLog.log(`upgrade → wss (dashboard logs)`);
-      wss.handleUpgrade(request, socket, head, (ws) => {
-        wss.emit("connection", ws, request);
-      });
+      resolveUserPrincipalForSessionRequest(request).then((principal) => {
+        if (!principal || !principalHasPermission(principal, "system:read")) {
+          socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+        const origin = request.headers.origin;
+        const host = request.headers["x-forwarded-host"]?.toString().split(",")[0]?.trim() || request.headers.host;
+        if (origin && host && new URL(origin).host !== host) {
+          socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+        (request as IncomingMessage & { dashboardPrincipal: Principal }).dashboardPrincipal = principal;
+        wss.handleUpgrade(request, socket, head, (ws) => wss.emit("connection", ws, request));
+      }).catch(() => socket.destroy());
     } else if (pathname === "/ws/events") {
       resolveUserPrincipalForSessionRequest(request)
         .then((principal) => {
@@ -121,7 +134,9 @@ export async function registerRoutes(
     broadcastLog(log);
   });
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, request) => {
+    const principal = (request as IncomingMessage & { dashboardPrincipal?: Principal }).dashboardPrincipal;
+    if (!principal || !principalHasPermission(principal, "system:read")) return ws.close(1008, "Permission required");
     setWsConnectionCount(wss.clients.size + eventsWss.clients.size);
     ws.send(JSON.stringify({ type: "connected", message: "WebSocket connected to Mantra Dashboard" }));
     ws.on("close", () => {

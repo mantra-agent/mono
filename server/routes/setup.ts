@@ -126,8 +126,8 @@ export async function registerSetupRoutes(app: Express) {
       })()),
       automationAuth: !!(await (async () => {
         try {
-          const { getSetting } = await import("../system-settings");
-          return await getSetting<string>("system.automation_auth_token");
+          const { getAutomationAuthToken } = await import("../automation-auth-token");
+          return await getAutomationAuthToken();
         } catch { return null; }
       })()),
     });
