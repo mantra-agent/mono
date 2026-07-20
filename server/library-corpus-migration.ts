@@ -4,7 +4,7 @@ import { syncContentFields } from "@shared/markdown-tiptap";
 import { libraryPages } from "@shared/models/info";
 import { db, pool } from "./db";
 import { ensureMantraLibraryVault, normalizeLibraryStructuralRole, type LibraryStructuralRole } from "./library-domain";
-import { placeLibraryPageSemantically } from "./library-placement";
+import { LIBRARY_PLACEMENT_POLICY, placeLibraryPageSemantically } from "./library-placement";
 import { buildLibrarySurfaceSet, publishLibraryChanged, slugifyLibraryTitle } from "./library-save";
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
@@ -23,7 +23,7 @@ const libraryScopeColumns = {
 };
 
 export type LibraryCorpusMigrationOutcome = "placed" | "unchanged" | "ambiguous" | "invalid";
-export type LibraryCorpusAmbiguityClass = "missing_index" | "ambiguous_index_match" | "invalid_role" | "invalid_title" | "invalid_parent" | "system_meta_page";
+export type LibraryCorpusAmbiguityClass = "missing_index" | "ambiguous_index_match" | "structural_container" | "invalid_role" | "invalid_title" | "invalid_parent" | "system_meta_page";
 
 export interface LibraryCorpusMigrationItemProposal {
   pageId: string;
@@ -115,7 +115,7 @@ function classifyInvalid(page: typeof libraryPages.$inferSelect): LibraryCorpusM
   return null;
 }
 
-async function proposePage(page: typeof libraryPages.$inferSelect, principal: Principal): Promise<LibraryCorpusMigrationItemProposal> {
+async function proposePage(page: typeof libraryPages.$inferSelect, principal: Principal, containerPageIds: Set<string>): Promise<LibraryCorpusMigrationItemProposal> {
   const invalid = classifyInvalid(page);
   if (invalid) return invalid;
 
@@ -136,6 +136,25 @@ async function proposePage(page: typeof libraryPages.$inferSelect, principal: Pr
       ambiguityClass: null,
       reason: "Canonical Mantra vault metadata page is already managed by the vault bootstrap.",
       confidence: 1,
+    };
+  }
+
+  if (containerPageIds.has(page.id)) {
+    return {
+      pageId: page.id,
+      pageTitle: page.title,
+      contentHash: contentHash(page),
+      currentVaultId: page.vaultId,
+      currentParentId: page.parentId,
+      currentStructuralRole: page.structuralRole,
+      proposedVaultId: null,
+      proposedParentId: null,
+      proposedParentTitle: null,
+      proposedStructuralRole: role,
+      outcome: "ambiguous",
+      ambiguityClass: "structural_container",
+      reason: "Page currently owns child pages. Corpus migration does not autonomously refile structural containers.",
+      confidence: 0,
     };
   }
 
@@ -287,7 +306,9 @@ function buildReport(input: {
     `**Vault:** ${input.vaultId}\n` +
     `**Index used:** @page:${input.indexPageId}\n` +
     `**Mode:** proposal only. No destructive moves, deletions, merges, or ambiguous changes were applied.\n` +
-    `**Human-review gate:** required before any application. Apply supports only explicitly reviewed placed items, bounded to ${APPLY_ITEM_LIMIT} per call.\n\n` +
+    `**Human-review gate:** required before any application. Apply supports only explicitly reviewed placed items, bounded to ${APPLY_ITEM_LIMIT} per call.\n` +
+    `**Matching source:** title and tags are primary anchors; summary, one-liner, purpose, and page context provide bounded supporting terms. Destination body text is excluded.\n` +
+    `**Confidence policy:** destination must be a direct canonical Wiki child and match at least ${LIBRARY_PLACEMENT_POLICY.minimumMatchedTerms} anchored terms with score >= ${LIBRARY_PLACEMENT_POLICY.minimumScore}, margin >= ${LIBRARY_PLACEMENT_POLICY.minimumScoreMargin}, and ratio >= ${LIBRARY_PLACEMENT_POLICY.minimumScoreRatio}. Structural containers always require review.\n\n` +
     `## Counts\n\n` +
     `- Total inventoried exactly once: ${counts.total}\n` +
     `- Placed proposals: ${counts.placed}\n` +
@@ -349,9 +370,10 @@ export async function proposeLibraryCorpusMigration(input: { idempotencyKey?: st
     throw new Error(`Library corpus migration is bounded to ${INVENTORY_PAGE_LIMIT} pages per run; refusing unbounded inventory.`);
   }
 
+  const containerPageIds = new Set(pages.map(page => page.parentId).filter((id): id is string => Boolean(id)));
   const proposals: LibraryCorpusMigrationItemProposal[] = [];
   for (const page of pages) {
-    proposals.push(await proposePage(page, principal));
+    proposals.push(await proposePage(page, principal, containerPageIds));
   }
   const counts = countOutcomes(proposals);
   const ambiguityClasses = countAmbiguityClasses(proposals);
