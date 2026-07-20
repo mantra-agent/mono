@@ -18,8 +18,15 @@ interface SpeakerPersonOption {
   nicknames?: string[];
 }
 
+function speakerDisplayLabel(participant: MeetingParticipant, index?: number): string {
+  return participant.label.trim() || `Unknown speaker${index == null ? "" : ` ${index + 1}`}`;
+}
+
 function speakerTestId(participant: MeetingParticipant): string {
-  return participant.label.replace(/\s+/g, "-").toLowerCase();
+  return (participant.key || speakerDisplayLabel(participant))
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
 }
 
 function SpeakerAssignment({
@@ -74,7 +81,7 @@ function SpeakerAssignment({
   return (
     <div className="flex min-w-0 items-center gap-2" data-testid={`speaker-assignment-${testId}`}>
       <span className="w-20 shrink-0 truncate text-xs font-medium text-foreground">
-        {participant.label}
+        {speakerDisplayLabel(participant)}
       </span>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
@@ -172,10 +179,10 @@ export function MeetingSpeakerAssignments({
     <div className="border-t border-border/20 px-4 py-2" data-testid="meeting-speaker-assignments">
       <div className="mb-1.5 text-xs font-medium text-muted-foreground">Speakers</div>
       <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-        {anonymousSpeakers.map((participant) => (
+        {anonymousSpeakers.map((participant, index) => (
           <SpeakerAssignment
             key={participant.key}
-            participant={participant}
+            participant={{ ...participant, label: speakerDisplayLabel(participant, index) }}
             sessionId={sessionId}
             people={data?.people || []}
           />

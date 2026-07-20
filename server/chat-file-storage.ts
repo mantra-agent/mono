@@ -1308,6 +1308,26 @@ async function resolvePersonaSnapshot(personaId: number | null | undefined): Pro
   }
 }
 
+function nextOrdinalLabel(participants: MeetingParticipant[], prefix: string): string {
+  const pattern = new RegExp(`^${prefix} (\\d+)$`);
+  const ordinals = new Set(
+    participants
+      .map((participant) => participant.label.match(pattern)?.[1])
+      .filter((ordinal): ordinal is string => Boolean(ordinal)),
+  );
+  let ordinal = 1;
+  while (ordinals.has(String(ordinal))) ordinal += 1;
+  return `${prefix} ${ordinal}`;
+}
+
+function nextUnknownSpeakerLabel(participants: MeetingParticipant[]): string {
+  return nextOrdinalLabel(participants, "Unknown speaker");
+}
+
+function nextGenericSpeakerLabel(participants: MeetingParticipant[]): string {
+  return nextOrdinalLabel(participants, "Speaker");
+}
+
 export const chatFileStorage: IChatFileStorage = {
   async getSession(id: string) {
     return _sessionsCache.getOrFetch(`session:${principalCacheKey()}:${id}`, async () => {
@@ -2017,7 +2037,19 @@ export const chatFileStorage: IChatFileStorage = {
         ? participants.findIndex((participant) => participant.key === candidate.key)
         : -1;
       if (keyedIndex >= 0) {
-        return { participant: participants[keyedIndex]!, participants, added: false };
+        const existing = participants[keyedIndex]!;
+        if (existing.label.trim() || candidate.source !== "machine_diarization") {
+          return { participant: existing, participants, added: false };
+        }
+        const participant = { ...existing, label: nextUnknownSpeakerLabel(participants) };
+        const updatedParticipants = [...participants];
+        updatedParticipants[keyedIndex] = participant;
+        data.meeting = { ...data.meeting, participants: updatedParticipants };
+        data.updatedAt = new Date().toISOString();
+        await writeConv(data);
+        const session = convToMeta(data);
+        invalidateSessionsCache({ action: "updated", sessionId, session });
+        return { participant, participants: updatedParticipants, added: false };
       }
       const legacyIndex = candidate.key
         ? participants.findIndex((participant) =>
@@ -2039,14 +2071,12 @@ export const chatFileStorage: IChatFileStorage = {
 
       let participant = candidate;
       if (!candidate.label.trim()) {
-        const ordinals = new Set(
-          participants
-            .map((entry) => entry.label.match(/^Speaker (\d+)$/)?.[1])
-            .filter(Boolean),
-        );
-        let ordinal = 1;
-        while (ordinals.has(String(ordinal))) ordinal += 1;
-        participant = { ...candidate, label: `Speaker ${ordinal}` };
+        participant = {
+          ...candidate,
+          label: candidate.source === "machine_diarization"
+            ? nextUnknownSpeakerLabel(participants)
+            : nextGenericSpeakerLabel(participants),
+        };
       }
       const updatedParticipants = [...participants, participant];
       data.meeting = { ...data.meeting, participants: updatedParticipants };

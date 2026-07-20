@@ -17,6 +17,8 @@ import type {
   MeetingRecognitionStream,
   MeetingSessionMeta,
   MeetingSpeakerPolicy,
+  type CanonicalMeetingSpeakerPolicy,
+  type MeetingRecognitionReasonCode,
 } from "@shared/models/chat";
 import { normalizeMeetingSpeakerPolicy } from "@shared/models/chat";
 import type { MeetingIngestFn } from "../routes/recall";
@@ -148,6 +150,9 @@ async function persistRecognition(
     .filter((stream) => stream.identity.sessionId === sessionId)
     .map((stream) => stream.recognition);
   const anyActive = recognitionStreams.some((stream) => stream.status === "active");
+  const degradedDetail = recognitionStreams.find(
+    (stream) => stream.status === "failed" || stream.status === "fallback",
+  )?.detail;
   // Meeting meta is user-owned state; this transport runs from a raw WebSocket
   // with no request principal, so every write must restore the meeting owner.
   await runWithMeetingOwnerPrincipal(meeting, () =>
@@ -155,6 +160,7 @@ async function persistRecognition(
       recognition: {
         mode: normalizeMeetingSpeakerPolicy(meeting.speakerPolicy).mode,
         status: recognitionStatus(recognitionStreams, closing),
+        ...(degradedDetail ? { detail: degradedDetail } : {}),
         streams: recognitionStreams,
       },
       // Claim the canonical source the moment participant audio is live so the
@@ -420,8 +426,56 @@ export function registerMeetingSTTAudioTransport(
   };
 }
 
-export function canonicalMeetingSTTEnabled(policy?: MeetingSpeakerPolicy): boolean {
-  return normalizeMeetingSpeakerPolicy(policy).mode === "shared_room"
-    ? new DeepgramDiarizingSTTProvider().isConfigured()
-    : new ScribeRealtimeSTTProvider().isConfigured();
+export interface MeetingRecognitionLaunchPlan {
+  outcome: "participant_audio" | "transcript_fallback";
+  mode: CanonicalMeetingSpeakerPolicy["mode"];
+  provider: string;
+  model: string;
+  source: "recall_participant_audio" | "recall_transcript_webhook";
+  fallback: boolean;
+  sttStatus: "fallback" | "inactive";
+  recognitionStatus: MeetingRecognitionState["status"];
+  reasonCode: MeetingRecognitionReasonCode;
+  detail: string;
+}
+
+/** Canonical readiness and launch decision for meeting recognition. */
+export function createMeetingRecognitionLaunchPlan(
+  policy?: MeetingSpeakerPolicy,
+): MeetingRecognitionLaunchPlan {
+  const mode = normalizeMeetingSpeakerPolicy(policy).mode;
+  const provider = mode === "shared_room"
+    ? new DeepgramDiarizingSTTProvider()
+    : new ScribeRealtimeSTTProvider();
+
+  if (provider.isConfigured()) {
+    return {
+      outcome: "participant_audio",
+      mode,
+      provider: provider.provider,
+      model: provider.model,
+      source: "recall_participant_audio",
+      fallback: false,
+      sttStatus: "inactive",
+      recognitionStatus: "waiting",
+      reasonCode: "participant_audio_ready",
+      detail: `Waiting for Recall participant audio for ${mode === "shared_room" ? "shared-room" : "participant"} recognition`,
+    };
+  }
+
+  const sharedRoom = mode === "shared_room";
+  return {
+    outcome: "transcript_fallback",
+    mode,
+    provider: "recallai_streaming",
+    model: "prioritize_low_latency",
+    source: "recall_transcript_webhook",
+    fallback: true,
+    sttStatus: "fallback",
+    recognitionStatus: "degraded",
+    reasonCode: sharedRoom ? "deepgram_not_configured" : "scribe_not_configured",
+    detail: sharedRoom
+      ? "Shared-room speaker recognition is unavailable because DEEPGRAM_API_KEY is not configured. Transcript capture continues through Recall, but people sharing one microphone will not be separated. Configure DEEPGRAM_API_KEY and start a new meeting."
+      : "Participant-audio recognition is unavailable because ELEVENLABS_API_KEY is not configured. Transcript capture continues through Recall. Configure ELEVENLABS_API_KEY and start a new meeting.",
+  };
 }

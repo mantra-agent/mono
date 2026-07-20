@@ -62,6 +62,8 @@ export async function joinMeetingByUrl(opts: {
     explicitEvent: opts.explicitEvent,
   });
   const title = identity.title;
+  const { createMeetingRecognitionLaunchPlan, issueMeetingSTTAudioToken } = await import("./stt");
+  const recognitionLaunch = createMeetingRecognitionLaunchPlan(identity.speakerPolicy);
   const { chatStorage } = await import("../integrations/chat/storage");
   const session = await chatStorage.createMeetingSession(title, {
     title,
@@ -79,10 +81,18 @@ export async function joinMeetingByUrl(opts: {
     resolutionSource: identity.resolutionSource,
     speakerPolicy: identity.speakerPolicy,
     recognition: {
-      mode: identity.speakerPolicy.mode,
-      status: "waiting",
+      mode: recognitionLaunch.mode,
+      status: recognitionLaunch.recognitionStatus,
+      reasonCode: recognitionLaunch.reasonCode,
+      detail: recognitionLaunch.detail,
       streams: [],
     },
+    sttProvider: recognitionLaunch.provider,
+    sttModel: recognitionLaunch.model,
+    sttSource: recognitionLaunch.source,
+    sttFallback: recognitionLaunch.fallback,
+    sttStatus: recognitionLaunch.sttStatus,
+    sttStatusDetail: recognitionLaunch.detail,
   });
 
   const failSession = async (message: string): Promise<never> => {
@@ -110,10 +120,23 @@ export async function joinMeetingByUrl(opts: {
   }
   const { outputMediaPageUrl, syncMeetingVisualizerBotStatus } = await import("./output-media");
   const outputMediaUrl = outputMediaPageUrl(publicUrl, session.id);
-  const { canonicalMeetingSTTEnabled, issueMeetingSTTAudioToken } = await import("./stt");
-  const participantAudioUrl = canonicalMeetingSTTEnabled(identity.speakerPolicy)
+  const participantAudioUrl = recognitionLaunch.outcome === "participant_audio"
     ? `${publicUrl.replace(/^http/, "ws")}/ws/recall-participant-audio/?sessionId=${encodeURIComponent(session.id)}&token=${encodeURIComponent(issueMeetingSTTAudioToken(session.id))}`
     : undefined;
+  const launchDiagnostic = {
+    sessionId: session.id,
+    requestedMode: recognitionLaunch.mode,
+    outcome: recognitionLaunch.outcome,
+    provider: recognitionLaunch.provider,
+    model: recognitionLaunch.model,
+    reasonCode: recognitionLaunch.reasonCode,
+    transcriptFallback: recognitionLaunch.fallback,
+  };
+  if (recognitionLaunch.outcome === "transcript_fallback") {
+    log.warn("meeting recognition launch degraded", launchDiagnostic);
+  } else {
+    log.info("meeting recognition launch ready", launchDiagnostic);
+  }
   let botId: string;
   try {
     const bot = await recall.createRecallBot({
@@ -135,23 +158,6 @@ export async function joinMeetingByUrl(opts: {
   await chatStorage.updateMeetingMeta(session.id, {
     botId,
     outputMediaUrl,
-    sttProvider: participantAudioUrl
-      ? identity.speakerPolicy.mode === "shared_room" ? "deepgram" : "scribe_realtime"
-      : "recallai_streaming",
-    sttModel: participantAudioUrl
-      ? identity.speakerPolicy.mode === "shared_room" ? "nova-3" : "scribe_v2_realtime"
-      : "prioritize_low_latency",
-    sttSource: participantAudioUrl ? "recall_participant_audio" : "recall_transcript_webhook",
-    sttFallback: !participantAudioUrl,
-    sttStatus: participantAudioUrl ? "inactive" : "fallback",
-    sttStatusDetail: participantAudioUrl
-      ? "Waiting for Recall participant audio"
-      : "Participant audio STT unavailable; Recall transcript webhook fallback active",
-    recognition: {
-      mode: identity.speakerPolicy.mode,
-      status: participantAudioUrl ? "waiting" : "degraded",
-      streams: [],
-    },
   });
   syncMeetingVisualizerBotStatus(session.id, "dialing");
   log.log(`Bot ${botId} dispatched to ${platform} meeting "${title}" (session ${session.id})`);
