@@ -86,6 +86,7 @@ const LABEL_PERCENTILE = 0.1;
 const LABEL_POSITION_TICKS = 4;
 const LABEL_REFRESH_TICKS = 12;
 const INITIAL_LAYOUT_SCALE = 20;
+const MIN_NODE_HIT_RADIUS_PX = 12;
 
 const nodeVertexShader = `
   attribute float aVisibility;
@@ -401,6 +402,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     const projected = new THREE.Vector3();
+    const cameraSpace = new THREE.Vector3();
     const frustum = new THREE.Frustum();
     const viewProjection = new THREE.Matrix4();
     const nodeSphere = new THREE.Sphere();
@@ -590,13 +592,42 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       requestRender(true);
     }
 
+    function pickProjectedNode(rect: DOMRect): number | null {
+      camera.updateMatrixWorld();
+      const pointerX = pendingPointer.x - rect.left;
+      const pointerY = pendingPointer.y - rect.top;
+      const pixelsPerRadian = rect.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+      let nearestIndex: number | null = null;
+      let nearestDepth = Number.POSITIVE_INFINITY;
+
+      sceneNodes.forEach((node, index) => {
+        cameraSpace.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
+        const depth = -cameraSpace.z;
+        if (depth <= 0) return;
+
+        projected.set(node.x, node.y, node.z).project(camera);
+        if (projected.z <= -1 || projected.z >= 1 || Math.abs(projected.x) > 1.02 || Math.abs(projected.y) > 1.02) return;
+        const centerX = (projected.x * 0.5 + 0.5) * rect.width;
+        const centerY = (-projected.y * 0.5 + 0.5) * rect.height;
+        const projectedRadius = node.radius * pixelsPerRadian / depth;
+        const hitRadius = Math.max(MIN_NODE_HIT_RADIUS_PX, projectedRadius);
+        if (Math.hypot(pointerX - centerX, pointerY - centerY) > hitRadius || depth >= nearestDepth) return;
+        nearestIndex = index;
+        nearestDepth = depth;
+      });
+
+      return nearestIndex;
+    }
+
     function pickNode() {
       pointerFrame = 0;
       const rect = renderer.domElement.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
       pointer.x = ((pendingPointer.x - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((pendingPointer.y - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
-      const nextHoveredIndex = raycaster.intersectObject(nodeMesh, false)[0]?.instanceId ?? null;
+      const exactHoveredIndex = raycaster.intersectObject(nodeMesh, false)[0]?.instanceId ?? null;
+      const nextHoveredIndex = exactHoveredIndex ?? pickProjectedNode(rect);
       if (nextHoveredIndex === hoveredIndex) return;
       const previousHoveredIndex = hoveredIndex;
       hoveredIndex = nextHoveredIndex;
