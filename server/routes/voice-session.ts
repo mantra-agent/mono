@@ -7,6 +7,7 @@ import { storage } from "../storage";
 import { eventBus } from "../event-bus";
 import { VoiceEvents } from "@shared/event-catalog";
 import { getSecretSync } from "../secrets-store";
+import crypto from "crypto";
 import { FTUE_AGENT_NAME } from "../onboarding";
 import {
   assembleVoiceContext,
@@ -98,6 +99,17 @@ export async function registerVoiceSessionRoutes(app: Express) {
   }
 
   const voiceLlmHandler = async (req: import("express").Request, res: import("express").Response) => {
+    const callbackSecret = getSecretSync("SESSION_SECRET")?.trim();
+    const supplied = typeof req.params.callbackToken === "string" ? req.params.callbackToken : "";
+    const expected = callbackSecret
+      ? crypto.createHmac("sha256", callbackSecret).update("elevenlabs-custom-llm-v1").digest("base64url")
+      : "";
+    const suppliedBytes = Buffer.from(supplied);
+    const expectedBytes = Buffer.from(expected);
+    if (!expected || suppliedBytes.length !== expectedBytes.length || !crypto.timingSafeEqual(suppliedBytes, expectedBytes)) {
+      voiceLog.warn(`custom LLM callback rejected path=${req.path}`);
+      return res.status(401).json({ error: "Invalid callback capability" });
+    }
     try {
       const { handleV25CustomLLM } = await import("../voice");
       await handleV25CustomLLM(req, res);
@@ -109,9 +121,9 @@ export async function registerVoiceSessionRoutes(app: Express) {
     }
   };
 
-  app.post("/api/voice/llm/route/chat/completions", voiceLlmHandler);
-  app.post("/api/voice/llm/:sessionId/:chatSessionId/chat/completions", voiceLlmHandler);
-  app.post("/api/voice/llm/:sessionId/chat/completions", voiceLlmHandler);
+  app.post("/api/voice/llm/route/:callbackToken/chat/completions", voiceLlmHandler);
+  app.post("/api/voice/llm/:sessionId/:chatSessionId/:callbackToken/chat/completions", voiceLlmHandler);
+  app.post("/api/voice/llm/:sessionId/:callbackToken/chat/completions", voiceLlmHandler);
 
   // Greetings removed — user speaks first, connection chime signals readiness.
 

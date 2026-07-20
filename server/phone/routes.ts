@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import type { IncomingMessage } from "http";
 import type { Socket } from "net";
+import crypto from "crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { getRuntimePublicBaseUrl } from "../runtime-identity";
 import { createLogger } from "../log";
@@ -13,6 +14,7 @@ import { clearPhoneSpeech, sendPhoneSpeech } from "./audio";
 import type { MessageSpeakerMeta } from "@shared/models/chat";
 import { applyOutboundCallStatus, getOutboundCall } from "./outbound";
 import type { TwilioCallStatus } from "../integrations/twilio/client";
+import { getSecretSync } from "../secrets-store";
 
 const log = createLogger("PhoneTransport");
 const pendingCalls = new Map<string, { sessionId: string; caller: string; principal: ReturnType<typeof getCurrentPrincipalOrSystem>; callerName: string }>();
@@ -31,6 +33,38 @@ async function callerIdentity(phone: string): Promise<{ name: string; personId?:
   return { name: "Caller" };
 }
 function xmlEscape(value: string): string { return value.replace(/[<>&"']/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[c]!); }
+function twilioRequestUrl(req: Request): string {
+  const proto = req.get("x-forwarded-proto")?.split(",")[0]?.trim() || req.protocol;
+  const host = req.get("x-forwarded-host")?.split(",")[0]?.trim() || req.get("host") || "";
+  return `${proto}://${host}${req.originalUrl}`;
+}
+
+function verifyTwilioRequest(req: Request): boolean {
+  const signature = req.get("x-twilio-signature")?.trim();
+  const authToken = getSecretSync("TWILIO_AUTH_TOKEN")?.trim();
+  if (!signature || !authToken) return false;
+  const parameters = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? Object.entries(req.body as Record<string, unknown>)
+      .filter(([, value]) => typeof value === "string")
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => `${key}${value as string}`)
+      .join("")
+    : "";
+  const expected = crypto.createHmac("sha1", authToken)
+    .update(`${twilioRequestUrl(req)}${parameters}`)
+    .digest("base64");
+  const actualBytes = Buffer.from(signature);
+  const expectedBytes = Buffer.from(expected);
+  return actualBytes.length === expectedBytes.length && crypto.timingSafeEqual(actualBytes, expectedBytes);
+}
+
+function requireTwilioSignature(req: Request, res: Response): boolean {
+  if (verifyTwilioRequest(req)) return true;
+  log.warn(`Twilio webhook rejected path=${req.path}`);
+  res.status(401).json({ error: "Invalid webhook signature" });
+  return false;
+}
+
 
 export function registerPhoneRoutes(app: Express, deps: {
   ingestPhoneTurn: PhoneIngestFn;
@@ -40,6 +74,7 @@ export function registerPhoneRoutes(app: Express, deps: {
   const sttProvider = new DeepgramSTTProvider();
 
   app.post("/api/webhooks/twilio/outbound-voice", async (req: Request, res: Response) => {
+    if (!requireTwilioSignature(req, res)) return;
     const callSid = typeof req.body?.CallSid === "string" ? req.body.CallSid : "";
     const sessionId = typeof req.query?.sessionId === "string" ? req.query.sessionId : "";
     const outbound = getOutboundCall(callSid, sessionId);
@@ -52,6 +87,7 @@ export function registerPhoneRoutes(app: Express, deps: {
   });
 
   app.post("/api/webhooks/twilio/call-status", async (req: Request, res: Response) => {
+    if (!requireTwilioSignature(req, res)) return;
     const callSid = typeof req.body?.CallSid === "string" ? req.body.CallSid : "";
     const status = typeof req.body?.CallStatus === "string" ? req.body.CallStatus as TwilioCallStatus : null;
     if (!callSid || !status) return res.status(400).json({ error: "CallSid and CallStatus are required" });
@@ -65,6 +101,7 @@ export function registerPhoneRoutes(app: Express, deps: {
   });
 
   app.post("/api/webhooks/twilio/voice", async (req: Request, res: Response) => {
+    if (!requireTwilioSignature(req, res)) return;
     const callSid = typeof req.body?.CallSid === "string" ? req.body.CallSid : "";
     const caller = typeof req.body?.From === "string" ? req.body.From : "Unknown";
     if (!callSid) return res.status(400).type("text/xml").send("<Response><Reject/></Response>");

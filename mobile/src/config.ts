@@ -25,7 +25,16 @@ const STORAGE_KEYS = {
 } as const;
 
 function normalizeServerUrl(value: string): string {
-  return value.trim().replace(/\/+$/, '');
+  const normalized = value.trim().replace(/\/+$/, '');
+  if (!normalized) return '';
+  try {
+    const parsed = new URL(normalized);
+    const localDevelopment = __DEV__ && parsed.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(parsed.hostname);
+    if (parsed.protocol !== 'https:' && !localDevelopment) return '';
+    return parsed.origin;
+  } catch {
+    return '';
+  }
 }
 
 function isBackendTarget(value: string): value is BackendTarget {
@@ -71,10 +80,14 @@ class AppConfig {
   get SERVER_URL(): string {
     if (this.BACKEND_TARGET === 'custom') {
       const customUrl = normalizeServerUrl(this.CUSTOM_SERVER_URL);
-      return customUrl || BACKEND_TARGETS.production;
+      return customUrl || normalizeServerUrl(BACKEND_TARGETS.production);
     }
 
-    return BACKEND_TARGETS[this.BACKEND_TARGET];
+    return normalizeServerUrl(BACKEND_TARGETS[this.BACKEND_TARGET]);
+  }
+
+  get TRUSTED_ORIGIN(): string {
+    return new URL(this.SERVER_URL).origin;
   }
 
   async set(key: keyof typeof STORAGE_KEYS, value: string): Promise<void> {

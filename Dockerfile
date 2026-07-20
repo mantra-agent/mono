@@ -53,6 +53,8 @@ FROM node:20-trixie-slim
 
 WORKDIR /app
 
+RUN groupadd --system mantra && useradd --system --gid mantra --home-dir /home/mantra --create-home mantra
+
 # Runtime system deps for native modules. Cache mounts removed (see builder
 # stage note).
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -87,18 +89,21 @@ COPY --from=builder /app/mobile ./mobile
 # The server runs on port 5000 by default
 ENV PORT=5000
 ENV NODE_ENV=production
-# Tell Claude Code we're running in a sandboxed/containerized environment so
-# it allows --dangerously-skip-permissions even though the container runs as
-# root (Railway's default). Without this the CLI exits with:
-#   "--dangerously-skip-permissions cannot be used with root/sudo privileges"
-# which is what crashed every voice/chat session in production after the
-# claude-cli runtime was wired up.
+# Tell Claude Code this is the product's sandboxed/containerized execution
+# boundary. The runtime drops root below; deterministic capability policy still
+# owns which tools and commands the model can reach.
 ENV IS_SANDBOX=1
 EXPOSE 5000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD node -e "fetch('http://localhost:5000/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
+
+# Runtime execution capabilities remain explicit, but they no longer receive
+# container-root authority. Writable workspaces and browser caches belong to mantra.
+RUN chown -R mantra:mantra /app /home/mantra
+USER mantra
+ENV HOME=/home/mantra
 
 # Tini is PID 1: it forwards signals to the entrypoint and reaps orphaned
 # grandchildren from git, esbuild, Chromium, and other runtime tooling.

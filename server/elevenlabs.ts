@@ -1,6 +1,7 @@
 import { getPublicBaseUrl } from "./voice-llm";
 import { createLogger } from "./log";
 import { getSecretSync, onSecretChange } from "./secrets-store";
+import crypto from "crypto";
 import { HIGH_QUALITY_SCRIBE_POLICY } from "./voice/stt";
 import { buildLanguagePresets, ELEVENLABS_ADDITIONAL_LANGUAGE_CODES } from "./voice/provider-system-tools";
 
@@ -185,8 +186,11 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
 
   log.debug(`setupAgentCallbackUrl: step 2/6 — getPublicBaseUrl`);
   const baseUrl = getPublicBaseUrl();
-  const callbackUrl = `${baseUrl}/api/voice/llm/route`;
-  log.debug(`setupAgentCallbackUrl: step 2/6 — getPublicBaseUrl done callbackUrl=${callbackUrl} (${Date.now() - setupStart}ms)`);
+  const callbackSecret = getSecretSync("SESSION_SECRET")?.trim();
+  if (!callbackSecret) throw new Error("SESSION_SECRET is required for the ElevenLabs callback capability");
+  const callbackToken = crypto.createHmac("sha256", callbackSecret).update("elevenlabs-custom-llm-v1").digest("base64url");
+  const callbackUrl = `${baseUrl}/api/voice/llm/route/${callbackToken}`;
+  log.debug(`setupAgentCallbackUrl: step 2/6 — getPublicBaseUrl done callbackOrigin=${new URL(callbackUrl).origin} (${Date.now() - setupStart}ms)`);
 
   const { hasVoiceWebhookBaseUrlOverride } = await import("./voice-webhook-base-url");
   const overridden = hasVoiceWebhookBaseUrlOverride();
@@ -349,10 +353,10 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
   log.debug(`setupAgentCallbackUrl: step 5/6 — PATCH full response body (${responseText.length} bytes): ${responseText.slice(0, 3000)}`);
   const effectiveLlm = responseData?.conversation_config?.agent?.prompt?.custom_llm;
   const patchCascade = effectiveLlm?.cascade_timeout_seconds;
-  log.debug(`setupAgentCallbackUrl: step 5/6 — PATCH success elapsed=${patchElapsed}ms custom_llm.url=${effectiveLlm?.url || "(missing)"} cascade_timeout_seconds=${patchCascade ?? "(not in response)"} (total=${Date.now() - setupStart}ms)`);
+  log.debug(`setupAgentCallbackUrl: step 5/6 — PATCH success elapsed=${patchElapsed}ms custom_llm.configured=${Boolean(effectiveLlm?.url)} cascade_timeout_seconds=${patchCascade ?? "(not in response)"} (total=${Date.now() - setupStart}ms)`);
 
   if (effectiveLlm?.url && effectiveLlm.url !== callbackUrl) {
-    log.warn(`setupAgentCallbackUrl MISMATCH: expected=${callbackUrl} got=${effectiveLlm.url}`);
+    log.warn("setupAgentCallbackUrl MISMATCH: provider callback URL differs from the configured capability URL");
   }
 
   const ttsVoiceId = (responseData?.conversation_config as Record<string, unknown> | undefined);
@@ -410,7 +414,7 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
         }
       }
 
-      log.debug(`setupAgentCallbackUrl: step 6/6 — GET verification done elapsed=${getElapsed}ms custom_llm.url=${effectiveUrl || "(missing)"} custom_llm.cascade_timeout_seconds=${cascadeInCustomLlm ?? "(absent)"} turn.cascade_timeout_seconds=${cascadeInTurn ?? "(absent)"} backup_llms.cascade_timeout_seconds=${cascadeInBackupLlms ?? "(absent)"} soft_timeout_config.timeout_seconds=${softTimeoutConfig?.timeout_seconds ?? "(absent)"} language_presets=${configuredLanguageCount}/${ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length} language_detection=${hasLanguageDetection} (total=${Date.now() - setupStart}ms)`);
+      log.debug(`setupAgentCallbackUrl: step 6/6 — GET verification done elapsed=${getElapsed}ms custom_llm.configured=${Boolean(effectiveUrl)} custom_llm.cascade_timeout_seconds=${cascadeInCustomLlm ?? "(absent)"} turn.cascade_timeout_seconds=${cascadeInTurn ?? "(absent)"} backup_llms.cascade_timeout_seconds=${cascadeInBackupLlms ?? "(absent)"} soft_timeout_config.timeout_seconds=${softTimeoutConfig?.timeout_seconds ?? "(absent)"} language_presets=${configuredLanguageCount}/${ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length} language_detection=${hasLanguageDetection} (total=${Date.now() - setupStart}ms)`);
 
       if (!hasLanguageDetection || configuredLanguageCount !== ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length) {
         log.error(`setupAgentCallbackUrl: MULTILINGUAL CONFIG MISMATCH — language_detection=${hasLanguageDetection} language_presets=${configuredLanguageCount}/${ELEVENLABS_ADDITIONAL_LANGUAGE_CODES.length}`);
