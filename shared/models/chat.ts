@@ -748,9 +748,16 @@ export interface MeetingRecognitionStream {
   detail?: string;
 }
 
+export type MeetingRecognitionReasonCode =
+  | "participant_audio_ready"
+  | "deepgram_not_configured"
+  | "scribe_not_configured";
+
 export interface MeetingRecognitionState {
   mode: MeetingSpeakerPolicy["mode"];
   status: "waiting" | "active" | "degraded" | "inactive";
+  reasonCode?: MeetingRecognitionReasonCode;
+  detail?: string;
   streams: MeetingRecognitionStream[];
 }
 

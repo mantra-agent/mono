@@ -353,11 +353,22 @@ export function MeetingHeaderBar({
         />
       )}
 
-      {meeting.recognition && meeting.recognition.streams.length > 0 && (
+      {meeting.recognition && (
+        meeting.recognition.status === "degraded" || meeting.recognition.streams.length > 0
+      ) && (
         <div
           className="flex flex-wrap items-center gap-1.5 border-t border-border/20 px-4 py-1.5"
-          data-testid="meeting-recognition-streams"
+          data-testid="meeting-recognition-state"
         >
+          {meeting.recognition.status === "degraded" && (
+            <div
+              className="flex w-full items-start gap-2 rounded border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive"
+              data-testid="banner-meeting-recognition-degraded"
+            >
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>{meeting.recognition.detail || meeting.sttStatusDetail || "Speaker recognition is degraded."}</span>
+            </div>
+          )}
           {meeting.recognition.streams.map((stream) => (
             <span
               key={stream.streamKey}
