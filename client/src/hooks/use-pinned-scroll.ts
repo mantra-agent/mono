@@ -111,11 +111,15 @@ export function usePinnedScroll({
     if (!isPinnedRef.current) return;
     programmaticScrollRef.current = true;
     requestAnimationFrame(() => {
-      if (userScrollIntentRef.current && !updatePinnedState(container)) {
+      // A wheel/touch at the bottom can set intent without producing a scroll
+      // event. Trust the established pinned state rather than measuring after
+      // new content has already increased the distance from the bottom.
+      if (!isPinnedRef.current) {
         programmaticScrollRef.current = false;
         log.verbose(() => `SCROLL_REVISION_CANCEL_USER resetKey=${resetKey}`);
         return;
       }
+      userScrollIntentRef.current = false;
       pinToBottom(container);
       log.verbose(() => `SCROLL_REVISION_APPLY resetKey=${resetKey} top=${container.scrollTop}`);
       requestAnimationFrame(() => {
