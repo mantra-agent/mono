@@ -11749,12 +11749,45 @@ const SHELL_DENYLIST = [
 // output. Threshold for triggering off-thread indexing matches the prior
 // behaviour (>30 KB triggers the indexer; smaller is returned inline).
 const SHELL_TMP_DIR = join(WORKSPACE_DIR, ".tmp", "shell");
+const SHELL_HOME_DIR = join(SHELL_TMP_DIR, "home");
 const SHELL_INDEX_THRESHOLD_BYTES = 30_000;
+
+function createIsolatedShellEnvironment(): NodeJS.ProcessEnv {
+  return {
+    PATH: "/usr/local/bin:/usr/bin:/bin",
+    HOME: SHELL_HOME_DIR,
+    TMPDIR: SHELL_TMP_DIR,
+    XDG_CONFIG_HOME: join(SHELL_HOME_DIR, ".config"),
+    XDG_CACHE_HOME: join(SHELL_HOME_DIR, ".cache"),
+    XDG_DATA_HOME: join(SHELL_HOME_DIR, ".local", "share"),
+    LANG: process.env.LANG || "C.UTF-8",
+    LC_ALL: process.env.LC_ALL || process.env.LANG || "C.UTF-8",
+    TZ: process.env.TZ || "UTC",
+    CI: "1",
+    NO_COLOR: "1",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "/bin/false",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_PAGER: "cat",
+    PAGER: "cat",
+    GIT_OPTIONAL_LOCKS: "0",
+    GIT_CONFIG_COUNT: "2",
+    GIT_CONFIG_KEY_0: "core.fsmonitor",
+    GIT_CONFIG_VALUE_0: "false",
+    GIT_CONFIG_KEY_1: "core.hooksPath",
+    GIT_CONFIG_VALUE_1: "/dev/null",
+    NPM_CONFIG_USERCONFIG: "/dev/null",
+    npm_config_userconfig: "/dev/null",
+    BUILD_PUSH_TO_GITHUB: "false",
+    ENABLE_DB_CLEANUP: "false",
+  };
+}
 const SHELL_INDEX_CHUNK_SIZE = 80_000;
 let _shellTmpDirEnsured = false;
 async function ensureShellTmpDir(): Promise<void> {
   if (_shellTmpDirEnsured) return;
-  await mkdir(SHELL_TMP_DIR, { recursive: true });
+  await mkdir(SHELL_HOME_DIR, { recursive: true });
   _shellTmpDirEnsured = true;
 }
 
@@ -11992,7 +12025,7 @@ const systemTools: Record<string, ToolHandler> = {
       try {
         child = spawn("/bin/sh", ["-c", command], {
           cwd: WORKSPACE_DIR,
-          env: { ...process.env },
+          env: createIsolatedShellEnvironment(),
           stdio: ["ignore", "pipe", "pipe"],
         });
       } catch (err: any) {
