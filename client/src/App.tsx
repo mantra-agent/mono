@@ -265,6 +265,7 @@ function Router() {
         <Route path="/platforms/environments/:id" component={PlatformEnvironmentDetailPage} />
         <Route path="/platforms" component={PlatformsPage} />
         <Route path="/memory" component={MemoryPageFull} />
+        <Route path="/journal">{() => <Redirect to="/memory?tab=maintenance" />}</Route>
         <Route path="/build">{() => <RequirePermission permission="build:read"><BuildPage /></RequirePermission>}</Route>
         <Route path="/database">{() => <RequirePermission permission="build:read"><DatabasePage /></RequirePermission>}</Route>
         <Route path="/design">{() => <RequirePermission permission="build:read"><DesignPage /></RequirePermission>}</Route>
