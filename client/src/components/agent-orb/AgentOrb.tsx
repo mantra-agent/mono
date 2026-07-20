@@ -28,14 +28,16 @@ function qualitySteps(maxFrameRate: number): number {
  * AgentOrb is the shared pure render boundary for every voice host.
  * It owns GPU lifecycle only. Transport, state ownership, and audio capture stay outside.
  */
-export function AgentOrb({ state, audioLevel, maxFrameRate = 60, className }: AgentOrbProps) {
+export function AgentOrb({ state, audioLevel, maxFrameRate = 60, paused = false, className }: AgentOrbProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef(state);
   const audioRef = useRef(audioLevel);
+  const pausedRef = useRef(paused);
   const [webGlFailed, setWebGlFailed] = useState(false);
 
   stateRef.current = state;
   audioRef.current = audioLevel;
+  pausedRef.current = paused;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -140,6 +142,7 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, className }: Ag
     let lastRenderTime = 0;
     let animFrameId = 0;
     let hidden = document.hidden;
+    let wasPaused = hidden || pausedRef.current;
     const frameIntervalMs = 1000 / Math.max(1, Math.min(60, maxFrameRate));
 
     function resize() {
@@ -154,7 +157,16 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, className }: Ag
     }
 
     function applyVisuals(now: number) {
-      if (hidden) return;
+      const shouldPause = hidden || pausedRef.current;
+      if (shouldPause) {
+        wasPaused = true;
+        return;
+      }
+      if (wasPaused) {
+        lastTime = now;
+        lastRenderTime = 0;
+        wasPaused = false;
+      }
       if (now - lastRenderTime < frameIntervalMs) return;
       lastRenderTime = now;
 
@@ -211,6 +223,7 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, className }: Ag
 
     function handleVisibilityChange() {
       hidden = document.hidden;
+      wasPaused = hidden || pausedRef.current;
       lastTime = performance.now();
       lastRenderTime = 0;
     }
