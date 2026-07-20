@@ -2158,7 +2158,7 @@ function InlinePlanWidget({
 
   if (isLoading) {
     return (
-      <div className="-ml-10 my-2 w-[calc(100%+2.5rem)] rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+      <div className="my-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
         Loading plan…
       </div>
     );
@@ -2166,7 +2166,7 @@ function InlinePlanWidget({
 
   if (error || !plan) {
     return (
-      <div className="-ml-10 my-2 w-[calc(100%+2.5rem)] rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+      <div className="my-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
         @plan:{planId}
       </div>
     );
@@ -2176,7 +2176,7 @@ function InlinePlanWidget({
     <PlanWidget
       plan={plan}
       sessionId={sessionId}
-      className="-ml-10 my-2 w-[calc(100%+2.5rem)]"
+      className="my-2"
       ownedChildBlocks={ownedChildBlocks}
       sessionTitleById={sessionTitleById}
       sessionStreams={sessionStreams}

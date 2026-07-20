@@ -227,7 +227,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
       id={`child-session-${meta.childSessionId}`}
       className={cn(
         "scroll-mt-20",
-        insidePlan ? "my-0.5" : `border rounded-md my-1 ${tileClass}`,
+        insidePlan ? "group my-0.5" : `border rounded-md my-1 ${tileClass}`,
         !expanded && "cursor-pointer",
       )}
       onClick={!expanded ? toggleExpanded : undefined}
@@ -308,7 +308,10 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                className={cn(
+                  "flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground",
+                  insidePlan && "opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100",
+                )}
                 onClick={(event) => event.stopPropagation()}
                 aria-label="Child session actions"
                 data-testid={`button-child-session-menu-${meta.childSessionId}`}
