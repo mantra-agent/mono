@@ -8,7 +8,8 @@ import { type PublishCommit } from "../github-pr";
 
 const log = createLogger("ReleaseVersioning");
 
-export const RELEASE_ENVIRONMENT_ID = 12;
+export const VERSION_FILE_PATH = "VERSION.md";
+const VERSION_DOCUMENT_RELEASE_LIMIT = 100;
 
 export type VersionIncrement = "minor" | "major" | "flagship";
 
@@ -103,23 +104,24 @@ function renderRelease(version: string, promotedAt: string, commitSha: string, n
   ].join("\n");
 }
 
-async function latestRelease() {
+async function latestRelease(environmentId: number) {
   const [release] = await db
     .select()
     .from(environmentPromotionReleases)
-    .where(eq(environmentPromotionReleases.environmentId, RELEASE_ENVIRONMENT_ID))
+    .where(eq(environmentPromotionReleases.environmentId, environmentId))
     .orderBy(desc(environmentPromotionReleases.promotedAt))
     .limit(1);
   return release ?? null;
 }
 
 export async function buildReleaseDraft(
+  environmentId: number,
   commits: PublishCommit[],
   increment: VersionIncrement,
   runId: string,
   targetCommitSha: string,
 ): Promise<ReleaseDraft> {
-  const latest = await latestRelease();
+  const latest = await latestRelease(environmentId);
   const currentVersion = latest?.version ?? "0.00";
   const nextVersion = incrementVersion(currentVersion, increment);
   const notes = await generateNotes(commits, runId);
@@ -136,6 +138,7 @@ export async function buildReleaseDraft(
 }
 
 export async function recordSuccessfulRelease(input: {
+  environmentId: number;
   publishRunId: string;
   actorUserId: string;
   draft: ReleaseDraft;
@@ -143,7 +146,7 @@ export async function recordSuccessfulRelease(input: {
   deploymentId: string | null;
 }): Promise<void> {
   await db.insert(environmentPromotionReleases).values({
-    environmentId: RELEASE_ENVIRONMENT_ID,
+    environmentId: input.environmentId,
     publishRunId: input.publishRunId,
     version: input.draft.nextVersion,
     incrementKind: input.draft.increment,
@@ -159,10 +162,10 @@ export async function recordSuccessfulRelease(input: {
   });
 }
 
-export async function getReleaseVersionSummary() {
+export async function getReleaseVersionSummary(environmentId: number) {
   let latest: Awaited<ReturnType<typeof latestRelease>> = null;
   try {
-    latest = await latestRelease();
+    latest = await latestRelease(environmentId);
   } catch (err) {
     log.warn("Release history unavailable; publish summary continuing without version data", {
       reason: err instanceof Error ? err.message : String(err),
@@ -178,5 +181,45 @@ export async function getReleaseVersionSummary() {
           promotedAt: latest.promotedAt.toISOString(),
         }
       : null,
+  };
+}
+
+export type EnvironmentVersionDocument =
+  | { available: false; path: typeof VERSION_FILE_PATH; reason: "not_generated" }
+  | { available: true; path: typeof VERSION_FILE_PATH; content: string; releaseCount: number; truncated: boolean; updatedAt: string };
+
+export async function getEnvironmentVersionDocument(environmentId: number): Promise<EnvironmentVersionDocument> {
+  const releases = await db
+    .select()
+    .from(environmentPromotionReleases)
+    .where(eq(environmentPromotionReleases.environmentId, environmentId))
+    .orderBy(desc(environmentPromotionReleases.promotedAt))
+    .limit(VERSION_DOCUMENT_RELEASE_LIMIT + 1);
+
+  if (releases.length === 0) {
+    return { available: false, path: VERSION_FILE_PATH, reason: "not_generated" };
+  }
+
+  const visibleReleases = releases.slice(0, VERSION_DOCUMENT_RELEASE_LIMIT);
+  const content = visibleReleases
+    .map((release) => renderRelease(
+      release.version,
+      release.promotedAt.toISOString(),
+      release.promotedCommitSha,
+      {
+        newFeatures: cleanItems((release.releaseNotes as Record<string, unknown> | null)?.newFeatures),
+        improvements: cleanItems((release.releaseNotes as Record<string, unknown> | null)?.improvements),
+        fixes: cleanItems((release.releaseNotes as Record<string, unknown> | null)?.fixes),
+      },
+    ))
+    .join("\n\n---\n\n");
+
+  return {
+    available: true,
+    path: VERSION_FILE_PATH,
+    content: `${content}\n`,
+    releaseCount: visibleReleases.length,
+    truncated: releases.length > VERSION_DOCUMENT_RELEASE_LIMIT,
+    updatedAt: visibleReleases[0].promotedAt.toISOString(),
   };
 }

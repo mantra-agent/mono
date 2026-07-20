@@ -14,6 +14,7 @@ import { environmentHostingBindings, environmentRuntimeVariables, environmentSou
 import { encrypt, getEncryptionKey } from "../encryption";
 import { getCloudflarePagesProjectTruth, triggerCloudflarePagesProductionDeployment, retryCloudflarePagesDeployment, cancelCloudflarePagesDeployment, repairCloudflarePagesProject, type CloudflareProjectRepair } from "../platforms/cloudflare-pages-service";
 import { deleteEnvironmentBuildLifecycleConfigs, disableEnvironmentBuildLifecycleConfig, getEnvironmentBuildLifecycleConfig, getEnvironmentBuildStatus, listEnvironmentBuildWorkflows, setEnvironmentBuildLifecycleConfig, startEnvironmentBuildWorkflow } from "../platforms/build-lifecycle-service";
+import { getEnvironmentVersionDocument } from "../integrations/railway/release-versioning";
 
 const log = createLogger("PlatformRoutes");
 const platformScopeColumns = { scope: platforms.scope, ownerUserId: platforms.ownerUserId, accountId: platforms.accountId };
@@ -309,6 +310,27 @@ export function registerPlatformRoutes(app: Express): void {
       });
     } catch (error: unknown) {
       const err = routeError(error, "get_environment_details");
+      res.status(500).json({ error: err.message, operation: err.operation });
+    }
+  });
+
+  app.get("/api/platforms/environments/:environmentId/version-document", async (req, res) => {
+    try {
+      const environmentId = platformIdParam(req.params.environmentId);
+      const lifecycle = await getEnvironmentBuildLifecycleConfig(environmentId);
+      if (!lifecycle) return res.status(404).json({ error: `Environment ${environmentId} not found`, operation: "get_environment_version_document" });
+
+      const docsConfig = lifecycle.config?.docsConfig as Record<string, unknown> | null | undefined;
+      const versionDocument = typeof docsConfig?.versionDocument === "object" && docsConfig.versionDocument !== null
+        ? docsConfig.versionDocument as Record<string, unknown>
+        : null;
+      if (!lifecycle.config?.enabled || versionDocument?.enabled !== true || versionDocument.path !== "VERSION.md") {
+        return res.json({ available: false, path: "VERSION.md", reason: "not_configured" });
+      }
+
+      res.json(await getEnvironmentVersionDocument(environmentId));
+    } catch (error: unknown) {
+      const err = routeError(error, "get_environment_version_document");
       res.status(500).json({ error: err.message, operation: err.operation });
     }
   });
