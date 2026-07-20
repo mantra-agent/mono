@@ -1722,7 +1722,7 @@ export function stepsFromSavedMessage(message: ChatMessage): ExecutionStep[] {
 
 /**
  * Extracts email draft reference IDs from message segments — both from assistant
- * prose content and from persisted gmail draft/update_draft tool results.
+ * prose content and from persisted Gmail draft/reply/update_draft tool results.
  * Shared by ChatTurn (rendering) and the message list (cross-message dedup).
  */
 export function referenceIdsFromSegments(
@@ -1787,7 +1787,9 @@ export function emailDraftIdsFromSegments(segments: MessageSegment[]): {
           if (
             tool.type !== "tool_call" ||
             tool.toolName !== "gmail" ||
-            (action !== "draft" && action !== "update_draft")
+            (action !== "draft" &&
+              action !== "reply" &&
+              action !== "update_draft")
           )
             return [];
           if (typeof tool.result !== "string") return [];
