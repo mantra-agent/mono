@@ -256,7 +256,7 @@ export interface ChatMessage {
   /** Persona that produced this assistant turn. */
   persona?: { id: number; name: string; icon: string } | null;
   /** Speaker attribution for meeting transcript messages. */
-  speaker?: { label: string; personId?: string } | null;
+  speaker?: { key?: string; label: string; personId?: string } | null;
   /** Structured response to an inline question tool call. */
   questionResponse?: QuestionResponseMeta;
   /** Canonical per-turn correlation ID for voice turns. */

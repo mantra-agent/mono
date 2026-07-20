@@ -34,6 +34,7 @@ import type { MeetingSessionMeta, MeetingBotStatus } from "@shared/models/chat";
 import { createReferenceRef } from "@shared/references";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
+import { MeetingSpeakerAssignments } from "@/components/meeting-speaker-assignments";
 
 const log = createLogger("MeetingHeaderBar");
 
@@ -401,9 +402,11 @@ export function MeetingHeaderBar({
             {elapsed}
           </span>
         )}
-        {meeting.participants.length > 0 && (
+        {meeting.participants.some((participant) => participant.source !== "machine_diarization") && (
           <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-            {meeting.participants.map((participant) => participant.personId ? (
+            {meeting.participants
+              .filter((participant) => participant.source !== "machine_diarization")
+              .map((participant) => participant.personId ? (
               <ReferenceRenderer
                 key={participant.personId}
                 refValue={createReferenceRef({
@@ -475,6 +478,13 @@ export function MeetingHeaderBar({
           </div>
         )}
       </div>
+
+      {sessionId && (
+        <MeetingSpeakerAssignments
+          participants={meeting.participants}
+          sessionId={sessionId}
+        />
+      )}
 
       {meeting.recognition && meeting.recognition.streams.length > 0 && (
         <div

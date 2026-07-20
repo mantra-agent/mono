@@ -19,6 +19,7 @@ import type {
   AssistantMessageState,
   ChildSessionBlockMeta,
   CompactionMeta,
+  MeetingParticipant,
   MeetingSessionMeta,
   MessageSpeakerMeta,
   PersonaSnapshot,
@@ -156,6 +157,15 @@ export type MeetingRecapClaim =
   | { outcome: "already_generating"; session: FileSession }
   | { outcome: "already_ready"; session: FileSession }
   | { outcome: "not_meeting" };
+
+export type MeetingSpeakerAssignment =
+  | {
+      outcome: "assigned" | "cleared" | "unchanged";
+      participant: MeetingParticipant;
+      previousPersonId?: string;
+      session: FileSession;
+    }
+  | { outcome: "not_found" | "not_anonymous_speaker" | "not_owned" };
 
 export type { SystemStepRecord } from "@shared/models/chat";
 
@@ -1102,6 +1112,11 @@ export interface IChatFileStorage {
     sessionId: string,
     candidate: MeetingParticipant,
   ): Promise<{ participant: MeetingParticipant; participants: MeetingParticipant[]; added: boolean } | null>;
+  assignMeetingParticipantPerson(
+    sessionId: string,
+    speakerKey: string,
+    person: { id: string } | null,
+  ): Promise<MeetingSpeakerAssignment>;
   createMeetingUserMessage(
     sessionId: string,
     content: string,
@@ -1950,6 +1965,80 @@ export const chatFileStorage: IChatFileStorage = {
       const session = convToMeta(data);
       invalidateSessionsCache({ action: "updated", sessionId, session });
       return { participant, participants: updatedParticipants, added: true };
+    });
+  },
+
+  async assignMeetingParticipantPerson(
+    sessionId: string,
+    speakerKey: string,
+    person: { id: string } | null,
+  ): Promise<MeetingSpeakerAssignment> {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data?.meeting || data.type !== "meeting") return { outcome: "not_found" };
+
+      const principal = getCurrentPrincipalOrSystem();
+      if (
+        principal.actorType !== "user" ||
+        !principal.userId ||
+        !principal.accountId ||
+        data.meeting.ownerUserId !== principal.userId ||
+        data.meeting.principalAccountId !== principal.accountId
+      ) {
+        return { outcome: "not_owned" };
+      }
+
+      const participantIndex = data.meeting.participants.findIndex(
+        (participant) => participant.key === speakerKey,
+      );
+      const current = data.meeting.participants[participantIndex];
+      if (!current) return { outcome: "not_found" };
+      if (current.source !== "machine_diarization") {
+        return { outcome: "not_anonymous_speaker" };
+      }
+
+      const nextPersonId = person?.id;
+      if (current.personId === nextPersonId) {
+        return {
+          outcome: "unchanged",
+          participant: current,
+          previousPersonId: current.personId,
+          session: convToMeta(data),
+        };
+      }
+
+      const previousPersonId = current.personId;
+      const participant: MeetingParticipant = {
+        ...current,
+        ...(person ? { personId: person.id } : {}),
+      };
+      if (!person) delete participant.personId;
+
+      const participants = [...data.meeting.participants];
+      participants[participantIndex] = participant;
+      data.meeting = { ...data.meeting, participants };
+
+      const now = new Date().toISOString();
+      for (const message of data.messages) {
+        if (message.speaker?.key !== speakerKey) continue;
+        message.speaker = {
+          ...message.speaker,
+          label: participant.label,
+          ...(person ? { personId: person.id } : {}),
+        };
+        if (!person) delete message.speaker.personId;
+        message.updatedAt = now;
+      }
+      data.updatedAt = now;
+      await writeConv(data);
+      const session = convToMeta(data);
+      invalidateSessionsCache({ action: "updated", sessionId, session });
+      return {
+        outcome: person ? "assigned" : "cleared",
+        participant,
+        previousPersonId,
+        session,
+      };
     });
   },
 

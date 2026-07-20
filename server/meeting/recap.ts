@@ -129,7 +129,7 @@ async function generateRecap(
   sessionTitle: string,
   meeting: MeetingSessionMeta,
 ): Promise<NonNullable<MeetingSessionMeta["recap"]>> {
-  const transcript = await buildTranscript(sessionId);
+  const transcript = await buildTranscript(sessionId, meeting);
   if (!transcript) {
     log.warn(`Meeting ${sessionId} ended with no transcript; marking recap failed`);
     const recap = { status: "failed" as const, error: "No transcript captured" };
@@ -268,15 +268,33 @@ async function refreshRecapPage(pageId: string, title: string, markdown: string)
   return page;
 }
 
-async function buildTranscript(sessionId: string): Promise<string | null> {
+async function buildTranscript(
+  sessionId: string,
+  meeting: MeetingSessionMeta,
+): Promise<string | null> {
   const messages = await chatStorage.getMessagesBySession(sessionId);
+  const participantByKey = new Map(
+    meeting.participants
+      .filter((participant) => participant.key)
+      .map((participant) => [participant.key!, participant]),
+  );
+  const personNames = new Map<string, string>();
+  const personIds = [...new Set(meeting.participants.flatMap((participant) => participant.personId ? [participant.personId] : []))];
+  await Promise.all(personIds.map(async (personId) => {
+    const person = await peopleStorage.getPerson(personId);
+    if (person) personNames.set(personId, person.name);
+  }));
+
   const lines: string[] = [];
   for (const msg of messages) {
     if (msg.visibility === "diagnostic") continue;
     const text = (msg.content || "").trim();
     if (!text) continue;
     if (msg.role === "user") {
-      lines.push(`[${msg.speaker?.label || "Unknown speaker"}] ${text}`);
+      const participant = msg.speaker?.key ? participantByKey.get(msg.speaker.key) : undefined;
+      const personId = participant?.personId || msg.speaker?.personId;
+      const speaker = (personId && personNames.get(personId)) || participant?.label || msg.speaker?.label || "Unknown speaker";
+      lines.push(`[${speaker}] ${text}`);
     } else if (msg.role === "assistant") {
       lines.push(`[Mantra Agent] ${text}`);
     }
@@ -299,7 +317,12 @@ async function generateRecapContent(
   meeting: MeetingSessionMeta,
   transcript: string,
 ): Promise<RecapContent> {
-  const participantList = meeting.participants.map((p) => p.label).join(", ") || "unknown";
+  const participantNames = await Promise.all(meeting.participants.map(async (participant) => {
+    if (!participant.personId) return participant.label;
+    const person = await peopleStorage.getPerson(participant.personId);
+    return person?.name || participant.label;
+  }));
+  const participantList = participantNames.join(", ") || "unknown";
   const result = await chatCompletion({
     activity: ACTIVITY_RECALL,
     jsonMode: true,
@@ -354,6 +377,65 @@ async function generateRecapContent(
     openQuestions: toStrings(parsed.openQuestions),
     followUps: toStrings(parsed.followUps),
   };
+}
+
+
+/**
+ * Refresh the structured participant attribution on an already-generated recap.
+ * Generated narrative remains immutable because replacing free-form speaker names
+ * after the fact could misattribute statements the transcript does not prove.
+ */
+export async function reconcileMeetingRecapParticipants(
+  meeting: MeetingSessionMeta,
+  changedParticipant: MeetingParticipant,
+  previousPersonId?: string,
+): Promise<void> {
+  const pageId = meeting.recap?.status === "ready" ? meeting.recap.pageId : undefined;
+  if (!pageId) return;
+
+  const principal = getCurrentPrincipalOrSystem();
+  const [page] = await db
+    .select({
+      id: libraryPages.id,
+      title: libraryPages.title,
+      plainTextContent: libraryPages.plainTextContent,
+    })
+    .from(libraryPages)
+    .where(
+      combineWithVisibleScope(
+        principal,
+        libraryScopeColumns,
+        eq(libraryPages.id, pageId),
+      ),
+    )
+    .limit(1);
+  if (!page) throw new Error(`Meeting recap page ${pageId} is no longer visible`);
+
+  const participantLine = `**Participants:** ${meeting.participants.map(participantRef).join(", ")}`;
+  const existing = page.plainTextContent.trim();
+  let next = /^\*\*Participants:\*\*.*$/m.test(existing)
+    ? existing.replace(/^\*\*Participants:\*\*.*$/m, participantLine)
+    : `${participantLine}\n\n${existing}`;
+  const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (previousPersonId && previousPersonId !== changedParticipant.personId) {
+    const oldPersonStillPresent = meeting.participants.some(
+      (participant) => participant.key !== changedParticipant.key && participant.personId === previousPersonId,
+    );
+    if (!oldPersonStillPresent) {
+      next = next.replaceAll(`@person:${previousPersonId}`, changedParticipant.label);
+    }
+  }
+  if (changedParticipant.personId) {
+    const speakerPattern = new RegExp(
+      `${escapeRegExp(changedParticipant.label)}(?!\\d)`,
+      "g",
+    );
+    next = next.replace(speakerPattern, `@person:${changedParticipant.personId}`);
+  }
+  if (next === existing) return;
+
+  await refreshRecapPage(page.id, page.title, next);
+  log.info(`Meeting recap participant attribution refreshed page=${page.id}`);
 }
 
 function participantRef(p: MeetingParticipant): string {
