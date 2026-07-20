@@ -330,6 +330,11 @@ async function appendLog(vault: Awaited<ReturnType<typeof ensureMantraLibraryVau
 }
 
 async function linkPages(sourcePageId: string, targetPageId: string, principal: Principal): Promise<boolean> {
+  const [target] = await db.select({ id: libraryPages.id }).from(libraryPages).where(eq(libraryPages.id, targetPageId)).limit(1);
+  if (!target) {
+    log.debug(`linkPages skipped: target page ${targetPageId} does not exist`);
+    return false;
+  }
   const ownership = ownedInsertValues(principal, linkScopeColumns);
   const inserted = await db.insert(libraryPageLinks).values({
     sourcePageId,
