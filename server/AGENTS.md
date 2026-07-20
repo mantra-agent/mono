@@ -119,6 +119,7 @@ The context system builds the LLM prompt from ~40 dynamically resolved sections.
 - **Pre-warming:** 7 storage layers pre-warmed at boot (people, projects, tasks, principles, rules, goals, skills)
 - **Budget:** compact boot context target; heavy docs render as retrieval references, no truncation of source data
 - **Personal Rules vs learned state:** A Rule is a user-owned, durable, deterministic override of Agent's default behavior. Universal behavior belongs in the system that owns it. Personal facts, tastes, tendencies, and probabilistic guidance belong in vNext memory. `personal-rule-policy.ts` is the canonical classification source; storage-layer validation remains authoritative for writes.
+- **Rule-linked canonical context:** direct `@page:id` references in active Personal Rule commands are compiled into the Rules context section through a bounded principal-scoped Library query. The Library page remains the source of truth; never copy its content into Rule text or rely on the model to dereference mandatory Rule sources with a tool call.
 
 ### When Working Here
 - Section resolvers run in parallel via `Promise.all` — each has a 15-second timeout
