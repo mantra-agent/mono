@@ -152,7 +152,7 @@ async function timedCompletion(options: {
   timeoutMs: number;
   sessionId: string;
   purpose: string;
-  /** Optional semantic tier override; map calls stay on the activity's default routing. */
+  /** Optional semantic tier override for the call's explicit quality/resource budget. */
   tier?: SemanticTier;
 }): Promise<string> {
   const result = await Promise.race([
@@ -253,6 +253,7 @@ export async function summarizeCompactedMessages(input: {
             timeoutMs: MAP_TIMEOUT_MS,
             sessionId: input.sessionId,
             purpose: `map-${index + 1}`,
+            tier: "fast",
           }),
           `segment ${index + 1}/${segments.length}`,
           input.sessionId,
