@@ -3,13 +3,11 @@ import { createPortal } from "react-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -42,7 +40,6 @@ import {
   Star,
   Trash2,
   Loader2,
-  UserPlus,
   Link as LinkIcon,
   X,
   Plus,
@@ -61,6 +58,8 @@ import {
 } from "@/components/calendar/use-event-metadata";
 import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { SimpleTreeRow } from "@/components/home/home-tree-row";
+import { createMeetingPersonChild } from "@shared/meeting-feed-items";
 
 // --- Shared types (duplicated from calendar.tsx for now, will extract later) ---
 
@@ -88,6 +87,8 @@ interface CalendarEvent {
   attendees?: Array<{ email: string; displayName?: string; responseStatus?: string; self?: boolean; optional?: boolean }>;
   status: string;
   htmlLink?: string;
+  hangoutLink?: string;
+  conferenceEntryPoints?: string[];
   created?: string;
   updated?: string;
   organizer?: { email: string; displayName?: string; self?: boolean };
@@ -334,6 +335,47 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   const isReadOnly = !isCreate && Boolean(selectedCal && !["owner", "writer"].includes(selectedCal.accessRole));
   const calendarLabel = selectedCal?.summary || eventData?.accountEmail || selectedCalendarId;
   const calendarAccountLabel = selectedCal?.accountEmail || eventData?.accountEmail;
+  const meetingLink = eventData?.hangoutLink
+    ?? eventData?.conferenceEntryPoints?.find(entryPoint => /^https:\/\//i.test(entryPoint))
+    ?? null;
+  const attendeeItems = useMemo(() => {
+    if (!eventData?.attendees?.length) return [];
+
+    const linkedPeopleById = new Map((metadata?.linkedPeople ?? []).map(person => [person.id, person]));
+    const seenIdentities = new Set<string>();
+    const parentSourceRef = {
+      type: "calendar" as const,
+      id: `${eventData.accountId}:${eventData.id}`,
+      label: eventData.summary,
+      href: "/calendar",
+      observedAt: eventData.start.dateTime ?? eventData.start.date,
+    };
+
+    return eventData.attendees.flatMap((attendee, index) => {
+      const normalizedEmail = attendee.email.trim().toLowerCase();
+      const matched = emailMap[normalizedEmail];
+      const identityKey = matched?.id ? `person:${matched.id}` : `email:${normalizedEmail}`;
+      if (seenIdentities.has(identityKey)) return [];
+      seenIdentities.add(identityKey);
+
+      const context = matched?.id ? linkedPeopleById.get(matched.id) : undefined;
+      const fallbackName = attendee.displayName?.trim()
+        || attendee.email.split("@")[0]
+        || attendee.email;
+
+      return [createMeetingPersonChild({
+        key: `event-attendee-${matched?.id ?? normalizedEmail ?? index}`,
+        section: "today",
+        parentSourceRef,
+        name: matched?.name ?? fallbackName,
+        email: attendee.email,
+        responseStatus: attendee.responseStatus,
+        personId: matched?.id,
+        profileSummary: context?.profileSummary,
+        lastInteractionContext: context?.lastInteractionContext,
+      })];
+    });
+  }, [eventData, emailMap, metadata?.linkedPeople]);
 
   const detailHeaderContent = useMemo(() => {
     if (isCreate) {
@@ -586,14 +628,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
 
       <ScrollArea className="flex-1">
         <div className="p-3 space-y-4 max-w-lg">
-          {!isCreate && eventData && isPersonalAccount(eventData.accountEmail) && (
-            <div className="flex items-center gap-2 flex-wrap">
-              <Badge variant="outline" className="no-default-hover-elevate no-default-active-elevate text-info-foreground border-info/30 dark:text-info dark:border-info/50" data-testid="badge-personal">
-                Personal
-              </Badge>
-            </div>
-          )}
-
           {isCreate && (
             <Input
               value={title}
@@ -663,6 +697,20 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
               )}
             </ProfileTreeRow>
 
+            {!isCreate && meetingLink && (
+              <ProfileTreeRow label="Meeting link" icon={<LinkIcon className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-event-meeting-link">
+                <a
+                  href={meetingLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="truncate text-cta underline-offset-2 hover:text-active hover:underline"
+                  data-testid="link-event-meeting"
+                >
+                  Join meeting
+                </a>
+              </ProfileTreeRow>
+            )}
+
             <ProfileTreeRow label="Calendar" icon={<CalendarIcon className="h-3.5 w-3.5" />} hasValue={Boolean(calendarLabel)} showEmpty mobileLayout="inline" testId="row-event-calendar">
               {isCreate ? (
                 <Select value={selectedCalendarId} onValueChange={setSelectedCalendarId}>
@@ -690,6 +738,33 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
                 </span>
               )}
             </ProfileTreeRow>
+
+            <ProfileTreeRow label="Prep Required" icon={<Star className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-event-prep-required">
+              <Switch
+                checked={prepRequired}
+                onCheckedChange={setPrepRequired}
+                disabled={isReadOnly}
+                aria-label="Prep Required"
+                data-testid="switch-prep-required"
+              />
+            </ProfileTreeRow>
+
+            {!isCreate && (metadata?.eventType || "meeting") === "meeting" && (
+              <ProfileTreeRow label="Shared room" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-event-shared-room">
+                <div className="flex items-center justify-end gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    {sharedRoomEnabled ? "Diarize room speakers" : "One speaker per connection"}
+                  </span>
+                  <Switch
+                    checked={sharedRoomEnabled}
+                    onCheckedChange={checked => setSpeakerPolicyMutation.mutate(checked)}
+                    disabled={setSpeakerPolicyMutation.isPending || isReadOnly}
+                    aria-label="Shared room"
+                    data-testid="switch-shared-room"
+                  />
+                </div>
+              </ProfileTreeRow>
+            )}
           </div>
 
           <div className="space-y-1">
@@ -712,67 +787,26 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
           </div>
 
           {/* Attendees */}
-          <div className="space-y-2">
+          <div className="space-y-2" data-testid="event-attendees-section">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Users className="h-4 w-4 shrink-0" />
               <span className="text-xs font-medium uppercase tracking-wider">
-                Attendees{!isCreate && eventData?.attendees ? ` (${eventData.attendees.length})` : ""}
+                Attendees{!isCreate && attendeeItems.length > 0 ? ` (${attendeeItems.length})` : ""}
               </span>
             </div>
 
-            {/* Show linked attendees in edit mode */}
-            {!isCreate && eventData?.attendees && eventData.attendees.length > 0 && (
-              <div className="pl-6 space-y-1.5">
-                {eventData.attendees.map((a, i) => {
-                  const matched = emailMap[a.email.toLowerCase()];
-                  return (
-                    <div key={i} className={cn("flex items-center gap-2 text-sm", a.optional && "opacity-60")} data-testid={`attendee-${i}`}>
-                      {a.self ? (
-                        <>
-                          <span className="truncate">{a.displayName || a.email}</span>
-                          <Badge variant="outline" className="text-xs no-default-hover-elevate no-default-active-elevate">You</Badge>
-                          {a.optional && <span className="text-xs text-muted-foreground">opt</span>}
-                        </>
-                      ) : matched ? (
-                        <button
-                          onClick={() => navigate(`/people/${matched.id}`)}
-                          className="truncate text-primary hover:underline flex items-center gap-1"
-                          data-testid={`attendee-link-${i}`}
-                        >
-                          <LinkIcon className="h-3 w-3 shrink-0" />
-                          {matched.name}
-                        </button>
-                      ) : (
-                        <>
-                          <span className="truncate">{a.displayName || a.email}</span>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button
-                                onClick={() => {
-                                  const name = a.displayName || a.email.split("@")[0];
-                                  navigate(`/people?add=${encodeURIComponent(name)}&email=${encodeURIComponent(a.email)}`);
-                                }}
-                                className="shrink-0 text-muted-foreground hover:text-primary transition-colors"
-                                data-testid={`attendee-add-${i}`}
-                              >
-                                <UserPlus className="h-3.5 w-3.5" />
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent>Add to People</TooltipContent>
-                          </Tooltip>
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
+            {!isCreate && attendeeItems.length > 0 && (
+              <div className="pl-6 space-y-0.5">
+                {attendeeItems.map(item => (
+                  <SimpleTreeRow key={item.id} item={item} layout="embedded" />
+                ))}
               </div>
             )}
 
-            {/* Editable attendees input for create/edit */}
-            {!isReadOnly && (
+            {isCreate && (
               <Input
                 value={attendeesInput}
-                onChange={e => setAttendeesInput(e.target.value)}
+                onChange={event => setAttendeesInput(event.target.value)}
                 placeholder="Add attendees (comma-separated emails)"
                 className="ml-6 text-xs border-transparent hover:border-border focus:border-border transition-colors"
                 data-testid="input-event-attendees"
@@ -886,21 +920,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
             </div>
           )}
 
-          {/* Prep Required toggle */}
-          {!isReadOnly && (
-            <div className="flex items-center justify-between py-1">
-              <label className="text-sm flex items-center gap-2">
-                <Star className="h-3.5 w-3.5 text-warning fill-warning" />
-                Prep Required
-              </label>
-              <Switch
-                checked={prepRequired}
-                onCheckedChange={setPrepRequired}
-                data-testid="switch-prep-required"
-              />
-            </div>
-          )}
-
           {/* Divider before metadata */}
           {!isCreate && <div className="border-t" />}
 
@@ -975,46 +994,11 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
                     </ProfileTreeRow>
                   )}
 
-                  {(metadata?.eventType || "meeting") === "meeting" && (
-                    <ProfileTreeRow label="Shared room" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-event-shared-room">
-                      <div className="flex items-center justify-end gap-2">
-                        <span className="text-xs text-muted-foreground">
-                          {sharedRoomEnabled ? "Diarize room speakers" : "One speaker per connection"}
-                        </span>
-                        <Switch
-                          checked={sharedRoomEnabled}
-                          onCheckedChange={checked => setSpeakerPolicyMutation.mutate(checked)}
-                          disabled={setSpeakerPolicyMutation.isPending || isReadOnly}
-                          aria-label="Shared room"
-                          data-testid="switch-shared-room"
-                        />
-                      </div>
-                    </ProfileTreeRow>
-                  )}
                 </>
               )}
             </div>
           )}
 
-
-          {/* Linked People (edit mode only) */}
-          {!isCreate && metadata && metadata.linkedPeople.length > 0 && (
-            <div data-testid="linked-people-section">
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">People</h4>
-              <div className="flex flex-wrap gap-1.5">
-                {metadata.linkedPeople.map(person => (
-                  <button
-                    key={person.id}
-                    onClick={() => navigate(`/people/${person.id}`)}
-                    className="px-2.5 py-0.5 rounded-full text-xs border bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground transition-colors"
-                    data-testid={`person-pill-${person.id}`}
-                  >
-                    {person.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* Save button */}
           {!isReadOnly && (
