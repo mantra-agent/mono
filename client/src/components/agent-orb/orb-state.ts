@@ -183,7 +183,7 @@ export function tickAnimation(
   anim.currentVisuals = lerpVisuals(from, to, t);
 
   // Resolve effective audio level
-  const useSynthetic = rawAudioLevel === undefined || rawAudioLevel === 0;
+  const useSynthetic = rawAudioLevel === undefined;
   const targetAudio = useSynthetic
     ? syntheticAmplitude(anim.nextState, anim.time)
     : rawAudioLevel;

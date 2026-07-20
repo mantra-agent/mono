@@ -91,6 +91,10 @@ export async function registerRoutes(
       const handler = app.locals.recallMeetingAudioUpgrade as ((request: IncomingMessage, socket: typeof socket, head: Buffer) => void) | undefined;
       if (!handler) { wsLog.warn("Recall participant audio upgrade handler unavailable"); socket.destroy(); }
       else handler(request, socket, head);
+    } else if (pathname === "/ws/meeting-visualizer") {
+      const handler = app.locals.meetingVisualizerUpgrade as ((request: IncomingMessage, socket: typeof socket, head: Buffer) => void) | undefined;
+      if (!handler) { wsLog.warn("Meeting visualizer upgrade handler unavailable"); socket.destroy(); }
+      else handler(request, socket, head);
     } else if (pathname === "/vite-hmr") {
       // Let Vite's HMR handler (registered later) handle this upgrade
     } else {

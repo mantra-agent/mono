@@ -22,7 +22,7 @@ const HALO_SCALE = 1.35;
  * Pure render component: (state, audioLevel) → pixels.
  * No transport logic. No data fetching. Props-driven only.
  */
-export function AgentOrb({ state, audioLevel, className }: AgentOrbProps) {
+export function AgentOrb({ state, audioLevel, maxFrameRate = 60, className }: AgentOrbProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef(state);
   const audioRef = useRef(audioLevel);
@@ -105,7 +105,9 @@ export function AgentOrb({ state, audioLevel, className }: AgentOrbProps) {
     // ── Animation state ───────────────────────────────────────
     const anim = createAnimationState(stateRef.current);
     let lastTime = performance.now();
+    let lastRenderTime = 0;
     let animFrameId = 0;
+    const frameIntervalMs = 1000 / Math.max(1, Math.min(60, maxFrameRate));
 
     // ── Resize handler ────────────────────────────────────────
     function resize() {
@@ -124,6 +126,8 @@ export function AgentOrb({ state, audioLevel, className }: AgentOrbProps) {
     // ── Render loop ───────────────────────────────────────────
     function animate(now: number) {
       animFrameId = requestAnimationFrame(animate);
+      if (now - lastRenderTime < frameIntervalMs) return;
+      lastRenderTime = now;
 
       const dt = Math.min((now - lastTime) / 1000, 0.1); // cap dt to avoid jumps
       lastTime = now;

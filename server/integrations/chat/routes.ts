@@ -383,11 +383,18 @@ function publishChatStreamEvent(
 }
 
 export async function registerChatRoutes(app: Express): Promise<void> {
-  const { OUTPUT_MEDIA_HTML, nextMeetingAudio, outputMediaSession } = await import("../../meeting/output-media");
+  const {
+    clearMeetingVisualizerState,
+    nextMeetingAudio,
+    outputMediaSession,
+    registerMeetingVisualizerTransport,
+    setMeetingVisualizerState,
+    syncMeetingVisualizerBotStatus,
+  } = await import("../../meeting/output-media");
+  app.locals.meetingVisualizerUpgrade = registerMeetingVisualizerTransport();
   app.get("/api/meeting-output/:token", (req, res) => {
     if (!outputMediaSession(req.params.token as string)) return res.status(401).send("Invalid or expired meeting output token");
-    res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; media-src 'self'; connect-src 'self'");
-    res.type("html").send(OUTPUT_MEDIA_HTML);
+    res.redirect(307, `/visualizer?token=${encodeURIComponent(req.params.token as string)}`);
   });
   app.get("/api/meeting-output/:token/audio", async (req, res) => {
     const sessionId = outputMediaSession(req.params.token as string);
@@ -1852,6 +1859,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }) => Promise<void> | void,
   ) {
     const lease = acceptedLease ?? chatRunLifecycle.begin(sessionId, sessionKey);
+    if (sayAloud) setMeetingVisualizerState(sessionId, "turn", "thinking");
+    const visualizerToolCalls = new Set<string>();
     let selectedAutoTier = autoTier;
     let selectionElapsedMs = modelSelectionMs;
     let chatRoutingDecision: ModelRoutingDecision | undefined;
@@ -2375,6 +2384,13 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             assistantDraftThinking += event.content || "";
             checkpointAssistantDraft();
           }
+          if (sayAloud && event.type === "tool_call") {
+            if (event.toolCallId) visualizerToolCalls.add(event.toolCallId);
+            setMeetingVisualizerState(sessionId, "tool", "tool_call");
+          } else if (sayAloud && event.type === "tool_result") {
+            if (event.toolCallId) visualizerToolCalls.delete(event.toolCallId);
+            if (visualizerToolCalls.size === 0) clearMeetingVisualizerState(sessionId, "tool");
+          }
         },
         chatRoutingTier,
         diagnosticTurnId,
@@ -2670,6 +2686,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       }
 
       if (sayAloud && !isSuperseded && responseContent.trim()) {
+        clearMeetingVisualizerState(sessionId, "tool");
+        clearMeetingVisualizerState(sessionId, "turn");
         const currentSession = await chatStorage.getSession(sessionId);
         if (currentSession?.type === "meeting") {
           chatLog.log(
@@ -2808,6 +2826,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           ),
         );
     } finally {
+      if (sayAloud) {
+        clearMeetingVisualizerState(sessionId, "tool");
+        clearMeetingVisualizerState(sessionId, "turn");
+      }
       if (onSettled) {
         await onSettled(settlement || { status: "failed", error: "run_did_not_settle" }).catch((error) =>
           chatLog.error(`stream settlement callback failed sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`),
@@ -3249,6 +3271,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       if (event.statusDetail) patch.statusDetail = event.statusDetail;
       if (Object.keys(patch).length > 0) {
         await chatStorage.updateMeetingMeta(sessionId, patch);
+        if (patch.botStatus) syncMeetingVisualizerBotStatus(sessionId, patch.botStatus);
         chatLog.log(
           `meeting ingest: status update sessionId=${sessionId} botStatus=${event.botStatus || "-"} detail=${event.statusDetail || "-"}`,
         );
@@ -3283,6 +3306,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         botStatus: event.botStatus,
         ...(event.botStatus === "ended" ? { endedAt: new Date().toISOString() } : {}),
       });
+      syncMeetingVisualizerBotStatus(sessionId, event.botStatus);
       if (updated) session = updated;
     }
     kickFinalization();

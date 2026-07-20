@@ -20,6 +20,7 @@ import type {
 } from "@shared/models/chat";
 import type { MeetingIngestFn } from "../routes/recall";
 import { runWithMeetingOwnerPrincipal } from "./owner-principal";
+import { publishMeetingAudioLevel, syncMeetingVisualizerBotStatus } from "./output-media";
 
 const log = createLogger("MeetingSTT");
 const MAX_PARTICIPANT_STREAMS = 16;
@@ -186,6 +187,17 @@ function appendPendingAudio(stream: ParticipantStream, bytes: Buffer): void {
   }
 }
 
+function pcm16Rms(bytes: Buffer): number {
+  const sampleCount = Math.floor(bytes.length / 2);
+  if (sampleCount === 0) return 0;
+  let sumSquares = 0;
+  for (let offset = 0; offset + 1 < bytes.length; offset += 2) {
+    const sample = bytes.readInt16LE(offset) / 32768;
+    sumSquares += sample * sample;
+  }
+  return Math.min(1, Math.sqrt(sumSquares / sampleCount) * 4.5);
+}
+
 export function registerMeetingSTTAudioTransport(
   deps: { ingestMeetingEvent: MeetingIngestFn },
 ): (request: IncomingMessage, socket: Socket, head: Buffer) => void {
@@ -262,6 +274,7 @@ export function registerMeetingSTTAudioTransport(
       })().then(async (stt) => {
         stream.stt = stt;
         stream.recognition = { ...stream.recognition, status: "active" };
+        syncMeetingVisualizerBotStatus(identity.sessionId, "live");
         for (const packet of stream.pendingAudio) stt.sendAudio(packet);
         stream.pendingAudio = [];
         stream.pendingBytes = 0;
@@ -304,6 +317,7 @@ export function registerMeetingSTTAudioTransport(
           await persistRecognition(sessionId, meeting, streams);
         }
         const bytes = Buffer.from(audioBase64, "base64");
+        publishMeetingAudioLevel(sessionId, pcm16Rms(bytes));
         if (stream.stt) stream.stt.sendAudio(bytes);
         else if (stream.recognition.status === "connecting") appendPendingAudio(stream, bytes);
       } catch (error) {
