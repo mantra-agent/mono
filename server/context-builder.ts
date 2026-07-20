@@ -1443,7 +1443,12 @@ async function resolveSessionContext(request: ContextRequest): Promise<string> {
 }
 
 const GRAPH_MEMORY_CACHE_TTL_MS = 5 * 60 * 1000;
-const _graphMemoryCache = new TTLCache<string>("GraphMemory", GRAPH_MEMORY_CACHE_TTL_MS);
+interface GraphMemoryCacheValue {
+  content: string;
+  recalledClaimIds: number[];
+}
+
+const _graphMemoryCache = new TTLCache<GraphMemoryCacheValue>("GraphMemory", GRAPH_MEMORY_CACHE_TTL_MS);
 
 function getQueryHash(query: string): string {
   return createHash("sha256").update(query).digest("hex").slice(0, 32);
@@ -1571,7 +1576,7 @@ interface VnextTierEntry {
 function renderVnextContext(
   candidates: Awaited<ReturnType<typeof import("./memory/vnext-context-retrieval").retrieveVnextContext>>["candidates"],
   tokenBudget: number,
-): string {
+): GraphMemoryCacheValue {
   const entries = new Map<number, VnextTierEntry>();
   const refs = new Map<number, ContextSourceRef[]>();
   for (const candidate of candidates) {
@@ -1607,8 +1612,36 @@ function renderVnextContext(
     refs,
     tokenBudget,
   );
-  if (allocated.length === 0) return "";
-  return ["vNEXT claims matching query:", ...allocated.map((item) => item.rendered)].join("\n");
+  if (allocated.length === 0) return { content: "", recalledClaimIds: [] };
+  return {
+    content: ["vNEXT claims matching query:", ...allocated.map((item) => item.rendered)].join("\n"),
+    recalledClaimIds: allocated.map((item) => item.id),
+  };
+}
+
+function recordVnextContextRecall(claimIds: number[], source: "fresh" | "cache"): void {
+  const uniqueIds = Array.from(new Set(claimIds));
+  if (uniqueIds.length === 0) return;
+  void import("./memory/vnext-claim-storage")
+    .then(({ memoryVnextClaimStorage }) => memoryVnextClaimStorage.reinforceClaims(uniqueIds))
+    .then((updated) => {
+      log.debug(JSON.stringify({
+        event: "memory.graph.context_recall_recorded",
+        path: "vnext",
+        source,
+        requested: uniqueIds.length,
+        updated,
+      }));
+    })
+    .catch((err) => {
+      log.warn(JSON.stringify({
+        event: "memory.graph.context_recall_failed",
+        path: "vnext",
+        source,
+        requested: uniqueIds.length,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+    });
 }
 
 async function resolveGraphMemory(request: ContextRequest): Promise<string> {
@@ -1631,7 +1664,10 @@ async function resolveGraphMemory(request: ContextRequest): Promise<string> {
   const tokenBudget = await getMemoryGraphTokenBudget(request.sessionId);
   const queryHash = `${contextPrincipalKey()}::vnext::${getQueryHash(focusText)}::${tokenBudget}`;
   const cached = _graphMemoryCache.get(queryHash);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) {
+    if (cached.content) recordVnextContextRecall(cached.recalledClaimIds, "cache");
+    return cached.content;
+  }
 
   try {
     const sessionTopics = request.sessionId
@@ -1647,8 +1683,9 @@ async function resolveGraphMemory(request: ContextRequest): Promise<string> {
     const { retrieveVnextContext } = await import("./memory/vnext-context-retrieval");
     const retrieved = await retrieveVnextContext(focusText, weights);
     const result = renderVnextContext(retrieved.candidates, tokenBudget);
-    if (result) {
+    if (result.content) {
       _graphMemoryCache.set(queryHash, result);
+      recordVnextContextRecall(result.recalledClaimIds, "fresh");
       log.debug(JSON.stringify({
         event: "memory.graph.context_resolved",
         path: "vnext",
@@ -1657,10 +1694,10 @@ async function resolveGraphMemory(request: ContextRequest): Promise<string> {
         expanded: retrieved.expandedCount,
         candidates: retrieved.candidates.length,
       }));
-      return result;
+      return result.content;
     }
     log.debug(JSON.stringify({ event: "memory.graph.context_empty", path: "vnext" }));
-    _graphMemoryCache.set(queryHash, "");
+    _graphMemoryCache.set(queryHash, { content: "", recalledClaimIds: [] });
     return "";
   } catch (err) {
     log.error(JSON.stringify({

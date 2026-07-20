@@ -915,17 +915,33 @@ export class MemoryVnextClaimStorage {
     };
   }
 
-  async reinforceClaim(id: number): Promise<void> {
+  async reinforceClaims(ids: number[]): Promise<number> {
+    const uniqueIds = Array.from(new Set(ids.filter((id) => Number.isInteger(id) && id > 0)));
+    if (uniqueIds.length === 0) return 0;
+
     const principal = getCurrentPrincipalOrSystem();
-    await db
+    const recalledAt = new Date();
+    const updated = await db
       .update(memoryVnextClaims)
       .set({
         recallCount: sql`${memoryVnextClaims.recallCount} + 1`,
-        lastRecalledAt: new Date(),
+        lastRecalledAt: recalledAt,
         updatedByUserId: principal.userId ?? undefined,
-        updatedAt: new Date(),
+        updatedAt: recalledAt,
       })
-      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)));
+      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, inArray(memoryVnextClaims.id, uniqueIds)))
+      .returning({ id: memoryVnextClaims.id });
+
+    log.debug(JSON.stringify({
+      event: "memory.vnext.claims_reinforced",
+      requested: uniqueIds.length,
+      updated: updated.length,
+    }));
+    return updated.length;
+  }
+
+  async reinforceClaim(id: number): Promise<void> {
+    await this.reinforceClaims([id]);
   }
 
   async advanceLifecycleStage(
