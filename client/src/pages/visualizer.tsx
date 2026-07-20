@@ -2,10 +2,32 @@ import { useEffect, useState } from "react";
 import { AgentOrb } from "@/components/agent-orb";
 import type { OrbState } from "@/components/agent-orb";
 import { createLogger } from "@/lib/logger";
-import type { AgentVisualizerEvent } from "@shared/agent-visualizer";
+import type { AgentVisualizerEvent, AgentVisualState } from "@shared/agent-visualizer";
 
 const log = createLogger("MeetingVisualizer");
 const RECONNECT_MAX_MS = 5_000;
+const VISUALIZER_STATES = new Set<AgentVisualState>([
+  "idle",
+  "listening",
+  "thinking",
+  "tool_call",
+  "speaking",
+  "degraded",
+]);
+
+function previewState(search: URLSearchParams): AgentVisualState {
+  const state = search.get("state")?.trim();
+  return state && VISUALIZER_STATES.has(state as AgentVisualState)
+    ? state as AgentVisualState
+    : "idle";
+}
+
+function previewAudioLevel(search: URLSearchParams): number | undefined {
+  const raw = search.get("level");
+  if (raw === null || raw.trim() === "") return undefined;
+  const level = Number(raw);
+  return Number.isFinite(level) ? Math.max(0, Math.min(1, level)) : undefined;
+}
 
 function meetingAudioEndpoint(token: string): string {
   return `/api/meeting-output/${encodeURIComponent(token)}/audio`;
@@ -162,20 +184,25 @@ function useMeetingSpeech(token: string, enabled: boolean): void {
 }
 
 export default function VisualizerPage() {
-  const token = new URLSearchParams(window.location.search).get("token")?.trim() || "";
-  const { state, remoteAudioLevel, connected } = useMeetingVisualizerFeed(token);
-  const recallMeetingLevel = useRecallMeetingLevel(Boolean(token && connected));
-  useMeetingSpeech(token, connected);
-  const audioLevel = state === "listening"
-    ? recallMeetingLevel ?? remoteAudioLevel
-    : state === "speaking" ? undefined : 0;
+  const search = new URLSearchParams(window.location.search);
+  const token = search.get("token")?.trim() || "";
+  const feed = useMeetingVisualizerFeed(token);
+  const recallMeetingLevel = useRecallMeetingLevel(Boolean(token && feed.connected));
+  useMeetingSpeech(token, feed.connected);
+
+  const state = token ? feed.state : previewState(search);
+  const audioLevel = token
+    ? state === "listening"
+      ? recallMeetingLevel ?? feed.remoteAudioLevel
+      : state === "speaking" ? undefined : 0
+    : previewAudioLevel(search);
 
   return (
     <main className="fixed inset-0 overflow-hidden bg-black" aria-label="Mantra Agent meeting visualizer">
       <AgentOrb
         state={state}
         audioLevel={audioLevel}
-        maxFrameRate={15}
+        maxFrameRate={token ? 15 : 60}
         className="absolute inset-0"
       />
     </main>
