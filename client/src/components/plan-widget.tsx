@@ -1,18 +1,15 @@
 /**
  * PlanWidget — canonical inline plan progress widget used in sessions and plan details.
  *
- * Containers decide where the widget appears. Progress, expansion, step checkboxes,
- * and plan controls stay here.
+ * Containers decide where the widget appears. The widget renders as a permanently
+ * open hierarchy tree; child sessions own their own inline expansion.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   Archive,
   Circle,
   CircleCheck,
-  ChevronDown,
-  ChevronRight,
-  FileText,
   OctagonAlert,
   MailOpen,
   MoreHorizontal,
@@ -22,19 +19,12 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
-import { ActiveStatusSpinner } from "@/components/nav-dot";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Progress } from "@/components/ui/progress";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -52,7 +42,6 @@ import { formatDiagnosticValue } from "@/lib/diagnostic-error";
 import { createReferenceRef } from "@shared/references";
 import {
   type PlanData,
-  type PlanStatus,
   type PlanStep,
   type PlanStepAttempt,
 } from "./plan-shared";
@@ -68,7 +57,6 @@ export interface PlanWidgetPlan extends PlanData {
 
 interface PlanWidgetProps {
   plan: PlanWidgetPlan;
-  variant?: "sticky" | "card";
   showArchiveAction?: boolean;
   sessionId?: string;
   className?: string;
@@ -77,38 +65,57 @@ interface PlanWidgetProps {
   sessionStreams?: SessionStreamMap;
 }
 
-function getBorderColor(status: PlanStatus, isFlashing: boolean): string {
-  if (isFlashing && status === "completed") return "border-l-success";
-  if (isFlashing && (status === "failed" || status === "aborted")) return "border-l-destructive";
-  switch (status) {
-    case "executing":
-      return "border-l-info/30";
-    case "completed":
-      return "border-l-success/20";
-    case "completed_with_failures":
-      return "border-l-warning/20";
-    case "failed":
-    case "aborted":
-      return "border-l-destructive/20";
-    case "needs_review":
-      return "border-l-foreground/30";
-    case "paused":
-      return "border-l-warning/20";
-    default:
-      return "border-l-border";
-  }
-}
-
-function getTerminalLabel(status: PlanStatus): string | null {
-  if (status === "completed") return "Complete";
-  if (status === "completed_with_failures") return "Complete with warnings";
-  if (status === "failed") return "Failed";
-  if (status === "aborted") return "Aborted";
-  return null;
-}
-
 function isProgressedStep(step: PlanStep): boolean {
   return step.status === "completed" || step.status === "skipped" || step.status === "failed" || step.status === "needs_review";
+}
+
+// Match the Project task tree geometry. Derive the connector from row padding
+// and completion-control size so the branch terminates at the center of the check.
+const PLAN_ROW_PADDING_PX = 8;
+const PLAN_COMPLETION_SIZE_PX = 16;
+const PLAN_CONNECTOR_STROKE_PX = 1;
+const PLAN_INDENT_STEP_PX = 24;
+const PLAN_CONNECTOR_SPINE_PX = PLAN_INDENT_STEP_PX - PLAN_ROW_PADDING_PX - PLAN_COMPLETION_SIZE_PX / 2;
+const PLAN_CONNECTOR_BRANCH_PX = PLAN_ROW_PADDING_PX + PLAN_COMPLETION_SIZE_PX / 2 - PLAN_CONNECTOR_SPINE_PX;
+
+function PlanTreeConnector({ continues }: { continues: boolean }) {
+  const spineStyle = {
+    left: PLAN_CONNECTOR_SPINE_PX,
+    width: PLAN_CONNECTOR_STROKE_PX,
+  };
+  const branchStyle = {
+    left: PLAN_CONNECTOR_SPINE_PX,
+    width: PLAN_CONNECTOR_BRANCH_PX,
+    height: PLAN_CONNECTOR_STROKE_PX,
+  };
+
+  return (
+    <div className="relative w-4 shrink-0 self-stretch" aria-hidden="true">
+      <div
+        className={cn("absolute top-0 bg-border", continues ? "bottom-0" : "bottom-1/2")}
+        style={spineStyle}
+      />
+      <div className="absolute top-1/2 bg-border" style={branchStyle} />
+    </div>
+  );
+}
+
+function PlanTreeRow({
+  continues,
+  children,
+}: {
+  continues: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="flex min-w-0 items-stretch"
+      style={{ paddingLeft: PLAN_INDENT_STEP_PX }}
+    >
+      <PlanTreeConnector continues={continues} />
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  );
 }
 
 function getAttemptChildSessionId(attempt: PlanStepAttempt): string | null {
@@ -145,9 +152,8 @@ function PlanAttemptChild({ planId, parentSessionId, step, attempt, ownedChildBl
   );
 }
 
-function PlanStepCheckbox({ step, stepIndex, planId, parentSessionId, ownedChildBlocks, sessionTitleById, sessionStreams }: { step: PlanStep; stepIndex: number; planId: string; parentSessionId?: string; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string>; sessionStreams?: SessionStreamMap }) {
+function PlanStepCheckbox({ step, stepIndex, continues, planId, parentSessionId, ownedChildBlocks, sessionTitleById, sessionStreams }: { step: PlanStep; stepIndex: number; continues: boolean; planId: string; parentSessionId?: string; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string>; sessionStreams?: SessionStreamMap }) {
   const checked = isProgressedStep(step);
-  const isRunning = step.status === "running";
   const isBlocked = step.status === "blocked";
   const needsReview = step.status === "needs_review";
   const stepErrorText = formatDiagnosticValue(step.error);
@@ -185,26 +191,30 @@ function PlanStepCheckbox({ step, stepIndex, planId, parentSessionId, ownedChild
   // child session widget. The child renders its own check icon via planStepCompleted.
   if (attempts.length > 0) {
     return (
-      <div className="space-y-1">
-        {attempts.map((attempt) => (
-          <PlanAttemptChild
+      <>
+        {attempts.map((attempt, attemptIndex) => (
+          <PlanTreeRow
             key={attempt.id ?? `${step.id}-${attempt.attemptNumber}`}
-            planId={planId}
-            parentSessionId={parentSessionId}
-            step={step}
-            attempt={attempt}
-            ownedChildBlocks={ownedChildBlocks}
-            sessionTitleById={sessionTitleById}
-            sessionStreams={sessionStreams}
-          />
+            continues={continues || attemptIndex < attempts.length - 1}
+          >
+            <PlanAttemptChild
+              planId={planId}
+              parentSessionId={parentSessionId}
+              step={step}
+              attempt={attempt}
+              ownedChildBlocks={ownedChildBlocks}
+              sessionTitleById={sessionTitleById}
+              sessionStreams={sessionStreams}
+            />
+          </PlanTreeRow>
         ))}
-      </div>
+      </>
     );
   }
 
   // Pending step row with "Step N: title" prefix.
   return (
-    <div>
+    <PlanTreeRow continues={continues}>
       <div
         className={cn(
           "group relative flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-foreground",
@@ -246,13 +256,12 @@ function PlanStepCheckbox({ step, stepIndex, planId, parentSessionId, ownedChild
           )}
         </div>
       </div>
-    </div>
+    </PlanTreeRow>
   );
 }
 
 export function PlanWidget({
   plan,
-  variant = "card",
   showArchiveAction = false,
   sessionId,
   className,
@@ -261,17 +270,9 @@ export function PlanWidget({
   sessionStreams,
 }: PlanWidgetProps) {
   const { toast } = useToast();
-  const [isOpen, setIsOpen] = useState(false);
-  const [isFlashing, setIsFlashing] = useState(false);
-  const [isMinimal, setIsMinimal] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const isExecuting = plan.status === "executing";
-  const isTerminal =
-    plan.status === "completed" ||
-    plan.status === "completed_with_failures" ||
-    plan.status === "failed" ||
-    plan.status === "aborted";
   const isPaused = plan.status === "paused";
   const needsReview = plan.status === "needs_review";
   const isCreated = plan.status === "created";
@@ -280,28 +281,6 @@ export function PlanWidget({
   const canResume = !isArchived && (isPaused || needsReview || isCreated || plan.status === "failed");
   const canArchive = showArchiveAction && !isArchived && !isExecuting;
   const canDeleteFromSession = Boolean(sessionId);
-  const progressedCount = plan.steps.filter(isProgressedStep).length;
-  const progressPercent = plan.steps.length > 0
-    ? Math.round((progressedCount / plan.steps.length) * 100)
-    : 0;
-
-
-  useEffect(() => {
-    if (variant !== "sticky" || !isTerminal) {
-      setIsFlashing(false);
-      setIsMinimal(false);
-      return;
-    }
-    setIsFlashing(true);
-    setIsOpen(false);
-    const flashTimer = setTimeout(() => setIsFlashing(false), 2000);
-    const minimalTimer = setTimeout(() => setIsMinimal(true), 10000);
-    return () => {
-      clearTimeout(flashTimer);
-      clearTimeout(minimalTimer);
-    };
-  }, [isTerminal, plan.status, variant]);
-
   const invalidatePlanQueries = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
     queryClient.invalidateQueries({ queryKey: ["/api/plans", plan.id] });
@@ -390,69 +369,26 @@ export function PlanWidget({
     },
   });
 
-  const terminalLabel = useMemo(() => getTerminalLabel(plan.status), [plan.status]);
   const title = plan.title.replace(/^Plan:\s*/, "") || plan.id;
-
-  if (isMinimal && variant === "sticky" && isTerminal) {
-    return (
-      <div
-        className={cn(
-          "flex shrink-0 cursor-pointer items-center gap-2 border-b border-l-4 border-border bg-card px-4 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-accent/50",
-          getBorderColor(plan.status, false),
-          className,
-        )}
-        onClick={() => {
-          setIsMinimal(false);
-          setIsOpen(true);
-        }}
-      >
-        <FileText className="h-3.5 w-3.5 shrink-0" />
-        <span className="max-w-[200px] truncate font-medium text-foreground/80">{title}</span>
-        <span>{terminalLabel}</span>
-      </div>
-    );
-  }
 
   return (
     <>
-    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-      <div
-        className={cn(
-          "overflow-hidden rounded-md border border-l-4 border-border/60 bg-muted/20 px-4 py-3 transition-all duration-200",
-          isFlashing && plan.status === "completed" && "bg-success/10 border-b-success/30",
-          isFlashing && (plan.status === "failed" || plan.status === "aborted") && "bg-destructive/10 border-b-destructive/30",
-          getBorderColor(plan.status, isFlashing),
-          className,
-        )}
-      >
-        <div className="flex items-start gap-2">
-          <CollapsibleTrigger asChild>
-            <button className="min-w-0 flex-1 cursor-pointer select-none text-left">
-              <div className="flex min-h-[28px] items-center gap-3">
-                {isOpen ? (
-                  <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                )}
-                {plan.pageSlug ? (
-                  <ReferenceRenderer
-                    refValue={createReferenceRef({
-                      type: "page",
-                      id: plan.pageSlug,
-                      metadata: { label: title },
-                    })}
-                    surface="card"
-                  />
-                ) : (
-                  <span className={cn("truncate text-sm font-medium", isExecuting && "text-active animate-pulse")}>{title}</span>
-                )}
-
-              </div>
-              <div className="mt-2 pl-7">
-                <Progress value={progressPercent} className="h-1.5" />
-              </div>
-            </button>
-          </CollapsibleTrigger>
+      <div className={cn("min-w-0", className)}>
+        <div className="flex min-w-0 items-center gap-2 px-2 py-1.5">
+          <div className="min-w-0 flex-1">
+            {plan.pageSlug ? (
+              <ReferenceRenderer
+                refValue={createReferenceRef({
+                  type: "page",
+                  id: plan.pageSlug,
+                  metadata: { label: title },
+                })}
+                surface="card"
+              />
+            ) : (
+              <span className={cn("block truncate text-sm font-medium", isExecuting && "text-active animate-pulse")}>{title}</span>
+            )}
+          </div>
 
           {(canPause || canResume || canArchive || canDeleteFromSession) && (
             <DropdownMenu>
@@ -506,27 +442,23 @@ export function PlanWidget({
           )}
         </div>
 
-        <CollapsibleContent className="overflow-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-200">
-          <div className="space-y-1 pt-3">
-            <div className="max-h-[28rem] space-y-0.5 overflow-y-auto pr-2 scrollbar-thin">
-              {plan.steps.map((step, stepIndex) => (
-                <PlanStepCheckbox
-                  key={step.id}
-                  step={step}
-                  stepIndex={stepIndex}
-                  planId={plan.id}
-                  parentSessionId={sessionId}
-                  ownedChildBlocks={ownedChildBlocks}
-                  sessionTitleById={sessionTitleById}
-                  sessionStreams={sessionStreams}
-                />
-              ))}
-            </div>
-          </div>
-        </CollapsibleContent>
+        <div className="max-h-[28rem] space-y-0.5 overflow-y-auto pr-2 scrollbar-thin">
+          {plan.steps.map((step, stepIndex) => (
+            <PlanStepCheckbox
+              key={step.id}
+              step={step}
+              stepIndex={stepIndex}
+              continues={stepIndex < plan.steps.length - 1}
+              planId={plan.id}
+              parentSessionId={sessionId}
+              ownedChildBlocks={ownedChildBlocks}
+              sessionTitleById={sessionTitleById}
+              sessionStreams={sessionStreams}
+            />
+          ))}
+        </div>
       </div>
-    </Collapsible>
-    <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+      <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Remove this plan from the session?</AlertDialogTitle>
