@@ -55,6 +55,7 @@ import {
   Play,
   Pause,
   Clock,
+  Timer,
   Bot,
   User,
   Settings,
@@ -103,6 +104,10 @@ const TYPE_META: Record<TimerType, { label: string; icon: typeof Bot }> = {
   me: { label: "Me", icon: User },
   skill: { label: "Skill", icon: Cpu },
   reminder: { label: "Reminder", icon: Bell },
+};
+
+const SYSTEM_TIMER_ICON_MAP: Record<string, typeof Timer> = {
+  sleep: Timer,
 };
 
 const STATUS_META: Record<TimerRunStatus, { label: string; icon: typeof CheckCircle2; color: string }> = {
@@ -459,7 +464,7 @@ function TimerTreeRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const typeMeta = TYPE_META[timer.type] || TYPE_META.agent;
-  const TypeIcon = typeMeta.icon;
+  const TypeIcon = (timer.systemKey && SYSTEM_TIMER_ICON_MAP[timer.systemKey]) || typeMeta.icon;
   const skillLabel = timer.type === "skill" && timer.skillId
     ? (skillNameMap[timer.skillId] || timer.skillId)
     : null;
