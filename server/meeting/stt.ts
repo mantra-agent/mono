@@ -19,6 +19,7 @@ import type {
   MeetingSpeakerPolicy,
 } from "@shared/models/chat";
 import type { MeetingIngestFn } from "../routes/recall";
+import { runWithMeetingOwnerPrincipal } from "./owner-principal";
 
 const log = createLogger("MeetingSTT");
 const MAX_PARTICIPANT_STREAMS = 16;
@@ -116,21 +117,32 @@ async function persistRecognition(
   const recognitionStreams = Array.from(streams.values())
     .filter((stream) => stream.identity.sessionId === sessionId)
     .map((stream) => stream.recognition);
-  await chatStorage.updateMeetingMeta(sessionId, {
-    recognition: {
-      mode: meeting.speakerPolicy?.mode || "participant_streams",
-      status: recognitionStatus(recognitionStreams, closing),
-      streams: recognitionStreams,
-    },
-    sttStatus: closing
-      ? "inactive"
-      : recognitionStreams.some((stream) => stream.status === "failed" || stream.status === "fallback")
-        ? "fallback"
-        : recognitionStreams.some((stream) => stream.status === "active") ? "active" : "inactive",
-    sttStatusDetail: closing
-      ? "Recall participant audio stream closed"
-      : `${recognitionStreams.filter((stream) => stream.status === "active").length}/${recognitionStreams.length} participant streams active`,
-  });
+  const anyActive = recognitionStreams.some((stream) => stream.status === "active");
+  // Meeting meta is user-owned state; this transport runs from a raw WebSocket
+  // with no request principal, so every write must restore the meeting owner.
+  await runWithMeetingOwnerPrincipal(meeting, () =>
+    chatStorage.updateMeetingMeta(sessionId, {
+      recognition: {
+        mode: meeting.speakerPolicy?.mode || "participant_streams",
+        status: recognitionStatus(recognitionStreams, closing),
+        streams: recognitionStreams,
+      },
+      // Claim the canonical source the moment participant audio is live so the
+      // transcript-webhook fallback gate holds before the first Scribe
+      // utterance arrives, closing the meeting-start duplication race.
+      ...(!closing && anyActive
+        ? { sttSource: "recall_participant_audio" as const, sttFallback: false }
+        : {}),
+      sttStatus: closing
+        ? "inactive"
+        : recognitionStreams.some((stream) => stream.status === "failed" || stream.status === "fallback")
+          ? "fallback"
+          : anyActive ? "active" : "inactive",
+      sttStatusDetail: closing
+        ? "Recall participant audio stream closed"
+        : `${recognitionStreams.filter((stream) => stream.status === "active").length}/${recognitionStreams.length} participant streams active`,
+    }),
+  );
 }
 
 async function ingestFinalUtterance(
@@ -198,7 +210,11 @@ export function registerMeetingSTTAudioTransport(
     const failStream = async (stream: ParticipantStream, detail: string): Promise<void> => {
       stream.recognition = { ...stream.recognition, status: "failed", detail: detail.slice(0, 500) };
       const meeting = meetings.get(stream.identity.sessionId);
-      if (meeting) await persistRecognition(stream.identity.sessionId, meeting, streams);
+      if (meeting) {
+        await persistRecognition(stream.identity.sessionId, meeting, streams).catch((error) =>
+          log.error(`failed to persist degraded recognition state sessionId=${stream.identity.sessionId}: ${error instanceof Error ? error.message : String(error)}`),
+        );
+      }
       log.warn(`meeting STT stream failed sessionId=${stream.identity.sessionId} stream=${stream.identity.streamId} detail=${detail}`);
     };
 
@@ -299,7 +315,11 @@ export function registerMeetingSTTAudioTransport(
       if (closed) return;
       closed = true;
       for (const stream of streams.values()) stream.stt?.close();
-      for (const [sessionId, meeting] of meetings) void persistRecognition(sessionId, meeting, streams, true);
+      for (const [sessionId, meeting] of meetings) {
+        persistRecognition(sessionId, meeting, streams, true).catch((error) =>
+          log.error(`failed to persist closed recognition state sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`),
+        );
+      }
     });
   });
 

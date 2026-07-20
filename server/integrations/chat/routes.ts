@@ -3186,13 +3186,13 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     };
 
     if (event.stt) {
-      const currentSource = meeting.sttSource;
-      const recognition = (await chatStorage.getSession(sessionId))?.meeting?.recognition || meeting.recognition;
+      // Canonical-source discriminant: sttSource + sttStatus are written
+      // atomically by the same paths (participant-audio stream transitions and
+      // this ingest boundary), so the gate reads only that pair instead of
+      // reconciling separately-written recognition stream state.
       const canonicalAudioActive =
-        currentSource === "recall_participant_audio" &&
-        (recognition
-          ? recognition.streams.some((stream) => stream.status === "active")
-          : meeting.sttStatus === "active");
+        meeting.sttSource === "recall_participant_audio" &&
+        meeting.sttStatus === "active";
       // A delayed Recall transcript webhook must not overwrite an active
       // participant-audio stream. It remains available as a replay-safe
       // fallback if canonical audio never connected or degraded.

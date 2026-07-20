@@ -178,7 +178,18 @@ export function createMeetingTurnCoordinator(
           return true;
         }
         try {
-          const decision = ready.participationMode === "always"
+          // Listen Mode is a hard session-level mute: transcription and recap
+          // continue, but no participation inference runs and no response is
+          // generated, even for explicit invocations.
+          const decision = session.meeting.participationPolicy === "listen_only"
+            ? {
+                outcome: "ignored" as const,
+                shouldRespond: false,
+                reason: "listen_only_policy",
+                latencyMs: 0,
+                confidence: 1,
+              }
+            : ready.participationMode === "always"
             ? {
                 outcome: "explicit" as const,
                 shouldRespond: true,

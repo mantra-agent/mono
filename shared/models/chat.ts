@@ -795,6 +795,9 @@ export interface MeetingSessionMeta {
   sttFallback?: boolean;
   sttStatus?: "active" | "fallback" | "inactive";
   sttStatusDetail?: string;
+  /** Session-level participation policy. listen_only keeps transcription and
+   * recap generation active but never speaks or posts agent responses. */
+  participationPolicy?: "auto" | "listen_only";
 }
 
 /** Recap lifecycle discriminant — one discriminant per decision. */
