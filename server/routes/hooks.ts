@@ -3,9 +3,11 @@ import * as hookStorage from "../hook-storage";
 import { hookExecutor } from "../hook-executor";
 import { eventBus } from "../event-bus";
 import { requireAuth } from "../auth";
+import { requirePermission } from "../permissions";
 
 export function registerHooksRoutes(app: Express) {
   app.use("/api/hooks", requireAuth);
+  app.use("/api/hooks", requirePermission("system:write"));
 
   app.get("/api/hooks", async (_req, res) => {
     try {

@@ -78,7 +78,8 @@ export class AgentTimerHandler implements TimerHandler {
         });
       }
     }
-    const allToolDefs = getToolDefinitions();
+    const { filterToolSchemasForAuthority } = await import("./agent-authority");
+    const allToolDefs = filterToolSchemasForAuthority(getToolDefinitions(), { origin: "timer", sessionId, sessionKey });
     const toolDefs = allToolDefs.map(
       (t: { name: string; description: string; parameters: unknown }) => ({
         name: t.name,
@@ -123,6 +124,7 @@ export class AgentTimerHandler implements TimerHandler {
       const toolResult = await executeTool(name, toolCallId, args, {
         sessionKey,
         sessionId,
+        authority: { origin: "timer" },
       });
       return {
         result: toolResult.result,

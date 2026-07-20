@@ -434,11 +434,18 @@ export function getRegisteredSkillIds(): string[] {
   return Object.keys(SKILL_RUN_CONFIGS);
 }
 
-function getSkillTools(activity: ActivityId, sessionKey: string, sessionId: string): {
+function getSkillTools(
+  activity: ActivityId,
+  sessionKey: string,
+  sessionId: string,
+  trustedDelegation?: "plan" | "workflow",
+): {
   tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
   toolExecutor: (name: string, args: Record<string, unknown>) => Promise<{ result: string; error: boolean }>;
 } {
-  const allToolDefs = getToolDefinitions();
+  const { filterToolSchemasForAuthority } = require("./agent-authority") as typeof import("./agent-authority");
+  const authority = { origin: "autonomous" as const, trustedDelegation, activity, sessionKey, sessionId };
+  const allToolDefs = filterToolSchemasForAuthority(getToolDefinitions(), authority);
   const tools = allToolDefs.map((t: AgentToolDefinition) => ({
     name: t.name,
     description: t.description,
@@ -450,6 +457,7 @@ function getSkillTools(activity: ActivityId, sessionKey: string, sessionId: stri
     const result = await executeTool(name, toolCallId, args, {
       sessionKey,
       sessionId,
+      authority,
     });
     return { result: result.result, error: result.error, sideEffectOnly: result.sideEffectOnly, continuation: result.continuation };
   };
@@ -1112,7 +1120,8 @@ async function runSkillPipeline(
       },
       sessionKey,
     });
-    const { tools, toolExecutor } = getSkillTools(config.activity, sessionKey, sessionId);
+    const trustedDelegation = options.planId ? "plan" : options.workflowRunId ? "workflow" : undefined;
+    const { tools, toolExecutor } = getSkillTools(config.activity, sessionKey, sessionId, trustedDelegation);
 
     let toolCallCount = 0;
     const toolCallLog: Array<{ name: string; action?: string; error?: boolean; result?: string }> = [];
@@ -1349,7 +1358,12 @@ export async function triggerResponseOnChildSession(sessionId: string): Promise<
     }
   }
 
-  const { tools, toolExecutor } = getSkillTools(ACTIVITY_WORK, sessionKey, sessionId);
+  const trustedDelegation = conv.spawnerTool === "plan-executor"
+    ? "plan" as const
+    : conv.spawnerTool === "workflow-executor"
+      ? "workflow" as const
+      : undefined;
+  const { tools, toolExecutor } = getSkillTools(ACTIVITY_WORK, sessionKey, sessionId, trustedDelegation);
 
   let finalStatus: "succeeded" | "failed" = "succeeded";
   let finalSummary = "Child session response completed";

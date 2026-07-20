@@ -786,7 +786,8 @@ export async function registerVoiceSessionRoutes(app: Express) {
 
       const systemPrompt = storedPrompt || "(system prompt not captured)";
       const { getToolSchemas } = await import("../tool-registry");
-      const tools = getToolSchemas().map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
+      const { filterToolSchemasForAuthority } = await import("../agent-authority");
+      const tools = filterToolSchemasForAuthority(getToolSchemas(), { origin: "voice", sessionId: chatSessionId }).map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
 
       const { voiceSessionEngine } = await import("../voice-session-engine");
       const voiceSession = await voiceSessionEngine.createSessionFromCheckIn(
@@ -864,7 +865,8 @@ export async function registerVoiceSessionRoutes(app: Express) {
     try {
       const { assembleContext } = await import("../agent-context");
       const { getToolSchemas } = await import("../tool-registry");
-      const tools = getToolSchemas();
+      const { filterToolSchemasForAuthority } = await import("../agent-authority");
+      const tools = filterToolSchemasForAuthority(getToolSchemas(), { origin: "voice", sessionId: chatSessionId });
       const toolDefs = tools.map(t => ({ name: t.name, description: t.description }));
       const assembled = await assembleContext({ profile: "voice", toolDefinitions: toolDefs });
       const estimatedTokens = Math.ceil(assembled.systemPrompt.length / 4);

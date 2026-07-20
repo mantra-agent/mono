@@ -13,6 +13,7 @@ import type { Principal } from "../principal";
 import { runWithPrincipal } from "../principal-context";
 import { chatFileStorage } from "../chat-file-storage";
 import { requirePermission } from "../permissions";
+import { requireAuth } from "../auth";
 
 const eventsLog = createLogger("EventsWS");
 let eventsConnectionCounter = 0;
@@ -360,7 +361,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
     }
   });
 
-  app.post("/api/agent/tools/:toolName", async (req, res) => {
+  app.post("/api/agent/tools/:toolName", requireAuth, async (req, res) => {
     try {
       const { isBridgeTool, executeBridgeTool } = await import("../bridge-tools");
       const toolName = req.params.toolName;
@@ -368,7 +369,11 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
         return res.status(404).json({ error: `Unknown bridge tool: ${toolName}` });
       }
       const toolCallId = req.body.toolCallId || `bridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const result = await executeBridgeTool(toolName, toolCallId, req.body.arguments || req.body);
+      const result = await executeBridgeTool(toolName, toolCallId, req.body.arguments || req.body, {
+        sessionKey: `http:${req.principal?.userId || "unknown"}`,
+        sessionId: "",
+        authority: { origin: "http" },
+      });
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message });

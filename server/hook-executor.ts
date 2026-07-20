@@ -3,6 +3,11 @@ import { eventBus } from "./event-bus";
 import type { SystemHook } from "@shared/schema";
 import * as hookStorage from "./hook-storage";
 import { createLogger } from "./log";
+import { isEventVisibleToPrincipal } from "./event-bus";
+import { runWithPrincipal } from "./principal-context";
+import { createNamedSystemPrincipal, createUserPrincipalFromUser, type Principal } from "./principal";
+import { getUserEffectivePermissions } from "./permissions";
+import { storage } from "./storage";
 
 const log = createLogger("HookExecutor");
 
@@ -70,19 +75,21 @@ class HookExecutor {
     }
 
     try {
-      await this.refreshCache();
+      await runWithPrincipal(createNamedSystemPrincipal("hook-executor"), () => this.refreshCache());
     } catch (err: any) {
       log.warn(`initial hook load failed: ${err.message}`);
     }
 
-    for (const hook of this.hooks) {
-      try {
-        const lastExec = await hookStorage.getLastExecution(hook.id);
-        if (lastExec) {
-          this.lastFired.set(hook.id, new Date(lastExec.createdAt).getTime());
-        }
-      } catch { }
-    }
+    await runWithPrincipal(createNamedSystemPrincipal("hook-executor"), async () => {
+      for (const hook of this.hooks) {
+        try {
+          const lastExec = await hookStorage.getLastExecution(hook.id);
+          if (lastExec) {
+            this.lastFired.set(hook.id, new Date(lastExec.createdAt).getTime());
+          }
+        } catch { }
+      }
+    });
 
     this.minuteResetTimer = setInterval(() => {
       this.executionsThisMinute = 0;
@@ -150,6 +157,8 @@ class HookExecutor {
 
     for (const { hook } of matchingHooks) {
       try {
+        const principal = await this.resolveHookPrincipal(hook);
+        if (!isEventVisibleToPrincipal(busEvent, principal)) continue;
         const resolvedConfig = interpolateTemplates(
           JSON.parse(JSON.stringify(hook.actionConfig)),
           context
@@ -159,7 +168,7 @@ class HookExecutor {
         this.executionCounts.set(hook.id, (this.executionCounts.get(hook.id) ?? 0) + 1);
         this.executionsThisMinute++;
 
-        this.dispatchAction(hook, resolvedConfig, eventDbId).catch(err => {
+        runWithPrincipal(principal, () => this.dispatchAction(hook, resolvedConfig, eventDbId)).catch(err => {
           log.error(`dispatch contract failed hook=${hook.name} action=${hook.actionType}: ${err.message}`);
         });
       } catch (err: any) {
@@ -204,7 +213,7 @@ class HookExecutor {
             action: "initiate",
             topic,
             message,
-          });
+          }, { sessionKey: `hook:${hook.id}`, sessionId: "", authority: { origin: "hook" } });
           status = "success";
           break;
         }
@@ -212,7 +221,11 @@ class HookExecutor {
           const { executeBridgeTool } = await import("./bridge-tools");
           const toolName = resolvedConfig.toolName;
           if (!toolName) throw new Error("missing toolName in action config");
-          await executeBridgeTool(toolName, `hook-${hook.id}-${Date.now()}`, resolvedConfig.arguments || {});
+          await executeBridgeTool(toolName, `hook-${hook.id}-${Date.now()}`, resolvedConfig.arguments || {}, {
+            sessionKey: `hook:${hook.id}`,
+            sessionId: "",
+            authority: { origin: "hook" },
+          });
           status = "success";
           break;
         }
@@ -258,9 +271,21 @@ class HookExecutor {
     }
   }
 
+  private async resolveHookPrincipal(hook: SystemHook): Promise<Principal> {
+    if (hook.scope === "system") return createNamedSystemPrincipal(`hook:${hook.id}`);
+    if (hook.scope !== "user" || !hook.ownerUserId || !hook.accountId) {
+      throw new Error(`Hook ${hook.id} is not executable because ownership is unresolved`);
+    }
+    const user = await storage.getUser(hook.ownerUserId);
+    if (!user) throw new Error(`Hook owner user missing: ${hook.ownerUserId}`);
+    const principal = createUserPrincipalFromUser(user, hook.accountId);
+    principal.permissions = await getUserEffectivePermissions(user.id);
+    return principal;
+  }
+
   async refreshCache(): Promise<void> {
     try {
-      this.hooks = await hookStorage.listHooks();
+      this.hooks = await hookStorage.listHooksForScheduler();
       this.executionCounts.clear();
     } catch (err: any) {
       log.warn(`hook cache refresh failed: ${err.message}`);
@@ -268,7 +293,8 @@ class HookExecutor {
   }
 
   invalidateCache(): void {
-    this.refreshCache().catch(err => log.warn(`cache invalidation failed: ${err.message}`));
+    runWithPrincipal(createNamedSystemPrincipal("hook-executor"), () => this.refreshCache())
+      .catch(err => log.warn(`cache invalidation failed: ${err.message}`));
   }
 
   testHook(hook: { eventPattern: string; condition?: any; actionConfig: any }, busEvent: BusEvent): {

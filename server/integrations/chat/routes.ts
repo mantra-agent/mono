@@ -1512,7 +1512,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
     onProgress?.("ctx_history", "done", Date.now() - histStart);
 
-    const allToolDefs = getToolDefinitions();
+    const { filterToolSchemasForAuthority } = await import("../../agent-authority");
+    const allToolDefs = filterToolSchemasForAuthority(getToolDefinitions(), { origin: "interactive", sessionId });
     const toolDefs: ToolDefinition[] = allToolDefs.map((t) => ({
       name: t.name,
       description: t.description,
@@ -1800,6 +1801,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       const toolResult = await executeTool(name, toolCallId, args, {
         sessionKey,
         sessionId,
+        authority: { origin: "interactive" },
       });
       const nextPersonaId = shouldTrackPersonaChange && !toolResult.error
         ? (await chatStorage.getSession(sessionId))?.personaId
