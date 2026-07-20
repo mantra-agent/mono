@@ -119,8 +119,8 @@ const nodeFragmentShader = `
     float core = smoothstep(0.12, 0.92, facing);
     float highlight = pow(max(dot(normalize(vNormal), normalize(vec3(-0.42, 0.66, 0.61))), 0.0), 10.0);
     float emphasis = 1.0 + vEmphasis * 0.45;
-    vec3 color = vTint * (0.42 + core * 0.38 + rim * 0.68 + highlight * 0.55) * emphasis;
-    float alpha = (0.34 + core * 0.34 + rim * 0.28 + highlight * 0.16) * vVisibility;
+    vec3 color = vTint * (0.56 + core * 0.38 + rim * 0.68 + highlight * 0.55) * emphasis;
+    float alpha = (0.44 + core * 0.34 + rim * 0.28 + highlight * 0.16) * vVisibility;
     gl_FragColor = vec4(color, clamp(alpha, 0.3, 1.0));
   }
 `;
@@ -165,7 +165,7 @@ function buildSceneGraph(nodes: MemoryGraph3DNode[], links: MemoryGraph3DLink[])
       vx: 0,
       vy: 0,
       vz: 0,
-      radius: 1 + Math.pow(degreeRatio, 0.6) * 9,
+      radius: 1 + Math.pow(degreeRatio, 0.6) * 39,
     };
   });
   const nodeIndex = new Map(sceneNodes.map((node, index) => [node.id, index]));
