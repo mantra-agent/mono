@@ -961,6 +961,9 @@ export async function registerLibraryRoutes(app: Express) {
     content: z.any().optional(),
     plainTextContent: z.string().default(""),
     parentId: z.string().nullable().optional(),
+    purpose: z.string().nullable().optional(),
+    pageContext: z.string().nullable().optional(),
+    contentSummary: z.string().nullable().optional(),
     tags: z.array(z.string()).default([]),
     status: z.string().nullable().optional(),
     emoji: z.string().nullable().optional(),
@@ -971,68 +974,26 @@ export async function registerLibraryRoutes(app: Express) {
   app.post("/api/info/library", async (req, res) => {
     try {
       const data = createPageSchema.parse(req.body);
-      const slug = slugify(data.title);
-
-      const parentId = data.parentId ?? null;
-      const principal = principalOrThrow(req);
-
-      if (parentId) {
-        const [parent] = await db
-          .select({ id: libraryPages.id })
-          .from(libraryPages)
-          .where(writableLibrary(req, eq(libraryPages.id, parentId)))
-          .limit(1);
-        if (!parent) {
-          return res.status(404).json({ error: "Parent page not found" });
-        }
-      }
-
-      const parentCondition = parentId
-        ? eq(libraryPages.parentId, parentId)
-        : isNull(libraryPages.parentId);
-      const [maxRow] = await db
-        .select({
-          maxSort: dsql<number>`COALESCE(MAX(${libraryPages.sortOrder}), -1)`,
-        })
-        .from(libraryPages)
-        .where(visibleLibrary(req, parentCondition));
-      const nextSortOrder = (maxRow?.maxSort ?? -1) + 1;
-
-      const { syncContentFields, isValidTiptapDoc } =
-        await import("@shared/markdown-tiptap");
+      const { syncContentFields, isValidTiptapDoc } = await import("@shared/markdown-tiptap");
       const synced = isValidTiptapDoc(data.content)
         ? syncContentFields({ tiptapJson: data.content })
         : syncContentFields({ markdown: data.plainTextContent });
-
-      const [page] = await db
-        .insert(libraryPages)
-        .values({
-          ...ownedInsertValues(principal, libraryScopeColumns),
-          title: data.title,
-          slug,
-          content: synced.content,
-          plainTextContent: synced.plainTextContent,
-          parentId,
-          tags: data.tags,
-          emoji: data.emoji ?? null,
-          structuralRole: normalizeLibraryStructuralRole(data.structuralRole),
-          ...buildLibrarySurfaceSet(data),
-          sortOrder: nextSortOrder,
-          createdByUserId: principal.userId ?? undefined,
-          updatedByUserId: principal.userId ?? undefined,
-        })
-        .returning();
-
-      upsertLibraryPageMemory(page).catch((e) =>
-        log.warn(`Library memory upsert failed: ${e.message}`),
-      );
-
-      publishLibraryChanged("created", page);
-
-      // Queue for vNext claim extraction
-      markSourceChanged("library_page", page.id, principal).catch((e) =>
-        log.warn(`vNext source queue upsert failed for new page ${page.id}: ${e.message}`),
-      );
+      const { createFiledLibraryPage } = await import("../library-save");
+      const page = await createFiledLibraryPage({
+        title: data.title,
+        markdown: synced.plainTextContent,
+        purpose: data.purpose ?? null,
+        explicitParentId: data.parentId ?? null,
+        pageContext: data.pageContext ?? null,
+        contentSummary: data.contentSummary ?? null,
+        tags: data.tags,
+        status: data.status,
+        structuralRole: data.structuralRole,
+        surface: data.surface,
+        surfaceDurationHours: data.surfaceDurationHours,
+        surfaceReason: data.surfaceReason,
+        surfaceSection: data.surfaceSection,
+      });
 
       res.status(201).json(page);
     } catch (err: any) {

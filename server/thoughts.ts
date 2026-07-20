@@ -207,7 +207,7 @@ export async function saveJournalToLibrary(
     tags,
   });
 
-  log.log(`[journal] Saved journal page id=${page.id} title="${title}" tags=[${tags.join(",")}] under filingKey=${page.filingResolution.filingKey}`);
+  log.log(`[journal] Saved journal page id=${page.id} title="${title}" tags=[${tags.join(",")}] under ${page.filingResolution.parentTitle} (${page.filingResolution.outcome})`);
 }
 
 export async function buildDreamPreContext(): Promise<{ preContext: string } | null> {
