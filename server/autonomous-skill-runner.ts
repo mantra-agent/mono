@@ -488,6 +488,8 @@ export async function executeAutonomousSkillRun(
      * into the sidebar title (e.g. "Advocate A — Round 2").
      */
     titleOverride?: string;
+    /** Explicit persona applied before context assembly and first inference. */
+    personaName?: "Engineer" | "Architect" | "Default";
     /** Admission priority inherited from the root session that initiated this run. */
     admissionTier?: AdmissionTier;
     /** Stable root session identity shared by this run and all descendants. */
@@ -656,6 +658,13 @@ export async function executeAutonomousSkillRun(
     }
   }
 
+  const explicitRunPersona = options.personaName
+    ? await (await import("./file-storage/persona-storage")).personaStorage.getByName(options.personaName)
+    : null;
+  if (options.personaName && !explicitRunPersona) {
+    throw new Error(`Explicit run persona "${options.personaName}" is not visible to the current principal`);
+  }
+
   let conversation: FileSession;
   // Top-level runs (hooks, timers, skills.run) default to "autonomous" so they
   // show in the SYSTEM category, not RECENT alongside user conversations.
@@ -726,20 +735,24 @@ export async function executeAutonomousSkillRun(
     }
   }
 
-  // Apply the resolved skill persona through the canonical mutation path so
-  // persona-driven semantic-tier model routing picks it up. Resolution chain:
-  // user_override → skill_persona_legacy → skill_recommendation (lineage).
-  if (resolvedPersona != null) {
+  // Apply explicit run persona before context assembly and first inference.
+  // Skill recommendations remain the fallback for ordinary skill runs.
+  if (explicitRunPersona) {
+    const { setSessionPersona } = await import("./session-persona");
+    const persona = await setSessionPersona(sessionId, explicitRunPersona.id);
+    if (!persona) throw new Error(`Failed to apply explicit run persona "${options.personaName}"`);
+    logger.log(`[SkillChat] [${sessionId}] Applied persona "${persona.name}" (id=${persona.id}, source=explicit_run)`);
+  } else if (resolvedPersona) {
     try {
       const { setSessionPersona } = await import("./session-persona");
       const persona = await setSessionPersona(sessionId, resolvedPersona.personaId);
       if (persona) {
-        logger.log(`[SkillChat] [${sessionId}] Applied skill persona "${persona.name}" (id=${persona.id}, source=${resolvedPersona.source})`);
+        logger.log(`[SkillChat] [${sessionId}] Applied persona "${persona.name}" (id=${persona.id}, source=${resolvedPersona.source})`);
       } else {
-        logger.warn(`[SkillChat] [${sessionId}] Skill persona id=${resolvedPersona.personaId} (source=${resolvedPersona.source}) not found — falling back to default persona resolution`);
+        logger.warn(`[SkillChat] [${sessionId}] Skill persona ${resolvedPersona.personaId} (source=${resolvedPersona.source}) not found — falling back to default persona resolution`);
       }
     } catch (personaErr: unknown) {
-      logger.warn(`[SkillChat] [${sessionId}] Failed to apply skill persona id=${resolvedPersona.personaId}: ${personaErr instanceof Error ? personaErr.message : String(personaErr)}`);
+      logger.warn(`[SkillChat] [${sessionId}] Failed to apply skill persona: ${personaErr instanceof Error ? personaErr.message : String(personaErr)}`);
     }
   }
 
@@ -1055,6 +1068,7 @@ async function runSkillPipeline(
       callType: config.callType,
       llmMode: "text",
       activity: config.activity,
+      sessionId,
       includeSections: config.includeSections,
       excludeSections: config.excludeSections,
     });
@@ -1299,6 +1313,7 @@ export async function triggerResponseOnChildSession(sessionId: string): Promise<
       callType: "full",
       llmMode: "text",
       activity: ACTIVITY_WORK,
+      sessionId,
     });
     systemPrompt = contextBuilder.renderToPrompt(spine);
   } catch (err) {

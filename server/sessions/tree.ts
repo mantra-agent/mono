@@ -49,6 +49,8 @@ export interface SpawnChildSessionOptions {
    * directly in the sidebar.
    */
   titleOverride?: string;
+  /** Explicit persona applied before child context assembly and first inference. */
+  personaName?: "Engineer" | "Architect" | "Default";
   /** Root-derived admission priority. User-originated descendants are foreground. */
   admissionTier?: AdmissionTier;
   /** Stable root session identity shared by the parent and all descendants. */
@@ -402,7 +404,7 @@ export async function spawnChildSession(
 ): Promise<SpawnChildSessionResult> {
   const model = options.model ?? options.skillId;
   if (!model && !options.preContext) throw new Error("spawnChildSession: either `model` (skill identifier) or `preContext` is required");
-  const { spawnReason, spawnerTool, spawnerSkillRun, preContext, waitForCompletion, modelOverride, sessionKeyOverride, titleOverride, admissionTier, lineageId, hookTriggerId, hookTriggerName, planId, stepId, attemptId, attemptNumber, planPageRef } = options;
+  const { spawnReason, spawnerTool, spawnerSkillRun, preContext, waitForCompletion, modelOverride, sessionKeyOverride, titleOverride, personaName, admissionTier, lineageId, hookTriggerId, hookTriggerName, planId, stepId, attemptId, attemptNumber, planPageRef } = options;
 
   const { executeAutonomousSkillRun } = await import("../autonomous-skill-runner");
 
@@ -440,6 +442,7 @@ export async function spawnChildSession(
       modelOverride,
       sessionKeyOverride,
       titleOverride,
+      personaName,
       admissionTier,
       lineageId: lineageId ?? parentId,
       hookTriggerId,

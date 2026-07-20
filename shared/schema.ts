@@ -1281,6 +1281,7 @@ export const planSteps = pgTable("plan_steps", {
   position: integer("position").notNull(),
   title: text("title").notNull(),
   instructions: text("instructions"),
+  persona: text("persona"),
   status: text("status").notNull().default("pending"),
   sessionId: text("session_id"),
   outcome: text("outcome"),
@@ -1296,6 +1297,7 @@ export const planSteps = pgTable("plan_steps", {
   index("idx_plan_steps_plan_id").on(table.planId),
   index("idx_plan_steps_owner").on(table.ownerUserId),
   index("idx_plan_steps_account").on(table.accountId),
+  check("chk_plan_steps_persona", sql`${table.persona} IS NULL OR ${table.persona} IN ('Engineer', 'Architect', 'Default')`),
   primaryKey({ columns: [table.planId, table.id] }),
 ]);
 

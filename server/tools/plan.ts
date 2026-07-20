@@ -22,6 +22,7 @@ import {
   ownedInsertValues,
 } from "../scoped-storage";
 import { createLogger } from "../log";
+import { isPlanStepPersona, resolvePlanStepPersona, type PlanStepPersona } from "../plan-persona";
 import {
   generatePlanId,
   generateStepId,
@@ -167,10 +168,17 @@ async function handleCreate(
   if (!title)
     return { result: "Missing required 'title' parameter.", error: true };
 
-  const stepsInput = args.steps as Array<{
+  const rawStepsInput = args.steps as Array<{
     title: string;
     instructions: string;
+    persona?: PlanStepPersona;
   }>;
+  const stepsInput = Array.isArray(rawStepsInput)
+    ? rawStepsInput.map((step) => ({
+        ...step,
+        persona: resolvePlanStepPersona(step.persona, step.title || "", step.instructions || "").persona,
+      }))
+    : rawStepsInput;
   if (!Array.isArray(stepsInput) || stepsInput.length === 0) {
     return {
       result:
@@ -185,6 +193,8 @@ async function handleCreate(
       return { result: `Step ${i + 1} missing 'title'.`, error: true };
     if (!s.instructions)
       return { result: `Step ${i + 1} missing 'instructions'.`, error: true };
+    if (!isPlanStepPersona(s.persona))
+      return { result: `Step ${i + 1} requires persona Engineer, Architect, or Default.`, error: true };
   }
 
   const sessionId = (args._sessionId as string) || "";
@@ -205,6 +215,7 @@ async function handleCreate(
     steps: stepsInput.map((s, i) => ({
       id: generateStepId(i),
       title: s.title,
+      persona: s.persona,
       status: "pending" as const,
     })),
   };
@@ -248,6 +259,7 @@ async function handleCreate(
       position: i,
       title: stepsInput[i].title,
       instructions: stepsInput[i].instructions,
+      persona: stepsInput[i].persona,
       status: "pending",
     });
   }
@@ -585,6 +597,7 @@ async function handleExecuteLegacy(
         position: i,
         title: step.title,
         instructions: instructions.get(i) || `Execute step: ${step.title}`,
+        persona: step.persona,
         status: step.status,
         sessionId: step.sessionId,
         outcome: step.outcome,
@@ -789,6 +802,7 @@ async function handleEdit(
         stepId: string;
         title?: string;
         instructions?: string;
+        persona?: PlanStepPersona;
         status?: string;
       }>
     | undefined;
@@ -809,6 +823,12 @@ async function handleEdit(
         setStep.title = edit.title.trim();
       if (typeof edit.instructions === "string")
         setStep.instructions = edit.instructions;
+      if (edit.persona !== undefined) {
+        if (!isPlanStepPersona(edit.persona)) {
+          return { result: `Invalid persona "${edit.persona}" for step "${edit.stepId}". Use Engineer, Architect, or Default.`, error: true };
+        }
+        setStep.persona = edit.persona;
+      }
       if (edit.status) {
         if (!validStatuses.has(edit.status)) {
           return {
@@ -869,12 +889,25 @@ async function handleAddSteps(
   if (!planId)
     return { result: "Missing required 'planId' parameter.", error: true };
 
-  const newSteps = args.newSteps as Array<{
+  const rawNewSteps = args.newSteps as Array<{
     title: string;
     instructions: string;
+    persona?: PlanStepPersona;
   }>;
+  const newSteps = Array.isArray(rawNewSteps)
+    ? rawNewSteps.map((step) => ({
+        ...step,
+        persona: resolvePlanStepPersona(step.persona, step.title || "", step.instructions || "").persona,
+      }))
+    : rawNewSteps;
   if (!Array.isArray(newSteps) || newSteps.length === 0) {
     return { result: "Missing required 'newSteps' array.", error: true };
+  }
+  for (let i = 0; i < newSteps.length; i++) {
+    if (!newSteps[i]?.title || !newSteps[i]?.instructions)
+      return { result: `New step ${i + 1} requires title and instructions.`, error: true };
+    if (!isPlanStepPersona(newSteps[i].persona))
+      return { result: `New step ${i + 1} requires persona Engineer, Architect, or Default.`, error: true };
   }
 
   const resolved = await resolvePlanWithPage(planId);
@@ -921,6 +954,7 @@ async function handleAddSteps(
       position: insertAfterPosition + 1 + i,
       title: newSteps[i].title,
       instructions: newSteps[i].instructions,
+      persona: newSteps[i].persona,
       status: "pending",
     });
   }
@@ -1098,6 +1132,7 @@ function dbRowsToMeta(
     steps: steps.map((s) => ({
       id: s.id,
       title: s.title,
+      persona: s.persona as PlanStepPersona | undefined,
       status: s.status as PlanStep["status"],
       duration: s.durationSeconds ?? undefined,
       sessionId: s.sessionId ?? undefined,

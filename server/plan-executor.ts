@@ -18,6 +18,7 @@ import { combineWithVisibleScope } from "./scoped-storage";
 import { PLAN_EXECUTION_LEASE_MS, claimPlanExecution, completePlanStepAttempt, createPlanStepAttempt, getLatestPlanStepAttempt, releasePlanExecution, renewPlanExecution, renderPlanProjection, transitionPlanStepStatus, updatePlanStatus as persistPlanStatus, updatePlanStepAttempt, updatePlanStepFields } from "./plan-service";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
+import { resolvePlanStepPersona } from "./plan-persona";
 import {
   buildStepBrief,
   isStepResolved,
@@ -429,6 +430,12 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
       );
 
       const idleTimeoutMs = (step.timeoutMinutes ?? DEFAULT_IDLE_TIMEOUT_MINUTES) * 60 * 1000;
+      const personaResolution = resolvePlanStepPersona(step.persona, step.title, stepInstructions);
+      if (personaResolution.inferred) {
+        await updatePlanStepFields(planId, step.id, { persona: personaResolution.persona });
+        step.persona = personaResolution.persona;
+        log.log(`[${planId}] Step ${stepIndex + 1} inferred legacy persona=${personaResolution.persona} and persisted it`);
+      }
 
       const { spawnChildSession } = await import("./sessions/tree");
 
@@ -439,6 +446,7 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
         preContext: brief,
         waitForCompletion: false,
         titleOverride: `Step ${stepIndex + 1}: ${step.title}`,
+        personaName: personaResolution.persona,
         admissionTier: "realtime",
         lineageId: originSessionId,
 planId,
