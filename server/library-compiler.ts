@@ -368,6 +368,8 @@ export async function compileLibraryPageToMantraWiki(
 
   const result = await chatCompletion({
     activity: ACTIVITY_FRAMING,
+    semanticTierOverride: "balanced",
+    overrideReason: "Library compiler is a bounded JSON summarization workload and must not inherit session max/Codex routing",
     metadata: {
       source: "library-compiler",
       activity: ACTIVITY_FRAMING,
