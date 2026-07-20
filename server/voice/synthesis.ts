@@ -6,6 +6,12 @@ import { getSecret } from "../secrets-store";
 import { getTtsConfig } from "../routes/voice-config";
 
 const log = createLogger("VoiceSynthesis");
+
+/** The provider returned a 200 stream that ended without a single audio byte.
+ * Distinguished so consumers can retry: nothing was audibly played. */
+export class EmptyVoiceStreamError extends Error {
+  override name = "EmptyVoiceStreamError";
+}
 const MAX_TTS_CHARS = 8_000;
 const ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1";
 
@@ -36,6 +42,12 @@ function responseBodyStream(
         const { done, value } = await reader.read();
         if (done) {
           completed = true;
+          if (byteCount === 0) {
+            log.error(`voice synthesis stream ended with zero audio bytes model=${modelId} durationMs=${Date.now() - startedAt}`);
+            throw new EmptyVoiceStreamError(
+              `Voice synthesis returned an empty audio stream (model=${modelId})`,
+            );
+          }
           log.info(`streamed portable voice audio model=${modelId} bytes=${byteCount} durationMs=${Date.now() - startedAt}`);
           return;
         }

@@ -1,5 +1,5 @@
 import type { MeetingSessionMeta } from "@shared/models/chat";
-import { createUserPrincipalFromUser } from "../principal";
+import { createUserPrincipalFromUser, type Principal } from "../principal";
 import { getCurrentPrincipal, runWithPrincipal } from "../principal-context";
 import { storage } from "../storage";
 
@@ -45,4 +45,19 @@ export async function runWithMeetingOwnerPrincipal<T>(
     );
   }
   return runWithMeetingOwnerIdentity({ ownerUserId, accountId }, operation);
+}
+
+/** True when the authenticated user principal owns this meeting session. */
+export function principalOwnsMeeting(
+  principal: Principal,
+  session: { type?: string; meeting?: MeetingSessionMeta } | null | undefined,
+): boolean {
+  const meeting = session?.meeting;
+  return !!meeting
+    && session?.type === "meeting"
+    && principal.actorType === "user"
+    && !!principal.userId
+    && !!principal.accountId
+    && meeting.ownerUserId === principal.userId
+    && meeting.principalAccountId === principal.accountId;
 }

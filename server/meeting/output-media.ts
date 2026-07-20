@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { finished } from "node:stream/promises";
 import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
-import { streamVoiceAudio, type VoiceAudioStream } from "../voice/synthesis";
+import { EmptyVoiceStreamError, streamVoiceAudio, type VoiceAudioStream } from "../voice/synthesis";
 
 const log = createLogger("MeetingOutputMedia");
 const TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
@@ -100,15 +100,30 @@ export async function speakMeetingResponse(sessionId: string, text: string): Pro
     if (!session?.meeting || session.meeting.botStatus !== "live") throw new Error("Meeting bot is not live");
     await chatStorage.updateMeetingMeta(sessionId, { speechStatus: "speaking" });
     try {
-      const audio = await streamVoiceAudio(text);
-      enqueue(sessionId, audio);
-      log.info(`queued speech stream sessionId=${sessionId} provider=${audio.provider}`);
-      await finished(audio.stream);
+      const maxAttempts = 2;
+      let spokenVia = "";
+      for (let attempt = 1; ; attempt++) {
+        const audio = await streamVoiceAudio(text);
+        enqueue(sessionId, audio);
+        log.info(`queued speech stream sessionId=${sessionId} provider=${audio.provider} attempt=${attempt}`);
+        try {
+          await finished(audio.stream);
+          spokenVia = audio.provider;
+          break;
+        } catch (error) {
+          // An empty stream produced no audio, so a retry cannot double-speak.
+          if (error instanceof EmptyVoiceStreamError && attempt < maxAttempts) {
+            log.warn(`empty speech stream, retrying sessionId=${sessionId} attempt=${attempt}`);
+            continue;
+          }
+          throw error;
+        }
+      }
       await chatStorage.updateMeetingMeta(sessionId, {
         speechStatus: "spoken",
-        speechStatusDetail: `Spoken via ${audio.provider}`,
+        speechStatusDetail: `Spoken via ${spokenVia}`,
       });
-      log.info(`completed speech stream sessionId=${sessionId} provider=${audio.provider}`);
+      log.info(`completed speech stream sessionId=${sessionId} provider=${spokenVia}`);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       await chatStorage.updateMeetingMeta(sessionId, { speechStatus: "failed", speechStatusDetail: detail });

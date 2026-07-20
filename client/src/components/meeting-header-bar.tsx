@@ -18,6 +18,7 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronRight,
+  Ear,
   Hourglass,
   Loader2,
   Mail,
@@ -268,6 +269,32 @@ export function MeetingHeaderBar({
   const banner = STATUS_BANNER[meeting.botStatus];
   const { toast } = useToast();
 
+  const isListenOnly = meeting.participationPolicy === "listen_only";
+  const toggleListenMode = useMutation({
+    mutationFn: async () => {
+      if (!sessionId) throw new Error("Meeting session unavailable");
+      const response = await apiRequest(
+        "PATCH",
+        `/api/meetings/${encodeURIComponent(sessionId)}/participation-policy`,
+        { participationPolicy: isListenOnly ? "auto" : "listen_only" },
+      );
+      return response.json();
+    },
+    onSuccess: () => {
+      if (!sessionId) return;
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+    },
+    onError: (error: Error) => {
+      log.error("Listen mode toggle failed", { sessionId, error });
+      toast({
+        title: "Listen mode update failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const retryRecap = useMutation({
     mutationFn: async () => {
       if (!sessionId) throw new Error("Meeting session unavailable");
@@ -393,6 +420,32 @@ export function MeetingHeaderBar({
               </span>
             ))}
           </div>
+        )}
+        {isLive && sessionId && (
+          <Button
+            variant="outline"
+            size="sm"
+            className={cn(
+              "ml-auto h-6 gap-1.5 px-2 text-xs",
+              isListenOnly && "border-active/40 text-active hover:text-active",
+            )}
+            onClick={() => toggleListenMode.mutate()}
+            disabled={toggleListenMode.isPending}
+            data-testid="button-toggle-listen-mode"
+            title={
+              isListenOnly
+                ? "Mantra is listening only — click to let it speak again"
+                : "Mute Mantra for this meeting — it keeps transcribing and will still build the recap"
+            }
+            aria-pressed={isListenOnly}
+          >
+            {toggleListenMode.isPending ? (
+              <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+            ) : (
+              <Ear className="h-3 w-3 shrink-0" />
+            )}
+            <span>{isListenOnly ? "Listen mode on" : "Listen mode"}</span>
+          </Button>
         )}
       </div>
 

@@ -13,6 +13,7 @@ import { combineWithVisibleScope } from "../scoped-storage";
 import { requireAuth } from "../auth";
 import { getPrincipal } from "../principal";
 import { chatStorage } from "../integrations/chat/storage";
+import { principalOwnsMeeting } from "../meeting/owner-principal";
 import { finalizeMeetingSession } from "../meeting/recap";
 import { distributeRecap } from "../meeting/distribution";
 import { createLogger } from "../log";
@@ -24,20 +25,6 @@ const scopeColumns = {
   ownerUserId: meetingRecapDistributions.ownerUserId,
   accountId: meetingRecapDistributions.accountId,
 };
-
-function ownsMeetingSession(
-  principal: NonNullable<ReturnType<typeof getPrincipal>>,
-  session: Awaited<ReturnType<typeof chatStorage.getSession>>,
-): boolean {
-  const meeting = session?.meeting;
-  return !!meeting
-    && session?.type === "meeting"
-    && principal.actorType === "user"
-    && !!principal.userId
-    && !!principal.accountId
-    && meeting.ownerUserId === principal.userId
-    && meeting.principalAccountId === principal.accountId;
-}
 
 export function registerMeetingDistributionRoutes(app: Express): void {
   /**
@@ -68,7 +55,7 @@ export function registerMeetingDistributionRoutes(app: Express): void {
           res.status(404).json({ error: "Meeting session not found" });
           return;
         }
-        if (!ownsMeetingSession(principal, session)) {
+        if (!principalOwnsMeeting(principal, session)) {
           res.status(404).json({ error: "Meeting session not found" });
           return;
         }
@@ -165,7 +152,7 @@ export function registerMeetingDistributionRoutes(app: Express): void {
 
       try {
         const session = await chatStorage.getSession(sessionId);
-        if (!session || !ownsMeetingSession(principal, session)) {
+        if (!session || !principalOwnsMeeting(principal, session)) {
           res.status(404).json({ error: "Meeting session not found" });
           return;
         }
