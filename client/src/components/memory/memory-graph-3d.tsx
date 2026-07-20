@@ -120,9 +120,8 @@ const nodeFragmentShader = `
     float edge = 1.0 - facing;
     float rim = pow(edge, 1.6);
     float emphasis = 1.0 + vEmphasis * 0.5;
-    vec3 color = vTint * (0.12 + rim * 0.88) * emphasis;
-    float alpha = (0.04 + rim * 0.82) * vVisibility;
-    gl_FragColor = vec4(color, clamp(alpha, 0.0, 0.92));
+    vec3 color = vTint * rim * emphasis * vVisibility;
+    gl_FragColor = vec4(color, 1.0);
   }
 `;
 
@@ -358,8 +357,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const nodeMaterial = new THREE.ShaderMaterial({
       vertexShader: nodeVertexShader,
       fragmentShader: nodeFragmentShader,
-      transparent: true,
-      depthWrite: false,
+      transparent: false,
+      depthWrite: true,
       depthTest: true,
       side: THREE.FrontSide,
     });
@@ -373,7 +372,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const linkGeometry = new LineSegmentsGeometry();
     const baseLinkColor = signalColor.clone().multiplyScalar(0.65);
     renderedLinks.forEach((link, linkIndex) => {
-      const brightness = 0.15 + Math.pow(Math.max(0, link.strength), 1.6) * 0.85;
+      const brightness = (0.15 + Math.pow(Math.max(0, link.strength), 1.6) * 0.85) * 0.5;
       for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
         const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
         linkColors[offset] = baseLinkColor.r * brightness;
@@ -657,7 +656,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       .iterations(1);
     const simulation: Simulation<SceneNode> = forceSimulation(sceneNodes, 3)
       .force("charge", forceManyBody<SceneNode>()
-        .strength((node) => -(120 + Math.sqrt(node.degree) * 8))
+        .strength((node) => -(60 + Math.sqrt(node.degree) * 4))
         .theta(0.76)
         .distanceMin(2)
         .distanceMax(520))
