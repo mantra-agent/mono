@@ -593,6 +593,6 @@ Container deployments use Tini as PID 1. The shell entrypoint must `exec` the No
 
 - `agent-authority.ts` is the canonical deterministic policy for model-originated tool calls. Prompts may describe safety but never grant authority.
 - Every model/tool path must label its origin and pass through `executeTool`; model-visible schemas must be filtered through the same policy.
-- Shell is allowlist-only and requires a trusted plan/workflow delegation plus `build:write`. Model-controlled URLs use `untrusted-url.ts`, which rejects credentials, local/private/reserved networks, and unsafe redirects.
+- Shell is allowlist-only and requires a trusted plan/workflow delegation plus `build:write`. Its child receives a positive environment allowlist and isolated home/cache so server credentials never become ambient shell authority; read commands must not expose shell expansion or executable sublanguages. Model-controlled URLs use `untrusted-url.ts`, which rejects credentials, local/private/reserved networks, and unsafe redirects.
 - Autonomous external effects fail closed unless explicitly allowlisted at the capability boundary. Human-gated actions remain unavailable to model-originated calls.
 - Cross-session messages remain inside direct parent/child/sibling relationships. Hook execution restores the durable owner principal and accepts only events visible to that principal.

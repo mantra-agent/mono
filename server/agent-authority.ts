@@ -159,23 +159,29 @@ const SAFE_SHELL_COMMANDS = new Set([
   "cd", "pwd", "ls", "find", "cat", "head", "tail", "grep", "sed", "wc", "sort", "uniq",
   "cut", "tr", "printf", "test", "[", "basename", "dirname", "stat", "du", "file", "diff", "git", "npm",
 ]);
-const FORBIDDEN_SHELL_TOKENS = /(?:\r|\n|;|`|\$\(|\|\||(?<!&)\&(?!&)|[<>]|\b(?:curl|wget|nc|ncat|netcat|ssh|scp|sftp|ftp|telnet|python|python3|node|deno|bun|perl|ruby|php|lua|env|printenv|eval|source)\b|\/(?:proc|sys|dev|root)\/|(?:^|[\s/])\.env(?:[\s/]|$)|credentials?|secrets?)/i;
+const FORBIDDEN_SHELL_TOKENS = /(?:\r|\n|;|`|\$\(|\$(?:\{|[A-Za-z0-9_?*#@!$-])|\|\||(?<!&)\&(?!&)|[<>~]|\b(?:curl|wget|nc|ncat|netcat|ssh|scp|sftp|ftp|telnet|python|python3|node|deno|bun|perl|ruby|php|lua|env|printenv|eval|source)\b|\/(?:proc|sys|dev|root|home)\/|(?:^|[\s/])\.(?:env|npmrc|netrc|gitconfig|git-credentials|aws|ssh|config)(?:[\s/]|$)|credentials?|secrets?)/i;
+const SAFE_SED_READ = /^sed\s+-n\s+(["'])(?:\d+)(?:,\d+)?p\1\s+(?:--\s+)?[^\s]+(?:\s+[^\s]+)*$/;
 
 export function validateShellCommand(command: string): ToolAuthorityDecision {
   if (!command.trim()) return { allowed: false, reason: "empty_command" };
   if (FORBIDDEN_SHELL_TOKENS.test(command)) return { allowed: false, reason: "forbidden_shell_token" };
+  if (/(?:^|[\s\"'=\\])\/(?!app(?:\/|$))/.test(command)) return { allowed: false, reason: "absolute_path_outside_workspace" };
+  if (/(?:^|[\s/])\.\.(?:[\s/]|$)/.test(command)) return { allowed: false, reason: "path_traversal_blocked" };
 
   const segments = command.split(/&&|\|/).map((segment) => segment.trim()).filter(Boolean);
   if (segments.length === 0) return { allowed: false, reason: "empty_command" };
   for (const segment of segments) {
     const first = segment.match(/^([A-Za-z[\]]+)/)?.[1];
     if (!first || !SAFE_SHELL_COMMANDS.has(first)) return { allowed: false, reason: `command_not_allowlisted:${first || "unknown"}` };
-    if (first === "sed" && /(?:^|\s)-(?:[^\s]*i|[^\s]*e)(?:\s|$)/.test(segment)) return { allowed: false, reason: "mutating_sed_blocked" };
-    if (first === "find" && /-(?:exec|execdir|delete|ok|okdir)\b/.test(segment)) return { allowed: false, reason: "mutating_find_blocked" };
-    if (first === "git" && !/^git\s+(?:status|log|diff|show|branch(?:\s+--list)?|remote\s+-v|rev-parse)(?:\s|$)/.test(segment)) {
-      return { allowed: false, reason: "shell_git_write_blocked" };
+    if (first === "sed" && !SAFE_SED_READ.test(segment)) return { allowed: false, reason: "sed_read_expression_required" };
+    if (first === "find" && /-(?:exec|execdir|delete|ok|okdir|fprintf|fprint0?|fls)\b/.test(segment)) return { allowed: false, reason: "mutating_find_blocked" };
+    if (first === "sort" && /(?:^|\s)(?:-o(?:\s|$)|--output(?:=|\s)|--compress-program(?:=|\s))/.test(segment)) return { allowed: false, reason: "sort_write_or_program_blocked" };
+    if (first === "uniq" && /(?:^|\s)--?output(?:=|\s)/.test(segment)) return { allowed: false, reason: "uniq_output_blocked" };
+    if (first === "file" && /(?:^|\s)-(?:[^\s]*z|[^\s]*Z)(?:\s|$)/.test(segment)) return { allowed: false, reason: "file_decompress_blocked" };
+    if (first === "git" && !/^git\s+(?:status|branch\s+--list|rev-parse)(?:\s|$)/.test(segment)) {
+      return { allowed: false, reason: "shell_git_requires_mcp" };
     }
-    if (first === "npm" && !/^npm\s+run\s+build(?:\s|$)/.test(segment)) return { allowed: false, reason: "npm_command_not_allowlisted" };
+    if (first === "npm" && !/^npm\s+run\s+build\s*$/.test(segment)) return { allowed: false, reason: "npm_command_not_allowlisted" };
   }
   return { allowed: true };
 }
