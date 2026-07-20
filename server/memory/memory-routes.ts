@@ -39,7 +39,7 @@ import { memoryVnextClaimStorage } from "./vnext-claim-storage";
 import { runVnextLifecycle } from "./vnext-lifecycle";
 import { listVisibleSources } from "./vnext-source-queue";
 import { peopleStorage } from "../people-storage";
-import { libraryPages } from "@shared/models/info";
+import { libraryPages, libraryPageLinks } from "@shared/models/info";
 import { chatFileStorage } from "../chat-file-storage";
 
 const log = createLogger("MemoryRoutes");
@@ -918,6 +918,29 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       sourcePageById.set(page.id, page);
       sourcePageById.set(page.slug, page);
     }
+
+    const libraryLinkScopeColumns = {
+      scope: libraryPageLinks.scope,
+      ownerUserId: libraryPageLinks.ownerUserId,
+      accountId: libraryPageLinks.accountId,
+    };
+    const librarySeedPageIds = sourcePageRows.map((page) => page.id);
+    const libraryLinks = librarySeedPageIds.length > 0
+      ? await db.select({ id: libraryPageLinks.id, sourcePageId: libraryPageLinks.sourcePageId, targetPageId: libraryPageLinks.targetPageId, createdAt: libraryPageLinks.createdAt })
+        .from(libraryPageLinks)
+        .where(combineWithVisibleScope(principal, libraryLinkScopeColumns, or(inArray(libraryPageLinks.sourcePageId, librarySeedPageIds), inArray(libraryPageLinks.targetPageId, librarySeedPageIds))))
+        .limit(200)
+      : [];
+    const linkedPageIds = [...new Set(libraryLinks.flatMap((link) => [link.sourcePageId, link.targetPageId]).filter((id) => !sourcePageById.has(id)))];
+    if (linkedPageIds.length > 0) {
+      const linkedPages = await db.select({ id: libraryPages.id, slug: libraryPages.slug, title: libraryPages.title, plainTextContent: libraryPages.plainTextContent, summary: libraryPages.summary, createdAt: libraryPages.createdAt, updatedAt: libraryPages.updatedAt })
+        .from(libraryPages)
+        .where(combineWithVisibleScope(principal, pageScope, inArray(libraryPages.id, linkedPageIds.slice(0, 100))));
+      for (const page of linkedPages) {
+        sourcePageById.set(page.id, page);
+        sourcePageById.set(page.slug, page);
+      }
+    }
     const sourceSessionById = new Map(
       allSessions
         .filter((session) => sourceSessionIds.includes(session.id) && session.sessionType !== "agent" && session.sessionType !== "autonomous")
@@ -982,20 +1005,19 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
     }
 
 
-    for (const ref of sourceRefs) {
-      if (!visibleClaimIds.has(ref.claimId)) continue;
-      const normalizedType = ref.sourceType === "library_page" || ref.sourceType === "library" ? "page" : ref.sourceType;
-      if (normalizedType !== "page" && normalizedType !== "session") continue;
-      const key = `${normalizedType}:${ref.sourceId}`;
-      if (sourceNodeIds.has(key)) continue;
-
-      const page = normalizedType === "page" ? sourcePageById.get(ref.sourceId) : undefined;
-      const session = normalizedType === "session" ? sourceSessionById.get(ref.sourceId) : undefined;
-      if (!page && !session) continue;
+    function ensureSourceNode(normalizedType: "page" | "session", sourceId: string, createdAt?: Date | string | null): number | null {
+      const page = normalizedType === "page" ? sourcePageById.get(sourceId) : undefined;
+      const session = normalizedType === "session" ? sourceSessionById.get(sourceId) : undefined;
+      if (!page && !session) return null;
+      const canonicalId = page?.id || session?.id || sourceId;
+      const key = `${normalizedType}:${canonicalId}`;
+      const existing = sourceNodeIds.get(key) ?? sourceNodeIds.get(`${normalizedType}:${sourceId}`);
+      if (existing) return existing;
       const sourceNodeId = nextSyntheticNodeId--;
       sourceNodeIds.set(key, sourceNodeId);
-      const title = page?.title || session?.title || ref.sourceId;
-      const content = page?.plainTextContent || session?.summary || ref.context || ref.quote || "";
+      sourceNodeIds.set(`${normalizedType}:${sourceId}`, sourceNodeId);
+      const title = page?.title || session?.title || sourceId;
+      const content = page?.plainTextContent || session?.summary || "";
       entries.push({
         id: sourceNodeId,
         content,
@@ -1003,18 +1025,31 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
         summary: page?.summary || session?.summary || undefined,
         layer: "long",
         source: normalizedType,
-        sourceId: page?.slug || session?.id || ref.sourceId,
+        sourceId: page?.slug || session?.id || sourceId,
         tags: [normalizedType],
         graphed: true,
         metadata: {
           graphStorage: "vnext",
           nodeKind: "source",
           nodeType: normalizedType,
-          reference: `@${normalizedType}:${page?.slug || session?.id || ref.sourceId}`,
+          reference: `@${normalizedType}:${page?.slug || session?.id || sourceId}`,
         },
-        createdAt: serializeDate(page?.createdAt || session?.createdAt || ref.createdAt),
-        updatedAt: serializeDate(page?.updatedAt || session?.updatedAt || ref.createdAt),
+        createdAt: serializeDate(page?.createdAt || session?.createdAt || createdAt),
+        updatedAt: serializeDate(page?.updatedAt || session?.updatedAt || createdAt),
       });
+      return sourceNodeId;
+    }
+
+    for (const ref of sourceRefs) {
+      if (!visibleClaimIds.has(ref.claimId)) continue;
+      const normalizedType = ref.sourceType === "library_page" || ref.sourceType === "library" ? "page" : ref.sourceType;
+      if (normalizedType !== "page" && normalizedType !== "session") continue;
+      ensureSourceNode(normalizedType, ref.sourceId, ref.createdAt);
+    }
+
+    for (const link of libraryLinks) {
+      ensureSourceNode("page", link.sourcePageId, link.createdAt);
+      ensureSourceNode("page", link.targetPageId, link.createdAt);
     }
 
     const links: VnextGraphLink[] = claimLinks
@@ -1031,7 +1066,8 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
 
     for (const ref of sourceRefs) {
       const normalizedType = ref.sourceType === "library_page" || ref.sourceType === "library" ? "page" : ref.sourceType;
-      const sourceNodeId = sourceNodeIds.get(`${normalizedType}:${ref.sourceId}`);
+      const page = normalizedType === "page" ? sourcePageById.get(ref.sourceId) : undefined;
+      const sourceNodeId = sourceNodeIds.get(`${normalizedType}:${page?.id || ref.sourceId}`) ?? sourceNodeIds.get(`${normalizedType}:${ref.sourceId}`);
       if (!sourceNodeId || !visibleClaimIds.has(ref.claimId)) continue;
       links.push({
         id: -(1_000_000 + ref.id),
@@ -1041,6 +1077,21 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
         strength: ref.strength,
         createdAt: serializeDate(ref.createdAt),
         relationshipType: "source_ref",
+      });
+    }
+
+    for (const link of libraryLinks) {
+      const fromId = sourceNodeIds.get(`page:${link.sourcePageId}`);
+      const toId = sourceNodeIds.get(`page:${link.targetPageId}`);
+      if (!fromId || !toId) continue;
+      links.push({
+        id: -(2_000_000 + link.id),
+        fromId,
+        toId,
+        relationship: "references",
+        strength: 0.6,
+        createdAt: serializeDate(link.createdAt),
+        relationshipType: "library_page_link",
       });
     }
 

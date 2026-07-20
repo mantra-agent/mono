@@ -10476,8 +10476,9 @@ ${refs}` : ""),
           const result = await queryMantraLibraryIndex(String(q), principal);
           const wiki = result.wikiPages.map(p => `- @page:${p.id} **${p.title}** — ${p.summary || "compiled Wiki page"}\n  ${p.contentPreview.slice(0, 500)}`).join("\n");
           const evidence = result.evidencePageIds.length ? `\n\nEvidence/neighbor refs: ${result.evidencePageIds.map(id => `@page:${id}`).join(", ")}` : "";
+          const neighbors = result.neighbors?.length ? `\n\nOne-hop Library neighbors: ${result.neighbors.map(n => `@page:${n.id} (${n.direction})`).join(", ")}` : "";
           return {
-            result: `Index-first Library query for "${q}" read @page:${result.indexPageId} and selected ${result.wikiPages.length} Wiki page(s)${result.fallbackUsed ? " using bounded fallback" : ""}.\n${wiki}${evidence}`,
+            result: `Index-first Library query for "${q}" read @page:${result.indexPageId} and selected ${result.wikiPages.length} Wiki page(s)${result.fallbackUsed ? " using bounded fallback" : ""}.\n${wiki}${evidence}${neighbors}`,
             query: result,
           };
         } catch (err: any) {
@@ -10627,6 +10628,12 @@ ${refs}` : ""),
           const substantiveChange = args.plainTextContent !== undefined || args.title !== undefined;
           if (substantiveChange) {
             try {
+              const { syncEmbeddedLibraryPageLinks } = await import("./library-link-graph");
+              await syncEmbeddedLibraryPageLinks(updated.id, principal);
+            } catch (linkErr: unknown) {
+              toolExec.warn(`update_library_page: link sync failed for page ${updated.id}: ${linkErr instanceof Error ? linkErr.message : String(linkErr)}`);
+            }
+            try {
               const { upsertLibraryPageMemory } = await import("./routes/library");
               await upsertLibraryPageMemory(updated);
             } catch (memErr: unknown) {
@@ -10701,6 +10708,13 @@ ${refs}` : ""),
           toolExec.log(`edit_library_page: page=${updated.id} replacements=${replacements} lengthDelta=${lengthDelta > 0 ? "+" : ""}${lengthDelta}`);
 
           try {
+            const { syncEmbeddedLibraryPageLinks } = await import("./library-link-graph");
+            await syncEmbeddedLibraryPageLinks(updated.id, principal);
+          } catch (linkErr: unknown) {
+            toolExec.warn(`edit_library_page: link sync failed for page ${updated.id}: ${linkErr instanceof Error ? linkErr.message : String(linkErr)}`);
+          }
+
+          try {
             const { upsertLibraryPageMemory } = await import("./routes/library");
             await upsertLibraryPageMemory(updated);
           } catch (memErr: unknown) {
@@ -10762,6 +10776,15 @@ ${refs}` : ""),
           }
           throw err;
         }
+      }
+
+
+
+      if (action === "lint_library" || action === "lint") {
+        const { runLibraryLint } = await import("./library-link-graph");
+        const report = await runLibraryLint({ repair: args.repair === true, surfaceReport: args.surface === true || args.surfaceReport === true }, principal);
+        const reportRef = report.reportPageId ? ` Report: @page:${report.reportPageId}.` : "";
+        return { result: `Library lint complete. Pages checked: ${report.checkedPages}. Links checked: ${report.checkedLinks}. Failures: ${report.failures}. Review: ${report.reviewItems}. Warnings: ${report.warnings}. Mechanical repairs inserted ${report.repaired.missingEdgesInserted}, removed ${report.repaired.staleEdgesRemoved}.${reportRef}` };
       }
 
       if (action === "link_pages") {

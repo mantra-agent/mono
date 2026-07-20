@@ -19,6 +19,7 @@ import {
   ownedInsertValues,
 } from "./scoped-storage";
 import { markSourceChanged, registerSourceIfAbsent } from "./memory/vnext-source-queue";
+import { getLibraryPageNeighbors, syncEmbeddedLibraryPageLinks } from "./library-link-graph";
 
 const log = createLogger("LibraryCompiler");
 
@@ -71,6 +72,7 @@ export interface LibraryIndexQueryResult {
   selectedEntries: LibraryIndexEntry[];
   wikiPages: Array<{ id: string; title: string; summary: string | null; contentPreview: string }>;
   evidencePageIds: string[];
+  neighbors: Array<{ id: string; title: string; slug: string; summary: string | null; structuralRole: string; direction: "inbound" | "outbound" }>;
   fallbackUsed: boolean;
 }
 
@@ -406,6 +408,7 @@ export async function compileLibraryPageToMantraWiki(
     else unchanged.push({ id: upserted.page.id, title: upserted.page.title });
 
     if (await linkPages(upserted.page.id, source.id, principal)) linksAdded++;
+    await syncEmbeddedLibraryPageLinks(upserted.page.id, principal);
     for (const targetId of update.relatedPageIds ?? []) {
       if (targetId && targetId !== upserted.page.id && await linkPages(upserted.page.id, targetId, principal)) linksAdded++;
     }
@@ -487,6 +490,9 @@ export async function queryMantraLibraryIndex(
     });
   }
 
+  const neighbors = await getLibraryPageNeighbors(wikiPages.map((page) => page.id), principal, 20);
+  for (const neighbor of neighbors) evidencePageIds.add(neighbor.id);
+
   return {
     query,
     vaultId: vault.vaultId,
@@ -494,6 +500,7 @@ export async function queryMantraLibraryIndex(
     selectedEntries: selected,
     wikiPages,
     evidencePageIds: Array.from(evidencePageIds).slice(0, 20),
+    neighbors,
     fallbackUsed,
   };
 }

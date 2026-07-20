@@ -7,6 +7,7 @@ import { markSourceChanged } from "./memory/vnext-source-queue";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { ownedInsertValues } from "./scoped-storage";
 import { libraryPages } from "@shared/models/info";
+import { syncEmbeddedLibraryPageLinks } from "./library-link-graph";
 import { syncContentFields } from "@shared/markdown-tiptap";
 import type { LibraryStructuralRole } from "./library-domain";
 
@@ -114,6 +115,13 @@ export async function createFiledLibraryPage(input: CreateFiledLibraryPageInput)
     }).returning();
     return row;
   });
+
+  try {
+    await syncEmbeddedLibraryPageLinks(page.id, principal);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    log.warn(`[links] error source=library sourceId=${page.id} reason=embedded_link_sync_failed error=${message}`);
+  }
 
   try {
     await markSourceChanged("library_page", page.id, principal);
