@@ -20,6 +20,11 @@ import {
 } from "./scoped-storage";
 import { markSourceChanged, registerSourceIfAbsent } from "./memory/vnext-source-queue";
 import { getLibraryPageNeighbors, syncEmbeddedLibraryPageLinks } from "./library-link-graph";
+import {
+  normalizeLibraryIndexCategory,
+  parseLibraryIndexEntries,
+  type LibraryIndexEntry,
+} from "./library-index-format";
 
 const log = createLogger("LibraryCompiler");
 
@@ -76,13 +81,6 @@ export interface LibraryIndexQueryResult {
   fallbackUsed: boolean;
 }
 
-interface LibraryIndexEntry {
-  id: string;
-  title: string;
-  category: "Entities" | "Concepts" | "Synthesis";
-  description: string;
-}
-
 interface CompilerUpdate {
   category: "Entities" | "Concepts" | "Synthesis";
   title: string;
@@ -110,10 +108,7 @@ function slugify(title: string, fallback = "wiki-page"): string {
 }
 
 function normalizeCategory(value: unknown): "Entities" | "Concepts" | "Synthesis" {
-  const text = String(value ?? "").toLowerCase();
-  if (text.startsWith("entit")) return "Entities";
-  if (text.startsWith("synth")) return "Synthesis";
-  return "Concepts";
+  return normalizeLibraryIndexCategory(value);
 }
 
 function contentHash(content: string): string {
@@ -146,22 +141,6 @@ function extractPageRefs(content: string): string[] {
   return Array.from(new Set(Array.from(content.matchAll(/@page:([A-Za-z0-9_-]+)/g)).map(m => m[1]).filter(Boolean)));
 }
 
-function parseIndexEntries(indexContent: string): LibraryIndexEntry[] {
-  const entries: LibraryIndexEntry[] = [];
-  let category: LibraryIndexEntry["category"] = "Concepts";
-  for (const line of indexContent.split(/\r?\n/)) {
-    const heading = line.match(/^##\s+(Entities|Concepts|Synthesis)\s*$/i);
-    if (heading) {
-      category = normalizeCategory(heading[1]);
-      continue;
-    }
-    const match = line.match(/^-\s+@page:([A-Za-z0-9_-]+)\s*(?:—|-|:)\s*(.+)$/);
-    if (!match) continue;
-    entries.push({ id: match[1], title: match[1], category, description: match[2].trim() });
-  }
-  return entries;
-}
-
 function scoreText(query: string, ...texts: Array<string | null | undefined>): number {
   const haystack = texts.join(" ").toLowerCase();
   const terms = query.toLowerCase().split(/[^a-z0-9]+/).filter(term => term.length > 2);
@@ -183,7 +162,7 @@ async function selectRelevantWikiPages(input: {
   wikiPageId: string;
   principal: Principal;
 }) {
-  const indexEntries = parseIndexEntries(input.indexPage.plainTextContent || "");
+  const indexEntries = parseLibraryIndexEntries(input.indexPage.plainTextContent || "");
   const scored = indexEntries
     .map(entry => ({ entry, score: scoreText(`${input.source.title}\n${input.source.plainTextContent}`, entry.description, entry.id) }))
     .filter(item => item.score > 0)
@@ -459,7 +438,7 @@ export async function queryMantraLibraryIndex(
   const [indexPage] = await db.select().from(libraryPages).where(visible(principal, eq(libraryPages.id, vault.indexPageId))).limit(1);
   if (!indexPage) throw new Error("Mantra Library Index page not found");
 
-  const entries = parseIndexEntries(indexPage.plainTextContent || "");
+  const entries = parseLibraryIndexEntries(indexPage.plainTextContent || "");
   let selected = entries
     .map(entry => ({ entry, score: scoreText(query, entry.description, entry.title, entry.id) }))
     .filter(item => item.score > 0)

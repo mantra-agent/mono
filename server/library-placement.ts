@@ -2,6 +2,7 @@ import { eq, inArray, type SQL } from "drizzle-orm";
 import { libraryPages } from "@shared/models/info";
 import { db } from "./db";
 import { ensureMantraLibraryVault, normalizeLibraryStructuralRole, type LibraryStructuralRole } from "./library-domain";
+import { parseLibraryIndexEntries, type LibraryIndexEntry } from "./library-index-format";
 import type { Principal } from "./principal";
 import { combineWithVisibleScope } from "./scoped-storage";
 
@@ -37,12 +38,6 @@ export interface LibrarySemanticPlacementResult {
   };
 }
 
-interface IndexEntry {
-  pageId: string;
-  description: string;
-  category: "Entities" | "Concepts" | "Synthesis";
-}
-
 const libraryScopeColumns = {
   scope: libraryPages.scope,
   ownerUserId: libraryPages.ownerUserId,
@@ -69,22 +64,7 @@ function inferRole(input: LibrarySemanticPlacementInput): LibraryStructuralRole 
   return "artifact";
 }
 
-function parseIndexEntries(indexContent: string): IndexEntry[] {
-  const entries: IndexEntry[] = [];
-  let category: IndexEntry["category"] = "Concepts";
-  for (const line of indexContent.split(/\r?\n/)) {
-    const heading = line.match(/^##\s+(Entities|Concepts|Synthesis)\s*$/i);
-    if (heading) {
-      category = heading[1].toLowerCase().startsWith("entit") ? "Entities" : heading[1].toLowerCase().startsWith("synth") ? "Synthesis" : "Concepts";
-      continue;
-    }
-    const match = line.match(/^-\s+@page:([A-Za-z0-9_-]+)\s*(?:—|-|:)\s*(.+)$/);
-    if (match) entries.push({ pageId: match[1], description: match[2].trim(), category });
-  }
-  return entries;
-}
-
-function scoreEntry(queryTerms: string[], entry: IndexEntry, page?: Pick<typeof libraryPages.$inferSelect, "title" | "slug" | "plainTextContent" | "summary" | "oneLiner">): number {
+function scoreEntry(queryTerms: string[], entry: LibraryIndexEntry, page?: Pick<typeof libraryPages.$inferSelect, "title" | "slug" | "plainTextContent" | "summary" | "oneLiner">): number {
   const haystack = [entry.description, entry.category, page?.title, page?.slug, page?.summary, page?.oneLiner, page?.plainTextContent?.slice(0, 1000)].join(" ").toLowerCase();
   return queryTerms.reduce((score, term) => score + (haystack.includes(term) ? 1 : 0), 0);
 }
@@ -118,7 +98,7 @@ export async function placeLibraryPageSemantically(input: LibrarySemanticPlaceme
 
   const [indexPage] = await db.select().from(libraryPages).where(visible(principal, eq(libraryPages.id, vault.indexPageId))).limit(1);
   const indexContent = indexPage?.plainTextContent ?? "";
-  const entries = parseIndexEntries(indexContent);
+  const entries = parseLibraryIndexEntries(indexContent);
 
   if (entries.length === 0) {
     return {
@@ -136,11 +116,11 @@ export async function placeLibraryPageSemantically(input: LibrarySemanticPlaceme
     };
   }
 
-  const pageRows = await readPages(entries.map(entry => entry.pageId), principal);
+  const pageRows = await readPages(entries.map(entry => entry.id), principal);
   const pageById = new Map(pageRows.map(page => [page.id, page]));
   const queryTerms = terms([input.title, input.contentSummary, input.pageContext, input.purpose, ...(input.tags ?? [])].filter(Boolean).join(" "));
   const ranked = entries
-    .map(entry => ({ entry, page: pageById.get(entry.pageId), score: scoreEntry(queryTerms, entry, pageById.get(entry.pageId)) }))
+    .map(entry => ({ entry, page: pageById.get(entry.id), score: scoreEntry(queryTerms, entry, pageById.get(entry.id)) }))
     .sort((a, b) => b.score - a.score);
 
   const best = ranked[0];
@@ -159,7 +139,7 @@ export async function placeLibraryPageSemantically(input: LibrarySemanticPlaceme
       structuralRole,
       confidence,
       reason: second && best.score === second.score
-        ? `Ambiguous placement between ${best.entry.pageId} and ${second.entry.pageId}.`
+        ? `Ambiguous placement between ${best.entry.id} and ${second.entry.id}.`
         : "No Index entry matched the document strongly enough for automatic placement.",
       lint: { requiresReview: true, code: "ambiguous_placement", message: "Saved at the vault root with review-required placement metadata; this is lint residue, not a final filing location." },
       compatibility: { purpose: input.purpose ?? null },
