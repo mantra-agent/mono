@@ -16,6 +16,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { formatCost } from "@/lib/format-utils";
+import { cn } from "@/lib/utils";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
@@ -224,31 +225,37 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
   return (
     <div
       id={`child-session-${meta.childSessionId}`}
-      className={`border rounded-md my-1 scroll-mt-20 ${tileClass} ${expanded ? "" : "cursor-pointer"}`}
+      className={cn(
+        "scroll-mt-20",
+        insidePlan ? "my-0.5" : `border rounded-md my-1 ${tileClass}`,
+        !expanded && "cursor-pointer",
+      )}
       onClick={!expanded ? toggleExpanded : undefined}
       data-testid={`child-session-block-${meta.childSessionId}`}
     >
       <div
-        className="flex items-center gap-2 px-3 py-2"
+        className={cn("flex items-center gap-2", insidePlan ? "px-2 py-1.5" : "px-3 py-2")}
         data-testid={`button-toggle-child-${meta.childSessionId}`}
         aria-expanded={expanded}
       >
         <div className="flex items-center gap-2 flex-1 min-w-0 text-sm text-foreground/90">
-          <button
-            type="button"
-            className="shrink-0 text-muted-foreground hover:text-foreground"
-            onClick={(event) => {
-              event.stopPropagation();
-              toggleExpanded();
-            }}
-            aria-label={expanded ? "Collapse child session" : "Expand child session"}
-          >
-            {expanded ? (
-              <ChevronDown className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5" />
-            )}
-          </button>
+          {!insidePlan && (
+            <button
+              type="button"
+              className="shrink-0 text-muted-foreground hover:text-foreground"
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleExpanded();
+              }}
+              aria-label={expanded ? "Collapse child session" : "Expand child session"}
+            >
+              {expanded ? (
+                <ChevronDown className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" />
+              )}
+            </button>
+          )}
           {insidePlan ? (
             planStepCompleted ? (
               <CircleCheck className="h-3.5 w-3.5 shrink-0 text-success" />
@@ -280,6 +287,23 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {insidePlan && (
+            <button
+              type="button"
+              className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleExpanded();
+              }}
+              aria-label={expanded ? "Collapse" : "Expand"}
+            >
+              {expanded ? (
+                <ChevronDown className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" />
+              )}
+            </button>
+          )}
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <button
@@ -329,7 +353,16 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
       )}
 
       {expanded && (
-        <div ref={turnsRef} className="border-t border-border/40 max-h-32 overflow-y-auto scrollbar-thin px-3 py-2" data-testid={`child-turns-${meta.childSessionId}`}>
+        <div
+          ref={turnsRef}
+          className={cn(
+            "max-h-32 overflow-y-auto scrollbar-thin px-3 py-2",
+            insidePlan
+              ? "ml-6 mt-1 rounded-md border border-border/60 bg-muted/20"
+              : "border-t border-border/40",
+          )}
+          data-testid={`child-turns-${meta.childSessionId}`}
+        >
           {segments.length === 0 && isChildStreaming ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground/70">
               <Loader2 className="h-3 w-3 animate-spin" />
