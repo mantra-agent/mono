@@ -28,6 +28,21 @@ Do not run standalone TypeScript checks (`npm run check`, `tsc --noEmit`, or equ
 
 **Do NOT run `npm install`.** `node_modules` is symlinked from the workspace root. Installing will break the symlink. The git clone tool owns this invariant: it hydrates `/app/node_modules` from `/app/package-lock.json` when missing/stale, then points session clones at that shared directory.
 
+## Security-First Engineering
+
+Root `SECURITY.md` is the canonical security doctrine, threat model, control baseline, and risk register. Apply it to every change.
+
+Security is a mandatory design gate when a change adds or alters a trust boundary, principal or permission, user/account/vault scope, S0-S3 data, public route or callback, WebSocket/SSE stream, external input or retrieved content, model context, memory, tool or autonomous authority, browser/shell/git execution, secret, dependency, artifact, environment, deployment, backup, logging, or recovery path. Before editing:
+
+1. Name the affected `SECURITY.md` assets, data classes, flows, and boundaries.
+2. Write the credible abuse case and STRIDE/LLM/agentic threat. Treat the model and every external/retrieved payload as untrusted.
+3. Name the canonical deterministic control and owner. Authentication, authorization, scope, confirmation, idempotency, command/network constraints, and human gates never live only in prompts.
+4. Apply default deny, least privilege, defense in depth, data minimization, secure defaults, observable privileged actions, and recoverability. Reduce blast radius before adding detection.
+5. Add or update the canonical finding in `SECURITY.md` with evidence, severity, owner, and SLA. Hypotheses stay labeled until verified. Critical/high findings block the affected release unless the Security Program Owner records a valid time-bounded acceptance.
+6. Include the security-gate outcome and residual risk in the implementation plan, PR, and final report.
+
+The no-test policy below remains unchanged. Approved read-only scanners, dependency/advisory review, secret-pattern scanning that never prints values, static analysis, configuration review, and ordinary non-destructive verification are allowed. Active exploit testing, fuzzing, credential attacks, injection/SSRF probes, permission bypass attempts, load/DoS testing, or destructive testing require explicit written scope and an isolated target with synthetic data, rates, stop conditions, and rollback. Never begin active testing on live.
+
 ## Branch Model
 
 - PRs always target `main`
