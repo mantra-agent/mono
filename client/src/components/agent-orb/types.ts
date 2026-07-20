@@ -7,8 +7,8 @@ export interface AgentOrbProps {
   /** Current agent state driving the visual signature */
   state: OrbState;
   /**
-   * Audio amplitude 0-1. When undefined or 0, a synthetic envelope
-   * is generated for states that need audio reactivity (speaking, listening).
+   * Audio amplitude 0-1. When undefined, a synthetic envelope is generated
+   * for states that need audio reactivity (speaking, listening).
    */
   audioLevel?: number;
   /** Maximum rendered frames per second. Recall Output Media streams at 15fps. */
@@ -17,7 +17,7 @@ export interface AgentOrbProps {
   className?: string;
 }
 
-/** Internal visual parameters interpolated between states */
+/** Internal visual parameters interpolated between states. */
 export interface OrbVisuals {
   rimPower: number;
   rimIntensity: number;
@@ -31,4 +31,15 @@ export interface OrbVisuals {
   breathDepth: number;
   pulseStrength: number;
   dimming: number;
+  fieldEnergy: number;
+  filamentDensity: number;
+  cloudDensity: number;
+  flowSpeed: number;
+  flowStrength: number;
+  coherence: number;
+  attractorStrength: number;
+  knotStrength: number;
+  orbitPrecision: number;
+  waveEnergy: number;
+  coreDarkness: number;
 }

@@ -1,108 +1,80 @@
 import type { OrbState, OrbVisuals } from './types';
 
-/** Per-state visual parameter targets. JS lerps between these during transitions. */
+/** Per-state targets for one continuous field. JS lerps every parameter. */
 export const STATE_VISUALS: Record<OrbState, OrbVisuals> = {
   idle: {
-    rimPower: 3.0,
-    rimIntensity: 0.7,
-    coreGlow: 0.02,
-    audioReactivity: 0,
-    swirlSpeed: 0,
-    swirlAmount: 0,
-    tickCount: 0,
-    tickSpeed: 0,
-    breathSpeed: 1.5,
-    breathDepth: 0.3,
-    pulseStrength: 0,
-    dimming: 1.0,
+    rimPower: 3.0, rimIntensity: 0.7, coreGlow: 0.02,
+    audioReactivity: 0, swirlSpeed: 0.1, swirlAmount: 0.04,
+    tickCount: 0, tickSpeed: 0, breathSpeed: 1.5, breathDepth: 0.3,
+    pulseStrength: 0, dimming: 1.0,
+    fieldEnergy: 0.72, filamentDensity: 0.7, cloudDensity: 0.3,
+    flowSpeed: 0.12, flowStrength: 0.28, coherence: 0.86,
+    attractorStrength: 0, knotStrength: 0.08, orbitPrecision: 0,
+    waveEnergy: 0.05, coreDarkness: 0.72,
   },
   listening: {
-    rimPower: 2.5,
-    rimIntensity: 1.0,
-    coreGlow: 0.05,
-    audioReactivity: 1.0,
-    swirlSpeed: 0,
-    swirlAmount: 0,
-    tickCount: 0,
-    tickSpeed: 0,
-    breathSpeed: 0,
-    breathDepth: 0,
-    pulseStrength: 0.3,
-    dimming: 1.0,
+    rimPower: 2.5, rimIntensity: 1.0, coreGlow: 0.05,
+    audioReactivity: 1.0, swirlSpeed: 0.18, swirlAmount: 0.08,
+    tickCount: 0, tickSpeed: 0, breathSpeed: 0, breathDepth: 0,
+    pulseStrength: 0.3, dimming: 1.0,
+    fieldEnergy: 0.9, filamentDensity: 0.7, cloudDensity: 0.3,
+    flowSpeed: 0.2, flowStrength: 0.34, coherence: 0.88,
+    attractorStrength: 0.78, knotStrength: 0.08, orbitPrecision: 0,
+    waveEnergy: 0.2, coreDarkness: 0.66,
   },
   thinking: {
-    rimPower: 3.5,
-    rimIntensity: 0.6,
-    coreGlow: 0.08,
-    audioReactivity: 0,
-    swirlSpeed: 0.5,
-    swirlAmount: 0.35,
-    tickCount: 0,
-    tickSpeed: 0,
-    breathSpeed: 2.0,
-    breathDepth: 0.15,
-    pulseStrength: 0,
-    dimming: 1.0,
+    rimPower: 3.5, rimIntensity: 0.6, coreGlow: 0.08,
+    audioReactivity: 0, swirlSpeed: 0.5, swirlAmount: 0.35,
+    tickCount: 0, tickSpeed: 0, breathSpeed: 2.0, breathDepth: 0.15,
+    pulseStrength: 0, dimming: 1.0,
+    fieldEnergy: 0.86, filamentDensity: 0.76, cloudDensity: 0.24,
+    flowSpeed: 0.34, flowStrength: 0.44, coherence: 0.9,
+    attractorStrength: 0, knotStrength: 0.88, orbitPrecision: 0,
+    waveEnergy: 0.06, coreDarkness: 0.74,
   },
   tool_call: {
-    rimPower: 2.0,
-    rimIntensity: 0.9,
-    coreGlow: 0.03,
-    audioReactivity: 0,
-    swirlSpeed: 0,
-    swirlAmount: 0,
-    tickCount: 6,
-    tickSpeed: 0.8,
-    breathSpeed: 0,
-    breathDepth: 0,
-    pulseStrength: 0,
-    dimming: 1.0,
+    rimPower: 2.0, rimIntensity: 0.9, coreGlow: 0.03,
+    audioReactivity: 0, swirlSpeed: 0.22, swirlAmount: 0.08,
+    tickCount: 6, tickSpeed: 0.8, breathSpeed: 0, breathDepth: 0,
+    pulseStrength: 0, dimming: 1.0,
+    fieldEnergy: 0.94, filamentDensity: 0.78, cloudDensity: 0.22,
+    flowSpeed: 0.24, flowStrength: 0.2, coherence: 1.0,
+    attractorStrength: 0, knotStrength: 0.04, orbitPrecision: 1.0,
+    waveEnergy: 0.04, coreDarkness: 0.76,
   },
   speaking: {
-    rimPower: 2.0,
-    rimIntensity: 1.3,
-    coreGlow: 0.1,
-    audioReactivity: 1.0,
-    swirlSpeed: 0,
-    swirlAmount: 0,
-    tickCount: 0,
-    tickSpeed: 0,
-    breathSpeed: 0,
-    breathDepth: 0,
-    pulseStrength: 1.0,
-    dimming: 1.0,
+    rimPower: 2.0, rimIntensity: 1.3, coreGlow: 0.1,
+    audioReactivity: 1.0, swirlSpeed: 0.24, swirlAmount: 0.1,
+    tickCount: 0, tickSpeed: 0, breathSpeed: 0, breathDepth: 0,
+    pulseStrength: 1.0, dimming: 1.0,
+    fieldEnergy: 1.0, filamentDensity: 0.68, cloudDensity: 0.32,
+    flowSpeed: 0.28, flowStrength: 0.38, coherence: 0.9,
+    attractorStrength: 0, knotStrength: 0.05, orbitPrecision: 0,
+    waveEnergy: 1.0, coreDarkness: 0.58,
   },
   degraded: {
-    rimPower: 4.0,
-    rimIntensity: 0.15,
-    coreGlow: 0.01,
-    audioReactivity: 0,
-    swirlSpeed: 0,
-    swirlAmount: 0,
-    tickCount: 0,
-    tickSpeed: 0,
-    breathSpeed: 3.0,
-    breathDepth: 0.05,
-    pulseStrength: 0,
-    dimming: 0.3,
+    rimPower: 4.0, rimIntensity: 0.15, coreGlow: 0.01,
+    audioReactivity: 0, swirlSpeed: 0.04, swirlAmount: 0.02,
+    tickCount: 0, tickSpeed: 0, breathSpeed: 3.0, breathDepth: 0.05,
+    pulseStrength: 0, dimming: 0.3,
+    fieldEnergy: 0.28, filamentDensity: 0.62, cloudDensity: 0.38,
+    flowSpeed: 0.05, flowStrength: 0.12, coherence: 0.22,
+    attractorStrength: 0, knotStrength: 0, orbitPrecision: 0,
+    waveEnergy: 0, coreDarkness: 0.9,
   },
 };
 
-/** Transition duration in seconds */
-const TRANSITION_DURATION = 0.4;
+const TRANSITION_DURATION = 0.55;
 
-/** Smoothstep easing */
 function smoothstep(t: number): number {
   const c = Math.max(0, Math.min(1, t));
   return c * c * (3 - 2 * c);
 }
 
-/** Lerp a single value */
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
-/** Lerp all visual parameters */
 function lerpVisuals(a: OrbVisuals, b: OrbVisuals, t: number): OrbVisuals {
   const result = {} as OrbVisuals;
   for (const key of Object.keys(a) as (keyof OrbVisuals)[]) {
@@ -111,10 +83,7 @@ function lerpVisuals(a: OrbVisuals, b: OrbVisuals, t: number): OrbVisuals {
   return result;
 }
 
-/**
- * Generate synthetic amplitude when no real audioLevel is provided.
- * Uses deterministic pseudo-random from time to simulate speech cadence.
- */
+/** Deterministic fallback when a host cannot provide a real level. */
 function syntheticAmplitude(state: OrbState, time: number): number {
   if (state === 'speaking') {
     const burst = Math.sin(time * 3.7) * 0.5 + 0.5;
@@ -128,7 +97,6 @@ function syntheticAmplitude(state: OrbState, time: number): number {
   return 0;
 }
 
-/** Mutable animation state managed by the rAF loop */
 export interface AnimationState {
   prevState: OrbState;
   nextState: OrbState;
@@ -151,10 +119,6 @@ export function createAnimationState(initial: OrbState): AnimationState {
   };
 }
 
-/**
- * Advance animation state by one frame.
- * Returns the interpolated visuals to push into shader uniforms.
- */
 export function tickAnimation(
   anim: AnimationState,
   dt: number,
@@ -163,31 +127,26 @@ export function tickAnimation(
 ): OrbVisuals {
   anim.time += dt;
 
-  // Detect state change
   if (targetState !== anim.nextState) {
     anim.prevState = anim.nextState;
     anim.nextState = targetState;
     anim.transitionElapsed = 0;
   }
 
-  // Advance transition
   anim.transitionElapsed = Math.min(
     anim.transitionElapsed + dt,
     anim.transitionDuration,
   );
   const t = smoothstep(anim.transitionElapsed / anim.transitionDuration);
+  anim.currentVisuals = lerpVisuals(
+    STATE_VISUALS[anim.prevState],
+    STATE_VISUALS[anim.nextState],
+    t,
+  );
 
-  // Interpolate visual parameters
-  const from = STATE_VISUALS[anim.prevState];
-  const to = STATE_VISUALS[anim.nextState];
-  anim.currentVisuals = lerpVisuals(from, to, t);
-
-  // Resolve effective audio level
-  const useSynthetic = rawAudioLevel === undefined;
-  const targetAudio = useSynthetic
+  const targetAudio = rawAudioLevel === undefined
     ? syntheticAmplitude(anim.nextState, anim.time)
-    : rawAudioLevel;
-  // Smooth audio level to avoid jitter
+    : Math.max(0, Math.min(1, rawAudioLevel));
   anim.effectiveAudioLevel = lerp(
     anim.effectiveAudioLevel,
     targetAudio,
