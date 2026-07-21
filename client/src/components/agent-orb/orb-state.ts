@@ -2,6 +2,16 @@ import type { OrbState, OrbVisuals } from './types';
 
 /** Per-state targets for one continuous field. JS lerps every parameter. */
 export const STATE_VISUALS: Record<OrbState, OrbVisuals> = {
+  entrance: {
+    rimPower: 3.0, rimIntensity: 0.7, coreGlow: 0.02,
+    audioReactivity: 0, swirlSpeed: 0.1, swirlAmount: 0.04,
+    tickCount: 0, tickSpeed: 0, breathSpeed: 1.5, breathDepth: 0.3,
+    pulseStrength: 0, dimming: 1.0,
+    fieldEnergy: 0.72, filamentDensity: 0.7, cloudDensity: 0.3,
+    flowSpeed: 0.12, flowStrength: 0.28, coherence: 0.86,
+    attractorStrength: 0, knotStrength: 0.08, orbitPrecision: 0,
+    waveEnergy: 0.05, coreDarkness: 0.72,
+  },
   idle: {
     rimPower: 3.0, rimIntensity: 0.7, coreGlow: 0.02,
     audioReactivity: 0, swirlSpeed: 0.1, swirlAmount: 0.04,
@@ -65,6 +75,23 @@ export const STATE_VISUALS: Record<OrbState, OrbVisuals> = {
 };
 
 const TRANSITION_DURATION = 0.55;
+export const ENTRANCE_DURATION = 3.2;
+
+export interface EntranceVeil {
+  radiusPercent: number;
+  opacity: number;
+}
+
+const ENTRANCE_REVEAL_VISUALS: OrbVisuals = {
+  rimPower: 1.8, rimIntensity: 1.65, coreGlow: 0.16,
+  audioReactivity: 0, swirlSpeed: 0.36, swirlAmount: 0.18,
+  tickCount: 0, tickSpeed: 0, breathSpeed: 0, breathDepth: 0,
+  pulseStrength: 0, dimming: 1.0,
+  fieldEnergy: 1.18, filamentDensity: 0.82, cloudDensity: 0.18,
+  flowSpeed: 0.42, flowStrength: 0.46, coherence: 0.94,
+  attractorStrength: 0.88, knotStrength: 0.52, orbitPrecision: 0,
+  waveEnergy: 0.08, coreDarkness: 0.42,
+};
 
 function smoothstep(t: number): number {
   const c = Math.max(0, Math.min(1, t));
@@ -81,6 +108,27 @@ function lerpVisuals(a: OrbVisuals, b: OrbVisuals, t: number): OrbVisuals {
     result[key] = lerp(a[key], b[key], t);
   }
   return result;
+}
+
+/** Entrance owns its full arc and settles into the canonical idle target. */
+function entranceVisuals(elapsed: number): OrbVisuals {
+  const settle = smoothstep((elapsed - 1.72) / 1.28);
+  return lerpVisuals(ENTRANCE_REVEAL_VISUALS, STATE_VISUALS.idle, settle);
+}
+
+/**
+ * Full-frame white holds first, then contracts into a soft terminal veil over
+ * the same field. The last trace fades only after the shell is fully resolved.
+ */
+export function entranceVeil(elapsed: number, reducedMotion: boolean): EntranceVeil {
+  if (reducedMotion) return { radiusPercent: 0, opacity: 0 };
+  const progress = Math.max(0, Math.min(1, elapsed / ENTRANCE_DURATION));
+  const contraction = smoothstep((progress - 0.12) / 0.46);
+  const disappearance = smoothstep((progress - 0.62) / 0.2);
+  return {
+    radiusPercent: lerp(150, 13, contraction),
+    opacity: 1 - disappearance,
+  };
 }
 
 /** Deterministic fallback when a host cannot provide a real level. */
@@ -105,6 +153,7 @@ export interface AnimationState {
   currentVisuals: OrbVisuals;
   time: number;
   effectiveAudioLevel: number;
+  entranceElapsed: number;
 }
 
 export function createAnimationState(initial: OrbState): AnimationState {
@@ -113,9 +162,12 @@ export function createAnimationState(initial: OrbState): AnimationState {
     nextState: initial,
     transitionElapsed: TRANSITION_DURATION,
     transitionDuration: TRANSITION_DURATION,
-    currentVisuals: { ...STATE_VISUALS[initial] },
+    currentVisuals: initial === 'entrance'
+      ? entranceVisuals(0)
+      : { ...STATE_VISUALS[initial] },
     time: 0,
     effectiveAudioLevel: 0,
+    entranceElapsed: 0,
   };
 }
 
@@ -128,21 +180,27 @@ export function tickAnimation(
   anim.time += dt;
 
   if (targetState !== anim.nextState) {
-    anim.prevState = anim.nextState;
+    anim.prevState = anim.nextState === 'entrance' ? 'idle' : anim.nextState;
     anim.nextState = targetState;
     anim.transitionElapsed = 0;
+    if (targetState === 'entrance') anim.entranceElapsed = 0;
   }
 
-  anim.transitionElapsed = Math.min(
-    anim.transitionElapsed + dt,
-    anim.transitionDuration,
-  );
-  const t = smoothstep(anim.transitionElapsed / anim.transitionDuration);
-  anim.currentVisuals = lerpVisuals(
-    STATE_VISUALS[anim.prevState],
-    STATE_VISUALS[anim.nextState],
-    t,
-  );
+  if (anim.nextState === 'entrance') {
+    anim.entranceElapsed = Math.min(anim.entranceElapsed + dt, ENTRANCE_DURATION);
+    anim.currentVisuals = entranceVisuals(anim.entranceElapsed);
+  } else {
+    anim.transitionElapsed = Math.min(
+      anim.transitionElapsed + dt,
+      anim.transitionDuration,
+    );
+    const t = smoothstep(anim.transitionElapsed / anim.transitionDuration);
+    anim.currentVisuals = lerpVisuals(
+      STATE_VISUALS[anim.prevState],
+      STATE_VISUALS[anim.nextState],
+      t,
+    );
+  }
 
   const targetAudio = rawAudioLevel === undefined
     ? syntheticAmplitude(anim.nextState, anim.time)

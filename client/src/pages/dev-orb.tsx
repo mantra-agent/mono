@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { AgentOrb } from '@/components/agent-orb';
 import type { OrbState } from '@/components/agent-orb';
 
 const ALL_STATES: OrbState[] = [
+  'entrance',
   'idle',
   'listening',
   'thinking',
@@ -12,6 +13,7 @@ const ALL_STATES: OrbState[] = [
 ];
 
 const STATE_LABELS: Record<OrbState, string> = {
+  entrance: 'Entrance — white terminal resolves into idle',
   idle: 'Idle — breathing glow',
   listening: 'Listening — amplitude-reactive rim',
   thinking: 'Thinking — internal swirl',
@@ -29,20 +31,23 @@ export default function DevOrbPage() {
   const [audioLevel, setAudioLevel] = useState(0);
   const [useSynthetic, setUseSynthetic] = useState(true);
   const [autoCycle, setAutoCycle] = useState(false);
-  const cycleIndexRef = useRef(0);
+  const [orbKey, setOrbKey] = useState(0);
 
   // Auto-cycle through states
   useEffect(() => {
     if (!autoCycle) return;
     const interval = setInterval(() => {
-      cycleIndexRef.current = (cycleIndexRef.current + 1) % ALL_STATES.length;
-      setCurrentState(ALL_STATES[cycleIndexRef.current]);
-    }, 3000);
+      setCurrentState((visibleState) => {
+        const nextIndex = (ALL_STATES.indexOf(visibleState) + 1) % ALL_STATES.length;
+        return ALL_STATES[nextIndex];
+      });
+    }, currentState === 'entrance' ? 3600 : 3000);
     return () => clearInterval(interval);
-  }, [autoCycle]);
+  }, [autoCycle, currentState]);
 
   const handleStateClick = useCallback((s: OrbState) => {
     setCurrentState(s);
+    if (s === 'entrance') setOrbKey((key) => key + 1);
     setAutoCycle(false);
   }, []);
 
@@ -51,6 +56,7 @@ export default function DevOrbPage() {
       {/* Orb viewport */}
       <div className="flex-1 relative">
         <AgentOrb
+          key={orbKey}
           state={currentState}
           audioLevel={useSynthetic ? undefined : audioLevel}
           className="absolute inset-0"
@@ -95,7 +101,7 @@ export default function DevOrbPage() {
             onChange={(e) => setAutoCycle(e.target.checked)}
             className="rounded"
           />
-          Auto-cycle (3s)
+          Auto-cycle
         </label>
 
         {/* Audio controls */}
@@ -137,7 +143,8 @@ export default function DevOrbPage() {
         <div className="mt-auto text-xs text-muted-foreground leading-relaxed">
           <p>
             This harness renders the AgentOrb component in isolation. Each state
-            has a distinct visual signature. Audio reactivity is visible in
+            has a distinct visual signature. Select <strong>entrance</strong> again
+            to replay its one-shot handoff. Audio reactivity is visible in
             <strong> listening</strong> and <strong>speaking</strong> states.
           </p>
           <p className="mt-2">

@@ -10,7 +10,7 @@ import {
   haloVertexShader,
   haloFragmentShader,
 } from './shaders';
-import { createAnimationState, tickAnimation } from './orb-state';
+import { createAnimationState, entranceVeil, tickAnimation } from './orb-state';
 
 const log = createLogger('AgentOrb');
 const MAX_DPR = 1.5;
@@ -33,6 +33,7 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, paused = false,
   const stateRef = useRef(state);
   const audioRef = useRef(audioLevel);
   const pausedRef = useRef(paused);
+  const entranceVeilRef = useRef<HTMLDivElement>(null);
   const [webGlFailed, setWebGlFailed] = useState(false);
 
   stateRef.current = state;
@@ -141,6 +142,7 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, paused = false,
     scene.add(haloMesh);
 
     const anim = createAnimationState(stateRef.current);
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let lastTime = performance.now();
     let lastRenderTime = 0;
     let animFrameId = 0;
@@ -182,6 +184,16 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, paused = false,
       const visuals = tickAnimation(anim, dt, stateRef.current, audioRef.current);
       const audio = anim.effectiveAudioLevel;
       const breath = visuals.breathDepth * Math.sin(anim.time * visuals.breathSpeed);
+      const veilElement = entranceVeilRef.current;
+      if (veilElement) {
+        const veil = stateRef.current === 'entrance'
+          ? entranceVeil(anim.entranceElapsed, reducedMotion)
+          : { radiusPercent: 0, opacity: 0 };
+        veilElement.style.opacity = String(veil.opacity);
+        veilElement.style.background = veil.opacity > 0
+          ? `radial-gradient(circle at center, rgba(255,255,255,1) 0%, rgba(255,255,255,1) ${Math.max(0, veil.radiusPercent - 5)}%, rgba(255,255,255,0.94) ${veil.radiusPercent}%, rgba(255,255,255,0) ${veil.radiusPercent + 12}%)`
+          : 'transparent';
+      }
 
       fieldUniforms.uTime.value = anim.time;
       fieldUniforms.uAudioLevel.value = audio;
@@ -264,9 +276,15 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, paused = false,
     <div
       ref={containerRef}
       className={className}
-      style={{ width: '100%', height: '100%', background: '#000' }}
+      style={{ width: '100%', height: '100%', background: '#000', overflow: 'hidden' }}
       data-renderer={webGlFailed ? 'fallback' : 'webgl'}
     >
+      <div
+        ref={entranceVeilRef}
+        className="pointer-events-none absolute inset-0 z-10"
+        style={{ opacity: state === 'entrance' ? 1 : 0, background: state === 'entrance' ? '#fff' : 'transparent' }}
+        aria-hidden="true"
+      />
       {webGlFailed && (
         <div
           className="absolute left-1/2 top-1/2 aspect-square w-[42%] -translate-x-1/2 -translate-y-1/2 rounded-full"
