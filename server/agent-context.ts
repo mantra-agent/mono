@@ -229,6 +229,7 @@ export async function runBetweenTurnCompaction(
     }
   }
   const operationId = claim.operation.id;
+  const operationAttempt = claim.operation.attemptCount;
   const operationStartedAt = Date.now();
   const deadlineAt = operationStartedAt + COMPACTION_WALL_TIME_MS;
 
@@ -245,12 +246,13 @@ export async function runBetweenTurnCompaction(
       archiveRefId: m.compaction?.archiveRefId,
       record: m,
     })),
+    claim.operation.createdAt.toISOString(),
   );
   const archiveDownloadable = removed.every(
     (m) => !m.compaction?.archiveRefId || m.compaction?.archiveDownloadable === true,
   );
   if (serialized.length < 200) {
-    await transitionCompactionOperation(operationId, "superseded", {
+    await transitionCompactionOperation(operationId, operationAttempt, "superseded", {
       outcome: "snapshot_changed",
       failureReason: "archive_payload_too_small",
     });
@@ -271,7 +273,7 @@ export async function runBetweenTurnCompaction(
   };
 
   try {
-    await transitionCompactionOperation(operationId, "archiving");
+    await transitionCompactionOperation(operationId, operationAttempt, "archiving");
     const { indexAndArchiveHeuristic } = await import("./content-indexer");
     const archiveRef = await indexAndArchiveHeuristic({
       content: serialized,
@@ -282,14 +284,14 @@ export async function runBetweenTurnCompaction(
     });
     if (!archiveRef) {
       const reason = "exact_archive_unavailable";
-      await transitionCompactionOperation(operationId, "failed", {
+      await transitionCompactionOperation(operationId, operationAttempt, "failed", {
         outcome: "archive_failed",
         failureReason: reason,
       });
       log.error(`betweenTurnCompaction: exact archive unavailable; preserving active history sessionId=${sessionId} operationId=${operationId}`);
       return { outcome: "archive_failed", operationId, reason };
     }
-    await transitionCompactionOperation(operationId, "summarizing", {
+    await transitionCompactionOperation(operationId, operationAttempt, "summarizing", {
       archiveRefId: archiveRef.id,
       archiveObjectPath: archiveRef.objectStoragePath,
       archiveBytes: archiveRef.byteCount,
@@ -370,7 +372,7 @@ export async function runBetweenTurnCompaction(
       log.warn(`betweenTurnCompaction: narrative summarizer error, using capsule fallback sessionId=${sessionId} error=${summaryError instanceof Error ? summaryError.message : String(summaryError)}`);
     }
 
-    await transitionCompactionOperation(operationId, "ready", {
+    await transitionCompactionOperation(operationId, operationAttempt, "ready", {
       summaryKind,
       summaryMetadata: {
         degradedSegments: degradedSegments ?? 0,
@@ -398,6 +400,7 @@ export async function runBetweenTurnCompaction(
     const compactResult = await chatFileStorage.compactSession(sessionId, summaryContent, removedMessageIds, {
       type: "between_turn",
       operationId,
+      operationAttempt,
       snapshotHash: snapshot.snapshotHash,
       summary: summaryBody,
       summaryKind,
@@ -445,7 +448,7 @@ export async function runBetweenTurnCompaction(
       };
     }
 
-    await transitionCompactionOperation(operationId, "superseded", {
+    await transitionCompactionOperation(operationId, operationAttempt, "superseded", {
       outcome: "snapshot_changed",
       failureReason: "snapshot_changed_before_commit",
     });
@@ -455,7 +458,7 @@ export async function runBetweenTurnCompaction(
     const reason = err instanceof Error ? err.message : String(err);
     if (operationId) {
       try {
-        await transitionCompactionOperation(operationId, "failed", {
+        await transitionCompactionOperation(operationId, operationAttempt, "failed", {
           outcome: "failed",
           failureReason: reason.slice(0, 1000),
         });

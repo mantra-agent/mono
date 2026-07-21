@@ -169,6 +169,7 @@ export interface ContinuationCapsule {
 export interface CompactionMeta {
   type: "between_turn";
   operationId?: string;
+  operationAttempt?: number;
   snapshotHash?: string;
   summary: string;
   /** How `summary` was produced: LLM narrative (primary) or deterministic capsule (fallback/legacy). */
