@@ -717,6 +717,8 @@ export type CanonicalMeetingSpeakerPolicy =
   | { mode: "participant_streams" }
   | { mode: "shared_room" };
 
+export type MeetingAudioSourceMode = CanonicalMeetingSpeakerPolicy["mode"];
+
 export type MeetingSpeakerPolicy =
   | CanonicalMeetingSpeakerPolicy
   | {
@@ -728,19 +730,35 @@ export type MeetingSpeakerPolicy =
       }>;
     };
 
-/** Existing attendee-scoped metadata migrates at the read boundary. */
+/** Preserve legacy selectors until a real transport source can migrate them. */
 export function normalizeMeetingSpeakerPolicy(
   policy: MeetingSpeakerPolicy | null | undefined,
-): CanonicalMeetingSpeakerPolicy {
+): MeetingSpeakerPolicy {
+  if (policy?.mode === "shared_room") return { mode: "shared_room" };
+  if (policy?.mode === "selected_shared_streams") return policy;
+  return { mode: "participant_streams" };
+}
+
+/** Meeting policy initializes newly discovered sources but never owns them after discovery. */
+export function meetingDefaultAudioSourceMode(
+  policy: MeetingSpeakerPolicy | null | undefined,
+): MeetingAudioSourceMode {
   return policy?.mode === "shared_room" || policy?.mode === "selected_shared_streams"
-    ? { mode: "shared_room" }
-    : { mode: "participant_streams" };
+    ? "shared_room"
+    : "participant_streams";
+}
+
+export interface MeetingAudioSourcePolicy {
+  mode: MeetingAudioSourceMode;
+  updatedAt: string;
+  mutationId: string;
 }
 
 export interface MeetingRecognitionStream {
   streamKey: string;
   transportParticipantId: string;
   transportLabel?: string;
+  sourcePolicy: MeetingAudioSourceMode;
   attribution: "participant" | "diarized" | "excluded";
   provider: string;
   model: string;
@@ -810,6 +828,8 @@ export interface MeetingSessionMeta {
   speechStatusDetail?: string;
   /** Speaker routing policy snapshotted from calendar metadata before bot dispatch. */
   speakerPolicy?: MeetingSpeakerPolicy;
+  /** Runtime source of truth. Keys are stable Recall audio artifact + participant stream identities. */
+  audioSourcePolicies?: Record<string, MeetingAudioSourcePolicy>;
   /** Per-stream recognition state for mixed Scribe + Deepgram meetings. */
   recognition?: MeetingRecognitionState;
   /** Canonical recognition boundary telemetry. Recall transcript webhooks remain the explicit fallback. */

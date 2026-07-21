@@ -13,6 +13,7 @@ import {
   type STTUtterance,
 } from "../voice/stt";
 import type {
+  MeetingAudioSourceMode,
   MeetingRecognitionState,
   MeetingRecognitionStream,
   MeetingSessionMeta,
@@ -20,7 +21,8 @@ import type {
   type CanonicalMeetingSpeakerPolicy,
   type MeetingRecognitionReasonCode,
 } from "@shared/models/chat";
-import { normalizeMeetingSpeakerPolicy } from "@shared/models/chat";
+import { meetingDefaultAudioSourceMode } from "@shared/models/chat";
+import { eventBus, type BusEvent } from "../event-bus";
 import type { MeetingIngestFn } from "../routes/recall";
 import { runWithMeetingOwnerPrincipal } from "./owner-principal";
 import { publishMeetingAudioLevel, syncMeetingVisualizerBotStatus } from "./output-media";
@@ -120,7 +122,7 @@ type StreamRoute =
   | { kind: "participant"; provider: STTProvider };
 
 function routeStream(
-  policy: MeetingSpeakerPolicy | undefined,
+  sourceMode: MeetingAudioSourceMode,
   identity: StreamIdentity,
   providers: { scribe: STTProvider; deepgram: STTProvider },
 ): StreamRoute {
@@ -128,7 +130,7 @@ function routeStream(
   if (identity.transportId === RECALL_OUTPUT_PARTICIPANT_ID || normalizedLabel === "mantra agent") {
     return { kind: "excluded", detail: "Mantra output excluded from human transcript ingestion" };
   }
-  return normalizeMeetingSpeakerPolicy(policy).mode === "shared_room"
+  return sourceMode === "shared_room"
     ? { kind: "diarized", provider: providers.deepgram }
     : { kind: "participant", provider: providers.scribe };
 }
@@ -158,7 +160,7 @@ async function persistRecognition(
   await runWithMeetingOwnerPrincipal(meeting, () =>
     chatStorage.updateMeetingMeta(sessionId, {
       recognition: {
-        mode: normalizeMeetingSpeakerPolicy(meeting.speakerPolicy).mode,
+        mode: meetingDefaultAudioSourceMode(meeting.speakerPolicy),
         status: recognitionStatus(recognitionStreams, closing),
         ...(degradedDetail ? { detail: degradedDetail } : {}),
         streams: recognitionStreams,
@@ -239,12 +241,49 @@ export function registerMeetingSTTAudioTransport(
   const wss = new WebSocketServer({ noServer: true });
   const scribeProvider = new ScribeRealtimeSTTProvider();
   const deepgramProvider = new DeepgramDiarizingSTTProvider();
+  const liveConnections = new Set<{
+    meetings: Map<string, MeetingSessionMeta>;
+    streams: Map<string, ParticipantStream>;
+    reconfigureStream: (stream: ParticipantStream, mode: MeetingAudioSourceMode) => Promise<void>;
+  }>();
+
+  const onSourcePolicyUpdated = (busEvent: BusEvent): void => {
+    if (busEvent.event !== "meeting.audio_source_policy.updated") return;
+    const sessionId = typeof busEvent.payload.sessionId === "string" ? busEvent.payload.sessionId : "";
+    const sourceKey = typeof busEvent.payload.sourceKey === "string" ? busEvent.payload.sourceKey : "";
+    const mode = busEvent.payload.mode;
+    if (mode !== "participant_streams" && mode !== "shared_room") return;
+    for (const connection of liveConnections) {
+      const meeting = connection.meetings.get(sessionId);
+      const stream = Array.from(connection.streams.values()).find(
+        (candidate) => candidate.identity.sessionId === sessionId && candidate.identity.streamId === sourceKey,
+      );
+      if (!stream || !meeting) continue;
+      if (
+        busEvent.audience.scope !== "user" ||
+        busEvent.audience.ownerUserId !== meeting.ownerUserId ||
+        busEvent.audience.accountId !== meeting.principalAccountId
+      ) continue;
+      void connection.reconfigureStream(stream, mode).catch((error) =>
+        log.error("meeting audio source reconfiguration failed", {
+          sessionId,
+          sourceKey,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
+  };
+  eventBus.on("event", onSourcePolicyUpdated);
 
   wss.on("connection", (socket: WebSocket) => {
     const streams = new Map<string, ParticipantStream>();
     const streamInitializations = new Map<string, Promise<ParticipantStream>>();
     const meetings = new Map<string, MeetingSessionMeta>();
+    const policyRefreshes = new Map<string, Promise<MeetingSessionMeta>>();
+    const policyRefreshedAt = new Map<string, number>();
     let closed = false;
+
+    const streamMapKey = (sessionId: string, transportId: string): string => `${sessionId}:${transportId}`;
 
     const loadMeeting = async (sessionId: string): Promise<MeetingSessionMeta> => {
       const cached = meetings.get(sessionId);
@@ -253,6 +292,23 @@ export function registerMeetingSTTAudioTransport(
       if (!session?.meeting) throw new Error(`Meeting session ${sessionId} not found`);
       meetings.set(sessionId, session.meeting);
       return session.meeting;
+    };
+
+    const refreshMeetingPolicy = async (sessionId: string): Promise<MeetingSessionMeta> => {
+      const cached = meetings.get(sessionId);
+      if (cached && Date.now() - (policyRefreshedAt.get(sessionId) || 0) < 1_000) return cached;
+      const inFlight = policyRefreshes.get(sessionId);
+      if (inFlight) return inFlight;
+      if (!cached) return loadMeeting(sessionId);
+      const refresh = runWithMeetingOwnerPrincipal(cached, async () => {
+        const session = await chatStorage.getSession(sessionId);
+        if (!session?.meeting) throw new Error(`Meeting session ${sessionId} not found`);
+        meetings.set(sessionId, session.meeting);
+        policyRefreshedAt.set(sessionId, Date.now());
+        return session.meeting;
+      }).finally(() => policyRefreshes.delete(sessionId));
+      policyRefreshes.set(sessionId, refresh);
+      return refresh;
     };
 
     const failStream = async (stream: ParticipantStream, detail: string): Promise<void> => {
@@ -270,6 +326,7 @@ export function registerMeetingSTTAudioTransport(
       identity: StreamIdentity,
       meeting: MeetingSessionMeta,
       route: Extract<StreamRoute, { kind: "participant" | "diarized" }>,
+      isCurrent: (stream: ParticipantStream) => boolean = () => true,
     ): ParticipantStream => {
       const provider = route.provider;
       const diarized = route.kind === "diarized";
@@ -277,6 +334,7 @@ export function registerMeetingSTTAudioTransport(
         streamKey: identity.streamId,
         transportParticipantId: identity.transportId,
         transportLabel: identity.label,
+        sourcePolicy: diarized ? "shared_room" : "participant_streams",
         attribution: diarized ? "diarized" : "participant",
         provider: provider.provider,
         model: provider.model,
@@ -304,7 +362,9 @@ export function registerMeetingSTTAudioTransport(
           channels: 1,
           },
           async (utterance) => {
-          if (utterance.isFinal) await ingestFinalUtterance(deps.ingestMeetingEvent, identity.sessionId, utterance, diarized);
+          if (utterance.isFinal && isCurrent(stream)) {
+            await ingestFinalUtterance(deps.ingestMeetingEvent, identity.sessionId, utterance, diarized);
+          }
           },
           (error) => void failStream(stream, error.message),
         );
@@ -321,12 +381,51 @@ export function registerMeetingSTTAudioTransport(
       return stream;
     };
 
+    const reconfigureStream = async (
+      stream: ParticipantStream,
+      mode: MeetingAudioSourceMode,
+    ): Promise<void> => {
+      const meeting = await loadMeeting(stream.identity.sessionId);
+      if (stream.recognition.attribution === "excluded") return;
+      if (stream.recognition.sourcePolicy === mode && ["connecting", "active"].includes(stream.recognition.status)) {
+        return;
+      }
+      stream.stt?.close();
+      stream.stt = undefined;
+      stream.pendingAudio = [];
+      stream.pendingBytes = 0;
+      const route = routeStream(mode, stream.identity, {
+        scribe: scribeProvider,
+        deepgram: deepgramProvider,
+      });
+      if (route.kind === "excluded") return;
+      const mapKey = streamMapKey(stream.identity.sessionId, stream.identity.transportId);
+      let replacement: ParticipantStream;
+      replacement = connectStream(
+        stream.identity,
+        meeting,
+        route,
+        (candidate) => streams.get(mapKey) === candidate,
+      );
+      streams.set(mapKey, replacement);
+      await persistRecognition(stream.identity.sessionId, meeting, streams);
+      log.info("meeting audio source reconfigured", {
+        sessionId: stream.identity.sessionId,
+        sourceKey: stream.identity.streamId,
+        mode,
+      });
+    };
+
+    const connection = { meetings, streams, reconfigureStream };
+    liveConnections.add(connection);
+
     const excludeStream = (identity: StreamIdentity, detail: string): ParticipantStream => ({
       identity,
       recognition: {
         streamKey: identity.streamId,
         transportParticipantId: identity.transportId,
         transportLabel: identity.label,
+        sourcePolicy: "participant_streams",
         attribution: "excluded",
         provider: "none",
         model: "bot_output_exclusion",
@@ -351,15 +450,32 @@ export function registerMeetingSTTAudioTransport(
         label: participant?.name || undefined,
         email: participant?.email || undefined,
       };
-      const meeting = await loadMeeting(sessionId);
-      const route = routeStream(meeting.speakerPolicy, identity, {
+      let meeting = await loadMeeting(sessionId);
+      const existingPolicy = meeting.audioSourcePolicies?.[identity.streamId];
+      const legacySelectedShared = meeting.speakerPolicy?.mode === "selected_shared_streams"
+        && meeting.speakerPolicy.sharedStreams.some((candidate) => {
+          const selectorEmail = candidate.selector.attendeeEmail?.trim().toLowerCase();
+          return !!selectorEmail && selectorEmail === identity.email?.trim().toLowerCase();
+        });
+      const sourceMode = existingPolicy?.mode
+        || (legacySelectedShared ? "shared_room" : meetingDefaultAudioSourceMode(meeting.speakerPolicy));
+      if (!existingPolicy) {
+        const initialized = await runWithMeetingOwnerPrincipal(meeting, () =>
+          chatStorage.initializeMeetingAudioSourcePolicy(sessionId, identity.streamId, sourceMode),
+        );
+        if (initialized?.meeting) {
+          meeting = initialized.meeting;
+          meetings.set(sessionId, meeting);
+        }
+      }
+      const route = routeStream(sourceMode, identity, {
         scribe: scribeProvider,
         deepgram: deepgramProvider,
       });
       const stream = route.kind === "excluded"
         ? excludeStream(identity, route.detail)
         : connectStream(identity, meeting, route);
-      streams.set(`${sessionId}:${transportId}`, stream);
+      streams.set(streamMapKey(sessionId, transportId), stream);
       await persistRecognition(sessionId, meeting, streams);
       log.info(`meeting audio stream routed sessionId=${sessionId} participantId=${transportId} route=${route.kind} stream=${identity.streamId}`);
       return stream;
@@ -376,7 +492,7 @@ export function registerMeetingSTTAudioTransport(
           log.warn("Recall participant audio packet missing session, participant, or buffer");
           return;
         }
-        const streamKey = `${sessionId}:${transportId}`;
+        const streamKey = streamMapKey(sessionId, transportId);
         let stream = streams.get(streamKey);
         if (!stream) {
           let initialization = streamInitializations.get(streamKey);
@@ -390,6 +506,14 @@ export function registerMeetingSTTAudioTransport(
             streamInitializations.set(streamKey, initialization);
           }
           stream = await initialization;
+        }
+        stream = streams.get(streamKey) || stream;
+        const currentMeeting = await refreshMeetingPolicy(sessionId);
+        const currentMode = currentMeeting.audioSourcePolicies?.[stream.identity.streamId]?.mode
+          || stream.recognition.sourcePolicy;
+        if (currentMode !== stream.recognition.sourcePolicy) {
+          await reconfigureStream(stream, currentMode);
+          stream = streams.get(streamKey) || stream;
         }
         if (stream.recognition.status === "excluded") return;
         const bytes = Buffer.from(audioBase64, "base64");
@@ -405,6 +529,7 @@ export function registerMeetingSTTAudioTransport(
       if (closed) return;
       closed = true;
       for (const stream of streams.values()) stream.stt?.close();
+      liveConnections.delete(connection);
       for (const [sessionId, meeting] of meetings) {
         persistRecognition(sessionId, meeting, streams, true).catch((error) =>
           log.error(`failed to persist closed recognition state sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`),
@@ -443,23 +568,29 @@ export interface MeetingRecognitionLaunchPlan {
 export function createMeetingRecognitionLaunchPlan(
   policy?: MeetingSpeakerPolicy,
 ): MeetingRecognitionLaunchPlan {
-  const mode = normalizeMeetingSpeakerPolicy(policy).mode;
-  const provider = mode === "shared_room"
-    ? new DeepgramDiarizingSTTProvider()
-    : new ScribeRealtimeSTTProvider();
+  const mode = meetingDefaultAudioSourceMode(policy);
+  const scribe = new ScribeRealtimeSTTProvider();
+  const deepgram = new DeepgramDiarizingSTTProvider();
+  const provider = mode === "shared_room" ? deepgram : scribe;
+  const alternateProvider = mode === "shared_room" ? scribe : deepgram;
 
-  if (provider.isConfigured()) {
+  if (provider.isConfigured() || alternateProvider.isConfigured()) {
+    const requestedReady = provider.isConfigured();
     return {
       outcome: "participant_audio",
       mode,
-      provider: provider.provider,
-      model: provider.model,
+      provider: requestedReady ? provider.provider : alternateProvider.provider,
+      model: requestedReady ? provider.model : alternateProvider.model,
       source: "recall_participant_audio",
-      fallback: false,
-      sttStatus: "inactive",
-      recognitionStatus: "waiting",
-      reasonCode: "participant_audio_ready",
-      detail: `Waiting for Recall participant audio for ${mode === "shared_room" ? "shared-room" : "participant"} recognition`,
+      fallback: !requestedReady,
+      sttStatus: requestedReady ? "inactive" : "fallback",
+      recognitionStatus: requestedReady ? "waiting" : "degraded",
+      reasonCode: requestedReady
+        ? "participant_audio_ready"
+        : mode === "shared_room" ? "deepgram_not_configured" : "scribe_not_configured",
+      detail: requestedReady
+        ? `Waiting for Recall participant audio for ${mode === "shared_room" ? "shared-room" : "participant"} recognition`
+        : `${mode === "shared_room" ? "Shared-room" : "Participant"} recognition is unavailable because ${mode === "shared_room" ? "DEEPGRAM_API_KEY" : "ELEVENLABS_API_KEY"} is not configured. Live audio sources remain available and can be switched to the configured recognition mode.`,
     };
   }
 

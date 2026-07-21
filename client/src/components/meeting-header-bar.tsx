@@ -15,6 +15,7 @@ import {
   AlertCircle,
   Ear,
   Hourglass,
+  Mic2,
   Loader2,
   LogOut,
   Mail,
@@ -24,7 +25,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { createLogger } from "@/lib/logger";
-import type { MeetingSessionMeta, MeetingBotStatus } from "@shared/models/chat";
+import type { MeetingRecognitionStream, MeetingSessionMeta, MeetingBotStatus } from "@shared/models/chat";
 import { createReferenceRef } from "@shared/references";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
@@ -78,7 +79,7 @@ function useElapsed(startedAt?: string, endedAt?: string): string | null {
 function formatRecognitionStreamSummary(stream: NonNullable<MeetingSessionMeta["recognition"]>["streams"][number]): string {
   const segments = [
     stream.transportLabel || `Stream ${stream.transportParticipantId}`,
-    stream.attribution === "diarized"
+    stream.sourcePolicy === "shared_room"
       ? "Shared room"
       : stream.attribution === "excluded"
         ? "Excluded"
@@ -91,6 +92,84 @@ function formatRecognitionStreamSummary(stream: NonNullable<MeetingSessionMeta["
   return segments.filter((segment, index) => (
     segments.findIndex((candidate) => candidate.toLowerCase() === segment.toLowerCase()) === index
   )).join(" · ");
+}
+
+function AudioSourcePolicyControl({
+  sessionId,
+  stream,
+  desiredMode,
+}: {
+  sessionId: string;
+  stream: MeetingRecognitionStream;
+  desiredMode: MeetingRecognitionStream["sourcePolicy"];
+}) {
+  const { toast } = useToast();
+  const isShared = desiredMode === "shared_room";
+  const isReconfiguring = desiredMode !== stream.sourcePolicy || stream.status === "connecting";
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const mutationId = typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const response = await apiRequest(
+        "PATCH",
+        `/api/meetings/${encodeURIComponent(sessionId)}/audio-source-policy`,
+        {
+          sourceKey: stream.streamKey,
+          mode: isShared ? "participant_streams" : "shared_room",
+          mutationId,
+        },
+      );
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+    },
+    onError: (error: Error) => {
+      log.error("Audio source policy toggle failed", {
+        sessionId,
+        sourceKey: stream.streamKey,
+        error,
+      });
+      toast({
+        title: "Audio source update failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+  const failed = stream.status === "failed" || stream.status === "fallback";
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className={cn(
+        "h-7 shrink-0 gap-1.5 px-2 text-xs",
+        isShared && !failed && "border-active/40 text-active hover:text-active",
+        failed && "border-destructive/30 text-destructive hover:text-destructive",
+      )}
+      onClick={() => mutation.mutate()}
+      disabled={mutation.isPending}
+      aria-pressed={isShared}
+      aria-label={`${isShared ? "Stop" : "Start"} shared-room recognition for ${stream.transportLabel || "this audio source"}`}
+      title={stream.detail || (isShared
+        ? "Treat future speech from this source as one participant"
+        : "Separate future speakers sharing this source")}
+      data-testid={`button-toggle-shared-source-${stream.transportParticipantId}`}
+    >
+      {mutation.isPending || isReconfiguring ? (
+        <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+      ) : failed ? (
+        <AlertCircle className="h-3 w-3 shrink-0" />
+      ) : (
+        <Mic2 className="h-3 w-3 shrink-0" />
+      )}
+      <span>{isReconfiguring ? "Recognizing" : failed && isShared ? "Shared degraded" : isShared ? "Shared" : "Individual"}</span>
+    </Button>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -232,6 +311,9 @@ export function MeetingHeaderBar({
   const visibleParticipants = meeting.participants.filter(
     (participant) => participant.source !== "machine_diarization",
   );
+  const eligibleAudioStreams = (meeting.recognition?.streams || []).filter(
+    (stream) => stream.attribution !== "excluded",
+  );
 
   return (
     <div className="border-b border-border bg-card/60">
@@ -340,6 +422,28 @@ export function MeetingHeaderBar({
                     {participant.label}
                   </span>
                 )}
+              </div>
+            </HierarchyTreeRow>
+          ))}
+        </div>
+      )}
+
+      {sessionId && isLive && eligibleAudioStreams.length > 0 && (
+        <div className="border-t border-border/20" data-testid="meeting-audio-source-policies">
+          {eligibleAudioStreams.map((stream, index) => (
+            <HierarchyTreeRow
+              key={stream.streamKey}
+              continues={index < eligibleAudioStreams.length - 1}
+            >
+              <div className="flex min-h-11 min-w-0 items-center gap-2 px-2 py-1">
+                <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+                  {stream.transportLabel || `Audio source ${stream.transportParticipantId}`}
+                </span>
+                <AudioSourcePolicyControl
+                  sessionId={sessionId}
+                  stream={stream}
+                  desiredMode={meeting.audioSourcePolicies?.[stream.streamKey]?.mode || stream.sourcePolicy}
+                />
               </div>
             </HierarchyTreeRow>
           ))}
