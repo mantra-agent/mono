@@ -553,3 +553,10 @@ Adjacent review found the same missing principle in Gmail `email_cache.get_messa
 **Framework mapping.** ASVS 5.0 V1/V4/V5/V8/V13/V14; OWASP API1, API3, API5, API8, API10; OWASP LLM01, LLM04, LLM06, LLM08; OWASP Agentic identity/privilege abuse, memory/context poisoning, tool misuse, and cascading behavior; NIST SSDF PW.4, PW.5, PW.7, RV.1, RV.2.
 
 **Incident and release decision.** The source path blocks readiness until the cure is merged and current `main` passes the production build. No credential rotation is indicated without evidence that S0/S1 data or credentials entered a foreign context. If logs or database review later show cross-tenant artifact links or foreign context delivery, declare an incident, revoke affected sessions, preserve prompt/tool-call evidence, remove the links at their producer boundary, notify affected users, and rotate only credential classes proven exposed. Rollback is the merged PR revert; no schema or live mutation is part of this cure.
+
+
+## 11.8 Independent readiness API-policy drift cure, July 20, 2026
+
+A fresh merged-main inventory found nine of 1,042 statically declared API routes had drifted outside the explicit API policy: admin-only Recall, Twilio, Deepgram, and Meta wearable status/configuration routes plus the authenticated browser-telemetry summary. The policy's default-deny behavior returned 404 before route-local guards, so this was a fail-closed availability/configuration defect rather than an authorization bypass. It still invalidated the zero-unclassified readiness control and demonstrated that route inventory must be rerun after every main change.
+
+**Closed in source.** `server/api-policy.ts` now classifies the eight integration routes as admin and the telemetry summary as personal. Route-local `requireAuth` and admin guards remain defense in depth. The merged-main static inventory must report `1,042 / 0 unclassified`, and the production build must pass before readiness is issued. Mapping: ASVS V1/V4/V7/V13/V14; OWASP API5, API8, API9; NIST SSDF PW.4, PW.7, RV.1.
