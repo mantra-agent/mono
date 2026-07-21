@@ -1,6 +1,11 @@
 import type { MeetingSessionMeta } from "@shared/models/chat";
-import { createUserPrincipalFromUser, type Principal } from "../principal";
+import {
+  createNamedSystemPrincipal,
+  createUserPrincipalFromUser,
+  type Principal,
+} from "../principal";
 import { getCurrentPrincipal, runWithPrincipal } from "../principal-context";
+import { chatStorage, type Session } from "../integrations/chat/storage";
 import { storage } from "../storage";
 
 /**
@@ -11,6 +16,23 @@ import { storage } from "../storage";
 export interface MeetingOwnerIdentity {
   ownerUserId: string;
   accountId: string;
+}
+
+/**
+ * Resolve a provider-authenticated or signed transport's opaque session ID.
+ * This principal exists only for the ownership lookup. Callers must immediately
+ * transition to runWithMeetingOwnerPrincipal before any user-owned work.
+ */
+export async function resolveMeetingTransportSession(
+  sessionId: string,
+): Promise<Session | null> {
+  return runWithPrincipal(
+    createNamedSystemPrincipal("meeting-transport", ["system:read"]),
+    async () => {
+      const session = await chatStorage.getSession(sessionId);
+      return session?.type === "meeting" && session.meeting ? session : null;
+    },
+  );
 }
 
 export async function runWithMeetingOwnerIdentity<T>(

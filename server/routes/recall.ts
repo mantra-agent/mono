@@ -247,7 +247,7 @@ export function registerRecallRoutes(
         : `webhook:${webhookId(req) || "unknown"}`;
       const turnId = `recall:${transcriptId}:${speakerKey}:${timeRange}`;
       try {
-        await ingestMeetingEvent({
+        const result = await ingestMeetingEvent({
           sessionId,
           speakerLabel,
           speaker: {
@@ -268,6 +268,11 @@ export function registerRecallRoutes(
           // misrouted.
           botStatus: "live",
         });
+        if (!result.ok) {
+          log.error(
+            `Recall transcript ingest failed sessionId=${sessionId} event=${eventName}: ${result.error}`,
+          );
+        }
       } catch (err) {
         log.error("Recall transcript webhook processing error", err);
       }

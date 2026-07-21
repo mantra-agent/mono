@@ -128,99 +128,24 @@ const SYSTEM_COMMAND_HANDLERS: Record<string, SystemCommandHandler> = {
   },
 
   "meeting-watchdog": async (_timer, _run) => {
-    log.debug(`Executing meeting-watchdog system command`);
-    const { listAllEvents } = await import("./google-calendar");
-    const {
-      setMetadata,
-      getLinkedPeople,
-      autoLogMeetingInteractions,
-      classifyEventByTitle,
-    } = await import("./calendar-metadata");
-
-    const now = new Date();
-    const lookback = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-
-    const { events, errors } = await listAllEvents({
-      timeMin: lookback.toISOString(),
-      timeMax: now.toISOString(),
-    });
-
-    if (errors.length > 0) {
-      log.warn(
-        `meeting-watchdog: ${errors.length} account errors: ${errors.map((e) => `${e.accountId}: ${e.message}`).join(", ")}`,
-      );
+    log.debug("Executing owner-scoped meeting-watchdog system command");
+    const { runMeetingWatchdog } = await import("./meeting/watchdog");
+    const result = await runMeetingWatchdog();
+    if (result.errors.length > 0) {
+      return {
+        outcome: "degraded",
+        reason: "owner_scoped_meeting_watchdog_errors",
+        output: result,
+      };
     }
-
-    // Filter to events that have actually ended and have attendees
-    const endedWithAttendees = events.filter((ev) => {
-      const endTime = ev.end?.dateTime || ev.end?.date;
-      if (!endTime) return false;
-      if (new Date(endTime) > now) return false;
-      const nonSelfAttendees = (ev.attendees || []).filter(
-        (a) => !a.self && a.email,
-      );
-      return nonSelfAttendees.length > 0;
-    });
-
-    if (endedWithAttendees.length === 0) {
-      log.debug(`meeting-watchdog: no ended events with attendees in last 24h`);
-      return { outcome: "skipped", reason: "no_ended_events_with_attendees" };
+    if (result.eventsScanned === 0) {
+      return {
+        outcome: "skipped",
+        reason: "no_ended_events_with_attendees",
+        output: result,
+      };
     }
-
-    let metadataCreated = 0;
-    let interactionsLogged = 0;
-
-    for (const ev of endedWithAttendees) {
-      try {
-        const attendeeEmails = (ev.attendees || [])
-          .filter((a) => !a.self && a.email)
-          .map((a) => a.email);
-
-        const eventType = classifyEventByTitle(ev.summary) || "meeting";
-        const eventDate = (ev.start?.dateTime || ev.start?.date || "").slice(
-          0,
-          10,
-        );
-
-        // Upsert metadata + auto-link people via attendee emails
-        const meta = await setMetadata(
-          ev.id,
-          ev.accountId,
-          ev.calendarId,
-          eventType,
-          undefined,
-          attendeeEmails,
-        );
-        metadataCreated++;
-
-        // Get linked people (may include previously linked ones)
-        const people = await getLinkedPeople(meta.id);
-        if (people.length > 0) {
-          const results = await autoLogMeetingInteractions(
-            people,
-            ev.summary || "Meeting",
-            eventDate,
-          );
-          interactionsLogged += results.filter((r) => r.logged).length;
-        }
-      } catch (err: any) {
-        log.warn(
-          `meeting-watchdog: failed processing event "${ev.summary}" (${ev.id}): ${err.message}`,
-        );
-      }
-    }
-
-    log.log(
-      `meeting-watchdog complete: ${endedWithAttendees.length} events scanned, ${metadataCreated} metadata upserted, ${interactionsLogged} interactions logged`,
-    );
-    return {
-      outcome: "success",
-      output: {
-        eventsScanned: endedWithAttendees.length,
-        metadataCreated,
-        interactionsLogged,
-      },
-    };
+    return { outcome: "success", output: result };
   },
 };
 

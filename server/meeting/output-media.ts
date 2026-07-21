@@ -7,6 +7,7 @@ import type { AgentVisualizerEvent, AgentVisualState } from "@shared/agent-visua
 import type { MeetingBotStatus } from "@shared/models/chat";
 import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
+import { resolveMeetingTransportSession } from "./owner-principal";
 import { EmptyVoiceStreamError, streamVoiceAudio, type VoiceAudioStream } from "../voice/synthesis";
 
 const log = createLogger("MeetingOutputMedia");
@@ -168,7 +169,7 @@ export function registerMeetingVisualizerTransport(): (
     clients.add(client);
     visualizerClients.set(sessionId, clients);
     if (!visualizerStates.has(sessionId)) {
-      void chatStorage.getSession(sessionId).then((session) => {
+      void resolveMeetingTransportSession(sessionId).then((session) => {
         if (!session?.meeting) {
           client.close(1008, "meeting not found");
           return;
