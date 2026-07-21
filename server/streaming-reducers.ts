@@ -313,7 +313,7 @@ export function addSystemStep(
   const newStep: ExecutionStep = {
     id: stepId,
     type: "system",
-    timestamp: Date.now(),
+    timestamp: opts?.startedAt ?? Date.now(),
     systemStepName: resolvedName,
     systemStepDetail: detail,
     systemStepMetadata: opts?.systemStepMetadata,

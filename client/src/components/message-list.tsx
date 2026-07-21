@@ -550,7 +550,12 @@ export function MessageList({
       return segment.steps.some((step) => {
         if (step.type === "thinking") return step.status === "active" || Boolean(step.thinking?.trim());
         if (step.type === "tool_call") return step.status === "active" || Boolean(step.result) || Boolean(step.error);
-        if (step.type === "system") return !CHAT_HIDDEN_VOICE_SETUP_STEPS.has(step.systemStepName ?? "");
+        if (step.type === "system") {
+          if (step.systemStepName === "session_compaction") {
+            return step.status === "active" || step.status === "error";
+          }
+          return !CHAT_HIDDEN_VOICE_SETUP_STEPS.has(step.systemStepName ?? "");
+        }
         return true;
       });
     }

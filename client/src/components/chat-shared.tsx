@@ -116,6 +116,8 @@ export function filterStepsByLayer(
     }
 
     if (step.type === "system") {
+      if (step.systemStepName === "session_compaction")
+        return step.status === "active" || step.status === "error";
       if (step.systemStepName === "working_context_compression")
         return layer >= 2;
       if (step.systemStepName === "compaction") return layer >= 2;
@@ -920,13 +922,13 @@ function CompactingStep({ step }: { step: ExecutionStep }) {
 }
 
 const THINKING_LABEL = "Thinking...";
-function ThinkingWaveText() {
+function ThinkingWaveText({ label = THINKING_LABEL }: { label?: string }) {
   return (
     <span
       className="text-xs italic whitespace-nowrap"
-      aria-label={THINKING_LABEL}
+      aria-label={label}
     >
-      {Array.from(THINKING_LABEL).map((char, index) => (
+      {Array.from(label).map((char, index) => (
         <span
           key={`${char}-${index}`}
           className="inline-block animate-[thinking-wave_1.35s_ease-in-out_infinite]"
@@ -1118,6 +1120,7 @@ const SYSTEM_STEP_ICONS: Record<string, typeof Brain> = {
   llm_connected: Wifi,
   llm_headers: Radio,
   compaction: Cog,
+  session_compaction: Brain,
   working_context_compression: AlertTriangle,
   first_token: Zap,
   greeting: MessageSquare,
@@ -1239,10 +1242,12 @@ function SystemStepRow({
   const isDone = step.status === "done";
   const isError = step.status === "error";
   const isVoiceDiag = name.startsWith("voice_");
+  const isSessionCompaction = name === "session_compaction";
   const isWorkingCompression =
     name === "working_context_compression" || step.type === "compacting";
-  const label =
-    isWorkingCompression && layer === 2
+  const label = isSessionCompaction && isError
+    ? "Session compaction failed"
+    : isWorkingCompression && layer === 2
       ? "Context Compressed"
       : meta?.label || name;
   const showSystemDetail =
@@ -1262,6 +1267,24 @@ function SystemStepRow({
     parentStartedAt != null
       ? Math.max(0, step.occurredAt - parentStartedAt)
       : undefined;
+
+  if (isSessionCompaction && isActive) {
+    return (
+      <div
+        className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1"
+        data-testid="system-step-session_compaction"
+      >
+        <div className="flex items-center gap-1.5 text-active animate-pulse">
+          <div className="relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 bg-active/15">
+            <Brain className="h-3 w-3" />
+            <span className="absolute inset-0 rounded-full animate-ping bg-active/20" />
+          </div>
+          <ThinkingWaveText label={label} />
+          <ThinkingTimer startTime={step.startedAt ?? step.timestamp} />
+        </div>
+      </div>
+    );
+  }
 
   const bgColor = isError
     ? "bg-error/10"

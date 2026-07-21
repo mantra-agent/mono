@@ -293,6 +293,27 @@ export async function transitionCompactionOperation(
   return operation ?? null;
 }
 
+export async function getActiveCompactionOperation(
+  sessionId: string,
+): Promise<CompactionOperation | null> {
+  const owner = ownerIdentity();
+  const now = new Date();
+  const [operation] = await db
+    .select()
+    .from(compactionOperations)
+    .where(
+      and(
+        ownedPredicate(owner),
+        eq(compactionOperations.sessionId, sessionId),
+        inArray(compactionOperations.status, ACTIVE_STATUSES),
+        sql`${compactionOperations.leaseExpiresAt} > ${now}`,
+      ),
+    )
+    .orderBy(asc(compactionOperations.createdAt))
+    .limit(1);
+  return operation ?? null;
+}
+
 export async function waitForCompactionOperation(
   operationId: string,
   maxWaitMs: number,

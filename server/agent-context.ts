@@ -132,6 +132,13 @@ function estimateHistoryTokens(msg: CompactableHistoryMessage): number {
   return tokens;
 }
 
+export type CompactionActivityStatus = "active" | "done" | "error";
+
+export interface CompactionActivityUpdate {
+  operationId: string;
+  status: CompactionActivityStatus;
+}
+
 export type CompactionOutcome =
   | { outcome: "below_threshold" }
   | { outcome: "joined"; operationId: string; terminalOutcome: string }
@@ -153,6 +160,7 @@ export async function runBetweenTurnCompaction(
   conversationHistory: CompactableHistoryMessage[],
   conversationBudget: number,
   callerGeneration?: number,
+  onActivity?: (update: CompactionActivityUpdate) => void,
 ): Promise<CompactionOutcome> {
   let totalTokens = 0;
   for (const msg of conversationHistory) {
@@ -165,6 +173,14 @@ export async function runBetweenTurnCompaction(
   }
 
   log.log(`betweenTurnCompaction: triggered sessionId=${sessionId} totalTokens=${totalTokens} threshold=${threshold} messages=${conversationHistory.length}`);
+
+  const emitActivity = (update: CompactionActivityUpdate) => {
+    try {
+      onActivity?.(update);
+    } catch (error) {
+      log.warn(`betweenTurnCompaction: activity projection failed sessionId=${sessionId} operationId=${update.operationId} status=${update.status} error=${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
 
   // The persisted doc is the coordinate space for the whole operation.
   // The token trigger above is model-space (what the LLM actually saw), but
@@ -188,6 +204,7 @@ export async function runBetweenTurnCompaction(
     waitForCompactionOperation,
   } = await import("./compaction-operation-storage");
   const claim = await claimCompactionOperation({ snapshot, callerGeneration });
+  emitActivity({ operationId: claim.operation.id, status: "active" });
   if (claim.outcome === "joined") {
     try {
       const terminal = await waitForCompactionOperation(
@@ -199,9 +216,11 @@ export async function runBetweenTurnCompaction(
         terminalOutcome === "snapshot_changed" ||
         terminal.status === "superseded"
       ) {
+        emitActivity({ operationId: terminal.id, status: "done" });
         return { outcome: "snapshot_changed", operationId: terminal.id };
       }
       if (terminalOutcome === "archive_failed") {
+        emitActivity({ operationId: terminal.id, status: "error" });
         return {
           outcome: "archive_failed",
           operationId: terminal.id,
@@ -209,18 +228,21 @@ export async function runBetweenTurnCompaction(
         };
       }
       if (terminal.status === "failed") {
+        emitActivity({ operationId: terminal.id, status: "error" });
         return {
           outcome: "failed",
           operationId: terminal.id,
           reason: terminal.failureReason ?? "compaction_failed",
         };
       }
+      emitActivity({ operationId: terminal.id, status: "done" });
       return {
         outcome: "joined",
         operationId: terminal.id,
         terminalOutcome,
       };
     } catch (error) {
+      emitActivity({ operationId: claim.operation.id, status: "error" });
       return {
         outcome: "failed",
         operationId: claim.operation.id,
@@ -256,6 +278,7 @@ export async function runBetweenTurnCompaction(
       outcome: "snapshot_changed",
       failureReason: "archive_payload_too_small",
     });
+    emitActivity({ operationId, status: "done" });
     return { outcome: "snapshot_changed", operationId };
   }
 
@@ -288,6 +311,7 @@ export async function runBetweenTurnCompaction(
         outcome: "archive_failed",
         failureReason: reason,
       });
+      emitActivity({ operationId, status: "error" });
       log.error(`betweenTurnCompaction: exact archive unavailable; preserving active history sessionId=${sessionId} operationId=${operationId}`);
       return { outcome: "archive_failed", operationId, reason };
     }
@@ -440,6 +464,7 @@ export async function runBetweenTurnCompaction(
         archiveBytes: archiveRef.byteCount,
       });
       eventBus.publish({ category: "system", event: "compaction.persisted", payload: { operationId, sessionId, snapshotHash: snapshot.snapshotHash, trigger: "between-turn", messagesBefore: compactResult.messagesBefore, messagesAfter: compactResult.messagesAfter, tokensBefore: totalTokens, tokensAfter, tokensSaved, summaryLength: summaryBody.length, summaryKind, capsuleVersion: capsule.version } });
+      emitActivity({ operationId, status: "done" });
       return {
         outcome: "compacted",
         operationId,
@@ -452,6 +477,7 @@ export async function runBetweenTurnCompaction(
       outcome: "snapshot_changed",
       failureReason: "snapshot_changed_before_commit",
     });
+    emitActivity({ operationId, status: "done" });
     log.warn(`betweenTurnCompaction: snapshot changed before commit sessionId=${sessionId} operationId=${operationId} removed=${removedMessageIds.length}; active history preserved`);
     return { outcome: "snapshot_changed", operationId };
   } catch (err: unknown) {
@@ -466,6 +492,7 @@ export async function runBetweenTurnCompaction(
         log.error(`betweenTurnCompaction: terminal state persistence failed operationId=${operationId} error=${transitionError instanceof Error ? transitionError.message : String(transitionError)}`);
       }
     }
+    if (operationId) emitActivity({ operationId, status: "error" });
     log.error(`betweenTurnCompaction: failed sessionId=${sessionId} operationId=${operationId ?? "none"} error=${reason}`);
     return { outcome: "failed", operationId, reason };
   }

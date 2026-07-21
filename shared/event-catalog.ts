@@ -118,6 +118,7 @@ export const SYSTEM_STEP_META: Record<string, { label: string }> = {
   llm_connected: { label: "Connected" },
   llm_headers: { label: "Headers Received" },
   compaction: { label: "Compaction" },
+  session_compaction: { label: "Compacting session..." },
   working_context_compression: { label: "Working Context Compressed" },
   first_token: { label: "First Token" },
   thinking: { label: "Thinking" },

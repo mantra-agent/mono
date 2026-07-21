@@ -124,7 +124,12 @@ function getSteps(streamingContent: StreamingContent): ExecutionStep[] {
 function deriveVisibleAssistantActivity(session: LiveSession): VisibleAssistantActivity {
   if (session.status !== "streaming") return "none";
   const steps = getSteps(session.streamingContent);
-  if (steps.some((step) => step.type === "thinking" && step.status === "active" && (step.thinking || "").trim().length > 0)) {
+  if (steps.some((step) =>
+    step.status === "active" && (
+      (step.type === "thinking" && (step.thinking || "").trim().length > 0) ||
+      (step.type === "system" && step.systemStepName === "session_compaction")
+    )
+  )) {
     return "thinking";
   }
   if (session.streamingContent.segments.some((segment) => segment.type === "content" && segment.content.length > 0)) {
