@@ -86,11 +86,19 @@ function describeExecutorFailure(result: ExecutorRunResult): string {
   const duration = durationMs > 0 ? `${(durationMs / 60000).toFixed(1)}m` : "unknown duration";
   const toolCallCount = result.toolCalls?.length ?? 0;
 
-  if (result.abortReason === "idle_timeout") {
+  if (result.abortReason === "idle_timeout" || result.abortReason === "pipeline_timeout" || result.abortReason === "zombie_timeout" || result.abortReason === "run_time_limit") {
+    const guardLabel = result.abortReason === "run_time_limit"
+      ? "execution hard-cap watchdog"
+      : result.abortReason === "pipeline_timeout"
+        ? "skill inactivity watchdog"
+        : result.abortReason === "zombie_timeout"
+          ? "executor zombie watchdog"
+          : "idle-timeout watchdog";
     return [
-      "Skill run stopped by idle-timeout watchdog.",
+      `Skill run stopped by ${guardLabel}.`,
       "This was not user-cancelled.",
-      `Reason: no executor stream/tool activity was observed before the idle timeout (${duration}).`,
+      `Canonical reason: ${result.abortReason}.`,
+      `Duration: ${duration}.`,
       `Work before stop: ${toolCallCount} tool call${toolCallCount === 1 ? "" : "s"}.`,
       "Recovery: the plan executor may retry this step automatically. If it does not, resume the plan step.",
     ].join("\n\n");
@@ -1204,9 +1212,7 @@ async function runSkillPipeline(
 
     if (result.status === "failed") {
       const abortSummary = formatAbortDetails(result.abortDetails);
-      const errorMsg = abortSummary || [result.error, result.abortReason, result.terminationReason]
-        .filter((v): v is string => typeof v === "string" && v.length > 0)
-        .join(": ") || "Unknown error";
+      const errorMsg = abortSummary || result.abortReason || result.error || result.terminationReason || "Unknown error";
       await persistExecutorResult(sessionId, result, describeExecutorFailure(result), true).catch((e: unknown) => {
         logger.error(`[SkillChat] [${sessionId}] Failed to persist error result: ${e instanceof Error ? e.message : String(e)}`);
       });

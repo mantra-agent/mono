@@ -364,7 +364,8 @@ Four interacting layers: intention stack (what), timer scheduler (when), skill r
 
 ### Admission Controller
 - **4 tiers:** communication (highest, always granted), realtime, request, background (lowest)
-- **Partitioned budget:** `RUN_ADMISSION_FOREGROUND_BUDGET` defaults to 7 and caps communication/realtime/request work; `RUN_ADMISSION_BACKGROUND_BUDGET` defaults to 3 and caps background work. Total concurrency is their sum, default 10.
+- **Shared budget:** `RUN_ADMISSION_CONCURRENCY_BUDGET` defaults to 20. Realtime work may consume every unused shared slot; `RUN_ADMISSION_REQUEST_BUDGET` defaults to 14 and caps ordinary request work; `RUN_ADMISSION_BACKGROUND_BUDGET` defaults to 6 and caps background work. Communication remains always granted and requests lower-tier yields when total occupancy overflows.
+- **Admission-scoped liveness:** executor runs are registered as queued, then become watchdog-active only after admission. Idle and hard-cap clocks start at admission, and the executor's canonical abort signal owns both queue cancellation and in-flight execution.
 - **Inherited work:** user-originated plan and workflow children run at foreground realtime priority and share the root session lineage; runs in one lineage never preempt one another.
 - **Blocking children:** a parent executor suspends its slot while a blocking plan execute/resume tool owns execution, then reacquires before continuing.
 - **Yield contract:** a genuine yield is terminal for that child attempt. Persist the failed session/spawn/block state so the plan or workflow monitor can retry or pause; never leave a yielded session streaming.
