@@ -6,6 +6,7 @@ import {
   segmentsFromSavedMessage,
   emailDraftIdsFromSegments,
   referenceIdsFromSegments,
+  isPlanWidgetToolCall,
   InlinePlanWidget,
   type ChatMessage as Message,
   type ChildSessionBlockMeta,
@@ -328,14 +329,7 @@ export function MessageList({
       const { fromToolResults } = referenceIdsFromSegments(
         segments,
         "plan",
-        (tool) => {
-          const action = typeof tool.arguments?.action === "string"
-            ? tool.arguments.action
-            : null;
-          return tool.toolName === "plan" &&
-            (action === "create" || action === "associate_session" ||
-             action === "execute" || action === "resume");
-        },
+        isPlanWidgetToolCall,
       );
       for (const id of fromToolResults) toolMatchedPlanIds.add(id);
     }
