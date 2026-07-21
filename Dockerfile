@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # ── Stage 1: Build ──────────────────────────────────────────────────────────
-FROM node:20-trixie-slim AS builder
+FROM node:22-trixie-slim AS builder
 
 WORKDIR /app
 
@@ -21,7 +21,8 @@ COPY package.json package-lock.json ./
 
 # Install all deps (including dev for build tools). Cache mount removed —
 # see note on the apt RUN above.
-RUN npm ci --legacy-peer-deps
+RUN npm ci --legacy-peer-deps \
+    && sha256sum package-lock.json | cut -d ' ' -f1 > node_modules/.xyz-hydrated-lock-hash
 
 # Install mobile app dependencies so runtime EAS commands can resolve Expo config
 # plugins from /app/mobile. Root npm ci does not install this nested package.
@@ -49,7 +50,7 @@ RUN rm -rf dist/tests
 # implement skill sessions — pruning and reinstalling per-session is wasteful.
 
 # ── Stage 2: Runtime ────────────────────────────────────────────────────────
-FROM node:20-trixie-slim
+FROM node:22-trixie-slim
 
 WORKDIR /app
 

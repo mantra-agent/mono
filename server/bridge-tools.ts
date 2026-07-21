@@ -1,5 +1,5 @@
-import { readFile, writeFile, readdir, stat, mkdir } from "fs/promises";
-import { join, resolve, relative, basename } from "path";
+import { readFile, writeFile, readdir, stat, mkdir, realpath } from "fs/promises";
+import { join, resolve, relative, basename, dirname } from "path";
 import type { SQL } from "drizzle-orm";
 import { recordToolCallStart, recordToolCallEnd } from "./file-storage";
 import { MIME_MAP, TEXT_ARTIFACT_MIME_MAP } from "./lib/mime";
@@ -6257,90 +6257,38 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       return candidates;
     }
 
-    async function runNpm(commandArgs: string[], cwd: string): Promise<string> {
-      const { stdout, stderr } = await execFileAsync("npm", commandArgs, {
-        cwd,
-        timeout: 120000,
-        maxBuffer: 1024 * 1024 * 20,
-        encoding: "utf-8",
-        env: { ...process.env, NODE_ENV: "development" },
-      });
-      return [stdout, stderr].filter(Boolean).join("\n").trim();
-    }
-
-    async function withDirectoryLock<T>(lockDir: string, actionName: string, fn: () => Promise<T>): Promise<T> {
-      const startedAt = Date.now();
-      const timeoutMs = 120000;
-
-      while (true) {
-        try {
-          await mkdirAsync(lockDir);
-          break;
-        } catch (err: any) {
-          if (err?.code !== "EEXIST") throw err;
-          if (Date.now() - startedAt > timeoutMs) {
-            throw new Error(`${actionName}: timed out waiting for lock ${lockDir}`);
-          }
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-      }
-
-      try {
-        return await fn();
-      } finally {
-        await rmAsync(lockDir, { recursive: true, force: true });
-      }
-    }
-
     async function ensureWorkspaceDependenciesHydrated(): Promise<string> {
       const packageLockPath = resolve(WORKSPACE_DIR, "package-lock.json");
       const rootNodeModules = resolve(WORKSPACE_DIR, "node_modules");
       const stampPath = resolve(rootNodeModules, ".xyz-hydrated-lock-hash");
-      const lockDir = resolve(WORKSPACE_DIR, ".xyz-deps-hydration.lock");
       const requiredBins = ["tsx", "tsc", "vite"];
 
       const lockfile = await readFileAsync(packageLockPath, "utf-8");
       const lockHash = createHash("sha256").update(lockfile).digest("hex");
 
-      async function hydrationProblem(): Promise<string | null> {
-        if (!await dirExists(rootNodeModules)) return "node_modules missing";
-
-        let stampedHash = "";
-        try {
-          stampedHash = (await readFileAsync(stampPath, "utf-8")).trim();
-        } catch {
-          return "hydration stamp missing";
-        }
-
-        if (stampedHash !== lockHash) return "package-lock hash changed";
-
-        for (const bin of requiredBins) {
-          const binPath = resolve(rootNodeModules, ".bin", bin);
-          if (!await executableExists(binPath)) return `required binary missing: ${bin}`;
-        }
-
-        return null;
+      if (!await dirExists(rootNodeModules)) {
+        throw new Error("workspace dependency image contract failed: node_modules missing");
       }
 
-      const initialProblem = await hydrationProblem();
-      if (!initialProblem) return "workspace dependencies already hydrated";
+      let stampedHash = "";
+      try {
+        stampedHash = (await readFileAsync(stampPath, "utf-8")).trim();
+      } catch {
+        throw new Error("workspace dependency image contract failed: hydration stamp missing");
+      }
 
-      return await withDirectoryLock(lockDir, "workspace dependency hydration", async () => {
-        const problemAfterLock = await hydrationProblem();
-        if (!problemAfterLock) return "workspace dependencies already hydrated by another session";
+      if (stampedHash !== lockHash) {
+        throw new Error("workspace dependency image contract failed: package-lock hash differs from the built dependency tree");
+      }
 
-        toolExec.log(`post-clone: hydrating workspace dependencies (${problemAfterLock})`);
-        const installOutput = await runNpm(["ci", "--include=dev", "--legacy-peer-deps", "--no-audit", "--no-fund"], WORKSPACE_DIR);
-        await writeFileAsync(stampPath, `${lockHash}\n`, "utf-8");
-
-        const remainingProblem = await hydrationProblem();
-        if (remainingProblem) {
-          throw new Error(`workspace dependency hydration incomplete after npm ci: ${remainingProblem}`);
+      for (const bin of requiredBins) {
+        const binPath = resolve(rootNodeModules, ".bin", bin);
+        if (!await executableExists(binPath)) {
+          throw new Error(`workspace dependency image contract failed: required binary missing: ${bin}`);
         }
+      }
 
-        const summary = installOutput.split("\n").filter(Boolean).slice(-3).join("; ");
-        return summary ? `workspace dependencies hydrated (${summary})` : "workspace dependencies hydrated";
-      });
+      return "workspace dependencies verified from immutable runtime image";
     }
 
     async function ensureCloneUsesSharedNodeModules(targetDir: string, dirName: string): Promise<string> {
@@ -11323,6 +11271,32 @@ export async function executeBridgeTool(
   return { result: result.result, error: result.error, data: result.data };
 }
 
+async function resolveScratchWritePath(filePath: string, sessionId: unknown): Promise<string | null> {
+  const resolved = resolveWorkspacePath(filePath);
+  if (!resolved) return null;
+
+  const normalized = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
+  const repositoryDirectory = normalized.match(/^repos\/([^/]+)(?:\/|$)/)?.[1];
+  if (!repositoryDirectory) return resolved;
+  if (typeof sessionId !== "string" || !repositoryDirectory.endsWith(`-${sessionId.slice(0, 8)}`)) return null;
+
+  const repositoryRoot = await realpath(resolve(WORKSPACE_DIR, "repos", repositoryDirectory));
+  const boundary = `${repositoryRoot}/`;
+  let existingAncestor = resolved;
+  while (existingAncestor !== repositoryRoot) {
+    try {
+      const canonicalAncestor = await realpath(existingAncestor);
+      return canonicalAncestor === repositoryRoot || canonicalAncestor.startsWith(boundary) ? resolved : null;
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") return null;
+      const parent = dirname(existingAncestor);
+      if (parent === existingAncestor) return null;
+      existingAncestor = parent;
+    }
+  }
+  return resolved;
+}
+
 const workspaceTools: Record<string, ToolHandler> = {
   async read_scratch(args) {
     const filePath = args.path;
@@ -11360,11 +11334,11 @@ const workspaceTools: Record<string, ToolHandler> = {
     const content = args.content;
     if (content === undefined || content === null) return { result: "Missing file content", error: true };
 
-    const resolved = resolveWorkspacePath(filePath);
-    if (!resolved) return { result: `Path escapes workspace: ${filePath}`, error: true };
+    const resolved = await resolveScratchWritePath(filePath, args._sessionId);
+    if (!resolved) return { result: `Write path is outside the current session-owned workspace: ${filePath}`, error: true };
 
     try {
-      const dir = join(resolved, "..");
+      const dir = dirname(resolved);
       await mkdir(dir, { recursive: true });
       await writeFile(resolved, content, "utf-8");
       return { result: `File written: ${filePath} (${content.length} bytes)` };
@@ -11382,8 +11356,8 @@ const workspaceTools: Record<string, ToolHandler> = {
     if (oldString === undefined) return { result: "Missing old_string", error: true };
     if (newString === undefined) return { result: "Missing new_string", error: true };
 
-    const resolved = resolveWorkspacePath(filePath);
-    if (!resolved) return { result: `Path escapes workspace: ${filePath}`, error: true };
+    const resolved = await resolveScratchWritePath(filePath, args._sessionId);
+    if (!resolved) return { result: `Edit path is outside the current session-owned workspace: ${filePath}`, error: true };
     if (!await pathExists(resolved)) return { result: `File not found: ${filePath}`, error: true };
 
     try {

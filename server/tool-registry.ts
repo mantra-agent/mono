@@ -45,7 +45,7 @@ export interface ToolMeta {
 
 export const TOOLS: Record<string, ToolMeta> = {
   scratch: {
-    description: "Manage temporary workspace files (NOT available in production). Use `files` for persistent storage.",
+    description: "Read and author workspace files, including code inside the current session-owned repos/ clone. Use write/edit for code changes; shell is intentionally read-only. Repository writes require trusted engineering provenance and build:write. Use `files` for persistent user-facing storage.",
     category: "file",
     parameters: {
       type: "object",
