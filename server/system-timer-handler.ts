@@ -2,6 +2,9 @@
 import type { Timer, TimerRun } from "@shared/models/timers";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
+import { createNamedSystemPrincipal, createUserPrincipalFromUser } from "./principal";
+import { runWithPrincipal } from "./principal-context";
+import { storage } from "./storage";
 import type { TimerHandler, TimerHandlerResult } from "./timer-handlers";
 
 const log = createLogger("SystemTimerHandler");
@@ -130,6 +133,7 @@ const SYSTEM_COMMAND_HANDLERS: Record<string, SystemCommandHandler> = {
   "meeting-watchdog": async (_timer, _run) => {
     log.debug(`Executing meeting-watchdog system command`);
     const { listAllEvents } = await import("./google-calendar");
+    const { getVisibleConnectedAccount } = await import("./connected-accounts");
     const {
       setMetadata,
       getLinkedPeople,
@@ -140,10 +144,13 @@ const SYSTEM_COMMAND_HANDLERS: Record<string, SystemCommandHandler> = {
     const now = new Date();
     const lookback = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-    const { events, errors } = await listAllEvents({
-      timeMin: lookback.toISOString(),
-      timeMax: now.toISOString(),
-    });
+    const { events, errors } = await runWithPrincipal(
+      createNamedSystemPrincipal("timer:meeting-watchdog-scan"),
+      () => listAllEvents({
+        timeMin: lookback.toISOString(),
+        timeMax: now.toISOString(),
+      }),
+    );
 
     if (errors.length > 0) {
       log.warn(
@@ -172,37 +179,60 @@ const SYSTEM_COMMAND_HANDLERS: Record<string, SystemCommandHandler> = {
 
     for (const ev of endedWithAttendees) {
       try {
-        const attendeeEmails = (ev.attendees || [])
-          .filter((a) => !a.self && a.email)
-          .map((a) => a.email);
+        await runWithPrincipal(
+          createNamedSystemPrincipal("timer:meeting-watchdog-scan"),
+          async () => {
+            const connectedAccount = await getVisibleConnectedAccount(ev.accountId);
+            if (!connectedAccount?.ownerUserId || !connectedAccount.principalAccountId) {
+              throw new Error(`Connected account ${ev.accountId} owner context is incomplete`);
+            }
+            const user = await storage.getUser(connectedAccount.ownerUserId);
+            if (!user) throw new Error(`Connected account owner ${connectedAccount.ownerUserId} not found`);
+            const ownerPrincipal = createUserPrincipalFromUser(user, connectedAccount.principalAccountId);
+            if (connectedAccount.vaultId) {
+              ownerPrincipal.visibleVaultIds = [connectedAccount.vaultId];
+              ownerPrincipal.activeVaultId = connectedAccount.vaultId;
+            }
+            ownerPrincipal.impersonation = {
+              impersonatedByActorType: "system",
+              reason: "timer:meeting-watchdog owner event processing",
+            };
 
-        const eventType = classifyEventByTitle(ev.summary) || "meeting";
-        const eventDate = (ev.start?.dateTime || ev.start?.date || "").slice(
-          0,
-          10,
+            await runWithPrincipal(ownerPrincipal, async () => {
+              const attendeeEmails = (ev.attendees || [])
+                .filter((a) => !a.self && a.email)
+                .map((a) => a.email);
+
+              const eventType = classifyEventByTitle(ev.summary) || "meeting";
+              const eventDate = (ev.start?.dateTime || ev.start?.date || "").slice(
+                0,
+                10,
+              );
+
+              // Upsert metadata + auto-link people via attendee emails
+              const meta = await setMetadata(
+                ev.id,
+                ev.accountId,
+                ev.calendarId,
+                eventType,
+                undefined,
+                attendeeEmails,
+              );
+              metadataCreated++;
+
+              // Get linked people (may include previously linked ones)
+              const people = await getLinkedPeople(meta.id);
+              if (people.length > 0) {
+                const results = await autoLogMeetingInteractions(
+                  people,
+                  ev.summary || "Meeting",
+                  eventDate,
+                );
+                interactionsLogged += results.filter((r) => r.logged).length;
+              }
+            });
+          },
         );
-
-        // Upsert metadata + auto-link people via attendee emails
-        const meta = await setMetadata(
-          ev.id,
-          ev.accountId,
-          ev.calendarId,
-          eventType,
-          undefined,
-          attendeeEmails,
-        );
-        metadataCreated++;
-
-        // Get linked people (may include previously linked ones)
-        const people = await getLinkedPeople(meta.id);
-        if (people.length > 0) {
-          const results = await autoLogMeetingInteractions(
-            people,
-            ev.summary || "Meeting",
-            eventDate,
-          );
-          interactionsLogged += results.filter((r) => r.logged).length;
-        }
       } catch (err: any) {
         log.warn(
           `meeting-watchdog: failed processing event "${ev.summary}" (${ev.id}): ${err.message}`,

@@ -49,6 +49,15 @@ export const VAULT_CROSS_ACCESS_ALLOWLIST = new Set<string>([
   // Autonomous skill runner — fallback when no users exist yet or
   // user resolution fails during background autonomous execution
   "autonomous-skill-runner",
+
+  // Meeting transports — unauthenticated Recall webhook/audio ingress must resolve
+  // the session (botId/sessionId → owner) before any owner principal exists.
+  // Identity bridge only; owner-scoped work re-runs under runWithMeetingOwnerPrincipal.
+  "recall-webhook",
+
+  // Meeting watchdog discovery — finds Google accounts with calendar access across
+  // owners, then every event/metadata mutation runs under that owner principal.
+  "timer:meeting-watchdog-scan",
 ]);
 
 // Throttle anonymous-system warnings to avoid log spam from hot paths

@@ -3,6 +3,8 @@ import type { Socket } from "net";
 import { WebSocketServer, WebSocket } from "ws";
 import crypto from "crypto";
 import { createLogger } from "../log";
+import { createNamedSystemPrincipal } from "../principal";
+import { runWithPrincipal } from "../principal-context";
 import { chatStorage } from "../integrations/chat/storage";
 import {
   DeepgramDiarizingSTTProvider,
@@ -288,7 +290,9 @@ export function registerMeetingSTTAudioTransport(
     const loadMeeting = async (sessionId: string): Promise<MeetingSessionMeta> => {
       const cached = meetings.get(sessionId);
       if (cached) return cached;
-      const session = await chatStorage.getSession(sessionId);
+      const session = await runWithPrincipal(createNamedSystemPrincipal("recall-webhook"), () =>
+        chatStorage.getSession(sessionId),
+      );
       if (!session?.meeting) throw new Error(`Meeting session ${sessionId} not found`);
       meetings.set(sessionId, session.meeting);
       return session.meeting;
