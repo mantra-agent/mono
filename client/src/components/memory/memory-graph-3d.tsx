@@ -373,9 +373,9 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const linkBrightness = new Float32Array(renderedLinks.length);
     const nodeLinkVisibility = new Float32Array(sceneNodes.length);
     const linkGeometry = new LineSegmentsGeometry();
-    const baseLinkColor = signalColor.clone().multiplyScalar(0.65);
+    const baseLinkColor = signalColor.clone().multiplyScalar(0.5);
     renderedLinks.forEach((link, linkIndex) => {
-      const brightness = (0.15 + Math.pow(Math.max(0, link.strength), 1.6) * 0.85) * 0.25;
+      const brightness = (0.15 + Math.pow(Math.max(0, link.strength), 1.6) * 0.85) * 0.18;
       linkBrightness[linkIndex] = brightness;
       for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
         const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
@@ -392,7 +392,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const linkMaterial = new LineMaterial({
       vertexColors: true,
       transparent: true,
-      opacity: 0.62,
+      opacity: 0.45,
       linewidth: 1,
       depthWrite: false,
       resolution: new THREE.Vector2(host.clientWidth, host.clientHeight),
@@ -722,7 +722,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       .iterations(1);
     const simulation: Simulation<SceneNode> = forceSimulation(sceneNodes, 3)
       .force("charge", forceManyBody<SceneNode>()
-        .strength((node) => -(60 + Math.sqrt(node.degree) * 4))
+        .strength((node) => -(30 + Math.sqrt(node.degree) * 2))
         .theta(0.76)
         .distanceMin(2)
         .distanceMax(520))
