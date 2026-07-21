@@ -543,8 +543,8 @@ export async function registerLibraryRoutes(app: Express) {
         .object({
           source: library2SourceSchema,
           vaultId: z.string().min(1),
-          sectionPageId: z.string().min(1),
-          importKey: z.string().min(8).max(500),
+          destinationId: z.string().min(1).max(500),
+          importKey: z.string().min(8).max(1_000),
         })
         .parse(req.body ?? {});
       const result = await createLibrary2Placements(

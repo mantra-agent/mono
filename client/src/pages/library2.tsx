@@ -47,24 +47,30 @@ import { LibraryPageEditor } from "@/pages/library/library-components";
 import type { LibraryPage, LibraryPageFull } from "@/pages/library/types";
 import type { Vault } from "@/hooks/use-vaults";
 
-interface Library2Section {
+interface Library2IndexDestination {
   id: string;
   title: string;
-  slug: string;
-  emoji: string | null;
+  path: string;
+  depth: number;
   sortOrder: number;
   category: "Entities" | "Concepts" | "Synthesis";
+  pageId: string | null;
+  pageTitle: string | null;
+  pageSlug: string | null;
+  pageEmoji: string | null;
+  kind: "section" | "wiki";
 }
 
-interface Library2Destination {
+interface Library2VaultDestination {
   vault: Vault;
-  sections: Library2Section[];
+  destinations: Library2IndexDestination[];
 }
 
 interface Library2Placement {
   placementId: string;
   vaultId: string;
-  sectionPageId: string | null;
+  destinationPageId: string | null;
+  indexPath: string | null;
   indexSection: "Entities" | "Concepts" | "Synthesis";
   createdAt: string;
   page: LibraryPage;
@@ -77,10 +83,10 @@ type ImportSource =
 function importKey(
   source: ImportSource,
   vaultId: string,
-  sectionPageId: string,
+  destinationId: string,
 ) {
   const sourceId = "pageId" in source ? source.pageId : source.vaultId;
-  return `library2:${source.type}:${sourceId}:${vaultId}:${sectionPageId}`;
+  return `library2:${source.type}:${sourceId}:${vaultId}:${destinationId}`;
 }
 
 function ImportDialog({
@@ -94,7 +100,7 @@ function ImportDialog({
   const { data: pages = [] } = useQuery<LibraryPage[]>({
     queryKey: ["/api/info/library"],
   });
-  const { data: destinations = [] } = useQuery<Library2Destination[]>({
+  const { data: destinations = [] } = useQuery<Library2VaultDestination[]>({
     queryKey: ["/api/library2/destinations"],
   });
   const [sourceType, setSourceType] = useState<"page" | "section" | "vault">(
@@ -102,7 +108,7 @@ function ImportDialog({
   );
   const [sourceId, setSourceId] = useState("");
   const [vaultId, setVaultId] = useState("");
-  const [sectionPageId, setSectionPageId] = useState("");
+  const [destinationId, setDestinationId] = useState("");
 
   const source = useMemo<ImportSource | null>(() => {
     if (!sourceId) return null;
@@ -139,7 +145,7 @@ function ImportDialog({
   useEffect(() => {
     setSourceId("");
     setVaultId("");
-    setSectionPageId("");
+    setDestinationId("");
   }, [sourceType, open]);
 
   const suggestMutation = useMutation({
@@ -149,23 +155,23 @@ function ImportDialog({
       });
       return response.json() as Promise<{
         vaultId: string;
-        sectionPageId: string | null;
+        destinationId: string | null;
       }>;
     },
     onSuccess: (suggestion) => {
-      if (!suggestion.sectionPageId) return;
+      if (!suggestion.destinationId) return;
       const destination = destinations.find(
         (candidate) => candidate.vault.id === suggestion.vaultId,
       );
       if (
-        !destination?.sections.some(
-          (section) => section.id === suggestion.sectionPageId,
+        !destination?.destinations.some(
+          (candidate) => candidate.id === suggestion.destinationId,
         )
       ) {
         return;
       }
       setVaultId(suggestion.vaultId);
-      setSectionPageId(suggestion.sectionPageId);
+      setDestinationId(suggestion.destinationId);
     },
     onError: (error) =>
       toast({
@@ -186,8 +192,8 @@ function ImportDialog({
       const response = await apiRequest("POST", "/api/library2/placements", {
         source,
         vaultId,
-        sectionPageId,
-        importKey: importKey(source, vaultId, sectionPageId),
+        destinationId,
+        importKey: importKey(source, vaultId, destinationId),
       });
       return response.json() as Promise<{
         sourceCount: number;
@@ -252,7 +258,7 @@ function ImportDialog({
             value={vaultId}
             onValueChange={(value) => {
               setVaultId(value);
-              setSectionPageId("");
+              setDestinationId("");
             }}
           >
             <SelectTrigger data-testid="select-library2-vault">
@@ -270,17 +276,17 @@ function ImportDialog({
             </SelectContent>
           </Select>
           <Select
-            value={sectionPageId}
-            onValueChange={setSectionPageId}
+            value={destinationId}
+            onValueChange={setDestinationId}
             disabled={!vaultId}
           >
             <SelectTrigger data-testid="select-library2-section">
               <SelectValue placeholder="Index section" />
             </SelectTrigger>
             <SelectContent>
-              {selectedDestination?.sections.map((section) => (
-                <SelectItem key={section.id} value={section.id}>
-                  {section.category} / {section.title}
+              {selectedDestination?.destinations.map((destination) => (
+                <SelectItem key={destination.id} value={destination.id}>
+                  {destination.path}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -300,7 +306,7 @@ function ImportDialog({
             disabled={
               !source ||
               !vaultId ||
-              !sectionPageId ||
+              !destinationId ||
               importMutation.isPending
             }
             onClick={() => importMutation.mutate()}
@@ -359,13 +365,13 @@ export default function Library2Page() {
   const [expandedVaultIds, setExpandedVaultIds] = useState<Set<string>>(
     () => new Set(),
   );
-  const [expandedSectionIds, setExpandedSectionIds] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [expandedDestinationIds, setExpandedDestinationIds] = useState<
+    Set<string>
+  >(() => new Set());
   const { data: placements = [], isLoading } = useQuery<Library2Placement[]>({
     queryKey: ["/api/library2/placements"],
   });
-  const { data: destinations = [] } = useQuery<Library2Destination[]>({
+  const { data: destinations = [] } = useQuery<Library2VaultDestination[]>({
     queryKey: ["/api/library2/destinations"],
   });
   const { data: pages = [] } = useQuery<LibraryPage[]>({
@@ -389,12 +395,14 @@ export default function Library2Page() {
         ? current
         : new Set(destinations.map((destination) => destination.vault.id)),
     );
-    setExpandedSectionIds((current) =>
+    setExpandedDestinationIds((current) =>
       current.size > 0
         ? current
         : new Set(
             destinations.flatMap((destination) =>
-              destination.sections.map((section) => section.id),
+              destination.destinations.map((indexDestination) =>
+                indexDestination.id,
+              ),
             ),
           ),
     );
@@ -427,22 +435,42 @@ export default function Library2Page() {
 
   const searchTerm = search.trim().toLowerCase();
   const grouped = destinations
-    .map((destination) => ({
-      ...destination,
-      sections: destination.sections
-        .map((section) => ({
-          ...section,
-          placements: placements.filter(
-            (placement) =>
-              placement.vaultId === destination.vault.id &&
-              placement.sectionPageId === section.id &&
-              (!searchTerm ||
-                placement.page.title.toLowerCase().includes(searchTerm)),
+    .map((destination) => {
+      return {
+        ...destination,
+        destinations: destination.destinations
+          .map((indexDestination) => ({
+            ...indexDestination,
+            placements: placements.filter((placement) => {
+              if (
+                placement.vaultId !== destination.vault.id ||
+                (searchTerm &&
+                  !placement.page.title.toLowerCase().includes(searchTerm))
+              ) {
+                return false;
+              }
+              if (placement.indexPath) {
+                return placement.indexPath === indexDestination.path;
+              }
+              if (placement.destinationPageId) {
+                return (
+                  indexDestination.pageId === placement.destinationPageId
+                );
+              }
+              return (
+                indexDestination.kind === "section" &&
+                indexDestination.title.toLowerCase() ===
+                  placement.indexSection.toLowerCase()
+              );
+            }),
+          }))
+          .filter(
+            (indexDestination) =>
+              !searchTerm || indexDestination.placements.length > 0,
           ),
-        }))
-        .filter((section) => section.placements.length > 0),
-    }))
-    .filter((destination) => destination.sections.length > 0);
+      };
+    })
+    .filter((destination) => destination.destinations.length > 0);
 
   const toggleInSet = (
     setter: Dispatch<SetStateAction<Set<string>>>,
@@ -520,47 +548,63 @@ export default function Library2Page() {
                       <span className="truncate">{destination.vault.name}</span>
                     </button>
                     {vaultExpanded &&
-                      destination.sections.map((section) => {
-                        const sectionExpanded = expandedSectionIds.has(
-                          section.id,
-                        );
+                      destination.destinations.map((indexDestination) => {
+                        const destinationExpanded =
+                          expandedDestinationIds.has(indexDestination.id);
+                        const indent = 16 + indexDestination.depth * 16;
                         return (
-                          <div key={section.id} className="min-w-0">
+                          <div key={indexDestination.id} className="min-w-0">
                             <button
                               type="button"
                               onClick={() =>
-                                toggleInSet(setExpandedSectionIds, section.id)
+                                toggleInSet(
+                                  setExpandedDestinationIds,
+                                  indexDestination.id,
+                                )
                               }
-                              className="ml-4 flex w-[calc(100%-1rem)] min-w-0 items-center gap-1 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+                              className="flex min-w-0 items-center gap-1 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+                              style={{
+                                marginLeft: indent,
+                                width: `calc(100% - ${indent}px)`,
+                              }}
                             >
-                              {sectionExpanded ? (
+                              {destinationExpanded ? (
                                 <ChevronDown className="h-3.5 w-3.5 shrink-0" />
                               ) : (
                                 <ChevronRight className="h-3.5 w-3.5 shrink-0" />
                               )}
-                              <span className="truncate">{section.title}</span>
+                              <span className="truncate">
+                                {indexDestination.title}
+                              </span>
                             </button>
-                            {sectionExpanded &&
-                              section.placements.map((placement) => (
-                                <button
-                                  key={placement.placementId}
-                                  type="button"
-                                  onClick={() =>
-                                    setSelectedPlacementId(
-                                      placement.placementId,
-                                    )
-                                  }
-                                  className={cn(
-                                    "ml-10 flex w-[calc(100%-2.5rem)] min-w-0 items-center rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-accent/70",
-                                    selectedPlacementId ===
-                                      placement.placementId && "bg-accent",
-                                  )}
-                                >
-                                  <span className="truncate">
-                                    {placement.page.title || "Untitled"}
-                                  </span>
-                                </button>
-                              ))}
+                            {destinationExpanded &&
+                              indexDestination.placements.map((placement) => {
+                                const pageIndent = indent + 24;
+                                return (
+                                  <button
+                                    key={placement.placementId}
+                                    type="button"
+                                    onClick={() =>
+                                      setSelectedPlacementId(
+                                        placement.placementId,
+                                      )
+                                    }
+                                    className={cn(
+                                      "flex min-w-0 items-center rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-accent/70",
+                                      selectedPlacementId ===
+                                        placement.placementId && "bg-accent",
+                                    )}
+                                    style={{
+                                      marginLeft: pageIndent,
+                                      width: `calc(100% - ${pageIndent}px)`,
+                                    }}
+                                  >
+                                    <span className="truncate">
+                                      {placement.page.title || "Untitled"}
+                                    </span>
+                                  </button>
+                                );
+                              })}
                           </div>
                         );
                       })}

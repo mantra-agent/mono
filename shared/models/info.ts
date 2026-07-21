@@ -224,6 +224,7 @@ export const libraryPlacements = pgTable(
       .references(() => libraryPages.id, { onDelete: "cascade" }),
     vaultId: text("vault_id").notNull(),
     indexSection: text("index_section").notNull().default("Concepts"),
+    indexPath: text("index_path"),
     parentPageId: text("parent_page_id").references(
       (): AnyPgColumn => libraryPages.id,
       { onDelete: "set null" },
@@ -254,6 +255,10 @@ export const libraryPlacements = pgTable(
       table.vaultId,
       table.indexSection,
     ),
+    index("idx_library_placements_vault_path").on(
+      table.vaultId,
+      table.indexPath,
+    ),
     index("idx_library_placements_scope_owner").on(
       table.scope,
       table.ownerUserId,
@@ -269,6 +274,7 @@ export const insertLibraryPlacementSchema = createInsertSchema(libraryPlacements
   })
   .extend({
     indexSection: z.enum(LIBRARY_PLACEMENT_INDEX_SECTIONS).default("Concepts"),
+    indexPath: z.string().nullable().optional(),
     parentPageId: z.string().nullable().optional(),
     placedBy: z.enum(LIBRARY_PLACEMENT_SOURCES).default("manual"),
     confidence: z.number().nullable().optional(),

@@ -3275,6 +3275,9 @@ export async function runSchemaBootstrap(
       )
     `);
     await pool.query(
+      `ALTER TABLE library_placements ADD COLUMN IF NOT EXISTS index_path TEXT`,
+    );
+    await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_library_placements_page ON library_placements (page_id)`,
     );
     await pool.query(
@@ -3285,6 +3288,9 @@ export async function runSchemaBootstrap(
     );
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_library_placements_vault_section ON library_placements (vault_id, index_section)`,
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_library_placements_vault_path ON library_placements (vault_id, index_path)`,
     );
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_library_placements_scope_owner ON library_placements (scope, owner_user_id)`,

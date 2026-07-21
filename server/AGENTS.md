@@ -12,7 +12,7 @@ GitNexus has one runtime authority: `gitnexus-runtime.ts`. Development may resol
 
 ## Library2 placement boundary
 
-`library_placements` is the single persisted join for the Library2 organizational lens. `library_pages` remains the authoritative page/content store. Every placement read and write goes through `server/library-placement-store.ts`; Library2 orchestration may resolve bounded import sets and canonical Index destinations, but it must not create a second placement table or mutate page content/parents. Destination vaults must be live and owned by the principal account, destination parents must be canonical Index-listed Wiki pages, bulk upserts must be atomic and replay-safe, and removal deletes only the owned placement row.
+`library_placements` is the single persisted join for the Library2 organizational lens. `library_pages` remains the authoritative page/content store. Every placement read and write goes through `server/library-placement-store.ts`; Library2 orchestration may resolve bounded import sets and canonical Index destinations, but it must not create a second placement table or mutate page content/parents. Destination vaults must be live and owned by the principal account. Destinations come from canonical Index headings or Index-listed Wiki pages, with the selected Index path persisted on the placement. Bulk upserts must be atomic and replay-safe, and removal deletes only the owned placement row.
 
 # Server Architecture
 
