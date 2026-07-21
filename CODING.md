@@ -61,6 +61,7 @@ The no-test policy below remains unchanged. Approved read-only scanners, depende
 - Never guess repository URLs. Use the authenticated workspace remote or an explicit URL from Ray; repo access is credential-bound.
 - Shell git is allowed only for read-only inspection: status, log, diff, show, branch list, remote, rev-parse
 - Git MCP is the exclusive credentialed path for clone, branch/checkout writes, add, commit, push, PR, merge, and branch deletion
+- **Interactive-session credential verification (2026-07-21):** Git MCP authenticated the stage-bound `mantra-agent/mono` path through clone, branch creation, commit, push, PR creation, and merge to `main`; the merged history of this line is the durable verification artifact.
 
 ## Coding Task Gate
 
