@@ -135,33 +135,62 @@ async function requireCanonicalSection(vaultId: string, sectionPageId: string, p
   return { ...fallback, category: "Index" };
 }
 
-async function resolveSourcePages(source: Library2ImportSource, principal: Principal): Promise<Array<typeof libraryPages.$inferSelect>> {
-  const pages = await db.select().from(libraryPages).where(visiblePages(principal));
+const LIBRARY2_IMPORT_PAGE_LIMIT = 5_000;
+const LIBRARY2_TRAVERSAL_BATCH_SIZE = 200;
+
+async function readVisiblePage(pageId: string, principal: Principal) {
+  const [page] = await db
+    .select()
+    .from(libraryPages)
+    .where(visiblePages(principal, eq(libraryPages.id, pageId)))
+    .limit(1);
+  return page;
+}
+
+async function resolveSectionPages(sectionPageId: string, principal: Principal, limit: number) {
+  const root = await readVisiblePage(sectionPageId, principal);
+  if (!root) throw Object.assign(new Error("Library section not found"), { status: 404 });
+
+  const pages = [root];
+  let frontier = [root.id];
+  while (frontier.length > 0 && pages.length <= limit) {
+    const nextFrontier: string[] = [];
+    for (let offset = 0; offset < frontier.length; offset += LIBRARY2_TRAVERSAL_BATCH_SIZE) {
+      const parentIds = frontier.slice(offset, offset + LIBRARY2_TRAVERSAL_BATCH_SIZE);
+      const remaining = limit + 1 - pages.length;
+      if (remaining <= 0) break;
+      const children = await db
+        .select()
+        .from(libraryPages)
+        .where(visiblePages(principal, inArray(libraryPages.parentId, parentIds)))
+        .orderBy(asc(libraryPages.sortOrder), asc(libraryPages.title))
+        .limit(remaining);
+      pages.push(...children);
+      nextFrontier.push(...children.map((page) => page.id));
+      if (pages.length > limit) break;
+    }
+    frontier = nextFrontier;
+  }
+  return pages;
+}
+
+async function resolveSourcePages(source: Library2ImportSource, principal: Principal, limit = LIBRARY2_IMPORT_PAGE_LIMIT): Promise<Array<typeof libraryPages.$inferSelect>> {
   if (source.type === "page") {
-    const page = pages.find((candidate) => candidate.id === source.pageId);
+    const page = await readVisiblePage(source.pageId, principal);
     if (!page) throw Object.assign(new Error("Library page not found"), { status: 404 });
     return [page];
   }
   if (source.type === "vault") {
-    const selected = pages.filter((page) => page.vaultId === source.vaultId);
-    if (selected.length === 0) throw Object.assign(new Error("Source vault has no visible Library pages"), { status: 404 });
-    return selected;
+    const pages = await db
+      .select()
+      .from(libraryPages)
+      .where(visiblePages(principal, eq(libraryPages.vaultId, source.vaultId)))
+      .orderBy(asc(libraryPages.sortOrder), asc(libraryPages.title))
+      .limit(limit + 1);
+    if (pages.length === 0) throw Object.assign(new Error("Source vault has no visible Library pages"), { status: 404 });
+    return pages;
   }
-
-  const root = pages.find((candidate) => candidate.id === source.pageId);
-  if (!root) throw Object.assign(new Error("Library section not found"), { status: 404 });
-  const selectedIds = new Set([root.id]);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const page of pages) {
-      if (page.parentId && selectedIds.has(page.parentId) && !selectedIds.has(page.id)) {
-        selectedIds.add(page.id);
-        changed = true;
-      }
-    }
-  }
-  return pages.filter((page) => selectedIds.has(page.id));
+  return resolveSectionPages(source.pageId, principal, limit);
 }
 
 export async function listLibrary2Destinations(principal: Principal) {
@@ -179,7 +208,7 @@ export async function listLibrary2Destinations(principal: Principal) {
 
 export async function suggestLibrary2Destination(source: Library2ImportSource, principal: Principal) {
   requireUserPrincipal(principal);
-  const pages = await resolveSourcePages(source, principal);
+  const pages = await resolveSourcePages(source, principal, 12);
   const representative = pages[0];
   const suggestion = await placeLibraryPageSemantically({
     title: pages.length === 1 ? representative.title : pages.slice(0, 12).map((page) => page.title).join(", "),
@@ -200,7 +229,7 @@ export async function createLibrary2Placements(input: CreateLibrary2PlacementsIn
   await requireLiveVault(input.vaultId, principal);
   await requireCanonicalSection(input.vaultId, input.sectionPageId, principal);
   const pages = await resolveSourcePages(input.source, principal);
-  if (pages.length > 5_000) throw Object.assign(new Error("Library2 import is limited to 5,000 pages"), { status: 400 });
+  if (pages.length > LIBRARY2_IMPORT_PAGE_LIMIT) throw Object.assign(new Error(`Library2 import is limited to ${LIBRARY2_IMPORT_PAGE_LIMIT.toLocaleString()} pages`), { status: 400 });
 
   const owner = ownedInsertValues(principal, placementInsertScopeColumns);
   if (owner.ownerUserId !== principal.userId || owner.accountId !== principal.accountId) {
