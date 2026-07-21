@@ -7,6 +7,7 @@ import { ObjectPermission } from "./objectAcl";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
 import { getPrincipal } from "../principal";
+import { canReadProjectAttachment } from "../file-storage/project-file-access";
 
 const log = createLogger("ObjectStorage");
 
@@ -102,12 +103,16 @@ export function registerObjectStorageRoutes(app: Express): void {
         req.originalUrl.split("?")[0],
         principal,
       );
-      const allowed = await objectStorageService.canAccessObjectEntity({
+      const allowedByAcl = await objectStorageService.canAccessObjectEntity({
         principal,
         objectFile,
         requestedPermission: ObjectPermission.READ,
       });
-      if (!allowed) {
+      const cleanObjectPath = req.originalUrl.split("?")[0];
+      const allowedByVisibleProject = principal
+        ? await canReadProjectAttachment(principal, cleanObjectPath)
+        : false;
+      if (!allowedByAcl && !allowedByVisibleProject) {
         return res.status(principal ? 403 : 401).json({ error: "Forbidden" });
       }
       const fileName = typeof req.query.name === "string" ? req.query.name : undefined;
