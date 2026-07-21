@@ -9,6 +9,7 @@ import { getInstanceName } from "@/lib/instance-config";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
@@ -99,6 +100,7 @@ import {
   Zap,
   MoreHorizontal,
   SlidersHorizontal,
+  ListFilter,
   Share2,
   GitBranch,
   Users,
@@ -113,7 +115,10 @@ import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
 import { SimpleTextFrame } from "@/components/home/simple-text-frame";
 import { MemoryGraph3D, type MemoryGraph3DHandle, type MemoryGraph3DLink, type MemoryGraph3DNode } from "@/components/memory/memory-graph-3d";
-import { MemorySourceIcon } from "@/components/memory/memory-source-icon";
+import {
+  getAvailableMemoryGraphNodeTypes,
+  MemorySourceIcon,
+} from "@/components/memory/memory-source-icon";
 
 const SOURCE_REF_TYPE_MAP: Record<string, "session" | "page"> = {
   session: "session",
@@ -1424,6 +1429,7 @@ function GraphTab({
   const isMobile = useIsMobile();
   const graphRef = useRef<MemoryGraph3DHandle>(null);
   const [selectedNode, setSelectedNode] = useState<MemoryEntry | null>(null);
+  const [selectedLabelTypes, setSelectedLabelTypes] = useState<Set<string>>(() => new Set(["people"]));
   const [hoveredNodeId, setHoveredNodeId] = useState<number | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
@@ -1471,6 +1477,20 @@ function GraphTab({
     [graph?.links],
   );
 
+  const availableLabelTypes = useMemo(
+    () => getAvailableMemoryGraphNodeTypes(graphNodes.map((node) => node.source)),
+    [graphNodes],
+  );
+
+  const toggleLabelType = useCallback((typeId: string) => {
+    setSelectedLabelTypes((current) => {
+      const next = new Set(current);
+      if (next.has(typeId)) next.delete(typeId);
+      else next.add(typeId);
+      return next;
+    });
+  }, []);
+
   const handleNodeSelect = useCallback((nodeId: number) => {
     const entry = entryMap.get(nodeId);
     if (entry) setSelectedNode(entry);
@@ -1509,6 +1529,7 @@ function GraphTab({
             nodes={graphNodes}
             links={graphLinks}
             selectedNodeId={selectedNode?.id ?? null}
+            selectedLabelTypes={selectedLabelTypes}
             onNodeSelect={handleNodeSelect}
             onNodeHover={handleNodeHover}
           />
@@ -1534,6 +1555,49 @@ function GraphTab({
           })()}
 
           <div className="absolute bottom-3 left-3 z-10 flex flex-col gap-1" data-testid="memory-graph-controls">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Choose persistent graph labels"
+                  title="Choose labels"
+                  data-testid="button-graph-label-filter"
+                  className={selectedLabelTypes.size > 0 ? "border-foreground/30 bg-card/90" : "bg-card/80"}
+                >
+                  <ListFilter className="h-3.5 w-3.5" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                side="right"
+                align="end"
+                sideOffset={8}
+                className="w-48 border-card-border bg-popover p-1.5"
+                data-testid="memory-graph-label-filter"
+              >
+                <div className="space-y-0.5" role="group" aria-label="Persistent graph labels">
+                  {availableLabelTypes.map((type) => {
+                    const selected = selectedLabelTypes.has(type.id);
+                    return (
+                      <label
+                        key={type.id}
+                        className="flex min-h-10 cursor-pointer items-center gap-2 rounded-md px-2 text-sm text-popover-foreground transition-colors hover:bg-accent"
+                        data-testid={`memory-graph-label-option-${type.id}`}
+                      >
+                        <Checkbox
+                          checked={selected}
+                          onCheckedChange={() => toggleLabelType(type.id)}
+                          onClick={(event) => event.stopPropagation()}
+                          aria-label={`Show ${type.label} labels`}
+                        />
+                        <MemorySourceIcon source={type.iconSource} className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span className="flex-1">{type.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </PopoverContent>
+            </Popover>
             <Button variant="outline" size="icon" onClick={() => graphRef.current?.zoomIn()} aria-label="Zoom in" title="Zoom in" data-testid="button-zoom-in">
               <ZoomIn className="h-3.5 w-3.5" />
             </Button>
