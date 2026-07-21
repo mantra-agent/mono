@@ -29,7 +29,6 @@ import {
   type WorkflowStageDefinition,
 } from "@shared/schema";
 import {
-  environmentContextArtifacts,
   environmentHostingBindings,
   environmentSourceBindings,
   platformProductEnvironments,
@@ -328,20 +327,8 @@ async function resolveGoverningArtifacts(environmentId: number | null, stageKey:
   if (!environmentId) return [];
   const relevantKinds = BUILD_STAGE_ARTIFACT_KINDS[stageKey] || [];
   if (relevantKinds.length === 0) return [];
-  const rows = await db
-    .select({
-      kind: environmentContextArtifacts.kind,
-      libraryPageId: environmentContextArtifacts.libraryPageId,
-      title: libraryPages.title,
-    })
-    .from(environmentContextArtifacts)
-    .innerJoin(libraryPages, eq(environmentContextArtifacts.libraryPageId, libraryPages.id))
-    .where(and(
-      eq(environmentContextArtifacts.environmentId, environmentId),
-      inArray(environmentContextArtifacts.kind, relevantKinds),
-      visible({ scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId }),
-    ))
-    .orderBy(environmentContextArtifacts.kind, libraryPages.title);
+  const { listVisibleEnvironmentContextPages } = await import("../platforms/context-artifact-access");
+  const rows = await listVisibleEnvironmentContextPages(relevantKinds, environmentId);
   return rows.map((row) => ({
     kind: row.kind,
     libraryPageId: row.libraryPageId,

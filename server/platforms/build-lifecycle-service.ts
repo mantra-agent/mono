@@ -3,7 +3,8 @@ import { db } from "../db";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { getProviderCredential } from "../provider-credential-store";
 import { getBranchHead } from "../integrations/github-pr";
-import { combineWithVisibleScope, combineWithWritableScope } from "../scoped-storage";
+import { combineWithVisibleScope } from "../scoped-storage";
+import { getVisibleEnvironment, getWritableEnvironment, writablePlatform } from "./platform-access";
 import { getLatestDeploymentByToken } from "../integrations/railway/client";
 import { getCloudflareLatestDeployment } from "../services/provider-connection-service";
 import { getCloudflarePagesProjectTruth } from "./cloudflare-pages-service";
@@ -30,18 +31,9 @@ import {
   type UpsertBuildLifecycleConfig,
 } from "@shared/models/platforms";
 
-const platformScopeColumns = { scope: platforms.scope, ownerUserId: platforms.ownerUserId, accountId: platforms.accountId };
 const providerConnectionScopeColumns = { scope: providerConnections.scope, ownerUserId: providerConnections.ownerUserId, accountId: providerConnections.accountId };
 const workflowRunScopeColumns = { scope: workflowRuns.scope, ownerUserId: workflowRuns.ownerUserId, accountId: workflowRuns.accountId };
 const workflowAttemptScopeColumns = { scope: workflowStageAttempts.scope, ownerUserId: workflowStageAttempts.ownerUserId, accountId: workflowStageAttempts.accountId };
-
-function visiblePlatform(predicate?: SQL): SQL {
-  return combineWithVisibleScope(getCurrentPrincipalOrSystem(), platformScopeColumns, predicate);
-}
-
-function writablePlatform(predicate?: SQL): SQL {
-  return combineWithWritableScope(getCurrentPrincipalOrSystem(), platformScopeColumns, predicate);
-}
 
 function visibleProviderConnection(predicate?: SQL): SQL {
   return combineWithVisibleScope(getCurrentPrincipalOrSystem(), providerConnectionScopeColumns, predicate);
@@ -53,36 +45,6 @@ function visibleWorkflowRun(predicate?: SQL): SQL {
 
 function visibleWorkflowAttempt(predicate?: SQL): SQL {
   return combineWithVisibleScope(getCurrentPrincipalOrSystem(), workflowAttemptScopeColumns, predicate);
-}
-
-async function getVisibleEnvironment(environmentId: number) {
-  const [row] = await db
-    .select({
-      environment: platformProductEnvironments,
-      product: platformProducts,
-      platform: platforms,
-    })
-    .from(platformProductEnvironments)
-    .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
-    .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
-    .where(and(eq(platformProductEnvironments.id, environmentId), visiblePlatform()))
-    .limit(1);
-  return row || null;
-}
-
-async function getWritableEnvironment(environmentId: number) {
-  const [row] = await db
-    .select({
-      environment: platformProductEnvironments,
-      product: platformProducts,
-      platform: platforms,
-    })
-    .from(platformProductEnvironments)
-    .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
-    .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
-    .where(and(eq(platformProductEnvironments.id, environmentId), writablePlatform()))
-    .limit(1);
-  return row || null;
 }
 
 function insertValues(environmentId: number, input: UpsertBuildLifecycleConfig) {

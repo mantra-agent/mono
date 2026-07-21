@@ -1904,36 +1904,18 @@ async function resolveCodeInstructions(): Promise<string> {
 
 This section is always loaded. Use it for code changes, debugging, repo/system diagnosis, builds, PRs, merges, deployments, and implementation planning.`;
 
-  // Strategy 1: Load from environment context artifact (kind = 'coding_process')
+  // Strategy 1: Load only context artifacts visible through both the
+  // parent Platform and the linked Library page. The ContextRequest does not
+  // yet carry a selected environment, so all principal-visible environments
+  // may contribute while other tenants fail closed.
   try {
-    const { db } = await import("./db");
-    const { eq } = await import("drizzle-orm");
-    const { environmentContextArtifacts } = await import("@shared/models/platforms");
-    const { libraryPages } = await import("@shared/models/info");
-
-    // Find all coding_process artifacts across environments
-    const artifactRows = await db
-      .select({
-        libraryPageId: environmentContextArtifacts.libraryPageId,
-        environmentId: environmentContextArtifacts.environmentId,
-      })
-      .from(environmentContextArtifacts)
-      .where(eq(environmentContextArtifacts.kind, "coding_process"));
-
-    if (artifactRows.length > 0) {
-      const { inArray } = await import("drizzle-orm");
-      const pageIds = artifactRows.map(r => r.libraryPageId);
-      const pages = await db
-        .select({ id: libraryPages.id, content: libraryPages.plainTextContent })
-        .from(libraryPages)
-        .where(inArray(libraryPages.id, pageIds));
-
-      const contents = pages.filter(p => p.content).map(p => p.content!.trim());
-      if (contents.length > 0) {
-        return `${header}
+    const { listVisibleEnvironmentContextPages } = await import("./platforms/context-artifact-access");
+    const pages = await listVisibleEnvironmentContextPages(["coding_process"]);
+    const contents = pages.map(page => page.content.trim()).filter(Boolean);
+    if (contents.length > 0) {
+      return `${header}
 
 ${contents.join("\n\n---\n\n")}`;
-      }
     }
   } catch (err) {
     // Fall through to next strategy
@@ -1965,32 +1947,16 @@ async function resolvePlanningInstructions(): Promise<string> {
 
 This section is always loaded. Use it for any complex, multi-turn, or cross-domain task.`;
 
-  // Strategy 1: Load from environment context artifact (kind = 'planning_process')
+  // Strategy 1: Resolve through the same principal-scoped Platform and
+  // Library boundary as coding instructions.
   try {
-    const { db } = await import("./db");
-    const { eq } = await import("drizzle-orm");
-    const { environmentContextArtifacts } = await import("@shared/models/platforms");
-    const { libraryPages } = await import("@shared/models/info");
-
-    const artifactRows = await db
-      .select({ libraryPageId: environmentContextArtifacts.libraryPageId })
-      .from(environmentContextArtifacts)
-      .where(eq(environmentContextArtifacts.kind, "planning_process"));
-
-    if (artifactRows.length > 0) {
-      const { inArray } = await import("drizzle-orm");
-      const pageIds = artifactRows.map(r => r.libraryPageId);
-      const pages = await db
-        .select({ id: libraryPages.id, content: libraryPages.plainTextContent })
-        .from(libraryPages)
-        .where(inArray(libraryPages.id, pageIds));
-
-      const contents = pages.filter(p => p.content).map(p => p.content!.trim());
-      if (contents.length > 0) {
-        return `${header}
+    const { listVisibleEnvironmentContextPages } = await import("./platforms/context-artifact-access");
+    const pages = await listVisibleEnvironmentContextPages(["planning_process"]);
+    const contents = pages.map(page => page.content.trim()).filter(Boolean);
+    if (contents.length > 0) {
+      return `${header}
 
 ${contents.join("\n\n---\n\n")}`;
-      }
     }
   } catch (err) {
     const { createLogger } = await import("./log");

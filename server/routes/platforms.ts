@@ -5,7 +5,7 @@ import { createLogger } from "../log";
 import { requireAuth } from "../auth";
 import { requirePermission } from "../permissions";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
-import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
+import { combineWithVisibleScope, ownedInsertValues } from "../scoped-storage";
 import { getSecretSync } from "../secrets-store";
 import { getProviderCredential } from "../provider-credential-store";
 import { getLatestDeploymentByToken } from "../integrations/railway/client";
@@ -15,24 +15,21 @@ import { encrypt, getEncryptionKey } from "../encryption";
 import { getCloudflarePagesProjectTruth, triggerCloudflarePagesProductionDeployment, retryCloudflarePagesDeployment, cancelCloudflarePagesDeployment, repairCloudflarePagesProject, type CloudflareProjectRepair } from "../platforms/cloudflare-pages-service";
 import { deleteEnvironmentBuildLifecycleConfigs, disableEnvironmentBuildLifecycleConfig, getEnvironmentBuildLifecycleConfig, getEnvironmentBuildStatus, listEnvironmentBuildWorkflows, setEnvironmentBuildLifecycleConfig, startEnvironmentBuildWorkflow } from "../platforms/build-lifecycle-service";
 import { getEnvironmentVersionDocument } from "../integrations/railway/release-versioning";
+import { getVisibleEnvironment, getWritableEnvironment, visiblePlatform, writablePlatform } from "../platforms/platform-access";
+import { libraryPages } from "@shared/models/info";
 
 const log = createLogger("PlatformRoutes");
-const platformScopeColumns = { scope: platforms.scope, ownerUserId: platforms.ownerUserId, accountId: platforms.accountId };
-
-function visiblePlatform(predicate?: SQL): SQL {
-  return combineWithVisibleScope(getCurrentPrincipalOrSystem(), platformScopeColumns, predicate);
-}
-
 const providerConnectionScopeColumns = { scope: providerConnections.scope, ownerUserId: providerConnections.ownerUserId, accountId: providerConnections.accountId };
 
 function visibleProviderConnection(predicate?: SQL): SQL {
   return combineWithVisibleScope(getCurrentPrincipalOrSystem(), providerConnectionScopeColumns, predicate);
 }
 
-function writablePlatform(predicate?: SQL): SQL {
-  return combineWithWritableScope(getCurrentPrincipalOrSystem(), platformScopeColumns, predicate);
-}
+const libraryScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
 
+function visibleLibrary(predicate?: SQL): SQL {
+  return combineWithVisibleScope(getCurrentPrincipalOrSystem(), libraryScopeColumns, predicate);
+}
 
 
 type RuntimeVariableTemplate = { key: string; category: string; required: boolean; source: string };
@@ -121,22 +118,8 @@ async function ensureProductWritable(platformId: number, productId: number): Pro
   return rows.length > 0;
 }
 
-/** Verify environment exists and belongs to a writable platform. Returns the environment row or null. */
-async function ensureEnvironmentWritable(environmentId: number) {
-  const [row] = await db
-    .select({
-      environmentId: platformProductEnvironments.id,
-      productId: platformProducts.id,
-      platformId: platforms.id,
-      environmentName: platformProductEnvironments.name,
-    })
-    .from(platformProductEnvironments)
-    .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
-    .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
-    .where(and(eq(platformProductEnvironments.id, environmentId), writablePlatform()))
-    .limit(1);
-  return row || null;
-}
+/** Verify environment exists and belongs to a writable platform. */
+const ensureEnvironmentWritable = getWritableEnvironment;
 
 export function registerPlatformRoutes(app: Express): void {
   app.use("/api/platforms", requireAuth);
@@ -224,7 +207,6 @@ export function registerPlatformRoutes(app: Express): void {
 
       // Context artifacts in a separate try/catch so binding failures don't silently kill artifact loading
       try {
-        const { libraryPages } = await import("@shared/models/info");
         contextArtifactRows = await db
           .select({
             id: environmentContextArtifacts.id,
@@ -237,7 +219,7 @@ export function registerPlatformRoutes(app: Express): void {
           })
           .from(environmentContextArtifacts)
           .leftJoin(libraryPages, eq(environmentContextArtifacts.libraryPageId, libraryPages.id))
-          .where(eq(environmentContextArtifacts.environmentId, environmentId));
+          .where(and(eq(environmentContextArtifacts.environmentId, environmentId), visibleLibrary()));
       } catch (err) {
         log.warn("Context artifact query failed", { error: err instanceof Error ? err.message : String(err), environmentId });
       }
@@ -941,7 +923,9 @@ export function registerPlatformRoutes(app: Express): void {
   app.get("/api/platforms/environments/:environmentId/context-artifacts", async (req, res) => {
     try {
       const environmentId = platformIdParam(req.params.environmentId);
-      const { libraryPages } = await import("@shared/models/info");
+      if (!(await getVisibleEnvironment(environmentId))) {
+        return res.status(404).json({ error: `Environment ${environmentId} not found`, operation: "list_context_artifacts" });
+      }
       const rows = await db
         .select({
           id: environmentContextArtifacts.id,
@@ -954,7 +938,7 @@ export function registerPlatformRoutes(app: Express): void {
         })
         .from(environmentContextArtifacts)
         .leftJoin(libraryPages, eq(environmentContextArtifacts.libraryPageId, libraryPages.id))
-        .where(eq(environmentContextArtifacts.environmentId, environmentId));
+        .where(and(eq(environmentContextArtifacts.environmentId, environmentId), visibleLibrary()));
 
       res.json(rows.map(r => ({
         id: r.id,
@@ -981,8 +965,7 @@ export function registerPlatformRoutes(app: Express): void {
       const parsed = upsertContextArtifactSchema.parse(req.body);
 
       // Verify library page exists
-      const { libraryPages } = await import("@shared/models/info");
-      const [page] = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(eq(libraryPages.id, parsed.libraryPageId)).limit(1);
+      const [page] = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(visibleLibrary(eq(libraryPages.id, parsed.libraryPageId))).limit(1);
       if (!page) return res.status(404).json({ error: `Library page ${parsed.libraryPageId} not found`, operation: "save_context_artifact" });
 
       // Prevent duplicate: same environment + kind + libraryPageId
