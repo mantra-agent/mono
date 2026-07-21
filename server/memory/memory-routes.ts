@@ -800,6 +800,8 @@ interface VnextGraphNode {
   metadata: Record<string, unknown>;
   createdAt?: string | null;
   updatedAt?: string | null;
+  /** Derived recency heat in (0, 1]: 2^(-daysSince(max(createdAt, lastRecalledAt)) / 7). */
+  recency?: number;
 }
 
 interface VnextGraphLink {
@@ -810,6 +812,25 @@ interface VnextGraphLink {
   strength: number;
   createdAt?: string | null;
   relationshipType: string;
+}
+
+const RECENCY_HALF_LIFE_DAYS = 7;
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * Recency heat for a claim node: 2^(-daysSince(max(createdAt, lastRecalledAt)) / 7).
+ * Pure derivation, no schema change. Returns 1 (fresh) when no timestamp is available.
+ */
+function computeClaimRecency(
+  createdAt: Date | string | null | undefined,
+  lastRecalledAt: Date | string | null | undefined,
+): number {
+  const createdMs = createdAt ? new Date(createdAt).getTime() : 0;
+  const recalledMs = lastRecalledAt ? new Date(lastRecalledAt).getTime() : 0;
+  const mostRecentMs = Math.max(createdMs, recalledMs);
+  if (!Number.isFinite(mostRecentMs) || mostRecentMs <= 0) return 1;
+  const daysSince = Math.max(0, (Date.now() - mostRecentMs) / MS_PER_DAY);
+  return Math.pow(2, -daysSince / RECENCY_HALF_LIFE_DAYS);
 }
 
 async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> {
@@ -972,6 +993,7 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       },
       createdAt: serializeDate(claim.createdAt),
       updatedAt: serializeDate(claim.updatedAt),
+      recency: computeClaimRecency(claim.createdAt, claim.lastRecalledAt),
     }));
 
     for (const link of entityLinks) {
