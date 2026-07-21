@@ -74,6 +74,7 @@ const PlatformsPage = lazyWithRetry(() => import("@/pages/platforms"));
 const PlatformEnvironmentDetailPage = lazyWithRetry(() => import("@/pages/platform-environment-detail"));
 const WellnessPage = lazyWithRetry(() => import("@/pages/wellness"));
 const InfoPage = lazyWithRetry(() => import("@/pages/library/index"));
+const Library2Page = lazyWithRetry(() => import("@/pages/library2"));
 const FinancePage = lazyWithRetry(() => import("@/pages/finance"));
 const CreatePage = lazyWithRetry(() => import("@/pages/create-page"));
 const ProfilePage = lazyWithRetry(() => import("@/pages/profile"));
@@ -298,6 +299,7 @@ function Router() {
         <Route path="/zero" component={ZeroPage} />
         <Route path="/interface-preview" component={InterfacePreviewPage} />
         <Route path="/dev/orb">{() => <RequirePermission permission="system:read"><DevOrbPage /></RequirePermission>}</Route>
+        <Route path="/library2" component={Library2Page} />
         <Route path="/library" component={InfoPage} />
         <Route path="/info" component={InfoPage} />
         <Route path="/audiences">{() => <RequirePermission permission="system:read"><AudiencesPage /></RequirePermission>}</Route>

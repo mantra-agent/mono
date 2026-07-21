@@ -50,6 +50,7 @@ export const MANAGED_TABLES: string[] = [
 
   "library_annotations",
   "library_page_links",
+  "library_page_placements",
   "library_page_views",
   "library_pages",
   "manual_assets",

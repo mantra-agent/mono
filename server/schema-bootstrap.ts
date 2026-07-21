@@ -5550,6 +5550,28 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_persons_company_id ON persons(company_id)`);
   });
 
+  await heal("library2 placement lens", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS library_page_placements (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
+        page_id TEXT NOT NULL REFERENCES library_pages(id) ON DELETE CASCADE,
+        vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+        section_page_id TEXT NOT NULL REFERENCES library_pages(id) ON DELETE CASCADE,
+        import_key TEXT NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'user',
+        owner_user_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        created_by_user_id TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uk_library_page_placement_identity ON library_page_placements(account_id, page_id, vault_id, section_page_id)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uk_library_page_placement_import_page ON library_page_placements(account_id, import_key, page_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_library_page_placements_scope_owner ON library_page_placements(scope, owner_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_library_page_placements_vault_section ON library_page_placements(vault_id, section_page_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_library_page_placements_page ON library_page_placements(page_id)`);
+  });
+
   await heal("persons last_viewed_at column", async () => {
     await pool.query(
       `ALTER TABLE persons ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMPTZ`,

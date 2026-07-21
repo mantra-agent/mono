@@ -67,6 +67,13 @@ import { getLibraryPageNeighbors, runLibraryLint, syncEmbeddedLibraryPageLinks }
 import { compileLibraryPageToMantraWiki, queryMantraLibraryIndex } from "../library-compiler";
 import { projectActiveLibraryReminders } from "../library-reminders";
 import { buildLibrarySurfaceSet } from "../library-save";
+import {
+  createLibrary2Placements,
+  deleteLibrary2Placement,
+  listLibrary2Destinations,
+  listLibrary2Placements,
+  suggestLibrary2Destination,
+} from "../library2-placement-service";
 
 const log = createLogger("InfoRoutes");
 
@@ -485,6 +492,65 @@ export async function registerLibraryRoutes(app: Express) {
   } catch (e: any) {
     log.warn(`[bootstrap] Mantra Library vault bootstrap skipped/failed: ${e.message}`);
   }
+
+  // ─── Library2 placement lens ──────────────────────────────────────────
+
+  const library2SourceSchema = z.discriminatedUnion("type", [
+    z.object({ type: z.enum(["page", "section"]), pageId: z.string().min(1) }),
+    z.object({ type: z.literal("vault"), vaultId: z.string().min(1) }),
+  ]);
+
+  app.get("/api/library2/destinations", async (req, res) => {
+    try {
+      res.json(await listLibrary2Destinations(principalOrThrow(req)));
+    } catch (err: any) {
+      res.status(err.status ?? 500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/library2/placements", async (req, res) => {
+    try {
+      res.json(await listLibrary2Placements(principalOrThrow(req)));
+    } catch (err: any) {
+      res.status(err.status ?? 500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/library2/suggest", async (req, res) => {
+    try {
+      const input = z.object({ source: library2SourceSchema }).parse(req.body ?? {});
+      res.json(await suggestLibrary2Destination(input.source, principalOrThrow(req)));
+    } catch (err: any) {
+      if (err.name === "ZodError") return res.status(400).json({ error: "Invalid input", details: err.errors });
+      res.status(err.status ?? 500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/library2/placements", async (req, res) => {
+    try {
+      const input = z.object({
+        source: library2SourceSchema,
+        vaultId: z.string().min(1),
+        sectionPageId: z.string().min(1),
+        importKey: z.string().min(8).max(200),
+      }).parse(req.body ?? {});
+      const result = await createLibrary2Placements(input, principalOrThrow(req));
+      publishLibraryChanged("library2_import");
+      res.status(result.createdCount > 0 ? 201 : 200).json(result);
+    } catch (err: any) {
+      if (err.name === "ZodError") return res.status(400).json({ error: "Invalid input", details: err.errors });
+      res.status(err.status ?? 500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/library2/placements/:id", async (req, res) => {
+    try {
+      res.json(await deleteLibrary2Placement(req.params.id, principalOrThrow(req)));
+      publishLibraryChanged("library2_remove");
+    } catch (err: any) {
+      res.status(err.status ?? 500).json({ error: err.message });
+    }
+  });
 
   // ─── Library Pages CRUD ───────────────────────────────────────────────
 
