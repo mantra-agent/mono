@@ -138,7 +138,8 @@ export class ScribeRealtimeSTTProvider implements STTProvider {
     const connectedAtMs = Date.now();
     let sessionId = "pending";
     let sequence = 0;
-    let reportedClose = false;
+    let closing = false;
+    let errorReported = false;
 
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("Scribe realtime connection timed out")), 10_000);
@@ -197,12 +198,15 @@ export class ScribeRealtimeSTTProvider implements STTProvider {
         onError(error instanceof Error ? error : new Error(String(error)));
       }
     });
-    socket.on("error", onError);
+    socket.on("error", (error) => {
+      if (closing || errorReported) return;
+      errorReported = true;
+      onError(error);
+    });
     socket.on("close", (code, reason) => {
-      if (!reportedClose && code !== 1000) {
-        reportedClose = true;
-        onError(new Error(`Scribe realtime closed code=${code} reason=${reason.toString()}`));
-      }
+      if (closing || errorReported || code === 1000) return;
+      errorReported = true;
+      onError(new Error(`Scribe realtime closed code=${code} reason=${reason.toString()}`));
     });
 
     return {
@@ -215,7 +219,11 @@ export class ScribeRealtimeSTTProvider implements STTProvider {
         }));
       },
       close() {
-        if (socket.readyState === WebSocket.OPEN) socket.close(1000, "Audio stream ended");
+        if (closing) return;
+        closing = true;
+        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+          socket.close(1000, "Audio stream ended");
+        }
       },
     };
   }

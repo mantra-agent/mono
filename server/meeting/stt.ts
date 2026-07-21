@@ -315,8 +315,40 @@ export function registerMeetingSTTAudioTransport(
     };
 
     const failStream = async (stream: ParticipantStream, detail: string): Promise<void> => {
-      stream.recognition = { ...stream.recognition, status: "failed", detail: detail.slice(0, 500) };
+      const mapKey = streamMapKey(stream.identity.sessionId, stream.identity.transportId);
+      if (
+        closed ||
+        streams.get(mapKey) !== stream ||
+        ["closed", "excluded"].includes(stream.recognition.status)
+      ) {
+        log.debug(
+          `ignored meeting STT error after stream close sessionId=${stream.identity.sessionId} stream=${stream.identity.streamId} detail=${detail}`,
+        );
+        return;
+      }
       const meeting = meetings.get(stream.identity.sessionId);
+      if (meeting) {
+        const currentSession = await runWithMeetingOwnerPrincipal(
+          meeting,
+          () => chatStorage.getSession(stream.identity.sessionId),
+        );
+        const currentMeeting = currentSession?.meeting;
+        if (
+          currentMeeting &&
+          ["leaving", "ended", "denied", "failed"].includes(currentMeeting.botStatus)
+        ) {
+          meetings.set(stream.identity.sessionId, currentMeeting);
+          stream.recognition = { ...stream.recognition, status: "closed", detail: undefined };
+          await persistRecognition(stream.identity.sessionId, currentMeeting, streams, true).catch((error) =>
+            log.error(`failed to persist closed recognition state sessionId=${stream.identity.sessionId}: ${error instanceof Error ? error.message : String(error)}`),
+          );
+          log.info(
+            `meeting STT stream closed with meeting lifecycle sessionId=${stream.identity.sessionId} stream=${stream.identity.streamId} botStatus=${currentMeeting.botStatus}`,
+          );
+          return;
+        }
+      }
+      stream.recognition = { ...stream.recognition, status: "failed", detail: detail.slice(0, 500) };
       if (meeting) {
         await persistRecognition(stream.identity.sessionId, meeting, streams).catch((error) =>
           log.error(`failed to persist degraded recognition state sessionId=${stream.identity.sessionId}: ${error instanceof Error ? error.message : String(error)}`),
@@ -531,7 +563,12 @@ export function registerMeetingSTTAudioTransport(
     socket.on("close", () => {
       if (closed) return;
       closed = true;
-      for (const stream of streams.values()) stream.stt?.close();
+      for (const stream of streams.values()) {
+        if (stream.recognition.status !== "excluded") {
+          stream.recognition = { ...stream.recognition, status: "closed", detail: undefined };
+        }
+        stream.stt?.close();
+      }
       liveConnections.delete(connection);
       for (const [sessionId, meeting] of meetings) {
         persistRecognition(sessionId, meeting, streams, true).catch((error) =>
