@@ -1117,7 +1117,7 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       sourceNodeIds.set(`${normalizedType}:${sourceId}`, sourceNodeId);
       const title = page?.title || session?.title || sourceId;
       const content = page?.plainTextContent || session?.summary || "";
-      const sessionLastMessageAt = session?.messages.reduce<Date | null>((latest, message) => {
+      const sessionLastMessageAt = (session?.messages ?? []).reduce<Date | null>((latest, message) => {
         const candidate = maxTimestamp(message.updatedAt, message.createdAt);
         return !candidate || (latest && latest >= candidate) ? latest : candidate;
       }, null);
@@ -1218,6 +1218,7 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
     log.debug(`[vnext] graph claims=${claims.length} claimLinks=${claimLinks.length} entityLinks=${entityLinks.length} sourceRefs=${sourceRefs.length} nodes=${entries.length} links=${links.length}`);
     res.json({ storage: "memory_vnext", entries, links, linkSource: "claim_links", semantics: "claim-centric" });
   } catch (error: unknown) {
+    log.error(`[vnext] graph failed: ${error instanceof Error ? error.stack || error.message : String(error)}`);
     res.status(500).json({ error: errorMessage(error) });
   }
 }
