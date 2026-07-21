@@ -14,6 +14,7 @@ import { runWithPrincipal } from "../principal-context";
 import { chatFileStorage } from "../chat-file-storage";
 import { requirePermission } from "../permissions";
 import { requireAuth } from "../auth";
+import { initialStreamingContent } from "@shared/streaming-types";
 
 const eventsLog = createLogger("EventsWS");
 let eventsConnectionCounter = 0;
@@ -125,13 +126,60 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
               setEventSocketSessionSubscription(connectionId, subSessionId, true);
             }
             eventsLog.debug(alreadySubscribed ? "WS:SESSION:RESUBSCRIBE" : "WS:SESSION:SUBSCRIBE", { sessionId: subSessionId, subscriptions: subscribedSessionIds.size, ...identity });
-            const snapshot = sessionManager.subscribe(subSessionId, ws, identity);
-            const payload = snapshot ?? {
-              sessionId: subSessionId,
-              status: "idle" as const,
-              streamingContent: null,
-              subscriberCount: 0,
-            };
+            const activeCompaction = await import("../compaction-operation-storage")
+              .then(({ getActiveCompactionOperation }) =>
+                getActiveCompactionOperation(subSessionId),
+              )
+              .catch((error) => {
+                eventsLog.warn("WS:SESSION:COMPACTION_HYDRATION_DEGRADED", {
+                  connectionId,
+                  sessionId: subSessionId,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+                return null;
+              });
+            const activeCompactionStep = activeCompaction
+              ? {
+                  id: `system-session_compaction-operation-${activeCompaction.id}`,
+                  type: "system" as const,
+                  timestamp: activeCompaction.createdAt.getTime(),
+                  systemStepName: "session_compaction",
+                  status: "active" as const,
+                  startedAt: activeCompaction.createdAt.getTime(),
+                }
+              : null;
+            const runtimeSnapshot = sessionManager.subscribe(subSessionId, ws, identity);
+            const streamingContent = activeCompactionStep
+              ? {
+                  ...(runtimeSnapshot?.streamingContent ?? initialStreamingContent),
+                  source: runtimeSnapshot?.streamingContent.source ?? ("text" as const),
+                  segments: (() => {
+                    const segments = runtimeSnapshot?.streamingContent.segments ?? [];
+                    const alreadyPresent = segments.some((segment) =>
+                      segment.type === "timeline" &&
+                      segment.steps.some((step) => step.id === activeCompactionStep.id),
+                    );
+                    return alreadyPresent
+                      ? segments
+                      : [...segments, { type: "timeline" as const, steps: [activeCompactionStep] }];
+                  })(),
+                }
+              : runtimeSnapshot?.streamingContent ?? null;
+            const payload = runtimeSnapshot
+              ? {
+                  ...runtimeSnapshot,
+                  streamingContent,
+                  visibleAssistantActivity: activeCompaction ? "thinking" as const : runtimeSnapshot.visibleAssistantActivity,
+                }
+              : {
+                  sessionId: subSessionId,
+                  status: activeCompaction ? "streaming" as const : "idle" as const,
+                  streamingContent,
+                  subscriberCount: 0,
+                  runActive: Boolean(activeCompaction),
+                  canStop: false,
+                  visibleAssistantActivity: activeCompaction ? "thinking" as const : "none" as const,
+                };
             ws.send(JSON.stringify({ type: "session.snapshot", ...payload }));
           }).catch((error) => {
             eventsLog.error("WS:SESSION:SUBSCRIBE_FAILED", {

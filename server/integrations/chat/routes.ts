@@ -1306,6 +1306,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     ) => void,
     currentMessageIds?: string[],
     callerGeneration?: number,
+    onCompactionActivity?: (update: import("../../agent-context").CompactionActivityUpdate) => void,
   ): Promise<{
     messages: ExecutorMessage[];
     conversationHistory: ConversationHistoryMessage[];
@@ -1491,6 +1492,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             conversationHistory,
             convBudget,
             callerGeneration,
+            onCompactionActivity,
           )
         : { outcome: "below_threshold" as const };
       durableCompactionApplied = compacted.outcome === "compacted" ||
@@ -2224,6 +2226,44 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       const contextRootId = `system-context_assembly-${lease.generation}`;
       const contextStartedAt = Date.now();
       const contextSpans = new Map<string, { id: string; startedAt: number; parentId?: string }>();
+      const compactionSpans = new Map<string, { startedAt: number; terminalRecorded: boolean }>();
+      const onCompactionActivity = (
+        update: import("../../agent-context").CompactionActivityUpdate,
+      ) => {
+        const stepId = `operation-${update.operationId}`;
+        const existing = compactionSpans.get(update.operationId);
+        const startedAt = existing?.startedAt ?? Date.now();
+        if (!existing) {
+          compactionSpans.set(update.operationId, {
+            startedAt,
+            terminalRecorded: false,
+          });
+        }
+        const endedAt = update.status === "active" ? undefined : Date.now();
+        sessionManager.applyEvent(sessionId, {
+          type: "system_step",
+          step: "session_compaction",
+          stepId,
+          status: update.status,
+          startedAt,
+          endedAt,
+        });
+        if (update.status === "active" || existing?.terminalRecorded) return;
+        const index = preSteps.length;
+        preSteps.push({
+          id: `system-session_compaction-${stepId}`,
+          name: "session_compaction",
+          status: update.status,
+          elapsedMs: Math.max(0, (endedAt ?? startedAt) - startedAt),
+          startedAt,
+          endedAt,
+        });
+        preChronology.push({ s: "system", i: index });
+        compactionSpans.set(update.operationId, {
+          startedAt,
+          terminalRecorded: true,
+        });
+      };
       const contextParentFor = (step: string): string | undefined => {
         if (step === "context_assembly") return undefined;
         if (step.startsWith("ctx_history_") && step !== "ctx_history") {
@@ -2272,6 +2312,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         onCtxProgress,
         currentMessageIds,
         lease.generation,
+        onCompactionActivity,
       );
       chatRunLifecycle.assertCurrent(lease);
       const contextEndedAt = Date.now();
