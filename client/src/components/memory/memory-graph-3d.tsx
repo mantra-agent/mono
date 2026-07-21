@@ -523,12 +523,40 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           writeQuadraticPoint(linkPositions, offset + 3, fromX, fromY, fromZ, controlX, controlY, controlZ, toX, toY, toZ, (segment + 1) / CURVE_SEGMENTS);
         }
       });
-      focusedLinkPositions.set(linkPositions);
       const instanceStartAttr = linkGeometry.getAttribute("instanceStart");
       if (instanceStartAttr && "data" in instanceStartAttr) (instanceStartAttr as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
-      const focusedInstanceStartAttr = focusedLinkGeometry.getAttribute("instanceStart");
-      if (focusedInstanceStartAttr && "data" in focusedInstanceStartAttr) {
-        (focusedInstanceStartAttr as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
+    }
+
+    function syncFocusedLinkGeometry() {
+      let focusedLinkIndex = 0;
+      focusedRenderedLinkIndices.forEach((linkIndex) => {
+        const endpointVisibility = Math.min(
+          nodeLinkVisibility[renderedLinks[linkIndex].fromIndex],
+          nodeLinkVisibility[renderedLinks[linkIndex].toIndex],
+        );
+        const brightness = Math.min(1, endpointVisibility * 1.45);
+        for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
+          const sourceOffset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
+          const focusedOffset = (focusedLinkIndex * CURVE_SEGMENTS + segment) * 6;
+          focusedLinkPositions.set(linkPositions.subarray(sourceOffset, sourceOffset + 6), focusedOffset);
+          focusedLinkColors[focusedOffset] = activeColor.r * brightness;
+          focusedLinkColors[focusedOffset + 1] = activeColor.g * brightness;
+          focusedLinkColors[focusedOffset + 2] = activeColor.b * brightness;
+          focusedLinkColors[focusedOffset + 3] = activeColor.r * brightness;
+          focusedLinkColors[focusedOffset + 4] = activeColor.g * brightness;
+          focusedLinkColors[focusedOffset + 5] = activeColor.b * brightness;
+        }
+        focusedLinkIndex += 1;
+      });
+      focusedLinkGeometry.instanceCount = focusedLinkIndex * CURVE_SEGMENTS;
+      focusedLinkLines.visible = focusedLinkIndex > 0;
+      const focusedInstanceStart = focusedLinkGeometry.getAttribute("instanceStart");
+      if (focusedInstanceStart && "data" in focusedInstanceStart) {
+        (focusedInstanceStart as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
+      }
+      const focusedInstanceColorStart = focusedLinkGeometry.getAttribute("instanceColorStart");
+      if (focusedInstanceColorStart && "data" in focusedInstanceColorStart) {
+        (focusedInstanceColorStart as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
       }
     }
 
@@ -546,10 +574,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
       renderedLinks.forEach((link, linkIndex) => {
         const endpointVisibility = Math.min(nodeLinkVisibility[link.fromIndex], nodeLinkVisibility[link.toIndex]);
-        const isFocused = focusedRenderedLinkIndices.has(linkIndex);
-        const hoverDim = hoveredIndex != null && !isFocused ? 0.42 : 1;
+        const hoverDim = hoveredIndex != null && !focusedRenderedLinkIndices.has(linkIndex) ? 0.42 : 1;
         const brightness = linkBrightness[linkIndex] * endpointVisibility * hoverDim;
-        const focusedBrightness = isFocused ? Math.min(1, endpointVisibility * 1.45) : 0;
         for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
           const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
           linkColors[offset] = baseLinkColor.r * brightness;
@@ -558,22 +584,12 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           linkColors[offset + 3] = baseLinkColor.r * brightness;
           linkColors[offset + 4] = baseLinkColor.g * brightness;
           linkColors[offset + 5] = baseLinkColor.b * brightness;
-          focusedLinkColors[offset] = activeColor.r * focusedBrightness;
-          focusedLinkColors[offset + 1] = activeColor.g * focusedBrightness;
-          focusedLinkColors[offset + 2] = activeColor.b * focusedBrightness;
-          focusedLinkColors[offset + 3] = activeColor.r * focusedBrightness;
-          focusedLinkColors[offset + 4] = activeColor.g * focusedBrightness;
-          focusedLinkColors[offset + 5] = activeColor.b * focusedBrightness;
         }
       });
-      focusedLinkLines.visible = focusedRenderedLinkIndices.size > 0;
+      syncFocusedLinkGeometry();
       const instanceColorStart = linkGeometry.getAttribute("instanceColorStart");
       if (instanceColorStart && "data" in instanceColorStart) {
         (instanceColorStart as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
-      }
-      const focusedInstanceColorStart = focusedLinkGeometry.getAttribute("instanceColorStart");
-      if (focusedInstanceColorStart && "data" in focusedInstanceColorStart) {
-        (focusedInstanceColorStart as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
       }
     }
 
