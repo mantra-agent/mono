@@ -564,7 +564,15 @@ The deterministic boundary is `server/library-placement-store.ts` plus `server/l
 
 Residual risk is limited to semantic suggestion quality. The suggestion may choose no destination or a poor candidate, but it cannot broaden authority or write until the user confirms a valid canonical destination. Rollback is the merged PR revert; the placement schema is additive and Library page rows remain authoritative.
 
-## 11.9 Independent readiness API-policy drift cure, July 20, 2026
+## 11.9 Project attachment object authorization, July 21, 2026
+
+**SEC-OBJ-001, high, closed in source.** Project attachments are user-owned S2/S3 artifacts crossing F04/F06/F07 and B06/B07/B10. The `work.add_file` producer previously wrote project-upload objects without an ACL, while object delivery correctly failed closed when no ACL existed. A user who could see their project therefore received 403 for its historical attachments, including Library wireframes embedded from that project. The same handler also accepted a caller-supplied object path without first proving object visibility, creating a latent confused-deputy risk if historical access were repaired only at the delivery route.
+
+The canonical controls now meet at both boundaries. New workspace uploads require a current authenticated user principal and write a private user/account ACL on the actual object key. Caller-supplied object paths must already be readable by that principal before they can be attached. Object delivery retains ACL authorization as the primary path and grants historical fallback access only when a principal-visible project contains the exact `/objects/...` path in its bounded attachment array. Parent visibility uses the canonical scoped project predicate, so a foreign project never grants access. This cures availability without making attachments public or weakening tenant isolation.
+
+**Threat and mapping.** Unauthorized object disclosure and attachment laundering under STRIDE information disclosure/elevation of privilege; OWASP API1/API3/API5; DATA-01, DATA-04, IAM-02, IAM-03, AGENT-03. Owner: Engineering. Rollback is the merged PR revert; no schema migration or destructive data rewrite is required. Closure evidence requires a passing production build, merged source, and authenticated browser proof that a visible historical project attachment renders while an unlinked object remains denied.
+
+## 11.10 Independent readiness API-policy drift cure, July 20, 2026
 
 A fresh merged-main inventory found nine of 1,042 statically declared API routes had drifted outside the explicit API policy: admin-only Recall, Twilio, Deepgram, and Meta wearable status/configuration routes plus the authenticated browser-telemetry summary. The policy's default-deny behavior returned 404 before route-local guards, so this was a fail-closed availability/configuration defect rather than an authorization bypass. It still invalidated the zero-unclassified readiness control and demonstrated that route inventory must be rerun after every main change.
 

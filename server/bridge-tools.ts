@@ -5,7 +5,7 @@ import { recordToolCallStart, recordToolCallEnd } from "./file-storage";
 import { MIME_MAP, TEXT_ARTIFACT_MIME_MAP } from "./lib/mime";
 import { getInstanceName } from "@shared/instance-config";
 import { objectStorageService } from "./object_storage";
-import { setObjectAclPolicy } from "./object_storage/objectAcl";
+import { ObjectPermission, setObjectAclPolicy } from "./object_storage/objectAcl";
 import { contextBuilder } from "./context-builder";
 import {
   checkAccountPermission,
@@ -5797,6 +5797,10 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         case "add_file": {
           const projectId = args.id;
           if (!projectId) return { result: "Missing project id", error: true };
+          const project = await fileProjectStorage.getProject(Number(projectId));
+          if (!project) return { result: `Project ${projectId} not found`, error: true };
+          const { requireCurrentUserPrincipal } = await import("./principal-context");
+          const principal = requireCurrentUserPrincipal();
           const workspacePath = args.workspacePath;
           let objectKey = args.fileObjectKey;
           let fileName = args.fileName;
@@ -5828,12 +5832,34 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             const uploaded = await objectStorageService.uploadObjectEntity(fileBuffer, {
               extension: extname(fileName),
               contentType: mimeType,
+              principal,
+              acl: {
+                owner: principal.userId,
+                ownerUserId: principal.userId,
+                accountId: principal.accountId,
+                createdByUserId: principal.userId,
+                scope: "user",
+                visibility: "private",
+              },
             });
             objectKey = uploaded.objectPath;
           }
 
           if (!fileName || !objectKey) return { result: "Missing fileName or fileObjectKey (or workspacePath)", error: true };
           if (!mimeType) mimeType = "application/octet-stream";
+          if (!workspacePath) {
+            const normalizedObjectPath = objectKey.startsWith("/objects/") ? objectKey : `/objects/${objectKey}`;
+            const objectFile = await objectStorageService.getObjectEntityFile(normalizedObjectPath, principal);
+            const canReadObject = await objectStorageService.canAccessObjectEntity({
+              principal,
+              objectFile,
+              requestedPermission: ObjectPermission.READ,
+            });
+            if (!canReadObject) {
+              return { result: "Cannot attach an object that is not visible to the current user", error: true };
+            }
+            objectKey = normalizedObjectPath;
+          }
           const fileEntry = {
             id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
             name: fileName,
