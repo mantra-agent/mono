@@ -6,6 +6,7 @@ import {
   type CalendarEventMetadata,
   type CalendarEventPerson,
   type CalendarEventArtifact,
+  type MeetingJoinMode,
 } from "@shared/schema";
 import { eq, inArray, and, sql, or, ne } from "drizzle-orm";
 import { libraryPages } from "@shared/models/info";
@@ -257,12 +258,13 @@ export async function setMetadata(
   return meta;
 }
 
-// ─── Agent auto-join policy materialization and per-event override ───
+// ─── Agent join mode materialization ───
 
 export type AgentJoinStatus = "scheduled" | "no_link" | "joined" | "failed";
 
 export interface AgentJoinPatch {
-  override?: boolean | null;
+  /** False only when the scheduler materializes an inherited user-wide policy. */
+  explicit?: boolean;
   status?: AgentJoinStatus | null;
   detail?: string | null;
   sessionId?: string | null;
@@ -271,24 +273,26 @@ export interface AgentJoinPatch {
 }
 
 /**
- * Materialize the effective per-event join decision. Preserves explicit
- * override intent and rearms only when the start changes or the caller
- * explicitly clears attemptedAt.
+ * Materialize the explicit per-event join mode and its scheduler projection.
+ * Rearms only when the start changes or the caller explicitly clears attemptedAt.
  */
 export async function setAgentJoin(
   googleEventId: string,
   accountId: string,
   calendarId: string,
-  enabled: boolean,
+  mode: MeetingJoinMode,
   patch: AgentJoinPatch = {}
 ): Promise<CalendarEventMetadata> {
-  log.log(`setAgentJoin event=${googleEventId} enabled=${enabled} status=${patch.status ?? "-"}`);
+  const enabled = mode !== "dont_join";
+  const legacyOverride = patch.explicit === false ? null : enabled;
+  log.log(`setAgentJoin event=${googleEventId} mode=${mode} status=${patch.status ?? "-"}`);
   const existing = await getMetadata(googleEventId, accountId, calendarId);
   const nextStartAt = patch.startAt !== undefined ? patch.startAt : existing?.agentJoinStartAt ?? null;
   const startChanged = existing?.agentJoinStartAt?.getTime() !== nextStartAt?.getTime();
   const joinFields = {
+    agentJoinMode: mode,
     agentJoinEnabled: enabled,
-    agentJoinOverride: patch.override !== undefined ? patch.override : existing?.agentJoinOverride ?? null,
+    agentJoinOverride: legacyOverride,
     agentJoinStatus: enabled ? patch.status ?? null : null,
     agentJoinDetail: enabled ? patch.detail ?? null : null,
     agentJoinSessionId: patch.sessionId !== undefined

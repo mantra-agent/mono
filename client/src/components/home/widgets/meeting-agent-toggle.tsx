@@ -1,7 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Bot, Loader2 } from "lucide-react";
+import { Bot } from "lucide-react";
 import type { SimpleFeedItem } from "@shared/models/simple";
+import { resolveMeetingJoinMode, type MeetingJoinMode } from "@shared/schema";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { MeetingJoinModeMenu, meetingJoinModeLabel } from "@/components/calendar/meeting-join-mode";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 
@@ -10,14 +12,7 @@ function str(payload: Record<string, unknown> | undefined, key: string): string 
   return typeof value === "string" && value ? value : null;
 }
 
-function explicitOverride(payload: Record<string, unknown> | undefined): boolean | null {
-  return typeof payload?.agentJoinOverride === "boolean" ? payload.agentJoinOverride : null;
-}
-
-/**
- * Per-event meeting agent override.
- * Click cycles inherit policy → force on → force off → inherit policy.
- */
+/** Explicit per-event meeting participation mode. */
 export function MeetingAgentToggle({ item }: { item: SimpleFeedItem }) {
   const queryClient = useQueryClient();
   const payload = item.payload as Record<string, unknown> | undefined;
@@ -25,19 +20,22 @@ export function MeetingAgentToggle({ item }: { item: SimpleFeedItem }) {
   const googleEventId = str(payload, "googleEventId");
   const accountId = str(payload, "accountId");
   const calendarId = str(payload, "calendarId");
-  const enabled = payload?.agentJoinEnabled === true;
-  const override = explicitOverride(payload);
+  const mode = resolveMeetingJoinMode(
+    payload?.agentJoinMode,
+    payload?.agentJoinEnabled === true,
+    typeof payload?.agentJoinOverride === "boolean" ? payload.agentJoinOverride : null,
+  );
   const status = str(payload, "agentJoinStatus");
   const detail = str(payload, "agentJoinDetail");
   const sessionId = str(payload, "agentJoinSessionId");
 
   const mutation = useMutation({
-    mutationFn: async (nextOverride: boolean | null) => {
+    mutationFn: async (nextMode: MeetingJoinMode) => {
       const res = await apiRequest("POST", "/api/calendar/agent-join", {
         googleEventId,
         accountId,
         calendarId,
-        override: nextOverride,
+        mode: nextMode,
       });
       return res.json();
     },
@@ -68,46 +66,31 @@ export function MeetingAgentToggle({ item }: { item: SimpleFeedItem }) {
     );
   }
 
-  const tone = !enabled
-    ? override === false ? "text-destructive/70" : "text-muted-foreground/50 hover:text-muted-foreground"
-    : status === "no_link" ? "text-warning-foreground"
-      : status === "failed" ? "text-destructive"
-        : "text-cta";
-
   const tooltip = mutation.isError
-    ? mutation.error instanceof Error ? mutation.error.message : "Override failed"
+    ? mutation.error instanceof Error ? mutation.error.message : "Meeting mode update failed"
     : status === "no_link" ? detail || "No meeting link found on this event"
       : status === "failed" ? detail || "Agent failed to join"
-        : override === true ? "Forced on. Click to force off."
-          : override === false ? "Forced off. Click to inherit your policy."
-            : enabled ? "Joining by policy. Click to force on."
-              : "Not joining by policy. Click to force on.";
-
-  const nextOverride = override === null ? true : override === true ? false : null;
+        : meetingJoinModeLabel(mode);
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          disabled={mutation.isPending}
-          onClick={(event) => {
-            event.stopPropagation();
-            mutation.mutate(nextOverride);
-          }}
-          className={cn(
-            "flex w-5 shrink-0 items-center justify-center rounded p-0.5 transition-colors hover:bg-accent/60",
-            override === null && !enabled && "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
-          )}
-          aria-label={tooltip}
-          aria-pressed={enabled}
-        >
-          {mutation.isPending
-            ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-            : <Bot className={cn("h-3.5 w-3.5", tone)} />}
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="left">{tooltip}</TooltipContent>
-    </Tooltip>
+    <div onClick={event => event.stopPropagation()}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className={cn(
+            "inline-flex rounded",
+            mode === "dont_join" && "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100",
+          )}>
+            <MeetingJoinModeMenu
+              value={mode}
+              onChange={nextMode => mutation.mutate(nextMode)}
+              disabled={mutation.isPending}
+              compact
+              testId={`meeting-join-mode-${googleEventId}`}
+            />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="left">{tooltip}</TooltipContent>
+      </Tooltip>
+    </div>
   );
 }

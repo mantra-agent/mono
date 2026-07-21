@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import type { MeetingJoinMode } from "@shared/schema";
 
 // Single source of truth for calendar event metadata queries.
 // Every consumer of ["/api/calendar/metadata", ...] must use this hook so the
@@ -15,6 +16,12 @@ export interface EventMetadataRecord {
   capacityType: string | null;
   notes: string | null;
   agenda: string | null;
+  agentJoinMode: MeetingJoinMode | null;
+  agentJoinEnabled: boolean;
+  agentJoinOverride: boolean | null;
+  agentJoinStatus: string | null;
+  agentJoinDetail: string | null;
+  agentJoinSessionId: string | null;
   speakerPolicy: { mode: "participant_streams" } | { mode: "shared_room" } | {
     /** @deprecated Read-only compatibility for existing metadata. */
     mode: "selected_shared_streams";

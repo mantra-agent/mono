@@ -22,6 +22,7 @@ import { extractMeetingUrl } from "./meeting/join";
 import { getMeetingJoinPolicy, shouldJoinMeeting } from "./meeting/join-policy";
 import { getBandwidthSummary } from "./calendar-bandwidth";
 import { resolveMeetingArtifactContext, resolveMeetingPeopleContext } from "./meeting-context";
+import { MEETING_JOIN_MODES, type MeetingJoinMode } from "@shared/schema";
 
 const log = createLogger("CalendarRoutes");
 
@@ -535,11 +536,15 @@ export function registerCalendarRoutes(app: Express): void {
     googleEventId: z.string().min(1),
     accountId: z.string().min(1),
     calendarId: z.string().min(1),
-    override: z.boolean().nullable(),
+    mode: z.enum(MEETING_JOIN_MODES).optional(),
+    /** @deprecated Rolling-deploy compatibility for stale clients. */
+    override: z.boolean().nullable().optional(),
+  }).refine(input => input.mode !== undefined || input.override !== undefined, {
+    message: "mode is required",
   });
 
-  // Per-event agent override. null inherits the user's policy, true forces a
-  // join, and false forces a skip. The scheduler materializes the decision.
+  // Explicit per-event meeting participation mode. The scheduler materializes
+  // the decision and the join path snapshots the speaking policy on session creation.
   app.post("/api/calendar/agent-join", async (req, res) => {
     try {
       const parsed = agentJoinSchema.safeParse(req.body);
@@ -553,20 +558,22 @@ export function registerCalendarRoutes(app: Express): void {
       }
 
       const event = await getEvent(accountId, calendarId, googleEventId);
+      const policy = await getMeetingJoinPolicy(principal.userId);
+      const mode: MeetingJoinMode = parsed.data.mode
+        ?? (shouldJoinMeeting(event, policy, override) ? "join_and_talk" : "dont_join");
+      const enabled = mode !== "dont_join";
       const startDateTime = event.start?.dateTime;
-      if (!startDateTime) {
+      if (enabled && !startDateTime) {
         return res.status(400).json({ error: "This event has no start time (all-day events can't be auto-joined)." });
       }
-      const startAt = new Date(startDateTime);
-      if (Number.isNaN(startAt.getTime())) {
+      const startAt = startDateTime ? new Date(startDateTime) : null;
+      if (enabled && (!startAt || Number.isNaN(startAt.getTime()))) {
         return res.status(400).json({ error: "Could not parse the event start time." });
       }
-      if (startAt.getTime() < Date.now() - 10 * 60_000) {
+      if (enabled && startAt && startAt.getTime() < Date.now() - 10 * 60_000) {
         return res.status(400).json({ error: "This event already started more than 10 minutes ago." });
       }
 
-      const policy = await getMeetingJoinPolicy(principal.userId);
-      const enabled = shouldJoinMeeting(event, policy, override);
       const meetingUrl = extractMeetingUrl(
         event.location,
         event.description,
@@ -574,13 +581,13 @@ export function registerCalendarRoutes(app: Express): void {
         event.hangoutLink,
         event.conferenceEntryPoints?.join("\n"),
       );
-      const meta = await setAgentJoin(googleEventId, accountId, calendarId, enabled, {
-        override,
+      const meta = await setAgentJoin(googleEventId, accountId, calendarId, mode, {
+        explicit: parsed.data.mode !== undefined || override !== null,
         status: enabled ? meetingUrl ? "scheduled" : "no_link" : null,
         detail: enabled && !meetingUrl ? "No Zoom or Google Meet link found on this event" : null,
         sessionId: enabled ? undefined : null,
-        startAt: enabled ? startAt : null,
-        attemptedAt: enabled && override === true ? null : undefined,
+        startAt: enabled ? startAt! : null,
+        attemptedAt: enabled ? null : undefined,
       });
       res.json({ metadata: meta, policy });
     } catch (error: any) {
