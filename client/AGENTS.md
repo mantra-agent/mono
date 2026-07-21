@@ -66,6 +66,7 @@ subscribe by sessionId via WS and receive snapshots + deltas.
 - Diagnostic trees render the complete trace before visibility filtering. Span duration comes from boundaries, milestones render as parent-relative offsets, and overlapping children are wall-clock/parallel rather than additive. Never reconstruct timing by subtracting visible child labels.
 - Terminal SessionManager snapshots are authoritative handoff state. Preserve their settled `StreamingContent` until the matching assistant message is durably terminal; never replace a saved/error snapshot with an empty stream or release it for a streaming checkpoint draft.
 - Finalized assistant turns preserve streamed content/tool boundaries. `transcript-projection.ts` alone owns the terminal-to-persisted handoff; persisted chronology must reconstruct the same segment sequence, and chronological timeline blocks receive full-turn graph context without collapsing across prose boundaries.
+- Transcript fallback widgets derived from persisted lifecycle metadata must deduplicate against both persisted assistant segments and the currently displayed authoritative stream. A child lifecycle event may persist before its creating tool call, but the live-to-persisted handoff still has one visible widget owner.
 
 ### Protocol
 1. Chat route subscribes to the focused session plus bounded live streaming sessions via `session.subscribe { sessionId }` on the shared WS

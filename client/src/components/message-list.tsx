@@ -333,6 +333,18 @@ export function MessageList({
       );
       for (const id of fromToolResults) toolMatchedPlanIds.add(id);
     }
+
+    // Child lifecycle events can persist before the assistant tool call that
+    // created the plan. During that handoff, the authoritative stream already
+    // owns the inline widget even though persisted messages do not. Include the
+    // displayed stream in the same ownership set so the orphan fallback cannot
+    // render a second copy below the active assistant turn.
+    const { fromToolResults: streamingPlanIds } = referenceIdsFromSegments(
+      effectiveStreaming.segments,
+      "plan",
+      isPlanWidgetToolCall,
+    );
+    for (const id of streamingPlanIds) toolMatchedPlanIds.add(id);
   }
   const orphanedPlanIds = [...childBlockPlanIds].filter(id => !toolMatchedPlanIds.has(id));
 
