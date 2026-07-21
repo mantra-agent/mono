@@ -75,6 +75,7 @@ const PERSONAL_RULES: ApiPolicyRule[] = [
       "/api/theses",
       "/api/landscape",
       "/api/library",
+      "/api/library2",
       "/api/notes",
       "/api/sessions",
       "/api/messages",

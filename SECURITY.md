@@ -556,7 +556,15 @@ Adjacent review found the same missing principle in Gmail `email_cache.get_messa
 **Incident and release decision.** The source path blocks readiness until the cure is merged and current `main` passes the production build. No credential rotation is indicated without evidence that S0/S1 data or credentials entered a foreign context. If logs or database review later show cross-tenant artifact links or foreign context delivery, declare an incident, revoke affected sessions, preserve prompt/tool-call evidence, remove the links at their producer boundary, notify affected users, and rotate only credential classes proven exposed. Rollback is the merged PR revert; no schema or live mutation is part of this cure.
 
 
-## 11.8 Independent readiness API-policy drift cure, July 20, 2026
+## 11.8 Library2 placement boundary, July 21, 2026
+
+**SEC-LIB-001, high, closed in source.** Library2 introduces a user-owned organizational join over S2/S3 Library metadata. The credible failure modes are cross-account page enumeration, placement into another account's or archived vault, forged non-Index destinations, replay duplication, unbounded subtree import, conflict updates against another principal's row, and deletion of the underlying Library page instead of the lens record.
+
+The deterministic boundary is `server/library-placement-store.ts` plus `server/library2-placement-service.ts`. Source pages and joined page rows use principal-visible scope predicates. Placement reads use principal-visible scope; updates and deletes use writable scope. Destination vaults must match the principal account and remain live. Destination parents must be visible Wiki pages named by the destination vault's canonical Index. Bulk imports cap at 5,000 pages, traverse descendants in bounded batches with cycle deduplication, validate the derived import key, and commit through one replay-safe transaction backed by the unique `(page_id, vault_id)` identity. A foreign uniqueness conflict fails closed. The API policy classifies `/api/library2` as personal. Removing from Library2 deletes only the owned placement row; `library_pages` content and Library1 hierarchy are untouched.
+
+Residual risk is limited to semantic suggestion quality. The suggestion may choose no destination or a poor candidate, but it cannot broaden authority or write until the user confirms a valid canonical destination. Rollback is the merged PR revert; the placement schema is additive and Library page rows remain authoritative.
+
+## 11.9 Independent readiness API-policy drift cure, July 20, 2026
 
 A fresh merged-main inventory found nine of 1,042 statically declared API routes had drifted outside the explicit API policy: admin-only Recall, Twilio, Deepgram, and Meta wearable status/configuration routes plus the authenticated browser-telemetry summary. The policy's default-deny behavior returned 404 before route-local guards, so this was a fail-closed availability/configuration defect rather than an authorization bypass. It still invalidated the zero-unclassified readiness control and demonstrated that route inventory must be rerun after every main change.
 

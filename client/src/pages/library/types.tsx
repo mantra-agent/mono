@@ -15,6 +15,8 @@ export interface LibraryPage {
   surfaceUntil?: string | null;
   surfaceReason?: string | null;
   surfaceSection?: string | null;
+  vaultId?: string | null;
+  structuralRole?: "source" | "artifact" | "wiki" | "meta";
 
   emoji: string | null;
   oneLiner: string | null;

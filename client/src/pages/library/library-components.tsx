@@ -112,11 +112,18 @@ interface LibraryPageEditorProps {
   selectedId: string;
   selectedPage: LibraryPageFull;
   pages: LibraryPage[];
-  onDeleteRequest: (id: string) => void;
+  onDeleteRequest?: (id: string) => void;
+  library2PlacementId?: string;
+  onRemoveFromLibrary2?: (placementId: string) => void;
 }
 
 export function LibraryPageEditor({
-  selectedId, selectedPage, pages, onDeleteRequest,
+  selectedId,
+  selectedPage,
+  pages,
+  onDeleteRequest,
+  library2PlacementId,
+  onRemoveFromLibrary2,
 }: LibraryPageEditorProps) {
   const editorRef = useRef<RichTextEditorHandle>(null);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
@@ -282,9 +289,15 @@ export function LibraryPageEditor({
               <DropdownMenuItem onClick={() => downloadPageAsMarkdown(selectedPage.title, selectedPage.content, selectedPage.plainTextContent)} data-testid="menu-download-page">
                 <Download className="h-3.5 w-3.5 mr-2" /> Download
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onDeleteRequest(selectedPage.id)} className="text-destructive" data-testid="menu-delete-page">
-                <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
-              </DropdownMenuItem>
+              {library2PlacementId && onRemoveFromLibrary2 ? (
+                <DropdownMenuItem onClick={() => onRemoveFromLibrary2(library2PlacementId)} data-testid="menu-remove-library2-placement">
+                  <Trash2 className="h-3.5 w-3.5 mr-2" /> Remove from Library2
+                </DropdownMenuItem>
+              ) : onDeleteRequest ? (
+                <DropdownMenuItem onClick={() => onDeleteRequest(selectedPage.id)} className="text-destructive" data-testid="menu-delete-page">
+                  <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
+                </DropdownMenuItem>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
