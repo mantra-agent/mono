@@ -56,6 +56,9 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, paused = false,
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_DPR));
     renderer.setClearColor(0x000000, 1);
     container.appendChild(renderer.domElement);
+    // A canvas is inline by default; block layout removes the baseline descender
+    // gap so the render surface fills its container exactly and stays centered.
+    renderer.domElement.style.display = 'block';
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
@@ -153,7 +156,11 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, paused = false,
       // Keep the complete halo inside narrow Recall/mobile viewports.
       camera.position.z = 4 * Math.max(1, h / w);
       camera.updateProjectionMatrix();
-      renderer.setSize(w, h, false);
+      // updateStyle must stay on. With it off, three.js sizes the drawing buffer
+      // to w*dpr but leaves the canvas CSS size unset, so on any display with
+      // devicePixelRatio > 1 the canvas element lays out at device-pixel size,
+      // overflows its container to the bottom-right, and pushes the orb off-center.
+      renderer.setSize(w, h);
     }
 
     function applyVisuals(now: number) {
