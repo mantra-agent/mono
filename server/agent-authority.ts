@@ -73,7 +73,9 @@ function requiresPermission(toolName: string, action: string | undefined): Permi
 }
 
 function isTrustedEngineeringDelegation(context: AgentAuthorityContext): boolean {
-  return context.trustedDelegation === "plan" || context.trustedDelegation === "workflow";
+ return context.origin === "interactive"
+ || context.trustedDelegation === "plan"
+ || context.trustedDelegation === "workflow";
 }
 
 function isModelOrigin(origin: ToolInvocationOrigin): boolean {
