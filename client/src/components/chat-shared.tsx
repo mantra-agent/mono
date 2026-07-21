@@ -2114,7 +2114,7 @@ export function MarkdownContent({
   );
 }
 
-function InlinePlanWidget({
+export function InlinePlanWidget({
   planId,
   sessionId,
   ownedChildBlocks,
@@ -2703,7 +2703,8 @@ export const ChatTurn = memo(function ChatTurn({
         ? tool.arguments.action
         : null;
       return tool.toolName === "plan" &&
-        (action === "create" || action === "associate_session");
+        (action === "create" || action === "associate_session" ||
+         action === "execute" || action === "resume");
     },
   );
   const { fromToolResults: workflowWidgetIds } = referenceIdsFromSegments(
