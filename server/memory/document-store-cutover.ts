@@ -14,17 +14,6 @@ type CutoverState = {
 };
 
 async function readCutoverState(client: { query: typeof pool.query }): Promise<CutoverState | null> {
-  const table = await client.query<{ exists: string | null }>(
-    "SELECT to_regclass('public.document_store_cutover_state')::text AS exists",
-  );
-  if (!table.rows[0]?.exists) return null;
-  await client.query(
-    `ALTER TABLE document_store_cutover_state
-     ADD COLUMN IF NOT EXISTS independent_writes_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-     ADD COLUMN IF NOT EXISTS independent_activation_requested_at TIMESTAMPTZ(6),
-     ADD COLUMN IF NOT EXISTS independent_started_at TIMESTAMPTZ(6),
-     ADD COLUMN IF NOT EXISTS legacy_workspace_row_count INTEGER`,
-  );
   const state = await client.query<CutoverState>(
     `SELECT shadow_writes_enabled, read_enabled, independent_writes_enabled,
             independent_activation_requested_at, independent_started_at, legacy_workspace_row_count
