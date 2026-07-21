@@ -21,7 +21,8 @@ export interface MemoryGraph3DNode {
   source: string;
   label: string;
   degree: number;
-  decayScore: number;
+  /** Recency heat in (0, 1]: 1 = just created/recalled, approaching 0 = cold. Drives node color + fade. */
+  recency: number;
   pendingDeletion: boolean;
 }
 
@@ -87,6 +88,8 @@ const LABEL_POSITION_TICKS = 4;
 const LABEL_REFRESH_TICKS = 12;
 const INITIAL_LAYOUT_SCALE = 20;
 const MIN_NODE_HIT_RADIUS_PX = 12;
+// Cold claims never disappear entirely: they hold a faint floor so the field keeps its ghosts.
+const RECENCY_OPACITY_FLOOR = 0.08;
 
 const nodeVertexShader = `
   attribute float aVisibility;
@@ -343,13 +346,21 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const signalColor = colorFromToken("--cta");
     const activeColor = colorFromToken("--active");
     const deletionColor = colorFromToken("--destructive");
+    // Recency heat ramp, tokens only: recency 1.0 glows the brighter interactive blue
+    // (--active); at ~0.5 it cools to the darker CTA blue (--cta); below that the node
+    // stays CTA-hued but fades via visibility toward the canvas, floored so it lingers.
+    const nodeBaseColors = sceneNodes.map((node) => {
+      const warmth = THREE.MathUtils.clamp((THREE.MathUtils.clamp(node.recency, 0, 1) - 0.5) / 0.5, 0, 1);
+      return signalColor.clone().lerp(activeColor, warmth);
+    });
     const nodeGeometry = new THREE.IcosahedronGeometry(1, 2);
     const visibility = new Float32Array(sceneNodes.length);
     const emphasis = new Float32Array(sceneNodes.length);
     const tints = new Float32Array(sceneNodes.length * 3);
     sceneNodes.forEach((node, index) => {
-      visibility[index] = Math.max(0.62, node.decayScore || 1);
-      (node.pendingDeletion ? deletionColor : signalColor).toArray(tints, index * 3);
+      const recency = THREE.MathUtils.clamp(node.recency, 0, 1);
+      visibility[index] = RECENCY_OPACITY_FLOOR + (1 - RECENCY_OPACITY_FLOOR) * recency;
+      (node.pendingDeletion ? deletionColor : nodeBaseColors[index]).toArray(tints, index * 3);
     });
     nodeGeometry.setAttribute("aVisibility", new THREE.InstancedBufferAttribute(visibility, 1));
     nodeGeometry.setAttribute("aEmphasis", new THREE.InstancedBufferAttribute(emphasis, 1));
@@ -515,7 +526,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         const selected = selectedIndex === index;
         const hovered = hoveredIndex === index;
         emphasis[index] = selected ? 1 : hovered ? 0.7 : 0;
-        (node.pendingDeletion ? deletionColor : selected || hovered ? activeColor : signalColor).toArray(tints, index * 3);
+        (node.pendingDeletion ? deletionColor : selected || hovered ? activeColor : nodeBaseColors[index]).toArray(tints, index * 3);
         transform.position.set(node.x, node.y, node.z);
         transform.scale.setScalar(node.radius * (selected ? 1.22 : hovered ? 1.12 : 1));
         transform.updateMatrix();

@@ -183,6 +183,7 @@ interface MemoryEntry {
   metadata?: Record<string, unknown>;
   createdAt?: string;
   updatedAt?: string;
+  recency?: number;
   processedAt?: string;
   integrationStage?: string | null;
   processingStatus?: "idle" | "processing" | "error" | string | null;
@@ -1453,14 +1454,13 @@ function GraphTab({
       degree.set(link.toId, (degree.get(link.toId) ?? 0) + 1);
     }
     return (graph?.entries ?? []).map((entry) => {
-      const metadata = (entry.metadata ?? {}) as Record<string, unknown>;
       const visual = getGraphNodeVisual(entry);
       return {
         id: entry.id,
         source: visual.source,
         label: entry.title?.trim() || entry.oneLiner?.trim() || firstLine(entry.content, 72) || visual.label,
         degree: degree.get(entry.id) ?? 0,
-        decayScore: metadata.decay_score == null ? 1 : Number(metadata.decay_score),
+        recency: typeof entry.recency === "number" ? entry.recency : 1,
         pendingDeletion: false,
       };
     });
