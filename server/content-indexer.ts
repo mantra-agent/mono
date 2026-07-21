@@ -43,6 +43,8 @@ export interface IndexAndArchiveOptions {
   sourceType: string;
   sourceLabel: string;
   timeoutMs?: number;
+  operationKey?: string;
+  objectFileName?: string;
 }
 
 export interface IndexedReference {
@@ -54,13 +56,16 @@ export interface IndexedReference {
   index: IndexData;
 }
 
-export async function persistToObjectStorage(content: string, category: string): Promise<string | null> {
+export async function persistToObjectStorage(
+  content: string,
+  category: string,
+  objectFileName?: string,
+): Promise<string | null> {
   try {
     const { storageBackend, vaultObjectKeyAuto } = await import("./object_storage");
     const { setObjectAclPolicy } = await import("./object_storage/objectAcl");
     const { randomUUID } = await import("crypto");
-    const fileId = randomUUID();
-    const filename = `${fileId}.txt`;
+    const filename = objectFileName ?? `${randomUUID()}.txt`;
     const key = vaultObjectKeyAuto(category, filename);
     const buffer = Buffer.from(content, "utf-8");
     await storageBackend.putObject(key, buffer, { contentType: "text/plain; charset=utf-8" });
@@ -305,9 +310,43 @@ export function formatReferenceBlock(ref: IndexedReference): string {
 
 
 export async function indexAndArchiveHeuristic(opts: IndexAndArchiveOptions): Promise<IndexedReference | null> {
-  const { content, sourceType, sourceLabel } = opts;
+  const { content, sourceType, sourceLabel, operationKey, objectFileName } = opts;
+  const owner = sensitiveOwnershipValues();
 
-  const objectPath = await persistToObjectStorage(content, sourceType);
+  if (operationKey) {
+    const { db } = await import("./db");
+    const { indexedContent } = await import("@shared/schema");
+    const ownerColumns = {
+      ownerUserId: indexedContent.ownerUserId,
+      principalAccountId: indexedContent.principalAccountId,
+      vaultId: indexedContent.vaultId,
+    };
+    const [existing] = await db
+      .select()
+      .from(indexedContent)
+      .where(
+        combineWithSensitiveVisible(
+          ownerColumns,
+          and(
+            eq(indexedContent.sourceType, sourceType),
+            eq(indexedContent.operationKey, operationKey),
+          ),
+        ),
+      )
+      .limit(1);
+    if (existing) {
+      return {
+        id: existing.id,
+        sourceType: existing.sourceType,
+        sourceLabel: existing.sourceLabel,
+        objectStoragePath: existing.objectStoragePath,
+        byteCount: existing.byteCount,
+        index: existing.index,
+      };
+    }
+  }
+
+  const objectPath = await persistToObjectStorage(content, sourceType, objectFileName);
   if (!objectPath) {
     log.error(`indexAndArchiveHeuristic failed to persist content sourceType=${sourceType} sourceLabel=${sourceLabel}; durable full-content archive unavailable`);
     return null;
@@ -322,18 +361,60 @@ export async function indexAndArchiveHeuristic(opts: IndexAndArchiveOptions): Pr
     const id = randomUUID();
     const byteCount = Buffer.byteLength(content, "utf-8");
 
-    await db.insert(indexedContent).values({
+    const [inserted] = await db.insert(indexedContent).values({
       id,
-      ...sensitiveOwnershipValues(),
+      ...owner,
       sourceType,
+      operationKey,
       sourceLabel,
       objectStoragePath: objectPath,
       byteCount,
       index: indexData,
-    });
+    }).onConflictDoNothing().returning();
 
-    log.log(`indexAndArchiveHeuristic: indexed ${sourceType}:${sourceLabel} id=${id} bytes=${byteCount} sections=${indexData.sections.length}`);
-    return { id, sourceType, sourceLabel, objectStoragePath: objectPath, byteCount, index: indexData };
+    if (!inserted && operationKey) {
+      const ownerColumns = {
+        ownerUserId: indexedContent.ownerUserId,
+        principalAccountId: indexedContent.principalAccountId,
+        vaultId: indexedContent.vaultId,
+      };
+      const [existing] = await db
+        .select()
+        .from(indexedContent)
+        .where(
+          combineWithSensitiveVisible(
+            ownerColumns,
+            and(
+              eq(indexedContent.sourceType, sourceType),
+              eq(indexedContent.operationKey, operationKey),
+            ),
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        if (existing.objectStoragePath !== objectPath) {
+          try {
+            await deleteCompactionArchiveObject(objectPath, owner.vaultId ?? null);
+          } catch (cleanupError) {
+            log.warn(
+              `indexAndArchiveHeuristic duplicate object cleanup failed operationKey=${operationKey}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+            );
+          }
+        }
+        return {
+          id: existing.id,
+          sourceType: existing.sourceType,
+          sourceLabel: existing.sourceLabel,
+          objectStoragePath: existing.objectStoragePath,
+          byteCount: existing.byteCount,
+          index: existing.index,
+        };
+      }
+    }
+    if (!inserted) throw new Error("Indexed archive insert conflicted without a replay-safe match");
+
+    log.log(`indexAndArchiveHeuristic: indexed ${sourceType}:${sourceLabel} id=${inserted.id} bytes=${byteCount} sections=${indexData.sections.length}`);
+    return { id: inserted.id, sourceType, sourceLabel, objectStoragePath: objectPath, byteCount, index: indexData };
   } catch (err: any) {
     log.error(`indexAndArchiveHeuristic DB insert failed sourceType=${sourceType} sourceLabel=${sourceLabel} objectPath=${objectPath}: ${err.message}; durable indexed reference unavailable`);
     return null;
@@ -407,6 +488,26 @@ export async function readVisibleIndexedContent(options: {
           : options.charOffset + options.charLength,
       );
   return { content, sourceLabel: row.sourceLabel };
+}
+
+export async function deleteCompactionArchiveObject(
+  objectPath: string,
+  vaultId: string | null,
+): Promise<void> {
+  if (!objectPath.startsWith("/objects/")) {
+    throw new Error("Compaction archive path is invalid");
+  }
+  const entityPath = objectPath.slice("/objects/".length);
+  if (!entityPath.startsWith("compaction/")) {
+    throw new Error("Refusing to delete a non-compaction object");
+  }
+  const { storageBackend, PRIVATE_PREFIX, VAULT_PREFIX } = await import("./object_storage");
+  const { deleteObjectAclPolicy } = await import("./object_storage/objectAcl");
+  const key = vaultId
+    ? `${VAULT_PREFIX}${vaultId}/${entityPath}`
+    : `${PRIVATE_PREFIX}${entityPath}`;
+  await storageBackend.deleteObject(key);
+  await deleteObjectAclPolicy(key);
 }
 
 export function heuristicFallbackWithArchive(content: string, reason: string): string {

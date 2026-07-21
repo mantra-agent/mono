@@ -132,11 +132,28 @@ function estimateHistoryTokens(msg: CompactableHistoryMessage): number {
   return tokens;
 }
 
+export type CompactionOutcome =
+  | { outcome: "below_threshold" }
+  | { outcome: "joined"; operationId: string; terminalOutcome: string }
+  | {
+      outcome: "compacted";
+      operationId: string;
+      markerId: string;
+      archiveRefId: string;
+    }
+  | { outcome: "snapshot_changed"; operationId: string }
+  | { outcome: "archive_failed"; operationId: string; reason: string }
+  | { outcome: "failed"; operationId?: string; reason: string };
+
+const COMPACTION_WALL_TIME_MS = 3 * 60_000;
+const COMPACTION_JOIN_WAIT_MS = 3 * 60_000;
+
 export async function runBetweenTurnCompaction(
   sessionId: string,
   conversationHistory: CompactableHistoryMessage[],
   conversationBudget: number,
-): Promise<boolean> {
+  callerGeneration?: number,
+): Promise<CompactionOutcome> {
   let totalTokens = 0;
   for (const msg of conversationHistory) {
     totalTokens += estimateHistoryTokens(msg);
@@ -144,7 +161,7 @@ export async function runBetweenTurnCompaction(
 
   const threshold = Math.floor(conversationBudget * BETWEEN_TURN_COMPACTION_THRESHOLD);
   if (totalTokens <= threshold) {
-    return false;
+    return { outcome: "below_threshold" };
   }
 
   log.log(`betweenTurnCompaction: triggered sessionId=${sessionId} totalTokens=${totalTokens} threshold=${threshold} messages=${conversationHistory.length}`);
@@ -156,29 +173,64 @@ export async function runBetweenTurnCompaction(
   const { chatFileStorage } = await import("./chat-file-storage");
   const docMessages = await chatFileStorage.getMessagesBySession(sessionId);
 
-  // Context-bearing entries are the ones rebuildConversationHistory projects
-  // into model space. Non-context entries (child_session_block, plan progress,
-  // diagnostics) ride along with whichever side of the boundary they fall on.
-  const isContextBearing = (m: (typeof docMessages)[number]): boolean =>
-    m.role === "user" ||
-    m.role === "assistant" ||
-    m.role === "system_prompt" ||
-    (m.role === "system" && m.model === "compaction-marker");
+  const { buildCompactionSnapshot, isCommittedContextMessage } = await import(
+    "./compaction-snapshot"
+  );
+  const snapshot = buildCompactionSnapshot(sessionId, docMessages);
+  if (!snapshot) return { outcome: "below_threshold" };
+  const removed = [...snapshot.removedMessages];
+  const boundaryIndex = removed.length;
+  const removedMessageIds = [...snapshot.removedMessageIds];
 
-  const keepRecent = 2;
-  const contextIndices: number[] = [];
-  for (let i = 0; i < docMessages.length; i++) {
-    if (isContextBearing(docMessages[i])) contextIndices.push(i);
+  const {
+    claimCompactionOperation,
+    transitionCompactionOperation,
+    waitForCompactionOperation,
+  } = await import("./compaction-operation-storage");
+  const claim = await claimCompactionOperation({ snapshot, callerGeneration });
+  if (claim.outcome === "joined") {
+    try {
+      const terminal = await waitForCompactionOperation(
+        claim.operation.id,
+        COMPACTION_JOIN_WAIT_MS,
+      );
+      const terminalOutcome = terminal.outcome ?? terminal.status;
+      if (
+        terminalOutcome === "snapshot_changed" ||
+        terminal.status === "superseded"
+      ) {
+        return { outcome: "snapshot_changed", operationId: terminal.id };
+      }
+      if (terminalOutcome === "archive_failed") {
+        return {
+          outcome: "archive_failed",
+          operationId: terminal.id,
+          reason: terminal.failureReason ?? "archive_failed",
+        };
+      }
+      if (terminal.status === "failed") {
+        return {
+          outcome: "failed",
+          operationId: terminal.id,
+          reason: terminal.failureReason ?? "compaction_failed",
+        };
+      }
+      return {
+        outcome: "joined",
+        operationId: terminal.id,
+        terminalOutcome,
+      };
+    } catch (error) {
+      return {
+        outcome: "failed",
+        operationId: claim.operation.id,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
-  if (contextIndices.length <= keepRecent) return false;
-
-  // Boundary: everything before the last keepRecent context-bearing entries
-  // is removed; everything at/after the boundary (including interleaved
-  // non-context entries) is kept.
-  const boundaryIndex = contextIndices[contextIndices.length - keepRecent];
-  const removed = docMessages.slice(0, boundaryIndex);
-  if (removed.length < 1) return false;
-  const removedMessageIds = removed.map((m) => m.id);
+  const operationId = claim.operation.id;
+  const operationStartedAt = Date.now();
+  const deadlineAt = operationStartedAt + COMPACTION_WALL_TIME_MS;
 
   const { encodeCompactionArchive, COMPACTION_ARCHIVE_FORMAT } = await import("./compaction-archive");
   const serialized = encodeCompactionArchive(
@@ -197,7 +249,13 @@ export async function runBetweenTurnCompaction(
   const archiveDownloadable = removed.every(
     (m) => !m.compaction?.archiveRefId || m.compaction?.archiveDownloadable === true,
   );
-  if (serialized.length < 200) return false;
+  if (serialized.length < 200) {
+    await transitionCompactionOperation(operationId, "superseded", {
+      outcome: "snapshot_changed",
+      failureReason: "archive_payload_too_small",
+    });
+    return { outcome: "snapshot_changed", operationId };
+  }
 
   const estimateDocTokens = (m: (typeof docMessages)[number]): number => {
     let tokens = estimateTokens(m.content);
@@ -213,16 +271,29 @@ export async function runBetweenTurnCompaction(
   };
 
   try {
+    await transitionCompactionOperation(operationId, "archiving");
     const { indexAndArchiveHeuristic } = await import("./content-indexer");
     const archiveRef = await indexAndArchiveHeuristic({
       content: serialized,
       sourceType: "compaction",
       sourceLabel: `session:${sessionId} (${removed.length} messages)`,
+      operationKey: operationId,
+      objectFileName: `${operationId}.txt`,
     });
     if (!archiveRef) {
-      log.error(`betweenTurnCompaction: exact archive unavailable; preserving active history sessionId=${sessionId}`);
-      return false;
+      const reason = "exact_archive_unavailable";
+      await transitionCompactionOperation(operationId, "failed", {
+        outcome: "archive_failed",
+        failureReason: reason,
+      });
+      log.error(`betweenTurnCompaction: exact archive unavailable; preserving active history sessionId=${sessionId} operationId=${operationId}`);
+      return { outcome: "archive_failed", operationId, reason };
     }
+    await transitionCompactionOperation(operationId, "summarizing", {
+      archiveRefId: archiveRef.id,
+      archiveObjectPath: archiveRef.objectStoragePath,
+      archiveBytes: archiveRef.byteCount,
+    });
 
     const { buildContinuationCapsule, renderContinuationCapsule } = await import("./continuation-capsule");
     const capsuleEntries = removed.flatMap((m) => {
@@ -261,6 +332,9 @@ export async function runBetweenTurnCompaction(
     let summaryBody = capsuleContent;
     let summaryKind: "narrative" | "capsule" = "capsule";
     let degradedSegments: number | undefined;
+    let segmentCount = 0;
+    let modelCallCount = 0;
+    let summarizationInputTokens = 0;
     try {
       const { summarizeCompactedMessages } = await import("./compaction-summarizer");
       const narrative = await summarizeCompactedMessages({
@@ -280,17 +354,32 @@ export async function runBetweenTurnCompaction(
             : undefined,
         })),
         capsuleFacts: capsuleContent,
+        deadlineAt,
       });
       if (narrative) {
         summaryBody = narrative.narrative;
         summaryKind = "narrative";
         degradedSegments = narrative.degradedSegments > 0 ? narrative.degradedSegments : undefined;
+        segmentCount = narrative.segmentCount;
+        modelCallCount = narrative.modelCallCount;
+        summarizationInputTokens = narrative.inputTokens;
       } else {
         log.warn(`betweenTurnCompaction: narrative summary unavailable, using capsule fallback sessionId=${sessionId}`);
       }
     } catch (summaryError: unknown) {
       log.warn(`betweenTurnCompaction: narrative summarizer error, using capsule fallback sessionId=${sessionId} error=${summaryError instanceof Error ? summaryError.message : String(summaryError)}`);
     }
+
+    await transitionCompactionOperation(operationId, "ready", {
+      summaryKind,
+      summaryMetadata: {
+        degradedSegments: degradedSegments ?? 0,
+        summaryLength: summaryBody.length,
+      },
+      segmentCount,
+      modelCallCount,
+      inputTokens: summarizationInputTokens,
+    });
 
     const archiveNote = `
 
@@ -299,12 +388,17 @@ export async function runBetweenTurnCompaction(
 
     let tokensAfter = estimateTokens(summaryContent);
     for (const m of docMessages.slice(boundaryIndex)) {
-      if (isContextBearing(m)) tokensAfter += estimateDocTokens(m);
+      if (isCommittedContextMessage(m)) tokensAfter += estimateDocTokens(m);
     }
     const tokensSaved = totalTokens - tokensAfter;
 
+    if (Date.now() > deadlineAt) {
+      throw new Error(`compaction wall-time budget exhausted (${COMPACTION_WALL_TIME_MS}ms)`);
+    }
     const compactResult = await chatFileStorage.compactSession(sessionId, summaryContent, removedMessageIds, {
       type: "between_turn",
+      operationId,
+      snapshotHash: snapshot.snapshotHash,
       summary: summaryBody,
       summaryKind,
       degradedSegments,
@@ -320,18 +414,57 @@ export async function runBetweenTurnCompaction(
       createdAt: new Date().toISOString(),
     });
 
-    if (compactResult.compacted) {
+    if (compactResult.compacted && compactResult.markerId) {
       const { eventBus } = await import("./event-bus");
-      log.log(`betweenTurnCompaction: persisted sessionId=${sessionId} trigger=between-turn messagesBefore=${compactResult.messagesBefore} messagesAfter=${compactResult.messagesAfter} tokensBefore=${totalTokens} tokensAfter=${tokensAfter} tokensSaved=${tokensSaved} summaryKind=${summaryKind} summaryLen=${summaryBody.length}${degradedSegments ? ` degradedSegments=${degradedSegments}` : ""}`);
-      eventBus.publish({ category: "system", event: "compaction.persisted", payload: { sessionId, trigger: "between-turn", messagesBefore: compactResult.messagesBefore, messagesAfter: compactResult.messagesAfter, tokensBefore: totalTokens, tokensAfter, tokensSaved, summaryLength: summaryBody.length, summaryKind, capsuleVersion: capsule.version } });
-    } else {
-      log.warn(`betweenTurnCompaction: write-back declined (prefix mismatch or empty removal) sessionId=${sessionId} removed=${removedMessageIds.length} — active history preserved`);
+      log.info("compaction.lifecycle", {
+        transition: "committed",
+        operationId,
+        sessionId,
+        snapshotHash: snapshot.snapshotHash,
+        callerGeneration,
+        durationMs: Date.now() - operationStartedAt,
+        messagesBefore: compactResult.messagesBefore,
+        messagesAfter: compactResult.messagesAfter,
+        tokensBefore: totalTokens,
+        tokensAfter,
+        tokensSaved,
+        summaryKind,
+        summaryLength: summaryBody.length,
+        degradedSegments: degradedSegments ?? 0,
+        segmentCount,
+        modelCallCount,
+        inputTokens: summarizationInputTokens,
+        archiveBytes: archiveRef.byteCount,
+      });
+      eventBus.publish({ category: "system", event: "compaction.persisted", payload: { operationId, sessionId, snapshotHash: snapshot.snapshotHash, trigger: "between-turn", messagesBefore: compactResult.messagesBefore, messagesAfter: compactResult.messagesAfter, tokensBefore: totalTokens, tokensAfter, tokensSaved, summaryLength: summaryBody.length, summaryKind, capsuleVersion: capsule.version } });
+      return {
+        outcome: "compacted",
+        operationId,
+        markerId: compactResult.markerId,
+        archiveRefId: archiveRef.id,
+      };
     }
 
-    return compactResult.compacted;
+    await transitionCompactionOperation(operationId, "superseded", {
+      outcome: "snapshot_changed",
+      failureReason: "snapshot_changed_before_commit",
+    });
+    log.warn(`betweenTurnCompaction: snapshot changed before commit sessionId=${sessionId} operationId=${operationId} removed=${removedMessageIds.length}; active history preserved`);
+    return { outcome: "snapshot_changed", operationId };
   } catch (err: unknown) {
-    log.error(`betweenTurnCompaction: failed sessionId=${sessionId} error=${err instanceof Error ? err.message : String(err)}`);
-    return false;
+    const reason = err instanceof Error ? err.message : String(err);
+    if (operationId) {
+      try {
+        await transitionCompactionOperation(operationId, "failed", {
+          outcome: "failed",
+          failureReason: reason.slice(0, 1000),
+        });
+      } catch (transitionError) {
+        log.error(`betweenTurnCompaction: terminal state persistence failed operationId=${operationId} error=${transitionError instanceof Error ? transitionError.message : String(transitionError)}`);
+      }
+    }
+    log.error(`betweenTurnCompaction: failed sessionId=${sessionId} operationId=${operationId ?? "none"} error=${reason}`);
+    return { outcome: "failed", operationId, reason };
   }
 }
 

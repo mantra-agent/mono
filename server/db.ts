@@ -738,10 +738,22 @@ instrumentPool(voicePool, "voice");
 
 const generalDb = drizzle(pool, { schema });
 const voiceDb = drizzle(voicePool, { schema });
+type DrizzleTransaction = Parameters<Parameters<typeof generalDb.transaction>[0]>[0];
+const databaseTransactionALS = new AsyncLocalStorage<DrizzleTransaction>();
+
+export function runWithDatabaseTransaction<T>(
+  transaction: DrizzleTransaction,
+  operation: () => Promise<T>,
+): Promise<T> {
+  return databaseTransactionALS.run(transaction, operation);
+}
+
 const databaseProxyTarget = Object.create(null);
 export const db = new Proxy(databaseProxyTarget, {
   get(_target, property, receiver) {
-    const selected = databaseLaneALS.getStore() === "voice" ? voiceDb : generalDb;
+    const selected =
+      databaseTransactionALS.getStore() ??
+      (databaseLaneALS.getStore() === "voice" ? voiceDb : generalDb);
     const value = Reflect.get(selected as object, property, selected);
     return typeof value === "function" ? value.bind(selected) : value;
   },
@@ -769,6 +781,8 @@ export async function closeDatabasePools(): Promise<void> {
 export const ADVISORY_LOCK_NS = {
   LIBRARY_PARENT: 0x4c425052, // 'LBPR' — must fit in int32
   PERSON_MERGE: 0x5052534d, // 'PRSM' — serializes Person merges per account
+  CHAT_DOCUMENT: 0x43484443, // 'CHDC' — serializes one scoped chat document across processes
+  COMPACTION_OPERATION: 0x434f4d50, // 'COMP' — serializes one scoped compaction claim
 } as const;
 
 const LIBRARY_ROOT_SENTINEL = "__LIBRARY_ROOT__";
@@ -789,7 +803,18 @@ export function libraryParentLockKey(parentId: string | null): number {
   return fnv1a32(parentId === null ? LIBRARY_ROOT_SENTINEL : parentId);
 }
 
-type DrizzleTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type DrizzleTx = DrizzleTransaction;
+
+export async function acquireAdvisoryTransactionLock(
+  tx: DrizzleTx,
+  namespace: number,
+  logicalKey: string,
+): Promise<void> {
+  const key = fnv1a32(logicalKey);
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(${namespace}::int4, ${key}::int4)`,
+  );
+}
 
 // Acquire pg advisory locks (transaction-scoped) for the given parent ids.
 // Locks are deduplicated and acquired in a stable sorted order so concurrent
