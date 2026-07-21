@@ -6,7 +6,8 @@ import type { AgentVisualizerEvent, AgentVisualState } from "@shared/agent-visua
 
 const log = createLogger("MeetingVisualizer");
 const RECONNECT_MAX_MS = 5_000;
-const VISUALIZER_STATES = new Set<AgentVisualState>([
+const VISUALIZER_STATES = new Set<OrbState>([
+  "entrance",
   "idle",
   "listening",
   "thinking",
@@ -15,10 +16,10 @@ const VISUALIZER_STATES = new Set<AgentVisualState>([
   "degraded",
 ]);
 
-function previewState(search: URLSearchParams): AgentVisualState {
+function previewState(search: URLSearchParams): OrbState {
   const state = search.get("state")?.trim();
-  return state && VISUALIZER_STATES.has(state as AgentVisualState)
-    ? state as AgentVisualState
+  return state && VISUALIZER_STATES.has(state as OrbState)
+    ? state as OrbState
     : "idle";
 }
 

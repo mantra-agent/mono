@@ -1,7 +1,10 @@
 import type { AgentVisualState } from '@shared/agent-visualizer';
 
-/** Agent orb voice visualizer state machine. */
-export type OrbState = AgentVisualState;
+/**
+ * Agent orb render states. The one-shot entrance belongs to this visual boundary,
+ * while AgentVisualState remains the canonical six-state voice/meeting protocol.
+ */
+export type OrbState = AgentVisualState | 'entrance';
 
 export interface AgentOrbProps {
   /** Current agent state driving the visual signature */
