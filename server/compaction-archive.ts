@@ -57,6 +57,7 @@ export class CompactionArchiveUnavailableError extends Error {
 export function encodeCompactionArchive(
   sessionId: string,
   messages: CompactionArchiveSourceMessage[],
+  createdAt = new Date().toISOString(),
 ): string {
   const entries: CompactionArchiveEntry[] = messages.map((message) => {
     if (message.archiveRefId) {
@@ -79,7 +80,7 @@ export function encodeCompactionArchive(
   const archive: CompactionArchiveV1 = {
     format: COMPACTION_ARCHIVE_FORMAT,
     sessionId,
-    createdAt: new Date().toISOString(),
+    createdAt,
     entries,
   };
   return JSON.stringify(archive);

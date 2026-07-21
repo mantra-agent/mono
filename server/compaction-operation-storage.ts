@@ -229,6 +229,7 @@ export async function claimCompactionOperation(input: {
 
 export async function transitionCompactionOperation(
   operationId: string,
+  expectedAttempt: number,
   status: CompactionOperationStatus,
   patch: Partial<{
     archiveRefId: string | null;
@@ -262,9 +263,18 @@ export async function transitionCompactionOperation(
       and(
         eq(compactionOperations.id, operationId),
         ownedPredicate(owner),
+        eq(compactionOperations.ownerBootId, BOOT_ID),
+        eq(compactionOperations.attemptCount, expectedAttempt),
+        inArray(compactionOperations.status, ACTIVE_STATUSES),
+        sql`${compactionOperations.leaseExpiresAt} > ${now}`,
       ),
     )
     .returning();
+  if (!operation) {
+    throw new Error(
+      `Compaction operation lease lost: operationId=${operationId} attempt=${expectedAttempt}`,
+    );
+  }
   if (operation) {
     log.info("compaction.lifecycle", {
       transition: status,

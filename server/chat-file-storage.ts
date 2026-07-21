@@ -2,6 +2,7 @@ import { documentStorage } from "./memory";
 import {
   ADVISORY_LOCK_NS,
   acquireAdvisoryTransactionLock,
+  BOOT_ID,
   db,
   runWithDatabaseTransaction,
 } from "./db";
@@ -3285,7 +3286,10 @@ export const chatFileStorage: IChatFileStorage = {
               eq(compactionOperations.ownerUserId, principal.userId),
               eq(compactionOperations.accountId, principal.accountId),
               eq(compactionOperations.sessionId, sessionId),
+              eq(compactionOperations.ownerBootId, BOOT_ID),
+              eq(compactionOperations.attemptCount, meta.operationAttempt ?? -1),
               eq(compactionOperations.status, "ready"),
+              sql`${compactionOperations.leaseExpiresAt} > ${new Date(compactionMarker.createdAt)}`,
             ),
           )
           .returning({ id: compactionOperations.id });
