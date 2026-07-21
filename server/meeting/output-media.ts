@@ -7,6 +7,8 @@ import type { AgentVisualizerEvent, AgentVisualState } from "@shared/agent-visua
 import type { MeetingBotStatus } from "@shared/models/chat";
 import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
+import { createNamedSystemPrincipal } from "../principal";
+import { runWithPrincipal } from "../principal-context";
 import { EmptyVoiceStreamError, streamVoiceAudio, type VoiceAudioStream } from "../voice/synthesis";
 
 const log = createLogger("MeetingOutputMedia");
@@ -168,7 +170,9 @@ export function registerMeetingVisualizerTransport(): (
     clients.add(client);
     visualizerClients.set(sessionId, clients);
     if (!visualizerStates.has(sessionId)) {
-      void chatStorage.getSession(sessionId).then((session) => {
+      void runWithPrincipal(createNamedSystemPrincipal("recall-webhook"), () =>
+        chatStorage.getSession(sessionId),
+      ).then((session) => {
         if (!session?.meeting) {
           client.close(1008, "meeting not found");
           return;

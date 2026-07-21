@@ -47,7 +47,7 @@ import { chatRunLifecycle, ChatRunInvalidatedError, type ChatRunLease } from "./
 import { timerStorage } from "../../file-storage";
 import { timerScheduler } from "../../timer-scheduler";
 import { SESSION_REMINDER_PREFIX } from "../../routes/session-reminder";
-import { getPrincipal } from "../../principal";
+import { createNamedSystemPrincipal, getPrincipal } from "../../principal";
 import { completeFtueSayHello } from "../../ftue-goals";
 import type { Timer } from "@shared/models/timers";
 
@@ -67,7 +67,7 @@ import { libraryPages } from "@shared/models/info";
 import { planExecutions } from "@shared/schema";
 import { createLogger } from "../../log";
 import { requireAuth } from "../../auth";
-import { getCurrentPrincipalOrSystem } from "../../principal-context";
+import { getCurrentPrincipalOrSystem, runWithPrincipal } from "../../principal-context";
 import { resolveQuestionResponse } from "../../question-response";
 
 const chatLog = createLogger("ChatStream");
@@ -3154,7 +3154,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     | { ok: false; status: number; error: string }
   > {
     const existingSession = event.sessionId
-      ? await chatStorage.getSession(event.sessionId)
+      ? await runWithPrincipal(createNamedSystemPrincipal("recall-webhook"), () =>
+        chatStorage.getSession(event.sessionId!),
+      )
       : null;
     if (event.sessionId && !existingSession) {
       return { ok: false, status: 404, error: "Session not found" };
