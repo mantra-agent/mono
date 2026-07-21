@@ -8,6 +8,8 @@ Root `AGENTS.md` is mandatory and authoritative for Engineering Principles, arch
 
 A Railway runtime may execute only its deployed entrypoint. Never launch `server/index.ts`, `npm run dev`, or another application server from an agent shell, verification command, or acceptance harness inside stage/live. Concurrent processes share the bound database and background services. Startup must never terminate PostgreSQL backends based on `application_name` or boot identity; PostgreSQL owns connection reclamation.
 
+GitNexus has one runtime authority: `gitnexus-runtime.ts`. Development may resolve the installed package, while deployed production must resolve only the build-owned `dist/gitnexus-runtime/gitnexus` artifact. That artifact is graph-only: LadybugDB graph ingestion and Cypher are required, native FTS is optional and must never be installed, loaded, or indexed in the production process. Code search composes graph/Cypher retrieval with Mantra's PostgreSQL semantic index.
+
 # Server Architecture
 
 The server is a Node.js/Express/TypeScript monolith running all backend logic: API routes, LLM orchestration, autonomous execution, memory management, and integrations. This file covers the server-root subsystems. For deeper dives see:

@@ -1,22 +1,12 @@
-import { resolve as resolvePath, join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { resolve as resolvePath, join } from "path";
 import { spawn } from "child_process";
 import { existsSync, readdirSync } from "fs";
 import { mkdir } from "fs/promises";
 import { createLogger } from "./log";
 import { withAbortTimeout, TimeoutError } from "./timeout";
 import { WORKSPACE_DIR } from "./paths";
+import { resolveGitNexusRuntime, resolveGitNexusRuntimePath } from "./gitnexus-runtime";
 import { createGitAskpassEnv, resolveDefaultIndexedGitSource, type ResolvedGitSource } from "./git-source-resolver";
-
-function getDir(): string {
-  try {
-    if (typeof import.meta?.url === "string") {
-      return dirname(fileURLToPath(import.meta.url));
-    }
-  } catch {}
-  return resolvePath(process.cwd(), "server");
-}
-const __dirname = getDir();
 
 const logger = createLogger("gitnexus");
 
@@ -298,20 +288,13 @@ async function publishNexusFailed(phase: string, detail: string, retryCount: num
 }
 
 function resolveLocalBackendPath(): string {
-  const devPath = resolvePath("node_modules/gitnexus");
-  if (existsSync(devPath)) {
-    const importPath = "gitnexus/dist/mcp/local/local-backend.js";
-    logger.log(`[gitnexus] resolveLocalBackendPath: using node_modules import (${importPath})`);
-    return importPath;
+  const runtime = resolveGitNexusRuntime();
+  const backendPath = resolveGitNexusRuntimePath("dist/mcp/local/local-backend.js");
+  if (!existsSync(backendPath)) {
+    throw new Error(`GitNexus ${runtime.kind} runtime missing LocalBackend at ${backendPath}`);
   }
-  const prodPath = resolvePath(process.cwd(), "dist/gitnexus-runtime/gitnexus/dist/mcp/local/local-backend.js");
-  if (!existsSync(prodPath)) {
-    const msg = `resolveLocalBackendPath: production runtime not found at ${prodPath} — was 'npm run build' executed?`;
-    logger.error(`[gitnexus] ${msg}`);
-    throw new Error(msg);
-  }
-  logger.log(`[gitnexus] resolveLocalBackendPath: node_modules/gitnexus not found — using production runtime at ${prodPath}`);
-  return prodPath;
+  logger.log(`[gitnexus] resolveLocalBackendPath: using ${runtime.kind} runtime at ${backendPath}`);
+  return backendPath;
 }
 
 async function initBackend(): Promise<void> {
@@ -632,28 +615,11 @@ function scheduleAutoRetry(reason: string) {
 }
 
 function resolveAnalyzeBinary(): { cmd: string; args: (repoRoot: string) => string[] } {
-  const localBin = resolvePath("node_modules/.bin/gitnexus");
-  if (existsSync(localBin)) {
-    logger.log(`[gitnexus] resolveAnalyzeBinary: using local binary at ${localBin}`);
-    return {
-      cmd: localBin,
-      args: (repoRoot) => ["analyze", repoRoot],
-    };
-  }
-  // In the bundled CJS production server, __dirname (from getDir()) is unreliable:
-  // import.meta.url is unavailable in esbuild CJS output, so getDir() falls back to
-  // resolve(process.cwd(), "server"), NOT the actual dist/ directory. To find the
-  // bundled gitnexus runtime we anchor to process.cwd() — always the workspace root.
-  const runtimeScript = resolvePath(process.cwd(), "dist/gitnexus-runtime/gitnexus/dist/cli/index.js");
-  if (!existsSync(runtimeScript)) {
-    const msg = `resolveAnalyzeBinary: production runtime not found at ${runtimeScript} — was 'npm run build' executed?`;
-    logger.error(`[gitnexus] ${msg}`);
-    throw new Error(msg);
-  }
-  logger.log(`[gitnexus] resolveAnalyzeBinary: local binary not found — using production runtime at ${runtimeScript}`);
+  const runtime = resolveGitNexusRuntime();
+  logger.log(`[gitnexus] resolveAnalyzeBinary: using ${runtime.kind} runtime at ${runtime.cliEntry}`);
   return {
     cmd: process.execPath,
-    args: (repoRoot) => ["--max-old-space-size=2048", runtimeScript, "analyze", repoRoot],
+    args: (repoRoot) => ["--max-old-space-size=2048", runtime.cliEntry, "analyze", repoRoot],
   };
 }
 

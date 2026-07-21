@@ -246,14 +246,108 @@ function buildGitnexusPatches(runtimeBase: string): PatchSpec[] {
       replace: "        stopOnComplete: false,\n        noTTYOutput: true,\n    }, cliProgress.Presets.shades_grey);",
       description: "analyze.js SingleBar: add noTTYOutput: true so cli-progress emits bar output when stdout is a pipe (non-TTY)",
     },
-    // ── FTS connection-pool bug fix ────────────────────────────────────────────
-    // Root cause of code_query returning empty results:
-    //   initLbug() creates INITIAL_CONNS_PER_REPO=2 connections [conn0, conn1]
-    //   and loads LOAD EXTENSION fts only on available[0] (conn0).
-    //   checkout() uses available.pop() which always returns conn1 (the last element).
-    //   conn0 is never used for FTS queries, so every CALL QUERY_FTS_INDEX
-    //   runs on an unloaded session and silently returns [].
-    // Fix: load FTS extension on every initial connection in the pool.
+    // ── Graph-only runtime ────────────────────────────────────────────────────
+    // LadybugDB's optional native FTS extension can SIGSEGV during install,
+    // load, or index creation. Graph ingestion and Cypher queries do not require
+    // it, so production removes FTS activation instead of letting an optional
+    // accelerator hold the complete code-intelligence capability hostage.
+    {
+      file: `${runtimeBase}/dist/cli/analyze.js`,
+      find: "import { initLbug, loadGraphToLbug, getLbugStats, executeQuery, executeWithReusedStatement, closeLbug, createFTSIndex, loadCachedEmbeddings } from '../core/lbug/lbug-adapter.js';",
+      replace: "import { initLbug, loadGraphToLbug, getLbugStats, executeQuery, executeWithReusedStatement, closeLbug, loadCachedEmbeddings } from '../core/lbug/lbug-adapter.js';",
+      description: "analyze.js: remove the unused native FTS index import",
+    },
+    {
+      file: `${runtimeBase}/dist/cli/analyze.js`,
+      find: [
+        "    // ── Phase 3: FTS (85–90%) ─────────────────────────────────────────",
+        "    updateBar(85, 'Creating search indexes...');",
+        "    const t0Fts = Date.now();",
+        "    try {",
+        "        await createFTSIndex('File', 'file_fts', ['name', 'content']);",
+        "        await createFTSIndex('Function', 'function_fts', ['name', 'content']);",
+        "        await createFTSIndex('Class', 'class_fts', ['name', 'content']);",
+        "        await createFTSIndex('Method', 'method_fts', ['name', 'content']);",
+        "        await createFTSIndex('Interface', 'interface_fts', ['name', 'content']);",
+        "    }",
+        "    catch (e) {",
+        "        // Non-fatal — FTS is best-effort",
+        "    }",
+        "    const ftsTime = ((Date.now() - t0Fts) / 1000).toFixed(1);",
+      ].join("\n"),
+      replace: [
+        "    // ── Phase 3: Search indexes (85–90%) ──────────────────────────────",
+        "    updateBar(85, 'Graph ready; native FTS disabled...');",
+        "    const ftsTime = 'disabled';",
+      ].join("\n"),
+      description: "analyze.js: make native FTS structurally optional and continue with graph finalization",
+    },
+    {
+      file: `${runtimeBase}/dist/cli/analyze.js`,
+      find: "    console.log(`  LadybugDB ${lbugTime}s | FTS ${ftsTime}s | Embeddings ${embeddingSkipped ? embeddingSkipReason : embeddingTime + 's'}`);",
+      replace: "    console.log(`  LadybugDB ${lbugTime}s | FTS ${ftsTime} | Embeddings ${embeddingSkipped ? embeddingSkipReason : embeddingTime + 's'}`);",
+      description: "analyze.js: report graph-only FTS capability truthfully",
+    },
+    {
+      file: `${runtimeBase}/dist/core/lbug/lbug-adapter.js`,
+      find: [
+        "export const loadFTSExtension = async () => {",
+        "    if (ftsLoaded)",
+        "        return;",
+        "    if (!conn) {",
+        "        throw new Error('LadybugDB not initialized. Call initLbug first.');",
+        "    }",
+        "    try {",
+        "        await conn.query('INSTALL fts');",
+        "        await conn.query('LOAD EXTENSION fts');",
+        "        ftsLoaded = true;",
+        "    }",
+        "    catch (err) {",
+        "        const msg = err?.message || '';",
+        "        if (msg.includes('already loaded') || msg.includes('already installed') || msg.includes('already exists')) {",
+        "            ftsLoaded = true;",
+        "        }",
+        "        else {",
+        "            console.error('GitNexus: FTS extension load failed:', msg);",
+        "        }",
+        "    }",
+        "};",
+      ].join("\n"),
+      replace: [
+        "export const loadFTSExtension = async () => {",
+        "    // Native FTS is disabled in the Mantra runtime; graph queries remain available.",
+        "    ftsLoaded = false;",
+        "};",
+      ].join("\n"),
+      description: "core/lbug/lbug-adapter.js: prohibit native FTS install and load",
+    },
+    {
+      file: `${runtimeBase}/dist/core/lbug/lbug-adapter.js`,
+      find: [
+        "export const createFTSIndex = async (tableName, indexName, properties, stemmer = 'porter') => {",
+        "    if (!conn) {",
+        "        throw new Error('LadybugDB not initialized. Call initLbug first.');",
+        "    }",
+        "    await loadFTSExtension();",
+        "    const propList = properties.map(p => `'${p}'`).join(', ');",
+        "    const query = `CALL CREATE_FTS_INDEX('${tableName}', '${indexName}', [${propList}], stemmer := '${stemmer}')`;",
+        "    try {",
+        "        await conn.query(query);",
+        "    }",
+        "    catch (e) {",
+        "        if (!e.message?.includes('already exists')) {",
+        "            throw e;",
+        "        }",
+        "    }",
+        "};",
+      ].join("\n"),
+      replace: [
+        "export const createFTSIndex = async (_tableName, _indexName, _properties, _stemmer = 'porter') => {",
+        "    // Native FTS is disabled in the Mantra runtime; graph queries remain available.",
+        "};",
+      ].join("\n"),
+      description: "core/lbug/lbug-adapter.js: prohibit native FTS index creation",
+    },
     {
       file: `${runtimeBase}/dist/mcp/core/lbug-adapter.js`,
       find: [
@@ -267,39 +361,9 @@ function buildGitnexusPatches(runtimeBase: string): PatchSpec[] {
         "            // Extension may not be installed — FTS queries will fail gracefully",
         "        }",
         "    }",
-        "};",
       ].join("\n"),
-      replace: [
-        "    // Load FTS extension on EVERY initial connection in the pool.",
-        "    // LOAD EXTENSION is per-session in LadybugDB: the original code loaded it only",
-        "    // on available[0], but checkout() uses pop() which always returns available[1],",
-        "    // so FTS queries silently returned [] on every search call.",
-        "    if (!shared.ftsLoaded) {",
-        "        let ftsOk = false;",
-        "        for (const c of available) {",
-        "            try {",
-        "                await c.query('LOAD EXTENSION fts');",
-        "                ftsOk = true;",
-        "            }",
-        "            catch {",
-        "                // Extension may not be installed — FTS queries will fail gracefully",
-        "            }",
-        "        }",
-        "        if (ftsOk) shared.ftsLoaded = true;",
-        "    }",
-        "};",
-      ].join("\n"),
-      description: "mcp/core/lbug-adapter.js: load FTS extension on ALL initial pool connections (not just available[0]) — fixes code_query BM25 returning empty results",
-    },
-    // ── Core lbug adapter FTS fix ─────────────────────────────────────────────
-    // doInitLbug() creates a fresh connection without calling loadFTSExtension(),
-    // so searchCode() / withLbugDb() calls (search_code tool) also silently fail.
-    // Fix: best-effort LOAD EXTENSION fts immediately after the connection is created.
-    {
-      file: `${runtimeBase}/dist/core/lbug/lbug-adapter.js`,
-      find: "    db = new lbug.Database(dbPath);\n    conn = new lbug.Connection(db);\n    for (const schemaQuery of SCHEMA_QUERIES) {",
-      replace: "    db = new lbug.Database(dbPath);\n    conn = new lbug.Connection(db);\n    // Best-effort FTS load — needed for CALL QUERY_FTS_INDEX when reading an already-analyzed DB.\n    // loadFTSExtension() also checks ftsLoaded so it becomes a no-op after this succeeds.\n    try { await conn.query('LOAD EXTENSION fts'); ftsLoaded = true; } catch { /* best-effort */ }\n    for (const schemaQuery of SCHEMA_QUERIES) {",
-      description: "core/lbug/lbug-adapter.js: load FTS extension in doInitLbug so withLbugDb/searchCode BM25 works",
+      replace: "    // Native FTS is disabled; the pool serves graph and Cypher queries only.",
+      description: "mcp/core/lbug-adapter.js: prohibit native FTS load on query connections",
     },
     // ── Fix labels(n)[0] KuzuDB syntax error ──────────────────────────────────
     // KuzuDB uses label(n) (singular) not Neo4j's labels(n)[0] (plural+index).
@@ -311,25 +375,7 @@ function buildGitnexusPatches(runtimeBase: string): PatchSpec[] {
       global: true,
       description: "mcp/local/local-backend.js: replace all labels(n)[0] with label(n) — KuzuDB uses singular label() not Neo4j's plural labels()[0]",
     },
-    // ── FTS row-count diagnostic logging ──────────────────────────────────────
-    // Add unconditional [gitnexus:fts:<Table>] rows: N logging so zero-result
-    // FTS queries are visible in logs without needing to dig into DB state.
-    {
-      file: `${runtimeBase}/dist/core/search/bm25-index.js`,
-      find: "        const rows = await executor(cypher);\n        return rows.map((row) => {",
-      replace: "        const rows = await executor(cypher);\n        console.log(`[gitnexus:fts:${tableName}] rows: ${rows.length}`);\n        return rows.map((row) => {",
-      description: "core/search/bm25-index.js: add unconditional FTS row-count logging for diagnostics",
-    },
-    // ── Fix pool growth path to load FTS on new connections ───────────────────
-    // When the pool grows past INITIAL_CONNS_PER_REPO, checkout() calls
-    // createConnection() but does NOT run LOAD EXTENSION fts on the new conn.
-    // Result: all concurrently-created connections silently skip FTS.
-    {
-      file: `${runtimeBase}/dist/mcp/core/lbug-adapter.js`,
-      find: "        entry.checkedOut++;\n        return Promise.resolve(createConnection(entry.db));",
-      replace: "        entry.checkedOut++;\n        const _newConn = createConnection(entry.db);\n        return _newConn.query(\"LOAD EXTENSION fts\").catch(() => {}).then(() => _newConn);",
-      description: "mcp/core/lbug-adapter.js: load FTS on pool-growth connections (checkout path) so new connections also support FTS queries",
-    },
+    // FTS query calls already catch missing-index errors and return no BM25 rows.
   ];
 }
 
@@ -515,7 +561,23 @@ async function bundleGitnexusRuntime() {
       `bundleGitnexusRuntime: missing required runtime deps: ${missingDeps.join(", ")}`
     );
   }
-  // 5. Ensure total bundle size is within threshold.
+  // 5. Native FTS must remain structurally absent from the production runtime.
+  const ftsGuardFiles = [
+    `${runtimeBase}/dist/cli/analyze.js`,
+    `${runtimeBase}/dist/core/lbug/lbug-adapter.js`,
+    `${runtimeBase}/dist/mcp/core/lbug-adapter.js`,
+  ];
+  const forbiddenFtsActivations = ["INSTALL fts", "LOAD EXTENSION fts", "CREATE_FTS_INDEX("];
+  for (const file of ftsGuardFiles) {
+    const source = await readFile(file, "utf-8");
+    const found = forbiddenFtsActivations.find((token) => source.includes(token));
+    if (found) {
+      throw new Error(`bundleGitnexusRuntime: forbidden native FTS activation ${JSON.stringify(found)} remains in ${file}`);
+    }
+  }
+  console.log("  graph-only invariant verified: no native FTS activation in production runtime");
+
+  // 6. Ensure total bundle size is within threshold.
   //    Updated from 80 MB → 150 MB to account for the ~30 MB of hoisted JS deps
   //    (cli-progress, graphology, @modelcontextprotocol/sdk, zod, hono, etc.).
   //    The ML packages (@huggingface/transformers, onnxruntime-node) are excluded
