@@ -12,7 +12,7 @@ import { createReferenceRef } from "@shared/references";
 import { createMeetingArtifactChild, createMeetingPersonChild } from "@shared/meeting-feed-items";
 import { listAllEvents, type CalendarEvent } from "../google-calendar";
 import { listMetadataByEvents, classifyEventByTitle, getLinkedArtifactsByMetadataIds } from "../calendar-metadata";
-import { buildEmailPersonContextMap, resolveMeetingArtifactContext, type EmailPersonContext, type MeetingArtifactContext } from "../meeting-context";
+import { buildEmailPersonContextMap, meetingInteractionContext, resolveMeetingArtifactContext, type EmailPersonContext, type MeetingArtifactContext } from "../meeting-context";
 import { computeAgendaSignals, computeContextBadge, peopleStorage, type Interaction, type ScoredAgendaItem } from "../people-storage";
 import { ensurePeopleSurfaceStates, listPeopleSurfaceStates } from "./people-surface-state";
 import { signalStorage } from "../news-storage";
