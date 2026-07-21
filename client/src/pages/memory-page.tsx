@@ -239,6 +239,7 @@ interface VnextClaim {
   metadata?: Record<string, unknown>;
   recallCount?: number;
   lastRecalledAt?: string | null;
+  activeTouchedAt?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }
@@ -1466,7 +1467,7 @@ function GraphTab({
         source: visual.source,
         label: entry.title?.trim() || entry.oneLiner?.trim() || firstLine(entry.content, 72) || visual.label,
         degree: degree.get(entry.id) ?? 0,
-        recency: typeof entry.recency === "number" ? entry.recency : 1,
+        recency: typeof entry.recency === "number" ? entry.recency : 0,
         pendingDeletion: false,
       };
     });

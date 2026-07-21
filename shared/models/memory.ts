@@ -468,6 +468,10 @@ export const memoryVnextClaims = pgTable(
       withTimezone: true,
       precision: 6,
     }),
+    activeTouchedAt: timestamp("active_touched_at", {
+      withTimezone: true,
+      precision: 6,
+    }),
     createdAt: timestamp("created_at", { withTimezone: true, precision: 6 })
       .default(sql`CURRENT_TIMESTAMP`)
       .notNull(),

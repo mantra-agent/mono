@@ -9,6 +9,7 @@ import {
   memorySources,
   memoryEntries,
   memorySourceRefs,
+  MEMORY_VNEXT_LIFECYCLE_STAGE,
   memoryVnextClaims,
   memoryVnextEntityLinks,
   memoryVnextClaimLinks,
@@ -70,6 +71,7 @@ function serializeVnextClaim(claim: MemoryVnextClaim) {
     metadata: claim.metadata ?? {},
     recallCount: claim.recallCount,
     lastRecalledAt: serializeDate(claim.lastRecalledAt),
+    activeTouchedAt: serializeDate(claim.activeTouchedAt),
     createdAt: serializeDate(claim.createdAt),
     updatedAt: serializeDate(claim.updatedAt),
   };
@@ -800,8 +802,8 @@ interface VnextGraphNode {
   metadata: Record<string, unknown>;
   createdAt?: string | null;
   updatedAt?: string | null;
-  /** Derived recency heat in (0, 1]: 2^(-daysSince(max(createdAt, lastRecalledAt)) / 7). */
-  recency?: number;
+  /** Derived active recency heat in [0, 1], using authoritative timestamps for the node kind. */
+  recency: number;
 }
 
 interface VnextGraphLink {
@@ -816,21 +818,42 @@ interface VnextGraphLink {
 
 const RECENCY_HALF_LIFE_DAYS = 7;
 const MS_PER_DAY = 86_400_000;
+const GRAPH_RELATION_BATCH_SIZE = 500;
+
+function chunkValues<T>(values: T[]): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += GRAPH_RELATION_BATCH_SIZE) {
+    chunks.push(values.slice(index, index + GRAPH_RELATION_BATCH_SIZE));
+  }
+  return chunks;
+}
 
 /**
- * Recency heat for a claim node: 2^(-daysSince(max(createdAt, lastRecalledAt)) / 7).
- * Pure derivation, no schema change. Returns 1 (fresh) when no timestamp is available.
+ * Recency heat for a graph node from its authoritative active timestamps.
+ * Missing timestamps are cold rather than silently fresh.
  */
-function computeClaimRecency(
-  createdAt: Date | string | null | undefined,
-  lastRecalledAt: Date | string | null | undefined,
+function computeNodeRecency(
+  ...timestamps: Array<Date | string | null | undefined>
 ): number {
-  const createdMs = createdAt ? new Date(createdAt).getTime() : 0;
-  const recalledMs = lastRecalledAt ? new Date(lastRecalledAt).getTime() : 0;
-  const mostRecentMs = Math.max(createdMs, recalledMs);
-  if (!Number.isFinite(mostRecentMs) || mostRecentMs <= 0) return 1;
+  const mostRecentMs = timestamps.reduce((latest, timestamp) => {
+    if (!timestamp) return latest;
+    const candidate = new Date(timestamp).getTime();
+    return Number.isFinite(candidate) ? Math.max(latest, candidate) : latest;
+  }, 0);
+  if (mostRecentMs <= 0) return 0;
   const daysSince = Math.max(0, (Date.now() - mostRecentMs) / MS_PER_DAY);
   return Math.pow(2, -daysSince / RECENCY_HALF_LIFE_DAYS);
+}
+
+function maxTimestamp(
+  ...timestamps: Array<Date | string | null | undefined>
+): Date | null {
+  const latestMs = timestamps.reduce((latest, timestamp) => {
+    if (!timestamp) return latest;
+    const candidate = new Date(timestamp).getTime();
+    return Number.isFinite(candidate) ? Math.max(latest, candidate) : latest;
+  }, 0);
+  return latestMs > 0 ? new Date(latestMs) : null;
 }
 
 async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> {
@@ -860,9 +883,12 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
     const claims = await db
       .select()
       .from(memoryVnextClaims)
-      .where(combineWithVisibleScope(principal, claimScopeColumns))
-      .orderBy(desc(memoryVnextClaims.createdAt))
-      .limit(300);
+      .where(combineWithVisibleScope(
+        principal,
+        claimScopeColumns,
+        sql`${memoryVnextClaims.lifecycleStage} <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}`,
+      ))
+      .orderBy(desc(memoryVnextClaims.createdAt));
 
     const claimIds = claims.map((claim) => claim.id);
     if (claimIds.length === 0) {
@@ -871,69 +897,101 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
     }
 
     const visibleClaimIds = new Set(claimIds);
-    const claimLinks = await db
-      .select()
-      .from(memoryVnextClaimLinks)
-      .where(
-        combineWithVisibleScope(
+    const claimLinksById = new Map<number, typeof memoryVnextClaimLinks.$inferSelect>();
+    const entityLinks: Array<typeof memoryVnextEntityLinks.$inferSelect> = [];
+    const sourceRefs: Array<typeof memoryVnextSourceRefs.$inferSelect> = [];
+    for (const batch of chunkValues(claimIds)) {
+      const [batchClaimLinks, batchEntityLinks, batchSourceRefs] = await Promise.all([
+        db.select().from(memoryVnextClaimLinks).where(combineWithVisibleScope(
           principal,
           claimLinkScopeColumns,
-          and(
-            inArray(memoryVnextClaimLinks.fromClaimId, claimIds),
-            inArray(memoryVnextClaimLinks.toClaimId, claimIds),
+          or(
+            inArray(memoryVnextClaimLinks.fromClaimId, batch),
+            inArray(memoryVnextClaimLinks.toClaimId, batch),
           ),
+        )),
+        db.select().from(memoryVnextEntityLinks).where(
+          combineWithVisibleScope(principal, entityLinkScopeColumns, inArray(memoryVnextEntityLinks.claimId, batch)),
         ),
-      );
-
-    const [entityLinks, sourceRefs] = await Promise.all([
-      db.select().from(memoryVnextEntityLinks).where(
-        combineWithVisibleScope(principal, entityLinkScopeColumns, inArray(memoryVnextEntityLinks.claimId, claimIds)),
-      ),
-      db.select().from(memoryVnextSourceRefs).where(
-        combineWithVisibleScope(principal, sourceRefScopeColumns, inArray(memoryVnextSourceRefs.claimId, claimIds)),
-      ),
-    ]);
+        db.select().from(memoryVnextSourceRefs).where(
+          combineWithVisibleScope(principal, sourceRefScopeColumns, inArray(memoryVnextSourceRefs.claimId, batch)),
+        ),
+      ]);
+      for (const link of batchClaimLinks) claimLinksById.set(link.id, link);
+      entityLinks.push(...batchEntityLinks);
+      sourceRefs.push(...batchSourceRefs);
+    }
+    const claimLinks = [...claimLinksById.values()];
 
     // Resolve human-readable titles for entity and source nodes in bounded batches.
     const entityTitleByKey = new Map<string, string>();
+    const entityTimestampByKey = new Map<string, { createdAt: Date | string | null; updatedAt: Date | string | null }>();
     const personEntityIds = [...new Set(entityLinks.filter((l) => l.entityType === "person").map((l) => l.entityId))];
     const pageEntityIds = [...new Set(entityLinks.filter((l) => l.entityType === "page" || l.entityType === "library_page").map((l) => l.entityId))];
     const entitySummaryByKey = new Map<string, string>();
     if (personEntityIds.length > 0) {
-      const people = await peopleStorage.getPeopleByIds(personEntityIds);
+      const people: Awaited<ReturnType<typeof peopleStorage.getPeopleByIds>> = [];
+      for (const batch of chunkValues(personEntityIds)) {
+        people.push(...await peopleStorage.getPeopleByIds(batch));
+      }
       for (const person of people) {
         entityTitleByKey.set(`person:${person.id}`, person.name);
         const fallbackSummary = [person.role, person.company, person.relation].filter(Boolean).join(" · ");
         const personSummary = person.quickSummary || person.aiSummary || person.identityContent || fallbackSummary;
         if (personSummary) entitySummaryByKey.set(`person:${person.id}`, personSummary);
+        entityTimestampByKey.set(`person:${person.id}`, {
+          createdAt: person.createdAt,
+          updatedAt: person.updatedAt,
+        });
       }
     }
     if (pageEntityIds.length > 0) {
       const pageScope = { ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, scope: libraryPages.scope };
-      const pageRows = await db
-        .select({ id: libraryPages.id, slug: libraryPages.slug, title: libraryPages.title })
-        .from(libraryPages)
-        .where(combineWithVisibleScope(principal, pageScope, or(inArray(libraryPages.id, pageEntityIds), inArray(libraryPages.slug, pageEntityIds))));
+      const pageRows: Array<{ id: string; slug: string; title: string; createdAt: Date; updatedAt: Date }> = [];
+      for (const batch of chunkValues(pageEntityIds)) {
+        pageRows.push(...await db
+          .select({ id: libraryPages.id, slug: libraryPages.slug, title: libraryPages.title, createdAt: libraryPages.createdAt, updatedAt: libraryPages.updatedAt })
+          .from(libraryPages)
+          .where(combineWithVisibleScope(principal, pageScope, or(inArray(libraryPages.id, batch), inArray(libraryPages.slug, batch)))));
+      }
       for (const row of pageRows) {
-        if (!row.title) continue;
-        entityTitleByKey.set(`page:${row.id}`, row.title);
-        entityTitleByKey.set(`library_page:${row.id}`, row.title);
-        entityTitleByKey.set(`page:${row.slug}`, row.title);
-        entityTitleByKey.set(`library_page:${row.slug}`, row.title);
+        if (row.title) {
+          entityTitleByKey.set(`page:${row.id}`, row.title);
+          entityTitleByKey.set(`library_page:${row.id}`, row.title);
+          entityTitleByKey.set(`page:${row.slug}`, row.title);
+          entityTitleByKey.set(`library_page:${row.slug}`, row.title);
+        }
+        const timestamps = { createdAt: row.createdAt, updatedAt: row.updatedAt };
+        entityTimestampByKey.set(`page:${row.id}`, timestamps);
+        entityTimestampByKey.set(`library_page:${row.id}`, timestamps);
+        entityTimestampByKey.set(`page:${row.slug}`, timestamps);
+        entityTimestampByKey.set(`library_page:${row.slug}`, timestamps);
       }
     }
 
     const sourcePageIds = [...new Set(sourceRefs.filter((ref) => ref.sourceType === "library_page" || ref.sourceType === "library").map((ref) => ref.sourceId))];
     const sourceSessionIds = [...new Set(sourceRefs.filter((ref) => ref.sourceType === "session").map((ref) => ref.sourceId))];
     const pageScope = { ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, scope: libraryPages.scope };
-    const [sourcePageRows, allSessions] = await Promise.all([
-      sourcePageIds.length > 0
-        ? db.select({ id: libraryPages.id, slug: libraryPages.slug, title: libraryPages.title, plainTextContent: libraryPages.plainTextContent, summary: libraryPages.summary, createdAt: libraryPages.createdAt, updatedAt: libraryPages.updatedAt })
-          .from(libraryPages)
-          .where(combineWithVisibleScope(principal, pageScope, or(inArray(libraryPages.id, sourcePageIds), inArray(libraryPages.slug, sourcePageIds))))
-        : Promise.resolve([]),
-      sourceSessionIds.length > 0 ? chatFileStorage.getAllSessions() : Promise.resolve([]),
+    const [sourcePageRows, sessionBatches] = await Promise.all([
+      (async () => {
+        const pages: Array<{ id: string; slug: string; title: string; plainTextContent: string; summary: string | null; createdAt: Date; updatedAt: Date }> = [];
+        for (const batch of chunkValues(sourcePageIds)) {
+          pages.push(...await db
+            .select({ id: libraryPages.id, slug: libraryPages.slug, title: libraryPages.title, plainTextContent: libraryPages.plainTextContent, summary: libraryPages.summary, createdAt: libraryPages.createdAt, updatedAt: libraryPages.updatedAt })
+            .from(libraryPages)
+            .where(combineWithVisibleScope(principal, pageScope, or(inArray(libraryPages.id, batch), inArray(libraryPages.slug, batch)))));
+        }
+        return pages;
+      })(),
+      (async () => {
+        const sessions: Array<Awaited<ReturnType<typeof chatFileStorage.getSession>>> = [];
+        for (const batch of chunkValues(sourceSessionIds)) {
+          sessions.push(...await Promise.all(batch.map((id) => chatFileStorage.getSession(id))));
+        }
+        return sessions;
+      })(),
     ]);
+    const allSessions = sessionBatches.flat().filter((session) => session !== undefined);
     const sourcePageById = new Map<string, typeof sourcePageRows[number]>();
     for (const page of sourcePageRows) {
       sourcePageById.set(page.id, page);
@@ -946,17 +1004,20 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       accountId: libraryPageLinks.accountId,
     };
     const librarySeedPageIds = sourcePageRows.map((page) => page.id);
-    const libraryLinks = librarySeedPageIds.length > 0
-      ? await db.select({ id: libraryPageLinks.id, sourcePageId: libraryPageLinks.sourcePageId, targetPageId: libraryPageLinks.targetPageId, createdAt: libraryPageLinks.createdAt })
+    const libraryLinksById = new Map<number, { id: number; sourcePageId: string; targetPageId: string; createdAt: Date }>();
+    for (const batch of chunkValues(librarySeedPageIds)) {
+      const rows = await db
+        .select({ id: libraryPageLinks.id, sourcePageId: libraryPageLinks.sourcePageId, targetPageId: libraryPageLinks.targetPageId, createdAt: libraryPageLinks.createdAt })
         .from(libraryPageLinks)
-        .where(combineWithVisibleScope(principal, libraryLinkScopeColumns, or(inArray(libraryPageLinks.sourcePageId, librarySeedPageIds), inArray(libraryPageLinks.targetPageId, librarySeedPageIds))))
-        .limit(200)
-      : [];
+        .where(combineWithVisibleScope(principal, libraryLinkScopeColumns, or(inArray(libraryPageLinks.sourcePageId, batch), inArray(libraryPageLinks.targetPageId, batch))));
+      for (const row of rows) libraryLinksById.set(row.id, row);
+    }
+    const libraryLinks = [...libraryLinksById.values()];
     const linkedPageIds = [...new Set(libraryLinks.flatMap((link) => [link.sourcePageId, link.targetPageId]).filter((id) => !sourcePageById.has(id)))];
-    if (linkedPageIds.length > 0) {
+    for (const batch of chunkValues(linkedPageIds)) {
       const linkedPages = await db.select({ id: libraryPages.id, slug: libraryPages.slug, title: libraryPages.title, plainTextContent: libraryPages.plainTextContent, summary: libraryPages.summary, createdAt: libraryPages.createdAt, updatedAt: libraryPages.updatedAt })
         .from(libraryPages)
-        .where(combineWithVisibleScope(principal, pageScope, inArray(libraryPages.id, linkedPageIds.slice(0, 100))));
+        .where(combineWithVisibleScope(principal, pageScope, inArray(libraryPages.id, batch)));
       for (const page of linkedPages) {
         sourcePageById.set(page.id, page);
         sourcePageById.set(page.slug, page);
@@ -967,6 +1028,17 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
         .filter((session) => sourceSessionIds.includes(session.id) && session.sessionType !== "agent" && session.sessionType !== "autonomous")
         .map((session) => [session.id, session]),
     );
+
+    const claimById = new Map(claims.map((claim) => [claim.id, claim]));
+    const newestClaimTimestampByEntityKey = new Map<string, Date>();
+    for (const link of entityLinks) {
+      const claim = claimById.get(link.claimId);
+      const linkedAt = maxTimestamp(claim?.createdAt, claim?.activeTouchedAt, link.createdAt);
+      if (!linkedAt) continue;
+      const key = `${link.entityType}:${link.entityId}`;
+      const current = newestClaimTimestampByEntityKey.get(key);
+      if (!current || linkedAt > current) newestClaimTimestampByEntityKey.set(key, linkedAt);
+    }
 
     const entityNodeIds = new Map<string, number>();
     const sourceNodeIds = new Map<string, number>();
@@ -993,7 +1065,7 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       },
       createdAt: serializeDate(claim.createdAt),
       updatedAt: serializeDate(claim.updatedAt),
-      recency: computeClaimRecency(claim.createdAt, claim.lastRecalledAt),
+      recency: computeNodeRecency(claim.createdAt, claim.activeTouchedAt),
     }));
 
     for (const link of entityLinks) {
@@ -1004,6 +1076,10 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
         entityNodeIds.set(key, entityNodeId);
         const entityTitle = entityTitleByKey.get(key) || link.entityId;
         const entitySummary = entitySummaryByKey.get(key) || `Entity linked to vNext claims (${link.entityType})`;
+        const resolvedTimestamps = entityTimestampByKey.get(key);
+        const fallbackTimestamp = newestClaimTimestampByEntityKey.get(key) ?? link.createdAt;
+        const createdAt = resolvedTimestamps?.createdAt ?? fallbackTimestamp;
+        const updatedAt = resolvedTimestamps?.updatedAt ?? fallbackTimestamp;
         entries.push({
           id: entityNodeId,
           content: entitySummary,
@@ -1020,8 +1096,9 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
             entityType: link.entityType,
             entityId: link.entityId,
           },
-          createdAt: serializeDate(link.createdAt),
-          updatedAt: serializeDate(link.createdAt),
+          createdAt: serializeDate(createdAt),
+          updatedAt: serializeDate(updatedAt),
+          recency: computeNodeRecency(createdAt, updatedAt),
         });
       }
     }
@@ -1040,6 +1117,12 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       sourceNodeIds.set(`${normalizedType}:${sourceId}`, sourceNodeId);
       const title = page?.title || session?.title || sourceId;
       const content = page?.plainTextContent || session?.summary || "";
+      const sessionLastMessageAt = session?.messages.reduce<Date | null>((latest, message) => {
+        const candidate = maxTimestamp(message.updatedAt, message.createdAt);
+        return !candidate || (latest && latest >= candidate) ? latest : candidate;
+      }, null);
+      const sourceCreatedAt = page?.createdAt || session?.createdAt || createdAt;
+      const sourceUpdatedAt = page?.updatedAt || maxTimestamp(session?.updatedAt, sessionLastMessageAt) || createdAt;
       entries.push({
         id: sourceNodeId,
         content,
@@ -1056,8 +1139,9 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
           nodeType: normalizedType,
           reference: `@${normalizedType}:${page?.slug || session?.id || sourceId}`,
         },
-        createdAt: serializeDate(page?.createdAt || session?.createdAt || createdAt),
-        updatedAt: serializeDate(page?.updatedAt || session?.updatedAt || createdAt),
+        createdAt: serializeDate(sourceCreatedAt),
+        updatedAt: serializeDate(sourceUpdatedAt),
+        recency: computeNodeRecency(sourceCreatedAt, sourceUpdatedAt),
       });
       return sourceNodeId;
     }
@@ -1240,10 +1324,12 @@ async function handleGetVnextClaim(req: Request, res: Response): Promise<void> {
     if (!id) { res.status(400).json({ error: "Invalid claim id" }); return; }
     const detail = await memoryVnextClaimStorage.getClaimDetail(id);
     if (!detail) { res.status(404).json({ error: "vNext claim not found" }); return; }
+    await memoryVnextClaimStorage.touchClaim(id);
+    const activeTouchedAt = new Date();
     log.debug(`[vnext] claim_detail claimId=${id}`);
     res.json({
       storage: "memory_vnext_claims",
-      claim: serializeVnextClaim(detail.claim),
+      claim: serializeVnextClaim({ ...detail.claim, activeTouchedAt }),
       sources: detail.sources.map(serializeVnextSourceRef),
       entityLinks: detail.entityLinks.map(serializeVnextEntityLink),
       claimLinks: detail.claimLinks.map(serializeVnextClaimLink),
@@ -1251,6 +1337,7 @@ async function handleGetVnextClaim(req: Request, res: Response): Promise<void> {
         ...detail.lifecycle,
         stageUpdatedAt: serializeDate(detail.lifecycle.stageUpdatedAt),
         lastRecalledAt: serializeDate(detail.lifecycle.lastRecalledAt),
+        activeTouchedAt: serializeDate(activeTouchedAt),
         createdAt: serializeDate(detail.lifecycle.createdAt),
         updatedAt: serializeDate(detail.lifecycle.updatedAt),
       },
@@ -1299,6 +1386,7 @@ async function handleGetVnextClaimLifecycle(req: Request, res: Response): Promis
     if (!id) { res.status(400).json({ error: "Invalid claim id" }); return; }
     const lifecycle = await memoryVnextClaimStorage.getLifecycleStatus(id);
     if (!lifecycle) { res.status(404).json({ error: "vNext claim not found" }); return; }
+    await memoryVnextClaimStorage.touchClaim(id);
     res.json({
       storage: "memory_vnext_claims",
       claimId: id,
@@ -1306,6 +1394,7 @@ async function handleGetVnextClaimLifecycle(req: Request, res: Response): Promis
         ...lifecycle,
         stageUpdatedAt: serializeDate(lifecycle.stageUpdatedAt),
         lastRecalledAt: serializeDate(lifecycle.lastRecalledAt),
+        activeTouchedAt: new Date().toISOString(),
         createdAt: serializeDate(lifecycle.createdAt),
         updatedAt: serializeDate(lifecycle.updatedAt),
       },

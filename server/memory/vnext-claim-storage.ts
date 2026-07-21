@@ -141,6 +141,7 @@ export interface VnextClaimDetail {
     stageUpdatedAt: Date;
     recallCount: number;
     lastRecalledAt: Date | null;
+    activeTouchedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
   };
@@ -391,6 +392,7 @@ function mapRawVnextClaimRow(row: Record<string, unknown>): MemoryVnextClaim {
     metadata: row.metadata ?? {},
     recallCount: Number(row.recall_count ?? 0),
     lastRecalledAt: toClaimDate(row.last_recalled_at),
+    activeTouchedAt: toClaimDate(row.active_touched_at),
     createdAt: toClaimDate(row.created_at) ?? new Date(0),
     updatedAt: toClaimDate(row.updated_at) ?? new Date(0),
   };
@@ -409,7 +411,7 @@ export async function executeVnextClaimSemanticSearch(
     SELECT id, title, content, claim_type, confidence, topics, entity_mentions, source_claim_index,
       content_hash, embedding, source_memory_id, source, source_id, lifecycle_stage,
       lifecycle_stage_updated_at, scope, owner_user_id, account_id, created_by_user_id, updated_by_user_id, metadata, recall_count,
-      last_recalled_at, created_at, updated_at,
+      last_recalled_at, active_touched_at, created_at, updated_at,
       1 - (embedding <=> ${embeddingStr}::vector) AS similarity
     FROM memory_vnext_claims
     WHERE embedding IS NOT NULL
@@ -443,7 +445,7 @@ export async function executeVnextClaimTitleTwinSearch(
     SELECT id, title, content, claim_type, confidence, topics, entity_mentions, source_claim_index,
       content_hash, embedding, source_memory_id, source, source_id, lifecycle_stage,
       lifecycle_stage_updated_at, scope, owner_user_id, account_id, created_by_user_id, updated_by_user_id, metadata, recall_count,
-      last_recalled_at, created_at, updated_at,
+      last_recalled_at, active_touched_at, created_at, updated_at,
       1 - (embedding <=> ${embeddingStr}::vector) AS similarity
     FROM memory_vnext_claims
     WHERE embedding IS NOT NULL
@@ -590,7 +592,6 @@ export class MemoryVnextClaimStorage {
           title: sql`COALESCE(${memoryVnextClaims.title}, ${input.claim.title || null})`,
           recallCount: sql`${memoryVnextClaims.recallCount} + 1`,
           lastRecalledAt: new Date(),
-          updatedAt: new Date(),
           metadata,
         },
       })
@@ -820,6 +821,7 @@ export class MemoryVnextClaimStorage {
         stageUpdatedAt: claim.lifecycleStageUpdatedAt,
         recallCount: claim.recallCount,
         lastRecalledAt: claim.lastRecalledAt,
+        activeTouchedAt: claim.activeTouchedAt,
         createdAt: claim.createdAt,
         updatedAt: claim.updatedAt,
       },
@@ -910,6 +912,7 @@ export class MemoryVnextClaimStorage {
       stageUpdatedAt: claim.lifecycleStageUpdatedAt,
       recallCount: claim.recallCount,
       lastRecalledAt: claim.lastRecalledAt,
+      activeTouchedAt: claim.activeTouchedAt,
       createdAt: claim.createdAt,
       updatedAt: claim.updatedAt,
     };
@@ -927,7 +930,6 @@ export class MemoryVnextClaimStorage {
         recallCount: sql`${memoryVnextClaims.recallCount} + 1`,
         lastRecalledAt: recalledAt,
         updatedByUserId: principal.userId ?? undefined,
-        updatedAt: recalledAt,
       })
       .where(combineWithWritableScope(principal, vnextClaimScopeColumns, inArray(memoryVnextClaims.id, uniqueIds)))
       .returning({ id: memoryVnextClaims.id });
@@ -942,6 +944,33 @@ export class MemoryVnextClaimStorage {
 
   async reinforceClaim(id: number): Promise<void> {
     await this.reinforceClaims([id]);
+  }
+
+  async touchClaims(ids: number[]): Promise<number> {
+    const uniqueIds = Array.from(new Set(ids.filter((id) => Number.isInteger(id) && id > 0)));
+    if (uniqueIds.length === 0) return 0;
+
+    const principal = getCurrentPrincipalOrSystem();
+    const touchedAt = new Date();
+    const updated = await db
+      .update(memoryVnextClaims)
+      .set({
+        activeTouchedAt: touchedAt,
+        updatedByUserId: principal.userId ?? undefined,
+      })
+      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, inArray(memoryVnextClaims.id, uniqueIds)))
+      .returning({ id: memoryVnextClaims.id });
+
+    log.debug(JSON.stringify({
+      event: "memory.vnext.claims_active_touched",
+      requested: uniqueIds.length,
+      updated: updated.length,
+    }));
+    return updated.length;
+  }
+
+  async touchClaim(id: number): Promise<void> {
+    await this.touchClaims([id]);
   }
 
   async advanceLifecycleStage(
@@ -1151,6 +1180,7 @@ export class MemoryVnextClaimStorage {
       .returning();
     if (ref) {
       await this.advanceLifecycleStage(claimId, MEMORY_VNEXT_LIFECYCLE_STAGE.SOURCED);
+      await this.touchClaim(claimId);
     }
     return ref ?? null;
   }
@@ -1165,7 +1195,7 @@ export class MemoryVnextClaimStorage {
     if (!claim) {
       throw new Error(`Cannot link vNext claim ${claimId} to entity: claim not writable`);
     }
-    await db
+    const [link] = await db
       .insert(memoryVnextEntityLinks)
       .values({
         claimId,
@@ -1175,8 +1205,10 @@ export class MemoryVnextClaimStorage {
         createdByUserId: principal.userId ?? undefined,
         updatedByUserId: principal.userId ?? undefined,
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ id: memoryVnextEntityLinks.id });
     await this.advanceLifecycleStage(claimId, MEMORY_VNEXT_LIFECYCLE_STAGE.LINKED);
+    if (link) await this.touchClaim(claimId);
   }
 
   async linkClaims(
@@ -1239,6 +1271,7 @@ export class MemoryVnextClaimStorage {
       reason: "claim_link_evidence_present",
       metadata: { claimLink: { direction: "in", relationship, fromClaimId } },
     });
+    if (link) await this.touchClaims([fromClaimId, toClaimId]);
 
     log.info(JSON.stringify({
       event: link ? "memory.vnext.claim_link_created" : "memory.vnext.claim_link_preserved",

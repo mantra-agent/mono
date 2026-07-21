@@ -564,7 +564,11 @@ The deterministic boundary is `server/library-placement-store.ts` plus `server/l
 
 Residual risk is limited to semantic suggestion quality. The suggestion may choose no destination or a poor candidate, but it cannot broaden authority or write until the user confirms a valid canonical destination. Rollback is the merged PR revert; the placement schema is additive and Library page rows remain authoritative.
 
-## 11.9 Independent readiness API-policy drift cure, July 20, 2026
+## 11.9 Memory graph recency integrity, July 21, 2026
+
+The Memory Graph exposes S1 personal memory, People, Library, and session relationships across B06/B09 and F03. The credible abuse case is cross-tenant graph expansion or a passive context read mutating active history, which could disclose private nodes or create a false audit trail of user activity. Controls remain deterministic: the endpoint selects only principal-visible active claims; relation, Person, Library, and session lookups retain their principal-scoped storage boundaries; relation fan-out is processed in bounded batches; and context assembly updates only passive recall diagnostics. A separate `active_touched_at` column records explicit claim reads and successful link mutations through one writable-scope helper. No new route, permission, model authority, provider transfer, or public callback is introduced. Residual risk is limited to existing principal-context and source-data integrity assumptions already owned by IAM-02, DATA-01, and AGENT-05. Rollback is the merged PR revert; the additive nullable column is safe to retain. Verification evidence is repository impact search, scoped diff review, and the production build.
+
+## 11.10 Independent readiness API-policy drift cure, July 20, 2026
 
 A fresh merged-main inventory found nine of 1,042 statically declared API routes had drifted outside the explicit API policy: admin-only Recall, Twilio, Deepgram, and Meta wearable status/configuration routes plus the authenticated browser-telemetry summary. The policy's default-deny behavior returned 404 before route-local guards, so this was a fail-closed availability/configuration defect rather than an authorization bypass. It still invalidated the zero-unclassified readiness control and demonstrated that route inventory must be rerun after every main change.
 
