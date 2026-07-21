@@ -129,6 +129,8 @@ Key files:
 
 All user-facing and context retrieval is vNEXT-only. `memory.search`, `search_claims`, People summarization, Library semantic search, the Memory Query API, and `memory.graph` read `memory_vnext_claims`; they never query or fall back to `memory_entries`. Retrieval algorithms may expose different modes over the same claim store: explicit hybrid search for tools/UI and contextual graph expansion for prompt assembly. Shared ranking policy lives in `vnext-retrieval-policy.ts`, while each mode owns its orchestration. Legacy `memory_entries` code is write-side ingestion, migration, maintenance, and compatibility CRUD only until retirement. Do not import legacy search from a vNEXT module or blend stores in one result set.
 
+Graph recency uses `active_touched_at`, distinct from passive `last_recalled_at`/`recall_count` diagnostics. Explicit claim reads and successful link mutations cross `MemoryVnextClaimStorage.touchClaim(s)`; context inclusion may reinforce passive recall but must never refresh active touch. Creation is fresh by `created_at`. Background lifecycle, embedding, decay, and dedup maintenance do not constitute active touch.
+
 ### Tiered Context Assembly (memory.graph)
 
 The `memory.graph` context section uses tiered context assembly instead of flat rendering. It allocates token budget from the active persona and renders memories at depth proportional to relevance.

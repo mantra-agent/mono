@@ -124,8 +124,8 @@ const nodeFragmentShader = `
     float edge = 1.0 - facing;
     float rim = pow(edge, 1.6);
     float emphasis = 1.0 + vEmphasis * 0.5;
-    vec3 color = vTint * rim * emphasis * vVisibility;
-    gl_FragColor = vec4(color, 1.0);
+    vec3 color = vTint * rim * emphasis;
+    gl_FragColor = vec4(color, vVisibility);
   }
 `;
 
@@ -350,7 +350,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     // (--active); at ~0.5 it cools to the darker CTA blue (--cta); below that the node
     // stays CTA-hued but fades via visibility toward the canvas, floored so it lingers.
     const nodeBaseColors = sceneNodes.map((node) => {
-      const warmth = THREE.MathUtils.clamp((THREE.MathUtils.clamp(node.recency, 0, 1) - 0.5) / 0.5, 0, 1);
+      const heat = THREE.MathUtils.clamp(node.recency, 0, 1);
+      const warmth = THREE.MathUtils.smoothstep(heat, 0.45, 1);
       return signalColor.clone().lerp(activeColor, warmth);
     });
     const nodeGeometry = new THREE.IcosahedronGeometry(1, 2);
@@ -359,7 +360,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const tints = new Float32Array(sceneNodes.length * 3);
     sceneNodes.forEach((node, index) => {
       const recency = THREE.MathUtils.clamp(node.recency, 0, 1);
-      visibility[index] = RECENCY_OPACITY_FLOOR + (1 - RECENCY_OPACITY_FLOOR) * recency;
+      const contrast = Math.pow(recency, 2.2);
+      visibility[index] = RECENCY_OPACITY_FLOOR + (1 - RECENCY_OPACITY_FLOOR) * contrast;
       (node.pendingDeletion ? deletionColor : nodeBaseColors[index]).toArray(tints, index * 3);
     });
     nodeGeometry.setAttribute("aVisibility", new THREE.InstancedBufferAttribute(visibility, 1));
@@ -369,8 +371,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const nodeMaterial = new THREE.ShaderMaterial({
       vertexShader: nodeVertexShader,
       fragmentShader: nodeFragmentShader,
-      transparent: false,
-      depthWrite: true,
+      transparent: true,
+      depthWrite: false,
       depthTest: true,
       side: THREE.FrontSide,
     });

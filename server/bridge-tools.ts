@@ -12605,7 +12605,10 @@ const memoryTools: Record<string, ToolHandler> = {
       const { memoryVnextClaimStorage } = await import("./memory/vnext-claim-storage");
       const detail = await memoryVnextClaimStorage.getClaimDetail(id);
       if (!detail) return { result: `vNEXT claim #${id} not found`, error: true };
-      await memoryVnextClaimStorage.reinforceClaim(id);
+      await Promise.all([
+        memoryVnextClaimStorage.reinforceClaim(id),
+        memoryVnextClaimStorage.touchClaim(id),
+      ]);
       const claim = detail.claim;
       const metadata = [
         `ID: ${claim.id}`,
@@ -13119,6 +13122,8 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         const numericIds = ids.map((id: unknown) => Number(id)).filter((id: number) => Number.isFinite(id) && Number.isInteger(id));
         if (numericIds.length === 0) return { result: "No valid numeric vNext claim IDs provided", error: true };
         const details = await Promise.all(numericIds.map((id: number) => memoryVnextClaimStorage.getClaimDetail(id)));
+        const foundIds = details.flatMap((detail) => detail ? [detail.claim.id] : []);
+        await memoryVnextClaimStorage.touchClaims(foundIds);
         const claims = details.filter(Boolean).map((detail: any) => ({
           id: detail.claim.id,
           storage: "memory_vnext_claims",
@@ -13248,6 +13253,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         const { memoryVnextClaimStorage } = await import("./memory/vnext-claim-storage");
         const detail = await memoryVnextClaimStorage.getClaimDetail(claimId);
         if (!detail) return { result: JSON.stringify({ found: false, storage: "memory_vnext_claims", id: claimId }) };
+        await memoryVnextClaimStorage.touchClaim(claimId);
         const iso = (value: Date | string | null | undefined) => value ? new Date(value).toISOString() : null;
         return { result: JSON.stringify({
           found: true,
@@ -13256,6 +13262,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
             ...detail.claim,
             lifecycleStageUpdatedAt: iso(detail.claim.lifecycleStageUpdatedAt),
             lastRecalledAt: iso(detail.claim.lastRecalledAt),
+            activeTouchedAt: iso(detail.claim.activeTouchedAt),
             createdAt: iso(detail.claim.createdAt),
             updatedAt: iso(detail.claim.updatedAt),
           },
@@ -13266,6 +13273,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
             ...detail.lifecycle,
             stageUpdatedAt: iso(detail.lifecycle.stageUpdatedAt),
             lastRecalledAt: iso(detail.lifecycle.lastRecalledAt),
+            activeTouchedAt: iso(detail.lifecycle.activeTouchedAt),
             createdAt: iso(detail.lifecycle.createdAt),
             updatedAt: iso(detail.lifecycle.updatedAt),
           },
