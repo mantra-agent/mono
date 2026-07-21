@@ -2108,6 +2108,7 @@ export async function runSchemaBootstrap(
         metadata JSONB DEFAULT '{}'::jsonb,
         recall_count INTEGER NOT NULL DEFAULT 0,
         last_recalled_at TIMESTAMPTZ,
+        active_touched_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT uk_memory_vnext_claim_content_hash UNIQUE (content_hash)
@@ -2118,6 +2119,7 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE memory_vnext_claims ADD COLUMN IF NOT EXISTS title TEXT`);
     await pool.query(`ALTER TABLE memory_vnext_claims ADD COLUMN IF NOT EXISTS lifecycle_stage TEXT NOT NULL DEFAULT 'extracted'`);
     await pool.query(`ALTER TABLE memory_vnext_claims ADD COLUMN IF NOT EXISTS lifecycle_stage_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP`);
+    await pool.query(`ALTER TABLE memory_vnext_claims ADD COLUMN IF NOT EXISTS active_touched_at TIMESTAMPTZ`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_source ON memory_vnext_claims(source, source_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_lifecycle_stage ON memory_vnext_claims(lifecycle_stage)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_created_at ON memory_vnext_claims(created_at)`);
