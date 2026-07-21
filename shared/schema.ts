@@ -966,6 +966,17 @@ export const insertEmailDraftSchema = createInsertSchema(emailDrafts).omit({
 export type EmailDraft = typeof emailDrafts.$inferSelect;
 export type InsertEmailDraft = z.infer<typeof insertEmailDraftSchema>;
 
+export const MEETING_JOIN_MODES = ["dont_join", "note_taking", "join_and_talk"] as const;
+export type MeetingJoinMode = typeof MEETING_JOIN_MODES[number];
+
+export function resolveMeetingJoinMode(value: unknown, legacyEnabled = false, legacyOverride?: boolean | null): MeetingJoinMode {
+  if (typeof value === "string" && MEETING_JOIN_MODES.includes(value as MeetingJoinMode)) {
+    return value as MeetingJoinMode;
+  }
+  if (legacyOverride === false) return "dont_join";
+  return legacyEnabled || legacyOverride === true ? "join_and_talk" : "dont_join";
+}
+
 export const calendarEventMetadata = pgTable("calendar_event_metadata", {
   id: serial("id").primaryKey(),
   googleEventId: text("google_event_id").notNull(),
@@ -984,9 +995,11 @@ export const calendarEventMetadata = pgTable("calendar_event_metadata", {
   // Meeting agent auto-join materialization. Status discriminant computed at
   // the source: scheduled | no_link | joined | failed. Detail carries the
   // human-visible reason for no_link/failed.
+  /** Explicit per-event participation choice. Nullable only during migration from the legacy booleans. */
+  agentJoinMode: text("agent_join_mode", { enum: MEETING_JOIN_MODES }),
+  /** @deprecated Compatibility projection. Derived from agentJoinMode. */
   agentJoinEnabled: boolean("agent_join_enabled").notNull().default(false),
-  // Nullable explicit per-event override. null inherits the user policy,
-  // true forces join, false forces skip.
+  /** @deprecated Compatibility projection. Derived from agentJoinMode. */
   agentJoinOverride: boolean("agent_join_override"),
   agentJoinStatus: text("agent_join_status"),
   agentJoinDetail: text("agent_join_detail"),
@@ -999,6 +1012,7 @@ export const calendarEventMetadata = pgTable("calendar_event_metadata", {
   unique("calendar_event_metadata_event_account_calendar_unique").on(table.googleEventId, table.accountId, table.calendarId),
   index("idx_calendar_event_metadata_owner").on(table.ownerUserId),
   index("idx_calendar_event_metadata_principal_account").on(table.principalAccountId),
+  check("calendar_event_metadata_agent_join_mode_check", sql`${table.agentJoinMode} IS NULL OR ${table.agentJoinMode} IN ('dont_join', 'note_taking', 'join_and_talk')`),
 ]);
 
 export const insertCalendarEventMetadataSchema = createInsertSchema(calendarEventMetadata).omit({

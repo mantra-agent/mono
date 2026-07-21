@@ -1,5 +1,6 @@
 import { createLogger } from "../log";
 import type { ExplicitMeetingEventIdentity } from "./identity";
+import type { MeetingJoinMode } from "@shared/schema";
 
 const log = createLogger("MeetingJoin");
 
@@ -47,6 +48,7 @@ export async function joinMeetingByUrl(opts: {
   title?: string;
   agenda?: string;
   explicitEvent?: ExplicitMeetingEventIdentity;
+  joinMode?: Exclude<MeetingJoinMode, "dont_join">;
 }): Promise<MeetingJoinResult> {
   const meetingUrl = opts.meetingUrl.trim();
   if (!MEETING_URL_RE.test(meetingUrl)) {
@@ -93,6 +95,7 @@ export async function joinMeetingByUrl(opts: {
     sttFallback: recognitionLaunch.fallback,
     sttStatus: recognitionLaunch.sttStatus,
     sttStatusDetail: recognitionLaunch.detail,
+    participationPolicy: opts.joinMode === "note_taking" ? "listen_only" : "auto",
   });
 
   const failSession = async (message: string): Promise<never> => {

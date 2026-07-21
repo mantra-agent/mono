@@ -5694,6 +5694,34 @@ export async function runSchemaBootstrap(
     log(`media backfill skipped: ${err.message}`, "warn");
   }
 
+  await heal("calendar meeting join mode", async () => {
+    await pool.query(`ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agent_join_mode TEXT`);
+    await pool.query(`
+      UPDATE calendar_event_metadata
+      SET agent_join_mode = CASE
+        WHEN agent_join_override = FALSE THEN 'dont_join'
+        WHEN agent_join_enabled = TRUE OR agent_join_override = TRUE THEN 'join_and_talk'
+        ELSE NULL
+      END
+      WHERE agent_join_mode IS NULL
+        AND (agent_join_override IS NOT NULL OR agent_join_enabled = TRUE)
+    `);
+    await pool.query(`
+      DO $
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'calendar_event_metadata_agent_join_mode_check'
+            AND conrelid = 'calendar_event_metadata'::regclass
+        ) THEN
+          ALTER TABLE calendar_event_metadata
+          ADD CONSTRAINT calendar_event_metadata_agent_join_mode_check
+          CHECK (agent_join_mode IN ('dont_join', 'note_taking', 'join_and_talk'));
+        END IF;
+      END $
+    `);
+  });
+
   await heal("meeting_turns table", async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS meeting_turns (

@@ -35,6 +35,7 @@ import {
   Calendar as CalendarIcon,
   Clock,
   Brain,
+  Bot,
   MapPin,
   Users,
   Star,
@@ -59,6 +60,9 @@ import { ExpandableLibraryPage } from "@/components/library/inline-library-page"
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { SimpleTreeRow } from "@/components/home/home-tree-row";
 import { createMeetingPersonChild } from "@shared/meeting-feed-items";
+import { resolveMeetingJoinMode, type MeetingJoinMode } from "@shared/schema";
+import { SIMPLE_TEXT_FRAME_CLASS, SimpleTextFrame } from "@/components/home/simple-text-frame";
+import { MeetingJoinModeMenu } from "@/components/calendar/meeting-join-mode";
 
 // --- Shared types (duplicated from calendar.tsx for now, will extract later) ---
 
@@ -129,6 +133,12 @@ interface CalendarMetadata {
   capacityType: CapacityTypeValue | null;
   notes: string | null;
   agenda: string | null;
+  agentJoinMode: MeetingJoinMode | null;
+  agentJoinEnabled: boolean;
+  agentJoinOverride: boolean | null;
+  agentJoinStatus: string | null;
+  agentJoinDetail: string | null;
+  agentJoinSessionId: string | null;
   speakerPolicy: { mode: "participant_streams" } | { mode: "shared_room" } | {
     /** @deprecated Read-only compatibility for existing metadata. */
     mode: "selected_shared_streams";
@@ -291,6 +301,9 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   const [selectedCalendarId, setSelectedCalendarId] = useState(calendarId || calendars[0]?.id || "");
   const [attendeesInput, setAttendeesInput] = useState("");
   const [prepRequired, setPrepRequired] = useState(false);
+  const [joinMode, setJoinMode] = useState<MeetingJoinMode>("dont_join");
+  const [initialJoinMode, setInitialJoinMode] = useState<MeetingJoinMode>("dont_join");
+  const [initialFormSnapshot, setInitialFormSnapshot] = useState<string | null>(null);
   const [recurrenceType, setRecurrenceType] = useState<string>("none");
   const [recurrenceInterval, setRecurrenceInterval] = useState(1);
   const [recurrenceEndType, setRecurrenceEndType] = useState<"never" | "count" | "until">("never");
@@ -305,7 +318,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
 
   // Populate form from fetched event data
   useEffect(() => {
-    if (!isCreate && eventData && !initialized) {
+    if (!isCreate && eventData && !metaLoading && !initialized) {
       setTitle(eventData.summary || "");
       setStart(eventData.start.dateTime ? toISOLocal(new Date(eventData.start.dateTime)).slice(0, 16) : getDefaultStart());
       setEnd(eventData.end.dateTime ? toISOLocal(new Date(eventData.end.dateTime)).slice(0, 16) : getDefaultEnd());
@@ -313,10 +326,28 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
       setDescription(cleanDescription(eventData.description || ""));
       setSelectedCalendarId(eventData.calendarId || calendarId || calendars[0]?.id || "");
       setAttendeesInput((eventData.attendees ?? []).map(a => a.email).join(", "));
+      const resolvedJoinMode = resolveMeetingJoinMode(
+        metadata?.agentJoinMode,
+        metadata?.agentJoinEnabled ?? false,
+        metadata?.agentJoinOverride,
+      );
       setPrepRequired(isHighPrep(eventData));
+      setJoinMode(resolvedJoinMode);
+      setInitialJoinMode(resolvedJoinMode);
+      setInitialFormSnapshot(JSON.stringify({
+        title: eventData.summary || "",
+        start: eventData.start.dateTime ? toISOLocal(new Date(eventData.start.dateTime)).slice(0, 16) : getDefaultStart(),
+        end: eventData.end.dateTime ? toISOLocal(new Date(eventData.end.dateTime)).slice(0, 16) : getDefaultEnd(),
+        location: eventData.location || "",
+        description: cleanDescription(eventData.description || ""),
+        selectedCalendarId: eventData.calendarId || calendarId || calendars[0]?.id || "",
+        attendeesInput: (eventData.attendees ?? []).map(a => a.email).join(", "),
+        prepRequired: isHighPrep(eventData),
+        joinMode: resolvedJoinMode,
+      }));
       setInitialized(true);
     }
-  }, [eventData, isCreate, initialized]);
+  }, [eventData, isCreate, initialized, metaLoading, metadata, calendarId, calendars]);
 
   // Agenda content is hydrated directly from the linked Library page.
 
@@ -492,6 +523,15 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
         event: eventPayload,
       });
 
+      if (joinMode !== initialJoinMode) {
+        await apiRequest("POST", "/api/calendar/agent-join", {
+          googleEventId: eventId,
+          accountId: accountId || selectedAccountId,
+          calendarId: calendarId || selectedCalendarId,
+          mode: joinMode,
+        });
+      }
+
       // Agenda edits autosave through the linked Library page editor.
       return null;
     },
@@ -499,6 +539,20 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
       queryClient.invalidateQueries({ queryKey: ["/api/calendar/events"] });
       queryClient.invalidateQueries({ queryKey: ["/api/calendar/metadata"] });
       toast({ title: isCreate ? "Event created" : "Event updated" });
+      if (!isCreate) {
+        setInitialFormSnapshot(JSON.stringify({
+          title,
+          start,
+          end,
+          location,
+          description,
+          selectedCalendarId,
+          attendeesInput,
+          prepRequired,
+          joinMode,
+        }));
+        setInitialJoinMode(joinMode);
+      }
       if (isCreate) {
         navigate("/schedule");
       }
@@ -545,10 +599,22 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
     onError: (err: any) => toast({ title: "Failed to update event type", description: err.message, variant: "destructive" }),
   });
 
-  const canSubmit = title.trim().length > 0 && selectedCalendarId && start && end;
+  const canSubmit = Boolean(title.trim().length > 0 && selectedCalendarId && start && end);
+  const currentFormSnapshot = JSON.stringify({
+    title,
+    start,
+    end,
+    location,
+    description,
+    selectedCalendarId,
+    attendeesInput,
+    prepRequired,
+    joinMode,
+  });
+  const hasUnsavedChanges = isCreate || (initialFormSnapshot !== null && currentFormSnapshot !== initialFormSnapshot);
 
   // --- Loading state ---
-  if (!isCreate && (eventLoading || !initialized)) {
+  if (!isCreate && (eventLoading || metaLoading || !initialized)) {
     return (
       <div className="flex h-full flex-col overflow-hidden" data-testid="event-detail-loading">
         <div className="p-4 space-y-4">
@@ -625,22 +691,24 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
           )}
 
           {(!isReadOnly || description) && (
-            <div className="overflow-hidden rounded-md border border-border/20" data-testid="event-description-frame">
-              {isReadOnly ? (
-                <div className="px-2 py-1.5 text-sm text-muted-foreground whitespace-pre-wrap" data-testid="event-description-readonly">
-                  {description}
-                </div>
-              ) : (
-                <Textarea
-                  value={description}
-                  onChange={event => setDescription(event.target.value)}
-                  placeholder="Add description"
-                  rows={3}
-                  className="resize-none border-0 bg-transparent px-2 py-1.5 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 min-h-0"
-                  data-testid="input-event-description"
-                />
-              )}
-            </div>
+            isReadOnly ? (
+              <SimpleTextFrame
+                content={description}
+                empty="No description."
+              />
+            ) : (
+              <Textarea
+                value={description}
+                onChange={event => setDescription(event.target.value)}
+                placeholder="Add description"
+                rows={3}
+                className={cn(
+                  SIMPLE_TEXT_FRAME_CLASS,
+                  "min-h-20 resize-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0",
+                )}
+                data-testid="input-event-description"
+              />
+            )
           )}
 
           <div className="overflow-hidden rounded-md border border-border/20" data-testid="event-core-fields">
@@ -743,6 +811,17 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
                 </span>
               )}
             </ProfileTreeRow>
+
+            {!isCreate && (
+              <ProfileTreeRow label="Meeting Agent" icon={<Bot className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-event-join-mode">
+                <MeetingJoinModeMenu
+                  value={joinMode}
+                  onChange={setJoinMode}
+                  disabled={isReadOnly}
+                  testId="event-join-mode"
+                />
+              </ProfileTreeRow>
+            )}
 
             <ProfileTreeRow label="Prep Required" icon={<Star className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-event-prep-required">
               <Switch
@@ -978,7 +1057,8 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
                     saveMutation.mutate();
                   }
                 }}
-                disabled={!canSubmit || saveMutation.isPending}
+                variant={hasUnsavedChanges ? "default" : "secondary"}
+                disabled={!canSubmit || !hasUnsavedChanges || saveMutation.isPending}
                 className="w-full"
                 data-testid="button-save-event"
               >

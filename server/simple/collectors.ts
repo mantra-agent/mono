@@ -2,7 +2,7 @@ import type { SimpleAction, SimpleFeedItem, SimpleSection, SimpleSourceRef } fro
 import { fileTaskStorage } from "../file-storage/tasks";
 import { fileProjectStorage } from "../file-storage/projects";
 import { createLogger } from "../log";
-import type { GoalIndexEntry, CalendarEventMetadata } from "@shared/schema";
+import { resolveMeetingJoinMode, type GoalIndexEntry, type CalendarEventMetadata } from "@shared/schema";
 import { goalsService } from "../goals-service";
 import type { Task, Project, Milestone } from "@shared/models/work";
 import { formatHour, getWindowLabel, inRange } from "@shared/wellness-window";
@@ -1142,6 +1142,7 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
       accountId: event.accountId,
       calendarId: event.calendarId,
       // Agenda is represented by the linked Library artifact child.
+      agentJoinMode: resolveMeetingJoinMode(meta?.agentJoinMode, meta?.agentJoinEnabled ?? false, meta?.agentJoinOverride),
       agentJoinEnabled: meta?.agentJoinEnabled ?? false,
       agentJoinOverride: meta?.agentJoinOverride ?? null,
       agentJoinStatus: meta?.agentJoinStatus ?? null,

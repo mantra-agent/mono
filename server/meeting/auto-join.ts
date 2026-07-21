@@ -25,6 +25,7 @@ import { storage } from "../storage";
 import { joinMeetingByUrl, MeetingJoinError } from "./join";
 import { meetingUrlForEvent } from "./identity";
 import { getMeetingJoinPolicy, shouldJoinMeeting } from "./join-policy";
+import { resolveMeetingJoinMode, type MeetingJoinMode } from "@shared/schema";
 
 const log = createLogger("meeting-auto-join");
 
@@ -75,19 +76,24 @@ async function discoverUserSchedules(user: Awaited<ReturnType<typeof storage.get
 
     for (const event of candidates) {
       const existing = byEvent.get(`${event.id}::${event.accountId}::${event.calendarId}`);
-      const override = existing?.agentJoinOverride ?? null;
-      const enabled = shouldJoinMeeting(event, policy, override);
+      const explicitMode = existing?.agentJoinMode as MeetingJoinMode | null | undefined;
+      const legacyOverride = existing?.agentJoinOverride ?? null;
+      const inheritedEnabled = shouldJoinMeeting(event, policy, legacyOverride);
+      const mode = legacyOverride === null
+        ? (inheritedEnabled ? "join_and_talk" : "dont_join")
+        : explicitMode ?? resolveMeetingJoinMode(null, existing?.agentJoinEnabled ?? false, legacyOverride);
+      const enabled = mode !== "dont_join";
       const eventStart = startAt(event);
       if (!eventStart) continue;
       const meetingUrl = meetingUrlForEvent(event);
       const scheduleUnchanged =
+        existing?.agentJoinMode === mode &&
         existing?.agentJoinEnabled === enabled &&
-        existing?.agentJoinOverride === override &&
         existing?.agentJoinStartAt?.getTime() === (enabled ? eventStart.getTime() : undefined);
       if (scheduleUnchanged) continue;
 
-      await setAgentJoin(event.id, event.accountId, event.calendarId, enabled, {
-        override,
+      await setAgentJoin(event.id, event.accountId, event.calendarId, mode, {
+        explicit: legacyOverride !== null,
         status: enabled ? meetingUrl ? "scheduled" : "no_link" : null,
         detail: enabled && !meetingUrl ? "No Zoom or Google Meet link found on this event" : null,
         sessionId: enabled ? undefined : null,
@@ -215,9 +221,12 @@ async function processDueJoin(row: DueJoinRow): Promise<void> {
 
     if (event) {
       const policy = await getMeetingJoinPolicy(user.id);
-      if (!shouldJoinMeeting(event, policy, row.agentJoinOverride)) {
-        await setAgentJoin(row.googleEventId, row.accountId, row.calendarId, false, {
-          override: row.agentJoinOverride,
+      const mode = row.agentJoinOverride === null
+        ? (shouldJoinMeeting(event, policy, null) ? "join_and_talk" : "dont_join")
+        : resolveMeetingJoinMode(row.agentJoinMode, row.agentJoinEnabled, row.agentJoinOverride);
+      if (mode === "dont_join") {
+        await setAgentJoin(row.googleEventId, row.accountId, row.calendarId, "dont_join", {
+          explicit: row.agentJoinOverride !== null,
           sessionId: null,
           startAt: null,
           attemptedAt: null,
@@ -265,6 +274,9 @@ async function processDueJoin(row: DueJoinRow): Promise<void> {
         meetingUrl,
         title: event?.summary || "Meeting",
         agenda: row.agenda ?? undefined,
+        joinMode: resolveMeetingJoinMode(row.agentJoinMode, row.agentJoinEnabled, row.agentJoinOverride) === "note_taking"
+          ? "note_taking"
+          : "join_and_talk",
         explicitEvent: {
           accountId: event.accountId,
           calendarId: event.calendarId,
