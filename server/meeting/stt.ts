@@ -24,7 +24,10 @@ import type {
 import { meetingDefaultAudioSourceMode } from "@shared/models/chat";
 import { eventBus, type BusEvent } from "../event-bus";
 import type { MeetingIngestFn } from "../routes/recall";
-import { runWithMeetingOwnerPrincipal } from "./owner-principal";
+import {
+  resolveMeetingTransportSession,
+  runWithMeetingOwnerPrincipal,
+} from "./owner-principal";
 import { publishMeetingAudioLevel, syncMeetingVisualizerBotStatus } from "./output-media";
 
 const log = createLogger("MeetingSTT");
@@ -288,7 +291,7 @@ export function registerMeetingSTTAudioTransport(
     const loadMeeting = async (sessionId: string): Promise<MeetingSessionMeta> => {
       const cached = meetings.get(sessionId);
       if (cached) return cached;
-      const session = await chatStorage.getSession(sessionId);
+      const session = await resolveMeetingTransportSession(sessionId);
       if (!session?.meeting) throw new Error(`Meeting session ${sessionId} not found`);
       meetings.set(sessionId, session.meeting);
       return session.meeting;

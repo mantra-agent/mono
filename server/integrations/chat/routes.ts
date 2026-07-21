@@ -3154,7 +3154,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     | { ok: false; status: number; error: string }
   > {
     const existingSession = event.sessionId
-      ? await chatStorage.getSession(event.sessionId)
+      ? await (await import("../../meeting/owner-principal"))
+          .resolveMeetingTransportSession(event.sessionId)
       : null;
     if (event.sessionId && !existingSession) {
       return { ok: false, status: 404, error: "Session not found" };

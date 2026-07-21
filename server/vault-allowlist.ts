@@ -49,6 +49,11 @@ export const VAULT_CROSS_ACCESS_ALLOWLIST = new Set<string>([
   // Autonomous skill runner — fallback when no users exist yet or
   // user resolution fails during background autonomous execution
   "autonomous-skill-runner",
+
+  // Verified Recall callbacks and signed meeting media transports need one
+  // cross-vault lookup from opaque session ID to durable owner. All work after
+  // that lookup immediately re-enters the exact meeting owner's principal.
+  "meeting-transport",
 ]);
 
 // Throttle anonymous-system warnings to avoid log spam from hot paths

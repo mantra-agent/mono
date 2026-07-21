@@ -113,19 +113,15 @@ async function discoverUpcomingMeetingSchedules(now: Date): Promise<void> {
   }
 }
 
-export async function runMeetingAutoJoinTick(): Promise<void> {
-  if (tickInFlight) {
-    log.debug("Skipping tick because previous tick is still in flight");
-    return;
-  }
-  tickInFlight = true;
-  try {
-    const now = new Date();
-    await discoverUpcomingMeetingSchedules(now);
-    const due = await listDueAgentJoins(now, GRACE_MS, LEAD_MS);
-    if (due.length === 0) return;
-    log.info("Due agent auto-joins found", { count: due.length });
+async function processUserDueJoins(
+  user: Awaited<ReturnType<typeof storage.getUsers>>[number],
+  now: Date,
+): Promise<number> {
+  const foundation = await resolveUserIdentityFoundation(user.id);
+  const principal = createUserPrincipalFromUser(user, foundation.accountId);
 
+  return runWithPrincipal(principal, async () => {
+    const due = await listDueAgentJoins(now, GRACE_MS, LEAD_MS);
     for (const row of due) {
       const claimed = await claimAgentJoin(row.id, now);
       if (!claimed) {
@@ -146,6 +142,31 @@ export async function runMeetingAutoJoinTick(): Promise<void> {
         }).catch(() => {});
       }
     }
+    return due.length;
+  });
+}
+
+export async function runMeetingAutoJoinTick(): Promise<void> {
+  if (tickInFlight) {
+    log.debug("Skipping tick because previous tick is still in flight");
+    return;
+  }
+  tickInFlight = true;
+  try {
+    const now = new Date();
+    await discoverUpcomingMeetingSchedules(now);
+    let dueCount = 0;
+    for (const user of await storage.getUsers()) {
+      try {
+        dueCount += await processUserDueJoins(user, now);
+      } catch (error) {
+        log.error("Meeting auto-join due-row scan failed for user", {
+          ownerUserId: user.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    if (dueCount > 0) log.info("Due agent auto-joins processed", { count: dueCount });
   } catch (error) {
     log.error("Meeting auto-join tick failed", {
       error: error instanceof Error ? error.message : String(error),

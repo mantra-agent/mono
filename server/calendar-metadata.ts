@@ -332,22 +332,18 @@ export async function setAgentJoin(
   return rows[0];
 }
 
-/**
- * System-scheduler scan: all enabled, unattempted auto-joins due to fire.
- * Deliberately unscoped — the caller runs without a user principal and wraps
- * all per-row work in runWithPrincipal using the row's owner columns.
- */
+/** List enabled, unattempted auto-joins visible to the current owner principal. */
 export async function listDueAgentJoins(now: Date, graceMs: number, leadMs: number): Promise<CalendarEventMetadata[]> {
   return db
     .select()
     .from(calendarEventMetadata)
-    .where(and(
+    .where(combineWithSensitiveVisible(calendarMetadataOwnerColumns, and(
       eq(calendarEventMetadata.agentJoinEnabled, true),
       sql`${calendarEventMetadata.agentJoinAttemptedAt} IS NULL`,
       sql`${calendarEventMetadata.agentJoinStartAt} IS NOT NULL`,
       sql`${calendarEventMetadata.agentJoinStartAt} <= ${new Date(now.getTime() + leadMs)}`,
       sql`${calendarEventMetadata.agentJoinStartAt} >= ${new Date(now.getTime() - graceMs)}`,
-    ));
+    )));
 }
 
 /**
@@ -358,11 +354,11 @@ export async function claimAgentJoin(metadataId: number, now: Date): Promise<boo
   const rows = await db
     .update(calendarEventMetadata)
     .set({ agentJoinAttemptedAt: now, updatedAt: sql`CURRENT_TIMESTAMP` })
-    .where(and(
+    .where(combineWithSensitiveWritable(calendarMetadataOwnerColumns, and(
       eq(calendarEventMetadata.id, metadataId),
       eq(calendarEventMetadata.agentJoinEnabled, true),
       sql`${calendarEventMetadata.agentJoinAttemptedAt} IS NULL`,
-    ))
+    )))
     .returning({ id: calendarEventMetadata.id });
   return rows.length > 0;
 }
@@ -379,7 +375,10 @@ export async function updateAgentJoinOutcome(metadataId: number, patch: AgentJoi
       ...(patch.attemptedAt !== undefined ? { agentJoinAttemptedAt: patch.attemptedAt } : {}),
       updatedAt: sql`CURRENT_TIMESTAMP`,
     })
-    .where(eq(calendarEventMetadata.id, metadataId));
+    .where(combineWithSensitiveWritable(
+      calendarMetadataOwnerColumns,
+      eq(calendarEventMetadata.id, metadataId),
+    ));
   invalidateCalendarCache();
 }
 
