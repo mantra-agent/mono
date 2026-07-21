@@ -3209,28 +3209,36 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       // atomically by the same paths (participant-audio stream transitions and
       // this ingest boundary), so the gate reads only that pair instead of
       // reconciling separately-written recognition stream state.
-      const canonicalAudioActive =
-        meeting.sttSource === "recall_participant_audio" &&
-        meeting.sttStatus === "active";
-      // A delayed Recall transcript webhook must not overwrite an active
-      // participant-audio stream. It remains available as a replay-safe
-      // fallback if canonical audio never connected or degraded.
-      if (event.stt.fallback && canonicalAudioActive) {
+      const activeRecognitionStreams = meeting.recognition?.streams.filter(
+        (stream) => stream.status === "active" && stream.attribution !== "excluded",
+      ) || [];
+      const canonicalAudioActive = activeRecognitionStreams.length > 0;
+      const sourceAudioActive = event.speaker?.transportParticipantId
+        ? activeRecognitionStreams.some(
+            (stream) => stream.transportParticipantId === event.speaker?.transportParticipantId,
+          )
+        : canonicalAudioActive;
+      // A delayed Recall transcript webhook must not duplicate the active
+      // participant-audio source. Degraded sources retain this replay-safe
+      // fallback even when another source in the same meeting is active.
+      if (event.stt.fallback && sourceAudioActive) {
         chatLog.debug(
           `meeting ingest: ignored transcript fallback while canonical STT active sessionId=${sessionId} provider=${event.stt.provider}`,
         );
         return { ok: true, sessionId, sessionKey, queued: false };
       }
-      await chatStorage.updateMeetingMeta(sessionId, {
-        sttProvider: event.stt.provider,
-        sttModel: event.stt.model,
-        sttSource: event.stt.source,
-        sttFallback: event.stt.fallback,
-        sttStatus: event.stt.fallback ? "fallback" : "active",
-        sttStatusDetail: event.stt.fallback
-          ? "Recall transcript webhook fallback active"
-          : "Canonical participant audio STT active",
-      });
+      if (!event.stt.fallback || !canonicalAudioActive) {
+        await chatStorage.updateMeetingMeta(sessionId, {
+          sttProvider: event.stt.provider,
+          sttModel: event.stt.model,
+          sttSource: event.stt.source,
+          sttFallback: event.stt.fallback,
+          sttStatus: event.stt.fallback ? "fallback" : "active",
+          sttStatusDetail: event.stt.fallback
+            ? "Recall transcript webhook fallback active"
+            : "Canonical participant audio STT active",
+        });
+      }
       chatLog.info(
         `meeting STT sessionId=${sessionId} provider=${event.stt.provider} model=${event.stt.model} source=${event.stt.source} fallback=${event.stt.fallback}`,
       );

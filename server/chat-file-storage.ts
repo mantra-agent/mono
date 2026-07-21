@@ -19,6 +19,7 @@ import type {
   AssistantMessageState,
   ChildSessionBlockMeta,
   CompactionMeta,
+  MeetingAudioSourceMode,
   MeetingParticipant,
   MeetingSessionMeta,
   MessageSpeakerMeta,
@@ -157,6 +158,10 @@ export type MeetingRecapClaim =
   | { outcome: "already_generating"; session: FileSession }
   | { outcome: "already_ready"; session: FileSession }
   | { outcome: "not_meeting" };
+
+export type MeetingAudioSourcePolicyMutation =
+  | { outcome: "updated" | "unchanged"; session: FileSession }
+  | { outcome: "not_found" | "not_owned" | "not_active" | "excluded" };
 
 export type MeetingSpeakerAssignment =
   | {
@@ -1154,6 +1159,17 @@ export interface IChatFileStorage {
     speakerKey: string,
     person: { id: string } | null,
   ): Promise<MeetingSpeakerAssignment>;
+  initializeMeetingAudioSourcePolicy(
+    sessionId: string,
+    sourceKey: string,
+    mode: MeetingAudioSourceMode,
+  ): Promise<FileSession | null>;
+  setMeetingAudioSourcePolicy(
+    sessionId: string,
+    sourceKey: string,
+    mode: MeetingAudioSourceMode,
+    mutationId: string,
+  ): Promise<MeetingAudioSourcePolicyMutation>;
   createMeetingUserMessage(
     sessionId: string,
     content: string,
@@ -2085,6 +2101,88 @@ export const chatFileStorage: IChatFileStorage = {
       const session = convToMeta(data);
       invalidateSessionsCache({ action: "updated", sessionId, session });
       return { participant, participants: updatedParticipants, added: true };
+    });
+  },
+
+  async initializeMeetingAudioSourcePolicy(
+    sessionId: string,
+    sourceKey: string,
+    mode: MeetingAudioSourceMode,
+  ): Promise<FileSession | null> {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data?.meeting || data.type !== "meeting") return null;
+      const principal = getCurrentPrincipalOrSystem();
+      if (
+        principal.actorType !== "user" ||
+        !principal.userId ||
+        !principal.accountId ||
+        data.meeting.ownerUserId !== principal.userId ||
+        data.meeting.principalAccountId !== principal.accountId
+      ) {
+        return null;
+      }
+      if (data.meeting.audioSourcePolicies?.[sourceKey]) return convToMeta(data);
+      const updatedAt = new Date().toISOString();
+      data.meeting = {
+        ...data.meeting,
+        audioSourcePolicies: {
+          ...(data.meeting.audioSourcePolicies || {}),
+          [sourceKey]: { mode, mutationId: `initialize:${sourceKey}`, updatedAt },
+        },
+      };
+      data.updatedAt = updatedAt;
+      await writeConv(data);
+      const session = convToMeta(data);
+      invalidateSessionsCache({ action: "updated", sessionId, session });
+      return session;
+    });
+  },
+
+  async setMeetingAudioSourcePolicy(
+    sessionId: string,
+    sourceKey: string,
+    mode: MeetingAudioSourceMode,
+    mutationId: string,
+  ): Promise<MeetingAudioSourcePolicyMutation> {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data?.meeting || data.type !== "meeting") return { outcome: "not_found" };
+      const principal = getCurrentPrincipalOrSystem();
+      if (
+        principal.actorType !== "user" ||
+        !principal.userId ||
+        !principal.accountId ||
+        data.meeting.ownerUserId !== principal.userId ||
+        data.meeting.principalAccountId !== principal.accountId
+      ) {
+        return { outcome: "not_owned" };
+      }
+      if (data.meeting.botStatus !== "live") return { outcome: "not_active" };
+      const stream = data.meeting.recognition?.streams.find(
+        (candidate) => candidate.streamKey === sourceKey,
+      );
+      if (!stream) return { outcome: "not_found" };
+      if (stream.attribution === "excluded") return { outcome: "excluded" };
+
+      const existing = data.meeting.audioSourcePolicies?.[sourceKey];
+      if (existing?.mutationId === mutationId || existing?.mode === mode) {
+        return { outcome: "unchanged", session: convToMeta(data) };
+      }
+
+      const updatedAt = new Date().toISOString();
+      data.meeting = {
+        ...data.meeting,
+        audioSourcePolicies: {
+          ...(data.meeting.audioSourcePolicies || {}),
+          [sourceKey]: { mode, mutationId, updatedAt },
+        },
+      };
+      data.updatedAt = updatedAt;
+      await writeConv(data);
+      const session = convToMeta(data);
+      invalidateSessionsCache({ action: "updated", sessionId, session });
+      return { outcome: "updated", session };
     });
   },
 

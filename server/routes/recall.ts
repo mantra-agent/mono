@@ -250,6 +250,11 @@ export function registerRecallRoutes(
         await ingestMeetingEvent({
           sessionId,
           speakerLabel,
+          speaker: {
+            key: participant?.id != null ? `recall:${String(participant.id)}` : speakerKey,
+            transportParticipantId: participant?.id != null ? String(participant.id) : undefined,
+            source: "participant_metadata",
+          },
           turnId,
           text,
           stt: {
