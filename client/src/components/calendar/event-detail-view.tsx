@@ -54,7 +54,6 @@ import { cn } from "@/lib/utils";
 import {
   eventMetadataQueryKey,
   useEventMetadata,
-  type LinkedPersonRef,
 } from "@/components/calendar/use-event-metadata";
 import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
@@ -135,7 +134,6 @@ interface CalendarMetadata {
     mode: "selected_shared_streams";
     sharedStreams: Array<{ selector: { attendeeEmail?: string; participantLabel?: string } }>;
   } | null;
-  linkedPeople: LinkedPersonRef[];
 }
 
 const PERSONAL_DOMAINS = new Set([
@@ -249,17 +247,21 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   const { data: metadataData, isLoading: metaLoading } = useEventMetadata(eventId, accountId, calendarId, !isCreate);
   const metadata: CalendarMetadata | null = metadataData?.metadata
     ? {
-        ...(metadataData.metadata as Omit<CalendarMetadata, "linkedPeople">),
+        ...(metadataData.metadata as CalendarMetadata),
         eventType: isEventTypeValue(metadataData.metadata.eventType) ? metadataData.metadata.eventType : null,
         capacityType: (metadataData.metadata.capacityType as CapacityTypeValue | null) ?? null,
-        linkedPeople: metadataData.people,
       }
     : null;
-  const sharedRoomEnabled = metadata?.speakerPolicy?.mode === "shared_room"
-    || metadata?.speakerPolicy?.mode === "selected_shared_streams";
 
   // --- Email map for people linking ---
-  const { data: emailMapData } = useQuery<{ emailMap: Record<string, { id: string; name: string }> }>({
+  const { data: emailMapData } = useQuery<{
+    emailMap: Record<string, {
+      id: string;
+      name: string;
+      summary: string | null;
+      lastInteractionContext: string | null;
+    }>;
+  }>({
     queryKey: ["/api/people/email-map"],
     enabled: !isCreate && (eventData?.attendees?.length ?? 0) > 0,
   });
@@ -341,7 +343,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   const attendeeItems = useMemo(() => {
     if (!eventData?.attendees?.length) return [];
 
-    const linkedPeopleById = new Map((metadata?.linkedPeople ?? []).map(person => [person.id, person]));
     const seenIdentities = new Set<string>();
     const parentSourceRef = {
       type: "calendar" as const,
@@ -358,7 +359,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
       if (seenIdentities.has(identityKey)) return [];
       seenIdentities.add(identityKey);
 
-      const context = matched?.id ? linkedPeopleById.get(matched.id) : undefined;
       const fallbackName = attendee.displayName?.trim()
         || attendee.email.split("@")[0]
         || attendee.email;
@@ -371,11 +371,11 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
         email: attendee.email,
         responseStatus: attendee.responseStatus,
         personId: matched?.id,
-        profileSummary: context?.profileSummary,
-        lastInteractionContext: context?.lastInteractionContext,
+        profileSummary: matched?.summary,
+        lastInteractionContext: matched?.lastInteractionContext,
       })];
     });
-  }, [eventData, emailMap, metadata?.linkedPeople]);
+  }, [eventData, emailMap]);
 
   const detailHeaderContent = useMemo(() => {
     if (isCreate) {
@@ -531,20 +531,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   });
 
   // --- Metadata mutations ---
-  const setSpeakerPolicyMutation = useMutation({
-    mutationFn: async (sharedRoom: boolean) => {
-      await apiRequest("POST", "/api/calendar/metadata", {
-        googleEventId: eventId,
-        accountId: accountId || selectedAccountId,
-        calendarId: calendarId || selectedCalendarId,
-        eventType: metadata?.eventType || "meeting",
-        speakerPolicy: { mode: sharedRoom ? "shared_room" : "participant_streams" },
-      });
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: metadataQueryKey }),
-    onError: (err: any) => toast({ title: "Failed to update shared room audio", description: err.message, variant: "destructive" }),
-  });
-
   const setTypeMutation = useMutation({
     mutationFn: async ({ eventType, capacityType }: { eventType: EventTypeValue; capacityType?: CapacityTypeValue | null }) => {
       await apiRequest("POST", "/api/calendar/metadata", {
@@ -638,6 +624,25 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
             />
           )}
 
+          {(!isReadOnly || description) && (
+            <div className="overflow-hidden rounded-md border border-border/20" data-testid="event-description-frame">
+              {isReadOnly ? (
+                <div className="px-2 py-1.5 text-sm text-muted-foreground whitespace-pre-wrap" data-testid="event-description-readonly">
+                  {description}
+                </div>
+              ) : (
+                <Textarea
+                  value={description}
+                  onChange={event => setDescription(event.target.value)}
+                  placeholder="Add description"
+                  rows={3}
+                  className="resize-none border-0 bg-transparent px-2 py-1.5 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 min-h-0"
+                  data-testid="input-event-description"
+                />
+              )}
+            </div>
+          )}
+
           <div className="overflow-hidden rounded-md border border-border/20" data-testid="event-core-fields">
             {!isCreate && (
               <ProfileTreeRow
@@ -711,7 +716,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
               </ProfileTreeRow>
             )}
 
-            <ProfileTreeRow label="Calendar" icon={<CalendarIcon className="h-3.5 w-3.5" />} hasValue={Boolean(calendarLabel)} showEmpty mobileLayout="inline" testId="row-event-calendar">
+            <ProfileTreeRow label="Calendar" icon={<CalendarIcon className="h-3.5 w-3.5 text-muted-foreground" />} hasValue={Boolean(calendarLabel)} showEmpty mobileLayout="inline" testId="row-event-calendar">
               {isCreate ? (
                 <Select value={selectedCalendarId} onValueChange={setSelectedCalendarId}>
                   <SelectTrigger data-testid="select-calendar">
@@ -748,42 +753,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
                 data-testid="switch-prep-required"
               />
             </ProfileTreeRow>
-
-            {!isCreate && (metadata?.eventType || "meeting") === "meeting" && (
-              <ProfileTreeRow label="Shared room" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-event-shared-room">
-                <div className="flex items-center justify-end gap-2">
-                  <span className="text-xs text-muted-foreground">
-                    {sharedRoomEnabled ? "Diarize room speakers" : "One speaker per connection"}
-                  </span>
-                  <Switch
-                    checked={sharedRoomEnabled}
-                    onCheckedChange={checked => setSpeakerPolicyMutation.mutate(checked)}
-                    disabled={setSpeakerPolicyMutation.isPending || isReadOnly}
-                    aria-label="Shared room"
-                    data-testid="switch-shared-room"
-                  />
-                </div>
-              </ProfileTreeRow>
-            )}
-          </div>
-
-          <div className="space-y-1">
-            {isReadOnly ? (
-              description ? (
-                <div className="text-sm text-muted-foreground whitespace-pre-wrap" data-testid="event-description-readonly">
-                  {description}
-                </div>
-              ) : null
-            ) : (
-              <Textarea
-                value={description}
-                onChange={event => setDescription(event.target.value)}
-                placeholder="Add description"
-                rows={3}
-                className="resize-none border-transparent hover:border-border focus:border-border transition-colors text-sm"
-                data-testid="input-event-description"
-              />
-            )}
           </div>
 
           {/* Attendees */}
@@ -919,9 +888,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
               <span>Part of a recurring series</span>
             </div>
           )}
-
-          {/* Divider before metadata */}
-          {!isCreate && <div className="border-t" />}
 
           {!isCreate && (
             <div className="space-y-2" data-testid="private-agenda-section">

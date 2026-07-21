@@ -9,6 +9,7 @@ import { contextBuilder } from "./context-builder";
 import { ACTIVITY_FRAMING } from "./job-profiles";
 import { createLogger } from "./log";
 import { searchVnextMemory } from "./memory/vnext-search";
+import { buildEmailPersonContextMap, type EmailPersonContext } from "./meeting-context";
 
 const log = createLogger("PeopleRoutes");
 
@@ -196,20 +197,14 @@ export function registerPeopleRoutes(app: Express, peopleStorage: PeopleStorage)
   app.get("/api/people/email-map", async (_req, res) => {
     log.debug(`GET /api/people/email-map`);
     try {
-      const people = await peopleStorage.listPeople();
-      const fullPeople = await peopleStorage.getPeopleByIds(people.map(entry => entry.id));
-      const emailMap: Record<string, { id: string; name: string }> = {};
-      for (const person of fullPeople) {
-        for (const ci of person.contactInfo || []) {
-          if (ci.type === "email" && ci.value) {
-            emailMap[ci.value.toLowerCase()] = { id: person.id, name: person.name };
-          }
-        }
-      }
+      const emailMap: Record<string, EmailPersonContext> = Object.fromEntries(
+        await buildEmailPersonContextMap(),
+      );
       res.json({ emailMap });
-    } catch (error: any) {
-      log.error(`GET /api/people/email-map error:`, error.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.error(`GET /api/people/email-map error:`, message);
+      res.status(500).json({ error: message });
     }
   });
 

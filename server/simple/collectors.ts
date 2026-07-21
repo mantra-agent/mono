@@ -12,7 +12,7 @@ import { createReferenceRef } from "@shared/references";
 import { createMeetingArtifactChild, createMeetingPersonChild } from "@shared/meeting-feed-items";
 import { listAllEvents, type CalendarEvent } from "../google-calendar";
 import { listMetadataByEvents, classifyEventByTitle, getLinkedArtifactsByMetadataIds } from "../calendar-metadata";
-import { meetingInteractionContext, meetingPersonSummary, resolveMeetingArtifactContext, type MeetingArtifactContext } from "../meeting-context";
+import { buildEmailPersonContextMap, resolveMeetingArtifactContext, type EmailPersonContext, type MeetingArtifactContext } from "../meeting-context";
 import { computeAgendaSignals, computeContextBadge, peopleStorage, type Interaction, type ScoredAgendaItem } from "../people-storage";
 import { ensurePeopleSurfaceStates, listPeopleSurfaceStates } from "./people-surface-state";
 import { signalStorage } from "../news-storage";
@@ -25,30 +25,16 @@ import { queryDistinctInteractionPeopleSeries } from "../interaction-activity";
 
 const log = createLogger("SimpleCollectors");
 
-type EmailPersonMap = Map<string, { id: string; name: string; summary: string | null; lastInteractionContext: string | null }>;
+type EmailPersonMap = Map<string, EmailPersonContext>;
 type MeetingArtifactMap = Map<number, MeetingArtifactContext[]>;
 
 async function buildEmailPersonMap(): Promise<EmailPersonMap> {
-  const map: EmailPersonMap = new Map();
   try {
-    const entries = await peopleStorage.listPeople();
-    const people = await peopleStorage.getPeopleByIds(entries.map(e => e.id));
-    for (const person of people) {
-      for (const ci of person.contactInfo ?? []) {
-        if (ci.type === "email" && ci.value) {
-          map.set(ci.value.toLowerCase(), {
-            id: person.id,
-            name: person.name,
-            summary: meetingPersonSummary(person),
-            lastInteractionContext: meetingInteractionContext(person.interactions ?? []),
-          });
-        }
-      }
-    }
+    return await buildEmailPersonContextMap();
   } catch (err) {
     log.warn(`buildEmailPersonMap failed: ${err instanceof Error ? err.message : String(err)}`);
+    return new Map();
   }
-  return map;
 }
 
 type WellnessActivityStatus = Awaited<ReturnType<typeof queryActivityStatus>>[number];
