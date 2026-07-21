@@ -1,6 +1,6 @@
-import { join, resolve as resolvePath } from "path";
-import { existsSync } from "fs";
+import { join } from "path";
 import { ensureBackend, bridgeCall } from "./gitnexus-bridge";
+import { resolveGitNexusRuntimePath } from "./gitnexus-runtime";
 import type {
   GitNexusGraphNode,
   GitNexusGraphRelationship,
@@ -8,17 +8,7 @@ import type {
   GitNexusArchitecture,
 } from "./gitnexus-bridge";
 
-function resolveGitnexusRuntimePath(subpath: string): string {
-  const devCheck = resolvePath("node_modules/gitnexus");
-  if (existsSync(devCheck)) {
-    return `gitnexus/${subpath}`;
-  }
-  const prodPath = resolvePath(process.cwd(), `dist/gitnexus-runtime/gitnexus/${subpath}`);
-  if (!existsSync(prodPath)) {
-    throw new Error(`gitnexus runtime not found at ${prodPath} — was 'npm run build' executed?`);
-  }
-  return prodPath;
-}
+// Runtime resolution is centralized in gitnexus-runtime.
 
 const NODE_TABLES = [
   "File", "Folder", "Function", "Class", "Interface", "Method",
@@ -28,7 +18,7 @@ const NODE_TABLES = [
 async function resolveRepoPaths(): Promise<{ repos: { storagePath: string; indexedAt?: string; [key: string]: unknown }[]; lbugPath: string }> {
   const { listRegisteredRepos } = await import(
     /* webpackIgnore: true */
-    resolveGitnexusRuntimePath("dist/storage/repo-manager.js")
+    resolveGitNexusRuntimePath("dist/storage/repo-manager.js")
   );
   const repos = await listRegisteredRepos();
   if (!repos.length) throw new Error("No indexed repositories");
@@ -93,7 +83,7 @@ export async function getGraph(limit = 15_000): Promise<GitNexusGraphResult> {
 
   const { executeQuery, withLbugDb } = await import(
     /* webpackIgnore: true */
-    resolveGitnexusRuntimePath("dist/core/lbug/lbug-adapter.js")
+    resolveGitNexusRuntimePath("dist/core/lbug/lbug-adapter.js")
   );
 
   const { lbugPath } = await bridgeCall((_signal) => resolveRepoPaths(), "resolveRepoPaths()");
@@ -167,7 +157,7 @@ export async function getCodebaseContext(): Promise<unknown> {
 export async function getGraphSchema(): Promise<string> {
   const { readResource } = await import(
     /* webpackIgnore: true */
-    resolveGitnexusRuntimePath("dist/mcp/resources.js")
+    resolveGitNexusRuntimePath("dist/mcp/resources.js")
   );
   const b = await ensureBackend();
   return bridgeCall((_signal) => readResource("gitnexus://repo/workspace/schema", b), "getGraphSchema()");
@@ -178,11 +168,11 @@ export async function searchCode(query: string, limit = 10): Promise<unknown> {
 
   const { withLbugDb } = await import(
     /* webpackIgnore: true */
-    resolveGitnexusRuntimePath("dist/core/lbug/lbug-adapter.js")
+    resolveGitNexusRuntimePath("dist/core/lbug/lbug-adapter.js")
   );
   const { searchFTSFromLbug } = await import(
     /* webpackIgnore: true */
-    resolveGitnexusRuntimePath("dist/core/search/bm25-index.js")
+    resolveGitNexusRuntimePath("dist/core/search/bm25-index.js")
   );
 
   return bridgeCall(async (_signal) => {
