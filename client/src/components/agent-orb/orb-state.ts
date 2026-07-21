@@ -146,7 +146,13 @@ function syntheticAmplitude(state: OrbState, time: number): number {
 }
 
 export interface AnimationState {
-  prevState: OrbState;
+  /**
+   * Snapshot of the visuals actually rendered when the current transition
+   * began. Interpolating from this snapshot, rather than the prior canonical
+   * target, keeps every state change continuous even when a target reverses
+   * mid-blend, so rapid cadence like idle -> listening -> idle never snaps.
+   */
+  fromVisuals: OrbVisuals;
   nextState: OrbState;
   transitionElapsed: number;
   transitionDuration: number;
@@ -157,14 +163,15 @@ export interface AnimationState {
 }
 
 export function createAnimationState(initial: OrbState): AnimationState {
+  const currentVisuals = initial === 'entrance'
+    ? entranceVisuals(0)
+    : { ...STATE_VISUALS[initial] };
   return {
-    prevState: initial,
+    fromVisuals: { ...currentVisuals },
     nextState: initial,
     transitionElapsed: TRANSITION_DURATION,
     transitionDuration: TRANSITION_DURATION,
-    currentVisuals: initial === 'entrance'
-      ? entranceVisuals(0)
-      : { ...STATE_VISUALS[initial] },
+    currentVisuals,
     time: 0,
     effectiveAudioLevel: 0,
     entranceElapsed: 0,
@@ -180,7 +187,10 @@ export function tickAnimation(
   anim.time += dt;
 
   if (targetState !== anim.nextState) {
-    anim.prevState = anim.nextState === 'entrance' ? 'idle' : anim.nextState;
+    // Snapshot the visuals currently on screen as the transition origin so the
+    // blend stays continuous through reversals instead of resetting to the prior
+    // canonical target. Entrance owns its own arc and ignores this source.
+    anim.fromVisuals = { ...anim.currentVisuals };
     anim.nextState = targetState;
     anim.transitionElapsed = 0;
     if (targetState === 'entrance') anim.entranceElapsed = 0;
@@ -196,7 +206,7 @@ export function tickAnimation(
     );
     const t = smoothstep(anim.transitionElapsed / anim.transitionDuration);
     anim.currentVisuals = lerpVisuals(
-      STATE_VISUALS[anim.prevState],
+      anim.fromVisuals,
       STATE_VISUALS[anim.nextState],
       t,
     );
