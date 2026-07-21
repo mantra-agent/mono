@@ -87,9 +87,6 @@ export const fieldFragmentShader = /* glsl */ `
       sin(p.y * 3.7 + phase * 0.65)
     );
 
-    vec3 lean = vec3(0.42, 0.18, 0.24) * uAttractorStrength;
-    p -= lean * smoothstep(-0.7, 0.8, p.z);
-
     float d1 = ringDistance(p, vec3(0.44, 1.0, 0.18), 0.56);
     float d2 = ringDistance(p + vec3(0.08, -0.03, 0.02), vec3(1.0, -0.28, 0.48), 0.53);
     float d3 = ringDistance(p - vec3(0.04, 0.06, 0.01), vec3(-0.34, 0.46, 1.0), 0.48);
@@ -102,17 +99,29 @@ export const fieldFragmentShader = /* glsl */ `
   }
 
   vec2 fieldDensity(vec3 p) {
-    float phase = uTime * uFlowSpeed;
-    vec3 flow = divergenceFreeFlow(p, phase);
-    vec3 advected = p + flow * uFlowStrength;
+    // Internal audio reactivity gate. uWaveEnergy keeps this near zero unless the
+    // state opts in (speaking fully, listening subtly). Damping already happened
+    // on effectiveAudioLevel upstream, so this stays smooth and never strobes.
+    float audio = uAudioLevel * uWaveEnergy;
 
-    float filaments = linkedCurrents(advected, phase);
-    float cloudA = valueNoise(advected * 2.35 + vec3(phase * 0.7, -phase * 0.4, phase * 0.25));
-    float cloudB = valueNoise(advected * 4.7 - vec3(phase * 0.2, phase * 0.35, -phase * 0.3));
+    // Audio accelerates and agitates the internal currents so the speaking field
+    // visibly moves with the voice rather than only changing color and size.
+    float phase = uTime * uFlowSpeed * (1.0 + audio * 1.6);
+    vec3 flow = divergenceFreeFlow(p, phase);
+    vec3 advected = p + flow * uFlowStrength * (1.0 + audio * 0.9);
+
+    // Radial gather toward the core. As uAttractorStrength rises (thinking), the
+    // field is sampled from farther out, so filaments migrate inward and the
+    // whole field visibly draws together instead of dispersing.
+    float sampleRadius = length(advected);
+    vec3 gathered = advected * (1.0 + uAttractorStrength * 0.9 * smoothstep(0.05, 1.0, sampleRadius));
+
+    float filaments = linkedCurrents(gathered, phase);
+    float cloudA = valueNoise(gathered * 2.35 + vec3(phase * 0.7, -phase * 0.4, phase * 0.25));
+    float cloudB = valueNoise(gathered * 4.7 - vec3(phase * 0.2, phase * 0.35, -phase * 0.3));
     float cloud = smoothstep(0.4, 0.7, cloudA * 0.72 + cloudB * 0.28);
 
     float radius = length(p);
-    float audio = uAudioLevel * uWaveEnergy;
     float wave = sin(radius * 24.0 - uTime * (4.5 + audio * 4.0));
     float damping = exp(-radius * 1.65);
     float pressure = smoothstep(0.28, 0.88, wave * 0.5 + 0.5) * damping * audio;
@@ -120,11 +129,17 @@ export const fieldFragmentShader = /* glsl */ `
     float coreLight = 0.22 + 0.78 * smoothstep(0.08, 0.42, radius);
     float coreMask = mix(1.0, coreLight, uCoreDarkness);
     float edgeMask = smoothstep(1.0, 0.72, radius);
+
+    // Concentration brightens the gathered core so thinking convergence reads clearly.
+    float concentration = 1.0 + uAttractorStrength * 1.7 * exp(-radius * radius * 3.2);
+    // Audio pulses the whole internal field so speaking internals breathe with the voice.
+    float audioPulse = 1.0 + audio * 1.15;
+
     float density = (
       filaments * uFilamentDensity * 2.25
       + cloud * uCloudDensity * 1.05
       + pressure * 1.15
-    ) * coreMask * edgeMask * uFieldEnergy * uDimming;
+    ) * coreMask * edgeMask * uFieldEnergy * uDimming * concentration * audioPulse;
 
     return vec2(density, filaments + pressure);
   }
