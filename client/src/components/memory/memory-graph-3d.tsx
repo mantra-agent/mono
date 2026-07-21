@@ -263,15 +263,6 @@ function writeQuadraticPoint(
   positions[offset + 2] = inverse * inverse * fromZ + 2 * inverse * progress * controlZ + progress * progress * toZ;
 }
 
-function labelsOverlap(rect: DOMRect, occupied: DOMRect[]) {
-  return occupied.some((other) => !(
-    rect.right + 8 < other.left
-    || rect.left - 8 > other.right
-    || rect.bottom + 6 < other.top
-    || rect.top - 6 > other.bottom
-  ));
-}
-
 export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>(function MemoryGraph3D(
   { nodes, links, selectedNodeId, selectedLabelTypes, onNodeSelect, onNodeHover },
   forwardedRef,
@@ -640,7 +631,6 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     function syncLabels() {
       const width = host.clientWidth;
       const height = host.clientHeight;
-      const occupied: DOMRect[] = [];
       const projectedLabels: ProjectedLabel[] = [];
       labelRefs.current.forEach((element, nodeId) => {
         const node = sceneNodeById.get(nodeId);
@@ -674,18 +664,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           const sceneIndex = nodeIndex.get(node.id);
           const focused = sceneIndex != null && (hoveredIndex === sceneIndex || hoveredNeighborIndices.has(sceneIndex));
           const selected = selectedNodeIdRef.current === node.id;
-          const labelWidth = Math.min(200, 44 + Math.min(node.label.length, 26) * 6.2);
-          let adjustedY = y;
-          let rect = new DOMRect(x - labelWidth / 2, adjustedY + 8, labelWidth, 34);
-          for (let attempt = 0; attempt < 4 && labelsOverlap(rect, occupied); attempt += 1) {
-            adjustedY += 18;
-            rect = new DOMRect(x - labelWidth / 2, adjustedY + 8, labelWidth, 34);
-          }
           element.style.display = "flex";
-          element.style.transform = `translate3d(${x}px, ${adjustedY}px, 0) translate(-50%, -12px)`;
+          element.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -12px)`;
           element.style.opacity = focused || selected ? "1" : String(THREE.MathUtils.clamp(1.18 - distance / 520, hoveredIndex == null ? 0.66 : 0.4, 0.94));
           element.style.zIndex = String(focused ? 2_000 : selected ? 1_500 : Math.max(1, Math.round(1_000 - distance)));
-          occupied.push(rect);
         });
     }
 
