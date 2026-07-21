@@ -1727,6 +1727,21 @@ export function stepsFromSavedMessage(message: ChatMessage): ExecutionStep[] {
  * prose content and from persisted Gmail draft/reply/update_draft tool results.
  * Shared by ChatTurn (rendering) and the message list (cross-message dedup).
  */
+/**
+ * Plan tool calls whose results promote an inline plan widget. This is the
+ * single predicate shared by ChatTurn's per-message rendering and the message
+ * list's orphaned-plan detection — the two filters must never diverge, since
+ * a mismatch makes plans invisible in one path but not the other.
+ */
+export function isPlanWidgetToolCall(tool: ExecutionStep): boolean {
+  const action = typeof tool.arguments?.action === "string"
+    ? tool.arguments.action
+    : null;
+  return tool.toolName === "plan" &&
+    (action === "create" || action === "associate_session" ||
+     action === "execute" || action === "resume");
+}
+
 export function referenceIdsFromSegments(
   segments: MessageSegment[],
   referenceType: string,
@@ -2114,7 +2129,7 @@ export function MarkdownContent({
   );
 }
 
-function InlinePlanWidget({
+export function InlinePlanWidget({
   planId,
   sessionId,
   ownedChildBlocks,
@@ -2698,13 +2713,7 @@ export const ChatTurn = memo(function ChatTurn({
   const { fromToolResults: planWidgetIds } = referenceIdsFromSegments(
     segments,
     "plan",
-    (tool) => {
-      const action = typeof tool.arguments?.action === "string"
-        ? tool.arguments.action
-        : null;
-      return tool.toolName === "plan" &&
-        (action === "create" || action === "associate_session");
-    },
+    isPlanWidgetToolCall,
   );
   const { fromToolResults: workflowWidgetIds } = referenceIdsFromSegments(
     segments,

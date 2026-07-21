@@ -5,6 +5,9 @@ import {
   ChatTurn,
   segmentsFromSavedMessage,
   emailDraftIdsFromSegments,
+  referenceIdsFromSegments,
+  isPlanWidgetToolCall,
+  InlinePlanWidget,
   type ChatMessage as Message,
   type ChildSessionBlockMeta,
   type CrossSessionMeta,
@@ -69,7 +72,8 @@ type ListItem =
   | { kind: "message"; msg: Message; ts: number }
   | { kind: "voice_transcript"; entry: VoiceTranscriptEntry; index: number; ts: number }
   | { kind: "live_child"; meta: ChildSessionBlockMeta; ts: number }
-  | { kind: "live_cross"; id: string; meta: CrossSessionMeta; content: string; ts: number };
+  | { kind: "live_cross"; id: string; meta: CrossSessionMeta; content: string; ts: number }
+  | { kind: "orphaned_plan"; planId: string; ts: number };
 
 function normalizeTranscriptText(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
@@ -307,6 +311,31 @@ export function MessageList({
   const isPlanOwnedChildBlock = (meta: ChildSessionBlockMeta): boolean => Boolean(meta.planId);
   const isWorkflowOwnedChildBlock = (meta: ChildSessionBlockMeta): boolean =>
     Boolean(meta.workflowRunId) || Boolean(meta.spawnReason?.startsWith("workflow:"));
+
+  // Detect plan IDs that have child blocks but no per-message widget.
+  // When a plan was created elsewhere, compacted, or spawned by a workflow,
+  // the parent session has child_session_blocks with a planId but no assistant
+  // message with a matching create/associate/execute/resume tool call. These
+  // "orphaned" plans need a session-level widget so they remain visible.
+  const childBlockPlanIds = new Set<string>();
+  for (const meta of planOwnedChildBlocks.values()) {
+    if (meta.planId) childBlockPlanIds.add(meta.planId);
+  }
+  const toolMatchedPlanIds = new Set<string>();
+  if (childBlockPlanIds.size > 0) {
+    for (const msg of messages) {
+      if (msg.role !== "assistant" || !msg.toolCalls || !Array.isArray(msg.toolCalls)) continue;
+      const segments = segmentsFromSavedMessage(msg);
+      const { fromToolResults } = referenceIdsFromSegments(
+        segments,
+        "plan",
+        isPlanWidgetToolCall,
+      );
+      for (const id of fromToolResults) toolMatchedPlanIds.add(id);
+    }
+  }
+  const orphanedPlanIds = [...childBlockPlanIds].filter(id => !toolMatchedPlanIds.has(id));
+
   const persistedCrossKeys = new Set(
     messages
       .filter(m => m.role === "cross_session" && m.crossSession)
@@ -364,6 +393,25 @@ export function MessageList({
       items.push({ kind: "live_cross", id: cm.id, meta: cm.meta, content: cm.content, ts: cm.receivedAt });
     }
   }
+  // Insert orphaned plan widgets at the timestamp of the earliest child block
+  // for each plan. These plans have child_session_blocks but no matching
+  // tool-call-based widget in any assistant message.
+  for (const planId of orphanedPlanIds) {
+    let earliestTs = Infinity;
+    for (const msg of messages) {
+      if (
+        msg.role === "child_session_block" &&
+        hasChildSessionId(msg.childSession) &&
+        msg.childSession.planId === planId
+      ) {
+        const t = new Date(msg.createdAt).getTime();
+        if (t < earliestTs) earliestTs = t;
+      }
+    }
+    if (earliestTs === Infinity) earliestTs = Date.now();
+    items.push({ kind: "orphaned_plan", planId, ts: earliestTs });
+  }
+
   items.sort((a, b) => a.ts - b.ts);
   const optimisticUserSubmittedAt = optimisticUserTurn ? getTimestamp(optimisticUserTurn.submittedAt, Date.now()) : null;
   let persistedOptimisticUserId: string | null = null;
@@ -694,6 +742,18 @@ export function MessageList({
   }
 
   const renderItem = (item: ListItem, isLast: boolean, isStreamingTarget: boolean): JSX.Element => {
+    if (item.kind === "orphaned_plan") {
+      return (
+        <InlinePlanWidget
+          key={`orphan-plan-${item.planId}`}
+          planId={item.planId}
+          sessionId={activeSession ?? undefined}
+          ownedChildBlocks={planOwnedChildBlocks}
+          sessionTitleById={sessionTitleById}
+          sessionStreams={sessionStreams}
+        />
+      );
+    }
     if (item.kind === "voice_transcript") {
       return <VoiceTranscriptBubble key={`vt-${item.entry.transcriptId || item.entry.turnId || item.index}`} entry={item.entry} index={item.index} />;
     }
