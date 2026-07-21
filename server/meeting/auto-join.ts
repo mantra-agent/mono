@@ -13,7 +13,12 @@ import {
   listMetadataByEvents,
   setAgentJoin,
 } from "../calendar-metadata";
-import { getEvent, listAllEvents, type CalendarEvent } from "../google-calendar";
+import {
+  getEvent,
+  getGoogleCalendarIntegrationState,
+  listAllEvents,
+  type CalendarEvent,
+} from "../google-calendar";
 import { runWithPrincipal } from "../principal-context";
 import { createUserPrincipalFromUser, resolveUserIdentityFoundation } from "../principal";
 import { storage } from "../storage";
@@ -93,6 +98,8 @@ async function discoverUserSchedules(user: Awaited<ReturnType<typeof storage.get
 }
 
 async function discoverUpcomingMeetingSchedules(now: Date): Promise<void> {
+  if (getGoogleCalendarIntegrationState().status !== "available") return;
+
   const users = await storage.getUsers();
   for (const user of users) {
     try {

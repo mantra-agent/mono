@@ -7,6 +7,7 @@ import {
   saveAccountTokens,
   getOAuth2Client,
 } from './gmail';
+import { getSecretSync } from './secrets-store';
 
 // ─── Interfaces ───
 
@@ -47,6 +48,30 @@ import { createLogger } from "./log";
 const log = createLogger("GoogleCalendar");
 
 export { type GmailAccount };
+
+export type GoogleCalendarIntegrationState =
+  | { status: "available" }
+  | { status: "disabled_missing_credentials" };
+
+let lastIntegrationStatus: GoogleCalendarIntegrationState["status"] | null = null;
+
+export function getGoogleCalendarIntegrationState(): GoogleCalendarIntegrationState {
+  const status: GoogleCalendarIntegrationState["status"] =
+    getSecretSync("GOOGLE_CLIENT_ID") && getSecretSync("GOOGLE_CLIENT_SECRET")
+      ? "available"
+      : "disabled_missing_credentials";
+
+  if (status !== lastIntegrationStatus) {
+    if (status === "disabled_missing_credentials") {
+      log.warn("Google Calendar integration disabled because OAuth client credentials are unavailable");
+    } else if (lastIntegrationStatus !== null) {
+      log.info("Google Calendar integration available; resuming calendar operations");
+    }
+    lastIntegrationStatus = status;
+  }
+
+  return { status };
+}
 
 // ─── Calendar scope checks ───
 
@@ -188,6 +213,10 @@ export async function listAllEvents(
     maxResults?: number;
   } = {}
 ): Promise<ListAllEventsResult> {
+  if (getGoogleCalendarIntegrationState().status !== "available") {
+    return { events: [], errors: [] };
+  }
+
   const accounts = await listGmailAccounts();
   const allEvents: CalendarEvent[] = [];
   const errors: ListAllEventsError[] = [];
