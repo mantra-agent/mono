@@ -36,6 +36,8 @@ export interface CompactionSummaryResult {
   narrative: string;
   segmentCount: number;
   degradedSegments: number;
+  modelCallCount: number;
+  inputTokens: number;
 }
 
 /** Input-token budget per map call. Grows adaptively if the transcript would exceed MAX_SEGMENTS. */
@@ -48,6 +50,8 @@ const MAP_OUTPUT_TOKENS = 500;
 const REDUCE_OUTPUT_TOKENS = 1_400;
 const MAP_TIMEOUT_MS = 60_000;
 const REDUCE_TIMEOUT_MS = 90_000;
+export const MAX_COMPACTION_MODEL_CALLS = MAX_SEGMENTS * 2 + 2;
+export const MAX_COMPACTION_SUMMARY_INPUT_TOKENS = 800_000;
 
 const NARRATIVE_FORMAT = `Write a continuation summary in markdown with exactly these sections (omit a section only when it has no content):
 ## Objective
@@ -152,9 +156,17 @@ async function timedCompletion(options: {
   timeoutMs: number;
   sessionId: string;
   purpose: string;
+  deadlineAt?: number;
   /** Optional semantic tier override for the call's explicit quality/resource budget. */
   tier?: SemanticTier;
 }): Promise<string> {
+  const remainingMs = options.deadlineAt
+    ? options.deadlineAt - Date.now()
+    : options.timeoutMs;
+  if (remainingMs <= 0) {
+    throw new Error(`compaction summarization wall-time budget exhausted (${options.purpose})`);
+  }
+  const effectiveTimeoutMs = Math.min(options.timeoutMs, remainingMs);
   const result = await Promise.race([
     chatCompletion({
       activity: ACTIVITY_FRAMING,
@@ -170,7 +182,7 @@ async function timedCompletion(options: {
       metadata: { source: `compaction-summarizer.${options.purpose}`, sessionId: options.sessionId, activity: ACTIVITY_FRAMING },
     }),
     new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`compaction summarization timeout (${options.purpose})`)), options.timeoutMs),
+      setTimeout(() => reject(new Error(`compaction summarization timeout (${options.purpose})`)), effectiveTimeoutMs),
     ),
   ]);
   const content = result.content?.trim();
@@ -220,41 +232,75 @@ export async function summarizeCompactedMessages(input: {
   sessionId: string;
   messages: SummarizableMessage[];
   capsuleFacts: string;
+  deadlineAt?: number;
 }): Promise<CompactionSummaryResult | null> {
   try {
     const segments = buildSegments(input.messages);
     if (segments.length === 0) return null;
+    const inputTokens = segments.reduce(
+      (sum, segment) => sum + estimateTokens(segment),
+      0,
+    );
+    if (inputTokens > MAX_COMPACTION_SUMMARY_INPUT_TOKENS) {
+      log.warn(
+        `narrative summarization input budget exceeded sessionId=${input.sessionId} inputTokens=${inputTokens} budget=${MAX_COMPACTION_SUMMARY_INPUT_TOKENS}`,
+      );
+      return null;
+    }
     let degradedSegments = 0;
+    let modelCallCount = 0;
+    const beginModelCall = () => {
+      if (modelCallCount >= MAX_COMPACTION_MODEL_CALLS) {
+        throw new Error(
+          `compaction model-call budget exhausted (${MAX_COMPACTION_MODEL_CALLS})`,
+        );
+      }
+      modelCallCount += 1;
+    };
 
     if (segments.length === 1) {
       const narrative = await withRetry(
-        () => timedCompletion({
+        () => {
+          beginModelCall();
+          return timedCompletion({
           system: `You are summarizing an archived portion of a conversation between a user and their AI agent so the conversation can continue seamlessly with the summary in place of the original messages.\n\n${NARRATIVE_FORMAT}`,
           user: `Deterministic extraction of key facts (use to anchor identifiers and outcomes):\n${input.capsuleFacts}\n\nFull transcript segment:\n${segments[0]}`,
           maxTokens: REDUCE_OUTPUT_TOKENS,
           timeoutMs: REDUCE_TIMEOUT_MS,
           sessionId: input.sessionId,
           purpose: "single",
+          deadlineAt: input.deadlineAt,
           tier: "balanced",
-        }),
+          });
+        },
         "single-segment summary",
         input.sessionId,
       );
-      return { narrative, segmentCount: 1, degradedSegments: 0 };
+      return {
+        narrative,
+        segmentCount: 1,
+        degradedSegments: 0,
+        modelCallCount,
+        inputTokens,
+      };
     }
 
     const notes = await mapWithConcurrency(segments, MAP_CONCURRENCY, async (segment, index) => {
       try {
         return await withRetry(
-          () => timedCompletion({
+          () => {
+            beginModelCall();
+            return timedCompletion({
             system: `You are summarizing segment ${index + 1} of ${segments.length} from an archived conversation between a user and their AI agent. Produce dense factual notes for a later merge step. Cover: what was being worked on, conclusions reached, actions taken and their outcomes, state changes, failures, and unresolved threads. Preserve exact identifiers verbatim (references like @page:slug, IDs, paths, branches, SHAs, numbers). Bullets only, no preamble. Target under 300 tokens.`,
             user: segment,
             maxTokens: MAP_OUTPUT_TOKENS,
             timeoutMs: MAP_TIMEOUT_MS,
             sessionId: input.sessionId,
             purpose: `map-${index + 1}`,
+            deadlineAt: input.deadlineAt,
             tier: "fast",
-          }),
+            });
+          },
           `segment ${index + 1}/${segments.length}`,
           input.sessionId,
         );
@@ -266,21 +312,31 @@ export async function summarizeCompactedMessages(input: {
     });
 
     const narrative = await withRetry(
-      () => timedCompletion({
+      () => {
+        beginModelCall();
+        return timedCompletion({
         system: `You are merging sequential segment notes from an archived conversation between a user and their AI agent into one continuation summary, so the conversation can continue seamlessly with the summary in place of the original messages.\n\n${NARRATIVE_FORMAT}`,
         user: `Deterministic extraction of key facts (use to anchor identifiers and outcomes):\n${input.capsuleFacts}\n\nSegment notes in chronological order:\n\n${notes.map((note, index) => `### Segment ${index + 1}\n${note}`).join("\n\n")}`,
         maxTokens: REDUCE_OUTPUT_TOKENS,
         timeoutMs: REDUCE_TIMEOUT_MS,
         sessionId: input.sessionId,
         purpose: "reduce",
+        deadlineAt: input.deadlineAt,
         tier: "balanced",
-      }),
+        });
+      },
       "reduce summary",
       input.sessionId,
     );
 
     log.log(`narrative summary produced sessionId=${input.sessionId} segments=${segments.length} degradedSegments=${degradedSegments} narrativeLen=${narrative.length}`);
-    return { narrative, segmentCount: segments.length, degradedSegments };
+    return {
+      narrative,
+      segmentCount: segments.length,
+      degradedSegments,
+      modelCallCount,
+      inputTokens,
+    };
   } catch (error) {
     log.warn(`narrative summarization failed; caller should fall back to capsule sessionId=${input.sessionId} error=${error instanceof Error ? error.message : String(error)}`);
     return null;

@@ -21,6 +21,7 @@ export * from "./models/content";
 export * from "./models/events";
 export * from "./models/cognition";
 export * from "./models/indexed-content";
+export * from "./models/compaction";
 export * from "./models/export";
 export * from "./models/media";
 export * from "./models/exec";

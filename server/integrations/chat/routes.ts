@@ -11,6 +11,7 @@ import { resolveModelCandidates, type ModelRoutingDecision } from "../../model-r
 import { normalizeSessionModelTierOverride } from "../../session-model-tier-override";
 import { agentExecutor } from "../../agent-executor";
 import { assembleContext } from "../../agent-context";
+import { isCommittedContextMessage } from "../../compaction-snapshot";
 import { getToolSchemas as getToolDefinitions } from "../../tool-registry";
 import { executeTool } from "../../bridge-tools";
 import type {
@@ -1304,6 +1305,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       elapsedMs?: number,
     ) => void,
     currentMessageIds?: string[],
+    callerGeneration?: number,
   ): Promise<{
     messages: ExecutorMessage[];
     conversationHistory: ConversationHistoryMessage[];
@@ -1368,7 +1370,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     ) => {
       conversationHistory.length = 0;
       const durableHistoryMessages = sourceMessages.filter(
-        (m) => !(m.role === "assistant" && m.assistantState === "streaming"),
+        isCommittedContextMessage,
       );
       const sourceLastUserIdx = durableHistoryMessages.reduce(
         (acc, m, i) => (m.role === "user" ? i : acc),
@@ -1488,10 +1490,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             sessionId,
             conversationHistory,
             convBudget,
+            callerGeneration,
           )
-        : false;
-      durableCompactionApplied = compacted;
-      if (compacted) {
+        : { outcome: "below_threshold" as const };
+      durableCompactionApplied = compacted.outcome === "compacted" ||
+        (compacted.outcome === "joined" && compacted.terminalOutcome === "compacted");
+      if (durableCompactionApplied) {
         chatLog.log(
           `betweenTurnCompaction ran, reloading messages sessionId=${sessionId}`,
         );
@@ -1749,6 +1753,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           resolvedModel,
           onProgress,
           currentMessageIds,
+          callerGeneration,
         );
       }
     }
@@ -2266,6 +2271,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         chatModel,
         onCtxProgress,
         currentMessageIds,
+        lease.generation,
       );
       chatRunLifecycle.assertCurrent(lease);
       const contextEndedAt = Date.now();

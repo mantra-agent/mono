@@ -1,6 +1,11 @@
 import { documentStorage } from "./memory";
-import { db } from "./db";
-import { accounts, users, memoryEntries, documentStoreDocuments, planStepAttempts, planSteps, sessionArtifacts, sessionTree } from "@shared/schema";
+import {
+  ADVISORY_LOCK_NS,
+  acquireAdvisoryTransactionLock,
+  db,
+  runWithDatabaseTransaction,
+} from "./db";
+import { accounts, users, memoryEntries, documentStoreDocuments, planStepAttempts, planSteps, sessionArtifacts, sessionTree, compactionOperations } from "@shared/schema";
 import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { combineWithVisibleScope, combineWithWritableScope } from "./scoped-storage";
 import { documentStoreIndependentWritesEnabled } from "./memory/document-store-cutover";
@@ -466,7 +471,14 @@ function withConvLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
   const wrapped = async () => {
     _trackConvLockStart?.(trackId, id);
     try {
-      return await fn();
+      return await db.transaction(async (transaction) => {
+        await acquireAdvisoryTransactionLock(
+          transaction,
+          ADVISORY_LOCK_NS.CHAT_DOCUMENT,
+          id,
+        );
+        return runWithDatabaseTransaction(transaction, fn);
+      });
     } finally {
       _trackConvLockEnd?.(trackId);
     }
@@ -1271,6 +1283,7 @@ export interface IChatFileStorage {
     removedMessageIds: string[],
     meta?: Partial<CompactionMeta>,
   ): Promise<{
+    outcome: "compacted" | "session_not_found" | "invalid_boundary" | "snapshot_changed";
     compacted: boolean;
     messagesBefore: number;
     messagesAfter: number;
@@ -1631,13 +1644,15 @@ export const chatFileStorage: IChatFileStorage = {
       );
     });
     if (!match) return false;
-    const data = await readConv(match.docId);
-    if (!data) return false;
-    data.messages = [];
-    data.updatedAt = new Date().toISOString();
-    await writeConv(data);
-    invalidateSessionsCache();
-    return true;
+    return withConvLock(match.docId, async () => {
+      const data = await readConv(match.docId);
+      if (!data) return false;
+      data.messages = [];
+      data.updatedAt = new Date().toISOString();
+      await writeConv(data);
+      invalidateSessionsCache();
+      return true;
+    });
   },
 
   async updateModelTier(sessionKey: string, tier: string) {
@@ -1649,41 +1664,48 @@ export const chatFileStorage: IChatFileStorage = {
       );
     });
     if (!match) return false;
-    const data = await readConv(match.docId);
-    if (!data) return false;
-    data.modelTier = normalizeSessionModelTierOverride(tier);
-    data.updatedAt = new Date().toISOString();
-    await writeConv(data);
-    invalidateSessionsCache();
-    return true;
+    return withConvLock(match.docId, async () => {
+      const data = await readConv(match.docId);
+      if (!data) return false;
+      data.modelTier = normalizeSessionModelTierOverride(tier);
+      data.updatedAt = new Date().toISOString();
+      await writeConv(data);
+      invalidateSessionsCache();
+      return true;
+    });
   },
 
   async getMessagesBySession(sessionId: string) {
-    const data = await readConv(sessionId);
-    if (!data) return [];
-    if (data.messages.length > 1) {
-      const firstMarkerIdx = data.messages.findIndex(
-        (m) => m.model === "compaction-marker",
-      );
-      if (firstMarkerIdx > 0) {
-        log.warn(
-          `getMessagesBySession sessionId=${sessionId} compaction marker at index ${firstMarkerIdx} (not 0), normalizing durably — dropping ${firstMarkerIdx} messages before marker`,
+    const initial = await readConv(sessionId);
+    if (!initial) return [];
+    const firstMarkerIdx = initial.messages.findIndex(
+      (message) => message.model === "compaction-marker",
+    );
+    if (firstMarkerIdx <= 0) {
+      if (firstMarkerIdx === 0) {
+        log.debug(
+          `getMessagesBySession sessionId=${sessionId} hasCompactionMarker=true totalMessages=${initial.messages.length}`,
         );
-        data.messages = data.messages.slice(firstMarkerIdx);
+      }
+      return initial.messages;
+    }
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data) return [];
+      const currentMarkerIdx = data.messages.findIndex(
+        (message) => message.model === "compaction-marker",
+      );
+      if (currentMarkerIdx > 0) {
+        log.warn(
+          `getMessagesBySession sessionId=${sessionId} compaction marker at index ${currentMarkerIdx}; normalizing durably`,
+        );
+        data.messages = data.messages.slice(currentMarkerIdx);
         data.updatedAt = new Date().toISOString();
         await writeConv(data);
         invalidateSessionsCache();
       }
-      if (firstMarkerIdx >= 0) {
-        const marker = data.messages.find(
-          (m) => m.model === "compaction-marker",
-        );
-        log.log(
-          `getMessagesBySession sessionId=${sessionId} hasCompactionMarker=true totalMessages=${data.messages.length} markerContentLen=${marker?.content.length || 0}`,
-        );
-      }
-    }
-    return data.messages;
+      return data.messages;
+    });
   },
 
   async createMessage(
@@ -2559,7 +2581,7 @@ export const chatFileStorage: IChatFileStorage = {
           },
           () => withConvLock(id, async () => {
             const principal = getCurrentPrincipalOrSystem();
-            return db.transaction(async (tx) => {
+            const tx = db;
               await tx.execute(sql`SET LOCAL lock_timeout = '5s'`);
               await tx.execute(sql`SET LOCAL statement_timeout = '15s'`);
 
@@ -2675,7 +2697,6 @@ export const chatFileStorage: IChatFileStorage = {
               invalidateSessionsCache();
               publishSessionStatusChanged(data, previousStatus, data.status);
               return true;
-            });
           }),
         );
         if (changed) {
@@ -3182,13 +3203,19 @@ export const chatFileStorage: IChatFileStorage = {
     return withConvLock(sessionId, async () => {
       const data = await readConv(sessionId);
       if (!data)
-        return { compacted: false, messagesBefore: 0, messagesAfter: 0 };
+        return {
+          outcome: "session_not_found" as const,
+          compacted: false,
+          messagesBefore: 0,
+          messagesAfter: 0,
+        };
       const messagesBefore = data.messages.length;
       if (
         removedMessageIds.length <= 0 ||
         removedMessageIds.length > messagesBefore
       ) {
         return {
+          outcome: "invalid_boundary" as const,
           compacted: false,
           messagesBefore,
           messagesAfter: messagesBefore,
@@ -3204,6 +3231,7 @@ export const chatFileStorage: IChatFileStorage = {
             `compactSession prefix mismatch sessionId=${sessionId} index=${i} expected=${removedMessageIds[i]} actual=${data.messages[i]?.id ?? "missing"} — failing closed`,
           );
           return {
+            outcome: "snapshot_changed" as const,
             compacted: false,
             messagesBefore,
             messagesAfter: messagesBefore,
@@ -3237,12 +3265,46 @@ export const chatFileStorage: IChatFileStorage = {
       data.messages = [compactionMarker, ...kept];
       data.updatedAt = compactionMarker.createdAt;
       await writeConv(data);
+      if (meta?.operationId) {
+        const principal = getCurrentPrincipalOrSystem();
+        if (!principal.userId || !principal.accountId) {
+          throw new Error("Compaction commit requires explicit operation ownership");
+        }
+        const attached = await db
+          .update(compactionOperations)
+          .set({
+            status: "committed",
+            outcome: "compacted",
+            markerId,
+            updatedAt: new Date(compactionMarker.createdAt),
+            completedAt: new Date(compactionMarker.createdAt),
+          })
+          .where(
+            and(
+              eq(compactionOperations.id, meta.operationId),
+              eq(compactionOperations.ownerUserId, principal.userId),
+              eq(compactionOperations.accountId, principal.accountId),
+              eq(compactionOperations.sessionId, sessionId),
+              eq(compactionOperations.status, "ready"),
+            ),
+          )
+          .returning({ id: compactionOperations.id });
+        if (attached.length !== 1) {
+          throw new Error(`Compaction operation attachment failed: ${meta.operationId}`);
+        }
+      }
       invalidateSessionsCache();
       const messagesAfter = data.messages.length;
       log.log(
         `compactSession sessionId=${sessionId} messagesBefore=${messagesBefore} messagesAfter=${messagesAfter} replaced=${removedMessageIds.length} summaryLen=${summaryContent.length}`,
       );
-      return { compacted: true, messagesBefore, messagesAfter, markerId };
+      return {
+        outcome: "compacted" as const,
+        compacted: true,
+        messagesBefore,
+        messagesAfter,
+        markerId,
+      };
     });
   },
 
