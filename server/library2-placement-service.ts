@@ -7,7 +7,14 @@ import {
 } from "@shared/models/info";
 import { vaults } from "@shared/models/vaults";
 import { db } from "./db";
-import { parseLibraryIndexEntries } from "./library-index-format";
+import {
+  CANONICAL_LIBRARY_INDEX_BOOTSTRAP_MARKDOWN,
+  ensureVaultPage,
+} from "./library-domain";
+import {
+  parseLibraryIndexStructure,
+  type LibraryIndexEntry,
+} from "./library-index-format";
 import {
   createLibraryPlacements,
   deleteLibraryPlacement,
@@ -36,17 +43,22 @@ export type Library2ImportSource =
 export interface CreateLibrary2PlacementsInput {
   source: Library2ImportSource;
   vaultId: string;
-  sectionPageId: string;
+  destinationId: string;
   importKey: string;
 }
 
-interface Library2Section {
+interface Library2Destination {
   id: string;
   title: string;
-  slug: string;
-  emoji: string | null;
+  path: string;
+  depth: number;
   sortOrder: number;
   category: LibraryPlacementIndexSection;
+  pageId: string | null;
+  pageTitle: string | null;
+  pageSlug: string | null;
+  pageEmoji: string | null;
+  kind: "section" | "wiki";
 }
 
 const LIBRARY2_IMPORT_PAGE_LIMIT = 5_000;
@@ -98,10 +110,14 @@ async function requireLiveVault(
   return vault;
 }
 
-async function readCanonicalSections(
+function wikiDestinationId(entry: LibraryIndexEntry): string {
+  return `index-wiki:${entry.id}`;
+}
+
+async function readCanonicalDestinations(
   vaultId: string,
   principal: Principal,
-): Promise<Library2Section[]> {
+): Promise<Library2Destination[]> {
   const [indexPage] = await db
     .select({ id: libraryPages.id, plainTextContent: libraryPages.plainTextContent })
     .from(libraryPages)
@@ -119,55 +135,123 @@ async function readCanonicalSections(
       ),
     )
     .limit(1);
-  if (!indexPage) return [];
-
-  const entries = parseLibraryIndexEntries(indexPage.plainTextContent);
-  if (entries.length === 0) return [];
-
-  const pages = await db
-    .select({
-      id: libraryPages.id,
-      title: libraryPages.title,
-      slug: libraryPages.slug,
-      emoji: libraryPages.emoji,
-      sortOrder: libraryPages.sortOrder,
-    })
-    .from(libraryPages)
-    .where(
-      visiblePages(
-        principal,
-        and(
-          inArray(
-            libraryPages.id,
-            entries.map((entry) => entry.id),
+  const [vaultRoot] = indexPage
+    ? []
+    : await db
+        .select({ id: libraryPages.id })
+        .from(libraryPages)
+        .where(
+          visiblePages(
+            principal,
+            and(
+              eq(libraryPages.vaultId, vaultId),
+              eq(libraryPages.structuralRole, "meta"),
+              sql`'library-vault' = ANY(${libraryPages.tags})`,
+            ),
           ),
-          eq(libraryPages.vaultId, vaultId),
-          eq(libraryPages.structuralRole, "wiki"),
-        ),
-      ),
-    )
-    .orderBy(asc(libraryPages.sortOrder), asc(libraryPages.title));
-  const entryById = new Map(entries.map((entry) => [entry.id, entry]));
-  return pages.map((page) => ({
-    ...page,
-    category: entryById.get(page.id)?.category ?? "Concepts",
+        )
+        .limit(1);
+  const canonicalIndexPage = indexPage ?? await ensureVaultPage({
+    principal,
+    vaultId,
+    title: "Index",
+    parentId: vaultRoot?.id ?? null,
+    structuralRole: "meta",
+    tags: ["library-index", "library-meta"],
+    plainTextContent: CANONICAL_LIBRARY_INDEX_BOOTSTRAP_MARKDOWN,
+    sortOrder: 1,
+    slugFallback: "index",
+  });
+
+  const structure = parseLibraryIndexStructure(
+    canonicalIndexPage.plainTextContent,
+  );
+  if (structure.sections.length === 0) return [];
+
+  const pages = structure.entries.length
+    ? await db
+        .select({
+          id: libraryPages.id,
+          title: libraryPages.title,
+          slug: libraryPages.slug,
+          emoji: libraryPages.emoji,
+        })
+        .from(libraryPages)
+        .where(
+          visiblePages(
+            principal,
+            and(
+              inArray(
+                libraryPages.id,
+                structure.entries.map((entry) => entry.id),
+              ),
+              eq(libraryPages.vaultId, vaultId),
+              eq(libraryPages.structuralRole, "wiki"),
+            ),
+          ),
+        )
+    : [];
+  const pageById = new Map(pages.map((page) => [page.id, page]));
+
+  const sections: Library2Destination[] = structure.sections.map((section) => ({
+    id: section.id,
+    title: section.title,
+    path: section.path,
+    depth: section.depth,
+    sortOrder: section.sortOrder,
+    category: section.category,
+    pageId: null,
+    pageTitle: null,
+    pageSlug: null,
+    pageEmoji: null,
+    kind: "section",
   }));
+  const sectionByPath = new Map(
+    structure.sections.map((section) => [section.path, section]),
+  );
+  const wikiPages = structure.entries.flatMap((entry) => {
+    const page = pageById.get(entry.id);
+    if (!page) return [];
+    const section = entry.sectionPath
+      ? sectionByPath.get(entry.sectionPath)
+      : undefined;
+    return [{
+      id: wikiDestinationId(entry),
+      title: page.title,
+      path: entry.sectionPath
+        ? `${entry.sectionPath} / ${page.title}`
+        : page.title,
+      depth: (section?.depth ?? -1) + 1,
+      sortOrder: entry.sortOrder,
+      category: entry.category,
+      pageId: page.id,
+      pageTitle: page.title,
+      pageSlug: page.slug,
+      pageEmoji: page.emoji,
+      kind: "wiki" as const,
+    }];
+  });
+  return [...sections, ...wikiPages].sort(
+    (left, right) => left.sortOrder - right.sortOrder,
+  );
 }
 
-async function requireCanonicalSection(
+async function requireCanonicalDestination(
   vaultId: string,
-  sectionPageId: string,
+  destinationId: string,
   principal: Principal,
-): Promise<Library2Section> {
-  const sections = await readCanonicalSections(vaultId, principal);
-  const section = sections.find((candidate) => candidate.id === sectionPageId);
-  if (!section) {
+): Promise<Library2Destination> {
+  const destinations = await readCanonicalDestinations(vaultId, principal);
+  const destination = destinations.find(
+    (candidate) => candidate.id === destinationId,
+  );
+  if (!destination) {
     throw Object.assign(
-      new Error("Library2 section must be a canonical Index entry"),
+      new Error("Library2 destination must exist in the canonical Index"),
       { status: 400 },
     );
   }
-  return section;
+  return destination;
 }
 
 async function readVisiblePage(pageId: string, principal: Principal) {
@@ -260,10 +344,10 @@ async function resolveSourcePages(
 function expectedImportKey(
   source: Library2ImportSource,
   vaultId: string,
-  sectionPageId: string,
+  destinationId: string,
 ): string {
   const sourceId = "pageId" in source ? source.pageId : source.vaultId;
-  return `library2:${source.type}:${sourceId}:${vaultId}:${sectionPageId}`;
+  return `library2:${source.type}:${sourceId}:${vaultId}:${destinationId}`;
 }
 
 export async function listLibrary2Destinations(principal: Principal) {
@@ -281,7 +365,7 @@ export async function listLibrary2Destinations(principal: Principal) {
   return Promise.all(
     liveVaults.map(async (vault) => ({
       vault,
-      sections: await readCanonicalSections(vault.id, principal),
+      destinations: await readCanonicalDestinations(vault.id, principal),
     })),
   );
 }
@@ -317,15 +401,26 @@ export async function suggestLibrary2Destination(
   );
 
   const destinations = await listLibrary2Destinations(principal);
-  const destination = destinations.find(
+  const vaultDestination = destinations.find(
     (candidate) => candidate.vault.id === suggestion.vaultId,
   );
-  const section = destination?.sections.find(
-    (candidate) => candidate.id === suggestion.parentId,
+  const wikiDestination = vaultDestination?.destinations.find(
+    (candidate) => candidate.pageId === suggestion.parentId,
   );
+  const conceptsDestination = vaultDestination?.destinations.find(
+    (candidate) =>
+      candidate.kind === "section" &&
+      candidate.category === "Concepts" &&
+      candidate.title.toLowerCase() === "concepts",
+  );
+  const fallbackDestination =
+    conceptsDestination ??
+    vaultDestination?.destinations.find(
+      (candidate) => candidate.kind === "section",
+    );
   return {
     vaultId: suggestion.vaultId,
-    sectionPageId: section?.id ?? null,
+    destinationId: wikiDestination?.id ?? fallbackDestination?.id ?? null,
     confidence: suggestion.confidence,
     reason: suggestion.reason,
     sourceCount: pages.length,
@@ -338,14 +433,14 @@ export async function createLibrary2Placements(
 ) {
   requireUserPrincipal(principal);
   await requireLiveVault(input.vaultId, principal);
-  const section = await requireCanonicalSection(
+  const destination = await requireCanonicalDestination(
     input.vaultId,
-    input.sectionPageId,
+    input.destinationId,
     principal,
   );
   if (
     input.importKey !==
-    expectedImportKey(input.source, input.vaultId, input.sectionPageId)
+    expectedImportKey(input.source, input.vaultId, input.destinationId)
   ) {
     throw Object.assign(new Error("Library2 import key does not match the request"), {
       status: 400,
@@ -365,6 +460,7 @@ export async function createLibrary2Placements(
   const existing: Array<{
     pageId: string;
     indexSection: string;
+    indexPath: string | null;
     parentPageId: string | null;
   }> = [];
   for (
@@ -380,6 +476,7 @@ export async function createLibrary2Placements(
         .select({
           pageId: libraryPlacements.pageId,
           indexSection: libraryPlacements.indexSection,
+          indexPath: libraryPlacements.indexPath,
           parentPageId: libraryPlacements.parentPageId,
         })
         .from(libraryPlacements)
@@ -398,8 +495,9 @@ export async function createLibrary2Placements(
     existing
       .filter(
         (row) =>
-          row.indexSection === section.category &&
-          row.parentPageId === section.id,
+          row.indexSection === destination.category &&
+          row.indexPath === destination.path &&
+          row.parentPageId === destination.pageId,
       )
       .map((row) => row.pageId),
   );
@@ -408,8 +506,9 @@ export async function createLibrary2Placements(
     pages.map((page) => ({
       pageId: page.id,
       vaultId: input.vaultId,
-      indexSection: section.category,
-      parentPageId: section.id,
+      indexSection: destination.category,
+      indexPath: destination.path,
+      parentPageId: destination.pageId,
       placedBy: "import",
       confidence: 1,
     })),
@@ -433,7 +532,8 @@ export async function listLibrary2Placements(principal: Principal) {
     .select({
       placementId: libraryPlacements.id,
       vaultId: libraryPlacements.vaultId,
-      sectionPageId: libraryPlacements.parentPageId,
+      destinationPageId: libraryPlacements.parentPageId,
+      indexPath: libraryPlacements.indexPath,
       indexSection: libraryPlacements.indexSection,
       createdAt: libraryPlacements.createdAt,
       page: libraryPages,

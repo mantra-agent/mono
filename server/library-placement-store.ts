@@ -46,6 +46,7 @@ export interface CreateLibraryPlacementInput {
   pageId: string;
   vaultId: string;
   indexSection: LibraryPlacementIndexSection;
+  indexPath?: string | null;
   parentPageId?: string | null;
   placedBy?: LibraryPlacementSource;
   confidence?: number | null;
@@ -60,6 +61,7 @@ interface NormalizedPlacementInput {
   pageId: string;
   vaultId: string;
   indexSection: LibraryPlacementIndexSection;
+  indexPath: string | null;
   parentPageId: string | null;
   placedBy: LibraryPlacementSource;
   confidence: number | null;
@@ -94,6 +96,7 @@ function normalizeInputs(
       pageId: input.pageId,
       vaultId: input.vaultId,
       indexSection: input.indexSection,
+      indexPath: input.indexPath?.trim() || null,
       parentPageId: input.parentPageId ?? null,
       placedBy: input.placedBy ?? "manual",
       confidence: input.confidence ?? null,
@@ -178,6 +181,7 @@ function updateGroupKey(input: NormalizedPlacementInput): string {
   return JSON.stringify([
     input.vaultId,
     input.indexSection,
+    input.indexPath,
     input.parentPageId,
     input.placedBy,
     input.confidence,
@@ -238,6 +242,7 @@ export async function createLibraryPlacements(
           .update(libraryPlacements)
           .set({
             indexSection: exemplar.indexSection,
+            indexPath: exemplar.indexPath,
             parentPageId: exemplar.parentPageId,
             placedBy: exemplar.placedBy,
             confidence: exemplar.confidence,

@@ -3,7 +3,11 @@ import { db } from "./db";
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
-import { ownedInsertValues } from "./scoped-storage";
+import {
+  combineWithVisibleScope,
+  combineWithWritableScope,
+  ownedInsertValues,
+} from "./scoped-storage";
 import { syncContentFields } from "@shared/markdown-tiptap";
 import { libraryPages } from "@shared/models/info";
 import { users } from "@shared/schema";
@@ -13,6 +17,8 @@ export const LIBRARY_STRUCTURAL_ROLES = ["source", "artifact", "wiki", "meta"] a
 export type LibraryStructuralRole = (typeof LIBRARY_STRUCTURAL_ROLES)[number];
 
 export const MANTRA_LIBRARY_VAULT_NAME = "Mantra";
+export const CANONICAL_LIBRARY_INDEX_BOOTSTRAP_MARKDOWN =
+  "# Library Index\n\n## Entities\n\n## Concepts\n\n## Synthesis\n\nThis semantic catalog lists compiled Wiki pages only. It is intentionally empty until ingest creates or updates Wiki pages.";
 
 const log = createLogger("LibraryDomain");
 
@@ -36,11 +42,20 @@ function slugify(title: string, fallback = "page"): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || fallback;
 }
 
-function requireAccountPrincipal(principal: Principal): Principal & { accountId: string } {
-  if (!principal.accountId) {
-    throw new Error("Library vault bootstrap requires an account principal");
+function requireAccountPrincipal(
+  principal: Principal,
+): Principal & { userId: string; accountId: string } {
+  if (
+    principal.actorType !== "user" ||
+    !principal.userId ||
+    !principal.accountId
+  ) {
+    throw Object.assign(
+      new Error("Library vault bootstrap requires a user principal"),
+      { status: 403 },
+    );
   }
-  return principal as Principal & { accountId: string };
+  return principal as Principal & { userId: string; accountId: string };
 }
 
 async function ensureMantraVault(principal: Principal): Promise<string> {
@@ -91,7 +106,7 @@ async function ensureMantraVault(principal: Principal): Promise<string> {
 }
 
 async function ensureUserCanSeeVault(principal: Principal, vaultId: string): Promise<void> {
-  if (!principal.userId) return;
+  if (principal.actorType !== "user" || !principal.userId) return;
   await db
     .update(users)
     .set({
@@ -104,7 +119,7 @@ async function ensureUserCanSeeVault(principal: Principal, vaultId: string): Pro
     .where(eq(users.id, principal.userId));
 }
 
-async function ensureVaultPage(input: {
+export async function ensureVaultPage(input: {
   principal: Principal;
   vaultId: string;
   title: string;
@@ -122,17 +137,31 @@ async function ensureVaultPage(input: {
     .select()
     .from(libraryPages)
     .where(
-      and(
-        eq(libraryPages.vaultId, input.vaultId),
-        input.parentId === null
-          ? isNull(libraryPages.parentId)
-          : eq(libraryPages.parentId, input.parentId),
-        eq(libraryPages.slug, slug),
+      combineWithVisibleScope(
+        input.principal,
+        libraryScopeColumns,
+        and(
+          eq(libraryPages.vaultId, input.vaultId),
+          input.parentId === null
+            ? isNull(libraryPages.parentId)
+            : eq(libraryPages.parentId, input.parentId),
+          eq(libraryPages.slug, slug),
+        ),
       ),
     )
     .limit(1);
 
   if (existing) {
+    if (
+      existing.scope !== "user" ||
+      existing.ownerUserId !== input.principal.userId ||
+      existing.accountId !== input.principal.accountId
+    ) {
+      throw Object.assign(
+        new Error("Library vault page is visible but not writable"),
+        { status: 403 },
+      );
+    }
     const desiredRole = normalizeLibraryStructuralRole(existing.structuralRole, input.structuralRole);
     const desiredTags = Array.from(new Set([...(existing.tags ?? []), ...input.tags]));
     const [updated] = await db
@@ -144,7 +173,13 @@ async function ensureVaultPage(input: {
         updatedAt: sql`CURRENT_TIMESTAMP`,
         updatedByUserId: input.principal.userId ?? undefined,
       })
-      .where(eq(libraryPages.id, existing.id))
+      .where(
+        combineWithWritableScope(
+          input.principal,
+          libraryScopeColumns,
+          eq(libraryPages.id, existing.id),
+        ),
+      )
       .returning();
     return updated;
   }
@@ -215,8 +250,7 @@ export async function ensureMantraLibraryVault(
     parentId: root.id,
     structuralRole: "meta",
     tags: ["library-index", "library-meta", "mantra"],
-    plainTextContent:
-      "# Library Index\n\n## Entities\n\n## Concepts\n\n## Synthesis\n\nThis semantic catalog lists compiled Wiki pages only. It is intentionally empty until ingest creates or updates Wiki pages.",
+    plainTextContent: CANONICAL_LIBRARY_INDEX_BOOTSTRAP_MARKDOWN,
     sortOrder: 1,
     slugFallback: "index",
   });
