@@ -456,7 +456,7 @@ const libraryScopeColumns = {
   accountId: libraryPages.accountId,
 };
 
-async function getVisibleLibraryPage(idOrSlug: string): Promise<MeetingAgendaPage | null> {
+export async function getVisibleLibraryPage(idOrSlug: string): Promise<MeetingAgendaPage | null> {
   const principal = getCurrentPrincipalOrSystem();
   const baseSelect = {
     id: libraryPages.id,

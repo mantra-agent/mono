@@ -940,7 +940,7 @@ export class HybridStorage implements IStorage {
 
   async recordTriagedEmail(entry: InsertEmailTriageLog): Promise<EmailTriageLog> {
     const [created] = await db.insert(emailTriageLog)
-      .values(entry)
+      .values({ ...entry, ...sensitiveOwnershipValues() })
       .onConflictDoNothing()
       .returning();
     log.log(`recordTriagedEmail msgId=${entry.gmailMessageId} tier=${entry.tier}`);
@@ -950,7 +950,7 @@ export class HybridStorage implements IStorage {
   async recordTriagedEmails(entries: InsertEmailTriageLog[]): Promise<void> {
     if (entries.length === 0) return;
     await db.insert(emailTriageLog)
-      .values(entries)
+      .values(entries.map(entry => ({ ...entry, ...sensitiveOwnershipValues() })))
       .onConflictDoNothing();
     log.log(`recordTriagedEmails count=${entries.length}`);
   }

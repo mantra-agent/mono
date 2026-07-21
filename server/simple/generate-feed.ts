@@ -202,6 +202,10 @@ async function enrichSectionsWithPlanArtifacts(
   const { db } = await import("../db");
   const { libraryPages } = await import("@shared/models/info");
   const { eq } = await import("drizzle-orm");
+  const { getCurrentPrincipalOrSystem } = await import("../principal-context");
+  const { combineWithVisibleScope } = await import("../scoped-storage");
+  const principal = getCurrentPrincipalOrSystem();
+  const libraryScope = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
 
   for (const section of sections) {
     const config = PLAN_ARTIFACT_CONFIG[section.section];
@@ -219,7 +223,7 @@ async function enrichSectionsWithPlanArtifacts(
         const rows = await db
           .select({ id: libraryPages.id, slug: libraryPages.slug, title: libraryPages.title })
           .from(libraryPages)
-          .where(eq(libraryPages.id, pageId))
+          .where(combineWithVisibleScope(principal, libraryScope, eq(libraryPages.id, pageId)))
           .limit(1);
         if (rows[0]) {
           section.planArtifact = {

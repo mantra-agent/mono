@@ -2114,12 +2114,14 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
     const { db } = await import("./db");
     const { emailMessages } = await import("@shared/schema");
     const { and: andOp, or: orOp, desc: descOp, gte: gteOp, ilike: ilikeOp } = await import("drizzle-orm");
+    const { combineWithSensitiveVisible } = await import("./sensitive-scope");
+    const emailScope = { ownerUserId: emailMessages.ownerUserId, principalAccountId: emailMessages.principalAccountId, vaultId: emailMessages.vaultId };
 
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const pattern = `%${query}%`;
 
     const results = await db.select().from(emailMessages)
-      .where(andOp(
+      .where(combineWithSensitiveVisible(emailScope, andOp(
         gteOp(emailMessages.date, since),
         orOp(
           ilikeOp(emailMessages.subject, pattern),
@@ -2127,7 +2129,7 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
           ilikeOp(emailMessages.toAddresses, pattern),
           ilikeOp(emailMessages.ccAddresses, pattern),
         ),
-      ))
+      )))
       .orderBy(descOp(emailMessages.date))
       .limit(searchLimit);
 
@@ -2181,8 +2183,15 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
 
   if (subAction === "store_enrichment") {
     const { thread_id, account_id, message_id, summary, decisions, actions: enrichActions, dismissed, dismiss_reason, model: enrichModel, tokens_used } = args;
-    if (!thread_id || !account_id) {
-      return { result: "Missing required thread_id and account_id.", error: true };
+    if (!thread_id || !account_id || !message_id) {
+      return { result: "Missing required thread_id, account_id, or message_id.", error: true };
+    }
+
+    const sourceEmail = await storage.getCachedEmailById(Number(message_id));
+    if (!sourceEmail) return { result: `Email message ${message_id} not found.`, error: true };
+    const sourceThreadId = sourceEmail.providerThreadId || sourceEmail.providerMessageId;
+    if (sourceThreadId !== thread_id || sourceEmail.accountId !== account_id) {
+      return { result: "Email enrichment identity does not match the visible source message.", error: true };
     }
 
     const NEVER_DISMISS_TIERS = new Set(["🟡", "🔴"]);
@@ -2192,19 +2201,21 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
     const { db } = await import("./db");
     const { emailMessages } = await import("@shared/schema");
     const { and: andOp, eq: eqOp, gt: gtOp, inArray: inArrayOp } = await import("drizzle-orm");
+    const { combineWithSensitiveVisible } = await import("./sensitive-scope");
+    const emailScope = { ownerUserId: emailMessages.ownerUserId, principalAccountId: emailMessages.principalAccountId, vaultId: emailMessages.vaultId };
 
     const importantThreadMessages = await db.select({
       id: emailMessages.id,
       triageTier: emailMessages.triageTier,
     })
       .from(emailMessages)
-      .where(andOp(
+      .where(combineWithSensitiveVisible(emailScope, andOp(
         eqOp(emailMessages.providerThreadId, thread_id),
         eqOp(emailMessages.accountId, account_id),
         eqOp(emailMessages.direction, "inbound"),
         eqOp(emailMessages.triageStatus, "triaged"),
         inArrayOp(emailMessages.triageTier, Array.from(NEVER_DISMISS_TIERS)),
-      ))
+      )))
       .limit(1);
 
     if (importantThreadMessages.length > 0) {
@@ -2220,12 +2231,12 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
       if (email?.providerThreadId && email.date) {
         const outbound = await db.select({ id: emailMessages.id })
           .from(emailMessages)
-          .where(andOp(
+          .where(combineWithSensitiveVisible(emailScope, andOp(
             eqOp(emailMessages.providerThreadId, email.providerThreadId),
             eqOp(emailMessages.accountId, email.accountId),
             eqOp(emailMessages.direction, "outbound"),
             gtOp(emailMessages.date, email.date),
-          ))
+          )))
           .limit(1);
         if (outbound.length > 0) {
           const before = normalizedActions.length;
@@ -2293,7 +2304,8 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
     const { combineWithVisibleScope } = await import("./scoped-storage");
     const { and: andOp, asc: ascOp, desc: descOp, eq: eqOp } = await import("drizzle-orm");
     const principal = getCurrentPrincipalOrSystem();
-    const emailScope = { ownerUserId: emailMessages.ownerUserId, accountId: emailMessages.principalAccountId };
+    const emailScope = { ownerUserId: emailMessages.ownerUserId, accountId: emailMessages.principalAccountId, vaultId: emailMessages.vaultId };
+    const enrichmentScope = { ownerUserId: emailEnrichments.ownerUserId, accountId: emailEnrichments.principalAccountId, vaultId: emailEnrichments.vaultId };
 
     let accountId = explicitAccountId;
     let providerThreadId: string | null = null;
@@ -2351,7 +2363,7 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
 
     const latest = messages[messages.length - 1];
     const [enrichment] = await db.select().from(emailEnrichments)
-      .where(andOp(eqOp(emailEnrichments.providerThreadId, providerThreadId), eqOp(emailEnrichments.accountId, latest.accountId)))
+      .where(combineWithVisibleScope(principal, enrichmentScope, andOp(eqOp(emailEnrichments.providerThreadId, providerThreadId), eqOp(emailEnrichments.accountId, latest.accountId))))
       .orderBy(descOp(emailEnrichments.updatedAt))
       .limit(1);
 
@@ -2384,7 +2396,14 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
     const { db } = await import("./db");
     const { emailMessages, emailEnrichments } = await import("@shared/schema");
     const { eq: eqOp } = await import("drizzle-orm");
-    const [msg] = await db.select().from(emailMessages).where(eqOp(emailMessages.id, Number(messageId))).limit(1);
+    const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+    const { combineWithVisibleScope } = await import("./scoped-storage");
+    const principal = getCurrentPrincipalOrSystem();
+    const messageScope = { ownerUserId: emailMessages.ownerUserId, accountId: emailMessages.principalAccountId, vaultId: emailMessages.vaultId };
+    const enrichmentScope = { ownerUserId: emailEnrichments.ownerUserId, accountId: emailEnrichments.principalAccountId, vaultId: emailEnrichments.vaultId };
+    const [msg] = await db.select().from(emailMessages)
+      .where(combineWithVisibleScope(principal, messageScope, eqOp(emailMessages.id, Number(messageId))))
+      .limit(1);
     if (!msg) {
       return { result: `Email message ${messageId} not found.`, error: true };
     }
@@ -2393,10 +2412,10 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
     if (msg.providerThreadId) {
       const { and: andOp } = await import("drizzle-orm");
       const [enr] = await db.select().from(emailEnrichments)
-        .where(andOp(
+        .where(combineWithVisibleScope(principal, enrichmentScope, andOp(
           eqOp(emailEnrichments.providerThreadId, msg.providerThreadId),
           eqOp(emailEnrichments.accountId, msg.accountId),
-        )).limit(1);
+        ))).limit(1);
       enrichment = enr || null;
     }
     return { result: safeStringify({
@@ -4581,9 +4600,13 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const { db } = await import("./db");
       const { libraryPages } = await import("@shared/models/info");
       const { eq } = await import("drizzle-orm");
-      const byId = await db.select({ id: libraryPages.id }).from(libraryPages).where(eq(libraryPages.id, rawId));
+      const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+      const { combineWithVisibleScope } = await import("./scoped-storage");
+      const principal = getCurrentPrincipalOrSystem();
+      const scope = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
+      const byId = await db.select({ id: libraryPages.id }).from(libraryPages).where(combineWithVisibleScope(principal, scope, eq(libraryPages.id, rawId)));
       if (byId[0]) return { uuid: byId[0].id };
-      const bySlug = await db.select({ id: libraryPages.id }).from(libraryPages).where(eq(libraryPages.slug, rawId));
+      const bySlug = await db.select({ id: libraryPages.id }).from(libraryPages).where(combineWithVisibleScope(principal, scope, eq(libraryPages.slug, rawId)));
       if (bySlug[0]) return { uuid: bySlug[0].id };
       return { error: `Library page "${rawId}" not found. Use the exact id or slug returned by the library tool when creating/updating the page.` };
     }
@@ -5415,11 +5438,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
       let title = args.title;
       try {
-        const { db } = await import("./db");
-        const { libraryPages } = await import("@shared/models/info");
-        const { eq } = await import("drizzle-orm");
-        const page = (await db.select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug }).from(libraryPages).where(eq(libraryPages.id, libraryPageId)).limit(1))[0]
-          || (await db.select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug }).from(libraryPages).where(eq(libraryPages.slug, libraryPageId)).limit(1))[0];
+        const { getVisibleLibraryPage } = await import("./calendar-metadata");
+        const page = await getVisibleLibraryPage(String(libraryPageId));
         if (!page) return { result: `Library page not found: ${libraryPageId}`, error: true };
         title = title || page.title;
         const link = await linkArtifact(metadataId, page.id, args.artifactKind || args.kind || "brief", title, args.source || "meetings_tool");
@@ -8943,7 +8963,7 @@ ${refs}` : ""),
 
     try {
       const { db } = await import("./db");
-      const { eq, and, sql: sqlTag, desc } = await import("drizzle-orm");
+      const { eq, and, inArray, sql: sqlTag, desc } = await import("drizzle-orm");
       const {
         providerConnections,
         environmentSourceBindings,
@@ -8962,6 +8982,8 @@ ${refs}` : ""),
       const { getCurrentPrincipalOrSystem } = await import("./principal-context");
       const { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } = await import("./scoped-storage");
       const { storeProviderCredential, getProviderCredential, deleteProviderCredential } = await import("./provider-credential-store");
+      const { getVisibleEnvironment, getWritableEnvironment, getVisibleProduct, getWritableProduct } = await import("./platforms/platform-access");
+      const { libraryPages } = await import("@shared/models/info");
 
       const connScopeColumns = { scope: providerConnections.scope, ownerUserId: providerConnections.ownerUserId, accountId: providerConnections.accountId };
       const platScopeColumns = { scope: platformsTable.scope, ownerUserId: platformsTable.ownerUserId, accountId: platformsTable.accountId };
@@ -8970,6 +8992,8 @@ ${refs}` : ""),
       const writableConn = (pred?: SQL) => combineWithWritableScope(getCurrentPrincipalOrSystem(), connScopeColumns, pred);
       const visiblePlat = (pred?: SQL) => combineWithVisibleScope(getCurrentPrincipalOrSystem(), platScopeColumns, pred);
       const writablePlat = (pred?: SQL) => combineWithWritableScope(getCurrentPrincipalOrSystem(), platScopeColumns, pred);
+      const libraryScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
+      const visibleLib = (pred?: SQL) => combineWithVisibleScope(getCurrentPrincipalOrSystem(), libraryScopeColumns, pred);
       const positiveId = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null);
 
       // ── list_connections ──
@@ -9099,10 +9123,9 @@ ${refs}` : ""),
       if (action === "update_product") {
         const productId = positiveId(args.id);
         if (!productId) return { result: "Missing positive product 'id' parameter for update_product", error: true };
-        const [prod] = await db.select({ id: platformProducts.id, platformId: platformProducts.platformId }).from(platformProducts).where(eq(platformProducts.id, productId)).limit(1);
-        if (!prod) return { result: `Product ${productId} not found`, error: true };
-        const [plat] = await db.select({ id: platformsTable.id }).from(platformsTable).where(writablePlat(eq(platformsTable.id, prod.platformId))).limit(1);
-        if (!plat) return { result: `No write access to product ${productId}`, error: true };
+        const productAccess = await getWritableProduct(productId);
+        if (!productAccess) return { result: `Product ${productId} not found or not writable`, error: true };
+        const prod = productAccess.product;
         const patch: Record<string, unknown> = { updatedAt: sqlTag`CURRENT_TIMESTAMP` };
         if (typeof args.name === "string") patch.name = args.name.trim();
         if (typeof args.description === "string") patch.description = args.description;
@@ -9117,10 +9140,9 @@ ${refs}` : ""),
       if (action === "create_environment") {
         const productId = positiveId(args.id);
         if (!productId) return { result: "Missing positive product 'id' parameter for create_environment", error: true };
-        const [prod] = await db.select({ id: platformProducts.id, platformId: platformProducts.platformId }).from(platformProducts).where(eq(platformProducts.id, productId)).limit(1);
-        if (!prod) return { result: `Product ${productId} not found`, error: true };
-        const [plat] = await db.select({ id: platformsTable.id }).from(platformsTable).where(writablePlat(eq(platformsTable.id, prod.platformId))).limit(1);
-        if (!plat) return { result: `No write access to product ${productId}`, error: true };
+        const productAccess = await getWritableProduct(productId);
+        if (!productAccess) return { result: `Product ${productId} not found or not writable`, error: true };
+        const prod = productAccess.product;
         const parsed = insertPlatformProductEnvironmentSchema.parse({ name: typeof args.name === "string" ? args.name : "" });
         const [created] = await db.insert(platformProductEnvironments).values({ ...parsed, productId }).returning();
         await db.update(platformProducts).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(eq(platformProducts.id, productId));
@@ -9132,12 +9154,10 @@ ${refs}` : ""),
       if (action === "update_environment") {
         const envId = positiveId(args.id);
         if (!envId) return { result: "Missing positive environment 'id' parameter for update_environment", error: true };
-        const [env] = await db.select().from(platformProductEnvironments).where(eq(platformProductEnvironments.id, envId)).limit(1);
-        if (!env) return { result: `Environment ${envId} not found`, error: true };
-        const [prod] = await db.select({ id: platformProducts.id, platformId: platformProducts.platformId }).from(platformProducts).where(eq(platformProducts.id, env.productId)).limit(1);
-        if (!prod) return { result: `Product not found for environment ${envId}`, error: true };
-        const [plat] = await db.select({ id: platformsTable.id }).from(platformsTable).where(writablePlat(eq(platformsTable.id, prod.platformId))).limit(1);
-        if (!plat) return { result: `No write access to environment ${envId}`, error: true };
+        const environmentAccess = await getWritableEnvironment(envId);
+        if (!environmentAccess) return { result: `Environment ${envId} not found or not writable`, error: true };
+        const env = environmentAccess.environment;
+        const prod = environmentAccess.product;
         const parsed = insertPlatformProductEnvironmentSchema.partial().parse({ name: typeof args.name === "string" ? args.name : undefined });
         const [updated] = await db.update(platformProductEnvironments).set({ ...parsed, updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(eq(platformProductEnvironments.id, envId)).returning();
         await db.update(platformProducts).set({ updatedAt: sqlTag`CURRENT_TIMESTAMP` }).where(eq(platformProducts.id, prod.id));
@@ -9148,33 +9168,40 @@ ${refs}` : ""),
       // ── list_environments ──
       if (action === "list_environments") {
         const plats = await db.select().from(platformsTable).where(visiblePlat()).orderBy(desc(platformsTable.updatedAt));
-        const prods = await db.select().from(platformProducts).orderBy(platformProducts.name);
-        const envs = await db.select().from(platformProductEnvironments).orderBy(platformProductEnvironments.name);
+        const platformIds = plats.map(platform => platform.id);
+        const prods = platformIds.length > 0
+          ? await db.select().from(platformProducts).where(inArray(platformProducts.platformId, platformIds)).orderBy(platformProducts.name)
+          : [];
+        const productIds = prods.map(product => product.id);
+        const envs = productIds.length > 0
+          ? await db.select().from(platformProductEnvironments).where(inArray(platformProductEnvironments.productId, productIds)).orderBy(platformProductEnvironments.name)
+          : [];
+        const environmentIds = envs.map(environment => environment.id);
 
-        // Batch-fetch all bindings in two queries instead of per-environment
+        // Batch-fetch bindings only for environments whose parent Platform is visible.
         let allSourceBindings: Array<{ environmentId: number; provider: string | null; owner: string | null; repo: string | null; branch: string | null; connectionId: number | null }> = [];
         let allHostingBindings: Array<{ environmentId: number; provider: string | null; projectName: string | null; providerEnvironmentName: string | null; serviceName: string | null; connectionId: number | null }> = [];
         try {
-          allSourceBindings = await db.select({
+          if (environmentIds.length > 0) allSourceBindings = await db.select({
             environmentId: environmentSourceBindings.environmentId,
             provider: environmentSourceBindings.provider,
             owner: environmentSourceBindings.owner,
             repo: environmentSourceBindings.repo,
             branch: environmentSourceBindings.branch,
             connectionId: environmentSourceBindings.connectionId,
-          }).from(environmentSourceBindings);
+          }).from(environmentSourceBindings).where(inArray(environmentSourceBindings.environmentId, environmentIds));
         } catch (err) {
           toolExec.debug("Source bindings table query failed, using empty set", { error: err instanceof Error ? err.message : String(err) });
         }
         try {
-          allHostingBindings = await db.select({
+          if (environmentIds.length > 0) allHostingBindings = await db.select({
             environmentId: environmentHostingBindings.environmentId,
             provider: environmentHostingBindings.provider,
             projectName: environmentHostingBindings.projectName,
             providerEnvironmentName: environmentHostingBindings.providerEnvironmentName,
             serviceName: environmentHostingBindings.serviceName,
             connectionId: environmentHostingBindings.connectionId,
-          }).from(environmentHostingBindings);
+          }).from(environmentHostingBindings).where(inArray(environmentHostingBindings.environmentId, environmentIds));
         } catch (err) {
           toolExec.debug("Hosting bindings table query failed, using empty set", { error: err instanceof Error ? err.message : String(err) });
         }
@@ -9225,12 +9252,11 @@ ${refs}` : ""),
         const envId = typeof args.id === "number" ? args.id : null;
         if (!envId) return { result: "Missing 'id' parameter for get_environment", error: true };
 
-        const [env] = await db.select().from(platformProductEnvironments).where(eq(platformProductEnvironments.id, envId)).limit(1);
-        if (!env) return { result: `Environment ${envId} not found`, error: true };
-
-        const [prod] = await db.select().from(platformProducts).where(eq(platformProducts.id, env.productId)).limit(1);
-        const [plat] = prod ? await db.select().from(platformsTable).where(visiblePlat(eq(platformsTable.id, prod.platformId))).limit(1) : [null];
-        if (!plat) return { result: `Environment ${envId} not accessible`, error: true };
+        const environmentAccess = await getVisibleEnvironment(envId);
+        if (!environmentAccess) return { result: `Environment ${envId} not accessible`, error: true };
+        const env = environmentAccess.environment;
+        const prod = environmentAccess.product;
+        const plat = environmentAccess.platform;
 
         let sourceBinding: Record<string, unknown> | null = null;
         let hostingBinding: Record<string, unknown> | null = null;
@@ -9269,6 +9295,7 @@ ${refs}` : ""),
         if (!envId) return { result: "Missing positive environment id", error: true };
         const principal = getCurrentPrincipalOrSystem();
         const { principalHasPermission } = await import("./permissions");
+        if (!(await getVisibleEnvironment(envId))) return { result: `Environment ${envId} not accessible`, error: true };
         const permission = action === "get_cloudflare_pages_project" || action === "poll_cloudflare_pages_deployment" ? "build:read" : "build:write";
         if (!principalHasPermission(principal, permission)) return { result: `Permission required: ${permission}`, error: true };
         const [binding] = await db.select().from(environmentHostingBindings).where(eq(environmentHostingBindings.environmentId, envId)).limit(1);
@@ -9294,8 +9321,8 @@ ${refs}` : ""),
         const envId = typeof args.id === "number" ? args.id : null;
         if (!envId) return { result: "Missing 'id' parameter for get_environment_status", error: true };
 
-        const [env] = await db.select().from(platformProductEnvironments).where(eq(platformProductEnvironments.id, envId)).limit(1);
-        if (!env) return { result: `Environment ${envId} not found`, error: true };
+        const environmentAccess = await getVisibleEnvironment(envId);
+        if (!environmentAccess) return { result: `Environment ${envId} not found`, error: true };
 
         let hostingBinding: Record<string, unknown> | null = null;
         try {
@@ -9450,12 +9477,10 @@ ${refs}` : ""),
       if (action === "delete_environment") {
         const envId = positiveId(args.id);
         if (!envId) return { result: "Missing positive environment 'id' parameter for delete_environment", error: true };
-        const [env] = await db.select().from(platformProductEnvironments).where(eq(platformProductEnvironments.id, envId)).limit(1);
-        if (!env) return { result: `Environment ${envId} not found`, error: true };
-        const [prod] = await db.select({ id: platformProducts.id, platformId: platformProducts.platformId }).from(platformProducts).where(eq(platformProducts.id, env.productId)).limit(1);
-        if (!prod) return { result: `Product not found for environment ${envId}`, error: true };
-        const [plat] = await db.select({ id: platformsTable.id }).from(platformsTable).where(writablePlat(eq(platformsTable.id, prod.platformId))).limit(1);
-        if (!plat) return { result: `No write access to environment ${envId}`, error: true };
+        const environmentAccess = await getWritableEnvironment(envId);
+        if (!environmentAccess) return { result: `Environment ${envId} not found or not writable`, error: true };
+        const env = environmentAccess.environment;
+        const prod = environmentAccess.product;
         await db.delete(environmentHostingBindings).where(eq(environmentHostingBindings.environmentId, envId));
         await db.delete(environmentSourceBindings).where(eq(environmentSourceBindings.environmentId, envId));
         const [deleted] = await db.delete(platformProductEnvironments).where(eq(platformProductEnvironments.id, envId)).returning();
@@ -9469,14 +9494,8 @@ ${refs}` : ""),
         const envId = typeof args.id === "number" ? args.id : null;
         if (!envId) return { result: "Missing 'id' (environment ID) for save_source_binding", error: true };
 
-        const [env] = await db.select().from(platformProductEnvironments).where(eq(platformProductEnvironments.id, envId)).limit(1);
-        if (!env) return { result: `Environment ${envId} not found`, error: true };
-
-        // Verify writable access through platform chain
-        const [prod] = await db.select().from(platformProducts).where(eq(platformProducts.id, env.productId)).limit(1);
-        if (!prod) return { result: `Product not found for environment ${envId}`, error: true };
-        const [plat] = await db.select().from(platformsTable).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), platScopeColumns, eq(platformsTable.id, prod.platformId))).limit(1);
-        if (!plat) return { result: `No write access to platform for environment ${envId}`, error: true };
+        const environmentAccess = await getWritableEnvironment(envId);
+        if (!environmentAccess) return { result: `Environment ${envId} not found or not writable`, error: true };
 
         // Verify connectionId is visible to the current user before saving
         if (typeof args.connectionId === "number") {
@@ -9511,14 +9530,8 @@ ${refs}` : ""),
         const envId = typeof args.id === "number" ? args.id : null;
         if (!envId) return { result: "Missing 'id' (environment ID) for save_hosting_binding", error: true };
 
-        const [env] = await db.select().from(platformProductEnvironments).where(eq(platformProductEnvironments.id, envId)).limit(1);
-        if (!env) return { result: `Environment ${envId} not found`, error: true };
-
-        // Verify writable access through platform chain
-        const [prod] = await db.select().from(platformProducts).where(eq(platformProducts.id, env.productId)).limit(1);
-        if (!prod) return { result: `Product not found for environment ${envId}`, error: true };
-        const [plat] = await db.select().from(platformsTable).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), platScopeColumns, eq(platformsTable.id, prod.platformId))).limit(1);
-        if (!plat) return { result: `No write access to platform for environment ${envId}`, error: true };
+        const environmentAccess = await getWritableEnvironment(envId);
+        if (!environmentAccess) return { result: `Environment ${envId} not found or not writable`, error: true };
 
         // Verify connectionId is visible to the current user before saving
         if (typeof args.connectionId === "number") {
@@ -9559,16 +9572,11 @@ ${refs}` : ""),
         if (!kind) return { result: "Missing 'kind' for save_context_artifact", error: true };
         if (!libraryPageId) return { result: "Missing 'libraryPageId' for save_context_artifact", error: true };
 
-        const [env] = await db.select().from(platformProductEnvironments).where(eq(platformProductEnvironments.id, envId)).limit(1);
-        if (!env) return { result: `Environment ${envId} not found`, error: true };
-        const [prod] = await db.select().from(platformProducts).where(eq(platformProducts.id, env.productId)).limit(1);
-        if (!prod) return { result: `Product not found for environment ${envId}`, error: true };
-        const [plat] = await db.select().from(platformsTable).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), platScopeColumns, eq(platformsTable.id, prod.platformId))).limit(1);
-        if (!plat) return { result: `No write access to platform for environment ${envId}`, error: true };
+        const environmentAccess = await getWritableEnvironment(envId);
+        if (!environmentAccess) return { result: `Environment ${envId} not found or not writable`, error: true };
 
-        // Verify library page exists
-        const { libraryPages } = await import("@shared/models/info");
-        const [page] = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(eq(libraryPages.id, libraryPageId)).limit(1);
+        // Verify the linked page is visible to the current principal.
+        const [page] = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(visibleLib(eq(libraryPages.id, libraryPageId))).limit(1);
         if (!page) return { result: `Library page ${libraryPageId} not found`, error: true };
 
         // Dedup: same environment + kind + libraryPageId = already linked
@@ -9589,7 +9597,7 @@ ${refs}` : ""),
         const envId = typeof args.id === "number" ? args.id : null;
         if (!envId) return { result: "Missing 'id' (environment ID) for get_context_artifacts", error: true };
 
-        const { libraryPages } = await import("@shared/models/info");
+        if (!(await getVisibleEnvironment(envId))) return { result: `Environment ${envId} not accessible`, error: true };
         const rows = await db
           .select({
             id: environmentContextArtifacts.id,
@@ -9600,7 +9608,7 @@ ${refs}` : ""),
           })
           .from(environmentContextArtifacts)
           .leftJoin(libraryPages, eq(environmentContextArtifacts.libraryPageId, libraryPages.id))
-          .where(eq(environmentContextArtifacts.environmentId, envId));
+          .where(and(eq(environmentContextArtifacts.environmentId, envId), visibleLib()));
 
         return { result: JSON.stringify(rows.map(r => ({ ...r, pageTitle: r.pageTitle || "Untitled" })), null, 2) };
       }
@@ -9613,12 +9621,8 @@ ${refs}` : ""),
         if (!envId) return { result: "Missing 'id' (environment ID) for remove_context_artifact", error: true };
         if (!kind) return { result: "Missing 'kind' for remove_context_artifact", error: true };
 
-        const [env] = await db.select().from(platformProductEnvironments).where(eq(platformProductEnvironments.id, envId)).limit(1);
-        if (!env) return { result: `Environment ${envId} not found`, error: true };
-        const [prod] = await db.select().from(platformProducts).where(eq(platformProducts.id, env.productId)).limit(1);
-        if (!prod) return { result: `Product not found for environment ${envId}`, error: true };
-        const [plat] = await db.select().from(platformsTable).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), platScopeColumns, eq(platformsTable.id, prod.platformId))).limit(1);
-        if (!plat) return { result: `No write access to platform for environment ${envId}`, error: true };
+        const environmentAccess = await getWritableEnvironment(envId);
+        if (!environmentAccess) return { result: `Environment ${envId} not found or not writable`, error: true };
 
         // If libraryPageId provided, remove the specific artifact; otherwise remove all of that kind
         const conditions = [eq(environmentContextArtifacts.environmentId, envId), eq(environmentContextArtifacts.kind, kind)];
@@ -15384,31 +15388,15 @@ async function ensureCodingContextLoaded(
   if (missing.includes("design_md")) {
     let designLoaded = false;
 
-    // Strategy 1: Load from environment context artifact (kind = 'design_system')
+    // Strategy 1: Load only context artifacts visible through both the
+    // parent Platform and linked Library page.
     try {
-      const { db } = await import("./db");
-      const { eq } = await import("drizzle-orm");
-      const { environmentContextArtifacts } = await import("@shared/models/platforms");
-      const { libraryPages } = await import("@shared/models/info");
-
-      const artifactRows = await db
-        .select({ libraryPageId: environmentContextArtifacts.libraryPageId })
-        .from(environmentContextArtifacts)
-        .where(eq(environmentContextArtifacts.kind, "design_system"));
-
-      if (artifactRows.length > 0) {
-        const { inArray } = await import("drizzle-orm");
-        const pageIds = artifactRows.map(r => r.libraryPageId);
-        const pages = await db
-          .select({ id: libraryPages.id, content: libraryPages.plainTextContent })
-          .from(libraryPages)
-          .where(inArray(libraryPages.id, pageIds));
-
-        const contents = pages.filter(p => p.content).map(p => p.content!.trim());
-        if (contents.length > 0) {
-          parts.push(`\n## DESIGN.md\n\n${contents.join("\n\n---\n\n")}`);
-          designLoaded = true;
-        }
+      const { listVisibleEnvironmentContextPages } = await import("./platforms/context-artifact-access");
+      const pages = await listVisibleEnvironmentContextPages(["design_system"]);
+      const contents = pages.map(page => page.content.trim()).filter(Boolean);
+      if (contents.length > 0) {
+        parts.push(`\n## DESIGN.md\n\n${contents.join("\n\n---\n\n")}`);
+        designLoaded = true;
       }
     } catch {
       // Fall through to filesystem
