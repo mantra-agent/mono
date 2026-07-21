@@ -5,6 +5,7 @@ import {
   timestamp,
   jsonb,
   integer,
+  real,
   boolean,
   index,
   unique,
@@ -178,6 +179,105 @@ export const libraryPageLinks = pgTable(
 );
 
 export type LibraryPageLink = typeof libraryPageLinks.$inferSelect;
+
+export const LIBRARY_PLACEMENT_INDEX_SECTIONS = [
+  "Entities",
+  "Concepts",
+  "Synthesis",
+] as const;
+export type LibraryPlacementIndexSection =
+  (typeof LIBRARY_PLACEMENT_INDEX_SECTIONS)[number];
+
+export const LIBRARY_PLACEMENT_SOURCES = [
+  "semantic",
+  "explicit",
+  "manual",
+  "import",
+] as const;
+export type LibraryPlacementSource =
+  (typeof LIBRARY_PLACEMENT_SOURCES)[number];
+
+/**
+ * Library placements — the load-bearing join between a Library page and a
+ * vault's Index/Wiki structure (the Library2 "second-brain" lens).
+ *
+ * A placement is a lightweight join (page -> vault -> index section/parent),
+ * never a copy of the page. A page is "in" the second-brain lens when it has
+ * a placement row; deleting the row removes it from the lens and leaves the
+ * flat Library page completely untouched. One page, one source of truth,
+ * two views.
+ *
+ * vault_id references a user-owned vault (shared/models/vaults) but, matching
+ * library_pages.vault_id, carries no hard FK: vaults are runtime-loaded,
+ * user-owned objects. page_id and parent_page_id are hard FKs to library_pages
+ * so a placement can never reference a nonexistent page, and cascade delete
+ * keeps the lens consistent when a page is removed.
+ */
+export const libraryPlacements = pgTable(
+  "library_placements",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    pageId: text("page_id")
+      .notNull()
+      .references(() => libraryPages.id, { onDelete: "cascade" }),
+    vaultId: text("vault_id").notNull(),
+    indexSection: text("index_section").notNull().default("Concepts"),
+    parentPageId: text("parent_page_id").references(
+      (): AnyPgColumn => libraryPages.id,
+      { onDelete: "set null" },
+    ),
+    placedBy: text("placed_by").notNull().default("manual"),
+    confidence: real("confidence"),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    updatedByUserId: text("updated_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (table) => [
+    unique("uk_library_placements_page_vault").on(
+      table.pageId,
+      table.vaultId,
+    ),
+    index("idx_library_placements_page").on(table.pageId),
+    index("idx_library_placements_vault").on(table.vaultId),
+    index("idx_library_placements_parent").on(table.parentPageId),
+    index("idx_library_placements_vault_section").on(
+      table.vaultId,
+      table.indexSection,
+    ),
+    index("idx_library_placements_scope_owner").on(
+      table.scope,
+      table.ownerUserId,
+    ),
+    index("idx_library_placements_account").on(table.accountId),
+  ],
+);
+
+export const insertLibraryPlacementSchema = createInsertSchema(libraryPlacements)
+  .omit({
+    createdAt: true,
+    updatedAt: true,
+  })
+  .extend({
+    indexSection: z.enum(LIBRARY_PLACEMENT_INDEX_SECTIONS).default("Concepts"),
+    parentPageId: z.string().nullable().optional(),
+    placedBy: z.enum(LIBRARY_PLACEMENT_SOURCES).default("manual"),
+    confidence: z.number().nullable().optional(),
+  });
+
+export type LibraryPlacement = typeof libraryPlacements.$inferSelect;
+export type InsertLibraryPlacement = z.infer<
+  typeof insertLibraryPlacementSchema
+>;
 
 export const libraryAnnotationTypes = [
   "observation",
