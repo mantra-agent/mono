@@ -13,6 +13,13 @@ export interface MeetingPersonContext {
   lastInteractionContext: string | null;
 }
 
+export interface EmailPersonContext {
+  id: string;
+  name: string;
+  summary: string | null;
+  lastInteractionContext: string | null;
+}
+
 export interface MeetingArtifactContext {
   id: number;
   metadataId: number;
@@ -41,6 +48,26 @@ export function meetingInteractionContext(interactions: Interaction[]): string |
   const summary = interaction.summary?.trim() || "No summary recorded";
   const date = interaction.date ? interaction.date.slice(0, 10) : "date missing";
   return `${date} ${interaction.type}: ${summary}`;
+}
+
+export async function buildEmailPersonContextMap(): Promise<Map<string, EmailPersonContext>> {
+  const entries = await peopleStorage.listPeople();
+  const people = await peopleStorage.getPeopleByIds(entries.map(entry => entry.id));
+  const emailMap = new Map<string, EmailPersonContext>();
+
+  for (const person of people) {
+    for (const contact of person.contactInfo ?? []) {
+      if (contact.type !== "email" || !contact.value) continue;
+      emailMap.set(contact.value.toLowerCase(), {
+        id: person.id,
+        name: person.name,
+        summary: meetingPersonSummary(person),
+        lastInteractionContext: meetingInteractionContext(person.interactions ?? []),
+      });
+    }
+  }
+
+  return emailMap;
 }
 
 export async function resolveMeetingPeopleContext(links: CalendarEventPerson[]): Promise<MeetingPersonContext[]> {
