@@ -203,7 +203,7 @@ export async function createLibrary2Placements(input: CreateLibrary2PlacementsIn
   if (pages.length > 5_000) throw Object.assign(new Error("Library2 import is limited to 5,000 pages"), { status: 400 });
 
   const owner = ownedInsertValues(principal, placementInsertScopeColumns);
-  if (owner.scope !== "user" || owner.ownerUserId !== principal.userId || owner.accountId !== principal.accountId) {
+  if (owner.ownerUserId !== principal.userId || owner.accountId !== principal.accountId) {
     throw new Error("Library2 placement ownership could not be established");
   }
   const inserted = await db
