@@ -60,6 +60,8 @@ import { useFocusSession } from "@/hooks/use-focus-session";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { ReminderPopover } from "@/components/library-reminder";
 import { useEmailMarkDone, useEmailSnooze } from "@/hooks/use-email-thread-actions";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
+import { getSearchTokens, matchesSearchTokens } from "@/lib/local-search";
 import type { EmailMessage, EmailEnrichment, EmailDismissal } from "@shared/schema";
 
 type EmailHealthStatus = "healthy" | "stale" | "degraded" | "failed";
@@ -257,6 +259,24 @@ function groupByThread(messages: EmailMessage[]): ThreadGroup[] {
   }
   groups.sort((a, b) => new Date(b.latestMessage.date || 0).getTime() - new Date(a.latestMessage.date || 0).getTime());
   return groups;
+}
+
+function messageMatchesSearch(message: EmailMessage, searchTokens: string[]): boolean {
+  return matchesSearchTokens(searchTokens, [
+    message.fromAddress,
+    message.toAddresses,
+    message.ccAddresses,
+    message.subject,
+    message.snippet,
+    message.bodyText,
+    message.bodyHtml,
+    message.accountId,
+    message.triageReason,
+  ]);
+}
+
+function threadMatchesSearch(thread: ThreadGroup, searchTokens: string[]): boolean {
+  return thread.messages.some((message) => messageMatchesSearch(message, searchTokens));
 }
 
 function formatSnoozeTime(date: Date): string {
@@ -636,7 +656,7 @@ function NoAccountsCta() {
   );
 }
 
-function InboxTab({ onHover }: { onHover: (ids: number[] | null) => void }) {
+function InboxTab({ onHover, searchTokens }: { onHover: (ids: number[] | null) => void; searchTokens: string[] }) {
   const [accountFilter, setAccountFilter] = useState<string>("all");
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -668,7 +688,10 @@ function InboxTab({ onHover }: { onHover: (ids: number[] | null) => void }) {
   });
 
   const messages = messagesQuery.data?.messages || [];
-  const threads = useMemo(() => groupByThread(messages), [messages]);
+  const threads = useMemo(
+    () => groupByThread(messages).filter((thread) => threadMatchesSearch(thread, searchTokens)),
+    [messages, searchTokens],
+  );
 
   const accountLabelMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -756,7 +779,7 @@ function InboxTab({ onHover }: { onHover: (ids: number[] | null) => void }) {
           <ListSkeleton />
         ) : threads.length === 0 ? (
           <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="inbox-empty">
-            No inbox messages yet.
+            {searchTokens.length > 0 ? "No inbox emails match your search." : "No inbox messages yet."}
           </div>
         ) : (
           <div data-testid="inbox-thread-list">
@@ -812,7 +835,7 @@ function TriageMessageRow({ message, onHover }: { message: EmailMessage; onHover
   );
 }
 
-function TriageTab({ onHover }: { onHover: (ids: number[] | null) => void }) {
+function TriageTab({ onHover, searchTokens }: { onHover: (ids: number[] | null) => void; searchTokens: string[] }) {
   const { toast } = useToast();
   const PAGE_SIZE = 200;
   const [page, setPage] = useState(0);
@@ -896,7 +919,10 @@ function TriageTab({ onHover }: { onHover: (ids: number[] | null) => void }) {
 
   const messages = messagesQuery.data?.messages || [];
   const total = messagesQuery.data?.total || 0;
-  const filtered = useMemo(() => messages.filter(m => !m.isDone), [messages]);
+  const filtered = useMemo(
+    () => messages.filter((message) => !message.isDone && messageMatchesSearch(message, searchTokens)),
+    [messages, searchTokens],
+  );
 
   const grouped = useMemo(() => {
     const red: EmailMessage[] = [];
@@ -997,11 +1023,17 @@ function TriageTab({ onHover }: { onHover: (ids: number[] | null) => void }) {
       )}
 
       {grouped.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-12 px-4 text-center flex-1" data-testid="triage-empty">
-          <ShieldCheck className="h-12 w-12 text-muted-foreground/30 mb-4" />
-          <h3 className="text-lg font-medium mb-2">All caught up</h3>
-          <p className="text-sm text-muted-foreground">Nothing waiting on enrichment.</p>
-        </div>
+        searchTokens.length > 0 ? (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="triage-empty">
+            No triage emails match your search.
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-12 px-4 text-center flex-1" data-testid="triage-empty">
+            <ShieldCheck className="h-12 w-12 text-muted-foreground/30 mb-4" />
+            <h3 className="text-lg font-medium mb-2">All caught up</h3>
+            <p className="text-sm text-muted-foreground">Nothing waiting on enrichment.</p>
+          </div>
+        )
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
           <div data-testid="triage-message-list">
@@ -1278,7 +1310,15 @@ function EmailPipelineStatusBadge() {
   );
 }
 
-function ReviewTab({ onHover, onSwitchTab }: { onHover: (ids: number[] | null) => void; onSwitchTab: (tab: string) => void }) {
+function ReviewTab({
+  onHover,
+  onSwitchTab,
+  searchTokens,
+}: {
+  onHover: (ids: number[] | null) => void;
+  onSwitchTab: (tab: string) => void;
+  searchTokens: string[];
+}) {
   const { toast } = useToast();
   const snoozeMutation = useEmailSnooze();
 
@@ -1321,7 +1361,7 @@ function ReviewTab({ onHover, onSwitchTab }: { onHover: (ids: number[] | null) =
   const accounts = (syncStatusQuery.data?.accounts || []).filter(account => !account.orphaned);
   const messages = messagesQuery.data?.messages || [];
   const threads = useMemo(() => {
-    const grouped = groupByThread(messages);
+    const grouped = groupByThread(messages).filter((thread) => threadMatchesSearch(thread, searchTokens));
     grouped.sort((a, b) => {
       const aPriority = TRIAGE_PRIORITY[a.triageTier || ""] ?? 99;
       const bPriority = TRIAGE_PRIORITY[b.triageTier || ""] ?? 99;
@@ -1329,7 +1369,7 @@ function ReviewTab({ onHover, onSwitchTab }: { onHover: (ids: number[] | null) =
       return new Date(b.latestMessage.date || 0).getTime() - new Date(a.latestMessage.date || 0).getTime();
     });
     return grouped;
-  }, [messages]);
+  }, [messages, searchTokens]);
 
   const threadIds = useMemo(() => threads.map(t => t.threadId), [threads]);
 
@@ -1464,6 +1504,9 @@ function ReviewTab({ onHover, onSwitchTab }: { onHover: (ids: number[] | null) =
   }
 
   if (threads.length === 0) {
+    if (searchTokens.length > 0) {
+      return <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="review-empty">No review emails match your search.</div>;
+    }
     return (
       <div className="flex flex-col items-center justify-center py-12 px-4 text-center" data-testid="review-empty">
         <Sparkles className="h-12 w-12 text-muted-foreground/30 mb-4" />
@@ -1499,7 +1542,7 @@ function ReviewTab({ onHover, onSwitchTab }: { onHover: (ids: number[] | null) =
   );
 }
 
-function HistoryTab() {
+function HistoryTab({ searchTokens }: { searchTokens: string[] }) {
   const today = new Date();
   const recentStart = new Date(today);
   recentStart.setDate(recentStart.getDate() - 14);
@@ -1528,6 +1571,16 @@ function HistoryTab() {
   });
 
   const history = historyQuery.data?.history || [];
+  const filteredHistory = useMemo(
+    () => history.filter((item) => matchesSearchTokens(searchTokens, [
+      item.sender,
+      item.subject,
+      item.reason,
+      item.tier,
+      item.dismissedBy,
+    ])),
+    [history, searchTokens],
+  );
 
   const dismissedByLabel: Record<string, string> = {
     auto: "Auto-dismissed",
@@ -1581,16 +1634,22 @@ function HistoryTab() {
         <ListSkeleton />
       ) : historyQuery.isError ? (
         <CommsErrorState title="History failed to load" message="The History tab could not fetch completed Comms actions." />
-      ) : history.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-12 px-4 text-center flex-1" data-testid="history-empty">
-          <History className="h-12 w-12 text-muted-foreground/30 mb-4" />
-          <h3 className="text-lg font-medium mb-2">No history</h3>
-          <p className="text-sm text-muted-foreground">No email actions found for this period.</p>
-        </div>
+      ) : filteredHistory.length === 0 ? (
+        searchTokens.length > 0 ? (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="history-empty">
+            No history emails match your search.
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-12 px-4 text-center flex-1" data-testid="history-empty">
+            <History className="h-12 w-12 text-muted-foreground/30 mb-4" />
+            <h3 className="text-lg font-medium mb-2">No history</h3>
+            <p className="text-sm text-muted-foreground">No email actions found for this period.</p>
+          </div>
+        )
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
           <div data-testid="history-list">
-            {history.map((item) => (
+            {filteredHistory.map((item) => (
               <div
                 key={item.id}
                 className="flex items-start gap-3 p-3 border-b hover:bg-muted/20 transition-colors"
@@ -1644,6 +1703,8 @@ export default function CommsPage() {
   const touchStartYRef = useRef<number | null>(null);
   const hasRefreshedOnOpenRef = useRef(false);
   const [pullDistance, setPullDistance] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchTokens = useMemo(() => getSearchTokens(searchQuery), [searchQuery]);
   const markDone = useEmailMarkDone();
 
   const refreshMutation = useMutation({
@@ -1742,29 +1803,36 @@ export default function CommsPage() {
       <TriageErrorBanner />
       <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
         <div className="space-y-1 p-2 min-w-0" data-testid="comms-primary-view">
+          <HierarchySearchInput
+            value={searchQuery}
+            onChange={setSearchQuery}
+            inputTestId="input-search-email"
+            clearTestId="button-clear-email-search"
+            ariaLabel="Search email"
+          />
           <CommsSection id="review" title="Review" defaultOpen>
             <div className="max-h-[calc(100vh-13rem)] overflow-y-auto overflow-x-hidden rounded-md border border-border/20" data-testid="section-panel-review">
-              <ReviewTab onHover={handleHover} onSwitchTab={() => undefined} />
+              <ReviewTab onHover={handleHover} onSwitchTab={() => undefined} searchTokens={searchTokens} />
             </div>
           </CommsSection>
           <CommsSection id="triage" title="Triage">
             <div className="max-h-[420px] overflow-y-auto overflow-x-hidden rounded-md border border-border/20" data-testid="section-panel-triage">
-              <TriageTab onHover={handleHover} />
+              <TriageTab onHover={handleHover} searchTokens={searchTokens} />
             </div>
           </CommsSection>
           <CommsSection id="inbox" title="Inbox">
             <div className="max-h-[420px] overflow-y-auto overflow-x-hidden rounded-md border border-border/20" data-testid="section-panel-inbox">
-              <InboxTab onHover={handleHover} />
+              <InboxTab onHover={handleHover} searchTokens={searchTokens} />
             </div>
           </CommsSection>
           <CommsSection id="drafts" title="Drafts">
             <div className="max-h-[420px] overflow-y-auto overflow-x-hidden rounded-md border border-border/20" data-testid="section-panel-drafts">
-              <DraftsView />
+              <DraftsView searchTokens={searchTokens} />
             </div>
           </CommsSection>
           <CommsSection id="history" title="History">
             <div className="max-h-[420px] overflow-y-auto overflow-x-hidden rounded-md border border-border/20" data-testid="section-panel-history">
-              <HistoryTab />
+              <HistoryTab searchTokens={searchTokens} />
             </div>
           </CommsSection>
         </div>

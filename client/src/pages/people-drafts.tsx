@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { matchesSearchTokens } from "@/lib/local-search";
 import {
   FileText,
   Send,
@@ -452,7 +453,11 @@ function DraftsSkeleton() {
   );
 }
 
-export default function DraftsView() {
+interface DraftsViewProps {
+  searchTokens?: string[];
+}
+
+export default function DraftsView({ searchTokens = [] }: DraftsViewProps) {
   const { toast } = useToast();
   const [selectedDraftId, setSelectedDraftId] = useState<number | null>(null);
   const [discardTarget, setDiscardTarget] = useState<EmailDraft | null>(null);
@@ -479,7 +484,15 @@ export default function DraftsView() {
   });
 
   const drafts = draftsQuery.data?.drafts || [];
-  const selectedDraft = drafts.find((d) => d.id === selectedDraftId);
+  const filteredDrafts = drafts.filter((draft) => matchesSearchTokens(searchTokens, [
+    draft.toAddress,
+    draft.subject,
+    draft.bodyText,
+    draft.bodyHtml,
+    draft.accountId,
+    draft.status,
+  ]));
+  const selectedDraft = filteredDrafts.find((draft) => draft.id === selectedDraftId);
 
   if (draftsQuery.isLoading) {
     return (
@@ -489,7 +502,10 @@ export default function DraftsView() {
     );
   }
 
-  if (drafts.length === 0) {
+  if (filteredDrafts.length === 0) {
+    if (searchTokens.length > 0) {
+      return <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="drafts-view">No drafts match your search.</div>;
+    }
     return (
       <div className="h-full flex flex-col items-center justify-center py-12 px-4 text-center" data-testid="drafts-view">
         <FileText className="h-12 w-12 text-muted-foreground/30 mb-4" />
@@ -505,7 +521,7 @@ export default function DraftsView() {
     <div className="h-full flex" data-testid="drafts-view">
       <div className={`w-full ${selectedDraft ? "@md:w-72" : ""} shrink-0 ${selectedDraft ? "border-r hidden @md:block" : ""}`}>
         <ScrollArea className="h-full">
-          {drafts.map((draft) => (
+          {filteredDrafts.map((draft) => (
             <DraftRow
               key={draft.id}
               draft={draft}
