@@ -1,4 +1,4 @@
-import { and, eq, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import {
   libraryPages,
   libraryPlacements,
@@ -11,30 +11,24 @@ import { db } from "./db";
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
 import {
-  assertVisible,
   combineWithVisibleScope,
   combineWithWritableScope,
   ownedInsertValues,
 } from "./scoped-storage";
 
 /**
- * Canonical persistence service for Library placements — the join between a
- * Library page and a vault's Index/Wiki structure (Library2 second-brain lens).
+ * Canonical persistence service for Library placements, the join between a
+ * Library page and a live vault's Index/Wiki structure (the Library2 lens).
  *
- * This is the single mutation path for placement rows. Create is a replay-safe
- * upsert on (page_id, vault_id); delete is scoped to the owning principal.
- * A placement never copies page content: the library_pages row remains the one
- * source of truth, and the second-brain lens is a view derived from placements.
- * Import is reversible by deleting placement rows, which leaves the flat Library
- * completely unaffected.
+ * This is the single mutation path for placement rows. Upserts are replay-safe
+ * on (page_id, vault_id), ownership is enforced on both the insert and conflict
+ * update paths, and a placement never copies page content. Removing a placement
+ * leaves the authoritative library_pages row untouched.
  */
 
 const log = createLogger("LibraryPlacementStore");
+const PLACEMENT_WRITE_BATCH_SIZE = 200;
 
-// Placement ownership boundary is account/owner scoping. vault_id is the
-// destination vault chosen by placement logic, not an ownership discriminant,
-// so it is intentionally excluded here: including it would let ownedInsertValues
-// overwrite the explicit destination with the principal's active vault.
 const placementScopeColumns = {
   scope: libraryPlacements.scope,
   ownerUserId: libraryPlacements.ownerUserId,
@@ -62,6 +56,15 @@ export interface ListLibraryPlacementsFilter {
   vaultId?: string;
 }
 
+interface NormalizedPlacementInput {
+  pageId: string;
+  vaultId: string;
+  indexSection: LibraryPlacementIndexSection;
+  parentPageId: string | null;
+  placedBy: LibraryPlacementSource;
+  confidence: number | null;
+}
+
 function visiblePlacements(principal: Principal, predicate?: SQL): SQL {
   return combineWithVisibleScope(principal, placementScopeColumns, predicate);
 }
@@ -74,92 +77,209 @@ function badRequest(message: string): Error {
   return Object.assign(new Error(message), { status: 400 });
 }
 
-async function requireVisiblePage(
-  pageId: string,
-  principal: Principal,
-): Promise<void> {
-  const [page] = await db
-    .select({ id: libraryPages.id })
-    .from(libraryPages)
-    .where(
-      combineWithVisibleScope(
-        principal,
-        libraryPageScopeColumns,
-        eq(libraryPages.id, pageId),
-      ),
-    )
-    .limit(1);
-  assertVisible(principal, page, "Library page");
+function chunks<T>(items: T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let offset = 0; offset < items.length; offset += size) {
+    result.push(items.slice(offset, offset + size));
+  }
+  return result;
 }
 
-async function requireOwnedVault(
-  vaultId: string,
+function normalizeInputs(
+  inputs: CreateLibraryPlacementInput[],
+): NormalizedPlacementInput[] {
+  const byIdentity = new Map<string, NormalizedPlacementInput>();
+  for (const input of inputs) {
+    byIdentity.set(`${input.pageId}:${input.vaultId}`, {
+      pageId: input.pageId,
+      vaultId: input.vaultId,
+      indexSection: input.indexSection,
+      parentPageId: input.parentPageId ?? null,
+      placedBy: input.placedBy ?? "manual",
+      confidence: input.confidence ?? null,
+    });
+  }
+  return Array.from(byIdentity.values());
+}
+
+async function validatePlacementInputs(
+  inputs: NormalizedPlacementInput[],
   principal: Principal,
 ): Promise<void> {
-  // System principals are trusted to place across accounts (backfill/import).
-  if (principal.actorType === "system") return;
-  if (!principal.accountId) {
-    throw badRequest("Library placement requires an account principal");
-  }
-  const [vault] = await db
-    .select({ id: vaults.id })
-    .from(vaults)
-    .where(and(eq(vaults.id, vaultId), eq(vaults.accountId, principal.accountId)))
-    .limit(1);
-  if (!vault) {
-    throw Object.assign(
-      new Error("Destination vault not found in this account"),
-      { status: 404 },
+  const pageIds = Array.from(
+    new Set(
+      inputs.flatMap((input) =>
+        input.parentPageId
+          ? [input.pageId, input.parentPageId]
+          : [input.pageId],
+      ),
+    ),
+  );
+  const pageRows: Array<{ id: string; vaultId: string | null }> = [];
+  for (const batch of chunks(pageIds, PLACEMENT_WRITE_BATCH_SIZE)) {
+    pageRows.push(
+      ...(await db
+        .select({ id: libraryPages.id, vaultId: libraryPages.vaultId })
+        .from(libraryPages)
+        .where(
+          combineWithVisibleScope(
+            principal,
+            libraryPageScopeColumns,
+            inArray(libraryPages.id, batch),
+          ),
+        )),
     );
   }
+  const pagesById = new Map(pageRows.map((page) => [page.id, page]));
+  for (const pageId of pageIds) {
+    if (!pagesById.has(pageId)) {
+      throw Object.assign(new Error("Library page not found"), { status: 404 });
+    }
+  }
+
+  const vaultIds = Array.from(new Set(inputs.map((input) => input.vaultId)));
+  if (principal.actorType !== "system" && !principal.accountId) {
+    throw badRequest("Library placement requires an account principal");
+  }
+  const vaultRows = await db
+    .select({ id: vaults.id })
+    .from(vaults)
+    .where(
+      principal.actorType === "system"
+        ? and(inArray(vaults.id, vaultIds), eq(vaults.isArchived, false))
+        : and(
+            inArray(vaults.id, vaultIds),
+            eq(vaults.accountId, principal.accountId!),
+            eq(vaults.isArchived, false),
+          ),
+    );
+  const visibleVaultIds = new Set(vaultRows.map((vault) => vault.id));
+  for (const vaultId of vaultIds) {
+    if (!visibleVaultIds.has(vaultId)) {
+      throw Object.assign(
+        new Error("Destination vault not found or archived"),
+        { status: 404 },
+      );
+    }
+  }
+
+  for (const input of inputs) {
+    if (!input.parentPageId) continue;
+    const parent = pagesById.get(input.parentPageId)!;
+    if (parent.vaultId !== input.vaultId) {
+      throw badRequest(
+        "Library placement parent must belong to the destination vault",
+      );
+    }
+  }
+}
+
+function updateGroupKey(input: NormalizedPlacementInput): string {
+  return JSON.stringify([
+    input.vaultId,
+    input.indexSection,
+    input.parentPageId,
+    input.placedBy,
+    input.confidence,
+  ]);
 }
 
 /**
- * Create (or replay-safely update) the placement of a page within a vault.
- * Uniqueness on (page_id, vault_id) means a page has at most one lens position
- * per vault; a second call updates the existing placement instead of duplicating.
+ * Atomically create or update a bounded batch of placements. Bulk validation,
+ * chunked inserts, and grouped conflict updates keep database work bounded. A
+ * uniqueness conflict owned by another principal fails closed and rolls back.
  */
+export async function createLibraryPlacements(
+  inputs: CreateLibraryPlacementInput[],
+  principal: Principal,
+): Promise<LibraryPlacement[]> {
+  const normalizedInputs = normalizeInputs(inputs);
+  if (normalizedInputs.length === 0) return [];
+  await validatePlacementInputs(normalizedInputs, principal);
+
+  const owner = ownedInsertValues(principal, placementScopeColumns);
+  const rows = await db.transaction(async (tx) => {
+    const placed: LibraryPlacement[] = [];
+    const insertedIdentities = new Set<string>();
+
+    for (const batch of chunks(normalizedInputs, PLACEMENT_WRITE_BATCH_SIZE)) {
+      const inserted = await tx
+        .insert(libraryPlacements)
+        .values(
+          batch.map((input) => ({
+            ...input,
+            ...owner,
+            createdByUserId: principal.userId ?? undefined,
+            updatedByUserId: principal.userId ?? undefined,
+          })),
+        )
+        .onConflictDoNothing()
+        .returning();
+      for (const row of inserted) {
+        insertedIdentities.add(`${row.pageId}:${row.vaultId}`);
+        placed.push(row);
+      }
+    }
+
+    const conflicts = normalizedInputs.filter(
+      (input) => !insertedIdentities.has(`${input.pageId}:${input.vaultId}`),
+    );
+    const groups = new Map<string, NormalizedPlacementInput[]>();
+    for (const input of conflicts) {
+      const key = updateGroupKey(input);
+      groups.set(key, [...(groups.get(key) ?? []), input]);
+    }
+
+    for (const group of groups.values()) {
+      const exemplar = group[0];
+      for (const batch of chunks(group, PLACEMENT_WRITE_BATCH_SIZE)) {
+        const pageIds = batch.map((input) => input.pageId);
+        const updated = await tx
+          .update(libraryPlacements)
+          .set({
+            indexSection: exemplar.indexSection,
+            parentPageId: exemplar.parentPageId,
+            placedBy: exemplar.placedBy,
+            confidence: exemplar.confidence,
+            updatedByUserId: principal.userId ?? undefined,
+            updatedAt: sql`CURRENT_TIMESTAMP`,
+          })
+          .where(
+            writablePlacements(
+              principal,
+              and(
+                eq(libraryPlacements.vaultId, exemplar.vaultId),
+                inArray(libraryPlacements.pageId, pageIds),
+              ),
+            ),
+          )
+          .returning();
+        if (updated.length !== batch.length) {
+          throw Object.assign(
+            new Error("Library placement identity belongs to another principal"),
+            { status: 409 },
+          );
+        }
+        placed.push(...updated);
+      }
+    }
+
+    return placed;
+  });
+
+  log.info("placements upserted", {
+    count: rows.length,
+    principalUserId: principal.userId ?? null,
+    vaultIds: Array.from(new Set(rows.map((row) => row.vaultId))),
+  });
+  return rows;
+}
+
 export async function createLibraryPlacement(
   input: CreateLibraryPlacementInput,
   principal: Principal,
 ): Promise<LibraryPlacement> {
-  await requireVisiblePage(input.pageId, principal);
-  await requireOwnedVault(input.vaultId, principal);
-
-  const owner = ownedInsertValues(principal, placementScopeColumns);
-  const placedBy: LibraryPlacementSource = input.placedBy ?? "manual";
-  const parentPageId = input.parentPageId ?? null;
-  const confidence = input.confidence ?? null;
-
-  const [row] = await db
-    .insert(libraryPlacements)
-    .values({
-      pageId: input.pageId,
-      vaultId: input.vaultId,
-      indexSection: input.indexSection,
-      parentPageId,
-      placedBy,
-      confidence,
-      ...owner,
-      createdByUserId: principal.userId ?? undefined,
-      updatedByUserId: principal.userId ?? undefined,
-    })
-    .onConflictDoUpdate({
-      target: [libraryPlacements.pageId, libraryPlacements.vaultId],
-      set: {
-        indexSection: input.indexSection,
-        parentPageId,
-        placedBy,
-        confidence,
-        updatedByUserId: principal.userId ?? undefined,
-        updatedAt: sql`CURRENT_TIMESTAMP`,
-      },
-    })
-    .returning();
-
-  log.log(
-    `placement upserted page=${input.pageId} vault=${input.vaultId} section=${input.indexSection} placedBy=${placedBy}`,
-  );
+  const [row] = await createLibraryPlacements([input], principal);
   return row;
 }
 
@@ -199,9 +319,8 @@ export async function getLibraryPlacement(
 }
 
 /**
- * Delete a placement the principal owns. Returns true when a row was removed.
- * This is how import is reversed: removing the placement takes the page out of
- * the second-brain lens without touching the underlying Library page.
+ * Delete a placement the principal owns. This removes only the Library2 lens
+ * row and never touches the underlying Library page.
  */
 export async function deleteLibraryPlacement(
   id: string,
@@ -212,6 +331,6 @@ export async function deleteLibraryPlacement(
     .where(writablePlacements(principal, eq(libraryPlacements.id, id)))
     .returning({ id: libraryPlacements.id });
   const removed = deleted.length > 0;
-  if (removed) log.log(`placement deleted id=${id}`);
+  if (removed) log.info("placement deleted", { placementId: id });
   return removed;
 }

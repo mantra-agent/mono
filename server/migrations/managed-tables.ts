@@ -52,6 +52,7 @@ export const MANAGED_TABLES: string[] = [
   "library_page_links",
   "library_page_views",
   "library_pages",
+  "library_placements",
   "manual_assets",
   "manual_liabilities",
   "memory_content_blocks",
