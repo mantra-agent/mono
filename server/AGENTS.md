@@ -10,6 +10,10 @@ A Railway runtime may execute only its deployed entrypoint. Never launch `server
 
 GitNexus has one runtime authority: `gitnexus-runtime.ts`. Development may resolve the installed package, while deployed production must resolve only the build-owned `dist/gitnexus-runtime/gitnexus` artifact. That artifact is graph-only: LadybugDB graph ingestion and Cypher are required, native FTS is optional and must never be installed, loaded, or indexed in the production process. Code search composes graph/Cypher retrieval with Mantra's PostgreSQL semantic index.
 
+## Library2 placement boundary
+
+`library_placements` is the single persisted join for the Library2 organizational lens. `library_pages` remains the authoritative page/content store. Every placement read and write goes through `server/library-placement-store.ts`; Library2 orchestration may resolve bounded import sets and canonical Index destinations, but it must not create a second placement table or mutate page content/parents. Destination vaults must be live and owned by the principal account, destination parents must be canonical Index-listed Wiki pages, bulk upserts must be atomic and replay-safe, and removal deletes only the owned placement row.
+
 # Server Architecture
 
 The server is a Node.js/Express/TypeScript monolith running all backend logic: API routes, LLM orchestration, autonomous execution, memory management, and integrations. This file covers the server-root subsystems. For deeper dives see:
