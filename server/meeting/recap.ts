@@ -386,6 +386,7 @@ async function generateRecapContent(
  * after the fact could misattribute statements the transcript does not prove.
  */
 export async function reconcileMeetingRecapParticipants(
+  sessionId: string,
   meeting: MeetingSessionMeta,
   changedParticipant: MeetingParticipant,
   previousPersonId?: string,
@@ -416,7 +417,6 @@ export async function reconcileMeetingRecapParticipants(
   let next = /^\*\*Participants:\*\*.*$/m.test(existing)
     ? existing.replace(/^\*\*Participants:\*\*.*$/m, participantLine)
     : `${participantLine}\n\n${existing}`;
-  const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   if (previousPersonId && previousPersonId !== changedParticipant.personId) {
     const oldPersonStillPresent = meeting.participants.some(
       (participant) => participant.key !== changedParticipant.key && participant.personId === previousPersonId,
@@ -425,17 +425,102 @@ export async function reconcileMeetingRecapParticipants(
       next = next.replaceAll(`@person:${previousPersonId}`, changedParticipant.label);
     }
   }
-  if (changedParticipant.personId) {
-    const speakerPattern = new RegExp(
-      `${escapeRegExp(changedParticipant.label)}(?!\\d)`,
-      "g",
-    );
-    next = next.replace(speakerPattern, `@person:${changedParticipant.personId}`);
+  // Generated narrative stays immutable. Only structured participant refs and
+  // deterministic People interactions are safe to reconcile after the fact.
+  const reconciledContent = next;
+  if (reconciledContent !== existing) {
+    await refreshRecapPage(page.id, page.title, reconciledContent);
+    log.info(`Meeting recap participant attribution refreshed page=${page.id}`);
   }
-  if (next === existing) return;
 
-  await refreshRecapPage(page.id, page.title, next);
-  log.info(`Meeting recap participant attribution refreshed page=${page.id}`);
+  const interactionChanged = await reconcileParticipantInteraction(
+    meeting,
+    changedParticipant,
+    previousPersonId,
+    reconciledContent,
+  );
+  if (meeting.recap) {
+    const interactionCount = await countLoggedParticipantInteractions(meeting, meeting.recap.pageSlug);
+    await chatStorage.updateMeetingMeta(sessionId, {
+      recap: { ...meeting.recap, interactionsLogged: interactionCount },
+    });
+  }
+  if (interactionChanged) {
+    eventBus.publish({
+      category: "agent",
+      event: "data:people_changed",
+      payload: { source: "meeting_speaker_assignment", action: "reconcile_interaction" },
+    });
+  }
+}
+
+async function reconcileParticipantInteraction(
+  meeting: MeetingSessionMeta,
+  changedParticipant: MeetingParticipant,
+  previousPersonId: string | undefined,
+  recapContent: string,
+): Promise<boolean> {
+  const pageSlug = meeting.recap?.pageSlug;
+  if (!pageSlug) return false;
+  let changed = false;
+  const context = `@page:${pageSlug}`;
+  const summaryMatch = recapContent.match(/^##\s+Summary\s*\n+([\s\S]*?)(?=\n##\s+|$)/im);
+  const recapSummary = summaryMatch?.[1]?.trim().replace(/\s+/g, " ") || "Meeting recap";
+  const currentPersonId = changedParticipant.personId;
+
+  if (previousPersonId && previousPersonId !== currentPersonId) {
+    const previousPersonStillPresent = meeting.participants.some(
+      (participant) => participant.key !== changedParticipant.key && participant.personId === previousPersonId,
+    );
+    if (!previousPersonStillPresent) {
+      const previousPerson = await peopleStorage.getPerson(previousPersonId);
+      const stale = previousPerson?.interactions.find(
+        (interaction) => interaction.type === "meeting" && interaction.context === context,
+      );
+      if (stale) {
+        await peopleStorage.deleteInteraction(previousPersonId, stale.id);
+        changed = true;
+      }
+    }
+  }
+
+  if (currentPersonId) {
+    const currentPerson = await peopleStorage.getPerson(currentPersonId);
+    const alreadyLogged = currentPerson?.interactions.some(
+      (interaction) => interaction.type === "meeting" && interaction.context === context,
+    );
+    if (!alreadyLogged) {
+      await peopleStorage.addInteraction(currentPersonId, {
+        date: getDateInTimezone(),
+        type: "meeting",
+        direction: "mutual",
+        summary: `${meeting.recap?.pageTitle || meeting.title || "Meeting"}: ${recapSummary}`.slice(0, 1000),
+        context,
+      });
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
+async function countLoggedParticipantInteractions(
+  meeting: MeetingSessionMeta,
+  pageSlug: string | undefined,
+): Promise<number> {
+  if (!pageSlug) return 0;
+  const context = `@page:${pageSlug}`;
+  const personIds = [...new Set(meeting.participants.flatMap((participant) =>
+    participant.personId ? [participant.personId] : [],
+  ))];
+  let count = 0;
+  for (const personId of personIds) {
+    const person = await peopleStorage.getPerson(personId);
+    if (person?.interactions.some(
+      (interaction) => interaction.type === "meeting" && interaction.context === context,
+    )) count += 1;
+  }
+  return count;
 }
 
 function participantRef(p: MeetingParticipant): string {

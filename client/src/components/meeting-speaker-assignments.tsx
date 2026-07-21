@@ -166,20 +166,18 @@ export function MeetingSpeakerAssignments({
   participants: MeetingParticipant[];
   sessionId: string;
 }) {
-  const anonymousSpeakers = participants.filter(
-    (participant) => participant.source === "machine_diarization" && !!participant.key,
-  );
+  const assignableSpeakers = participants.filter((participant) => !!participant.key);
   const { data } = useQuery<{ people: SpeakerPersonOption[] }>({
     queryKey: ["/api/people"],
-    enabled: anonymousSpeakers.length > 0,
+    enabled: assignableSpeakers.length > 0,
   });
-  if (anonymousSpeakers.length === 0) return null;
+  if (assignableSpeakers.length === 0) return null;
 
   return (
     <div className="border-t border-border/20 px-4 py-2" data-testid="meeting-speaker-assignments">
       <div className="mb-1.5 text-xs font-medium text-muted-foreground">Speakers</div>
       <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-        {anonymousSpeakers.map((participant, index) => (
+        {assignableSpeakers.map((participant, index) => (
           <SpeakerAssignment
             key={participant.key}
             participant={{ ...participant, label: speakerDisplayLabel(participant, index) }}

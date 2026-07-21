@@ -50,16 +50,13 @@ export function registerMeetingSpeakerRoutes(app: Express): void {
           person ? { id: person.id, name: person.name } : null,
         );
         if (result.outcome === "not_found" || result.outcome === "not_owned") {
-          res.status(404).json({ error: "Anonymous meeting speaker not found" });
-          return;
-        }
-        if (result.outcome === "not_anonymous_speaker") {
-          res.status(409).json({ error: "Only anonymous diarized speakers can be assigned" });
+          res.status(404).json({ error: "Meeting speaker not found" });
           return;
         }
 
         if (result.session.meeting) {
           await reconcileMeetingRecapParticipants(
+            sessionId,
             result.session.meeting,
             result.participant,
             result.previousPersonId,

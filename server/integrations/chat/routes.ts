@@ -3174,6 +3174,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     speaker?: {
       key?: string;
       email?: string;
+      isHost?: boolean;
       transportParticipantId?: string;
       providerSpeakerId?: string;
       source?: "participant_metadata" | "machine_diarization" | "manual";
@@ -3362,6 +3363,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         speakerKey: event.speaker?.key,
         label: event.speakerLabel,
         email: event.speaker?.email,
+        isHost: event.speaker?.isHost,
         transportParticipantId: event.speaker?.transportParticipantId,
         providerSpeakerId: event.speaker?.providerSpeakerId,
         source: event.speaker?.source,

@@ -704,16 +704,23 @@ export type MeetingBotStatus =
   | "ended";
 
 export type MeetingSpeakerSource = "participant_metadata" | "machine_diarization" | "manual";
+export type MeetingIdentitySource = "calendar" | "transport" | "manual";
+export type MeetingCalendarRole = "organizer" | "attendee";
 
 /** A canonical speaker within one meeting. key is stable across display-name corrections. */
 export interface MeetingParticipant {
   key?: string;
+  /** Canonical display identity. Provider display names remain evidence in providerLabel. */
   label: string;
   personId?: string;
   source?: MeetingSpeakerSource;
+  identitySource?: MeetingIdentitySource;
   transportParticipantId?: string;
   transportEmail?: string;
   providerSpeakerId?: string;
+  providerLabel?: string;
+  calendarEmail?: string;
+  calendarRole?: MeetingCalendarRole;
 }
 
 export type CanonicalMeetingSpeakerPolicy =

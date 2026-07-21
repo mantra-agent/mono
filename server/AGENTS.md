@@ -10,6 +10,10 @@ A Railway runtime may execute only its deployed entrypoint. Never launch `server
 
 GitNexus has one runtime authority: `gitnexus-runtime.ts`. Development may resolve the installed package, while deployed production must resolve only the build-owned `dist/gitnexus-runtime/gitnexus` artifact. That artifact is graph-only: LadybugDB graph ingestion and Cypher are required, native FTS is optional and must never be installed, loaded, or indexed in the production process. Code search composes graph/Cypher retrieval with Mantra's PostgreSQL semantic index.
 
+## Meeting speaker identity boundary
+
+Meeting identity is session-owned state. Calendar organizer and attendee email/People links define the canonical roster; Recall participant IDs, display names, email, and host status are transport evidence that binds stable speaker keys to that roster. Provider labels never become canonical identity when stronger calendar or manual evidence exists. Owner-authenticated manual assignment may correct any stable speaker key, rewrites persisted transcript speaker metadata through `chat-file-storage.ts`, and reconciles recap participant references plus People interactions. Later provider retries must never overwrite `identitySource: "manual"`.
+
 ## Library2 placement boundary
 
 `library_placements` is the single persisted join for the Library2 organizational lens. `library_pages` remains the authoritative page/content store. Every placement read and write goes through `server/library-placement-store.ts`; Library2 orchestration may resolve bounded import sets and canonical Index destinations, but it must not create a second placement table or mutate page content/parents. Destination vaults must be live and owned by the principal account. Destinations come from canonical Index headings or Index-listed Wiki pages, with the selected Index path persisted on the placement. Bulk upserts must be atomic and replay-safe, and removal deletes only the owned placement row.
