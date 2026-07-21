@@ -1513,10 +1513,6 @@ function GraphTab({
             onNodeHover={handleNodeHover}
           />
 
-          <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-md border border-card-border bg-card/80 px-3 py-2 text-xs text-muted-foreground backdrop-blur-sm">
-            Drag to orbit · Scroll to zoom · Select a node to inspect
-          </div>
-
           {hoveredNodeId !== null && (() => {
             const entry = entryMap.get(hoveredNodeId);
             if (!entry) return null;
