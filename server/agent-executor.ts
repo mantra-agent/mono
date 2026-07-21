@@ -127,6 +127,12 @@ const VALID_ABORT_REASONS: ReadonlySet<string> = new Set<AbortReason>([
   "idle_timeout", "pipeline_timeout", "run_time_limit", "cancelled", "superseded", "error", "circuit_breaker", "zombie_timeout",
 ]);
 
+function getAbortReason(signal: AbortSignal, fallback: AbortReason = "cancelled"): AbortReason {
+  return typeof signal.reason === "string" && VALID_ABORT_REASONS.has(signal.reason)
+    ? signal.reason as AbortReason
+    : fallback;
+}
+
 export interface RepeatedToolFailureDetails {
   type: "repeated_tool_failure";
   toolNames: string[];
@@ -812,7 +818,7 @@ export function mergeIterationResults(
 }
 
 export class AgentExecutor extends EventEmitter {
-  private activeRuns = new Map<string, { abort: AbortController; startedAt: number; lastActivityAt: number; sessionId?: string; model?: string; activity?: string; sessionKey?: string; requestContent?: string; aborted?: boolean; hardCapMs?: number }>();
+  private activeRuns = new Map<string, { abort: AbortController; createdAt: number; startedAt?: number; lastActivityAt?: number; admitted: boolean; sessionId?: string; model?: string; activity?: string; sessionKey?: string; requestContent?: string; aborted?: boolean; hardCapMs?: number }>();
   private zombieCheckTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
@@ -830,6 +836,9 @@ export class AgentExecutor extends EventEmitter {
     this.zombieCheckTimer = setInterval(() => {
       const now = Date.now();
       for (const [runId, run] of this.activeRuns) {
+        if (!run.admitted || run.startedAt === undefined || run.lastActivityAt === undefined) {
+          continue;
+        }
         const ageMs = now - run.startedAt;
         const idleMs = now - run.lastActivityAt;
         const hardCap = run.hardCapMs ?? ZOMBIE_HARD_CAP_MS;
@@ -862,11 +871,13 @@ export class AgentExecutor extends EventEmitter {
     return count;
   }
 
-  getActiveRuns(): Array<{ runId: string; startedAt: number; lastActivityAt: number; sessionId?: string; model?: string; activity?: string; sessionKey?: string; requestContent?: string; aborted?: boolean }> {
+  getActiveRuns(): Array<{ runId: string; createdAt: number; startedAt: number; lastActivityAt: number; admitted: boolean; sessionId?: string; model?: string; activity?: string; sessionKey?: string; requestContent?: string; aborted?: boolean }> {
     return Array.from(this.activeRuns.entries()).map(([runId, run]) => ({
       runId,
-      startedAt: run.startedAt,
-      lastActivityAt: run.lastActivityAt,
+      createdAt: run.createdAt,
+      startedAt: run.startedAt ?? run.createdAt,
+      lastActivityAt: run.lastActivityAt ?? run.createdAt,
+      admitted: run.admitted,
       sessionId: run.sessionId,
       model: run.model,
       activity: run.activity,
@@ -889,7 +900,7 @@ export class AgentExecutor extends EventEmitter {
   /** Touch lastActivityAt for the active run belonging to a session, keeping the zombie idle timer fresh. */
   heartbeatRunBySessionId(sessionId: string): void {
     for (const run of this.activeRuns.values()) {
-      if (run.sessionId === sessionId) {
+      if (run.sessionId === sessionId && run.admitted) {
         run.lastActivityAt = Date.now();
         return;
       }
@@ -968,7 +979,7 @@ export class AgentExecutor extends EventEmitter {
     let hasNonAborted = false;
     for (const [runId, run] of this.activeRuns) {
       if (run.sessionKey === sessionKey || (sessionId && run.sessionId === sessionId)) {
-        const entry = { runId, aborted: !!run.aborted, ageMs: Date.now() - run.startedAt };
+        const entry = { runId, aborted: !!run.aborted, ageMs: Date.now() - (run.startedAt ?? run.createdAt) };
         matching.push(entry);
         if (!run.aborted) hasNonAborted = true;
       }
@@ -1688,7 +1699,7 @@ export class AgentExecutor extends EventEmitter {
       runId: ctx.runId,
       sessionId: options.sessionId || null,
       status: ctx.aborted ? "aborted" : "complete",
-      reason: terminationReason,
+      reason: ctx.aborted ? (ctx.abortReason ?? terminationReason) : terminationReason,
       iterations: ctx.iteration,
       durationMs: terminalDurationMs,
       lastStep: ctx.diagnosticLastStep || "terminal",
@@ -1789,7 +1800,7 @@ export class AgentExecutor extends EventEmitter {
       const msgPreview = options.messages?.slice(-5) || [];
       requestContent = safeStringify(msgPreview, { maxBytes: 4 * 1024, label: "agent-executor.requestPreview" }).slice(0, 2000);
     } catch (err) { log.warn("request content serialization failed", err); }
-    this.activeRuns.set(runId, { abort: abortController, startedAt: startTime, lastActivityAt: startTime, sessionId: options.sessionId, model: undefined, activity: options.activity || ACTIVITY_CHAT, sessionKey: options.sessionKey, requestContent });
+    this.activeRuns.set(runId, { abort: abortController, createdAt: startTime, admitted: false, sessionId: options.sessionId, model: undefined, activity: options.activity || ACTIVITY_CHAT, sessionKey: options.sessionKey, requestContent });
 
     const activityForRouting = options.activity || ACTIVITY_CHAT;
     if (options.model && options.routingDecision) {
@@ -1983,11 +1994,7 @@ export class AgentExecutor extends EventEmitter {
     if (options.signal) {
       const mapUpstreamReason = () => {
         if (!ctx.abortReason) {
-          const sig = options.signal!;
-          const reason = "reason" in sig ? (sig as { reason?: string }).reason : undefined;
-          ctx.abortReason = typeof reason === "string" && VALID_ABORT_REASONS.has(reason)
-            ? reason as AbortReason
-            : "cancelled";
+          ctx.abortReason = getAbortReason(options.signal!);
         }
         abortTrace("agent_executor.signal_listener", {
           runId,
@@ -1995,7 +2002,7 @@ export class AgentExecutor extends EventEmitter {
           sessionKey: options.sessionKey,
           reason: ctx.abortReason,
         });
-        abortController.abort();
+        abortController.abort(ctx.abortReason);
       };
       options.signal.addEventListener("abort", mapUpstreamReason);
       if (options.signal.aborted) {
@@ -2198,7 +2205,7 @@ export class AgentExecutor extends EventEmitter {
         );
         ctx.lastStreamDiagnostics = { eventCount: streamEventCount, elapsedMs, lastEventType };
         ctx.abortReason = "idle_timeout";
-        abortController.abort();
+        abortController.abort(ctx.abortReason);
         if (streamGenerator) {
           // Force-close the generator and HAND THE CLEANUP CHAIN to the run's
           // background-work registry. Previously we used .catch(() => {}) here,
@@ -2309,12 +2316,7 @@ export class AgentExecutor extends EventEmitter {
         if (abortController.signal.aborted) {
           ctx.aborted = true;
           if (!ctx.abortReason) {
-            const reason = "reason" in abortController.signal
-              ? (abortController.signal as { reason?: string }).reason
-              : undefined;
-            ctx.abortReason = typeof reason === "string" && VALID_ABORT_REASONS.has(reason)
-              ? reason as AbortReason
-              : "cancelled";
+            ctx.abortReason = getAbortReason(abortController.signal);
           }
           break;
         }
@@ -2326,12 +2328,7 @@ export class AgentExecutor extends EventEmitter {
       if (!ctx.aborted && abortController.signal.aborted) {
         ctx.aborted = true;
         if (!ctx.abortReason) {
-          const reason = "reason" in abortController.signal
-            ? (abortController.signal as { reason?: string }).reason
-            : undefined;
-          ctx.abortReason = typeof reason === "string" && VALID_ABORT_REASONS.has(reason)
-            ? reason as AbortReason
-            : "cancelled";
+          ctx.abortReason = getAbortReason(abortController.signal);
         }
       }
       const responseStatus = ctx.aborted ? "error" : "done";
@@ -2413,11 +2410,7 @@ export class AgentExecutor extends EventEmitter {
     if (!ctx.aborted && abortController.signal.aborted) {
       ctx.aborted = true;
       if (!ctx.abortReason) {
-        const sig = abortController.signal;
-        const reason = "reason" in sig ? (sig as { reason?: string }).reason : undefined;
-        ctx.abortReason = typeof reason === "string" && VALID_ABORT_REASONS.has(reason)
-          ? reason as AbortReason
-          : "cancelled";
+        ctx.abortReason = getAbortReason(abortController.signal);
       }
       log.warn(`Post-loop abort detection: signal was aborted but ctx.aborted was false. Set abortReason=${ctx.abortReason} runId=${ctx.runId}`);
     }
@@ -2675,10 +2668,17 @@ export class AgentExecutor extends EventEmitter {
         sessionId: options.sessionId,
         activity: options.activity,
         lineageId: options.lineageId ?? options.sessionId,
-        signal: options.signal,
+        signal: abortController.signal,
       });
       admissionGranted = true;
-      const admissionWaitMs = Date.now() - admissionQueuedAt;
+      const admittedAt = Date.now();
+      const activeRun = this.activeRuns.get(runId);
+      if (activeRun) {
+        activeRun.admitted = true;
+        activeRun.startedAt = admittedAt;
+        activeRun.lastActivityAt = admittedAt;
+      }
+      const admissionWaitMs = admittedAt - admissionQueuedAt;
       if (admissionWaitMs > 1000) {
         log.log(`Admission granted for ${tier} run ${runId} after ${admissionWaitMs}ms wait`);
       } else {
@@ -2695,6 +2695,7 @@ export class AgentExecutor extends EventEmitter {
       while (true) {
         if (abortController.signal.aborted) {
           ctx.aborted = true;
+          ctx.abortReason ??= getAbortReason(abortController.signal);
           lastExitCause = "aborted";
           break;
         }
@@ -2815,11 +2816,7 @@ export class AgentExecutor extends EventEmitter {
       if (abortController.signal.aborted) {
         ctx.aborted = true;
         if (!ctx.abortReason) {
-          const signalReason = abortController.signal.reason;
-          ctx.abortReason =
-            typeof signalReason === "string" && VALID_ABORT_REASONS.has(signalReason)
-              ? (signalReason as AbortReason)
-              : "cancelled";
+          ctx.abortReason = getAbortReason(abortController.signal);
         }
         const terminationReason: TerminationReason =
           ctx.abortReason === "circuit_breaker" ? "circuit_breaker" : "aborted";

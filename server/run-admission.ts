@@ -29,8 +29,9 @@ interface QueuedRequest {
 }
 
 const DEFAULT_IDLE_THRESHOLD_MS = 60 * 1000;
-const DEFAULT_FOREGROUND_BUDGET = 7;
-const DEFAULT_BACKGROUND_BUDGET = 3;
+const DEFAULT_CONCURRENCY_BUDGET = 20;
+const DEFAULT_REQUEST_BUDGET = 14;
+const DEFAULT_BACKGROUND_BUDGET = 6;
 const DEFAULT_ADMISSION_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const MAX_BACKGROUND_SLOT_AGE_MS = 15 * 60 * 1000;
 
@@ -54,13 +55,20 @@ function parseEnvInt(name: string, fallback: number, options?: { min?: number; m
 }
 
 function getInitialAdmissionConfig() {
-  const foregroundBudget = parseEnvInt("RUN_ADMISSION_FOREGROUND_BUDGET", DEFAULT_FOREGROUND_BUDGET, { min: 1, max: 25 });
-  const backgroundBudget = parseEnvInt("RUN_ADMISSION_BACKGROUND_BUDGET", DEFAULT_BACKGROUND_BUDGET, { min: 0, max: 25 });
+  const concurrencyBudget = parseEnvInt("RUN_ADMISSION_CONCURRENCY_BUDGET", DEFAULT_CONCURRENCY_BUDGET, { min: 1, max: 50 });
+  const requestBudget = Math.min(
+    concurrencyBudget,
+    parseEnvInt("RUN_ADMISSION_REQUEST_BUDGET", DEFAULT_REQUEST_BUDGET, { min: 1, max: 50 }),
+  );
+  const backgroundBudget = Math.min(
+    concurrencyBudget,
+    parseEnvInt("RUN_ADMISSION_BACKGROUND_BUDGET", DEFAULT_BACKGROUND_BUDGET, { min: 0, max: 50 }),
+  );
   return {
     idleThresholdMs: parseEnvInt("RUN_ADMISSION_IDLE_THRESHOLD_MS", DEFAULT_IDLE_THRESHOLD_MS, { min: 0, max: 30 * 60 * 1000 }),
-    foregroundBudget,
+    concurrencyBudget,
+    requestBudget,
     backgroundBudget,
-    concurrencyBudget: foregroundBudget + backgroundBudget,
   };
 }
 
@@ -79,17 +87,17 @@ export class RunAdmissionController {
   private slotAgeTimer: ReturnType<typeof setInterval> | null = null;
   private idleThresholdMs: number;
   private concurrencyBudget: number;
-  private foregroundBudget: number;
+  private requestBudget: number;
   private backgroundBudget: number;
 
   constructor() {
     const config = getInitialAdmissionConfig();
     this.idleThresholdMs = config.idleThresholdMs;
     this.concurrencyBudget = config.concurrencyBudget;
-    this.foregroundBudget = config.foregroundBudget;
+    this.requestBudget = config.requestBudget;
     this.backgroundBudget = config.backgroundBudget;
     log.debug(
-      `Initialized admission config: budget=${this.concurrencyBudget}, foregroundBudget=${this.foregroundBudget}, ` +
+      `Initialized admission config: budget=${this.concurrencyBudget}, requestBudget=${this.requestBudget}, ` +
       `backgroundBudget=${this.backgroundBudget}, idleThreshold=${this.idleThresholdMs}ms`
     );
     this.slotAgeTimer = setInterval(() => this.enforceMaxSlotAge(), 60_000);
@@ -138,8 +146,12 @@ export class RunAdmissionController {
     return counts.communication + counts.realtime + counts.request;
   }
 
-  private canAdmitForeground(): boolean {
-    return this.getForegroundCount() < this.foregroundBudget && this.getActiveCount() < this.concurrencyBudget;
+  private canAdmitRealtime(): boolean {
+    return this.getActiveCount() < this.concurrencyBudget;
+  }
+
+  private canAdmitRequest(): boolean {
+    return this.getTierCounts().request < this.requestBudget && this.getActiveCount() < this.concurrencyBudget;
   }
 
   private setState(newState: AdmissionState): void {
@@ -186,17 +198,16 @@ export class RunAdmissionController {
         this.cooldownTimer = null;
       }
       this.setState("active");
-      const foregroundOverflow = Math.max(0, this.getForegroundCount() - this.foregroundBudget);
       const totalOverflow = Math.max(0, this.getActiveCount() - this.concurrencyBudget);
-      if (foregroundOverflow > 0 || totalOverflow > 0) {
-        this.yieldLowestTierRuns(tier, Math.max(foregroundOverflow, totalOverflow), options?.lineageId);
+      if (totalOverflow > 0) {
+        this.yieldLowestTierRuns(tier, totalOverflow, options?.lineageId);
       }
       log.verbose(() => `Communication slot granted: ${runId}`);
       return slot;
     }
 
     if (tier === "realtime") {
-      if (this.canAdmitForeground()) {
+      if (this.canAdmitRealtime()) {
         this.slots.set(runId, slot);
         if (this.cooldownTimer) {
           clearTimeout(this.cooldownTimer);
@@ -214,7 +225,7 @@ export class RunAdmissionController {
     }
 
     if (tier === "request") {
-      if (this.canAdmitForeground()) {
+      if (this.canAdmitRequest()) {
         if (this.cooldownTimer) {
           clearTimeout(this.cooldownTimer);
           this.cooldownTimer = null;
@@ -258,7 +269,7 @@ export class RunAdmissionController {
       activeCount: this.getActiveCount(),
       foregroundCount: this.getForegroundCount(),
       concurrencyBudget: this.concurrencyBudget,
-      foregroundBudget: this.foregroundBudget,
+      requestBudget: this.requestBudget,
       backgroundBudget: this.backgroundBudget,
       idleThresholdMs: this.idleThresholdMs,
       cooldownActive: this.cooldownTimer !== null,
@@ -390,11 +401,14 @@ export class RunAdmissionController {
       .filter(s => {
         if (s.yieldRequested) return false;
         if (callerLineageId && s.lineageId === callerLineageId) return false;
-        if (s.tier === "realtime") return false;
         if (callerTier === "communication") {
+          return s.tier === "realtime" || s.tier === "request" || s.tier === "background";
+        }
+        if (s.tier === "realtime") return false;
+        if (callerTier === "realtime") {
           return s.tier === "request" || s.tier === "background";
         }
-        if (callerTier === "realtime" || callerTier === "request") {
+        if (callerTier === "request") {
           return s.tier === "background";
         }
         return false;
@@ -430,52 +444,35 @@ export class RunAdmissionController {
   }
 
   private drainNonBackgroundQueue(): void {
-    let i = 0;
-    while (i < this.queue.length) {
-      const next = this.queue[i];
-      if (next.tier === "background") {
-        i++;
-        continue;
-      }
-      if (!this.canAdmitForeground()) break;
-      this.queue.splice(i, 1);
-      if (next.timer) clearTimeout(next.timer);
-      const slot: AdmissionSlot = {
-        runId: next.runId,
-        tier: next.tier,
-        sessionId: next.sessionId,
-        activity: next.activity,
-        lineageId: next.lineageId,
-        yieldRequested: false,
-        grantedAt: Date.now(),
-      };
-      this.slots.set(next.runId, slot);
-      this.setState("active");
-      log.debug(
-        `autonomous.lifecycle phase=admitted runId=${next.runId} sessionId=${next.sessionId ?? "none"} ` +
-        `tier=${next.tier} activity=${next.activity ?? "none"} queueAgeMs=${Date.now() - next.queuedAt} ` +
-        `queueDepth=${this.queue.length} cooldownBypassed=true`,
-      );
-      next.resolve(slot);
+    while (this.queue.length > 0) {
+      const nextIndex = this.queue.findIndex((next) => {
+        if (next.tier === "background") return false;
+        return next.tier === "realtime" ? this.canAdmitRealtime() : this.canAdmitRequest();
+      });
+      if (nextIndex === -1) break;
+      this.grantFromQueue(nextIndex, true);
     }
   }
 
   private drainQueue(): void {
     while (this.queue.length > 0) {
-      const next = this.queue[0];
-      if (next.tier === "background") {
-        if (!this.canAdmitBackground({ activity: next.activity })) break;
-      } else {
-        if (!this.canAdmitForeground()) break;
-      }
-      this.grantNextFromQueue();
+      const nextIndex = this.queue.findIndex((next) => {
+        if (next.tier === "background") {
+          return this.canAdmitBackground({ activity: next.activity });
+        }
+        if (next.tier === "realtime") {
+          return this.canAdmitRealtime();
+        }
+        return this.canAdmitRequest();
+      });
+      if (nextIndex === -1) break;
+      this.grantFromQueue(nextIndex, false);
     }
   }
 
-  private grantNextFromQueue(): void {
-    if (this.queue.length === 0) return;
-
-    const request = this.queue.shift()!;
+  private grantFromQueue(index: number, cooldownBypassed: boolean): void {
+    const [request] = this.queue.splice(index, 1);
+    if (!request) return;
     if (request.timer) clearTimeout(request.timer);
 
     const slot: AdmissionSlot = {
@@ -493,7 +490,7 @@ export class RunAdmissionController {
     log.debug(
       `autonomous.lifecycle phase=admitted runId=${request.runId} sessionId=${request.sessionId ?? "none"} ` +
       `tier=${request.tier} activity=${request.activity ?? "none"} queueAgeMs=${Date.now() - request.queuedAt} ` +
-      `queueDepth=${this.queue.length} cooldownBypassed=false`,
+      `queueDepth=${this.queue.length} cooldownBypassed=${cooldownBypassed}`,
     );
     request.resolve(slot);
   }
@@ -508,23 +505,29 @@ export class RunAdmissionController {
     }
   }
 
-  configure(options: { idleThresholdMs?: number; foregroundBudget?: number; backgroundBudget?: number }): void {
+  configure(options: { idleThresholdMs?: number; concurrencyBudget?: number; requestBudget?: number; backgroundBudget?: number }): void {
     if (options.idleThresholdMs !== undefined) {
       this.idleThresholdMs = options.idleThresholdMs;
       log.verbose(() => `Idle threshold updated: ${this.idleThresholdMs}ms`);
     }
-    if (options.foregroundBudget !== undefined) {
-      this.foregroundBudget = Math.max(1, options.foregroundBudget);
+    if (options.concurrencyBudget !== undefined) {
+      this.concurrencyBudget = Math.max(1, options.concurrencyBudget);
+    }
+    if (options.requestBudget !== undefined) {
+      this.requestBudget = Math.max(1, Math.min(this.concurrencyBudget, options.requestBudget));
     }
     if (options.backgroundBudget !== undefined) {
-      this.backgroundBudget = Math.max(0, options.backgroundBudget);
+      this.backgroundBudget = Math.max(0, Math.min(this.concurrencyBudget, options.backgroundBudget));
     }
-    if (options.foregroundBudget !== undefined || options.backgroundBudget !== undefined) {
-      this.concurrencyBudget = this.foregroundBudget + this.backgroundBudget;
+    if (options.concurrencyBudget !== undefined || options.requestBudget !== undefined || options.backgroundBudget !== undefined) {
+      this.requestBudget = Math.min(this.requestBudget, this.concurrencyBudget);
+      this.backgroundBudget = Math.min(this.backgroundBudget, this.concurrencyBudget);
       log.verbose(
         () => `Admission budgets updated: total=${this.concurrencyBudget}, ` +
-          `foreground=${this.foregroundBudget}, background=${this.backgroundBudget}`,
+          `request=${this.requestBudget}, background=${this.backgroundBudget}`,
       );
+      this.drainQueue();
+      this.updateState();
     }
   }
 
