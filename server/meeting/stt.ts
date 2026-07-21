@@ -82,7 +82,12 @@ interface RecallAudioPayload {
     data?: {
       buffer?: string;
       timestamp?: { absolute?: string; relative?: number };
-      participant?: { id?: number | string; name?: string | null; email?: string | null };
+      participant?: {
+        id?: number | string;
+        name?: string | null;
+        email?: string | null;
+        is_host?: boolean | null;
+      };
     };
     bot?: { id?: string; metadata?: Record<string, unknown> };
     realtime_endpoint?: { id?: string };
@@ -96,6 +101,7 @@ interface StreamIdentity {
   streamId: string;
   label?: string;
   email?: string;
+  isHost?: boolean;
 }
 
 interface ParticipantStream {
@@ -201,6 +207,7 @@ async function ingestFinalUtterance(
     speaker: {
       key: clusterKey,
       email: diarized ? undefined : utterance.participant.email,
+      isHost: diarized ? undefined : utterance.participant.isHost,
       transportParticipantId: utterance.participant.transportId,
       providerSpeakerId: utterance.providerSpeakerId,
       source: diarized ? "machine_diarization" : "participant_metadata",
@@ -391,6 +398,7 @@ export function registerMeetingSTTAudioTransport(
             transportId: identity.transportId,
             label: identity.label,
             email: identity.email,
+            isHost: identity.isHost,
           },
           encoding: "pcm_s16le",
           sampleRateHz: 16000,
@@ -484,6 +492,7 @@ export function registerMeetingSTTAudioTransport(
         streamId: `${payload.data?.audio_separate?.id || payload.data?.realtime_endpoint?.id || `recall:${sessionId}`}:participant:${transportId}`,
         label: participant?.name || undefined,
         email: participant?.email || undefined,
+        isHost: participant?.is_host === true,
       };
       let meeting = await loadMeeting(sessionId);
       const existingPolicy = meeting.audioSourcePolicies?.[identity.streamId];

@@ -27,6 +27,7 @@ export type MeetingIngestFn = (event: {
   speaker?: {
     key?: string;
     email?: string;
+    isHost?: boolean;
     transportParticipantId?: string;
     providerSpeakerId?: string;
     source?: "participant_metadata" | "machine_diarization" | "manual";
@@ -208,7 +209,12 @@ export function registerRecallRoutes(
               start_timestamp?: { relative?: number };
               end_timestamp?: { relative?: number } | null;
             }>;
-            participant?: { id?: number | string; name?: string | null };
+            participant?: {
+              id?: number | string;
+              name?: string | null;
+              email?: string | null;
+              is_host?: boolean | null;
+            };
             is_final?: boolean;
             final?: boolean;
           };
@@ -252,6 +258,8 @@ export function registerRecallRoutes(
           speakerLabel,
           speaker: {
             key: participant?.id != null ? `recall:${String(participant.id)}` : speakerKey,
+            email: participant?.email || undefined,
+            isHost: participant?.is_host === true,
             transportParticipantId: participant?.id != null ? String(participant.id) : undefined,
             source: "participant_metadata",
           },

@@ -7,6 +7,7 @@ import {
 import { getLinkedPeople, getMetadata, resolveMeetingAgenda, resolveMeetingAgendaPage, setMeetingAgendaPage, type MeetingAgendaPage } from "../calendar-metadata";
 import { listAllEvents, type CalendarEvent } from "../google-calendar";
 import { createLogger } from "../log";
+import { peopleStorage, type Person } from "../people-storage";
 
 const log = createLogger("MeetingIdentityResolver");
 const LOOKBACK_MS = 12 * 60 * 60_000;
@@ -23,6 +24,8 @@ export interface ExplicitMeetingEventIdentity {
   title?: string;
   agenda?: string;
   attendees?: CalendarEvent["attendees"];
+  organizer?: CalendarEvent["organizer"];
+  accountEmail?: string;
 }
 
 export interface ResolvedMeetingIdentity {
@@ -74,42 +77,98 @@ function eventDateTime(value: CalendarEvent["start"] | CalendarEvent["end"]): st
   return value.dateTime || value.date || undefined;
 }
 
+function normalizeEmail(value: string | null | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized && normalized.includes("@") ? normalized : undefined;
+}
+
+function personByEmail(people: Person[]): Map<string, Person> {
+  const result = new Map<string, Person>();
+  for (const person of people) {
+    for (const contact of person.contactInfo) {
+      if (contact.type !== "email") continue;
+      const email = normalizeEmail(contact.value);
+      if (email && !result.has(email)) result.set(email, person);
+    }
+  }
+  return result;
+}
+
 async function resolveEventParticipants(
   attendees: CalendarEvent["attendees"],
+  organizer: CalendarEvent["organizer"] | undefined,
+  accountEmail: string | undefined,
   metadataId?: number,
 ): Promise<MeetingParticipant[]> {
   const linkedPeople = metadataId ? await getLinkedPeople(metadataId) : [];
   const linksByEmail = new Map(
     linkedPeople
-      .filter((link) => link.attendeeEmail)
-      .map((link) => [link.attendeeEmail!.trim().toLowerCase(), link]),
+      .filter((link) => normalizeEmail(link.attendeeEmail))
+      .map((link) => [normalizeEmail(link.attendeeEmail)!, link]),
   );
+  let people: Person[] = [];
+  try {
+    const peopleIndex = await peopleStorage.listPeople();
+    people = await peopleStorage.getPeopleByIds(peopleIndex.map((person) => person.id));
+  } catch (error) {
+    log.warn("People lookup failed during meeting roster resolution", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  const peopleByEmail = personByEmail(people);
   const participants: MeetingParticipant[] = [];
   const seenPeople = new Set<string>();
-  const seenLabels = new Set<string>();
+  const seenEmails = new Set<string>();
 
-  for (const attendee of attendees) {
-    const email = attendee.email.trim().toLowerCase();
+  const appendCalendarParticipant = (
+    value: { email?: string; displayName?: string; self?: boolean },
+    calendarRole: "organizer" | "attendee",
+  ) => {
+    const email = normalizeEmail(value.email);
+    if (!email || seenEmails.has(email)) return;
     const link = linksByEmail.get(email);
-    if (attendee.self && !link) continue;
+    const person = peopleByEmail.get(email)
+      || (link ? people.find((candidate) => candidate.id === link.personId) : undefined);
+    if (person?.id && seenPeople.has(person.id)) {
+      seenEmails.add(email);
+      return;
+    }
+    const label = person?.name || link?.personName?.trim() || value.displayName?.trim() || email;
+    participants.push({
+      label,
+      ...(person?.id ? { personId: person.id } : link?.personId ? { personId: link.personId } : {}),
+      identitySource: "calendar",
+      calendarEmail: email,
+      calendarRole,
+    });
+    seenEmails.add(email);
+    if (person?.id || link?.personId) seenPeople.add(person?.id || link!.personId);
+  };
 
-    const label = attendee.displayName?.trim() || link?.personName?.trim() || attendee.email.trim();
-    if (!label) continue;
-    const labelKey = label.toLowerCase();
-    if ((link && seenPeople.has(link.personId)) || seenLabels.has(labelKey)) continue;
-
-    participants.push(link ? { label, personId: link.personId } : { label });
-    seenLabels.add(labelKey);
-    if (link) seenPeople.add(link.personId);
+  const organizerEmail = normalizeEmail(organizer?.email) || normalizeEmail(accountEmail);
+  if (organizerEmail) {
+    appendCalendarParticipant({
+      email: organizerEmail,
+      displayName: organizer?.displayName,
+      self: organizer?.self,
+    }, "organizer");
   }
+  for (const attendee of attendees) appendCalendarParticipant(attendee, "attendee");
 
   for (const link of linkedPeople) {
     if (seenPeople.has(link.personId)) continue;
     const label = link.personName.trim();
-    if (!label || seenLabels.has(label.toLowerCase())) continue;
-    participants.push({ label, personId: link.personId });
+    if (!label) continue;
+    const email = normalizeEmail(link.attendeeEmail);
+    participants.push({
+      label,
+      personId: link.personId,
+      identitySource: "calendar",
+      ...(email ? { calendarEmail: email } : {}),
+      calendarRole: "attendee",
+    });
     seenPeople.add(link.personId);
-    seenLabels.add(label.toLowerCase());
+    if (email) seenEmails.add(email);
   }
 
   return participants;
@@ -128,7 +187,12 @@ async function fromEvent(
     ? await setMeetingAgendaPage(metadata, undefined, metadata.agenda, event.summary || fallbackTitle)
     : existingAgendaPage;
   const resolvedAgenda = metadata ? await resolveMeetingAgenda(metadata) : fallbackAgenda;
-  const participants = await resolveEventParticipants(event.attendees, metadata?.id);
+  const participants = await resolveEventParticipants(
+    event.attendees,
+    event.organizer,
+    event.accountEmail,
+    metadata?.id,
+  );
   const speakerPolicy = normalizeMeetingSpeakerPolicy(metadata?.speakerPolicy as MeetingSpeakerPolicy | null);
   return {
     meetingUrl,
@@ -160,6 +224,8 @@ export async function resolveMeetingIdentity(input: ResolveMeetingIdentityInput)
     );
     const participants = await resolveEventParticipants(
       input.explicitEvent.attendees || [],
+      input.explicitEvent.organizer,
+      input.explicitEvent.accountEmail,
       metadata?.id,
     );
     const existingAgendaPage = metadata ? await resolveMeetingAgendaPage(metadata) : null;

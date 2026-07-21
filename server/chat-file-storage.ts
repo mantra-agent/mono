@@ -176,7 +176,7 @@ export type MeetingSpeakerAssignment =
       previousPersonId?: string;
       session: FileSession;
     }
-  | { outcome: "not_found" | "not_anonymous_speaker" | "not_owned" };
+  | { outcome: "not_found" | "not_owned" };
 
 export type { SystemStepRecord } from "@shared/models/chat";
 
@@ -1170,7 +1170,7 @@ export interface IChatFileStorage {
   assignMeetingParticipantPerson(
     sessionId: string,
     speakerKey: string,
-    person: { id: string } | null,
+    person: { id: string; name: string } | null,
   ): Promise<MeetingSpeakerAssignment>;
   initializeMeetingAudioSourcePolicy(
     sessionId: string,
@@ -2077,6 +2077,31 @@ export const chatFileStorage: IChatFileStorage = {
         : -1;
       if (keyedIndex >= 0) {
         const existing = participants[keyedIndex]!;
+        if (existing.identitySource === "manual") {
+          return { participant: existing, participants, added: false };
+        }
+        if (candidate.identitySource === "calendar" && existing.identitySource !== "calendar") {
+          const participant = { ...existing, ...candidate, key: existing.key || candidate.key };
+          const updatedParticipants = [...participants];
+          updatedParticipants[keyedIndex] = participant;
+          const now = new Date().toISOString();
+          for (const message of data.messages) {
+            if (message.speaker?.key !== participant.key) continue;
+            message.speaker = {
+              ...message.speaker,
+              label: participant.label,
+              ...(participant.personId ? { personId: participant.personId } : {}),
+            };
+            if (!participant.personId) delete message.speaker.personId;
+            message.updatedAt = now;
+          }
+          data.meeting = { ...data.meeting, participants: updatedParticipants };
+          data.updatedAt = now;
+          await writeConv(data);
+          const session = convToMeta(data);
+          invalidateSessionsCache({ action: "updated", sessionId, session });
+          return { participant, participants: updatedParticipants, added: false };
+        }
         if (existing.label.trim() || candidate.source !== "machine_diarization") {
           return { participant: existing, participants, added: false };
         }
@@ -2212,7 +2237,7 @@ export const chatFileStorage: IChatFileStorage = {
   async assignMeetingParticipantPerson(
     sessionId: string,
     speakerKey: string,
-    person: { id: string } | null,
+    person: { id: string; name: string } | null,
   ): Promise<MeetingSpeakerAssignment> {
     return withConvLock(sessionId, async () => {
       const data = await readConv(sessionId);
@@ -2234,12 +2259,12 @@ export const chatFileStorage: IChatFileStorage = {
       );
       const current = data.meeting.participants[participantIndex];
       if (!current) return { outcome: "not_found" };
-      if (current.source !== "machine_diarization") {
-        return { outcome: "not_anonymous_speaker" };
-      }
 
       const nextPersonId = person?.id;
-      if (current.personId === nextPersonId) {
+      if (
+        current.personId === nextPersonId &&
+        (!person || (current.identitySource === "manual" && current.label === person.name))
+      ) {
         return {
           outcome: "unchanged",
           participant: current,
@@ -2251,9 +2276,20 @@ export const chatFileStorage: IChatFileStorage = {
       const previousPersonId = current.personId;
       const participant: MeetingParticipant = {
         ...current,
-        ...(person ? { personId: person.id } : {}),
+        ...(person
+          ? {
+              personId: person.id,
+              label: person.name,
+              providerLabel: current.providerLabel || current.label,
+            }
+          : {}),
+        identitySource: person ? "manual" : current.identitySource,
       };
-      if (!person) delete participant.personId;
+      if (!person) {
+        delete participant.personId;
+        participant.label = current.providerLabel || current.label;
+        participant.identitySource = current.calendarEmail ? "calendar" : "transport";
+      }
 
       const participants = [...data.meeting.participants];
       participants[participantIndex] = participant;

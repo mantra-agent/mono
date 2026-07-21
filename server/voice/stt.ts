@@ -14,6 +14,7 @@ export interface STTParticipant {
   transportId: string;
   label?: string;
   email?: string;
+  isHost?: boolean;
 }
 
 /** Provider-neutral PCM stream accepted by the voice recognition boundary. */
