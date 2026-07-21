@@ -63,9 +63,37 @@ function actionOf(args: Record<string, unknown>): string | undefined {
   return typeof args.action === "string" && args.action.trim() ? args.action.trim() : undefined;
 }
 
-function requiresPermission(toolName: string, action: string | undefined): Permission | null {
+function scratchAction(toolName: string, action: string | undefined): string | undefined {
+  if (toolName === "write_scratch") return "write";
+  if (toolName === "edit_scratch") return "edit";
+  return toolName === "scratch" ? action : undefined;
+}
+
+function isRepositoryScratchWrite(
+  toolName: string,
+  action: string | undefined,
+  args: Record<string, unknown>,
+): boolean {
+  if (!["write", "edit"].includes(scratchAction(toolName, action) || "")) return false;
+  const path = typeof args.path === "string" ? args.path.trim().replace(/^\.\//, "") : "";
+  return /^repos\/[^/]+(?:\/|$)/.test(path);
+}
+
+function isSessionOwnedRepositoryPath(path: unknown, sessionId: string | undefined): boolean {
+  if (typeof path !== "string" || !sessionId) return false;
+  const normalized = path.trim().replace(/^\.\//, "");
+  const directory = normalized.match(/^repos\/([^/]+)(?:\/|$)/)?.[1];
+  return Boolean(directory?.endsWith(`-${sessionId.slice(0, 8)}`));
+}
+
+function requiresPermission(
+  toolName: string,
+  action: string | undefined,
+  args: Record<string, unknown>,
+): Permission | null {
   if (toolName === "hooks") return ["list", "get", "test"].includes(action || "") ? "system:read" : "system:write";
   if (toolName === "backup") return ["list", "get"].includes(action || "") ? "system:read" : "system:write";
+  if (isRepositoryScratchWrite(toolName, action, args)) return "build:write";
   if (!ENGINEERING_TOOLS.has(toolName)) return null;
   if (toolName === "shell") return "build:write";
   if (ENGINEERING_WRITE_ACTIONS[toolName]?.has(action || "")) return "build:write";
@@ -73,9 +101,9 @@ function requiresPermission(toolName: string, action: string | undefined): Permi
 }
 
 function isTrustedEngineeringDelegation(context: AgentAuthorityContext): boolean {
- return context.origin === "interactive"
- || context.trustedDelegation === "plan"
- || context.trustedDelegation === "workflow";
+  return context.origin === "interactive"
+    || context.trustedDelegation === "plan"
+    || context.trustedDelegation === "workflow";
 }
 
 function isModelOrigin(origin: ToolInvocationOrigin): boolean {
@@ -96,7 +124,8 @@ export function authorizeToolInvocation(
     return { allowed: false, reason: "unbound_service_principal" };
   }
 
-  const permission = requiresPermission(toolName, action);
+  const repositoryScratchWrite = isRepositoryScratchWrite(toolName, action, args);
+  const permission = requiresPermission(toolName, action, args);
   if (permission && !principalHasPermission(principal, permission)) {
     return { allowed: false, reason: `permission_required:${permission}` };
   }
@@ -105,7 +134,11 @@ export function authorizeToolInvocation(
     return { allowed: false, reason: "human_gate_required" };
   }
 
-  if (toolName === "shell" && !isTrustedEngineeringDelegation(context)) {
+  if (repositoryScratchWrite && !isSessionOwnedRepositoryPath(args.path, context.sessionId)) {
+    return { allowed: false, reason: "session_owned_repository_required" };
+  }
+
+  if ((toolName === "shell" || repositoryScratchWrite) && !isTrustedEngineeringDelegation(context)) {
     return { allowed: false, reason: "trusted_engineering_delegation_required" };
   }
 

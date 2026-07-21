@@ -26,7 +26,7 @@ Do not create, add, restore, scaffold, maintain, or run tests. No test files, te
 
 Do not run standalone TypeScript checks (`npm run check`, `tsc --noEmit`, or equivalent typecheck-only commands) as part of the normal coding verification loop. The only required automated gate is whether the production build succeeds via `npm run build`. Run typecheck-only commands or tests only if Ray explicitly reverses this policy in the current conversation.
 
-**Do NOT run `npm install`.** `node_modules` is symlinked from the workspace root. Installing will break the symlink. The git clone tool owns this invariant: it hydrates `/app/node_modules` from `/app/package-lock.json` when missing/stale, then points session clones at that shared directory.
+**Do NOT run `npm install`.** `node_modules` is symlinked from the workspace root. Installing will break the symlink. The runtime image owns the immutable shared dependency tree and stamps it with the exact root lockfile hash at build time. The git clone tool validates that image contract, then points session clones at the shared directory. A missing, stale, or incomplete toolchain fails clone loudly and must be repaired in the image; live requests never mutate `/app/node_modules`.
 
 ## Security-First Engineering
 
@@ -110,7 +110,7 @@ Before any code diagnosis, system debugging, file edit, build, PR, or merge:
 7. Inspect the existing implementation and identify the smallest coherent change.
 8. If the change depends on an external system, library, SDK, hosted API, provider behavior, platform constraint, or integration contract, review the current authoritative API documentation with the `web` tool before finalizing the implementation plan. Capture the relevant contract in the plan instead of guessing from memory.
 9. Before making changes, write the implementation plan/design and compare it against root `AGENTS.md`, auditing specifically for Engineering Principle violations. Cure violations in the plan before editing.
-10. Make the scoped changes. If the change spreads beyond the planned files, pause and reassess.
+10. Make the scoped changes with `scratch.write`/`scratch.edit` inside the current session-owned clone. Shell is intentionally read-only. If the change spreads beyond the planned files, pause and reassess.
 11. If you introduced a new reusable pattern, document it concisely in the relevant subdirectory AGENTS.md.
 12. Do not add tests, fixtures, or typecheck-only gates.
 13. Run `npm run build`. If it fails, fix the build and rerun until it passes.
