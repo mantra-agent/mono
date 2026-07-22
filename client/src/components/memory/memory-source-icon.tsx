@@ -1,6 +1,7 @@
 import {
   Activity,
   AlertCircle,
+  Building2,
   CircleDot,
   Database,
   FileText,
@@ -23,10 +24,11 @@ export interface MemoryGraphNodeTypeConfig {
   iconSource: string;
 }
 
-const MEMORY_GRAPH_NODE_TYPE_ORDER = ["people", "claims", "pages", "sessions", "goals", "projects"];
+const MEMORY_GRAPH_NODE_TYPE_ORDER = ["people", "companies", "claims", "pages", "sessions", "goals", "projects"];
 
 const MEMORY_GRAPH_NODE_TYPE_BY_SOURCE: Record<string, MemoryGraphNodeTypeConfig> = {
   person: { id: "people", label: "People", iconSource: "person" },
+  company: { id: "companies", label: "Companies", iconSource: "company" },
   claim: { id: "claims", label: "Claims", iconSource: "claim" },
   state: { id: "claims", label: "Claims", iconSource: "claim" },
   cause: { id: "claims", label: "Claims", iconSource: "claim" },
@@ -103,6 +105,8 @@ export function getMemorySourceIcon(source: string): LucideIcon {
       return Target;
     case "person":
       return User;
+    case "company":
+      return Building2;
     case "project":
       return Database;
     case "issue":

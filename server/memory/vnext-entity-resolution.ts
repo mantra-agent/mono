@@ -9,7 +9,7 @@ export interface ResolvedVnextEntityMention {
 }
 
 /**
- * Resolve vNext claim entity mentions against People, Projects, and Goals.
+ * Resolve vNext claim entity mentions against People, Companies, Projects, and Goals.
  * Returns only high-confidence, unambiguous matches so lifecycle linking fails closed.
  */
 export async function resolveVnextEntityMentions(
@@ -34,6 +34,12 @@ export async function resolveVnextEntityMentions(
         const candidates = startsWithMatches.length > 0 ? startsWithMatches : results;
         if (candidates.length === 1) {
           resolved.push({ entityType: "person", entityId: candidates[0].id });
+        }
+      } else if (mention.entityType === "company") {
+        const { companyStorage } = await import("../company-storage");
+        const match = await companyStorage.resolve(mention.name);
+        if (match && match.name.toLowerCase() === mention.name.toLowerCase().trim()) {
+          resolved.push({ entityType: "company", entityId: match.id });
         }
       } else if (mention.entityType === "project") {
         const { fileProjectStorage } = await import("../file-storage/projects");

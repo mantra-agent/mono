@@ -41,6 +41,7 @@ import { memoryVnextClaimStorage } from "./vnext-claim-storage";
 import { runVnextLifecycle } from "./vnext-lifecycle";
 import { listVisibleSources } from "./vnext-source-queue";
 import { peopleStorage } from "../people-storage";
+import { companyStorage } from "../company-storage";
 import { goalsService } from "../goals-service";
 import { fileProjectStorage } from "../file-storage/projects";
 import { libraryPages, libraryPageLinks } from "@shared/models/info";
@@ -939,6 +940,7 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
     const entityTitleByKey = new Map<string, string>();
     const entityTimestampByKey = new Map<string, { createdAt: Date | string | null; updatedAt: Date | string | null }>();
     const personEntityIds = [...new Set(entityLinks.filter((l) => l.entityType === "person").map((l) => l.entityId))];
+    const companyEntityIds = new Set(entityLinks.filter((link) => link.entityType === "company").map((link) => link.entityId));
     const pageEntityIds = [...new Set(entityLinks.filter((l) => l.entityType === "page" || l.entityType === "library_page").map((l) => l.entityId))];
     const entitySummaryByKey = new Map<string, string>();
     if (personEntityIds.length > 0) {
@@ -955,6 +957,17 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
           createdAt: person.createdAt,
           updatedAt: person.updatedAt,
         });
+      }
+    }
+    if (companyEntityIds.size > 0) {
+      const companies = await companyStorage.list();
+      for (const company of companies) {
+        if (!companyEntityIds.has(company.id)) continue;
+        const key = `company:${company.id}`;
+        entityTitleByKey.set(key, company.name);
+        const companySummary = company.description || [company.industry, company.location].filter(Boolean).join(" · ");
+        if (companySummary) entitySummaryByKey.set(key, companySummary);
+        entityTimestampByKey.set(key, { createdAt: company.createdAt, updatedAt: company.updatedAt });
       }
     }
     if (pageEntityIds.length > 0) {

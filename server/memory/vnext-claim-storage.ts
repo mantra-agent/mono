@@ -1187,6 +1187,18 @@ export class MemoryVnextClaimStorage {
 
   async linkClaimToEntity(claimId: number, entityType: string, entityId: string): Promise<void> {
     const principal = getCurrentPrincipalOrSystem();
+    const normalizedEntityType = entityType.trim().toLowerCase();
+    const normalizedEntityId = entityId.trim();
+    if (!normalizedEntityType || !normalizedEntityId) {
+      throw new Error("Cannot link vNext claim to an empty entity type or ID");
+    }
+    if (normalizedEntityType === "company") {
+      const { companyStorage } = await import("../company-storage");
+      const company = await companyStorage.get(normalizedEntityId);
+      if (!company) {
+        throw new Error(`Cannot link vNext claim ${claimId} to company ${normalizedEntityId}: company not visible`);
+      }
+    }
     const [claim] = await db
       .select({ id: memoryVnextClaims.id })
       .from(memoryVnextClaims)
@@ -1199,8 +1211,8 @@ export class MemoryVnextClaimStorage {
       .insert(memoryVnextEntityLinks)
       .values({
         claimId,
-        entityType,
-        entityId,
+        entityType: normalizedEntityType,
+        entityId: normalizedEntityId,
         ...ownedInsertValues(principal, vnextEntityScopeColumns),
         createdByUserId: principal.userId ?? undefined,
         updatedByUserId: principal.userId ?? undefined,
