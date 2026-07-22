@@ -22,6 +22,7 @@ export interface CreateFiledLibraryPageInput {
   status?: string | null;
   structuralRole?: LibraryStructuralRole | null;
   createdBySessionId?: string | null;
+  id?: string;
   slugSuffix?: string | null;
   surface?: boolean;
   surfaceDurationHours?: number;
@@ -99,6 +100,7 @@ export async function createFiledLibraryPage(input: CreateFiledLibraryPageInput)
   const page = await db.transaction(async (tx) => {
     await acquireLibraryParentLocks(tx, [filingResolution.parentId]);
     const [row] = await tx.insert(libraryPages).values({
+      ...(input.id ? { id: input.id } : {}),
       title: input.title,
       slug,
       content: synced.content,

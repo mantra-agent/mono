@@ -196,7 +196,7 @@ Urgent items (calendar conflicts, blocked tasks, time-sensitive decisions) surfa
    - One-liner: time, title, key attendees
    - People context only if it changes how Ray should show up
    - On light days (Tue/Thu), just list the schedule without prep notes
-   - When you create a standalone Library artifact for a specific meeting, immediately link that page to the event through the meetings tool: ensure metadata exists with set_metadata when needed, then call meetings action=link_artifact with metadataId, libraryPageId, artifactKind=brief, and source=daily_brief. If linking fails, state the degraded attachment explicitly in the brief/session output.
+   - A meeting has one canonical preparation page. Resolve it from meeting metadata. If absent, claim the page with meetings action=set_metadata and agendaLibraryPageId. Update that same page for all agenda and brief preparation. Never create or link a second brief page. Use meetings action=link_artifact only for distinct non-preparation artifacts with an explicit kind such as research, follow_up, or recap.
 
 8. **Weather:**
    - Use the \`weather\` tool — action "current" and action "forecast" with days=1

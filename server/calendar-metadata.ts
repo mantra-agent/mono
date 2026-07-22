@@ -1,4 +1,4 @@
-import { db } from "./db";
+import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, runWithDatabaseTransaction } from "./db";
 import {
   calendarEventMetadata,
   calendarEventPeople,
@@ -8,7 +8,7 @@ import {
   type CalendarEventArtifact,
   type MeetingJoinMode,
 } from "@shared/schema";
-import { eq, inArray, and, sql, or, ne } from "drizzle-orm";
+import { eq, inArray, and, sql, or } from "drizzle-orm";
 import { libraryPages } from "@shared/models/info";
 import { createLogger } from "./log";
 import { TTLCache } from "./utils/ttl-cache";
@@ -388,14 +388,27 @@ export async function updateAgentJoinOutcome(metadataId: number, patch: AgentJoi
 
 // ─── linkArtifact ───
 
-export async function linkArtifact(
+const PREPARATION_ARTIFACT_KINDS = new Set(["agenda", "brief"]);
+
+async function getWritableMetadataById(metadataId: number): Promise<CalendarEventMetadata | null> {
+  const [metadata] = await db
+    .select()
+    .from(calendarEventMetadata)
+    .where(combineWithSensitiveWritable(
+      calendarMetadataOwnerColumns,
+      eq(calendarEventMetadata.id, metadataId),
+    ))
+    .limit(1);
+  return metadata ?? null;
+}
+
+async function upsertArtifactLink(
   metadataId: number,
   libraryPageId: string,
-  artifactKind = "brief",
+  artifactKind: string,
   title?: string,
-  source?: string
+  source?: string,
 ): Promise<CalendarEventArtifact> {
-  log.log(`linkArtifact metadataId=${metadataId} libraryPageId=${libraryPageId} kind=${artifactKind}`);
   const rows = await db
     .insert(calendarEventArtifacts)
     .values({
@@ -415,12 +428,45 @@ export async function linkArtifact(
         artifactKind,
         title: title ?? null,
         source: source ?? null,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
         ...sensitiveOwnershipValues(),
       },
     })
     .returning();
-  invalidateCalendarCache();
   return rows[0];
+}
+
+export async function linkArtifact(
+  metadataId: number,
+  libraryPageIdOrSlug: string,
+  artifactKind: string,
+  title?: string,
+  source?: string,
+): Promise<CalendarEventArtifact> {
+  const normalizedKind = artifactKind?.trim();
+  if (!normalizedKind) {
+    throw new Error("artifactKind is required for a meeting artifact link");
+  }
+  if (PREPARATION_ARTIFACT_KINDS.has(normalizedKind)) {
+    throw new Error("Agenda and legacy brief pages must use the canonical meeting preparation page");
+  }
+  const [metadata, page] = await Promise.all([
+    getWritableMetadataById(metadataId),
+    getVisibleLibraryPage(libraryPageIdOrSlug),
+  ]);
+  if (!metadata) throw new Error(`Calendar event metadata not found or not writable: ${metadataId}`);
+  if (!page) throw new Error(`Library page not found: ${libraryPageIdOrSlug}`);
+
+  log.log(`linkArtifact metadataId=${metadataId} libraryPageId=${page.id} kind=${normalizedKind}`);
+  const link = await upsertArtifactLink(
+    metadata.id,
+    page.id,
+    normalizedKind,
+    title ?? page.title,
+    source,
+  );
+  invalidateCalendarCache();
+  return link;
 }
 
 // ─── getLinkedArtifactById ───
@@ -433,6 +479,11 @@ export async function getLinkedArtifactById(linkId: number): Promise<CalendarEve
 // ─── unlinkArtifact ───
 
 export async function unlinkArtifact(linkId: number): Promise<void> {
+  const artifact = await getLinkedArtifactById(linkId);
+  if (!artifact) throw new Error(`Artifact link ${linkId} not found`);
+  if (PREPARATION_ARTIFACT_KINDS.has(artifact.artifactKind)) {
+    throw new Error("The canonical meeting preparation page cannot be unlinked; update that page instead");
+  }
   log.log(`unlinkArtifact linkId=${linkId}`);
   await db.delete(calendarEventArtifacts).where(combineWithSensitiveWritable(calendarArtifactOwnerColumns, eq(calendarEventArtifacts.id, linkId)));
   invalidateCalendarCache();
@@ -482,11 +533,23 @@ export async function getVisibleLibraryPage(idOrSlug: string): Promise<MeetingAg
 }
 
 export async function resolveMeetingAgendaPage(metadata: CalendarEventMetadata): Promise<MeetingAgendaPage | null> {
-  const linkedAgenda = (await getLinkedArtifacts(metadata.id)).find(
-    artifact => artifact.artifactKind === "agenda" && artifact.artifactType === "library_page",
+  const currentMetadata = await getWritableMetadataById(metadata.id);
+  if (!currentMetadata) return null;
+  if (currentMetadata.agendaLibraryPageId) {
+    return getVisibleLibraryPage(currentMetadata.agendaLibraryPageId);
+  }
+  const linkedPrep = (await getLinkedArtifacts(currentMetadata.id)).find(
+    artifact => PREPARATION_ARTIFACT_KINDS.has(artifact.artifactKind) && artifact.artifactType === "library_page",
   );
-  if (!linkedAgenda) return null;
-  return getVisibleLibraryPage(linkedAgenda.libraryPageId);
+  if (!linkedPrep) return null;
+  const page = await getVisibleLibraryPage(linkedPrep.libraryPageId);
+  if (!page) return null;
+  const claimed = await setMeetingAgendaPage(currentMetadata, page.id, undefined, currentMetadata.googleEventId);
+  return claimed;
+}
+
+function canonicalPrepConflict(pageId: string): Error {
+  return new Error(`This meeting already has canonical preparation page @page:${pageId}. Update that page instead.`);
 }
 
 export async function setMeetingAgendaPage(
@@ -495,43 +558,105 @@ export async function setMeetingAgendaPage(
   legacyAgenda?: string,
   meetingTitle = "Meeting",
 ): Promise<MeetingAgendaPage> {
-  const existingAgendaPage = await resolveMeetingAgendaPage(metadata);
-  if (libraryPageIdOrSlug) {
-    const selectedPage = await getVisibleLibraryPage(libraryPageIdOrSlug);
-    if (!selectedPage) throw new Error(`Library page not found: ${libraryPageIdOrSlug}`);
-    await linkArtifact(metadata.id, selectedPage.id, "agenda", selectedPage.title, "meeting_agenda");
-    await db.delete(calendarEventArtifacts).where(combineWithSensitiveWritable(calendarArtifactOwnerColumns, and(
-      eq(calendarEventArtifacts.metadataId, metadata.id),
-      eq(calendarEventArtifacts.artifactKind, "agenda"),
-      ne(calendarEventArtifacts.libraryPageId, selectedPage.id),
-    )));
-    invalidateCalendarCache();
-    return selectedPage;
+  const requestedPage = libraryPageIdOrSlug
+    ? await getVisibleLibraryPage(libraryPageIdOrSlug)
+    : null;
+  if (libraryPageIdOrSlug && !requestedPage) {
+    throw new Error(`Library page not found: ${libraryPageIdOrSlug}`);
   }
-  if (existingAgendaPage) return existingAgendaPage;
 
-  const { createFiledLibraryPage } = await import("./library-save");
-  const created = await createFiledLibraryPage({
-    title: `${meetingTitle.trim() || "Meeting"} Agenda`,
-    markdown: legacyAgenda?.trim() || "",
-    purpose: "meeting-notes",
-    pageContext: "/calendar",
-    contentSummary: `Private agenda for ${meetingTitle.trim() || "meeting"}`,
-    tags: ["meeting-agenda"],
-  });
-  await linkArtifact(metadata.id, created.id, "agenda", created.title, "meeting_agenda");
-  await db.delete(calendarEventArtifacts).where(combineWithSensitiveWritable(calendarArtifactOwnerColumns, and(
-    eq(calendarEventArtifacts.metadataId, metadata.id),
-    eq(calendarEventArtifacts.artifactKind, "agenda"),
-    ne(calendarEventArtifacts.libraryPageId, created.id),
-  )));
+  const page = await db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+    await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.MEETING_PREP, String(metadata.id));
+    const currentMetadata = await getWritableMetadataById(metadata.id);
+    if (!currentMetadata) {
+      throw new Error(`Calendar event metadata not found or not writable: ${metadata.id}`);
+    }
+
+    if (currentMetadata.agendaLibraryPageId) {
+      if (legacyAgenda?.trim()) {
+        log.warn(`Ignored legacy agenda text for meeting ${currentMetadata.id}; update @page:${currentMetadata.agendaLibraryPageId} instead`);
+      }
+      if (requestedPage && requestedPage.id !== currentMetadata.agendaLibraryPageId) {
+        throw canonicalPrepConflict(currentMetadata.agendaLibraryPageId);
+      }
+      const existing = await getVisibleLibraryPage(currentMetadata.agendaLibraryPageId);
+      if (!existing) throw new Error("Canonical meeting preparation page is not visible to the current principal");
+      await db
+        .delete(calendarEventArtifacts)
+        .where(combineWithSensitiveWritable(calendarArtifactOwnerColumns, and(
+          eq(calendarEventArtifacts.metadataId, currentMetadata.id),
+          inArray(calendarEventArtifacts.artifactKind, ["agenda", "brief"]),
+          sql`${calendarEventArtifacts.libraryPageId} <> ${existing.id}`,
+        )));
+      await upsertArtifactLink(currentMetadata.id, existing.id, "agenda", existing.title, "meeting_prep");
+      return existing;
+    }
+
+    const legacyPrep = (await db
+      .select()
+      .from(calendarEventArtifacts)
+      .where(combineWithSensitiveVisible(calendarArtifactOwnerColumns, and(
+        eq(calendarEventArtifacts.metadataId, currentMetadata.id),
+        inArray(calendarEventArtifacts.artifactKind, ["agenda", "brief"]),
+      )))
+      .orderBy(sql`CASE ${calendarEventArtifacts.artifactKind} WHEN 'agenda' THEN 0 ELSE 1 END`, calendarEventArtifacts.createdAt)
+      .limit(1))[0];
+    if (legacyPrep && requestedPage && legacyPrep.libraryPageId !== requestedPage.id) {
+      throw canonicalPrepConflict(legacyPrep.libraryPageId);
+    }
+
+    let selected = requestedPage
+      ?? (legacyPrep ? await getVisibleLibraryPage(legacyPrep.libraryPageId) : null);
+    if (!selected) {
+      const deterministicPageId = `meeting-prep-${currentMetadata.id}`;
+      selected = await getVisibleLibraryPage(deterministicPageId);
+      if (!selected) {
+        const { createFiledLibraryPage } = await import("./library-save");
+        const created = await createFiledLibraryPage({
+          id: deterministicPageId,
+          title: `${meetingTitle.trim() || "Meeting"} Preparation`,
+          markdown: legacyAgenda?.trim() || "",
+          purpose: "meeting-notes",
+          pageContext: "/calendar",
+          contentSummary: `Private preparation page for ${meetingTitle.trim() || "meeting"}`,
+          tags: ["meeting-preparation"],
+        });
+        selected = {
+          id: created.id,
+          title: created.title,
+          slug: created.slug,
+          plainTextContent: created.plainTextContent,
+        };
+      }
+    }
+
+    const claimed = await db
+      .update(calendarEventMetadata)
+      .set({ agendaLibraryPageId: selected.id, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(combineWithSensitiveWritable(calendarMetadataOwnerColumns, and(
+        eq(calendarEventMetadata.id, currentMetadata.id),
+        sql`${calendarEventMetadata.agendaLibraryPageId} IS NULL`,
+      )))
+      .returning({ id: calendarEventMetadata.id });
+    if (claimed.length === 0) {
+      const raced = await getWritableMetadataById(currentMetadata.id);
+      if (!raced?.agendaLibraryPageId) throw new Error("Failed to claim the canonical meeting preparation page");
+      if (raced.agendaLibraryPageId !== selected.id) throw canonicalPrepConflict(raced.agendaLibraryPageId);
+    }
+
+    await db
+      .delete(calendarEventArtifacts)
+      .where(combineWithSensitiveWritable(calendarArtifactOwnerColumns, and(
+        eq(calendarEventArtifacts.metadataId, currentMetadata.id),
+        inArray(calendarEventArtifacts.artifactKind, ["agenda", "brief"]),
+        sql`${calendarEventArtifacts.libraryPageId} <> ${selected.id}`,
+      )));
+    await upsertArtifactLink(currentMetadata.id, selected.id, "agenda", selected.title, "meeting_prep");
+    return selected;
+  }));
+
   invalidateCalendarCache();
-  return {
-    id: created.id,
-    title: created.title,
-    slug: created.slug,
-    plainTextContent: created.plainTextContent,
-  };
+  return page;
 }
 
 /** Resolve agenda text for model context and legacy consumers. The linked

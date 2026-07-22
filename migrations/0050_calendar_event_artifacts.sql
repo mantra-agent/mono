@@ -5,10 +5,11 @@ CREATE TABLE IF NOT EXISTS calendar_event_artifacts (
   principal_account_id TEXT,
   artifact_type TEXT NOT NULL DEFAULT 'library_page',
   library_page_id TEXT NOT NULL REFERENCES library_pages(id) ON DELETE CASCADE,
-  artifact_kind TEXT NOT NULL DEFAULT 'brief',
+  artifact_kind TEXT NOT NULL,
   title TEXT,
   source TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS calendar_event_artifacts_metadata_page_unique

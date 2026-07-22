@@ -1009,8 +1009,10 @@ export const calendarEventMetadata = pgTable("calendar_event_metadata", {
   eventType: text("event_type").notNull().default("meeting"),
   capacityType: text("capacity_type"),
   notes: text("notes"),
-  /** Private agenda visible only through Mantra's user-scoped meeting metadata. */
+  /** Legacy private agenda text. The canonical preparation artifact is agendaLibraryPageId. */
   agenda: text("agenda"),
+  /** The meeting's single canonical preparation page. Agenda and legacy brief workflows share this slot. */
+  agendaLibraryPageId: text("agenda_library_page_id").references(() => libraryPages.id, { onDelete: "set null" }),
   /** Meeting-level physical audio topology policy for acoustic diarization. */
   speakerPolicy: jsonb("speaker_policy"),
   // Meeting agent auto-join materialization. Status discriminant computed at
@@ -1076,10 +1078,11 @@ export const calendarEventArtifacts = pgTable("calendar_event_artifacts", {
   vaultId: text("vault_id"),
   artifactType: text("artifact_type").notNull().default("library_page"),
   libraryPageId: text("library_page_id").notNull().references(() => libraryPages.id, { onDelete: "cascade" }),
-  artifactKind: text("artifact_kind").notNull().default("brief"),
+  artifactKind: text("artifact_kind").notNull(),
   title: text("title"),
   source: text("source"),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   unique("calendar_event_artifacts_metadata_page_unique").on(table.metadataId, table.libraryPageId),
   index("idx_calendar_event_artifacts_metadata").on(table.metadataId),
@@ -1090,6 +1093,7 @@ export const calendarEventArtifacts = pgTable("calendar_event_artifacts", {
 export const insertCalendarEventArtifactSchema = createInsertSchema(calendarEventArtifacts).omit({
   id: true,
   createdAt: true,
+  updatedAt: true,
 });
 
 export type CalendarEventArtifact = typeof calendarEventArtifacts.$inferSelect;

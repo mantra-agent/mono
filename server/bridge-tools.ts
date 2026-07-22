@@ -5425,11 +5425,13 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
   async link_artifact_meeting(args) {
     try {
-      const { linkArtifact, getMetadataByIds } = await import("./calendar-metadata");
+      const { linkArtifact, getMetadataByIds, setMeetingAgendaPage } = await import("./calendar-metadata");
       const metadataId = args.metadataId;
       const libraryPageId = args.libraryPageId || args.pageId || args.artifactId;
+      const artifactKind = String(args.artifactKind || args.kind || "").trim();
       if (!metadataId) return { result: "Missing metadataId", error: true };
       if (!libraryPageId) return { result: "Missing libraryPageId", error: true };
+      if (!artifactKind) return { result: "Missing artifactKind. Use set_metadata with agendaLibraryPageId for meeting preparation, or provide an explicit non-preparation kind such as research, follow_up, or recap.", error: true };
 
       const metaRows = await getMetadataByIds([metadataId]);
       if (!metaRows[0]) return { result: `No calendar event metadata found for id ${metadataId}`, error: true };
@@ -5444,7 +5446,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         const page = await getVisibleLibraryPage(String(libraryPageId));
         if (!page) return { result: `Library page not found: ${libraryPageId}`, error: true };
         title = title || page.title;
-        const link = await linkArtifact(metadataId, page.id, args.artifactKind || args.kind || "brief", title, args.source || "meetings_tool");
+        if (artifactKind === "agenda" || artifactKind === "brief") {
+          const canonicalPage = await setMeetingAgendaPage(metaRows[0], page.id);
+          return { result: `Canonical meeting preparation page: @page:${canonicalPage.id}. Update this page for agenda or brief preparation.` };
+        }
+        const link = await linkArtifact(metadataId, page.id, artifactKind, title, args.source || "meetings_tool");
         return { result: `Linked artifact "${title || page.id}" to calendar event metadata (linkId: ${link.id})` };
       } catch (lookupErr: any) {
         return { result: `Failed to resolve library page: ${lookupErr.message}`, error: true };

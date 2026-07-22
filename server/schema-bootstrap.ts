@@ -1530,6 +1530,18 @@ export async function runSchemaBootstrap(
         IF to_regclass('public.calendar_event_metadata') IS NOT NULL THEN
           ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS capacity_type TEXT;
           ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agenda TEXT;
+          ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agenda_library_page_id TEXT;
+          IF to_regclass('public.library_pages') IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'calendar_event_metadata_agenda_library_page_id_fkey'
+              AND conrelid = 'calendar_event_metadata'::regclass
+          ) THEN
+            ALTER TABLE calendar_event_metadata
+              ADD CONSTRAINT calendar_event_metadata_agenda_library_page_id_fkey
+              FOREIGN KEY (agenda_library_page_id)
+              REFERENCES library_pages(id)
+              ON DELETE SET NULL;
+          END IF;
           ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS speaker_policy JSONB;
         END IF;
       END $migration$;
@@ -1798,12 +1810,54 @@ export async function runSchemaBootstrap(
             principal_account_id TEXT,
             artifact_type TEXT NOT NULL DEFAULT 'library_page',
             library_page_id TEXT NOT NULL REFERENCES library_pages(id) ON DELETE CASCADE,
-            artifact_kind TEXT NOT NULL DEFAULT 'brief',
+            artifact_kind TEXT NOT NULL,
             title TEXT,
             source TEXT,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
           );
+          ALTER TABLE calendar_event_artifacts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
           CREATE UNIQUE INDEX IF NOT EXISTS calendar_event_artifacts_metadata_page_unique ON calendar_event_artifacts(metadata_id, library_page_id);
+          WITH ranked_prep AS (
+            SELECT
+              metadata_id,
+              library_page_id,
+              ROW_NUMBER() OVER (
+                PARTITION BY metadata_id
+                ORDER BY CASE artifact_kind WHEN 'agenda' THEN 0 ELSE 1 END, created_at, id
+              ) AS rank
+            FROM calendar_event_artifacts
+            WHERE artifact_kind IN ('agenda', 'brief')
+          ), chosen_prep AS (
+            SELECT metadata_id, library_page_id
+            FROM ranked_prep
+            WHERE rank = 1
+          )
+          UPDATE calendar_event_metadata metadata
+          SET agenda_library_page_id = chosen.library_page_id,
+              updated_at = CURRENT_TIMESTAMP
+          FROM chosen_prep chosen
+          WHERE metadata.id = chosen.metadata_id
+            AND metadata.agenda_library_page_id IS NULL;
+
+          UPDATE calendar_event_artifacts artifact
+          SET artifact_kind = 'agenda',
+              updated_at = CURRENT_TIMESTAMP
+          FROM calendar_event_metadata metadata
+          WHERE artifact.metadata_id = metadata.id
+            AND artifact.library_page_id = metadata.agenda_library_page_id
+            AND artifact.artifact_kind IN ('agenda', 'brief');
+
+          DELETE FROM calendar_event_artifacts artifact
+          USING calendar_event_metadata metadata
+          WHERE artifact.metadata_id = metadata.id
+            AND artifact.artifact_kind IN ('agenda', 'brief')
+            AND artifact.library_page_id <> metadata.agenda_library_page_id;
+
+          CREATE UNIQUE INDEX IF NOT EXISTS calendar_event_artifacts_one_prep_per_meeting
+            ON calendar_event_artifacts(metadata_id)
+            WHERE artifact_kind IN ('agenda', 'brief');
+          ALTER TABLE calendar_event_artifacts ALTER COLUMN artifact_kind DROP DEFAULT;
           CREATE INDEX IF NOT EXISTS idx_calendar_event_artifacts_metadata ON calendar_event_artifacts(metadata_id);
           CREATE INDEX IF NOT EXISTS idx_calendar_event_artifacts_owner ON calendar_event_artifacts(owner_user_id);
           CREATE INDEX IF NOT EXISTS idx_calendar_event_artifacts_principal_account ON calendar_event_artifacts(principal_account_id);
@@ -3086,6 +3140,8 @@ export async function runSchemaBootstrap(
       migrateSkillProcessToToolBased,
       deprecateRetiredBuiltinSkills,
       migrateSkillProcessUpdates,
+      migrateAutonomyCanonicalMeetingPrep,
+      migrateDailyBriefCanonicalMeetingPrep,
       migrateLegacySkillPersonaPreferences,
       deleteZombieSkills,
     } = await import("./skill-seed");
@@ -3097,6 +3153,8 @@ export async function runSchemaBootstrap(
     await migrateSkillProcessToToolBased();
     await deprecateRetiredBuiltinSkills();
     await migrateSkillProcessUpdates();
+    await migrateAutonomyCanonicalMeetingPrep();
+    await migrateDailyBriefCanonicalMeetingPrep();
     await deleteZombieSkills();
     await verifyRequiredSkills();
   } catch (err: any) {
