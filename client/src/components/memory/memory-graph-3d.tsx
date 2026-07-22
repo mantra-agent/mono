@@ -200,7 +200,7 @@ function buildSceneGraph(nodes: MemoryGraph3DNode[], links: MemoryGraph3DLink[])
       vx: 0,
       vy: 0,
       vz: 0,
-      radius: 1 + Math.pow(degreeRatio, 0.6) * 39,
+      radius: 2 + Math.pow(degreeRatio, 0.6) * 38,
     };
   });
   const nodeIndex = new Map(sceneNodes.map((node, index) => [node.id, index]));
@@ -791,7 +791,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       .iterations(1);
     const simulation: Simulation<SceneNode> = forceSimulation(sceneNodes, 3)
       .force("charge", forceManyBody<SceneNode>()
-        .strength((node) => -(30 + Math.sqrt(node.degree) * 2))
+        .strength((node) => -(60 + Math.sqrt(node.degree) * 4))
         .theta(0.76)
         .distanceMin(2)
         .distanceMax(520))
