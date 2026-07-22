@@ -7,7 +7,8 @@ import { createLogger } from "../log";
 const log = createLogger("AdoptRayPersonalLibraryIndex");
 
 const RAY_OWNER_USER_ID = "f6de5710-5f8a-4e91-afa2-c673a997ce2d";
-const RAY_ACCOUNT_ID = "1d52cbcd-d922-4afd-b5e8-0eeeb5babd47";
+const RAY_APPROVED_INDEX_ACCOUNT_ID = "1d52cbc6-d922-4afd-b5e8-0eeeb5babd47";
+const RAY_PERSONAL_VAULT_ACCOUNT_ID = "1d52cbcd-d922-4afd-b5e8-0eeeb5babd47";
 const RAY_PERSONAL_VAULT_ID = "f26432c0-7d60-4b50-9541-e67eab2d5542";
 const APPROVED_INDEX_PAGE_ID = "c9c75e5d-b096-49d4-ab9f-35890d1ec95d";
 const PERSONAL_INDEX_PAGE_ID = "e8a1cbe7-66d4-4024-910d-d895a45e6a53";
@@ -35,7 +36,7 @@ export async function adoptRayPersonalLibraryIndex(): Promise<void> {
       and(
         eq(libraryPages.id, APPROVED_INDEX_PAGE_ID),
         eq(libraryPages.ownerUserId, RAY_OWNER_USER_ID),
-        eq(libraryPages.accountId, RAY_ACCOUNT_ID),
+        eq(libraryPages.accountId, RAY_APPROVED_INDEX_ACCOUNT_ID),
         eq(libraryPages.scope, "user"),
         eq(libraryPages.structuralRole, "meta"),
       ),
@@ -64,7 +65,7 @@ export async function adoptRayPersonalLibraryIndex(): Promise<void> {
       and(
         eq(libraryPages.id, PERSONAL_INDEX_PAGE_ID),
         eq(libraryPages.ownerUserId, RAY_OWNER_USER_ID),
-        eq(libraryPages.accountId, RAY_ACCOUNT_ID),
+        eq(libraryPages.accountId, RAY_PERSONAL_VAULT_ACCOUNT_ID),
         eq(libraryPages.vaultId, RAY_PERSONAL_VAULT_ID),
         eq(libraryPages.scope, "user"),
         eq(libraryPages.structuralRole, "meta"),
