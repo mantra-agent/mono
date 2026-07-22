@@ -40,14 +40,12 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
-  ShieldCheck,
   Sparkles,
   CheckCircle2,
   Eye,
   PenLine,
   FileText,
   Loader2,
-  History,
   Calendar,
   MoreHorizontal,
 } from "lucide-react";
@@ -1023,17 +1021,9 @@ function TriageTab({ onHover, searchTokens }: { onHover: (ids: number[] | null) 
       )}
 
       {grouped.length === 0 ? (
-        searchTokens.length > 0 ? (
-          <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="triage-empty">
-            No triage emails match your search.
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-12 px-4 text-center flex-1" data-testid="triage-empty">
-            <ShieldCheck className="h-12 w-12 text-muted-foreground/30 mb-4" />
-            <h3 className="text-lg font-medium mb-2">All caught up</h3>
-            <p className="text-sm text-muted-foreground">Nothing waiting on enrichment.</p>
-          </div>
-        )
+        <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="triage-empty">
+          {searchTokens.length > 0 ? "No triage emails match your search." : "No emails awaiting enrichment."}
+        </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
           <div data-testid="triage-message-list">
@@ -1253,7 +1243,11 @@ function CommsHealthBanner() {
   );
 }
 
-function EmailPipelineStatusBadge() {
+interface EmailPipelineStatusBadgeProps {
+  refreshing: boolean;
+}
+
+function EmailPipelineStatusBadge({ refreshing }: EmailPipelineStatusBadgeProps) {
   const { data } = useQuery<EmailPipelineStatus>({
     queryKey: ["/api/email/pipeline-status"],
     queryFn: async () => {
@@ -1263,6 +1257,19 @@ function EmailPipelineStatusBadge() {
     },
     refetchInterval: 60000,
   });
+
+  if (refreshing) {
+    return (
+      <div
+        className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs text-active"
+        aria-live="polite"
+        data-testid="badge-email-pipeline-status"
+      >
+        <RefreshCw className="h-3 w-3 animate-spin" />
+        <span>Refreshing…</span>
+      </div>
+    );
+  }
 
   if (!data) return null;
 
@@ -1504,14 +1511,9 @@ function ReviewTab({
   }
 
   if (threads.length === 0) {
-    if (searchTokens.length > 0) {
-      return <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="review-empty">No review emails match your search.</div>;
-    }
     return (
-      <div className="flex flex-col items-center justify-center py-12 px-4 text-center" data-testid="review-empty">
-        <Sparkles className="h-12 w-12 text-muted-foreground/30 mb-4" />
-        <h3 className="text-lg font-medium mb-2">Nothing needs attention</h3>
-        <p className="text-sm text-muted-foreground">No actionable triaged emails right now.</p>
+      <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="review-empty">
+        {searchTokens.length > 0 ? "No review emails match your search." : "No emails need review."}
       </div>
     );
   }
@@ -1635,17 +1637,9 @@ function HistoryTab({ searchTokens }: { searchTokens: string[] }) {
       ) : historyQuery.isError ? (
         <CommsErrorState title="History failed to load" message="The History tab could not fetch completed Comms actions." />
       ) : filteredHistory.length === 0 ? (
-        searchTokens.length > 0 ? (
-          <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="history-empty">
-            No history emails match your search.
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-12 px-4 text-center flex-1" data-testid="history-empty">
-            <History className="h-12 w-12 text-muted-foreground/30 mb-4" />
-            <h3 className="text-lg font-medium mb-2">No history</h3>
-            <p className="text-sm text-muted-foreground">No email actions found for this period.</p>
-          </div>
-        )
+        <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="history-empty">
+          {searchTokens.length > 0 ? "No history emails match your search." : "No email history for this period."}
+        </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
           <div data-testid="history-list">
@@ -1749,7 +1743,7 @@ export default function CommsPage() {
     setPullDistance(0);
   }, [pullDistance, refreshEmail]);
 
-  const refreshLabel = refreshMutation.isPending ? "Refreshing…" : pullDistance >= PULL_THRESHOLD ? "Release to refresh" : "Pull to refresh";
+  const pullRefreshLabel = pullDistance >= PULL_THRESHOLD ? "Release to refresh" : "Pull to refresh";
 
   const handleHover = useCallback((ids: number[] | null) => {
     hoveredIdsRef.current = ids;
@@ -1773,7 +1767,10 @@ export default function CommsPage() {
     refreshEmail();
   }, [refreshEmail]);
 
-  const headerStatus = useMemo(() => <EmailPipelineStatusBadge />, []);
+  const headerStatus = useMemo(
+    () => <EmailPipelineStatusBadge refreshing={refreshMutation.isPending} />,
+    [refreshMutation.isPending],
+  );
 
   usePageHeader({
     title: "Email",
@@ -1791,13 +1788,12 @@ export default function CommsPage() {
       onTouchCancel={handleTouchEnd}
     >
       <div
-        className="flex items-center justify-center gap-2 overflow-hidden text-xs text-muted-foreground transition-[height,opacity] duration-200"
-        style={{ height: Math.max(pullDistance, refreshMutation.isPending ? 32 : 0), opacity: pullDistance > 8 || refreshMutation.isPending ? 1 : 0 }}
-        aria-live="polite"
+        className="flex items-center justify-center gap-2 overflow-hidden text-xs text-muted-foreground"
+        style={{ height: pullDistance, opacity: pullDistance > 8 ? 1 : 0 }}
         data-testid="email-pull-refresh-indicator"
       >
-        <RefreshCw className={`h-3.5 w-3.5 ${refreshMutation.isPending ? "animate-spin" : ""}`} />
-        {refreshLabel}
+        <RefreshCw className="h-3.5 w-3.5" />
+        {pullRefreshLabel}
       </div>
       <CommsHealthBanner />
       <TriageErrorBanner />

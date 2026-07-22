@@ -503,16 +503,9 @@ export default function DraftsView({ searchTokens = [] }: DraftsViewProps) {
   }
 
   if (filteredDrafts.length === 0) {
-    if (searchTokens.length > 0) {
-      return <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="drafts-view">No drafts match your search.</div>;
-    }
     return (
-      <div className="h-full flex flex-col items-center justify-center py-12 px-4 text-center" data-testid="drafts-view">
-        <FileText className="h-12 w-12 text-muted-foreground/30 mb-4" />
-        <h3 className="text-lg font-medium mb-2">No drafts</h3>
-        <p className="text-sm text-muted-foreground max-w-sm">
-          When Agent generates email drafts for you, they will appear here for review before sending.
-        </p>
+      <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="drafts-view">
+        {searchTokens.length > 0 ? "No drafts match your search." : "No drafts yet."}
       </div>
     );
   }
