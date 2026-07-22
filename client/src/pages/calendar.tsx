@@ -34,7 +34,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
 import { fromCivilDate } from "@shared/civil-date";
-import { createMeetingArtifactChild, createMeetingPersonChild, formatMeetingInviteeName } from "@shared/meeting-feed-items";
+import { createMeetingArtifactChild, createMeetingPersonChild, dedupeMeetingInvitees, formatMeetingInviteeName } from "@shared/meeting-feed-items";
 import type { SimpleSourceRef } from "@shared/models/simple";
 import { SimpleTreeRow } from "@/components/home/home-tree-row";
 import { sourceRefToReferenceRef } from "@shared/simple-references";
@@ -894,8 +894,15 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
     href: `/schedule/${encodeURIComponent(event.id)}?calendarId=${encodeURIComponent(event.calendarId)}&accountId=${encodeURIComponent(event.accountId)}`,
   };
   const meetingReference = sourceRefToReferenceRef(parentSourceRef);
+  const displayedAttendees = dedupeMeetingInvitees(
+    (event.attendees ?? []).filter(attendee => !attendee.self && attendee.email),
+    attendee => {
+      const email = attendee.email.trim().toLowerCase();
+      return { personId: emailMap[email]?.id, email };
+    },
+  );
   const contextChildren = [
-    ...(event.attendees ?? []).filter(attendee => !attendee.self && attendee.email).map(attendee => {
+    ...displayedAttendees.map(attendee => {
       const email = attendee.email.trim().toLowerCase();
       const matched = emailMap[email];
       return createMeetingPersonChild({
@@ -974,7 +981,6 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
           hasDetails ? setExpanded(value => !value) : onEventClick(event);
         }}
       >
-        <EventTypeIcon event={event} eventType={data?.metadata?.eventType} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0" onClick={clickEvent => clickEvent.stopPropagation()}>
           {meetingReference ? (
             <ReferenceRenderer refValue={meetingReference} surface="simple-row" />

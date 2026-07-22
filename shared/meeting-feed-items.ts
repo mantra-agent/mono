@@ -51,6 +51,23 @@ export function formatMeetingInviteeName(displayName: string | null | undefined,
     .join(" ");
 }
 
+export function dedupeMeetingInvitees<T>(
+  invitees: T[],
+  identity: (invitee: T) => { personId?: string | null; email: string },
+): T[] {
+  const seenPersonIds = new Set<string>();
+  const seenEmails = new Set<string>();
+  return invitees.filter(invitee => {
+    const resolved = identity(invitee);
+    const personId = resolved.personId?.trim() || null;
+    const email = resolved.email.trim().toLowerCase();
+    if ((personId && seenPersonIds.has(personId)) || (email && seenEmails.has(email))) return false;
+    if (personId) seenPersonIds.add(personId);
+    if (email) seenEmails.add(email);
+    return true;
+  });
+}
+
 export function createMeetingPersonChild(input: MeetingPersonChildInput): SimpleFeedItem {
   const personSourceRef: SimpleSourceRef | null = input.personId
     ? { type: "person", id: input.personId, label: input.name, href: `/people/${input.personId}` }

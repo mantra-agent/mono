@@ -693,24 +693,34 @@ export async function linkMeetingPerson(
   person: { id: string; name: string },
   attendeeEmail: string,
 ): Promise<CalendarEventPerson> {
-  const rows = await db
-    .insert(calendarEventPeople)
-    .values({
-      metadataId,
-      personId: person.id,
-      personName: person.name,
-      attendeeEmail: attendeeEmail.toLowerCase(),
-      createdAt: sql`CURRENT_TIMESTAMP`,
-      ...sensitiveOwnershipValues(),
-    })
-    .onConflictDoUpdate({
-      target: [calendarEventPeople.metadataId, calendarEventPeople.personId],
-      set: {
-        personName: person.name,
-        attendeeEmail: attendeeEmail.toLowerCase(),
-      },
-    })
-    .returning();
+  const normalizedEmail = attendeeEmail.toLowerCase();
+  const identityPredicate = and(
+    eq(calendarEventPeople.metadataId, metadataId),
+    eq(calendarEventPeople.personId, person.id),
+  );
+  const existing = await db
+    .select()
+    .from(calendarEventPeople)
+    .where(combineWithSensitiveWritable(calendarPeopleOwnerColumns, identityPredicate))
+    .limit(1);
+
+  const rows = existing[0]
+    ? await db
+        .update(calendarEventPeople)
+        .set({ personName: person.name, attendeeEmail: normalizedEmail })
+        .where(combineWithSensitiveWritable(calendarPeopleOwnerColumns, eq(calendarEventPeople.id, existing[0].id)))
+        .returning()
+    : await db
+        .insert(calendarEventPeople)
+        .values({
+          metadataId,
+          personId: person.id,
+          personName: person.name,
+          attendeeEmail: normalizedEmail,
+          createdAt: sql`CURRENT_TIMESTAMP`,
+          ...sensitiveOwnershipValues(),
+        })
+        .returning();
   invalidateCalendarCache();
   return rows[0];
 }

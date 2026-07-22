@@ -5694,6 +5694,20 @@ export async function runSchemaBootstrap(
     log(`media backfill skipped: ${err.message}`, "warn");
   }
 
+  await heal("calendar event people uniqueness", async () => {
+    await pool.query(`
+      DELETE FROM calendar_event_people duplicate
+      USING calendar_event_people kept
+      WHERE duplicate.metadata_id = kept.metadata_id
+        AND duplicate.person_id = kept.person_id
+        AND duplicate.id > kept.id
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS calendar_event_people_metadata_person_unique
+      ON calendar_event_people(metadata_id, person_id)
+    `);
+  });
+
   await heal("calendar meeting join mode", async () => {
     await pool.query(`ALTER TABLE calendar_event_metadata ADD COLUMN IF NOT EXISTS agent_join_mode TEXT`);
     await pool.query(`
