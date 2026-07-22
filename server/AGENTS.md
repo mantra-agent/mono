@@ -66,7 +66,7 @@ Access control is server-owned and permission-based. Future code must plug into 
 
 ### Background Document Repair
 
-Background chat-document repair must never write as a system principal or infer ownership from the caller. Enumerate candidates read-only, recover the persisted owner/account/vault tuple, and re-enter that user principal. Inside the same bounded transaction, lock and validate the current user/account authorization before locking and mutating the exact document row. Normal writes and ACL changes serialize behind repair. Malformed rows fail per-document without blocking boot.
+Background chat-document repair must never write as a system principal or infer ownership from the caller. The named `chat-recovery` job may enumerate only bounded streaming ordinary-user text-chat identifiers, owner/account/vault identity, and active runtime owner metadata. It must re-enter that user principal before reading content. Active text work persists `<runtime-instance>@<boot-id>` ownership on both the session and streaming assistant draft; startup reconciles only legacy ownerless work or a prior boot on the same runtime instance, never another live instance. Inside the same bounded transaction, lock and validate the current user/account authorization before locking and mutating the exact document row. Preserve the last assistant checkpoint, persist one replay-safe interruption notice, and settle the session once. Normal writes and ACL changes serialize behind repair. Malformed rows fail per-document without blocking boot.
 
 ### Skills and Prompt Modules
 

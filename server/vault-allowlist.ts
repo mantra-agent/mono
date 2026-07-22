@@ -24,6 +24,11 @@ export const VAULT_CROSS_ACCESS_ALLOWLIST = new Set<string>([
   "ensure-vaults",
   "legacy-ownership-repair",
 
+  // Chat restart recovery performs one bounded, content-free discovery of
+  // streaming text documents, then immediately restores each persisted owner
+  // before reading or mutating the session document.
+  "chat-recovery",
+
   // Memory maintenance — sleep cycle processes all memories for decay,
   // reinforcement, NREM merge across all vaults for the owning user
   "sleep-cycle",

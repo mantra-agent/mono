@@ -17,7 +17,7 @@ import { markSessionDeleted } from "./chat-journal";
 import { eventBus } from "./event-bus";
 import { TTLCache } from "./utils/ttl-cache";
 import { getCurrentPrincipalOrSystem, runWithPrincipal } from "./principal-context";
-import { createUserPrincipalFromUser, resolveUserIdentityFoundation } from "./principal";
+import { createNamedSystemPrincipal, createUserPrincipalFromUser, resolveUserIdentityFoundation } from "./principal";
 import { storage } from "./storage";
 import { normalizeSessionModelTierOverride } from "./session-model-tier-override";
 import { hasUnansweredQuestion } from "./question-response";
@@ -40,6 +40,27 @@ const memoryMirrorLog = createLogger("SessionMemoryMirror");
 
 const SESSION_INDEX_TTL_MS = 30_000;
 const _sessionsCache = new TTLCache<any>("Sessions", SESSION_INDEX_TTL_MS);
+const CHAT_RECOVERY_JOB = "chat-recovery";
+const CHAT_RECOVERY_NOTICE_PREFIX = "system:chat-interrupted-by-restart:v1";
+
+function getRuntimeInstanceId(): string {
+  return process.env.RAILWAY_REPLICA_ID || process.env.HOSTNAME || "local";
+}
+
+function getRuntimeOwner(): string {
+  return `${getRuntimeInstanceId()}@${BOOT_ID}`;
+}
+
+function isOwnedByCurrentRuntime(owner: string | null | undefined): boolean {
+  return owner === getRuntimeOwner();
+}
+
+function isOwnedByPriorBootOnThisInstance(owner: string | null | undefined): boolean {
+  return Boolean(
+    owner?.startsWith(`${getRuntimeInstanceId()}@`) &&
+      !isOwnedByCurrentRuntime(owner),
+  );
+}
 
 function principalCacheKey(): string {
   const principal = getCurrentPrincipalOrSystem();
@@ -277,6 +298,7 @@ export interface FileMessage {
   pageContext?: PageContext;
   assistantState?: AssistantMessageState;
   assistantRunId?: string;
+  assistantRuntimeOwner?: string;
   assistantInterruptedAt?: string;
   voice?: VoiceMessageMeta;
   /** Persona that produced this assistant turn. */
@@ -326,6 +348,8 @@ interface SessionData {
   spawnerSkillRun?: string;
   endReason?: string;
   errorSeverity?: "warning" | "error" | null;
+  /** Runtime instance and boot that owns the currently active text-chat turn. */
+  activeRuntimeOwner?: string;
   pageContext?: PageContext;
   gitWriteOverride?: boolean;
   contextFlags?: Record<string, boolean>;
@@ -611,6 +635,7 @@ function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
     spawnerSkillRun: data.spawnerSkillRun || undefined,
     endReason: data.endReason || undefined,
     errorSeverity: data.errorSeverity || undefined,
+    activeRuntimeOwner: data.activeRuntimeOwner || undefined,
     pageContext: data.pageContext || undefined,
     contextFlags: data.contextFlags || undefined,
     triggerType: data.triggerType,
@@ -1535,6 +1560,10 @@ export const chatFileStorage: IChatFileStorage = {
       data.status = data.type === "meeting" && (data.meeting?.botStatus === "live" || data.meeting?.botStatus === "leaving")
         ? "streaming"
         : "saved";
+      if (data.status !== "streaming" || data.type !== "text") {
+        data.activeRuntimeOwner = undefined;
+      }
+      if (data.status === "saved") data.runStatus = "resolved";
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
       invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
@@ -1626,6 +1655,13 @@ export const chatFileStorage: IChatFileStorage = {
       }
       if (status === "streaming") {
         data.runStatus = "active";
+        if ((data.type || "text") === "text") {
+          data.activeRuntimeOwner = getRuntimeOwner();
+        }
+      } else {
+        data.activeRuntimeOwner = undefined;
+        if (status === "failed") data.runStatus = "failed";
+        if (status === "saved") data.runStatus = "resolved";
       }
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
@@ -2452,6 +2488,7 @@ export const chatFileStorage: IChatFileStorage = {
       if (existing) {
         existing.model = opts?.model || existing.model || null;
         existing.assistantRunId = opts?.runId || existing.assistantRunId;
+        existing.assistantRuntimeOwner = getRuntimeOwner();
         if (!existing.persona && persona) existing.persona = persona;
         if (opts?.systemSteps)
           existing.systemSteps =
@@ -2484,6 +2521,7 @@ export const chatFileStorage: IChatFileStorage = {
             : null,
         assistantState: "streaming",
         assistantRunId: opts?.runId,
+        assistantRuntimeOwner: getRuntimeOwner(),
         ...(persona ? { persona } : {}),
       };
       data.messages.push(msg);
@@ -2563,8 +2601,12 @@ export const chatFileStorage: IChatFileStorage = {
             ? alignedSegmentChronology
             : null;
       }
-      if (updates.assistantState !== undefined)
+      if (updates.assistantState !== undefined) {
         msg.assistantState = updates.assistantState;
+        if (updates.assistantState !== "streaming") {
+          msg.assistantRuntimeOwner = undefined;
+        }
+      }
       if (updates.assistantInterruptedAt !== undefined)
         msg.assistantInterruptedAt = updates.assistantInterruptedAt;
       if (
@@ -2596,148 +2638,219 @@ export const chatFileStorage: IChatFileStorage = {
   },
 
   async reconcileInterruptedAssistantDrafts(sessionId?: string) {
-    const allDocs = await documentStorage.getDocumentsMetadataOnly("chat");
-    const interruptedCandidates = allDocs.filter(
-      (doc) => doc.metadata.status === "streaming",
+    const recoveryPrincipal = createNamedSystemPrincipal(CHAT_RECOVERY_JOB);
+    const candidates = await runWithPrincipal(recoveryPrincipal, () =>
+      documentStorage.discoverInterruptedChatRecoveryCandidates(100),
     );
-    const docs = sessionId
-      ? interruptedCandidates.filter((doc) => doc.docId === sessionId)
-      : interruptedCandidates;
+    const docs = candidates.filter((doc) => {
+      if (sessionId && doc.docId !== sessionId) return false;
+      return (
+        doc.runtimeOwner === null ||
+        isOwnedByPriorBootOnThisInstance(doc.runtimeOwner)
+      );
+    });
     let sessionsScanned = 0;
     let draftsReconciled = 0;
     let failures = 0;
     for (const doc of docs) {
       const id = doc.docId;
       try {
-        const changed = await runWithChatDocumentOwner(
+        const result = await runWithChatDocumentOwner(
           id,
           {
-            ownerUserId: doc.ownerUserId ?? "",
-            accountId: doc.accountId ?? "",
+            ownerUserId: doc.ownerUserId,
+            accountId: doc.accountId,
             vaultId: doc.vaultId,
           },
           () => withConvLock(id, async () => {
             const principal = getCurrentPrincipalOrSystem();
             const tx = db;
-              await tx.execute(sql`SET LOCAL lock_timeout = '5s'`);
-              await tx.execute(sql`SET LOCAL statement_timeout = '15s'`);
+            await tx.execute(sql`SET LOCAL lock_timeout = '5s'`);
+            await tx.execute(sql`SET LOCAL statement_timeout = '15s'`);
 
-              const [lockedUser] = await tx
-                .select({
-                  id: users.id,
-                  activeVaultId: users.activeVaultId,
-                  visibleVaultIds: users.visibleVaultIds,
-                })
-                .from(users)
-                .where(eq(users.id, doc.ownerUserId!))
-                .limit(1)
-                .for("share");
-              const [lockedAccount] = await tx
-                .select({ id: accounts.id })
-                .from(accounts)
-                .where(
+            const [lockedUser] = await tx
+              .select({
+                id: users.id,
+                activeVaultId: users.activeVaultId,
+                visibleVaultIds: users.visibleVaultIds,
+              })
+              .from(users)
+              .where(eq(users.id, doc.ownerUserId))
+              .limit(1)
+              .for("share");
+            const [lockedAccount] = await tx
+              .select({ id: accounts.id })
+              .from(accounts)
+              .where(
+                and(
+                  eq(accounts.id, doc.accountId),
+                  eq(accounts.kind, "personal"),
+                  eq(accounts.ownerUserId, doc.ownerUserId),
+                ),
+              )
+              .limit(1)
+              .for("share");
+            if (!lockedUser || !lockedAccount) {
+              throw new Error(`Chat document ownership changed during repair: chat/${id}`);
+            }
+            if (
+              doc.vaultId &&
+              lockedUser.activeVaultId !== doc.vaultId &&
+              !lockedUser.visibleVaultIds.includes(doc.vaultId)
+            ) {
+              throw new Error(`Chat document vault access changed during repair: chat/${id}`);
+            }
+
+            const [locked] = await tx
+              .select({
+                id: documentStoreDocuments.id,
+                content: documentStoreDocuments.content,
+                metadata: documentStoreDocuments.metadata,
+              })
+              .from(documentStoreDocuments)
+              .where(
+                combineWithWritableScope(
+                  principal,
+                  targetChatDocumentScopeColumns,
                   and(
-                    eq(accounts.id, doc.accountId!),
-                    eq(accounts.kind, "personal"),
-                    eq(accounts.ownerUserId, doc.ownerUserId!),
+                    eq(documentStoreDocuments.documentType, "chat"),
+                    eq(documentStoreDocuments.documentId, id),
                   ),
-                )
-                .limit(1)
-                .for("share");
-              if (!lockedUser || !lockedAccount) {
-                throw new Error(`Chat document ownership changed during repair: chat/${id}`);
-              }
+                ),
+              )
+              .limit(1)
+              .for("update");
+            if (!locked) return { changed: false, interruptedDrafts: 0 };
+
+            let data: SessionData;
+            try {
+              data = JSON.parse(locked.content) as SessionData;
+            } catch (error) {
+              throw new Error(
+                `Chat document content is invalid JSON: chat/${id}: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
+            sessionsScanned++;
+            if (
+              (data.type || "text") !== "text" ||
+              (data.sessionType || "user") !== "user" ||
+              data.status !== "streaming"
+            ) {
+              return { changed: false, interruptedDrafts: 0 };
+            }
+            const persistedOwner =
+              data.activeRuntimeOwner ||
+              (locked.metadata as Record<string, unknown> | null)?.activeRuntimeOwner;
+            if (
+              typeof persistedOwner === "string" &&
+              !isOwnedByPriorBootOnThisInstance(persistedOwner)
+            ) {
+              return { changed: false, interruptedDrafts: 0 };
+            }
+
+            const now = new Date().toISOString();
+            let interruptedDrafts = 0;
+            for (const msg of data.messages) {
+              if (msg.role !== "assistant" || msg.assistantState !== "streaming") continue;
               if (
-                doc.vaultId &&
-                lockedUser.activeVaultId !== doc.vaultId &&
-                !lockedUser.visibleVaultIds.includes(doc.vaultId)
+                msg.assistantRuntimeOwner &&
+                !isOwnedByPriorBootOnThisInstance(msg.assistantRuntimeOwner)
               ) {
-                throw new Error(`Chat document vault access changed during repair: chat/${id}`);
+                continue;
               }
+              msg.assistantState = "interrupted";
+              msg.assistantRuntimeOwner = undefined;
+              msg.assistantInterruptedAt = now;
+              msg.isError = true;
+              interruptedDrafts++;
+            }
 
-              const [locked] = await tx
-                .select({
-                  id: documentStoreDocuments.id,
-                  content: documentStoreDocuments.content,
-                })
-                .from(documentStoreDocuments)
-                .where(
-                  combineWithWritableScope(
-                    principal,
-                    targetChatDocumentScopeColumns,
-                    and(
-                      eq(documentStoreDocuments.documentType, "chat"),
-                      eq(documentStoreDocuments.documentId, id),
-                    ),
-                  ),
-                )
-                .limit(1)
-                .for("update");
-              if (!locked) return false;
+            const interruptedRunIds = data.messages
+              .filter(
+                (msg) =>
+                  msg.role === "assistant" &&
+                  msg.assistantState === "interrupted" &&
+                  msg.assistantInterruptedAt === now,
+              )
+              .map((msg) => msg.assistantRunId)
+              .filter((runId): runId is string => Boolean(runId));
+            const noticeIdentity =
+              interruptedRunIds[interruptedRunIds.length - 1] ||
+              doc.runtimeOwner ||
+              "legacy";
+            const noticeKey = `${CHAT_RECOVERY_NOTICE_PREFIX}:${noticeIdentity}`;
+            const noticeExists = data.messages.some(
+              (msg) => msg.artifactKey === noticeKey,
+            );
+            if (!noticeExists) {
+              const notice = {
+                severity: "warning",
+                errorType: "response_interrupted",
+                description:
+                  "The server restarted while this response was in progress. Any completed work above was preserved.",
+                actionHint:
+                  "Send another message and I'll continue from the last completed step.",
+                terminationReason: "process_restart",
+              };
+              data.messages.push({
+                id: generateId(),
+                sessionId: id,
+                role: "system_notice",
+                content: JSON.stringify(notice),
+                thinking: null,
+                toolCalls: null,
+                systemSteps: null,
+                model: null,
+                createdAt: now,
+                updatedAt: now,
+                artifactKey: noticeKey,
+              });
+            }
 
-              let data: SessionData;
-              try {
-                data = JSON.parse(locked.content) as SessionData;
-              } catch (error) {
-                throw new Error(
-                  `Chat document content is invalid JSON: chat/${id}: ${error instanceof Error ? error.message : String(error)}`,
-                );
-              }
-              sessionsScanned++;
-              let touched = false;
-              let interruptedDrafts = 0;
-              const now = new Date().toISOString();
-              for (const msg of data.messages) {
-                if (msg.role !== "assistant" || msg.assistantState !== "streaming") continue;
-                msg.assistantState = "interrupted";
-                msg.assistantInterruptedAt = now;
-                msg.isError = true;
-                if (!msg.content || msg.content.trim().length === 0) {
-                  msg.content = "Response interrupted before any assistant text was durably checkpointed.";
-                }
-                touched = true;
-                interruptedDrafts++;
-              }
-              const previousStatus = data.status;
-              if (data.status === "streaming") {
-                data.status = "failed";
-                touched = true;
-              }
-              if (!touched) return false;
-
-              data.errorSeverity = data.errorSeverity || "warning";
-              data.updatedAt = now;
-              const updated = await tx
-                .update(documentStoreDocuments)
-                .set({
-                  title: data.title,
-                  content: JSON.stringify(data),
-                  metadata: buildConvDocumentMetadata(data),
-                  updatedByUserId: principal.userId ?? undefined,
-                  updatedAt: new Date(now),
-                  sourceContentHash: null,
-                  sourceMetadataHash: null,
-                  sourceIdentityHash: null,
-                })
-                .where(
-                  combineWithWritableScope(
-                    principal,
-                    targetChatDocumentScopeColumns,
-                    eq(documentStoreDocuments.id, locked.id),
-                  ),
-                )
-                .returning({ id: documentStoreDocuments.id });
-              if (updated.length !== 1) {
-                throw new Error(`Locked chat document update failed: chat/${id}`);
-              }
-              draftsReconciled += interruptedDrafts;
-              invalidateSessionsCache();
-              publishSessionStatusChanged(data, previousStatus, data.status);
-              return true;
+            const previousStatus = data.status;
+            data.status = "failed";
+            data.runStatus = "failed";
+            data.activeRuntimeOwner = undefined;
+            data.endReason = "process_restart";
+            data.errorSeverity = "warning";
+            data.updatedAt = now;
+            const updated = await tx
+              .update(documentStoreDocuments)
+              .set({
+                title: data.title,
+                content: JSON.stringify(data),
+                metadata: buildConvDocumentMetadata(data),
+                updatedByUserId: principal.userId ?? undefined,
+                updatedAt: new Date(now),
+                sourceContentHash: null,
+                sourceMetadataHash: null,
+                sourceIdentityHash: null,
+              })
+              .where(
+                combineWithWritableScope(
+                  principal,
+                  targetChatDocumentScopeColumns,
+                  eq(documentStoreDocuments.id, locked.id),
+                ),
+              )
+              .returning({ id: documentStoreDocuments.id });
+            if (updated.length !== 1) {
+              throw new Error(`Locked chat document update failed: chat/${id}`);
+            }
+            invalidateSessionsCache({
+              action: "updated",
+              sessionId: id,
+              session: convToMeta(data),
+            });
+            publishSessionStatusChanged(data, previousStatus, data.status);
+            return { changed: true, interruptedDrafts };
           }),
         );
-        if (changed) {
-          log.warn(`[ChatFileStorage] reconciled interrupted assistant draft(s) sessionId=${id}`);
+        draftsReconciled += result.interruptedDrafts;
+        if (result.changed) {
+          log.warn(
+            `[ChatFileStorage] reconciled interrupted chat sessionId=${id} assistantDrafts=${result.interruptedDrafts} priorRuntimeOwner=${doc.runtimeOwner || "legacy"}`,
+          );
         }
       } catch (error) {
         failures++;
