@@ -8,21 +8,23 @@ import {
   isHighPrepEvent, type CalendarEvent
 } from "./google-calendar";
 import { getTimezone, getDateInTimezone } from "./timezone";
-import { PeopleStorage } from "./people-storage";
+import { PeopleStorage, peopleStorage } from "./people-storage";
 import { createLogger } from "./log";
-import { db } from "./db";
+import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, runWithDatabaseTransaction } from "./db";
 import { libraryPages } from "@shared/models/info";
 import { eq } from "drizzle-orm";
 import {
   getMetadata, setMetadata, getLinkedPeople, linkArtifact, unlinkArtifact, getLinkedArtifacts,
   autoLogMeetingInteractions, EVENT_TYPES, CAPACITY_TYPES, type EventType, type CapacityType,
-  setAgentJoin, setMeetingAgendaPage,
+  setAgentJoin, setMeetingAgendaPage, linkMeetingPerson,
 } from "./calendar-metadata";
 import { extractMeetingUrl } from "./meeting/join";
 import { getMeetingJoinPolicy, shouldJoinMeeting } from "./meeting/join-policy";
 import { getBandwidthSummary } from "./calendar-bandwidth";
-import { resolveMeetingArtifactContext, resolveMeetingPeopleContext } from "./meeting-context";
+import { buildEmailPersonContextMap, resolveMeetingArtifactContext, resolveMeetingPeopleContext } from "./meeting-context";
 import { MEETING_JOIN_MODES, type MeetingJoinMode } from "@shared/schema";
+import { formatMeetingInviteeName } from "@shared/meeting-feed-items";
+import { getCurrentPrincipalOrSystem } from "./principal-context";
 
 const log = createLogger("CalendarRoutes");
 
@@ -203,6 +205,78 @@ export function registerCalendarRoutes(app: Express): void {
       res.json(event);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  const promoteAttendeeSchema = z.object({
+    accountId: z.string().min(1),
+    calendarId: z.string().min(1),
+    email: z.string().email(),
+  });
+
+  app.post("/api/calendar/events/:eventId/attendees/promote", async (req, res) => {
+    try {
+      const parsed = promoteAttendeeSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid attendee promotion" });
+      }
+      const { accountId, calendarId } = parsed.data;
+      const email = parsed.data.email.trim().toLowerCase();
+      const event = await getEvent(accountId, calendarId, req.params.eventId);
+      const attendee = event.attendees.find(candidate => !candidate.self && candidate.email.trim().toLowerCase() === email);
+      if (!attendee) {
+        return res.status(404).json({ error: "That email is not an external attendee on this event" });
+      }
+      const inviteeName = formatMeetingInviteeName(attendee.displayName, attendee.email);
+      const principal = getCurrentPrincipalOrSystem();
+      if (!principal.accountId) {
+        return res.status(401).json({ error: "Authenticated account is required" });
+      }
+
+      const person = await db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+        await acquireAdvisoryTransactionLock(
+          tx,
+          ADVISORY_LOCK_NS.CALENDAR_ATTENDEE_PROMOTION,
+          `${principal.accountId}:${email}`,
+        );
+        const existing = (await buildEmailPersonContextMap()).get(email);
+        const resolved = existing
+          ? await peopleStorage.getPerson(existing.id)
+          : await peopleStorage.createPerson({
+              name: inviteeName,
+              cabinetLevel: "community",
+              nicknames: [],
+              professionalRelations: [],
+              socialProfiles: {},
+              contactInfo: [{ type: "email", label: "Email", value: email }],
+              importantDates: [],
+              notes: [],
+              interactions: [],
+              tags: ["calendar-invitee"],
+              private: false,
+            });
+        if (!resolved) throw new Error("Unable to resolve attendee profile");
+
+        const metadata = await getMetadata(event.id, accountId, calendarId)
+          ?? await setMetadata(event.id, accountId, calendarId, "meeting", undefined, [email]);
+        await linkMeetingPerson(metadata.id, { id: resolved.id, name: resolved.name }, email);
+        return resolved;
+      }));
+
+      const context = (await buildEmailPersonContextMap()).get(email);
+      log.info(`promoted calendar attendee event=${event.id} person=${person.id}`);
+      return res.json({
+        person: {
+          id: person.id,
+          name: person.name,
+          profileSummary: context?.summary ?? null,
+          lastInteractionContext: context?.lastInteractionContext ?? null,
+        },
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.error(`POST /api/calendar/events/${req.params.eventId}/attendees/promote failed: ${message}`);
+      res.status(500).json({ error: message });
     }
   });
 

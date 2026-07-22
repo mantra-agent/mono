@@ -1,7 +1,9 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { ChevronRight, Loader2, MessageSquare, MoreHorizontal } from "lucide-react";
+import { ChevronRight, Loader2, MessageSquare, MoreHorizontal, Plus, User } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SimpleAction, SimpleFeed, SimpleFeedItem } from "@shared/models/simple";
+import { createReferenceRef, type ReferenceRef } from "@shared/references";
+import type { MeetingAttendeePromotion } from "@shared/meeting-feed-items";
 import { sourceRefToReferenceRef, sourceRefsToReferenceRefs } from "@shared/simple-references";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
@@ -10,6 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { SimpleCheckCircle } from "./home-check-circle";
 import { SimpleTextFrame } from "./simple-text-frame";
@@ -129,10 +132,20 @@ function stringPayload(item: SimpleFeedItem, key: string): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function expandedContent(item: SimpleFeedItem): string | null {
+function attendeePromotion(item: SimpleFeedItem): MeetingAttendeePromotion | null {
+  if (item.payload?.kind !== "meeting_attendee" || item.payload?.personId) return null;
+  const promotion = item.payload?.promotion;
+  if (!promotion || typeof promotion !== "object" || Array.isArray(promotion)) return null;
+  const value = promotion as Record<string, unknown>;
+  if (typeof value.eventId !== "string" || typeof value.accountId !== "string" || typeof value.calendarId !== "string") return null;
+  return { eventId: value.eventId, accountId: value.accountId, calendarId: value.calendarId };
+}
+
+function expandedContent(item: SimpleFeedItem, hasPerson: boolean): string | null {
   const kind = item.payload?.kind;
 
   if (kind === "meeting_attendee") {
+    if (!hasPerson) return null;
     const parts: string[] = [];
     const lastInteraction = stringPayload(item, "lastInteractionContext");
     const summary = stringPayload(item, "profileSummary");
@@ -166,11 +179,26 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children }: Si
   const [expanded, setExpanded] = useState(false);
   const [entryOpen, setEntryOpen] = useState(false);
   const [entryContent, setEntryContent] = useState("");
+  const [promotedReference, setPromotedReference] = useState<ReferenceRef | null>(null);
+  const [promotedSummary, setPromotedSummary] = useState<string | null>(null);
+  const [promotedInteraction, setPromotedInteraction] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const { route, setSessionForRoute, setWidgetOpen } = useFocusSession();
   const action = completeAction(item);
-  const reference = primaryReference(item);
-  const inlineExpandedContent = expandedContent(item);
+  const reference = promotedReference ?? primaryReference(item);
+  const promotion = attendeePromotion(item);
+  const attendeeHasPerson = Boolean(reference?.type === "person");
+  const expandedItem = promotedReference ? {
+    ...item,
+    payload: {
+      ...item.payload,
+      personId: promotedReference.id,
+      profileSummary: promotedSummary,
+      lastInteractionContext: promotedInteraction,
+    },
+  } : item;
+  const inlineExpandedContent = expandedContent(expandedItem, attendeeHasPerson);
   const isAgendaPage = item.payload?.kind === "meeting_artifact" && item.payload?.artifactKind === "agenda";
   const agendaPageId = isAgendaPage && typeof item.payload?.pageId === "string" ? item.payload.pageId : null;
   const agendaPageSlug = isAgendaPage && typeof item.payload?.slug === "string" ? item.payload.slug : null;
@@ -208,6 +236,55 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children }: Si
         queryClient.invalidateQueries({ queryKey: [entryUi.endpoint] });
         queryClient.invalidateQueries({ queryKey: ["/api/wellness/logs"] });
       }
+    },
+  });
+
+  const promoteMutation = useMutation({
+    mutationFn: async () => {
+      if (!promotion) throw new Error("Attendee promotion is unavailable");
+      const email = stringPayload(item, "email");
+      if (!email) throw new Error("Attendee email is missing");
+      const res = await apiRequest(
+        "POST",
+        `/api/calendar/events/${encodeURIComponent(promotion.eventId)}/attendees/promote`,
+        {
+          accountId: promotion.accountId,
+          calendarId: promotion.calendarId,
+          email,
+        },
+      );
+      return res.json() as Promise<{
+        person: {
+          id: string;
+          name: string;
+          profileSummary: string | null;
+          lastInteractionContext: string | null;
+        };
+      }>;
+    },
+    onSuccess: ({ person }) => {
+      setPromotedReference(createReferenceRef({
+        type: "person",
+        id: person.id,
+        metadata: { label: person.name, href: `/people/${person.id}` },
+      }));
+      setPromotedSummary(person.profileSummary);
+      setPromotedInteraction(person.lastInteractionContext);
+      toast({ title: `${person.name} added to People` });
+    },
+    onError: error => {
+      toast({
+        title: "Could not add profile",
+        description: error instanceof Error ? error.message : "The attendee profile was not created.",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/people"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/people/email-map"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/calendar/metadata"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/calendar/events"] });
     },
   });
 
@@ -263,6 +340,26 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children }: Si
     <span>
       <ReferenceRenderer refValue={reference} surface="simple-row" className={completed ? "text-neutral hover:text-neutral" : undefined} />
     </span>
+  ) : promotion ? (
+    <button
+      type="button"
+      disabled={promoteMutation.isPending}
+      onClick={event => {
+        event.stopPropagation();
+        promoteMutation.mutate();
+      }}
+      className="mx-1 inline-flex max-w-full items-center gap-1 whitespace-nowrap text-xs font-medium leading-tight text-cta underline-offset-4 transition-colors hover:text-active disabled:text-muted-foreground"
+      title={promoteMutation.isError ? (promoteMutation.error instanceof Error ? promoteMutation.error.message : "Profile creation failed") : `Add ${displayTitle} to People`}
+      data-testid={`promote-attendee-${item.id}`}
+    >
+      {promoteMutation.isPending ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" /> : (
+        <span className="inline-flex shrink-0 items-center gap-0.5" aria-hidden="true">
+          <Plus className="h-3 w-3 stroke-[2.5]" />
+          <User className="h-3.5 w-3.5" />
+        </span>
+      )}
+      <span className="min-w-0 truncate border-b border-current leading-[inherit]">{displayTitle}</span>
+    </button>
   ) : mapHref || titleHref ? (
     <a
       href={mapHref ?? titleHref ?? undefined}
@@ -337,7 +434,7 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children }: Si
         {/* Content area */}
         <div
           className="relative min-w-0 flex-1 pl-0.5"
-          onClick={reference ? (event) => event.stopPropagation() : undefined}
+          onClick={reference || promotion ? (event) => event.stopPropagation() : undefined}
         >
           {/* Hierarchy connector lines (for nested items) —
               Vertical line at parent's checkbox center (1 indent = 24px back → -32px from content edge).

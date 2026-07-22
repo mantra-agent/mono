@@ -34,9 +34,11 @@ import {
 import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
 import { fromCivilDate } from "@shared/civil-date";
-import { createMeetingArtifactChild, createMeetingPersonChild } from "@shared/meeting-feed-items";
+import { createMeetingArtifactChild, createMeetingPersonChild, formatMeetingInviteeName } from "@shared/meeting-feed-items";
 import type { SimpleSourceRef } from "@shared/models/simple";
 import { SimpleTreeRow } from "@/components/home/home-tree-row";
+import { sourceRefToReferenceRef } from "@shared/simple-references";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
 
 interface CalendarInfo {
   id: string;
@@ -67,6 +69,13 @@ interface CalendarEvent {
   organizer?: { email: string; displayName?: string; self?: boolean };
   recurringEventId?: string;
   colorId?: string;
+}
+
+interface EmailPersonContext {
+  id: string;
+  name: string;
+  summary: string | null;
+  lastInteractionContext: string | null;
 }
 
 interface AccountInfo {
@@ -870,27 +879,42 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
   const { event, rowStart, rowSpan } = block;
   const [expanded, setExpanded] = useState(false);
   const { data } = useEventMetadata(event.id, event.accountId, event.calendarId);
+  const { data: emailMapData } = useQuery<{ emailMap: Record<string, EmailPersonContext> }>({
+    queryKey: ["/api/people/email-map"],
+  });
   const isFocusBlock = data?.metadata?.eventType === "focus_block";
   const optional = isOptionalForMe(event);
   const external = hasExternalAttendees(event, accountEmails);
-  const people = data?.people ?? [];
   const artifacts = data?.artifacts ?? [];
+  const emailMap = emailMapData?.emailMap ?? {};
   const parentSourceRef: SimpleSourceRef = {
     type: "calendar",
     id: `${event.accountId}:${event.id}`,
     label: event.summary,
     href: `/schedule/${encodeURIComponent(event.id)}?calendarId=${encodeURIComponent(event.calendarId)}&accountId=${encodeURIComponent(event.accountId)}`,
   };
+  const meetingReference = sourceRefToReferenceRef(parentSourceRef);
   const contextChildren = [
-    ...people.map(person => createMeetingPersonChild({
-      key: `schedule-${event.accountId}-${event.id}-person-${person.id}`,
-      section: "now",
-      parentSourceRef,
-      name: person.name,
-      personId: person.id,
-      profileSummary: person.profileSummary,
-      lastInteractionContext: person.lastInteractionContext,
-    })),
+    ...(event.attendees ?? []).filter(attendee => !attendee.self && attendee.email).map(attendee => {
+      const email = attendee.email.trim().toLowerCase();
+      const matched = emailMap[email];
+      return createMeetingPersonChild({
+        key: `schedule-${event.accountId}-${event.id}-attendee-${email}`,
+        section: "now",
+        parentSourceRef,
+        name: matched?.name ?? formatMeetingInviteeName(attendee.displayName, attendee.email),
+        email: attendee.email,
+        responseStatus: attendee.responseStatus,
+        personId: matched?.id,
+        profileSummary: matched?.summary,
+        lastInteractionContext: matched?.lastInteractionContext,
+        promotion: matched ? null : {
+          eventId: event.id,
+          accountId: event.accountId,
+          calendarId: event.calendarId,
+        },
+      });
+    }),
     ...artifacts.map(artifact => createMeetingArtifactChild({
       key: `schedule-${event.accountId}-${event.id}-artifact-${artifact.id}`,
       section: "now",
@@ -951,7 +975,13 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
         }}
       >
         <EventTypeIcon event={event} eventType={data?.metadata?.eventType} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="truncate">{event.summary}</span>
+        <span className="min-w-0" onClick={clickEvent => clickEvent.stopPropagation()}>
+          {meetingReference ? (
+            <ReferenceRenderer refValue={meetingReference} surface="simple-row" />
+          ) : (
+            <span className="truncate">{event.summary}</span>
+          )}
+        </span>
         {isHighPrep(event) && <Star className="h-3 w-3 shrink-0 fill-warning text-warning" />}
         {external && <span className="shrink-0 text-[10px] text-muted-foreground">EXT</span>}
         {hasDetails && <ChevronRight className={cn("ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-90")} />}
@@ -971,7 +1001,7 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
               ))}
             </div>
           )}
-          <button type="button" onClick={() => onEventClick(event)} className="text-cta hover:underline">Open event</button>
+          {/* The meeting title reference is the event navigation affordance. */}
         </div>
       )}
     </div>

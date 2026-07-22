@@ -783,6 +783,7 @@ export const ADVISORY_LOCK_NS = {
   PERSON_MERGE: 0x5052534d, // 'PRSM' — serializes Person merges per account
   CHAT_DOCUMENT: 0x43484443, // 'CHDC' — serializes one scoped chat document across processes
   COMPACTION_OPERATION: 0x434f4d50, // 'COMP' — serializes one scoped compaction claim
+  CALENDAR_ATTENDEE_PROMOTION: 0x43415450, // 'CATP' — serializes profile promotion by account + attendee email
 } as const;
 
 const LIBRARY_ROOT_SENTINEL = "__LIBRARY_ROOT__";

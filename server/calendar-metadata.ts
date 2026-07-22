@@ -688,6 +688,33 @@ export async function autoLogMeetingInteractions(
   return results;
 }
 
+export async function linkMeetingPerson(
+  metadataId: number,
+  person: { id: string; name: string },
+  attendeeEmail: string,
+): Promise<CalendarEventPerson> {
+  const rows = await db
+    .insert(calendarEventPeople)
+    .values({
+      metadataId,
+      personId: person.id,
+      personName: person.name,
+      attendeeEmail: attendeeEmail.toLowerCase(),
+      createdAt: sql`CURRENT_TIMESTAMP`,
+      ...sensitiveOwnershipValues(),
+    })
+    .onConflictDoUpdate({
+      target: [calendarEventPeople.metadataId, calendarEventPeople.personId],
+      set: {
+        personName: person.name,
+        attendeeEmail: attendeeEmail.toLowerCase(),
+      },
+    })
+    .returning();
+  invalidateCalendarCache();
+  return rows[0];
+}
+
 // ─── getLinkedPeople ───
 
 export async function getLinkedPeople(metadataId: number): Promise<CalendarEventPerson[]> {

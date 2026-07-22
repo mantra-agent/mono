@@ -9,7 +9,7 @@ import { formatHour, getWindowLabel, inRange } from "@shared/wellness-window";
 import { queryActivityStatus } from "../routes/wellness";
 import { sourceRefsToReferenceRefs } from "@shared/simple-references";
 import { createReferenceRef } from "@shared/references";
-import { createMeetingArtifactChild, createMeetingPersonChild } from "@shared/meeting-feed-items";
+import { createMeetingArtifactChild, createMeetingPersonChild, formatMeetingInviteeName } from "@shared/meeting-feed-items";
 import { listAllEvents, type CalendarEvent } from "../google-calendar";
 import { listMetadataByEvents, classifyEventByTitle, getLinkedArtifactsByMetadataIds } from "../calendar-metadata";
 import { buildEmailPersonContextMap, meetingInteractionContext, resolveMeetingArtifactContext, type EmailPersonContext, type MeetingArtifactContext } from "../meeting-context";
@@ -1087,7 +1087,7 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
   const externalAttendees = event.attendees.filter(a => !a.self);
   for (const attendee of externalAttendees.slice(0, 6)) {
     const matched = emailMap.get(attendee.email.toLowerCase());
-    const name = matched?.name ?? (attendee.displayName || attendee.email.split("@")[0]);
+    const name = matched?.name ?? formatMeetingInviteeName(attendee.displayName, attendee.email);
     children.push(createMeetingPersonChild({
       key: `meeting-${event.accountId}-${event.id}-attendee-${attendee.email}`,
       section,
@@ -1098,6 +1098,11 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
       personId: matched?.id,
       profileSummary: matched?.summary,
       lastInteractionContext: matched?.lastInteractionContext,
+      promotion: matched ? null : {
+        eventId: event.id,
+        accountId: event.accountId,
+        calendarId: event.calendarId,
+      },
     }));
   }
 
