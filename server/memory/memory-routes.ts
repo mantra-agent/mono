@@ -22,6 +22,7 @@ import {
   type MemoryVnextEntityLink,
   type MemoryVnextClaimLink,
   type MemoryVnextSourceQueueRow,
+  type Goal,
 } from "@shared/schema";
 import { eventBus } from "../event-bus";
 import { chatCompletion } from "../model-client";
@@ -40,6 +41,8 @@ import { memoryVnextClaimStorage } from "./vnext-claim-storage";
 import { runVnextLifecycle } from "./vnext-lifecycle";
 import { listVisibleSources } from "./vnext-source-queue";
 import { peopleStorage } from "../people-storage";
+import { goalsService } from "../goals-service";
+import { fileProjectStorage } from "../file-storage/projects";
 import { libraryPages, libraryPageLinks } from "@shared/models/info";
 import { chatFileStorage } from "../chat-file-storage";
 
@@ -819,11 +822,12 @@ interface VnextGraphLink {
 const RECENCY_HALF_LIFE_DAYS = 7;
 const MS_PER_DAY = 86_400_000;
 const GRAPH_RELATION_BATCH_SIZE = 500;
+const GRAPH_ENTITY_READ_BATCH_SIZE = 10;
 
-function chunkValues<T>(values: T[]): T[][] {
+function chunkValues<T>(values: T[], batchSize = GRAPH_RELATION_BATCH_SIZE): T[][] {
   const chunks: T[][] = [];
-  for (let index = 0; index < values.length; index += GRAPH_RELATION_BATCH_SIZE) {
-    chunks.push(values.slice(index, index + GRAPH_RELATION_BATCH_SIZE));
+  for (let index = 0; index < values.length; index += batchSize) {
+    chunks.push(values.slice(index, index + batchSize));
   }
   return chunks;
 }
@@ -880,22 +884,30 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       accountId: memoryVnextClaimLinks.accountId,
     };
 
-    const claims = await db
-      .select()
-      .from(memoryVnextClaims)
-      .where(combineWithVisibleScope(
-        principal,
-        claimScopeColumns,
-        sql`${memoryVnextClaims.lifecycleStage} <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}`,
-      ))
-      .orderBy(desc(memoryVnextClaims.createdAt));
+    const [claims, currentGoalIndex, currentProjects] = await Promise.all([
+      db
+        .select()
+        .from(memoryVnextClaims)
+        .where(combineWithVisibleScope(
+          principal,
+          claimScopeColumns,
+          sql`${memoryVnextClaims.lifecycleStage} <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}`,
+        ))
+        .orderBy(desc(memoryVnextClaims.createdAt)),
+      goalsService.listAll(),
+      fileProjectStorage.getProjects(),
+    ]);
+    const currentGoalIds = currentGoalIndex
+      .filter((goal) => goal.status !== "achieved")
+      .map((goal) => goal.id);
+    const currentGoals: Goal[] = [];
+    for (const batch of chunkValues(currentGoalIds, GRAPH_ENTITY_READ_BATCH_SIZE)) {
+      const goals = await Promise.all(batch.map((id) => goalsService.get(id)));
+      currentGoals.push(...goals.filter((goal): goal is Goal => goal !== null));
+    }
+    const currentProjectRows = currentProjects.filter((project) => project.status !== "completed");
 
     const claimIds = claims.map((claim) => claim.id);
-    if (claimIds.length === 0) {
-      res.json({ storage: "memory_vnext", entries: [], links: [], linkSource: "claim_links", semantics: "claim-centric" });
-      return;
-    }
-
     const visibleClaimIds = new Set(claimIds);
     const claimLinksById = new Map<number, typeof memoryVnextClaimLinks.$inferSelect>();
     const entityLinks: Array<typeof memoryVnextEntityLinks.$inferSelect> = [];
@@ -967,6 +979,18 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
         entityTimestampByKey.set(`page:${row.slug}`, timestamps);
         entityTimestampByKey.set(`library_page:${row.slug}`, timestamps);
       }
+    }
+    for (const goal of currentGoals) {
+      const key = `goal:${goal.id}`;
+      entityTitleByKey.set(key, goal.shortName);
+      entitySummaryByKey.set(key, goal.description || `${goal.horizon} goal · ${goal.status}`);
+      entityTimestampByKey.set(key, { createdAt: goal.createdAt, updatedAt: goal.updatedAt });
+    }
+    for (const project of currentProjectRows) {
+      const key = `project:${project.id}`;
+      entityTitleByKey.set(key, project.title);
+      entitySummaryByKey.set(key, project.description || `${project.status} project`);
+      entityTimestampByKey.set(key, { createdAt: project.createdAt, updatedAt: project.updatedAt });
     }
 
     const sourcePageIds = [...new Set(sourceRefs.filter((ref) => ref.sourceType === "library_page" || ref.sourceType === "library").map((ref) => ref.sourceId))];
@@ -1068,40 +1092,51 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       recency: computeNodeRecency(claim.createdAt, claim.activeTouchedAt),
     }));
 
+    function ensureEntityNode(entityType: string, entityId: string, fallbackTimestamp?: Date | string | null): number {
+      const key = `${entityType}:${entityId}`;
+      const existingNodeId = entityNodeIds.get(key);
+      if (existingNodeId !== undefined) return existingNodeId;
+      const entityNodeId = nextSyntheticNodeId--;
+      entityNodeIds.set(key, entityNodeId);
+      const entityTitle = entityTitleByKey.get(key) || entityId;
+      const entitySummary = entitySummaryByKey.get(key) || `${entityType} in your memory graph`;
+      const resolvedTimestamps = entityTimestampByKey.get(key);
+      const createdAt = resolvedTimestamps?.createdAt ?? fallbackTimestamp ?? null;
+      const updatedAt = resolvedTimestamps?.updatedAt ?? fallbackTimestamp ?? null;
+      entries.push({
+        id: entityNodeId,
+        content: entitySummary,
+        title: entityTitle,
+        summary: entitySummary,
+        layer: "long",
+        source: entityType,
+        sourceId: entityId,
+        tags: [entityType],
+        graphed: true,
+        metadata: {
+          graphStorage: "vnext",
+          nodeKind: "entity",
+          entityType,
+          entityId,
+          reference: `@${entityType}:${entityId}`,
+        },
+        createdAt: serializeDate(createdAt),
+        updatedAt: serializeDate(updatedAt),
+        recency: computeNodeRecency(createdAt, updatedAt),
+      });
+      return entityNodeId;
+    }
+
     for (const link of entityLinks) {
       if (!visibleClaimIds.has(link.claimId)) continue;
-      const key = `${link.entityType}:${link.entityId}`;
-      if (!entityNodeIds.has(key)) {
-        const entityNodeId = nextSyntheticNodeId--;
-        entityNodeIds.set(key, entityNodeId);
-        const entityTitle = entityTitleByKey.get(key) || link.entityId;
-        const entitySummary = entitySummaryByKey.get(key) || `Entity linked to vNext claims (${link.entityType})`;
-        const resolvedTimestamps = entityTimestampByKey.get(key);
-        const fallbackTimestamp = newestClaimTimestampByEntityKey.get(key) ?? link.createdAt;
-        const createdAt = resolvedTimestamps?.createdAt ?? fallbackTimestamp;
-        const updatedAt = resolvedTimestamps?.updatedAt ?? fallbackTimestamp;
-        entries.push({
-          id: entityNodeId,
-          content: entitySummary,
-          title: entityTitle,
-          summary: entitySummary,
-          layer: "long",
-          source: link.entityType,
-          sourceId: link.entityId,
-          tags: [link.entityType],
-          graphed: true,
-          metadata: {
-            graphStorage: "vnext",
-            nodeKind: "entity",
-            entityType: link.entityType,
-            entityId: link.entityId,
-          },
-          createdAt: serializeDate(createdAt),
-          updatedAt: serializeDate(updatedAt),
-          recency: computeNodeRecency(createdAt, updatedAt),
-        });
-      }
+      ensureEntityNode(
+        link.entityType,
+        link.entityId,
+        newestClaimTimestampByEntityKey.get(`${link.entityType}:${link.entityId}`) ?? link.createdAt,
+      );
     }
+    for (const goal of currentGoals) ensureEntityNode("goal", goal.id, goal.updatedAt);
+    for (const project of currentProjectRows) ensureEntityNode("project", String(project.id), project.updatedAt);
 
 
     function ensureSourceNode(normalizedType: "page" | "session", sourceId: string, createdAt?: Date | string | null): number | null {
@@ -1215,8 +1250,8 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       });
     }
 
-    log.debug(`[vnext] graph claims=${claims.length} claimLinks=${claimLinks.length} entityLinks=${entityLinks.length} sourceRefs=${sourceRefs.length} nodes=${entries.length} links=${links.length}`);
-    res.json({ storage: "memory_vnext", entries, links, linkSource: "claim_links", semantics: "claim-centric" });
+    log.debug(`[vnext] graph claims=${claims.length} goals=${currentGoals.length} projects=${currentProjectRows.length} claimLinks=${claimLinks.length} entityLinks=${entityLinks.length} sourceRefs=${sourceRefs.length} nodes=${entries.length} links=${links.length}`);
+    res.json({ storage: "memory_vnext", entries, links, linkSource: "claim_links", semantics: "personal-intelligence" });
   } catch (error: unknown) {
     log.error(`[vnext] graph failed: ${error instanceof Error ? error.stack || error.message : String(error)}`);
     res.status(500).json({ error: errorMessage(error) });
