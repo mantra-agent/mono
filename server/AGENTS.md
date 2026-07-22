@@ -334,6 +334,7 @@ The `gitWriteOverride` field on session metadata is retained as an admin escape 
 - **Never add a handler without also adding it to `TOOLS` in `tool-registry.ts`** — unregistered handlers are invisible to the LLM
 - **New `TOOLS` entries must be top-level keys** — inserting inside an existing tool's object literal silently nests the new entry as a property of that tool instead of registering it. Always verify the new entry is a direct child of the `TOOLS` object (same indentation as `meta:`, `expo:`, `railway:`, etc.) and that the preceding entry's `},` is closed before the new key starts.
 - Tool handlers use lazy dynamic imports for storage modules — `const { foo } = await import("./bar")`
+- DOCX reads accept workspace files and canonical `/objects/...` attachment paths. Object-backed reads must resolve through `ObjectStorageService`, require the current user principal, enforce the existing object ACL before download, and parse from the authorized buffer without minting a public URL or raw storage key.
 - Person ID resolution at `bridge-tools.ts:78` is reused by all people-related handlers (fuzzy match, Levenshtein)
 - The monolith is the biggest codebase risk — a syntax error breaks all tools
 
