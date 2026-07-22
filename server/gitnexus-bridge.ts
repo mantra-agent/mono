@@ -146,7 +146,7 @@ let initPromise: Promise<void> | null = null;
 let lastInitFailedAt: number | null = null;
 let initAttemptCount = 0;
 let ready = false;
-let indexingPhase: "idle" | "indexing" | "ready" | "error" = "idle";
+let indexingPhase: "idle" | "indexing" | "ready" | "error" | "disabled" = "idle";
 let indexingSubPhase: "syncing" | "analyzing" | "initializing" | "" = "";
 let indexingProgressMessage = "";
 let analyzePercent: number | undefined = undefined;
@@ -756,7 +756,7 @@ export async function startGitNexus() {
 
   const source = await resolveDefaultIndexedGitSource();
   if (!source) {
-    indexingPhase = "idle";
+    indexingPhase = "disabled";
     indexingSubPhase = "";
     indexingProgressMessage = "Code indexing disabled for all Platform environments";
     activeSource = null;
@@ -1060,11 +1060,26 @@ export async function getStatus(): Promise<GitNexusStatus> {
     };
   }
 
-  if (indexingPhase === "idle") {
+  if (indexingPhase === "disabled") {
     return {
       ready: false,
       phase: "disabled",
       message: indexingProgressMessage || "Code indexing is disabled for Platform environments. Use git/filesystem inspection instead.",
+      lastIndexedAt,
+      source: activeSource,
+    };
+  }
+
+  if (indexingPhase === "idle") {
+    // Indexing has not been triggered yet in this process. This is a warm-up
+    // state, not a terminal "disabled" fact — callers should treat it as
+    // retryable and trigger startGitNexus() rather than abandoning the index.
+    return {
+      ready: false,
+      phase: "indexing",
+      subPhase: "initializing",
+      progressMessage: "GitNexus index not yet started — warming up...",
+      message: "GitNexus index not yet started. Warming up — try again in a moment.",
       lastIndexedAt,
       source: activeSource,
     };
