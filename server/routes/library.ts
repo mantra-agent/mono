@@ -6,6 +6,7 @@ import {
   pool,
   acquireLibraryParentLocks,
   isSerializationConflict,
+  type DrizzleTx,
 } from "../db";
 import { z } from "zod";
 import {
@@ -33,6 +34,7 @@ import {
   libraryPageViews,
 } from "@shared/models/info";
 import type { LibraryPage } from "@shared/models/info";
+import { vaults } from "@shared/models/vaults";
 import {
   MEMORY_INTEGRATION_STAGE,
   deriveMemoryIntegrationStage,
@@ -153,6 +155,102 @@ function writableLibrary(req: any, predicate?: SQL): SQL {
     libraryScopeColumns,
     predicate,
   );
+}
+
+type VaultMoveDecision =
+  | { ok: true }
+  | { ok: false; status: number; error: string; logDetail: string };
+
+/**
+ * Vault safety guard for Library page moves/reparents — the single enforcement
+ * boundary shared by PATCH /:id and PATCH /reorder, the two write paths that can
+ * change a page's parent.
+ *
+ * A vault is a hard security scope boundary (SEC-LIB-001). Invariants:
+ *  - `vault_id` is immutable across moves. A move to the vault-section root
+ *    (parentId null) keeps the page in its current vault.
+ *  - A parent in a different `vault_id` than the moving page is rejected (403).
+ *  - A destination vault not visible to the principal, or archived, is rejected.
+ *
+ * Null `vault_id` rows (pre-backfill / system plumbing) stay unconstrained,
+ * matching scoped-storage's backwards-compatibility semantics.
+ */
+async function validateVaultSafeMove(
+  executor: Pick<DrizzleTx, "select">,
+  principal: Principal,
+  movingVaultId: string | null,
+  destinationParentVaultId: string | null,
+  isMoveToRoot: boolean,
+): Promise<VaultMoveDecision> {
+  // Effective destination vault: the parent's vault, or (for a root move) the
+  // page's own vault — because a move never changes vault_id.
+  const destVaultId = isMoveToRoot ? movingVaultId : destinationParentVaultId;
+
+  // Cross-vault reparent guard. Only enforced when both vaults are known; null
+  // vault_id rows remain unconstrained for backfill compatibility.
+  if (
+    !isMoveToRoot &&
+    movingVaultId !== null &&
+    destinationParentVaultId !== null &&
+    movingVaultId !== destinationParentVaultId
+  ) {
+    return {
+      ok: false,
+      status: 403,
+      error:
+        "Cannot move a page into a different vault. A vault is a hard security boundary.",
+      logDetail: `crossVault movingVault=${movingVaultId} destVault=${destinationParentVaultId}`,
+    };
+  }
+
+  if (destVaultId === null) {
+    return { ok: true };
+  }
+
+  // Destination vault must be in the principal's visible set (when scoped).
+  if (
+    principal.visibleVaultIds &&
+    principal.visibleVaultIds.length > 0 &&
+    !principal.visibleVaultIds.includes(destVaultId)
+  ) {
+    return {
+      ok: false,
+      status: 403,
+      error: "Destination vault is not visible.",
+      logDetail: `hiddenVault destVault=${destVaultId}`,
+    };
+  }
+
+  // Destination vault must exist, be owned by the principal's account, and be
+  // non-archived. System principals skip the account filter.
+  const vaultPredicate =
+    principal.actorType === "system" || !principal.accountId
+      ? eq(vaults.id, destVaultId)
+      : and(
+          eq(vaults.id, destVaultId),
+          eq(vaults.accountId, principal.accountId),
+        );
+  const [destVault] = await executor
+    .select({ id: vaults.id, isArchived: vaults.isArchived })
+    .from(vaults)
+    .where(vaultPredicate);
+  if (!destVault) {
+    return {
+      ok: false,
+      status: 403,
+      error: "Destination vault not found.",
+      logDetail: `missingVault destVault=${destVaultId}`,
+    };
+  }
+  if (destVault.isArchived) {
+    return {
+      ok: false,
+      status: 403,
+      error: "Destination vault is archived.",
+      logDetail: `archivedVault destVault=${destVaultId}`,
+    };
+  }
+  return { ok: true };
 }
 
 const librarySurfaceInput = {
@@ -953,10 +1051,15 @@ export async function registerLibraryRoutes(app: Express) {
         // an ancestor — re-reading after the lock keeps the check
         // lock-consistent.
         const lite = await tx
-          .select({ id: libraryPages.id, parentId: libraryPages.parentId })
+          .select({
+            id: libraryPages.id,
+            parentId: libraryPages.parentId,
+            vaultId: libraryPages.vaultId,
+          })
           .from(libraryPages)
           .where(visibleLibrary(req));
         const parentMap = new Map(lite.map((p) => [p.id, p.parentId] as const));
+        const vaultMap = new Map(lite.map((p) => [p.id, p.vaultId] as const));
 
         if (!parentMap.has(id)) {
           return { kind: "client-error", status: 404, error: "Page not found" };
@@ -976,6 +1079,27 @@ export async function registerLibraryRoutes(app: Express) {
               error: "Cannot move a node into its own descendant",
             };
           }
+        }
+
+        // Vault safety: reparenting must never cross a vault boundary or land
+        // in a hidden/archived vault. Runs inside the advisory-locked tx on the
+        // same lock-consistent snapshot as the cycle check.
+        const vaultDecision = await validateVaultSafeMove(
+          tx,
+          principalOrThrow(req),
+          vaultMap.get(id) ?? null,
+          parentId !== null ? (vaultMap.get(parentId) ?? null) : null,
+          parentId === null,
+        );
+        if (!vaultDecision.ok) {
+          log.warn(
+            `Reorder vault guard rejected: op=reorder page=${id} parent=${parentId ?? "<root>"} ${vaultDecision.logDetail}`,
+          );
+          return {
+            kind: "client-error",
+            status: vaultDecision.status,
+            error: vaultDecision.error,
+          };
         }
 
         // Step 4: re-read the row to get authoritative sort_order + parent
@@ -1187,7 +1311,43 @@ export async function registerLibraryRoutes(app: Express) {
         }
       }
       if (updates.parentId !== undefined) {
-        setData.parentId = updates.parentId === "" ? null : updates.parentId;
+        const newParentId = updates.parentId === "" ? null : updates.parentId;
+        const principal = principalOrThrow(req);
+        // Resolve the moving page's vault (scoped read also confirms visibility).
+        const [movingPage] = await db
+          .select({ vaultId: libraryPages.vaultId })
+          .from(libraryPages)
+          .where(visibleLibrary(req, eq(libraryPages.id, req.params.id)));
+        if (!movingPage) {
+          return res.status(404).json({ error: "Library page not found" });
+        }
+        let destinationParentVaultId: string | null = null;
+        if (newParentId !== null) {
+          const [destParent] = await db
+            .select({ vaultId: libraryPages.vaultId })
+            .from(libraryPages)
+            .where(visibleLibrary(req, eq(libraryPages.id, newParentId)));
+          if (!destParent) {
+            return res.status(400).json({ error: "Parent not found" });
+          }
+          destinationParentVaultId = destParent.vaultId;
+        }
+        const vaultDecision = await validateVaultSafeMove(
+          db,
+          principal,
+          movingPage.vaultId,
+          destinationParentVaultId,
+          newParentId === null,
+        );
+        if (!vaultDecision.ok) {
+          log.warn(
+            `Library move vault guard rejected: op=patch page=${req.params.id} parent=${newParentId ?? "<root>"} ${vaultDecision.logDetail}`,
+          );
+          return res
+            .status(vaultDecision.status)
+            .json({ error: vaultDecision.error });
+        }
+        setData.parentId = newParentId;
       }
       if (updates.tags !== undefined) setData.tags = updates.tags;
       if (updates.emoji !== undefined) setData.emoji = updates.emoji;
