@@ -365,6 +365,7 @@ Four interacting layers: intention stack (what), timer scheduler (when), skill r
 ### Plan Execution
 
 - The parent plan executor is the sole owner of managed step completion, failure, retry, and attempt finalization. Plan-spawned children may report only `blocked` or `needs_review`; ending the child session is the completion signal.
+- Plan leases persist `replica@boot:origin-session` ownership. The named `plan-recovery` system job may enumerate bounded executing-plan IDs, but every user-owned plan, attempt, child session, and projection mutation must re-enter that plan's persisted owner principal. Recovery claims the exact expired or prior-boot owner, then atomically reconciles the attempt and step before pausing or completing the plan. Boot and periodic recovery share this one replay-safe boundary.
 - A completed child attempt is replay-safe. If legacy behavior already marked the same step complete for the same child session, the executor reconciles that owned completion instead of rerunning successful work.
 - Each plan step owns a durable persona name. The autonomous session creation write must include the resolved persona so the initial child snapshot, context assembly, and first inference agree; never create the child persona-less and patch it afterward. Retries reuse the step persona. Legacy NULL persona rows are inferred once from the mission and persisted before spawn.
 

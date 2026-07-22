@@ -97,6 +97,7 @@ export async function claimPlanExecution(
   planId: string,
   owner: string,
   leaseMs = PLAN_EXECUTION_LEASE_MS,
+  staleOwner?: string | null,
 ): Promise<{ claimed: true; leaseId: string; expiresAt: Date } | { claimed: false }> {
   const leaseId = randomUUID();
   const now = new Date();
@@ -105,7 +106,11 @@ export async function claimPlanExecution(
     .set({ executionLeaseId: leaseId, executionLeaseOwner: owner, executionLeaseExpiresAt: expiresAt, executionClaimedAt: now, updatedAt: now })
     .where(writablePlan(and(
       eq(planExecutions.id, planId),
-      or(isNull(planExecutions.executionLeaseExpiresAt), lt(planExecutions.executionLeaseExpiresAt, now)),
+      or(
+        isNull(planExecutions.executionLeaseExpiresAt),
+        lt(planExecutions.executionLeaseExpiresAt, now),
+        staleOwner ? eq(planExecutions.executionLeaseOwner, staleOwner) : undefined,
+      ),
     )))
     .returning({ id: planExecutions.id });
   return rows.length ? { claimed: true, leaseId, expiresAt } : { claimed: false };
@@ -232,6 +237,77 @@ export async function getPlanStepAttemptByChildSession(
 export type CompletePlanStepAttemptOutcome =
   | { outcome: "transitioned" }
   | { outcome: "reconciled_existing" };
+
+export type FailInterruptedPlanStepOutcome =
+  | { outcome: "transitioned" }
+  | { outcome: "already_terminal" };
+
+export async function failInterruptedPlanStep(params: {
+  planId: string;
+  stepId: string;
+  attemptNumber: number | null;
+  childSessionId: string | null;
+  error: string;
+  durationSeconds: number | null;
+  completedAt: Date;
+}): Promise<FailInterruptedPlanStepOutcome> {
+  return db.transaction(async (tx) => {
+    const transitioned = await tx.update(planSteps)
+      .set({
+        status: "failed",
+        error: params.error,
+        durationSeconds: params.durationSeconds,
+        completedAt: params.completedAt,
+        updatedAt: params.completedAt,
+      })
+      .where(writablePlanStep(and(
+        eq(planSteps.planId, params.planId),
+        eq(planSteps.id, params.stepId),
+        eq(planSteps.status, "running"),
+        params.childSessionId
+          ? eq(planSteps.sessionId, params.childSessionId)
+          : isNull(planSteps.sessionId),
+      )))
+      .returning({ id: planSteps.id });
+
+    if (transitioned.length === 0) {
+      const current = await tx.select({ status: planSteps.status })
+        .from(planSteps)
+        .where(visiblePlanStep(and(eq(planSteps.planId, params.planId), eq(planSteps.id, params.stepId))))
+        .then(rows => rows[0]);
+      if (!current || current.status === "running") {
+        throw new Error(`[state] Interrupted step ${params.stepId} lost recovery ownership`);
+      }
+      return { outcome: "already_terminal" };
+    }
+
+    if (params.attemptNumber !== null) {
+      const attemptRows = await tx.update(planStepAttempts)
+        .set({
+          status: "abandoned",
+          error: params.error,
+          durationSeconds: params.durationSeconds,
+          completedAt: params.completedAt,
+          updatedAt: params.completedAt,
+        })
+        .where(writablePlanAttempt(and(
+          eq(planStepAttempts.planId, params.planId),
+          eq(planStepAttempts.stepId, params.stepId),
+          eq(planStepAttempts.attemptNumber, params.attemptNumber),
+          eq(planStepAttempts.status, "running"),
+          params.childSessionId
+            ? eq(planStepAttempts.childSessionId, params.childSessionId)
+            : isNull(planStepAttempts.childSessionId),
+        )))
+        .returning({ id: planStepAttempts.id });
+      if (attemptRows.length === 0) {
+        throw new Error(`[state] Interrupted attempt ${params.attemptNumber} for step ${params.stepId} lost recovery ownership`);
+      }
+    }
+
+    return { outcome: "transitioned" };
+  });
+}
 
 export async function completePlanStepAttempt(params: {
   planId: string;
