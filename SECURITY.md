@@ -2,7 +2,7 @@
 
 **Status:** Canonical security baseline<br>
 **Baseline date:** 2026-07-20<br>
-**Source reviewed:** `mantra-agent/mono` at `76382b6`<br>
+**Source reviewed:** `mantra-agent/mono` at `06d9134` plus the July 21 assistant-checkpoint change<br>
 **Applies to:** Mantra browser, server, mobile, agent runtime, data stores, integrations, build systems, and hosted environments
 
 This document is the repository source of truth for Mantra's security doctrine, threat model, control baseline, and risk register. `CODING.md` owns the procedural security gate and points here. Library artifacts may surface this document and its current review state, but must not copy it into a second baseline.
@@ -590,3 +590,7 @@ The canonical controls now meet at both boundaries. New workspace uploads requir
 A fresh merged-main inventory found nine of 1,042 statically declared API routes had drifted outside the explicit API policy: admin-only Recall, Twilio, Deepgram, and Meta wearable status/configuration routes plus the authenticated browser-telemetry summary. The policy's default-deny behavior returned 404 before route-local guards, so this was a fail-closed availability/configuration defect rather than an authorization bypass. It still invalidated the zero-unclassified readiness control and demonstrated that route inventory must be rerun after every main change.
 
 **Closed in source.** `server/api-policy.ts` now classifies the eight integration routes as admin and the telemetry summary as personal. Route-local `requireAuth` and admin guards remain defense in depth. The merged-main static inventory must report `1,042 / 0 unclassified`, and the production build must pass before readiness is issued. Mapping: ASVS V1/V4/V7/V13/V14; OWASP API5, API8, API9; NIST SSDF PW.4, PW.7, RV.1.
+
+## 11.12 Assistant checkpoint durability review, July 21, 2026
+
+This change persists the already-authorized, already-user-visible `SessionManager` transcript during an active text turn so process interruption cannot erase prose boundaries, tool calls, or diagnostic chronology. It introduces no new route, principal, provider, or data class. The write remains inside the existing principal-scoped chat document and `updateAssistantDraft` session lock; late checkpoints remain fenced once the assistant row leaves `streaming`. The projection stores only fields already present in the durable assistant-message contract. Security result: no new finding. Availability and transcript integrity improve without broadening read or write authority.
