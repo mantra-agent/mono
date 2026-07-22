@@ -4,7 +4,7 @@ Root `AGENTS.md` is mandatory and authoritative for Engineering Principles, arch
 
 ## Work storage boundary
 
-Project milestones are first-class rows in `milestones`, keyed by `(project_id, id)` because numeric milestone IDs are project-local and tasks pair `project_id` with `milestone_id`. `FileProjectStorage` is the canonical read/write boundary: it hydrates the stable `Project.milestones` response shape from scoped rows, inherits milestone ownership from the writable parent project, and serializes per-project replacement/ID allocation. The deprecated `projects.milestones` JSON column is rollback-only and must not be read or written by runtime code.
+Project milestones are first-class rows in `milestones`, keyed by `(project_id, id)` because numeric milestone IDs are project-local and tasks pair `project_id` with `milestone_id`. `FileProjectStorage` is the canonical read/write boundary: it hydrates the stable `Project.milestones` response shape from scoped rows, inherits milestone ownership from the writable parent project, and serializes per-project replacement/ID allocation. Production boot must converge the table through `milestone-schema.ts` before accepting requests. The deprecated `projects.milestones` JSON column is rollback-only and must not be read or written by runtime code.
 
 # Runtime Identity
 

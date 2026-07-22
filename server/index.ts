@@ -360,6 +360,9 @@ app.use((req, res, next) => {
   bootTracker.startPhase("database");
   const tMigrate0 = Date.now();
   await runSchemaBootstrap("boot");
+  const { ensureMilestonesSchema } = await import("./milestone-schema");
+  const { pool } = await import("./db");
+  await ensureMilestonesSchema(pool);
   await beginRuntimeProcessLifecycle();
   // Persona templates and skill recommendations are a runtime invariant, not
   // optional background maintenance. Complete them before accepting requests
