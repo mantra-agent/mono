@@ -2,6 +2,7 @@
 import { spawn, type ChildProcess } from "child_process";
 import http from "http";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { createLogger } from "./log";
 import {
@@ -47,6 +48,12 @@ const RUNTIME_WEDGE_HEALTH_TIMEOUT_MS = 30_000;
 // the main thread is wedged or the worker died — either way, hard fail.
 const WORKER_HEARTBEAT_DEAD_MS = parseInt(process.env.WORKER_HEARTBEAT_DEAD_MS || "10000", 10);
 const MEMORY_PRESSURE_EXIT_CODE = 78;
+const APPLICATION_HEAP_PERCENT = 75;
+const BYTES_PER_MIB = 1024 * 1024;
+const CGROUP_MEMORY_LIMIT_PATHS = [
+  "/sys/fs/cgroup/memory.max",
+  "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+] as const;
 const BOOT_COMPLETE_MARKER = "__BOOT_COMPLETE__";
 const PREV_BOOT_ID_FILE = path.join("/tmp", "watchdog-prev-boot-id");
 const CHILD_PATH = "dist/index.mjs";
@@ -456,6 +463,45 @@ function generateBootId(): string {
   return `${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
 }
 
+interface ApplicationHeapBudget {
+  heapMiB: number;
+  availableMemoryMiB: number;
+  source: string;
+}
+
+function readCgroupMemoryLimitBytes(): { bytes: number; source: string } | null {
+  for (const limitPath of CGROUP_MEMORY_LIMIT_PATHS) {
+    try {
+      const raw = fs.readFileSync(limitPath, "utf8").trim();
+      if (!raw || raw === "max") continue;
+      const bytes = Number(raw);
+      if (Number.isSafeInteger(bytes) && bytes > 0) {
+        return { bytes, source: limitPath };
+      }
+    } catch {}
+  }
+  return null;
+}
+
+function resolveApplicationHeapBudget(): ApplicationHeapBudget {
+  const cgroupLimit = readCgroupMemoryLimitBytes();
+  const hostMemoryBytes = os.totalmem();
+  const availableMemoryBytes = cgroupLimit
+    ? Math.min(cgroupLimit.bytes, hostMemoryBytes)
+    : hostMemoryBytes;
+  const availableMemoryMiB = Math.max(1, Math.floor(availableMemoryBytes / BYTES_PER_MIB));
+  const heapMiB = Math.max(
+    1,
+    Math.floor((availableMemoryMiB * APPLICATION_HEAP_PERCENT) / 100),
+  );
+
+  return {
+    heapMiB,
+    availableMemoryMiB,
+    source: cgroupLimit?.source || "os.totalmem",
+  };
+}
+
 function startChild() {
   pendingRestartTimer = null;
   pruneRestartTimestamps();
@@ -481,11 +527,8 @@ function startChild() {
     process.exit(1);
   }
 
-  const nodeOptions = "--max-old-space-size=2048";
-  const existingNodeOptions = process.env.NODE_OPTIONS || "";
-  const mergedNodeOptions = existingNodeOptions
-    ? `${existingNodeOptions} ${nodeOptions}`
-    : nodeOptions;
+  const heapBudget = resolveApplicationHeapBudget();
+  const childNodeArgs = [`--max-old-space-size=${heapBudget.heapMiB}`, CHILD_PATH];
 
   currentBootId = generateBootId();
   supervisorHealthToken = createSupervisorHealthToken();
@@ -498,7 +541,6 @@ function startChild() {
 
   const childEnv = {
     ...process.env,
-    NODE_OPTIONS: mergedNodeOptions,
     WRAPPED_BY_WATCHDOG: "true",
     WATCHDOG_WRAPPER_ID: WRAPPER_ID,
     WATCHDOG_BOOT_ID: currentBootId,
@@ -519,7 +561,7 @@ function startChild() {
       env: { ...childEnv, NODE_ENV: "development" },
     });
   } else {
-    child = spawn("node", [CHILD_PATH], {
+    child = spawn("node", childNodeArgs, {
       stdio,
       env: { ...childEnv, NODE_ENV: "production" },
     });
@@ -583,6 +625,10 @@ function startChild() {
     hardBootTimeoutMs: BOOT_HARD_TIMEOUT_MS,
     silentBootMs: SILENT_BOOT_STDOUT_SILENT_MS,
     runtimeWedgeMs: RUNTIME_WEDGE_STDOUT_SILENT_MS,
+    applicationHeapMiB: heapBudget.heapMiB,
+    availableMemoryMiB: heapBudget.availableMemoryMiB,
+    applicationHeapPercent: APPLICATION_HEAP_PERCENT,
+    memoryLimitSource: heapBudget.source,
   });
 
   startBootDeadline();
