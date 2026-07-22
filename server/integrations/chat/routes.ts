@@ -5,6 +5,7 @@ import { chatStorage } from "./storage";
 import { storage } from "../../storage";
 import type { SegmentChronologyEntry } from "../../chat-file-storage";
 import type { SessionStreamEvent } from "../../session-manager";
+import { projectAssistantDraft } from "../../assistant-draft-projection";
 import { WORKSPACE_DIR } from "../../paths";
 import { ACTIVITY_CHAT } from "../../job-profiles";
 import { resolveModelCandidates, type ModelRoutingDecision } from "../../model-routing";
@@ -1931,9 +1932,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     let assistantDraft: Awaited<
       ReturnType<typeof chatStorage.createAssistantDraft>
     > = null;
-    let assistantDraftContent = "";
-    let assistantDraftThinking = "";
     let assistantDraftCheckpointPending: NodeJS.Timeout | null = null;
+    let assistantDraftCheckpointWrite: Promise<void> = Promise.resolve();
     let settlement: { status: "completed" | "failed"; assistantMessageId?: string; error?: string } | null = null;
 
     const diagnosticRunId = `pre-run-${lease.generation}-${randomUUID().slice(0, 8)}`;
@@ -2210,17 +2210,26 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           }
           return;
         }
+        const snapshot = sessionManager.getSnapshot(sessionId);
+        if (!snapshot || snapshot.status !== "streaming") return;
         assistantDraftLastCheckpoint = now;
-        chatStorage
-          .updateAssistantDraft(sessionId, assistantDraft.id, {
-            content: assistantDraftContent,
-            thinking: assistantDraftThinking || undefined,
+        const projection = projectAssistantDraft(snapshot.streamingContent);
+        const assistantDraftId = assistantDraft.id;
+        assistantDraftCheckpointWrite = assistantDraftCheckpointWrite
+          .then(async () => {
+            await chatStorage.updateAssistantDraft(sessionId, assistantDraftId, {
+              content: projection.content,
+              thinking: projection.thinking,
+              toolCalls: projection.toolCalls,
+              systemSteps: projection.systemSteps,
+              segmentChronology: projection.segmentChronology,
+            });
           })
-          .catch((err) =>
+          .catch((err) => {
             chatLog.warn(
               `assistant draft checkpoint failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
-            ),
-          );
+            );
+          });
       };
 
       const contextRootId = `system-context_assembly-${lease.generation}`;
@@ -2421,11 +2430,15 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         resolvedRoutingDecision,
         contextPressure,
         (event) => {
-          if (event.type === "delta") {
-            assistantDraftContent += event.content || "";
-            checkpointAssistantDraft();
-          } else if (event.type === "thinking") {
-            assistantDraftThinking += event.content || "";
+          if (
+            event.type === "delta" ||
+            event.type === "thinking" ||
+            event.type === "thinking_complete" ||
+            event.type === "tool_call" ||
+            event.type === "tool_result" ||
+            event.type === "system_step" ||
+            event.type === "compacting"
+          ) {
             checkpointAssistantDraft();
           }
           if (sayAloud && event.type === "tool_call") {
@@ -2444,17 +2457,27 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         clearTimeout(assistantDraftCheckpointPending);
         assistantDraftCheckpointPending = null;
       }
+      await assistantDraftCheckpointWrite;
       if (assistantDraft) {
-        await chatStorage
-          .updateAssistantDraft(sessionId, assistantDraft.id, {
-            content: assistantDraftContent,
-            thinking: assistantDraftThinking || undefined,
-          })
-          .catch((err) =>
-            chatLog.warn(
-              `assistant draft final checkpoint failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
-            ),
-          );
+        const snapshot = sessionManager.getSnapshot(sessionId);
+        const projection = snapshot
+          ? projectAssistantDraft(snapshot.streamingContent)
+          : null;
+        if (projection) {
+          await chatStorage
+            .updateAssistantDraft(sessionId, assistantDraft.id, {
+              content: projection.content,
+              thinking: projection.thinking,
+              toolCalls: projection.toolCalls,
+              systemSteps: projection.systemSteps,
+              segmentChronology: projection.segmentChronology,
+            })
+            .catch((err) =>
+              chatLog.warn(
+                `assistant draft final checkpoint failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+              ),
+            );
+        }
       }
       chatLog.log(
         `executor DONE sessionId=${sessionId} contentLen=${result.content?.length || 0} terminationReason=${result.terminationReason || "unknown"} abortReason=${result.abortReason || "none"} durationMs=${result.durationMs ?? "?"} iterations=${result.iterations}`,
