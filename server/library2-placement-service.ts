@@ -18,6 +18,7 @@ import {
 import {
   createLibraryPlacements,
   deleteLibraryPlacement,
+  getLibraryPlacement,
 } from "./library-placement-store";
 import { placeLibraryPageSemantically } from "./library-placement";
 import type { Principal } from "./principal";
@@ -87,21 +88,35 @@ function visiblePlacements(principal: Principal, predicate?: SQL): SQL {
   return combineWithVisibleScope(principal, placementScopeColumns, predicate);
 }
 
+function visibleVaultIds(principal: Principal): string[] | null {
+  if (principal.actorType === "system") return null;
+  return principal.visibleVaultIds.length > 0
+    ? principal.visibleVaultIds
+    : null;
+}
+
+function vaultIsVisible(vaultId: string, principal: Principal): boolean {
+  const allowedVaultIds = visibleVaultIds(principal);
+  return allowedVaultIds === null || allowedVaultIds.includes(vaultId);
+}
+
 async function requireLiveVault(
   vaultId: string,
   principal: Principal & { accountId: string },
 ) {
-  const [vault] = await db
-    .select()
-    .from(vaults)
-    .where(
-      and(
-        eq(vaults.id, vaultId),
-        eq(vaults.accountId, principal.accountId),
-        eq(vaults.isArchived, false),
-      ),
-    )
-    .limit(1);
+  const [vault] = vaultIsVisible(vaultId, principal)
+    ? await db
+        .select()
+        .from(vaults)
+        .where(
+          and(
+            eq(vaults.id, vaultId),
+            eq(vaults.accountId, principal.accountId),
+            eq(vaults.isArchived, false),
+          ),
+        )
+        .limit(1)
+    : [];
   if (!vault) {
     throw Object.assign(new Error("Library2 vault not found or archived"), {
       status: 404,
@@ -352,6 +367,8 @@ function expectedImportKey(
 
 export async function listLibrary2Destinations(principal: Principal) {
   requireUserPrincipal(principal);
+  const allowedVaultIds = visibleVaultIds(principal);
+  if (allowedVaultIds?.length === 0) return [];
   const liveVaults = await db
     .select()
     .from(vaults)
@@ -359,6 +376,7 @@ export async function listLibrary2Destinations(principal: Principal) {
       and(
         eq(vaults.accountId, principal.accountId),
         eq(vaults.isArchived, false),
+        allowedVaultIds ? inArray(vaults.id, allowedVaultIds) : undefined,
       ),
     )
     .orderBy(asc(vaults.position), asc(vaults.name));
@@ -407,17 +425,9 @@ export async function suggestLibrary2Destination(
   const wikiDestination = vaultDestination?.destinations.find(
     (candidate) => candidate.pageId === suggestion.parentId,
   );
-  const conceptsDestination = vaultDestination?.destinations.find(
-    (candidate) =>
-      candidate.kind === "section" &&
-      candidate.category === "Concepts" &&
-      candidate.title.toLowerCase() === "concepts",
+  const fallbackDestination = vaultDestination?.destinations.find(
+    (candidate) => candidate.kind === "section",
   );
-  const fallbackDestination =
-    conceptsDestination ??
-    vaultDestination?.destinations.find(
-      (candidate) => candidate.kind === "section",
-    );
   return {
     vaultId: suggestion.vaultId,
     destinationId: wikiDestination?.id ?? fallbackDestination?.id ?? null,
@@ -528,6 +538,8 @@ export async function createLibrary2Placements(
 
 export async function listLibrary2Placements(principal: Principal) {
   requireUserPrincipal(principal);
+  const allowedVaultIds = visibleVaultIds(principal);
+  if (allowedVaultIds?.length === 0) return [];
   return db
     .select({
       placementId: libraryPlacements.id,
@@ -548,7 +560,15 @@ export async function listLibrary2Placements(principal: Principal) {
         eq(vaults.isArchived, false),
       ),
     )
-    .where(and(visiblePlacements(principal), visiblePages(principal)))
+    .where(
+      and(
+        visiblePlacements(principal),
+        visiblePages(principal),
+        allowedVaultIds
+          ? inArray(libraryPlacements.vaultId, allowedVaultIds)
+          : undefined,
+      ),
+    )
     .orderBy(asc(libraryPages.sortOrder), asc(libraryPages.title));
 }
 
@@ -557,6 +577,12 @@ export async function deleteLibrary2Placement(
   principal: Principal,
 ) {
   requireUserPrincipal(principal);
+  const placement = await getLibraryPlacement(placementId, principal);
+  if (!placement || !vaultIsVisible(placement.vaultId, principal)) {
+    throw Object.assign(new Error("Library2 placement not found"), {
+      status: 404,
+    });
+  }
   const deleted = await deleteLibraryPlacement(placementId, principal);
   if (!deleted) {
     throw Object.assign(new Error("Library2 placement not found"), {

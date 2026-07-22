@@ -177,6 +177,7 @@ function invalidateVaultScopedQueries() {
   const scopedPrefixes = [
     "/api/sessions",
     "/api/library",
+    "/api/library2",
     "/api/memory",
     "/api/goals",
     "/api/projects",

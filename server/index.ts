@@ -49,6 +49,7 @@ process.on("unhandledRejection", (reason) => {
 import { addObjectAclsTable } from "./migrations/add-object-acls";
 import { ensureVaults } from "./migrations/ensure-vaults";
 import { migrateProjectNotesSpecToLibrary } from "./migrations/migrate-project-notes-spec-to-library";
+import { adoptRayPersonalLibraryIndex } from "./migrations/adopt-ray-personal-library-index";
 
 const objectAclsMigrationReady = addObjectAclsTable();
 const vaultsMigrationReady = objectAclsMigrationReady.then(() => ensureVaults());
@@ -462,6 +463,7 @@ app.use((req, res, next) => {
   await objectAclsMigrationReady;
   await migrateProjectNotesSpecToLibrary();
   await vaultsMigrationReady;
+  await adoptRayPersonalLibraryIndex();
 
   const tRoutes0 = Date.now();
   await registerRoutes(httpServer, app);
