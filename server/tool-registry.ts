@@ -144,7 +144,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         relationship: { type: "string", description: "Relationship type for vNext source refs; legacy create_link is retired" },
         strength: { type: "number", description: "Strength 0–1 for vNext source refs; legacy create_link is retired" },
         includeGSI: { type: "boolean", description: "Include GSI computation in sleep cycle (for run_full_sleep_cycle, default false)" },
-        entityType: { type: "string", description: "Entity type to link (for link_entity, e.g. 'person', 'project', 'goal')" },
+        entityType: { type: "string", description: "Entity type to link (for link_entity, e.g. 'person', 'company', 'project', 'goal')" },
         entityId: { type: "string", description: "Entity ID to link (for link_entity/get_entity_links). Also used as entity filter for search_claims." },
         memoryId: { type: "number", description: "vNext claim ID for list_sources/add_source. Legacy memory entry IDs are retired." },
         sourceType: { type: "string", description: "Source type filter or value (for list_sources, add_source — e.g. 'memory', 'library', 'session', 'chat_journal')" },

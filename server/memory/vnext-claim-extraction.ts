@@ -63,7 +63,7 @@ function parseClaimsFromResponse(parsed: Record<string, unknown>): ClaimCandidat
 
   const validTypes = new Set(["state", "cause", "action"]);
   const legacyTypeMap: Record<string, ClaimCandidate["claimType"]> = { event: "action" };
-  const validEntityTypes = new Set(["person", "project", "goal"]);
+  const validEntityTypes = new Set(["person", "company", "project", "goal"]);
 
   return (parsed.claims as unknown[])
     .filter((c): c is Record<string, unknown> => c != null && typeof c === "object")
@@ -152,10 +152,10 @@ Extraction principle: look through the process wrapper to the underlying facts. 
 
 For each claim, include a "title": a 1-3 word Title Case label naming the subject of the claim (e.g. "Toku Outreach", "Brand Colors", "Eric Kamont"). Never more than 3 words.
 
-For each claim, include 1-4 topics and entityMentions for named people, projects, or goals when present. entityType must be "person", "project", or "goal". If one claim is caused by another claim in this batch, set sourceClaimIndex to that claim's 0-based index; otherwise use null.
+For each claim, include 1-4 topics and entityMentions for explicitly named people, companies, projects, or goals when present. entityType must be "person", "company", "project", or "goal". Company mentions must name the organization directly; never infer a company from a person's employer, a domain, or contextual association. If one claim is caused by another claim in this batch, set sourceClaimIndex to that claim's 0-based index; otherwise use null.
 
 Respond with only valid JSON:
-{"claims":[{"title":"1-3 Word Title","content":"...","claimType":"state|cause|action","confidence":0.0,"topics":["..."],"entityMentions":[{"name":"...","entityType":"person|project|goal"}],"sourceClaimIndex":null}],"reasoning":"short reason, or why no claims were worth storing"}`;
+{"claims":[{"title":"1-3 Word Title","content":"...","claimType":"state|cause|action","confidence":0.0,"topics":["..."],"entityMentions":[{"name":"...","entityType":"person|company|project|goal"}],"sourceClaimIndex":null}],"reasoning":"short reason, or why no claims were worth storing"}`;
 
 // ---------------------------------------------------------------------------
 // Chunk-level claim extraction
