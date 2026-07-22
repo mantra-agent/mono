@@ -1687,6 +1687,12 @@ export class MemoryVnextClaimStorage {
     if (boundedDelta <= 0) return this.getClaim(id);
     const decayedAt = now.toISOString();
     const expectedLastDecayedAt = input?.expectedLastDecayedAt?.toISOString() ?? null;
+    const confidenceDecayMetadata = JSON.stringify({
+      lastMaintainedAt: decayedAt,
+      elapsedPeriods: input?.elapsedPeriods ?? 1,
+      intervalDays: input?.intervalDays ?? null,
+      delta: boundedDelta,
+    });
     const replayGuard = input
       ? expectedLastDecayedAt
         ? sql`${memoryVnextClaims.metadata}->>'lastDecayedAt' = ${expectedLastDecayedAt}`
@@ -1706,12 +1712,7 @@ export class MemoryVnextClaimStorage {
             true
           ),
           '{lifecycle,confidenceDecay}',
-          jsonb_build_object(
-            'lastMaintainedAt', ${decayedAt},
-            'elapsedPeriods', ${input?.elapsedPeriods ?? 1},
-            'intervalDays', ${input?.intervalDays ?? null}::integer,
-            'delta', ${boundedDelta}
-          ),
+          ${confidenceDecayMetadata}::jsonb,
           true
         )`,
       })
