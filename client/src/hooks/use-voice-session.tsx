@@ -22,6 +22,7 @@ import {
   playDisconnectionChime,
   startVoiceThinkingLoop,
   stopVoiceThinkingLoop,
+  unlockVoiceAudioContext,
 } from "@/lib/voice-chime";
 import { isNativeVoiceBridge, sendToNative, onNativeMessage } from "@/lib/native-voice-bridge";
 import {
@@ -43,23 +44,8 @@ const log = createLogger("VoiceSession");
  * Returns once the warm-up completes or on any error (non-blocking).
  */
 async function warmUpAudioPipeline(): Promise<void> {
-  try {
-    const ctx = new AudioContext();
-    await ctx.resume();
-    // Play ~50ms of silence to force the output pipeline to activate
-    const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * 0.05), ctx.sampleRate);
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(ctx.destination);
-    src.start();
-    // Give hardware time to process before tearing down
-    await new Promise(r => setTimeout(r, 100));
-    src.stop();
-    src.disconnect();
-    await ctx.close();
-  } catch {
-    // Non-critical: if warm-up fails, the session will still start
-  }
+  await unlockVoiceAudioContext();
+  await new Promise(r => setTimeout(r, 100));
 }
 
 export type VoiceStatus = "idle" | "connecting" | "active" | "ending" | "reconnecting";
