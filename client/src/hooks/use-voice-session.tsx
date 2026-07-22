@@ -299,14 +299,24 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const disconnectChimePlayedRef = useRef(false);
 
   useEffect(() => {
-    if (status === "active" && voiceThinking && agentMode !== "speaking") {
+    const shouldPlayThinkingAudio = status === "active" && voiceThinking && agentMode !== "speaking";
+
+    if (isNative) {
+      sendToNative({ type: "voice.thinkingAudio", active: shouldPlayThinkingAudio });
+      return;
+    }
+
+    if (shouldPlayThinkingAudio) {
       startVoiceThinkingLoop();
       return;
     }
     stopVoiceThinkingLoop();
-  }, [agentMode, status, voiceThinking]);
+  }, [agentMode, isNative, status, voiceThinking]);
 
-  useEffect(() => () => stopVoiceThinkingLoop(), []);
+  useEffect(() => () => {
+    stopVoiceThinkingLoop();
+    if (isNative) sendToNative({ type: "voice.thinkingAudio", active: false });
+  }, [isNative]);
 
   const playDisconnectChimeOnce = useCallback(() => {
     if (disconnectChimePlayedRef.current) return;

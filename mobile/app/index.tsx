@@ -16,6 +16,7 @@ import {
   type WebToNativeVoiceMessage,
 } from '../src/lib/voice-bridge';
 import { useVoiceSession } from '../src/contexts/voice-session';
+import { startThinkingAudioLoop, stopThinkingAudioLoop, unloadThinkingAudioLoop } from '../src/lib/thinking-audio';
 
 const LOG_TAG = 'PrimaryScreen';
 
@@ -243,6 +244,12 @@ export default function PrimaryScreen() {
   useEffect(() => {
     const unsubscribe = voiceSession.addBridgeListener((event) => {
       Logger.debug(LOG_TAG, 'Forwarding voice event to WebView', { type: event.type });
+      if (event.type === 'voice.modeChange' && event.mode === 'speaking') {
+        void stopThinkingAudioLoop();
+      }
+      if (event.type === 'voice.disconnected' || event.type === 'voice.error') {
+        void stopThinkingAudioLoop();
+      }
       sendToWebView(event);
     });
     return unsubscribe;
@@ -265,6 +272,12 @@ export default function PrimaryScreen() {
     });
     return () => subscription.remove();
   }, [sendToWebView]);
+
+  useEffect(() => {
+    return () => {
+      void unloadThinkingAudioLoop();
+    };
+  }, []);
 
   // ---------------------------------------------------------------------------
   // Voice message routing: web client → native voice session
@@ -305,6 +318,14 @@ export default function PrimaryScreen() {
 
       case 'voice.userActivity':
         voiceSession.sendUserActivity();
+        break;
+
+      case 'voice.thinkingAudio':
+        if (msg.active) {
+          void startThinkingAudioLoop();
+        } else {
+          void stopThinkingAudioLoop();
+        }
         break;
     }
   }, [voiceSession]);

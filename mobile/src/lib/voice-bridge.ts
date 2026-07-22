@@ -41,11 +41,18 @@ export interface VoiceBridgeUserActivity {
   type: 'voice.userActivity';
 }
 
+/** Web asks native to start or stop the local thinking feedback loop. */
+export interface VoiceBridgeThinkingAudio {
+  type: 'voice.thinkingAudio';
+  active: boolean;
+}
+
 export type WebToNativeVoiceMessage =
   | VoiceBridgeStart
   | VoiceBridgeEnd
   | VoiceBridgeMute
-  | VoiceBridgeUserActivity;
+  | VoiceBridgeUserActivity
+  | VoiceBridgeThinkingAudio;
 
 // ---------------------------------------------------------------------------
 // Native → Web messages

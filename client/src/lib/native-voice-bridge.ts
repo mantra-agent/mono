@@ -44,11 +44,17 @@ export interface VoiceBridgeUserActivity {
   type: 'voice.userActivity';
 }
 
+export interface VoiceBridgeThinkingAudio {
+  type: 'voice.thinkingAudio';
+  active: boolean;
+}
+
 export type WebToNativeVoiceMessage =
   | VoiceBridgeStart
   | VoiceBridgeEnd
   | VoiceBridgeMute
-  | VoiceBridgeUserActivity;
+  | VoiceBridgeUserActivity
+  | VoiceBridgeThinkingAudio;
 
 // ---------------------------------------------------------------------------
 // Native → Web message types (mirrors mobile/src/lib/voice-bridge.ts)
