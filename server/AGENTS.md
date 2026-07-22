@@ -600,7 +600,9 @@ Cloudflare Pages project truth and deployment commands live in `server/platforms
 
 ## Runtime Architecture
 
-Container deployments use Tini as PID 1. The shell entrypoint must `exec` the Node server as Tini's direct child. Never make Node PID 1 and never replace Tini with route-level or child-specific reaping logic; Tini owns signal forwarding and orphaned descendant reaping for git, esbuild, Chromium, and provider tooling.
+Container deployments use Tini as PID 1. The shell entrypoint must `exec` `dist/process-wrapper.mjs` as Tini's direct child; the wrapper is the sole owner of the `dist/index.mjs` application child, bounded same-container restart decisions, and observed child exit code/signal classification. Never make Node PID 1 and never replace Tini with route-level or child-specific reaping logic; Tini owns signal forwarding and orphaned descendant reaping for git, esbuild, Chromium, and provider tooling.
+
+`runtime-process-lifecycle.ts` owns the single durable last-boot record per Railway environment/service/replica runtime key in `system_settings`. The child registers its boot after schema bootstrap and marks clean termination only through `index.ts`'s graceful-shutdown coordinator. A later child may settle a prior active boot from bounded supervisor exit evidence; absent evidence is `unclean` with an unknown prior-boot cause. Never infer whole-container SIGKILL, OOM eviction, host migration, native crash, or provider termination from missing in-process telemetry. Railway owns container restart policy and its SIGTERM-to-SIGKILL draining interval; the wrapper must exit non-zero after exhausting its bounded child-restart budget.
 
 ### Session Compaction Archives
 

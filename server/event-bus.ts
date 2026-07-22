@@ -80,7 +80,7 @@ class EventBus extends EventEmitter {
   private trimDroppedSinceLastLog = 0;
   private lastTrimLogTime = 0;
   private readonly TRIM_LOG_INTERVAL_MS = 60_000;
-  public readonly bootId = `boot-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  public readonly bootId = process.env.WATCHDOG_BOOT_ID || `boot-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   public readonly bootTimestamp = Date.now();
 
   on(event: string | symbol, listener: (...args: any[]) => void): this {
