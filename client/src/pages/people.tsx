@@ -3861,17 +3861,6 @@ function ImportTagPicker({ tags, onChange }: { tags: string[]; onChange: (tags: 
   );
 }
 
-function DesktopPlaceholder() {
-  return (
-    <div className="flex items-center justify-center h-full" data-testid="detail-placeholder">
-      <div className="text-center">
-        <Users className="h-12 w-12 text-muted-foreground/20 mx-auto mb-3" />
-        <p className="text-sm text-muted-foreground">Select a person to view their details</p>
-      </div>
-    </div>
-  );
-}
-
 export default function PeoplePage() {
   const { toast } = useToast();
   const [, params] = useRoute("/people/:id");
@@ -3995,7 +3984,8 @@ export default function PeoplePage() {
 
   return (
     <div className="flex h-full bg-black" data-testid="people-page">
-      <div className={`w-full @md:w-64 shrink-0 flex flex-col bg-black ${selectedPersonId || selectedImportEmail ? "hidden @md:flex" : "flex"}`}>
+      {!selectedPersonId && !selectedImportEmail && (
+      <div className="flex w-full shrink-0 flex-col bg-black">
         <div className="p-2">
           <div className="flex items-center gap-1.5">
             <div className="relative flex-1 min-w-0">
@@ -4076,8 +4066,10 @@ export default function PeoplePage() {
           </div>
         </ScrollArea>
       </div>
+      )}
 
-      <div className={`flex-1 flex flex-col min-w-0 ${selectedPersonId || selectedImportEmail ? "flex" : "hidden @md:flex"}`}>
+      {(selectedPersonId || selectedImportEmail) && (
+      <div className="flex min-w-0 flex-1 flex-col">
         {selectedPersonId ? (
           <>
             <div className="flex-1 overflow-y-auto scrollbar-thin">
@@ -4098,10 +4090,9 @@ export default function PeoplePage() {
             onClearSelection={() => setSelectedImportEmail(null)}
             onSelectPerson={setSelectedPersonId}
           />
-        ) : (
-          <DesktopPlaceholder />
-        )}
+        ) : null}
       </div>
+      )}
     </div>
   );
 }
