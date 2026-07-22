@@ -47,6 +47,10 @@ import { LibraryPageEditor, PageEmoji } from "@/pages/library/library-components
 import type { LibraryPage, LibraryPageFull } from "@/pages/library/types";
 import { type Vault } from "@/hooks/use-vaults";
 import { useVaultSections } from "@/pages/library/use-vault-sections";
+import {
+  HIERARCHY_SECTION_HEADER_CLASS,
+  HierarchySectionHeader,
+} from "@/components/hierarchy-section-header";
 
 interface Library2IndexDestination {
   id: string;
@@ -87,8 +91,6 @@ type Library2Selection =
   | { kind: "placement"; placementId: string }
   | { kind: "page"; pageId: string };
 
-const SECTION_LABEL_CLASS =
-  "mt-2 flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground";
 const QUIET_ROW_CLASS = "px-2 py-1.5 text-sm text-muted-foreground";
 
 type ImportSource =
@@ -613,9 +615,9 @@ export default function Library2Page() {
                     className="mb-1 min-w-0"
                     data-testid="library2-recent-section"
                   >
-                    <div className={SECTION_LABEL_CLASS}>
+                    <HierarchySectionHeader className="mt-2">
                       <span className="truncate">Recent</span>
-                    </div>
+                    </HierarchySectionHeader>
                     {recent.length === 0 ? (
                       <div className={QUIET_ROW_CLASS}>Nothing recent yet.</div>
                     ) : (
@@ -656,7 +658,10 @@ export default function Library2Page() {
                           onClick={() =>
                             toggleInSet(setExpandedVaultIds, vault.id)
                           }
-                          className="flex w-full min-w-0 items-center gap-1 rounded-md px-2 py-1.5 text-left text-sm font-medium text-foreground hover:bg-accent/70"
+                          className={cn(
+                            HIERARCHY_SECTION_HEADER_CLASS,
+                            "mt-2 text-left hover:bg-accent/70",
+                          )}
                           data-testid={`library2-vault-section-${vault.id}`}
                         >
                           {vaultExpanded ? (
@@ -664,14 +669,6 @@ export default function Library2Page() {
                           ) : (
                             <ChevronRight className="h-3.5 w-3.5 shrink-0" />
                           )}
-                          {vault.icon ? (
-                            <span
-                              className="text-xs leading-none"
-                              aria-hidden="true"
-                            >
-                              {vault.icon}
-                            </span>
-                          ) : null}
                           <span className="truncate">{vault.name}</span>
                         </button>
                         {vaultExpanded &&

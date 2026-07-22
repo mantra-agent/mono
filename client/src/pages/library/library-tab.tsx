@@ -16,6 +16,7 @@ import { flattenTree, DndTree } from "./library-tree";
 import { useVaultSections } from "./use-vault-sections";
 import type { Vault } from "@/hooks/use-vaults";
 import { useLibraryUnread, computeHasUnreadDescendantIds } from "@/components/library-activity-indicator";
+import { HierarchySectionHeader } from "@/components/hierarchy-section-header";
 
 const log = createLogger("LibraryTab");
 
@@ -25,18 +26,16 @@ const DEFAULT_SIDEBAR_WIDTH = 280;
 const MIN_SIDEBAR_WIDTH = 220;
 const MAX_SIDEBAR_WIDTH = 480;
 
-const SECTION_LABEL_CLASS =
-  "mt-2 flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground";
 const QUIET_ROW_CLASS = "px-2 py-1.5 text-sm text-muted-foreground";
 
 function VaultSectionHeader({ vault }: { vault: Vault }) {
   return (
-    <div className={SECTION_LABEL_CLASS} data-testid={`library-vault-section-${vault.id}`}>
-      {vault.icon ? (
-        <span className="text-xs normal-case leading-none" aria-hidden="true">{vault.icon}</span>
-      ) : null}
+    <HierarchySectionHeader
+      className="mt-2"
+      data-testid={`library-vault-section-${vault.id}`}
+    >
       <span className="truncate">{vault.name}</span>
-    </div>
+    </HierarchySectionHeader>
   );
 }
 
@@ -60,9 +59,9 @@ interface VaultTreeSectionProps {
 
 /**
  * One vault section: a header plus a self-contained DndTree over that vault's
- * root nodes. Each section owns its own drag state, which structurally confines
- * drag-and-drop reordering to within the vault (a separate DndContext per
- * vault), matching the same-vault move guard.
+ * root nodes. Each section owns its own drag state, which keeps direct
+ * drag-and-drop reordering inside the displayed vault. Cross-vault transfers
+ * remain an explicit Move-dialog action with a named destination vault.
  */
 function VaultTreeSection({
   vault, rootNodes, selectedId, expandedIds,
@@ -413,7 +412,9 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
             <>
               {!isSearching && (
                 <div className="mb-1 min-w-0" data-testid="library-recent-section">
-                  <div className={SECTION_LABEL_CLASS}><span className="truncate">Recent</span></div>
+                  <HierarchySectionHeader className="mt-2">
+                    <span className="truncate">Recent</span>
+                  </HierarchySectionHeader>
                   {recent.length === 0 ? (
                     <div className={QUIET_ROW_CLASS}>Nothing recent yet.</div>
                   ) : (

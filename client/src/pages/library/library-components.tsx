@@ -465,7 +465,12 @@ export function MovePageDialog({ open, onOpenChange, page, pages }: {
     method: "PATCH",
     path: ({ id }) => `/api/info/library/${id}`,
     body: ({ parentId, destinationVaultId }) => ({ parentId, destinationVaultId }),
-    invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"], ["/api/library2/placements"]],
+    invalidateKeys: [
+      ["/api/info/library"],
+      ["/api/info/library/tree"],
+      ["/api/library2/placements"],
+      ["/api/library2/destinations"],
+    ],
     successMessage: () => `${page.title || "Page"} moved`,
     errorTitle: "Move failed",
     onSuccess: () => onOpenChange(false),
