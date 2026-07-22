@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, Loader2, TrendingUp } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
@@ -122,7 +123,7 @@ export default function BusinessModelPage() {
   usePageHeader({ title: "Business Model" });
   const { toast } = useToast();
 
-  const { data, isLoading, error } = useQuery<FinancialModel>({ queryKey: ["/api/business/model"] });
+  const { data, isLoading, isFetching, error, refetch } = useQuery<FinancialModel>({ queryKey: ["/api/business/model"] });
 
   const [draft, setDraft] = useState<Assumptions | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -195,16 +196,34 @@ export default function BusinessModelPage() {
     return map;
   }, [draft]);
 
+  if (error) {
+    return (
+      <div className="w-full p-4">
+        <div className="rounded-md border border-destructive/30 p-4">
+          <p className="text-sm font-medium text-foreground">Financial model unavailable</p>
+          <p className="mt-1 text-sm text-muted-foreground">{(error as Error).message}</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-4"
+            disabled={isFetching}
+            onClick={() => void refetch()}
+          >
+            {isFetching && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+            Try again
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (isLoading || !draft || !projection) {
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
       </div>
     );
-  }
-
-  if (error) {
-    return <div className="p-6 text-sm text-destructive">Failed to load model: {(error as Error).message}</div>;
   }
 
   const { months, stages: summaries } = projection;
