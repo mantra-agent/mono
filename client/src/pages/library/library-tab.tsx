@@ -11,8 +11,10 @@ import { cn } from "@/lib/utils";
 import { X, Plus, Loader2, Search } from "lucide-react";
 import type { JSONContent } from "@tiptap/core";
 import type { LibraryPage, LibraryPageFull, TreeNode, DropPosition } from "./types";
-import { LibraryPageEditor, EmptyLibraryState, DeletePageDialog, MovePageDialog } from "./library-components";
+import { LibraryPageEditor, EmptyLibraryState, DeletePageDialog, MovePageDialog, PageEmoji } from "./library-components";
 import { flattenTree, DndTree } from "./library-tree";
+import { useVaultSections } from "./use-vault-sections";
+import type { Vault } from "@/hooks/use-vaults";
 import { useLibraryUnread, computeHasUnreadDescendantIds } from "@/components/library-activity-indicator";
 
 const log = createLogger("LibraryTab");
@@ -22,6 +24,90 @@ const EXPANDED_IDS_KEY = "library-expanded-ids";
 const DEFAULT_SIDEBAR_WIDTH = 280;
 const MIN_SIDEBAR_WIDTH = 220;
 const MAX_SIDEBAR_WIDTH = 480;
+
+const SECTION_LABEL_CLASS =
+  "mt-2 flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground";
+const QUIET_ROW_CLASS = "px-2 py-1.5 text-sm text-muted-foreground";
+
+function VaultSectionHeader({ vault }: { vault: Vault }) {
+  return (
+    <div className={SECTION_LABEL_CLASS} data-testid={`library-vault-section-${vault.id}`}>
+      {vault.icon ? (
+        <span className="text-xs normal-case leading-none" aria-hidden="true">{vault.icon}</span>
+      ) : null}
+      <span className="truncate">{vault.name}</span>
+    </div>
+  );
+}
+
+interface VaultTreeSectionProps {
+  vault: Vault;
+  rootNodes: TreeNode[];
+  selectedId: string | null;
+  expandedIds: Set<string>;
+  onSelect: (id: string, slug?: string) => void;
+  onCreateChild: (parentId: string) => void;
+  onSetEmoji: (id: string, emoji: string | null) => void;
+  onDelete: (id: string) => void;
+  onDownload: (node: TreeNode) => void;
+  onEnrich: (id: string) => void;
+  onMove: (id: string) => void;
+  onReorder: (data: { id: string; parentId: string | null; sortOrder: number }) => void;
+  toggleExpand: (id: string) => void;
+  unreadIds: Set<string>;
+  hasUnreadDescendantIds: Set<string>;
+}
+
+/**
+ * One vault section: a header plus a self-contained DndTree over that vault's
+ * root nodes. Each section owns its own drag state, which structurally confines
+ * drag-and-drop reordering to within the vault (a separate DndContext per
+ * vault), matching the same-vault move guard.
+ */
+function VaultTreeSection({
+  vault, rootNodes, selectedId, expandedIds,
+  onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onReorder, toggleExpand,
+  unreadIds, hasUnreadDescendantIds,
+}: VaultTreeSectionProps) {
+  const [dragActiveId, setDragActiveId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ id: string; position: DropPosition } | null>(null);
+  const flatNodes = useMemo(() => flattenTree(rootNodes, 0, null, expandedIds), [rootNodes, expandedIds]);
+  const flatNodeIds = useMemo(() => flatNodes.map(n => n.id), [flatNodes]);
+  const flatNodeMap = useMemo(() => new Map(flatNodes.map(n => [n.id, n])), [flatNodes]);
+
+  return (
+    <div className="mb-1 min-w-0">
+      <VaultSectionHeader vault={vault} />
+      {rootNodes.length === 0 ? (
+        <div className={QUIET_ROW_CLASS}>No pages yet.</div>
+      ) : (
+        <DndTree
+          treeData={rootNodes}
+          flatNodes={flatNodes}
+          flatNodeIds={flatNodeIds}
+          flatNodeMap={flatNodeMap}
+          selectedId={selectedId}
+          expandedIds={expandedIds}
+          dragActiveId={dragActiveId}
+          dropTarget={dropTarget}
+          onDragActiveIdChange={setDragActiveId}
+          onDropTargetChange={setDropTarget}
+          onSelect={onSelect}
+          onCreateChild={onCreateChild}
+          onSetEmoji={onSetEmoji}
+          onDelete={onDelete}
+          onDownload={onDownload}
+          onEnrich={onEnrich}
+          onMove={onMove}
+          onReorder={onReorder}
+          toggleExpand={toggleExpand}
+          unreadIds={unreadIds}
+          hasUnreadDescendantIds={hasUnreadDescendantIds}
+        />
+      )}
+    </div>
+  );
+}
 
 export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSlug?: string; initialPageSlug?: string }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -179,6 +265,21 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
   const flatNodeIds = useMemo(() => flatNodes.map(n => n.id), [flatNodes]);
   const flatNodeMap = useMemo(() => new Map(flatNodes.map(n => [n.id, n])), [flatNodes]);
 
+  // Vault-aware sidebar: one section per visible vault (including empty ones)
+  // plus a RECENT list. `treeData` is search-filtered so sections reflect the
+  // query; RECENT derives from the full page list. Grouping/visibility come
+  // from the shared hook, which reacts to top-bar vault toggles.
+  const isSearching = searchQuery.trim().length > 0;
+  const { sections, recent, visibleVaults, isLoading: isVaultLoading } = useVaultSections({
+    pages,
+    treeData: filteredTreeData,
+  });
+  const useSectioned = !isVaultLoading && visibleVaults.length > 0;
+  const renderedSections = useMemo(
+    () => (isSearching ? sections.filter((s) => s.rootNodes.length > 0) : sections),
+    [isSearching, sections],
+  );
+
   const reorderMutation = useApiMutation<{ id: string; parentId: string | null; sortOrder: number }>({
     method: "PATCH",
     path: "/api/info/library/reorder",
@@ -308,32 +409,85 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
           </button>
           {isTreeLoading ? (
             <div className="flex justify-center py-12"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div>
-          ) : filteredTreeData.length === 0 ? (
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">{searchQuery ? "No matching pages." : "No pages yet."}</div>
           ) : (
-            <DndTree
-              treeData={treeData}
-              flatNodes={flatNodes}
-              flatNodeIds={flatNodeIds}
-              flatNodeMap={flatNodeMap}
-              selectedId={selectedId}
-              expandedIds={expandedIds}
-              dragActiveId={dragActiveId}
-              dropTarget={dropTarget}
-              onDragActiveIdChange={setDragActiveId}
-              onDropTargetChange={setDropTarget}
-              onSelect={selectPage}
-              onCreateChild={(parentId) => createMutation.mutate({ parentId })}
-              onSetEmoji={(id, emoji) => emojiMutation.mutate({ id, emoji })}
-              onDelete={(id) => setDeleteConfirmId(id)}
-              onDownload={handleTreeDownload}
-              onEnrich={(id) => enrichMutation.mutate(id)}
-              onMove={(id) => setTreeMoveId(id)}
-              onReorder={(data) => reorderMutation.mutate(data)}
-              toggleExpand={toggleExpand}
-              unreadIds={unreadIds}
-              hasUnreadDescendantIds={hasUnreadDescendantIds}
-            />
+            <>
+              {!isSearching && (
+                <div className="mb-1 min-w-0" data-testid="library-recent-section">
+                  <div className={SECTION_LABEL_CLASS}><span className="truncate">Recent</span></div>
+                  {recent.length === 0 ? (
+                    <div className={QUIET_ROW_CLASS}>Nothing recent yet.</div>
+                  ) : (
+                    recent.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => selectPage(p.id, p.slug)}
+                        className={cn(
+                          "flex w-full min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent/50",
+                          selectedId === p.id && "bg-accent",
+                        )}
+                        data-testid={`library-recent-${p.id}`}
+                      >
+                        <PageEmoji emoji={p.emoji} size="xs" />
+                        <span className="min-w-0 flex-1 truncate text-left">{p.title || "Untitled"}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+              {useSectioned ? (
+                renderedSections.length === 0 ? (
+                  <div className={QUIET_ROW_CLASS}>{isSearching ? "No matching pages." : "No pages yet."}</div>
+                ) : (
+                  renderedSections.map((section) => (
+                    <VaultTreeSection
+                      key={section.vault.id}
+                      vault={section.vault}
+                      rootNodes={section.rootNodes}
+                      selectedId={selectedId}
+                      expandedIds={expandedIds}
+                      onSelect={selectPage}
+                      onCreateChild={(parentId) => createMutation.mutate({ parentId })}
+                      onSetEmoji={(id, emoji) => emojiMutation.mutate({ id, emoji })}
+                      onDelete={(id) => setDeleteConfirmId(id)}
+                      onDownload={handleTreeDownload}
+                      onEnrich={(id) => enrichMutation.mutate(id)}
+                      onMove={(id) => setTreeMoveId(id)}
+                      onReorder={(data) => reorderMutation.mutate(data)}
+                      toggleExpand={toggleExpand}
+                      unreadIds={unreadIds}
+                      hasUnreadDescendantIds={hasUnreadDescendantIds}
+                    />
+                  ))
+                )
+              ) : filteredTreeData.length === 0 ? (
+                <div className={QUIET_ROW_CLASS}>{searchQuery ? "No matching pages." : "No pages yet."}</div>
+              ) : (
+                <DndTree
+                  treeData={treeData}
+                  flatNodes={flatNodes}
+                  flatNodeIds={flatNodeIds}
+                  flatNodeMap={flatNodeMap}
+                  selectedId={selectedId}
+                  expandedIds={expandedIds}
+                  dragActiveId={dragActiveId}
+                  dropTarget={dropTarget}
+                  onDragActiveIdChange={setDragActiveId}
+                  onDropTargetChange={setDropTarget}
+                  onSelect={selectPage}
+                  onCreateChild={(parentId) => createMutation.mutate({ parentId })}
+                  onSetEmoji={(id, emoji) => emojiMutation.mutate({ id, emoji })}
+                  onDelete={(id) => setDeleteConfirmId(id)}
+                  onDownload={handleTreeDownload}
+                  onEnrich={(id) => enrichMutation.mutate(id)}
+                  onMove={(id) => setTreeMoveId(id)}
+                  onReorder={(data) => reorderMutation.mutate(data)}
+                  toggleExpand={toggleExpand}
+                  unreadIds={unreadIds}
+                  hasUnreadDescendantIds={hasUnreadDescendantIds}
+                />
+              )}
+            </>
           )}
         </ScrollArea>
       </div>

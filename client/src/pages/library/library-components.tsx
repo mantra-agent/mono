@@ -27,6 +27,7 @@ import data from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
 import type { JSONContent } from "@tiptap/core";
 import type { LibraryPage, LibraryPageFull, TreeNode } from "./types";
+import { useVisibleVaults } from "./use-vault-sections";
 
 
 const log = createLogger("LibraryComponents");
@@ -464,6 +465,14 @@ export function MovePageDialog({ open, onOpenChange, page, pages }: {
     onSuccess: () => onOpenChange(false),
   });
 
+  // A vault is a hard security boundary and vault_id is immutable across moves,
+  // so destinations are restricted to the moving page's OWN vault (its section
+  // root + same-vault hierarchy). Pages in other vaults, and hidden/archived
+  // vaults, are excluded entirely.
+  const { resolveVaultId, isVaultVisible } = useVisibleVaults();
+  const movingVaultId = resolveVaultId(page.vaultId);
+  const movingVaultVisible = isVaultVisible(page.vaultId);
+
   const excludeIds = useMemo(() => {
     const ids = getDescendantIds(pages, page.id);
     ids.add(page.id);
@@ -471,8 +480,13 @@ export function MovePageDialog({ open, onOpenChange, page, pages }: {
   }, [pages, page.id]);
 
   const filteredPages = useMemo(() =>
-    pages.filter(p => !excludeIds.has(p.id) && (!query || p.title.toLowerCase().includes(query.toLowerCase()))),
-    [pages, excludeIds, query]
+    pages.filter(p =>
+      !excludeIds.has(p.id) &&
+      movingVaultVisible &&
+      resolveVaultId(p.vaultId) === movingVaultId &&
+      (!query || p.title.toLowerCase().includes(query.toLowerCase()))
+    ),
+    [pages, excludeIds, query, movingVaultId, movingVaultVisible, resolveVaultId]
   );
 
   return (
