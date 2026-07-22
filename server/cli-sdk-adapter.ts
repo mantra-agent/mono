@@ -12,6 +12,7 @@ import { createLogger } from "./log";
 import { getModel } from "./model-registry";
 import { getSecretSync } from "./secrets-store";
 import { thinkingConfigKey } from "./thinking-config";
+import { recordWireBoundaryCapture } from "./context-wire-capture";
 
 const log = createLogger("cli-sdk-adapter");
 
@@ -1464,6 +1465,23 @@ export async function* cliSdkStream(
       `spawn=${spawnMs}ms first_event=${firstEventMs ?? "n/a"}ms stream=${streamMs ?? "n/a"}ms ` +
       `tokens=${inputTokens}+${outputTokens} cache=${cacheReadTokens}+${cacheWriteTokens}`
     );
+
+    // Non-blocking, ownership-scoped capture of the real outbound wire payload for
+    // the Context viewer. systemPrompt + toolDefs are exactly what was handed to the
+    // SDK; inputTokens is the provider's own measure. The SDK harness and system-
+    // reminder envelopes it injects show up as the gap between inputTokens and this
+    // attributable payload.
+    recordWireBoundaryCapture({
+      provider: "claude-cli",
+      model,
+      activity: options.metadata?.activity ?? null,
+      systemPrompt,
+      tools: toolDefs,
+      conversation: prompt,
+      providerInputTokens: inputTokens || null,
+      providerCacheReadTokens: cacheReadTokens || null,
+      providerTokensMayBeCumulative: usageSource === "assistant.usage",
+    });
 
     yield {
       type: "usage",
