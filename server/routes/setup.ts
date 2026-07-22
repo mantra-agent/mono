@@ -1,5 +1,6 @@
 // Use createLogger for logging ONLY
 import type { Express } from "express";
+import { getHeapStatistics } from "node:v8";
 import { executorManager } from "../executor-manager";
 import { getPerformanceDiagnostics } from "../performance-monitor";
 import { setTierModel } from "../job-profiles";
@@ -230,15 +231,8 @@ export async function registerSetupRoutes(app: Express) {
   app.get("/api/health/deep", async (_req, res) => {
     const { probeDb, getDbSaturationInfo } = await import("../db");
     const mem = process.memoryUsage();
-    const maxHeapMB = (() => {
-      const flag = process.execArgv.find(a => a.startsWith("--max-old-space-size="));
-      if (flag) {
-        const val = parseInt(flag.split("=")[1], 10);
-        if (!isNaN(val)) return val;
-      }
-      return 2048;
-    })();
-    const maxHeapBytes = maxHeapMB * 1024 * 1024;
+    const maxHeapBytes = getHeapStatistics().heap_size_limit;
+    const maxHeapMB = Math.round((maxHeapBytes / 1024 / 1024) * 10) / 10;
     const heapUsedPct = Math.round((mem.heapUsed / maxHeapBytes) * 1000) / 10;
 
     const probe = await probeDb(HEALTH_PROBE_TIMEOUT_MS);
