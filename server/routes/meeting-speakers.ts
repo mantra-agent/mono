@@ -4,6 +4,7 @@ import { getPrincipal } from "../principal";
 import { chatStorage } from "../integrations/chat/storage";
 import { peopleStorage } from "../people-storage";
 import { reconcileMeetingRecapParticipants } from "../meeting/recap";
+import { recoverRecapDistributionAfterSpeakerResolution } from "../meeting/distribution";
 import { createLogger } from "../log";
 
 const log = createLogger("MeetingSpeakerRoutes");
@@ -54,6 +55,7 @@ export function registerMeetingSpeakerRoutes(app: Express): void {
           return;
         }
 
+        let distributionRecovery: Awaited<ReturnType<typeof recoverRecapDistributionAfterSpeakerResolution>> | undefined;
         if (result.session.meeting) {
           await reconcileMeetingRecapParticipants(
             sessionId,
@@ -61,19 +63,30 @@ export function registerMeetingSpeakerRoutes(app: Express): void {
             result.participant,
             result.previousPersonId,
           );
+          const reconciledSession = await chatStorage.getSession(sessionId);
+          if (reconciledSession?.meeting) {
+            distributionRecovery = await recoverRecapDistributionAfterSpeakerResolution(
+              sessionId,
+              reconciledSession.meeting,
+              principal,
+            );
+          }
         }
         log.info("meeting speaker assignment updated", {
           sessionId,
           speakerKey,
           personId: person?.id ?? null,
           outcome: result.outcome,
+          distributionRecovery,
           principalUserId: principal.userId,
         });
+        const updatedSession = await chatStorage.getSession(sessionId);
         res.json({
           ok: true,
           outcome: result.outcome,
+          distributionRecovery,
           participant: result.participant,
-          meeting: result.session.meeting,
+          meeting: updatedSession?.meeting ?? result.session.meeting,
         });
       } catch (error) {
         log.error("meeting speaker assignment failed", {
