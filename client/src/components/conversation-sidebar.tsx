@@ -40,6 +40,7 @@ import { isDurablyActiveSession, type ChatSession } from "@shared/models/chat";
 import { SessionActionsMenuItems } from "@/components/session-actions-menu";
 import { SessionDetailsModal } from "@/components/session-details-modal";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
+import { HIERARCHY_SECTION_HEADER_CLASS } from "@/components/hierarchy-section-header";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -654,7 +655,7 @@ export function SessionGroupSection({
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex items-center gap-1.5 w-full px-2 py-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider hover-elevate rounded-md" data-testid={`button-group-${group.label.toLowerCase()}`}>
+      <CollapsibleTrigger className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")} data-testid={`button-group-${group.label.toLowerCase()}`}>
         <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
         {group.label}
       </CollapsibleTrigger>
@@ -725,7 +726,7 @@ function AutoSessionsGroup({
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex items-center gap-1.5 w-full px-2 py-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider hover-elevate rounded-md" data-testid="button-group-system">
+      <CollapsibleTrigger className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")} data-testid="button-group-system">
         <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
         <span className="flex items-center gap-1.5">
           System
