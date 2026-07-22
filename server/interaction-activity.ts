@@ -34,7 +34,7 @@ export async function queryDistinctInteractionPeopleSeries(
       END
     ) AS interaction(value)
     WHERE ${visibleScopePredicate(principal, personScope)}
-      AND interaction.value->>'type' IN ('email', 'call', 'text')
+      AND interaction.value->>'type' IN ('email', 'call', 'text', 'in_person', 'video', 'social')
       AND interaction.value->>'date' >= ${startDate}
       AND interaction.value->>'date' <= ${endDate}
     GROUP BY interaction.value->>'date'
