@@ -12813,12 +12813,18 @@ async function getFirstOfNextMonth(): Promise<string> {
 
 async function gitnexusBridgeCall<T>(fn: () => Promise<T>): Promise<{ ok: boolean; result?: T; error?: string }> {
   try {
-    const { isGitNexusReady, getStatus } = await import("./gitnexus-bridge");
+    const { isGitNexusReady, getStatus, getGitNexusPhase, startGitNexus } = await import("./gitnexus-bridge");
     const status = await getStatus();
     if (status.phase === "disabled") {
       return { ok: false, error: "GitNexus indexing is disabled for the current Platform environments. Use normal repo/file inspection instead, or enable code indexing on the relevant environment source binding." };
     }
     if (!isGitNexusReady()) {
+      // If indexing was never triggered in this process, warm it up now so the
+      // first code action starts the index instead of failing forever on idle.
+      // startGitNexus() guards against concurrent calls, so this is idempotent.
+      if (getGitNexusPhase() === "idle") {
+        startGitNexus().catch(() => {});
+      }
       return { ok: false, error: status.message || "Index not ready — GitNexus is still indexing the codebase. Try again in a moment." };
     }
     const result = await fn();
