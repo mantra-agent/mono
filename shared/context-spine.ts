@@ -94,72 +94,7 @@ export interface SpineMetadata {
   codingContext?: CodingContextMetadata;
 }
 
-/**
- * One tool's serialized schema size, sourced from the live tool registry
- * (`getToolSchemas`). Truthful by construction: it reuses the exact schemas the
- * chat path sends rather than a hand-maintained copy.
- */
-export interface WireToolSchemaEntry {
-  name: string;
-  category: string;
-  chars: number;
-  /** chars/3.5 estimate. */
-  tokens: number;
-  /** True when this entry is an alias schema (extra wire cost the registry ships). */
-  isAlias: boolean;
-}
-
-/**
- * Latest real model-boundary payload captured for the requesting user. Scoped to
- * the principal so one user never sees another user's captured prompt.
- */
-export interface WireBoundaryCaptureView {
-  capturedAt: string;
-  provider: string;
-  model: string;
-  activity: string | null;
-  /** chars/3.5 estimates of the captured outbound payload components. */
-  systemPromptTokens: number;
-  toolSchemaTokens: number;
-  conversationTokens: number;
-  attributableTokens: number;
-  /** Provider-measured input tokens for the captured call, when reported. */
-  providerInputTokens: number | null;
-  providerCacheReadTokens: number | null;
-  /**
-   * providerInputTokens - attributableTokens, clamped >= 0. The SDK harness plus
-   * system-reminder envelopes plus tokenizer overhead — injected at the boundary,
-   * not authored in Mantra code, so it is measured as a remainder.
-   */
-  harnessAndRemindersTokens: number | null;
-  /** May be cumulative across a multi-turn session for some providers. */
-  providerTokensMayBeCumulative: boolean;
-  systemPromptExcerpt: string;
-  systemPromptExcerptTruncated: boolean;
-}
-
-/**
- * Truthful wire-payload breakdown for the Context viewer: what the model actually
- * receives, not just the rendered spine template.
- */
-export interface ContextWirePayload {
-  /** Token estimator identity for every estimated value below. */
-  estimator: string;
-  spine: { tokens: number; chars: number };
-  toolSchemas: {
-    count: number;
-    aliasCount: number;
-    totalTokens: number;
-    totalChars: number;
-    tools: WireToolSchemaEntry[];
-  };
-  /** Statically attributable estimated tokens (spine + tool schemas), no live call required. */
-  estimatedAttributableTokens: number;
-  /** Latest real boundary capture for this user, or null when none recorded yet. */
-  capture: WireBoundaryCaptureView | null;
-  /** Explains SDK-injected components (harness, system-reminders) not authored in Mantra code. */
-  sdkInjectedNote: string;
-}
+// Exact inference payload capture contracts live in shared/inference-payload.ts.
 
 export interface ContextRequest {
   callType: ContextCallType;

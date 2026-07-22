@@ -1,102 +1,46 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
-import { usePageHeader } from "@/hooks/use-page-header";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import ReactMarkdown from "react-markdown";
-import { getInstanceName } from "@/lib/instance-config";
-import remarkGfm from "remark-gfm";
-import { Card } from "@/components/ui/card";
+import { ChevronRight, Clock, FileJson2, Layers, ShieldCheck } from "lucide-react";
+import { usePageHeader } from "@/hooks/use-page-header";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  TabsContent,
-} from "@/components/ui/tabs";
-import { Input } from "@/components/ui/input";
-import {
-  ChevronRight,
-  ChevronDown,
-  Clock,
-  FileText,
-  Layers,
-  ArrowLeft,
-  Loader2,
-  Boxes,
-} from "lucide-react";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { HierarchyTreeRow } from "@/components/hierarchy-tree";
+import { cn } from "@/lib/utils";
+import type { SpineMetadata } from "@shared/context-spine";
 import type {
-  SpineMetadata,
-  ContextCallType,
-  LlmMode,
-  ContextWirePayload,
-} from "../../../shared/context-spine";
-
-interface UnifiedPreset {
-  key: string;
-  label: string;
-  callType: ContextCallType;
-  llmMode: LlmMode;
-  includeSections: string[];
-  excludeSections: string[];
-}
-
-const STANDARD_PRESETS: UnifiedPreset[] = [
-  { key: "full-text", label: "Full / Text", callType: "full", llmMode: "text", includeSections: [], excludeSections: [] },
-  { key: "full-voice", label: "Full / Voice", callType: "full", llmMode: "voice", includeSections: [], excludeSections: [] },
-  { key: "world-text", label: "World / Text", callType: "world", llmMode: "text", includeSections: [], excludeSections: [] },
-  { key: "internal-text", label: "Internal / Text", callType: "internal", llmMode: "text", includeSections: [], excludeSections: [] },
-];
-
-function formatTokens(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-  return String(n);
-}
+  InferencePayloadCapture,
+  InferencePayloadCaptureListResponse,
+  InferencePayloadCaptureSummary,
+} from "@shared/inference-payload";
 
 function formatModelName(modelId: string): string {
   const name = modelId.includes("/") ? modelId.split("/").pop()! : modelId;
   return name.replace(/-\d{8}$/, "");
 }
 
-function SummaryBar({ metadata, wire }: { metadata: SpineMetadata; wire?: ContextWirePayload }) {
+function formatTokens(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
+
+function SummaryBar({ metadata }: { metadata: SpineMetadata }) {
   const usagePct = metadata.contextWindow && metadata.contextWindow > 0
     ? Math.min((metadata.totalTokens / metadata.contextWindow) * 100, 100)
     : null;
-
   return (
-    <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0" data-testid="context-summary-bar">
-      <span className="flex items-center gap-1" data-testid="text-section-count">
+    <div className="flex items-center gap-3 text-xs text-muted-foreground" data-testid="context-summary-bar">
+      <span className="flex items-center gap-1">
         <Layers className="h-3 w-3" />
         {metadata.activeSectionCount}/{metadata.sectionCount} sections
       </span>
-      {wire && (
-        <span className="flex items-center gap-1" data-testid="text-wire-total">
-          <Boxes className="h-3 w-3" />
-          wire ~{formatTokens(wire.estimatedAttributableTokens)} est
-          {wire.capture?.providerInputTokens != null && (
-            <> · {formatTokens(wire.capture.providerInputTokens)} measured</>
-          )}
-        </span>
-      )}
-      {metadata.placeholderCount > 0 && (
-        <span className="flex items-center gap-1" data-testid="text-placeholder-count">
-          <FileText className="h-3 w-3" />
-          {metadata.placeholderCount} placeholders
-        </span>
-      )}
       {metadata.contextWindow && metadata.modelId && usagePct !== null && (
         <>
-          <span data-testid="text-model-info">
-            {formatModelName(metadata.modelId)} / {metadata.modelTier} tier
-          </span>
-          <span className="tabular-nums" data-testid="text-usage-ratio">
+          <span>{formatModelName(metadata.modelId)} / {metadata.modelTier} tier</span>
+          <span className="tabular-nums">
             {formatTokens(metadata.totalTokens)} / {formatTokens(metadata.contextWindow)} ({usagePct.toFixed(1)}%)
           </span>
         </>
@@ -105,45 +49,27 @@ function SummaryBar({ metadata, wire }: { metadata: SpineMetadata; wire?: Contex
   );
 }
 
-function statusClass(loaded: boolean, required: boolean): string {
-  if (loaded) return "text-emerald-600 dark:text-emerald-400";
-  return required ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground";
-}
-
 function RuntimeCard({ metadata }: { metadata: SpineMetadata }) {
   const coding = metadata.codingContext;
   return (
-    <Card className="flex-1 min-h-0 overflow-auto">
+    <Card className="flex-1 min-h-0 min-w-0 overflow-auto">
       <div className="p-4 space-y-4">
-        <div>
-          <h2 className="text-sm font-semibold">Runtime</h2>
-        </div>
-        {coding && (
-          <div className="rounded-lg border border-border/30 p-3 space-y-3" data-testid="card-coding-context">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-medium">Coding context</h3>
-
-              </div>
-              <span className="text-xs rounded-full border px-2 py-0.5">always-on</span>
-            </div>
-            <div className="space-y-2">
-              {coding.requiredReferences.map(ref => (
-                <div key={ref.id} className="flex items-start justify-between gap-3 text-xs border-t border-border/20 pt-2 first:border-t-0 first:pt-0">
-                  <div>
-                    <div className="font-medium">{ref.label}</div>
-                    {ref.source && <div className="text-muted-foreground font-mono">{ref.source}</div>}
-                    {ref.evidence?.[0] && <div className="text-muted-foreground">{ref.evidence[0]}</div>}
-                  </div>
-                  <div className={statusClass(ref.loaded, ref.required)}>
-                    {ref.loaded ? "loaded" : ref.required ? "loads at tool boundary" : "on demand"}
-                  </div>
+        <h2 className="text-sm font-semibold">Runtime</h2>
+        {coding ? (
+          <div className="space-y-2">
+            {coding.requiredReferences.map((reference) => (
+              <div key={reference.id} className="flex items-start justify-between gap-4 border-b border-border/20 py-2 text-sm last:border-b-0">
+                <div className="min-w-0">
+                  <div>{reference.label}</div>
+                  {reference.source && <div className="font-mono text-xs text-muted-foreground break-all">{reference.source}</div>}
                 </div>
-              ))}
-            </div>
+                <span className="shrink-0 text-xs text-muted-foreground">{reference.loaded ? "loaded" : reference.required ? "tool boundary" : "on demand"}</span>
+              </div>
+            ))}
           </div>
+        ) : (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">No coding context metadata recorded.</div>
         )}
-        {!coding && <p className="text-sm text-muted-foreground">No coding context metadata recorded for this render.</p>}
       </div>
     </Card>
   );
@@ -151,891 +77,321 @@ function RuntimeCard({ metadata }: { metadata: SpineMetadata }) {
 
 function InstructionsCard({ metadata }: { metadata: SpineMetadata }) {
   return (
-    <Card className="flex-1 min-h-0 overflow-auto">
-      <div className="p-4 space-y-4">
-        <div>
-          <h2 className="text-sm font-semibold">Instructions</h2>
-        </div>
-        <div className="space-y-3">
-          {(metadata.instructionGroups || []).map(group => (
-            <div key={group.id} className="rounded-lg border border-border/30 p-3 text-xs">
-              <div className="flex items-center justify-between gap-3">
-                <div className="font-medium">{group.title}</div>
-                <div className="text-muted-foreground tabular-nums">{formatTokens(group.tokenCount)} tokens</div>
-              </div>
-              <div className="font-mono text-muted-foreground mt-1">{group.id}</div>
-              <div className="text-muted-foreground mt-1">{group.sectionIds.join(", ")}</div>
+    <Card className="flex-1 min-h-0 min-w-0 overflow-auto">
+      <div className="p-4 space-y-3">
+        <h2 className="text-sm font-semibold">Instructions</h2>
+        {(metadata.instructionGroups || []).map((group) => (
+          <div key={group.id} className="flex items-start justify-between gap-4 border-b border-border/20 py-2 text-sm last:border-b-0">
+            <div className="min-w-0">
+              <div>{group.title}</div>
+              <div className="font-mono text-xs text-muted-foreground break-all">{group.id}</div>
             </div>
-          ))}
-          {(metadata.instructionGroups || []).length === 0 && <p className="text-sm text-muted-foreground">No instruction groups recorded.</p>}
-        </div>
-        {(metadata.references || []).length > 0 && (
-          <div className="space-y-2">
-            <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">References</h3>
-            {metadata.references?.map(ref => (
-              <div key={ref.id} className="rounded-md border border-border/30 p-2 text-xs">
-                <div className="font-medium">{ref.title}</div>
-                <div className="font-mono text-muted-foreground">{ref.id}</div>
-                <div className="text-muted-foreground">{ref.reason}</div>
-              </div>
-            ))}
+            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatTokens(group.tokenCount)} tokens</span>
           </div>
+        ))}
+        {(metadata.instructionGroups || []).length === 0 && (
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">No instruction groups recorded.</div>
         )}
       </div>
     </Card>
   );
 }
 
-function WireCapRow({ label, value, strong }: { label: string; value: number | null; strong?: boolean }) {
-  return (
-    <div className="flex items-center justify-between gap-3 px-3 py-2">
-      <span className={strong ? "font-semibold" : "text-muted-foreground"}>{label}</span>
-      <span className={`tabular-nums ${strong ? "font-semibold" : "text-muted-foreground"}`}>
-        {value == null ? "—" : formatTokens(value)}
-      </span>
-    </div>
-  );
-}
-
-function WirePayloadCard({ wire }: { wire: ContextWirePayload }) {
-  const [showAllTools, setShowAllTools] = useState(false);
-  const cap = wire.capture;
-  const visibleTools = showAllTools ? wire.toolSchemas.tools : wire.toolSchemas.tools.slice(0, 25);
-
-  const breakdown: { label: string; hint?: string; tokens: number; strong?: boolean }[] = [
-    { label: "Spine (rendered template)", tokens: wire.spine.tokens },
-    {
-      label: `Tool schemas (${wire.toolSchemas.count})`,
-      hint: wire.toolSchemas.aliasCount > 0 ? `${wire.toolSchemas.aliasCount} alias schemas` : undefined,
-      tokens: wire.toolSchemas.totalTokens,
-    },
-    { label: "Estimated attributable", tokens: wire.estimatedAttributableTokens, strong: true },
-  ];
-
-  return (
-    <Card className="flex-1 min-h-0 overflow-auto" data-testid="wire-payload-card">
-      <div className="p-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">Wire payload</h2>
-          <span className="text-xs text-muted-foreground">estimate = {wire.estimator}</span>
-        </div>
-
-        <div className="rounded-lg border border-border/30 divide-y divide-border/20">
-          {breakdown.map(row => (
-            <div key={row.label} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className={row.strong ? "font-semibold" : ""}>{row.label}</span>
-                {row.hint && <span className="text-muted-foreground shrink-0">{row.hint}</span>}
-              </div>
-              <span className={`tabular-nums shrink-0 ${row.strong ? "font-semibold" : "text-muted-foreground"}`}>
-                {formatTokens(row.tokens)}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        <div>
-          <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
-            Last real model-boundary call
-          </h3>
-          {cap ? (
-            <div className="rounded-lg border border-border/30 p-3 space-y-3 text-xs" data-testid="wire-capture">
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
-                <span className="rounded-full border px-2 py-0.5">captured</span>
-                <span>{new Date(cap.capturedAt).toLocaleString()}</span>
-                <span className="font-mono">{cap.provider} / {formatModelName(cap.model)}</span>
-                {cap.activity && <span className="font-mono">activity: {cap.activity}</span>}
-              </div>
-              <div className="rounded-md border border-border/20 divide-y divide-border/20">
-                <WireCapRow label="Provider-measured input tokens" value={cap.providerInputTokens} strong />
-                <WireCapRow label="↳ system prompt (spine)" value={cap.systemPromptTokens} />
-                <WireCapRow label="↳ tool schemas" value={cap.toolSchemaTokens} />
-                <WireCapRow label="↳ conversation" value={cap.conversationTokens} />
-                <WireCapRow label="↳ SDK harness + system-reminders" value={cap.harnessAndRemindersTokens} />
-              </div>
-              {cap.providerTokensMayBeCumulative && (
-                <p className="text-muted-foreground">
-                  Provider tokens may be cumulative across a multi-turn session; first-turn calls read cleanly.
-                </p>
-              )}
-              <div>
-                <div className="text-muted-foreground mb-1">
-                  Captured system prompt{cap.systemPromptExcerptTruncated ? " (first 4k chars)" : ""}
-                </div>
-                <pre
-                  className="text-[11px] whitespace-pre-wrap font-mono bg-muted/30 rounded-md p-3 max-h-64 overflow-auto scrollbar-thin text-foreground/80"
-                  data-testid="wire-capture-excerpt"
-                >
-                  {cap.systemPromptExcerpt || "(empty)"}
-                </pre>
-              </div>
-            </div>
-          ) : (
-            <div
-              className="rounded-lg border border-dashed border-border/40 p-4 text-xs text-muted-foreground"
-              data-testid="wire-capture-empty"
-            >
-              No capture yet. Send a chat turn, then reload — the latest real call populates provider-measured
-              input tokens and the SDK harness cost here.
-            </div>
-          )}
-        </div>
-
-        <p className="text-[11px] text-muted-foreground leading-relaxed">{wire.sdkInjectedNote}</p>
-
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Tool schema sizes</h3>
-            <span className="text-xs text-muted-foreground tabular-nums">
-              {formatTokens(wire.toolSchemas.totalTokens)} total
-            </span>
-          </div>
-          <div className="rounded-lg border border-border/30 divide-y divide-border/20">
-            {visibleTools.map(tool => (
-              <div key={tool.name} className="flex items-center justify-between gap-3 px-3 py-1.5 text-xs">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-mono truncate">{tool.name}</span>
-                  {tool.isAlias && (
-                    <span className="rounded-full border px-1.5 text-[10px] text-muted-foreground shrink-0">alias</span>
-                  )}
-                  <span className="text-muted-foreground/60 shrink-0">{tool.category}</span>
-                </div>
-                <span className="tabular-nums text-muted-foreground shrink-0">{formatTokens(tool.tokens)}</span>
-              </div>
-            ))}
-          </div>
-          {wire.toolSchemas.tools.length > 25 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs h-7 mt-2"
-              onClick={() => setShowAllTools(v => !v)}
-              data-testid="button-toggle-all-tools"
-            >
-              {showAllTools ? "Show top 25" : `Show all ${wire.toolSchemas.tools.length}`}
-            </Button>
-          )}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-interface ParsedSection {
+interface PayloadNode {
   id: string;
-  title: string;
-  content: string;
-  children: ParsedSection[];
+  label: string;
+  value: unknown;
   depth: number;
+  children: PayloadNode[];
 }
 
-function unescapeXml(text: string): string {
-  return text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
-}
-
-function extractReadableContent(node: Node): string {
-  if (node.nodeType === Node.TEXT_NODE) return unescapeXml(node.textContent || "");
-  if (node.nodeType !== Node.ELEMENT_NODE) return "";
-  const el = node as Element;
-  const tag = el.tagName.toLowerCase();
-
-  if (tag === "section") return "";
-
-  if (tag === "entry") {
-    const entryTitle = el.getAttribute("title");
-    const entrySource = el.getAttribute("source");
-    const entryId = el.getAttribute("id");
-    const inner = Array.from(el.childNodes).map(extractReadableContent).join("").trim();
-    if (entryTitle) {
-      const label = entrySource ? ` [${entrySource}]` : "";
-      return `\n**${entryTitle}**${label}\n${inner}\n`;
-    }
-    if (entryId) {
-      return `\n---\n${inner}\n`;
-    }
-    return `\n${inner}\n`;
-  }
-
-  if (tag === "turn") {
-    const role = el.getAttribute("role") || "unknown";
-    const name = el.getAttribute("name");
-    const inner = Array.from(el.childNodes).map(extractReadableContent).join("").trim();
-    const label = name || (role === "user" ? "User" : role === "assistant" ? getInstanceName() : role === "tools" ? "Tools" : role === "thinking" ? "Thinking" : role);
-    return `\n**${label}:** ${inner}\n`;
-  }
-
-  return Array.from(el.childNodes).map(extractReadableContent).join("");
-}
-
-function findSectionsDeep(el: Element, depth: number): ParsedSection[] {
-  const results: ParsedSection[] = [];
-  for (const child of Array.from(el.children)) {
-    if (child.tagName.toLowerCase() === "section") {
-      const id = child.getAttribute("id") || "";
-      const title = child.getAttribute("title") || id;
-      const childSections = findSectionsDeep(child, depth + 1);
-      const contentParts: string[] = [];
-      for (const node of Array.from(child.childNodes)) {
-        contentParts.push(extractReadableContent(node));
-      }
-      const content = contentParts.join("").trim();
-      results.push({ id, title, content, children: childSections, depth });
-    } else {
-      results.push(...findSectionsDeep(child, depth));
-    }
-  }
-  return results;
-}
-
-function parseRenderedPrompt(raw: string): { sections: ParsedSection[]; parseFailed: boolean } {
-  try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(raw, "text/html");
-    const sections = findSectionsDeep(doc.body, 0);
-    if (sections.length === 0) return { sections: [], parseFailed: true };
-    return { sections, parseFailed: false };
-  } catch {
-    return { sections: [], parseFailed: true };
-  }
-}
-
-function collectAllIds(sections: ParsedSection[]): Set<string> {
-  const ids = new Set<string>();
-  const walk = (list: ParsedSection[]) => {
-    for (const s of list) {
-      ids.add(s.id);
-      walk(s.children);
-    }
+function buildPayloadNode(label: string, value: unknown, depth = 0, path = "request"): PayloadNode {
+  const entries = Array.isArray(value)
+    ? value.map((item, index) => [`[${index}]`, item] as const)
+    : value !== null && typeof value === "object"
+      ? Object.entries(value as Record<string, unknown>)
+      : [];
+  return {
+    id: path,
+    label,
+    value,
+    depth,
+    children: entries.map(([key, child]) => buildPayloadNode(key, child, depth + 1, `${path}.${key}`)),
   };
-  walk(sections);
-  return ids;
 }
 
-function buildParentMap(sections: ParsedSection[]): Map<string, string> {
-  const map = new Map<string, string>();
-  const walk = (list: ParsedSection[], parentId: string | null) => {
-    for (const s of list) {
-      if (parentId) map.set(s.id, parentId);
-      walk(s.children, s.id);
-    }
-  };
-  walk(sections, null);
-  return map;
+function rawValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  const serialized = JSON.stringify(value, null, 2);
+  return serialized === undefined ? String(value) : serialized;
 }
 
-function getAncestorChain(id: string, parentMap: Map<string, string>): string[] {
-  const chain: string[] = [];
-  let current = parentMap.get(id);
-  while (current) {
-    chain.push(current);
-    current = parentMap.get(current);
-  }
-  return chain;
+function nodeMeta(node: PayloadNode): string {
+  if (Array.isArray(node.value)) return `${node.value.length} items`;
+  if (node.value !== null && typeof node.value === "object") return `${node.children.length} fields`;
+  if (typeof node.value === "string") return `${node.value.length.toLocaleString()} chars`;
+  if (node.value === null) return "null";
+  return typeof node.value;
 }
 
-const depthColors = [
-  "border-l-primary/40",
-  "border-l-active/40",
-  "border-l-success/40",
-  "border-l-warning/40",
-  "border-l-cat-ai/40",
-];
-
-const depthHeadingSize = [
-  "text-base font-semibold",
-  "text-sm font-semibold",
-  "text-sm font-medium",
-  "text-xs font-medium",
-  "text-xs font-medium",
-];
-
-function TocNode({
-  section,
-  expanded,
-  activeId,
-  onToggle,
-  onNavigate,
-}: {
-  section: ParsedSection;
+interface PayloadIndexNodeProps {
+  node: PayloadNode;
   expanded: Set<string>;
-  activeId: string | null;
+  activeId: string;
   onToggle: (id: string) => void;
   onNavigate: (id: string) => void;
-}) {
-  const isExpanded = expanded.has(section.id);
-  const isActive = activeId === section.id;
-  const hasChildren = section.children.length > 0;
+  continues: boolean;
+}
 
-  return (
-    <div style={{ paddingLeft: section.depth > 0 ? 12 : 0 }} data-testid={`toc-node-${section.id}`}>
-      <div
-        className={`flex items-center gap-0.5 w-full text-left py-1 px-1.5 rounded text-xs transition-colors ${
-          isActive
-            ? "bg-primary/10 text-primary font-medium"
-            : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-        }`}
-      >
-        {hasChildren ? (
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onToggle(section.id); }}
-            className="p-0.5 rounded hover:bg-muted/80 shrink-0"
-            data-testid={`toc-toggle-${section.id}`}
-          >
-            {isExpanded ? (
-              <ChevronDown className="h-3 w-3" />
-            ) : (
-              <ChevronRight className="h-3 w-3" />
-            )}
-          </button>
-        ) : (
-          <span className="w-4 shrink-0" />
-        )}
-        <button
-          type="button"
-          onClick={() => onNavigate(section.id)}
-          className="truncate text-left flex-1"
-          data-testid={`toc-button-${section.id}`}
-        >
-          {section.title}
+function PayloadIndexNode({ node, expanded, activeId, onToggle, onNavigate, continues }: PayloadIndexNodeProps) {
+  const hasChildren = node.children.length > 0;
+  const open = expanded.has(node.id);
+  const row = (
+    <div className={cn("flex min-w-0 items-center gap-1 rounded-md px-1 py-1 text-xs", activeId === node.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70 hover:text-foreground")}>
+      {hasChildren ? (
+        <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center rounded" onClick={() => onToggle(node.id)} aria-label={`${open ? "Collapse" : "Expand"} ${node.label}`}>
+          <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
         </button>
-      </div>
-      {hasChildren && isExpanded && (
-        <div>
-          {section.children.map(child => (
-            <TocNode
-              key={child.id}
-              section={child}
-              expanded={expanded}
-              activeId={activeId}
-              onToggle={onToggle}
-              onNavigate={onNavigate}
-            />
-          ))}
-        </div>
-      )}
+      ) : <span className="h-5 w-5 shrink-0" />}
+      <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={() => onNavigate(node.id)}>{node.label}</button>
     </div>
   );
-}
-
-function ContentSection({
-  section,
-  expanded,
-  sectionRefs,
-}: {
-  section: ParsedSection;
-  expanded: Set<string>;
-  sectionRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
-}) {
-  const isExpanded = expanded.has(section.id);
-  const borderColor = depthColors[Math.min(section.depth, depthColors.length - 1)];
-  const headingSize = depthHeadingSize[Math.min(section.depth, depthHeadingSize.length - 1)];
-
-  const refCallback = useCallback((el: HTMLDivElement | null) => {
-    if (el) {
-      sectionRefs.current.set(section.id, el);
-    } else {
-      sectionRefs.current.delete(section.id);
-    }
-  }, [section.id, sectionRefs]);
-
   return (
-    <div
-      ref={refCallback}
-      id={`content-${section.id}`}
-      className={`border-l-2 ${borderColor} pl-3 py-1.5`}
-      data-testid={`formatted-section-${section.id}`}
-    >
-      <div className={`${headingSize} text-foreground mb-1`}>
-        {section.title}
-        <span className="ml-2 text-xs font-normal text-muted-foreground/50">{section.id}</span>
-      </div>
-      {isExpanded && (
-        <>
-          {section.content && (
-            <div className="text-sm text-foreground/85 leading-relaxed prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-hr:my-2 prose-blockquote:my-1">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{section.content}</ReactMarkdown>
-            </div>
-          )}
-          {section.children.length > 0 && (
-            <div className="mt-2 space-y-2">
-              {section.children.map(child => (
-                <ContentSection
-                  key={child.id}
-                  section={child}
-                  expanded={expanded}
-                  sectionRefs={sectionRefs}
-                />
-              ))}
-            </div>
-          )}
-        </>
-      )}
+    <div>
+      {node.depth > 0 ? <HierarchyTreeRow continues={continues}>{row}</HierarchyTreeRow> : row}
+      {hasChildren && open && node.children.map((child, index) => (
+        <PayloadIndexNode
+          key={child.id}
+          node={child}
+          expanded={expanded}
+          activeId={activeId}
+          onToggle={onToggle}
+          onNavigate={onNavigate}
+          continues={index < node.children.length - 1}
+        />
+      ))}
     </div>
   );
 }
 
-function findSectionById(sections: ParsedSection[], id: string): ParsedSection | null {
-  for (const s of sections) {
-    if (s.id === id) return s;
-    const found = findSectionById(s.children, id);
-    if (found) return found;
-  }
-  return null;
+interface PayloadContentNodeProps {
+  node: PayloadNode;
+  openIds: Set<string>;
+  onOpenChange: (id: string, open: boolean) => void;
+  refs: React.MutableRefObject<Map<string, HTMLDivElement>>;
+  continues: boolean;
 }
 
-function TwoColumnPrompt({ rendered }: { rendered: string }) {
-  const isMobile = useIsMobile();
-  const { sections, parseFailed } = useMemo(() => parseRenderedPrompt(rendered), [rendered]);
-  const allIds = useMemo(() => collectAllIds(sections), [sections]);
-  const parentMap = useMemo(() => buildParentMap(sections), [sections]);
-  const [expanded, setExpanded] = useState<Set<string>>(() => collectAllIds(sections));
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [mobileSelectedId, setMobileSelectedId] = useState<string | null>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const sectionRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const isScrollingRef = useRef(false);
+function PayloadContentNode({ node, openIds, onOpenChange, refs, continues }: PayloadContentNodeProps) {
+  const open = openIds.has(node.id);
+  const setRef = useCallback((element: HTMLDivElement | null) => {
+    if (element) refs.current.set(node.id, element);
+    else refs.current.delete(node.id);
+  }, [node.id, refs]);
+  const content = (
+    <Collapsible open={open} onOpenChange={(next) => onOpenChange(node.id, next)}>
+      <div ref={setRef} id={`payload-${node.id}`} className="min-w-0 rounded-md hover:bg-accent/40">
+        <CollapsibleTrigger asChild>
+          <button type="button" className="flex min-h-11 w-full min-w-0 items-center gap-2 px-2 py-1.5 text-left text-sm sm:min-h-8">
+            <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
+            <span className="min-w-0 flex-1 truncate font-mono">{node.label}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">{nodeMeta(node)}</span>
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="px-2 pb-2 pl-8">
+            <pre className="max-h-none min-w-0 overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-3 font-mono text-xs leading-relaxed text-foreground" data-testid={`payload-raw-${node.id}`}>
+              {rawValue(node.value)}
+            </pre>
+            {node.children.length > 0 && (
+              <div className="mt-2">
+                {node.children.map((child, index) => (
+                  <PayloadContentNode
+                    key={child.id}
+                    node={child}
+                    openIds={openIds}
+                    onOpenChange={onOpenChange}
+                    refs={refs}
+                    continues={index < node.children.length - 1}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
+  );
+  return node.depth > 0 ? <HierarchyTreeRow continues={continues}>{content}</HierarchyTreeRow> : content;
+}
+
+function PromptCaptureTree({ capture }: { capture: InferencePayloadCapture }) {
+  const root = useMemo(() => buildPayloadNode(`inference call ${capture.id}`, capture.request), [capture.id, capture.request]);
+  const [indexExpanded, setIndexExpanded] = useState<Set<string>>(() => new Set([root.id]));
+  const [contentOpen, setContentOpen] = useState<Set<string>>(() => new Set([root.id]));
+  const [activeId, setActiveId] = useState(root.id);
+  const contentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   useEffect(() => {
-    setExpanded(collectAllIds(sections));
-  }, [sections]);
+    setIndexExpanded(new Set([root.id]));
+    setContentOpen(new Set([root.id]));
+    setActiveId(root.id);
+  }, [capture.id, root.id]);
 
-  const handleToggle = useCallback((id: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
+  const toggleSet = useCallback((setter: React.Dispatch<React.SetStateAction<Set<string>>>, id: string, forced?: boolean) => {
+    setter((current) => {
+      const next = new Set(current);
+      const shouldOpen = forced ?? !next.has(id);
+      if (shouldOpen) next.add(id);
+      else next.delete(id);
       return next;
     });
   }, []);
 
-  const handleNavigate = useCallback((id: string) => {
-    if (isMobile) {
-      setMobileSelectedId(id);
-      setActiveId(id);
-      return;
-    }
-    const ancestors = getAncestorChain(id, parentMap);
-    setExpanded(prev => {
-      const next = new Set(prev);
-      next.add(id);
-      for (const a of ancestors) next.add(a);
-      return next;
-    });
+  const navigate = useCallback((id: string) => {
     setActiveId(id);
-    requestAnimationFrame(() => {
-      const el = sectionRefs.current.get(id);
-      if (el && contentRef.current) {
-        isScrollingRef.current = true;
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
-        setTimeout(() => { isScrollingRef.current = false; }, 800);
-      }
-    });
-  }, [parentMap, isMobile]);
-
-  useEffect(() => {
-    if (isMobile) return;
-    const container = contentRef.current;
-    if (!container) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (isScrollingRef.current) return;
-        let topMost: { id: string; top: number } | null = null;
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            const id = entry.target.id.replace("content-", "");
-            const top = entry.boundingClientRect.top;
-            if (!topMost || top < topMost.top) {
-              topMost = { id, top };
-            }
-          }
-        }
-        if (topMost) {
-          setActiveId(topMost.id);
-        }
-      },
-      {
-        root: container,
-        rootMargin: "-10% 0px -80% 0px",
-        threshold: 0,
-      }
-    );
-
-    const refs = sectionRefs.current;
-    for (const el of refs.values()) {
-      observer.observe(el);
-    }
-
-    return () => observer.disconnect();
-  }, [sections, expanded, isMobile]);
-
-  useEffect(() => {
-    if (!isMobile && mobileSelectedId) {
-      setActiveId(mobileSelectedId);
-      setMobileSelectedId(null);
-      const ancestors = getAncestorChain(mobileSelectedId, parentMap);
-      setExpanded(prev => {
-        const next = new Set(prev);
-        next.add(mobileSelectedId);
-        for (const a of ancestors) next.add(a);
-        return next;
-      });
-      requestAnimationFrame(() => {
-        const el = sectionRefs.current.get(mobileSelectedId);
-        if (el && contentRef.current) {
-          isScrollingRef.current = true;
-          el.scrollIntoView({ behavior: "smooth", block: "start" });
-          setTimeout(() => { isScrollingRef.current = false; }, 800);
-        }
-      });
-    }
-  }, [isMobile, mobileSelectedId, parentMap]);
-
-  if (parseFailed) {
-    return (
-      <Card className="overflow-hidden">
-        <div className="py-3 px-3">
-          <p className="text-xs text-muted-foreground mb-2" data-testid="text-parse-fallback">
-            Could not format prompt — showing raw output.
-          </p>
-          <pre className="text-xs whitespace-pre-wrap font-mono bg-muted/30 rounded-md p-4 overflow-auto scrollbar-thin max-h-[70vh] text-foreground/90">
-            {rendered}
-          </pre>
-        </div>
-      </Card>
-    );
-  }
-
-  if (isMobile) {
-    const selectedSection = mobileSelectedId ? findSectionById(sections, mobileSelectedId) : null;
-
-    if (selectedSection) {
-      const mobileContentExpanded = new Set(collectAllIds([selectedSection]));
-      return (
-        <div className="border border-border/30 rounded-lg overflow-hidden" data-testid="formatted-prompt-mobile-content">
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-border/20 bg-white/[0.02]">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => { setMobileSelectedId(null); setActiveId(null); }}
-              data-testid="button-mobile-back"
-            >
-              <ArrowLeft className="h-3.5 w-3.5 mr-1" />
-              Back
-            </Button>
-            <span className="text-sm font-medium truncate">{selectedSection.title}</span>
-          </div>
-          <div className="overflow-y-auto scrollbar-thin p-3 space-y-3 max-h-[calc(100vh-320px)]" data-testid="mobile-content-pane">
-            <ContentSection
-              section={selectedSection}
-              expanded={mobileContentExpanded}
-              sectionRefs={sectionRefs}
-            />
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="border border-border/30 rounded-lg overflow-hidden" data-testid="formatted-prompt-mobile-toc">
-        <div className="px-3 py-2 border-b border-border/20 bg-white/[0.02]">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">
-              Table of Contents
-            </span>
-            <div className="flex gap-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-xs h-6 px-2"
-                onClick={() => setExpanded(new Set(allIds))}
-                data-testid="button-expand-all"
-              >
-                Expand All
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-xs h-6 px-2"
-                onClick={() => setExpanded(new Set())}
-                data-testid="button-collapse-all"
-              >
-                Collapse All
-              </Button>
-            </div>
-          </div>
-        </div>
-        <div className="overflow-y-auto scrollbar-thin py-2 px-1 max-h-[calc(100vh-320px)]" data-testid="mobile-toc-list">
-          {sections.map(section => (
-            <TocNode
-              key={section.id}
-              section={section}
-              expanded={expanded}
-              activeId={activeId}
-              onToggle={handleToggle}
-              onNavigate={handleNavigate}
-            />
-          ))}
-        </div>
-      </div>
-    );
-  }
+    toggleSet(setContentOpen, id, true);
+    requestAnimationFrame(() => contentRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }, [toggleSet]);
 
   return (
-    <div className="flex border border-border/30 rounded-lg overflow-hidden flex-1 min-h-0" data-testid="formatted-prompt">
-      <div
-        className="w-[260px] shrink-0 border-r border-border/20 overflow-y-auto scrollbar-thin bg-white/[0.02] py-2 px-1"
-        data-testid="toc-sidebar"
-      >
-        <div className="text-xs font-semibold text-muted-foreground uppercase tracking-widest px-2 mb-2">
-          Table of Contents
-        </div>
-        {sections.map(section => (
-          <TocNode
-            key={section.id}
-            section={section}
-            expanded={expanded}
-            activeId={activeId}
-            onToggle={handleToggle}
-            onNavigate={handleNavigate}
-          />
-        ))}
-        <div className="mt-3 px-2 pt-2 border-t border-border/20">
-          <div className="flex gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs h-6 px-2"
-              onClick={() => setExpanded(new Set(allIds))}
-              data-testid="button-expand-all"
-            >
-              Expand All
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs h-6 px-2"
-              onClick={() => setExpanded(new Set())}
-              data-testid="button-collapse-all"
-            >
-              Collapse All
-            </Button>
-          </div>
-        </div>
+    <div className="flex flex-1 min-h-0 min-w-0 flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span className="font-mono">{capture.provider} / {capture.model}</span>
+        <span>{capture.boundary}</span>
+        <span>{capture.requestChars.toLocaleString()} chars</span>
+        <span>attempt {capture.attempt}</span>
       </div>
-      <div
-        ref={contentRef}
-        className="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-3"
-        data-testid="content-pane"
-      >
-        {sections.map(section => (
-          <ContentSection
-            key={section.id}
-            section={section}
-            expanded={expanded}
-            sectionRefs={sectionRefs}
+      <div className="rounded-md border border-border/30 px-3 py-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 text-foreground"><ShieldCheck className="h-3.5 w-3.5" />{capture.evidence.observableBoundary}</div>
+        {capture.evidence.residualLimitation && <div className="mt-1 leading-relaxed">{capture.evidence.residualLimitation}</div>}
+        {capture.evidence.excludedSensitiveFields.length > 0 && <div className="mt-1">Excluded: {capture.evidence.excludedSensitiveFields.join(", ")}</div>}
+      </div>
+      <div className="flex flex-1 min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-border/30 md:flex-row">
+        <aside className="max-h-64 w-full shrink-0 overflow-y-auto border-b border-border/20 bg-card/40 p-2 md:max-h-none md:w-[280px] md:border-b-0 md:border-r" aria-label="Payload index">
+          <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">Index</div>
+          <PayloadIndexNode
+            node={root}
+            expanded={indexExpanded}
+            activeId={activeId}
+            onToggle={(id) => toggleSet(setIndexExpanded, id)}
+            onNavigate={navigate}
+            continues={false}
           />
-        ))}
+        </aside>
+        <div className="min-w-0 flex-1 overflow-y-auto p-2 md:p-4">
+          <PayloadContentNode
+            node={root}
+            openIds={contentOpen}
+            onOpenChange={(id, open) => toggleSet(setContentOpen, id, open)}
+            refs={contentRefs}
+            continues={false}
+          />
+        </div>
       </div>
     </div>
   );
 }
 
+function captureLabel(capture: InferencePayloadCaptureSummary): string {
+  const timestamp = new Date(capture.capturedAt).toLocaleString();
+  return `${timestamp} · ${formatModelName(capture.model)} · ${capture.boundary}`;
+}
+
 export default function ContextPage({ embedded }: { embedded?: boolean } = {}) {
   usePageHeader({ title: "Context", skip: !!embedded });
-  const [callType, setCallType] = useState<ContextCallType>("full");
-  const [llmMode, setLlmMode] = useState<LlmMode>("text");
-  const [viewTab, setViewTab] = useState("runtime");
-  const [includeSections, setIncludeSections] = useState<string[]>([]);
-  const [excludeSections, setExcludeSections] = useState<string[]>([]);
-  const [activePreset, setActivePreset] = useState<string>("full-text");
-  const [memoryQuery, setMemoryQuery] = useState("");
-  const [debouncedMemoryQuery, setDebouncedMemoryQuery] = useState("");
+  const [viewTab, setViewTab] = useState("prompt");
+  const [selectedCaptureId, setSelectedCaptureId] = useState("");
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedMemoryQuery(memoryQuery);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [memoryQuery]);
-
-  const unifiedPresets = STANDARD_PRESETS;
-
-  const includeParam = includeSections.length > 0 ? includeSections.join(",") : "";
-  const excludeParam = excludeSections.length > 0 ? excludeSections.join(",") : "";
-
-  const renderedQuery = useQuery<{ rendered: string; metadata: SpineMetadata; wirePayload?: ContextWirePayload }>({
-    queryKey: ["/api/context/preview/rendered", callType, llmMode, includeParam, excludeParam, debouncedMemoryQuery],
+  const previewQuery = useQuery<{ metadata: SpineMetadata }>({
+    queryKey: ["/api/context/preview/rendered", "full", "text"],
     queryFn: async () => {
-      const params = new URLSearchParams({ callType, llmMode });
-      if (includeParam) params.set("includeSections", includeParam);
-      if (excludeParam) params.set("excludeSections", excludeParam);
-      if (debouncedMemoryQuery.trim()) params.set("memoryQuery", debouncedMemoryQuery.trim());
-      const res = await fetch(`/api/context/preview/rendered?${params.toString()}`);
-      if (!res.ok) throw new Error("Failed to load rendered prompt");
-      return res.json();
+      const response = await fetch("/api/context/preview/rendered?callType=full&llmMode=text");
+      if (!response.ok) throw new Error("Failed to load context metadata");
+      return response.json();
     },
   });
 
-  const handlePresetSelect = (presetKey: string) => {
-    const preset = unifiedPresets.find(p => p.key === presetKey);
-    if (!preset) return;
-    setActivePreset(presetKey);
-    setCallType(preset.callType);
-    setLlmMode(preset.llmMode);
-    setIncludeSections(preset.includeSections);
-    setExcludeSections(preset.excludeSections);
-  };
+  const capturesQuery = useQuery<InferencePayloadCaptureListResponse>({
+    queryKey: ["/api/context/inference-calls"],
+    queryFn: async () => {
+      const response = await fetch("/api/context/inference-calls");
+      if (!response.ok) throw new Error("Failed to load inference calls");
+      return response.json();
+    },
+    refetchInterval: 15_000,
+  });
 
-  const isLoading = renderedQuery.isLoading;
+  useEffect(() => {
+    const captures = capturesQuery.data?.captures ?? [];
+    if (captures.length > 0 && !captures.some((capture) => capture.id === selectedCaptureId)) {
+      setSelectedCaptureId(captures[0].id);
+    }
+  }, [capturesQuery.data?.captures, selectedCaptureId]);
 
-  const assembledDate = renderedQuery.data?.metadata?.assembledAt
-    ? new Date(renderedQuery.data.metadata.assembledAt).toLocaleString()
-    : null;
+  const captureQuery = useQuery<InferencePayloadCapture>({
+    queryKey: ["/api/context/inference-calls", selectedCaptureId],
+    enabled: Boolean(selectedCaptureId),
+    queryFn: async () => {
+      const response = await fetch(`/api/context/inference-calls/${encodeURIComponent(selectedCaptureId)}`);
+      if (!response.ok) throw new Error("Failed to load inference payload");
+      return response.json();
+    },
+  });
 
   return (
-    <div className="flex flex-col h-full min-h-0 min-w-0 overflow-hidden" data-testid="context-page">
-      <div className="flex flex-col flex-1 min-h-0 gap-2 p-3 w-full overflow-hidden">
-          <Tabs value={viewTab} onValueChange={setViewTab} className="flex flex-col flex-1 min-h-0">
-            <div className="flex flex-col @sm:flex-row @sm:items-center flex-wrap gap-2 @sm:gap-3 shrink-0">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Preset:</span>
-                <Select value={activePreset} onValueChange={handlePresetSelect}>
-                  <SelectTrigger className="w-[160px]" data-testid="select-preset">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {unifiedPresets.map(p => (
-                      <SelectItem key={p.key} value={p.key}>{p.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-center gap-1.5" data-testid="context-experimentation">
-                <Input
-                  placeholder="Test memory query..."
-                  value={memoryQuery}
-                  onChange={(e) => setMemoryQuery(e.target.value)}
-                  className="text-xs h-7 w-full @sm:w-[200px]"
-                  data-testid="input-context-experiment"
-                />
-                {memoryQuery.trim() && memoryQuery !== debouncedMemoryQuery && (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
-                )}
-              </div>
-              {assembledDate && (
-                <span className="flex items-center gap-1 text-xs text-muted-foreground" data-testid="text-assembled-at">
-                  <Clock className="h-3 w-3" />
-                  {assembledDate}
-                </span>
-              )}
-              <div className="@sm:ml-auto">
-                <TabsList data-testid="context-view-tabs">
-                  <TabsTrigger value="runtime" data-testid="tab-runtime-view">Runtime</TabsTrigger>
-                  <TabsTrigger value="instructions" data-testid="tab-instructions-view">Instructions</TabsTrigger>
-                  <TabsTrigger value="prompt" data-testid="tab-prompt-view">Rendered Prompt</TabsTrigger>
-                  <TabsTrigger value="wire" data-testid="tab-wire-view">Wire Payload</TabsTrigger>
-                  <TabsTrigger value="raw" data-testid="tab-raw-view">Raw</TabsTrigger>
-                </TabsList>
-              </div>
-            </div>
-
-          {renderedQuery.data?.metadata && (
-            <SummaryBar metadata={renderedQuery.data.metadata} wire={renderedQuery.data.wirePayload} />
-          )}
-
-            <TabsContent value="runtime" className="mt-0 flex flex-col flex-1 min-h-0">
-              {isLoading ? (
-                <Skeleton className="h-full w-full" />
-              ) : renderedQuery.data?.metadata ? (
-                <RuntimeCard metadata={renderedQuery.data.metadata} />
-              ) : null}
-            </TabsContent>
-
-            <TabsContent value="instructions" className="mt-0 flex flex-col flex-1 min-h-0">
-              {isLoading ? (
-                <Skeleton className="h-full w-full" />
-              ) : renderedQuery.data?.metadata ? (
-                <InstructionsCard metadata={renderedQuery.data.metadata} />
-              ) : null}
-            </TabsContent>
-
-            <TabsContent value="prompt" className="mt-0 flex flex-col flex-1 min-h-0">
-              {isLoading ? (
-                <div className="space-y-2">
-                  {Array.from({ length: 12 }).map((_, i) => (
-                    <Skeleton key={i} className="h-4 w-full" />
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden" data-testid="context-page">
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-3">
+        <Tabs value={viewTab} onValueChange={setViewTab} className="flex min-h-0 flex-1 flex-col">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            {viewTab === "prompt" && (
+              <Select value={selectedCaptureId} onValueChange={setSelectedCaptureId}>
+                <SelectTrigger className="min-w-0 sm:w-[520px]" data-testid="select-inference-call">
+                  <SelectValue placeholder="Select a recent inference call" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(capturesQuery.data?.captures ?? []).map((capture) => (
+                    <SelectItem key={capture.id} value={capture.id}>{captureLabel(capture)}</SelectItem>
                   ))}
-                </div>
-              ) : renderedQuery.isError ? (
-                <Card>
-                  <div className="py-8 text-center">
-                    <p className="text-sm text-destructive" data-testid="text-rendered-error">
-                      Failed to load rendered prompt.
-                    </p>
-                  </div>
-                </Card>
-              ) : renderedQuery.data ? (
-                <TwoColumnPrompt
-                  rendered={renderedQuery.data.rendered}
-                />
-              ) : null}
-            </TabsContent>
+                </SelectContent>
+              </Select>
+            )}
+            {captureQuery.data && viewTab === "prompt" && (
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Clock className="h-3 w-3" />{new Date(captureQuery.data.capturedAt).toLocaleString()}
+              </span>
+            )}
+            <TabsList className="sm:ml-auto">
+              <TabsTrigger value="prompt" data-testid="tab-prompt-view">Prompt</TabsTrigger>
+              <TabsTrigger value="runtime">Runtime</TabsTrigger>
+              <TabsTrigger value="instructions">Instructions</TabsTrigger>
+            </TabsList>
+          </div>
 
-            <TabsContent value="wire" className="mt-0 flex flex-col flex-1 min-h-0">
-              {isLoading ? (
-                <Skeleton className="h-full w-full" />
-              ) : renderedQuery.isError ? (
-                <Card>
-                  <div className="py-8 text-center">
-                    <p className="text-sm text-destructive" data-testid="text-wire-error">
-                      Failed to load wire payload.
-                    </p>
-                  </div>
-                </Card>
-              ) : renderedQuery.data?.wirePayload ? (
-                <WirePayloadCard wire={renderedQuery.data.wirePayload} />
-              ) : (
-                <Card>
-                  <div className="py-8 text-center">
-                    <p className="text-sm text-muted-foreground">No wire payload for this render.</p>
-                  </div>
-                </Card>
-              )}
-            </TabsContent>
+          {previewQuery.data?.metadata && <SummaryBar metadata={previewQuery.data.metadata} />}
 
-            <TabsContent value="raw" className="mt-0 flex flex-col flex-1 min-h-0">
-              {isLoading ? (
-                <div className="space-y-2">
-                  {Array.from({ length: 12 }).map((_, i) => (
-                    <Skeleton key={i} className="h-4 w-full" />
-                  ))}
-                </div>
-              ) : renderedQuery.isError ? (
-                <Card>
-                  <div className="py-8 text-center">
-                    <p className="text-sm text-destructive" data-testid="text-raw-error">
-                      Failed to load rendered prompt.
-                    </p>
-                  </div>
-                </Card>
-              ) : renderedQuery.data ? (
-                <div className="flex-1 min-h-0 flex flex-col py-3 px-3">
-                    <pre
-                      className="text-xs whitespace-pre-wrap font-mono bg-muted/30 rounded-md p-4 overflow-auto scrollbar-thin flex-1 min-h-0 text-foreground/90"
-                      data-testid="text-full-prompt-raw"
-                    >
-                      {renderedQuery.data.rendered}
-                    </pre>
-                </div>
-              ) : null}
-            </TabsContent>
-          </Tabs>
+          <TabsContent value="prompt" className="mt-0 flex min-h-0 flex-1 flex-col">
+            {capturesQuery.isLoading || captureQuery.isLoading ? (
+              <Skeleton className="h-full w-full" />
+            ) : capturesQuery.isError || captureQuery.isError ? (
+              <div className="px-2 py-1.5 text-sm text-destructive">Failed to load captured inference payload.</div>
+            ) : captureQuery.data ? (
+              <PromptCaptureTree capture={captureQuery.data} />
+            ) : (
+              <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
+                <FileJson2 className="h-4 w-4" />No captured inference calls yet.
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="runtime" className="mt-0 flex min-h-0 flex-1 flex-col">
+            {previewQuery.isLoading ? <Skeleton className="h-full w-full" /> : previewQuery.data?.metadata ? <RuntimeCard metadata={previewQuery.data.metadata} /> : null}
+          </TabsContent>
+
+          <TabsContent value="instructions" className="mt-0 flex min-h-0 flex-1 flex-col">
+            {previewQuery.isLoading ? <Skeleton className="h-full w-full" /> : previewQuery.data?.metadata ? <InstructionsCard metadata={previewQuery.data.metadata} /> : null}
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );
