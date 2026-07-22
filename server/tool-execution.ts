@@ -27,6 +27,7 @@ export interface ToolResult {
   error?: boolean;
   sideEffectOnly?: boolean;
   continuation?: import("./agent-executor").ToolContinuation;
+  normalizedArguments?: Record<string, unknown>;
 }
 
 export type ToolMiddleware = (

@@ -145,6 +145,7 @@ export function resolveToolResult(
   error?: string,
   toolName?: string,
   ts?: number,
+  args?: Record<string, unknown>,
 ): StreamingContent {
   let foundMatch = false;
   const segments = state.segments.map(seg => {
@@ -156,7 +157,16 @@ export function resolveToolResult(
         if (toolCallId && s.toolCallId !== toolCallId) return s;
         foundMatch = true;
         const endedAt = typeof ts === "number" ? ts : Date.now();
-        return { ...s, result, error, status: error ? "error" as const : "done" as const, endedAt, startedAt: s.timestamp, elapsedMs: Math.max(0, endedAt - s.timestamp) };
+        return {
+          ...s,
+          ...(args ? { arguments: args } : {}),
+          result,
+          error,
+          status: error ? "error" as const : "done" as const,
+          endedAt,
+          startedAt: s.timestamp,
+          elapsedMs: Math.max(0, endedAt - s.timestamp),
+        };
       }),
     };
   });
@@ -188,6 +198,7 @@ export function resolveToolResult(
       timestamp: orphanTs,
       toolName: toolName || "unknown",
       toolCallId,
+      arguments: args,
       result,
       error,
       status: error ? "error" : "done",

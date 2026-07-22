@@ -11,6 +11,7 @@ export interface QuestionPrompt {
   options: QuestionOption[];
   selectionMode: QuestionSelectionMode;
   allowOther: boolean;
+  reasoning?: string;
 }
 
 export interface QuestionResponseMeta {
@@ -71,6 +72,38 @@ function nonEmptyString(value: unknown, maxLength: number): string | null {
   return normalized;
 }
 
+function optionIdFromLabel(label: string, index: number): string {
+  const slug = label
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, MAX_OPTION_ID_LENGTH - 4);
+  return slug || `option-${index + 1}`;
+}
+
+function parseQuestionOptions(value: unknown): QuestionValidationResult<unknown[]> {
+  if (Array.isArray(value)) return { ok: true, value };
+  if (typeof value !== "string") {
+    return { ok: false, error: `options must contain between 2 and ${MAX_OPTIONS} choices.` };
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("[") || !trimmed.endsWith("]") || trimmed.length > 16_000) {
+    return { ok: false, error: "options may be a JSON-encoded array, but prose or ambiguous strings are not accepted." };
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    return Array.isArray(parsed)
+      ? { ok: true, value: parsed }
+      : { ok: false, error: "JSON-encoded options must decode to an array." };
+  } catch {
+    return { ok: false, error: "options contains invalid JSON. Reissue the question with a valid options array." };
+  }
+}
+
 export function normalizeQuestionPrompt(input: unknown): QuestionValidationResult<QuestionPrompt> {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return { ok: false, error: "Question arguments must be an object." };
@@ -82,19 +115,24 @@ export function normalizeQuestionPrompt(input: unknown): QuestionValidationResul
     return { ok: false, error: `question is required and must be at most ${MAX_QUESTION_LENGTH} characters.` };
   }
 
-  if (!Array.isArray(raw.options) || raw.options.length < 2 || raw.options.length > MAX_OPTIONS) {
+  const parsedOptions = parseQuestionOptions(raw.options);
+  if (!parsedOptions.ok) return parsedOptions;
+  if (parsedOptions.value.length < 2 || parsedOptions.value.length > MAX_OPTIONS) {
     return { ok: false, error: `options must contain between 2 and ${MAX_OPTIONS} choices.` };
   }
 
   const options: QuestionOption[] = [];
   const optionIds = new Set<string>();
-  for (const rawOption of raw.options) {
-    if (!rawOption || typeof rawOption !== "object" || Array.isArray(rawOption)) {
-      return { ok: false, error: "Every option must be an object with id and label." };
+  for (const [index, rawOption] of parsedOptions.value.entries()) {
+    const option = typeof rawOption === "string"
+      ? { id: optionIdFromLabel(rawOption.trim(), index), label: rawOption }
+      : rawOption;
+    if (!option || typeof option !== "object" || Array.isArray(option)) {
+      return { ok: false, error: "Every option must be a string or an object with id and label." };
     }
-    const option = rawOption as Record<string, unknown>;
-    const id = nonEmptyString(option.id, MAX_OPTION_ID_LENGTH);
-    const label = nonEmptyString(option.label, MAX_OPTION_LABEL_LENGTH);
+    const rawOptionRecord = option as Record<string, unknown>;
+    let id = nonEmptyString(rawOptionRecord.id, MAX_OPTION_ID_LENGTH);
+    const label = nonEmptyString(rawOptionRecord.label, MAX_OPTION_LABEL_LENGTH);
     if (!id || !label) {
       return { ok: false, error: "Every option needs a non-empty id and label." };
     }
@@ -103,13 +141,20 @@ export function normalizeQuestionPrompt(input: unknown): QuestionValidationResul
     }
     optionIds.add(id);
 
-    const description = option.description === undefined
+    const description = rawOptionRecord.description === undefined
       ? undefined
-      : nonEmptyString(option.description, MAX_OPTION_DESCRIPTION_LENGTH);
-    if (option.description !== undefined && !description) {
+      : nonEmptyString(rawOptionRecord.description, MAX_OPTION_DESCRIPTION_LENGTH);
+    if (rawOptionRecord.description !== undefined && !description) {
       return { ok: false, error: `Option ${id} has an invalid description.` };
     }
     options.push({ id, label, ...(description ? { description } : {}) });
+  }
+
+  const reasoning = raw.reasoning === undefined
+    ? undefined
+    : nonEmptyString(raw.reasoning, MAX_OPTION_DESCRIPTION_LENGTH);
+  if (raw.reasoning !== undefined && !reasoning) {
+    return { ok: false, error: `reasoning must be non-empty and at most ${MAX_OPTION_DESCRIPTION_LENGTH} characters.` };
   }
 
   const selectionMode: QuestionSelectionMode = raw.selectionMode === "multiple" ? "multiple" : "single";
@@ -120,6 +165,7 @@ export function normalizeQuestionPrompt(input: unknown): QuestionValidationResul
       options,
       selectionMode,
       allowOther: raw.allowOther === true,
+      ...(reasoning ? { reasoning } : {}),
     },
   };
 }

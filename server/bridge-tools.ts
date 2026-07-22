@@ -90,6 +90,7 @@ export interface ToolResult {
   error?: boolean;
   sideEffectOnly?: boolean;
   continuation?: import("./agent-executor").ToolContinuation;
+  normalizedArguments?: Record<string, unknown>;
   durationMs: number;
 }
 
@@ -97,6 +98,7 @@ export type ToolHandler = (args: Record<string, any>) => Promise<{
   result: string;
   error?: boolean;
   continuation?: import("./agent-executor").ToolContinuation;
+  normalizedArguments?: Record<string, unknown>;
 }>;
 type ToolHandlerResult = { result: string; error?: boolean; data?: Record<string, unknown> };
 
