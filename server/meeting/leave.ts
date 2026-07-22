@@ -1,41 +1,12 @@
-import { createHash } from "crypto";
 import type { Principal } from "../principal";
-import { pool } from "../db";
 import type { FileSession } from "../chat-file-storage";
 import { chatStorage } from "../integrations/chat/storage";
 import { leaveRecallBot } from "../integrations/recall/client";
 import { createLogger } from "../log";
 import { principalOwnsMeeting } from "./owner-principal";
+import { withMeetingTransportLock } from "./locks";
 
 const log = createLogger("MeetingLeave");
-
-function leaveLockKey(sessionId: string): bigint {
-  const hash = createHash("sha256").update(`meeting-leave:${sessionId}`).digest();
-  let key = 0n;
-  for (let index = 0; index < 8; index += 1) {
-    key = (key << 8n) | BigInt(hash[index]);
-  }
-  return key & 0x7fffffffffffffffn;
-}
-
-async function withMeetingLeaveLock<T>(
-  sessionId: string,
-  operation: () => Promise<T>,
-): Promise<T> {
-  const client = await pool.connect();
-  const key = leaveLockKey(sessionId);
-  try {
-    await client.query("SELECT pg_advisory_lock($1::bigint)", [key.toString()]);
-    return await operation();
-  } finally {
-    try {
-      await client.query("SELECT pg_advisory_unlock($1::bigint)", [key.toString()]);
-    } catch {
-      log.warn(`failed to release departure lock sessionId=${sessionId}`);
-    }
-    client.release();
-  }
-}
 
 export type MeetingLeaveResult =
   | { outcome: "requested" | "already_leaving"; session: FileSession }
@@ -53,7 +24,7 @@ export async function requestMeetingBotLeave(
     return { outcome: "not_found" };
   }
 
-  return withMeetingLeaveLock(sessionId, async () => {
+  return withMeetingTransportLock(sessionId, async () => {
     const lockedSession = await chatStorage.getSession(sessionId);
     if (!lockedSession || !principalOwnsMeeting(principal, lockedSession)) {
       return { outcome: "not_found" };

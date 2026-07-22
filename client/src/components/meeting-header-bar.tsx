@@ -18,10 +18,19 @@ import {
   Loader2,
   LogOut,
   Mail,
+  MoreVertical,
   Radio,
+  RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { createLogger } from "@/lib/logger";
 import type { MeetingSessionMeta, MeetingBotStatus } from "@shared/models/chat";
@@ -160,6 +169,39 @@ export function MeetingHeaderBar({
     },
   });
 
+  const resetMeeting = useMutation({
+    mutationFn: async () => {
+      if (!sessionId) throw new Error("Meeting session unavailable");
+      const response = await apiRequest(
+        "POST",
+        `/api/meetings/${encodeURIComponent(sessionId)}/reset`,
+      );
+      return response.json() as Promise<{ outcome?: string; strategy?: string }>;
+    },
+    onSuccess: (result) => {
+      if (sessionId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
+        queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+      }
+      toast({
+        title:
+          result?.strategy === "rejoin"
+            ? "Reconnecting Mantra to the meeting…"
+            : result?.outcome === "already_resetting"
+              ? "Reconnection already in progress"
+              : "Reconnecting speech recognition…",
+      });
+    },
+    onError: (error: Error) => {
+      log.error("Meeting reset failed", { sessionId, error });
+      toast({
+        title: "Could not reconnect the meeting",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const retryRecap = useMutation({
     mutationFn: async () => {
       if (!sessionId) throw new Error("Meeting session unavailable");
@@ -207,6 +249,13 @@ export function MeetingHeaderBar({
     },
   });
 
+  // Reconnect is meaningful whenever there is a join URL and the bot is either
+  // live (recover recognition in place) or gone (leave/rejoin on this session).
+  const canReset =
+    !!meeting.meetingUrl &&
+    ["live", "leaving", "denied", "failed", "ended"].includes(meeting.botStatus);
+  const busy = toggleListenMode.isPending || leaveMeeting.isPending || resetMeeting.isPending;
+
   const recap = meeting.recap;
   const showDistributionSpinner = recap?.distributionStatus === "drafting";
   const showDistributionFailed =
@@ -245,52 +294,58 @@ export function MeetingHeaderBar({
             {elapsed}
           </span>
         )}
-        {sessionId && (isLive || departureMeaningful) && (
+        {sessionId && (isLive || departureMeaningful || canReset) && (
           <div className="ml-auto flex items-center gap-1.5">
-            {isLive && (
-              <Button
-                variant="outline"
-                size="sm"
-                className={cn(
-                  "h-6 gap-1.5 px-2 text-xs",
-                  isListenOnly && "border-active/40 text-active hover:text-active",
+            {busy && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 shrink-0 text-muted-foreground"
+                  data-testid="button-meeting-controls"
+                  aria-label="Meeting controls"
+                  disabled={busy}
+                >
+                  <MoreVertical className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                {isLive && (
+                  <DropdownMenuItem
+                    onSelect={() => toggleListenMode.mutate()}
+                    data-testid="menuitem-toggle-listen-mode"
+                    className={cn(isListenOnly && "text-active focus:text-active")}
+                  >
+                    <Ear className="h-3.5 w-3.5 shrink-0" />
+                    <span>{isListenOnly ? "Listen mode on" : "Listen mode"}</span>
+                  </DropdownMenuItem>
                 )}
-                onClick={() => toggleListenMode.mutate()}
-                disabled={toggleListenMode.isPending || leaveMeeting.isPending}
-                data-testid="button-toggle-listen-mode"
-                title={
-                  isListenOnly
-                    ? "Mantra is listening only — click to let it speak again"
-                    : "Mute Mantra for this meeting — it keeps transcribing and will still build the recap"
-                }
-                aria-pressed={isListenOnly}
-              >
-                {toggleListenMode.isPending ? (
-                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-                ) : (
-                  <Ear className="h-3 w-3 shrink-0" />
+                {canReset && (
+                  <DropdownMenuItem
+                    onSelect={() => resetMeeting.mutate()}
+                    data-testid="menuitem-reset-meeting"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5 shrink-0" />
+                    <span>Reconnect Mantra</span>
+                  </DropdownMenuItem>
                 )}
-                <span>{isListenOnly ? "Listen mode on" : "Listen mode"}</span>
-              </Button>
-            )}
-            {departureMeaningful && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-6 gap-1.5 border-destructive/30 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
-                onClick={() => leaveMeeting.mutate()}
-                disabled={leaveMeeting.isPending || meeting.botStatus === "leaving"}
-                data-testid="button-leave-meeting"
-                title="Remove Mantra Agent from this meeting"
-              >
-                {leaveMeeting.isPending || meeting.botStatus === "leaving" ? (
-                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-                ) : (
-                  <LogOut className="h-3 w-3 shrink-0" />
+                {departureMeaningful && (
+                  <>
+                    {(isLive || canReset) && <DropdownMenuSeparator />}
+                    <DropdownMenuItem
+                      onSelect={() => leaveMeeting.mutate()}
+                      disabled={meeting.botStatus === "leaving"}
+                      data-testid="menuitem-leave-meeting"
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <LogOut className="h-3.5 w-3.5 shrink-0" />
+                      <span>{meeting.botStatus === "leaving" ? "Leaving…" : "Leave meeting"}</span>
+                    </DropdownMenuItem>
+                  </>
                 )}
-                <span>{leaveMeeting.isPending || meeting.botStatus === "leaving" ? "Leaving…" : "Leave"}</span>
-              </Button>
-            )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         )}
       </div>

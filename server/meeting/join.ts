@@ -1,5 +1,6 @@
 import { createLogger } from "../log";
 import type { ExplicitMeetingEventIdentity } from "./identity";
+import type { MeetingRecognitionLaunchPlan } from "./stt";
 import type { MeetingJoinMode } from "@shared/schema";
 
 const log = createLogger("MeetingJoin");
@@ -64,7 +65,7 @@ export async function joinMeetingByUrl(opts: {
     explicitEvent: opts.explicitEvent,
   });
   const title = identity.title;
-  const { createMeetingRecognitionLaunchPlan, issueMeetingSTTAudioToken } = await import("./stt");
+  const { createMeetingRecognitionLaunchPlan, meetingRecognitionLaunchMeta } = await import("./stt");
   const recognitionLaunch = createMeetingRecognitionLaunchPlan(identity.speakerPolicy);
   const { chatStorage } = await import("../integrations/chat/storage");
   const session = await chatStorage.createMeetingSession(title, {
@@ -82,19 +83,7 @@ export async function joinMeetingByUrl(opts: {
     eventEnd: identity.eventEnd,
     resolutionSource: identity.resolutionSource,
     speakerPolicy: identity.speakerPolicy,
-    recognition: {
-      mode: recognitionLaunch.mode,
-      status: recognitionLaunch.recognitionStatus,
-      reasonCode: recognitionLaunch.reasonCode,
-      detail: recognitionLaunch.detail,
-      streams: [],
-    },
-    sttProvider: recognitionLaunch.provider,
-    sttModel: recognitionLaunch.model,
-    sttSource: recognitionLaunch.source,
-    sttFallback: recognitionLaunch.fallback,
-    sttStatus: recognitionLaunch.sttStatus,
-    sttStatusDetail: recognitionLaunch.detail,
+    ...meetingRecognitionLaunchMeta(recognitionLaunch),
     participationPolicy: opts.joinMode === "note_taking" ? "listen_only" : "auto",
   });
 
@@ -107,63 +96,90 @@ export async function joinMeetingByUrl(opts: {
     throw new MeetingJoinError(message, session.id);
   };
 
+  let dispatch: { botId: string; outputMediaUrl: string };
+  try {
+    dispatch = await createMeetingRecallBot({
+      sessionId: session.id,
+      meetingUrl,
+      recognitionLaunch,
+    });
+  } catch (err) {
+    return failSession(err instanceof Error ? err.message : String(err));
+  }
+
+  await chatStorage.updateMeetingMeta(session.id, {
+    botId: dispatch.botId,
+    outputMediaUrl: dispatch.outputMediaUrl,
+  });
+  const { syncMeetingVisualizerBotStatus } = await import("./output-media");
+  syncMeetingVisualizerBotStatus(session.id, "dialing");
+  log.log(`Bot ${dispatch.botId} dispatched to ${platform} meeting "${title}" (session ${session.id})`);
+
+  return { sessionId: session.id, botId: dispatch.botId, platform, title };
+}
+
+/**
+ * Dispatch a Recall bot for an already-created meeting session and return the
+ * bot id plus the signed output-media URL. Canonical bot-creation path shared
+ * by the initial join and the reset/rejoin recovery, so both build the webhook,
+ * participant-audio, and output-media wiring identically. Throws
+ * MeetingJoinError on any configuration or Recall failure; the caller owns the
+ * session state transition (fail on join, mark failed on reset).
+ */
+export async function createMeetingRecallBot(opts: {
+  sessionId: string;
+  meetingUrl: string;
+  recognitionLaunch: MeetingRecognitionLaunchPlan;
+}): Promise<{ botId: string; outputMediaUrl: string }> {
   const recall = await import("../integrations/recall/client");
   const cfg = await recall.getRecallConfig();
   if (!recall.isRecallConfigured(cfg)) {
-    return failSession(
+    throw new MeetingJoinError(
       "Recall.ai is not configured. Enter the RECALL_API_KEY and RECALL_REGION in Settings → Integrations → Recall.ai, then retry.",
+      opts.sessionId,
     );
   }
   const { getRuntimePublicBaseUrl } = await import("../runtime-identity");
   const publicUrl = await getRuntimePublicBaseUrl();
   if (!publicUrl) {
-    return failSession(
+    throw new MeetingJoinError(
       "No public base URL available. Bind this deployment to a Platform Environment with a hosting binding publicUrl, or deploy behind a Railway public domain, then retry.",
+      opts.sessionId,
     );
   }
-  const { outputMediaPageUrl, syncMeetingVisualizerBotStatus } = await import("./output-media");
-  const outputMediaUrl = outputMediaPageUrl(publicUrl, session.id);
-  const participantAudioUrl = recognitionLaunch.outcome === "participant_audio"
-    ? `${publicUrl.replace(/^http/, "ws")}/ws/recall-participant-audio/?sessionId=${encodeURIComponent(session.id)}&token=${encodeURIComponent(issueMeetingSTTAudioToken(session.id))}`
+  const { outputMediaPageUrl } = await import("./output-media");
+  const { issueMeetingSTTAudioToken } = await import("./stt");
+  const outputMediaUrl = outputMediaPageUrl(publicUrl, opts.sessionId);
+  const participantAudioUrl = opts.recognitionLaunch.outcome === "participant_audio"
+    ? `${publicUrl.replace(/^http/, "ws")}/ws/recall-participant-audio/?sessionId=${encodeURIComponent(opts.sessionId)}&token=${encodeURIComponent(issueMeetingSTTAudioToken(opts.sessionId))}`
     : undefined;
   const launchDiagnostic = {
-    sessionId: session.id,
-    requestedMode: recognitionLaunch.mode,
-    outcome: recognitionLaunch.outcome,
-    provider: recognitionLaunch.provider,
-    model: recognitionLaunch.model,
-    reasonCode: recognitionLaunch.reasonCode,
-    transcriptFallback: recognitionLaunch.fallback,
+    sessionId: opts.sessionId,
+    requestedMode: opts.recognitionLaunch.mode,
+    outcome: opts.recognitionLaunch.outcome,
+    provider: opts.recognitionLaunch.provider,
+    model: opts.recognitionLaunch.model,
+    reasonCode: opts.recognitionLaunch.reasonCode,
+    transcriptFallback: opts.recognitionLaunch.fallback,
   };
-  if (recognitionLaunch.outcome === "transcript_fallback") {
+  if (opts.recognitionLaunch.outcome === "transcript_fallback") {
     log.warn("meeting recognition launch degraded", launchDiagnostic);
   } else {
     log.info("meeting recognition launch ready", launchDiagnostic);
   }
-  let botId: string;
   try {
     const bot = await recall.createRecallBot({
-      meetingUrl,
+      meetingUrl: opts.meetingUrl,
       botName: "Mantra Agent",
       webhookUrl: `${publicUrl}/api/webhooks/recall/transcript`,
       participantAudioUrl,
-      metadata: { sessionId: session.id },
+      metadata: { sessionId: opts.sessionId },
       outputMediaUrl,
     });
-    botId = bot.id;
+    return { botId: bot.id, outputMediaUrl };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    const message = `Recall bot creation failed: ${detail}`;
-    log.error(`Recall bot creation failed for session ${session.id}: ${detail}`);
-    return failSession(message);
+    log.error(`Recall bot creation failed for session ${opts.sessionId}: ${detail}`);
+    throw new MeetingJoinError(`Recall bot creation failed: ${detail}`, opts.sessionId);
   }
-
-  await chatStorage.updateMeetingMeta(session.id, {
-    botId,
-    outputMediaUrl,
-  });
-  syncMeetingVisualizerBotStatus(session.id, "dialing");
-  log.log(`Bot ${botId} dispatched to ${platform} meeting "${title}" (session ${session.id})`);
-
-  return { sessionId: session.id, botId, platform, title };
 }
