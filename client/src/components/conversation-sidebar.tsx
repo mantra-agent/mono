@@ -68,7 +68,7 @@ export function sortByUpdated(a: ChatSession, b: ChatSession): number {
 
 export function isLiveTransportSession(session: ChatSession, liveVoiceConversationId?: string | null): boolean {
   return (session.type === "meeting" && (session.meeting?.botStatus === "live" || session.meeting?.botStatus === "leaving")) ||
-    (session.type === "voice" && !!liveVoiceConversationId && session.id === liveVoiceConversationId);
+    (!!liveVoiceConversationId && session.id === liveVoiceConversationId);
 }
 
 export function groupSessions(sessions: ChatSession[], opts?: { liveVoiceConversationId?: string | null; recentStickyIds?: Set<string> }): SessionGroup[] {
@@ -296,7 +296,7 @@ export function ConversationItem({
   // - Default: Bot or User icon
   const isWaiting = conv.status === "waiting";
   const isMeeting = conv.type === "meeting";
-  const isVoice = conv.type === "voice";
+  const isVoice = conv.type === "voice" || (isTransportLive && !isMeeting);
   const isSpinning = !isWaiting && !isMeeting && !isVoice && !isAwaitingQuestion && (isLive || !!conv.hasActiveDescendant || !!conv.hasActivePlan);
   const showPinIcon = (isPinned && !isSpinning && !isWaiting) || iconHovered;
   const isIconInteractive = iconHovered || (isPinned && !isSpinning);
