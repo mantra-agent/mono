@@ -55,6 +55,7 @@ import { cn } from "@/lib/utils";
 import {
   eventMetadataQueryKey,
   useEventMetadata,
+  type EventMetadataQueryData,
 } from "@/components/calendar/use-event-metadata";
 import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
@@ -302,7 +303,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   const [attendeesInput, setAttendeesInput] = useState("");
   const [prepRequired, setPrepRequired] = useState(false);
   const [joinMode, setJoinMode] = useState<MeetingJoinMode>("dont_join");
-  const [initialJoinMode, setInitialJoinMode] = useState<MeetingJoinMode>("dont_join");
   const [initialFormSnapshot, setInitialFormSnapshot] = useState<string | null>(null);
   const [recurrenceType, setRecurrenceType] = useState<string>("none");
   const [recurrenceInterval, setRecurrenceInterval] = useState(1);
@@ -333,7 +333,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
       );
       setPrepRequired(isHighPrep(eventData));
       setJoinMode(resolvedJoinMode);
-      setInitialJoinMode(resolvedJoinMode);
       setInitialFormSnapshot(JSON.stringify({
         title: eventData.summary || "",
         start: eventData.start.dateTime ? toISOLocal(new Date(eventData.start.dateTime)).slice(0, 16) : getDefaultStart(),
@@ -343,7 +342,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
         selectedCalendarId: eventData.calendarId || calendarId || calendars[0]?.id || "",
         attendeesInput: (eventData.attendees ?? []).map(a => a.email).join(", "),
         prepRequired: isHighPrep(eventData),
-        joinMode: resolvedJoinMode,
       }));
       setInitialized(true);
     }
@@ -523,15 +521,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
         event: eventPayload,
       });
 
-      if (joinMode !== initialJoinMode) {
-        await apiRequest("POST", "/api/calendar/agent-join", {
-          googleEventId: eventId,
-          accountId: accountId || selectedAccountId,
-          calendarId: calendarId || selectedCalendarId,
-          mode: joinMode,
-        });
-      }
-
+      // Meeting participation mode persists independently when selected.
       // Agenda edits autosave through the linked Library page editor.
       return null;
     },
@@ -549,9 +539,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
           selectedCalendarId,
           attendeesInput,
           prepRequired,
-          joinMode,
         }));
-        setInitialJoinMode(joinMode);
       }
       if (isCreate) {
         navigate("/schedule");
@@ -599,6 +587,41 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
     onError: (err: any) => toast({ title: "Failed to update event type", description: err.message, variant: "destructive" }),
   });
 
+  const setJoinModeMutation = useMutation({
+    mutationFn: async (nextMode: MeetingJoinMode) => {
+      const response = await apiRequest("POST", "/api/calendar/agent-join", {
+        googleEventId: eventId,
+        accountId: accountId || selectedAccountId,
+        calendarId: calendarId || selectedCalendarId,
+        mode: nextMode,
+      });
+      return response.json();
+    },
+    onMutate: (nextMode) => {
+      const previousMode = joinMode;
+      setJoinMode(nextMode);
+      return { previousMode };
+    },
+    onError: (err: any, _nextMode, context) => {
+      setJoinMode(context?.previousMode ?? resolveMeetingJoinMode(
+        metadata?.agentJoinMode,
+        metadata?.agentJoinEnabled ?? false,
+        metadata?.agentJoinOverride,
+      ));
+      toast({ title: "Failed to update meeting agent", description: err.message, variant: "destructive" });
+    },
+    onSettled: async () => {
+      const refreshed = await queryClient.fetchQuery<EventMetadataQueryData>({ queryKey: metadataQueryKey });
+      setJoinMode(resolveMeetingJoinMode(
+        refreshed.metadata?.agentJoinMode,
+        refreshed.metadata?.agentJoinEnabled ?? false,
+        refreshed.metadata?.agentJoinOverride,
+      ));
+      queryClient.invalidateQueries({ queryKey: ["/api/calendar/events"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
+    },
+  });
+
   const canSubmit = Boolean(title.trim().length > 0 && selectedCalendarId && start && end);
   const currentFormSnapshot = JSON.stringify({
     title,
@@ -609,7 +632,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
     selectedCalendarId,
     attendeesInput,
     prepRequired,
-    joinMode,
   });
   const hasUnsavedChanges = isCreate || (initialFormSnapshot !== null && currentFormSnapshot !== initialFormSnapshot);
 
@@ -816,8 +838,8 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
               <ProfileTreeRow label="Meeting Agent" icon={<Bot className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-event-join-mode">
                 <MeetingJoinModeMenu
                   value={joinMode}
-                  onChange={setJoinMode}
-                  disabled={isReadOnly}
+                  onChange={nextMode => setJoinModeMutation.mutate(nextMode)}
+                  disabled={isReadOnly || setJoinModeMutation.isPending}
                   testId="event-join-mode"
                 />
               </ProfileTreeRow>
