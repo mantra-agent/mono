@@ -66,6 +66,7 @@ export function DesktopVoiceSurface({ voiceSession, transcript }: DesktopVoiceSu
     >
       <AgentOrb
         state={voiceSession.visualState}
+        initialEntrance="voice"
         audioLevel={audioLevel}
         maxFrameRate={60}
         className="absolute left-1/2 top-1/2 h-[60%] w-[60%] -translate-x-1/2 -translate-y-1/2 md:inset-0 md:h-full md:w-full md:translate-x-0 md:translate-y-0"

@@ -6,9 +6,14 @@ import type { AgentVisualState } from '@shared/agent-visualizer';
  */
 export type OrbState = AgentVisualState | 'entrance';
 
+/** One-shot presentation owned entirely by the renderer that creates it. */
+export type AgentOrbInitialEntrance = 'voice';
+
 export interface AgentOrbProps {
   /** Current agent state driving the visual signature */
   state: OrbState;
+  /** Optional renderer-local entrance played once when this orb mounts. */
+  initialEntrance?: AgentOrbInitialEntrance;
   /**
    * Audio amplitude 0-1. When undefined, a synthetic envelope is generated
    * for states that need audio reactivity (speaking, listening).
