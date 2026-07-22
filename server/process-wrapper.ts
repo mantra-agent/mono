@@ -4,6 +4,12 @@ import http from "http";
 import * as fs from "fs";
 import * as path from "path";
 import { createLogger } from "./log";
+import {
+  createSupervisorHealthToken,
+  SUPERVISOR_HEALTH_HEADER,
+  SUPERVISOR_HEALTH_PATH,
+  SUPERVISOR_HEALTH_TOKEN_ENV,
+} from "./supervisor-health-contract";
 
 const log = createLogger("ProcessWrapper");
 
@@ -12,11 +18,10 @@ const RESTART_WINDOW_MS = 60_000;
 const BASE_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
 const HEALTH_CHECK_INTERVAL_MS = 15_000;
-// Health-check HTTP timeout. Now that checkHealth() probes
-// /api/health/deep (Task #1007), the deep handler caps its DB work at
-// ~2s internally; 5s gives that handler full headroom plus network/
-// scheduling slack without letting a wedged main thread go undetected
-// for the prior 10s window. Three-strike kill logic preserved below.
+// Health-check HTTP timeout. The process-local supervisor endpoint runs the
+// same deep DB/pool probe as the authenticated operator endpoint and caps its
+// DB work at ~2s internally. Five seconds gives that handler full headroom
+// plus loopback scheduling slack. Three-strike kill logic is preserved below.
 const HEALTH_CHECK_TIMEOUT_MS = 5_000;
 const HEALTH_CHECK_FAILURES_BEFORE_KILL = 3;
 const POOL_DEGRADED_FAILURES_BEFORE_KILL = 3;
@@ -76,6 +81,7 @@ let forwardedSignal: NodeJS.Signals | null = null;
 let pendingRestartTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingChildTerminationReason: string | null = null;
 let workerDeadReason: string | null = null;
+let supervisorHealthToken = "";
 let previousExit: ChildExitEvidence | null = null;
 
 interface ChildExitEvidence {
@@ -156,22 +162,22 @@ interface HealthResult {
   poolSaturated: boolean;
 }
 
-// Task #1007 step 1: this probe targets /api/health/deep so that the
-// wrapper actually receives the {degraded, reasons[]} payload it parses
-// below. The trivial /api/health (used by probeHealthQuick) deliberately
-// has no body shape — gating pool-saturation kills on it (as Task #995's
-// round 5 did) is silently dead because reasons[] is always empty there.
-// The deep handler runs its own probeDb() with a 2s internal timeout
-// plus pool/saturation accounting, so the 10s wrapper-side timeout is
-// comfortable headroom and still well under the 15s probe interval.
+// The wrapper needs the deep {degraded, reasons[]} payload for independent
+// pool-saturation escalation. The trivial /api/health used by
+// probeHealthQuick deliberately has no DB semantics. This request crosses a
+// bounded parent-to-child capability boundary over loopback; it never weakens
+// the authenticated /api/health/deep operator route.
 function checkHealth(): Promise<HealthResult> {
   return new Promise((resolve) => {
     const req = http.get(
       {
         hostname: "127.0.0.1",
         port: PORT,
-        path: "/api/health/deep",
+        path: SUPERVISOR_HEALTH_PATH,
         timeout: HEALTH_CHECK_TIMEOUT_MS,
+        headers: {
+          [SUPERVISOR_HEALTH_HEADER]: supervisorHealthToken,
+        },
       },
       (res) => {
         let data = "";
@@ -482,6 +488,7 @@ function startChild() {
     : nodeOptions;
 
   currentBootId = generateBootId();
+  supervisorHealthToken = createSupervisorHealthToken();
   bootComplete = false;
   lastHeartbeatAt = 0;
   consecutiveHealthFailures = 0;
@@ -497,6 +504,7 @@ function startChild() {
     WATCHDOG_BOOT_ID: currentBootId,
     WATCHDOG_PREVIOUS_EXIT_JSON: previousExit ? JSON.stringify(previousExit) : "",
     MEMORY_PRESSURE_EXIT_CODE: String(MEMORY_PRESSURE_EXIT_CODE),
+    [SUPERVISOR_HEALTH_TOKEN_ENV]: supervisorHealthToken,
   };
 
   // stdio: inherit stdin, pipe stdout/stderr so we can scan for boot marker,

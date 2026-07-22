@@ -1,5 +1,5 @@
 // Use createLogger for logging ONLY
-import type { Express } from "express";
+import type { Express, Response } from "express";
 import { executorManager } from "../executor-manager";
 import { getPerformanceDiagnostics } from "../performance-monitor";
 import { setTierModel } from "../job-profiles";
@@ -7,6 +7,12 @@ import { z } from "zod";
 import { createLogger } from "../log";
 import { BOOT_ID } from "../db";
 import { getSecret, getSecretSync } from "../secrets-store";
+import {
+  isLoopbackSupervisorAddress,
+  isValidSupervisorHealthToken,
+  SUPERVISOR_HEALTH_HEADER,
+  SUPERVISOR_HEALTH_PATH,
+} from "../supervisor-health-contract";
 
 const log = createLogger("SetupRoutes");
 
@@ -224,10 +230,11 @@ export async function registerSetupRoutes(app: Express) {
     });
   });
 
-  // /api/health/deep: full degraded-state probe (DB probe + saturation). Same
-  // JSON shape and 200/503 mapping that /api/health used to return — preserved
-  // verbatim for operator dashboards and gateway diagnostics.
-  app.get("/api/health/deep", async (_req, res) => {
+  // Full degraded-state producer (DB probe + pool saturation). Both consumers
+  // receive the same JSON and 200/503 semantics. Authority is decided before
+  // this producer runs: /api/health/deep remains authenticated, while the
+  // loopback supervisor route requires its ephemeral process capability.
+  async function sendDeepHealth(res: Response): Promise<void> {
     const { probeDb, getDbSaturationInfo } = await import("../db");
     const mem = process.memoryUsage();
     const maxHeapMB = (() => {
@@ -275,5 +282,23 @@ export async function registerSetupRoutes(app: Express) {
         heapUsedPct,
       },
     });
+  }
+
+  // Authenticated operator/dashboard diagnostics. API policy intentionally
+  // keeps the /api/health prefix personal except for exact public contracts.
+  app.get("/api/health/deep", async (_req, res) => {
+    await sendDeepHealth(res);
+  });
+
+  // Process-local supervisor diagnostics. The API policy allows only this
+  // exact GET through to route-owned capability validation. Missing or invalid
+  // capabilities receive 404 so the endpoint does not become an anonymous
+  // operational oracle.
+  app.get(SUPERVISOR_HEALTH_PATH, async (req, res) => {
+    const candidate = req.get(SUPERVISOR_HEALTH_HEADER);
+    if (!isLoopbackSupervisorAddress(req.socket.remoteAddress) || !isValidSupervisorHealthToken(candidate)) {
+      return res.status(404).json({ error: "Not found" });
+    }
+    await sendDeepHealth(res);
   });
 }

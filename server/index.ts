@@ -5,6 +5,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { setupAuth } from "./auth";
 import { registerApiPolicy } from "./api-policy";
+import { SUPERVISOR_HEALTH_PATH } from "./supervisor-health-contract";
 import { createServer } from "http";
 import { executorManager } from "./executor-manager";
 import { apiTimingMiddleware, startEventLoopMonitor, recordBootTiming } from "./performance-monitor";
@@ -226,7 +227,7 @@ app.use(apiTimingMiddleware);
 // stays clean and the watchdog can be skipped if unavailable.
 app.use((req, res, next) => {
   if (!req.path.startsWith("/api")) return next();
-  if (req.path === "/api/health" || req.path === "/api/diag/inflight") return next();
+  if (req.path === "/api/health" || req.path === SUPERVISOR_HEALTH_PATH || req.path === "/api/diag/inflight") return next();
   let trackEnd: ((id: string) => void) | null = null;
   let id: string | null = null;
   try {
@@ -292,6 +293,7 @@ const POLLING_ENDPOINTS = new Set([
   "/api/inference/stats",
   "/api/gitnexus-status",
   "/api/health",
+  SUPERVISOR_HEALTH_PATH,
 ]);
 
 const NOISY_REQUEST_ENDPOINTS = new Set([
