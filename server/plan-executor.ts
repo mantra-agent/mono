@@ -11,11 +11,12 @@
  * - Each function has a single responsibility
  */
 import { db } from "./db";
-import { eq, type SQL } from "drizzle-orm";
-import { planExecutions, planSteps } from "@shared/schema";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { and, eq, type SQL } from "drizzle-orm";
+import { accounts, planExecutions, planSteps, users } from "@shared/schema";
+import { getCurrentPrincipalOrSystem, runWithPrincipal } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
-import { PLAN_EXECUTION_LEASE_MS, claimPlanExecution, completePlanStepAttempt, createPlanStepAttempt, getLatestPlanStepAttempt, releasePlanExecution, renewPlanExecution, renderPlanProjection, transitionPlanStepStatus, updatePlanStatus as persistPlanStatus, updatePlanStepAttempt, updatePlanStepFields } from "./plan-service";
+import { PLAN_EXECUTION_LEASE_MS, claimPlanExecution, completePlanStepAttempt, createPlanStepAttempt, failInterruptedPlanStep, getLatestPlanStepAttempt, releasePlanExecution, renewPlanExecution, renderPlanProjection, transitionPlanStepStatus, updatePlanStatus as persistPlanStatus, updatePlanStepAttempt, updatePlanStepFields } from "./plan-service";
+import { createNamedSystemPrincipal, createUserPrincipalFromUser } from "./principal";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
 import { resolvePlanStepPersona } from "./plan-persona";
@@ -47,6 +48,26 @@ const MAX_STEP_RETRIES = 3;
 
 function createExecutionId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getRuntimeInstanceId(): string {
+  return process.env.RAILWAY_REPLICA_ID || process.env.HOSTNAME || "local";
+}
+
+function getRuntimeBootId(): string {
+  return process.env.WATCHDOG_BOOT_ID || `pid:${process.pid}`;
+}
+
+function getRuntimeExecutionOwner(originSessionId: string): string {
+  return `${getRuntimeInstanceId()}@${getRuntimeBootId()}:${originSessionId || "plan-executor"}`;
+}
+
+function isOwnedByCurrentRuntime(owner: string | null): boolean {
+  return Boolean(owner?.startsWith(`${getRuntimeInstanceId()}@${getRuntimeBootId()}:`));
+}
+
+function isOwnedByPriorBootOnThisInstance(owner: string | null): boolean {
+  return Boolean(owner?.startsWith(`${getRuntimeInstanceId()}@`) && !isOwnedByCurrentRuntime(owner));
 }
 
 // ─── Active plan tracking ────────────────────────────────────────────
@@ -155,7 +176,7 @@ export async function executePlan(
     return { planId, status: plan.status as PlanStatus, completedSteps: 0, totalSteps: steps.length, totalDuration: 0, error: "Plan is already executing" };
   }
 
-  const lease = await claimPlanExecution(planId, originSessionId || "plan-executor");
+  const lease = await claimPlanExecution(planId, getRuntimeExecutionOwner(originSessionId));
   if (!lease.claimed) {
     const steps = await getStepsFromDb(planId);
     return { planId, status: plan.status as PlanStatus, completedSteps: 0, totalSteps: steps.length, totalDuration: 0, error: "Plan execution is already claimed by another worker" };
@@ -815,124 +836,125 @@ export async function resumePlan(
 
 // ─── Crash Recovery ──────────────────────────────────────────────────
 
-async function recoverInterruptedPlan(planId: string): Promise<boolean> {
-  const initialPlan = await getPlanFromDb(planId);
+const PLAN_RECOVERY_JOB = "plan-recovery";
+
+async function runAsPlanOwner<T>(
+  plan: { ownerUserId: string; accountId: string },
+  fn: () => Promise<T>,
+): Promise<T> {
+  const [identity] = await db.select({ user: users })
+    .from(users)
+    .innerJoin(
+      accounts,
+      and(
+        eq(accounts.id, plan.accountId),
+        eq(accounts.kind, "personal"),
+        eq(accounts.ownerUserId, plan.ownerUserId),
+      ),
+    )
+    .where(eq(users.id, plan.ownerUserId))
+    .limit(1);
+  if (!identity) {
+    throw new Error(`Plan owner identity is no longer valid for account ${plan.accountId}`);
+  }
+  return runWithPrincipal(
+    createUserPrincipalFromUser(identity.user, plan.accountId),
+    fn,
+  );
+}
+
+async function recoverInterruptedPlan(
+  planId: string,
+  staleOwner?: string | null,
+  ownerHint?: { ownerUserId: string; accountId: string },
+): Promise<boolean> {
+  const initialPlan = ownerHint
+    ? await runAsPlanOwner(ownerHint, () => getPlanFromDb(planId))
+    : await getPlanFromDb(planId);
   if (!initialPlan || initialPlan.status !== "executing") return false;
 
-  const recoveryLease = await claimPlanExecution(
-    initialPlan.id,
-    `recovery:${process.pid}`,
-  );
-  if (!recoveryLease.claimed) return false;
+  return runAsPlanOwner(initialPlan, async () => {
+    const recoveryLease = await claimPlanExecution(
+      initialPlan.id,
+      `recovery:${process.env.WATCHDOG_BOOT_ID || process.pid}`,
+      PLAN_EXECUTION_LEASE_MS,
+      staleOwner,
+    );
+    if (!recoveryLease.claimed) return false;
 
-  try {
-    const plan = await getPlanFromDb(initialPlan.id);
-    if (!plan || plan.status !== "executing") return false;
+    try {
+      const plan = await getPlanFromDb(initialPlan.id);
+      if (!plan || plan.status !== "executing") return false;
+      const steps = await getStepsFromDb(plan.id);
 
-    const steps = await getStepsFromDb(plan.id);
+      for (const step of steps) {
+        if (step.status !== "running") continue;
+        const attempt = await getLatestPlanStepAttempt(plan.id, step.id);
+        const completedAt = new Date();
+        const durationSeconds = step.startedAt
+          ? Math.max(0, Math.round((completedAt.getTime() - new Date(step.startedAt).getTime()) / 1000))
+          : step.durationSeconds;
 
-    for (const step of steps) {
-      if (step.status !== "running") continue;
-
-      if (step.sessionId) {
-        try {
+        if (step.sessionId) {
           const { chatFileStorage } = await import("./chat-file-storage");
-          const session = await chatFileStorage.getSession(step.sessionId);
+          const session = await chatFileStorage.getSession(step.sessionId).catch(() => null);
           const sessionStatus = (session as { status?: string } | null)?.status;
 
-          if (sessionStatus === "saved") {
+          if (sessionStatus === "saved" && attempt) {
             const output = await readFinalAssistantOutput(step.sessionId);
-            const duration = step.startedAt
-              ? Math.round((Date.now() - new Date(step.startedAt).getTime()) / 1000)
-              : null;
-            const attempt = await getLatestPlanStepAttempt(plan.id, step.id);
-            if (attempt) {
-              await updatePlanStepAttempt({
-                planId: plan.id,
-                stepId: step.id,
-                attemptNumber: attempt.attemptNumber,
-                childSessionId: step.sessionId,
-                status: "completed",
-                outcome: output?.slice(0, 500) || "Completed (recovered)",
-                durationSeconds: duration,
-                completedAt: new Date(),
-              });
-            }
-            await updatePlanStepFields(plan.id, step.id, {
-              status: "completed",
-              outcome: output?.slice(0, 500) || "Completed (recovered)",
-              completedAt: new Date(),
-              durationSeconds: duration,
-            });
-            log.log(`[recovery] Plan ${plan.id} step ${step.id} — recovered as completed`);
-          } else {
-            const error = "Interrupted while marked executing; child did not resolve";
-            await closeAbandonedChildSessionBlock(plan.originSessionId, step.sessionId, error, step.durationSeconds);
-            const attempt = await getLatestPlanStepAttempt(plan.id, step.id);
-            if (attempt) {
-              await updatePlanStepAttempt({
-                planId: plan.id,
-                stepId: step.id,
-                attemptNumber: attempt.attemptNumber,
-                childSessionId: step.sessionId,
-                status: "failed",
-                error,
-                durationSeconds: step.durationSeconds,
-                completedAt: new Date(),
-              });
-            }
-            await updatePlanStepFields(plan.id, step.id, {
-              status: "failed",
-              error,
-              completedAt: new Date(),
-            });
-          }
-        } catch {
-          const error = "Interrupted while marked executing; child could not be inspected";
-          await closeAbandonedChildSessionBlock(plan.originSessionId, step.sessionId, error, step.durationSeconds);
-          const attempt = await getLatestPlanStepAttempt(plan.id, step.id);
-          if (attempt) {
-            await updatePlanStepAttempt({
+            await completePlanStepAttempt({
               planId: plan.id,
               stepId: step.id,
               attemptNumber: attempt.attemptNumber,
               childSessionId: step.sessionId,
-              status: "failed",
-              error,
-              durationSeconds: step.durationSeconds,
-              completedAt: new Date(),
+              outcome: output?.slice(0, 500) || "Completed (recovered)",
+              durationSeconds: durationSeconds ?? 0,
+              completedAt,
             });
+            log.log(`[recovery] Plan ${plan.id} step ${step.id} — recovered as completed`);
+            continue;
           }
-          await updatePlanStepFields(plan.id, step.id, {
-            status: "failed",
-            error,
-            completedAt: new Date(),
-          });
         }
-      } else {
-        await updatePlanStepFields(plan.id, step.id, {
-          status: "failed",
-          error: "Interrupted while marked running before child session was persisted",
-          completedAt: new Date(),
+
+        const error = step.sessionId
+          ? "Interrupted by a process restart before the child reached a terminal state"
+          : "Interrupted by a process restart before the child session was persisted";
+        const result = await failInterruptedPlanStep({
+          planId: plan.id,
+          stepId: step.id,
+          attemptNumber: attempt?.attemptNumber ?? null,
+          childSessionId: step.sessionId,
+          error,
+          durationSeconds,
+          completedAt,
         });
+        if (result.outcome === "transitioned") {
+          await closeAbandonedChildSessionBlock(
+            plan.originSessionId,
+            step.sessionId,
+            error,
+            durationSeconds,
+          );
+          log.warn(`[recovery] Plan ${plan.id} step ${step.id} — abandoned after process restart`);
+        }
       }
-    }
 
-    const updatedSteps = await getStepsFromDb(plan.id);
-    if (isPlanDone(updatedSteps)) {
-      const anyFailed = updatedSteps.some(s => s.status === "failed");
-      await updatePlanStatus(plan.id, anyFailed ? "completed_with_failures" : "completed");
-      log.log(`[recovery] Plan ${plan.id} — ${anyFailed ? "completed_with_failures" : "completed"}`);
-    } else {
-      await updatePlanStatus(plan.id, "paused");
-      log.log(`[recovery] Plan ${plan.id} — paused after interrupted execution`);
-    }
+      const updatedSteps = await getStepsFromDb(plan.id);
+      if (isPlanDone(updatedSteps)) {
+        const anyFailed = updatedSteps.some(s => s.status === "failed");
+        await updatePlanStatus(plan.id, anyFailed ? "completed_with_failures" : "completed");
+        log.log(`[recovery] Plan ${plan.id} — ${anyFailed ? "completed_with_failures" : "completed"}`);
+      } else {
+        await updatePlanStatus(plan.id, "paused");
+        log.log(`[recovery] Plan ${plan.id} — paused after interrupted execution`);
+      }
 
-    await renderPlanToLibraryPage(plan.id);
-    return true;
-  } finally {
-    await releasePlanExecution(initialPlan.id, recoveryLease.leaseId).catch(() => undefined);
-  }
+      await renderPlanToLibraryPage(plan.id);
+      return true;
+    } finally {
+      await releasePlanExecution(initialPlan.id, recoveryLease.leaseId).catch(() => undefined);
+    }
+  });
 }
 
 const scheduledRecoveryTimers = new Map<string, NodeJS.Timeout>();
@@ -961,28 +983,41 @@ function scheduleInterruptedPlanRecovery(planId: string, expiresAt: Date): void 
  * Scan for plans that were executing when the server crashed.
  */
 export async function recoverInterruptedPlans(): Promise<number> {
-  try {
-    const executing = await db.select().from(planExecutions)
-      .where(visiblePlan(eq(planExecutions.status, "executing")));
+  const systemPrincipal = createNamedSystemPrincipal(PLAN_RECOVERY_JOB);
+  return runWithPrincipal(systemPrincipal, async () => {
+    try {
+      const executing = await db.select().from(planExecutions)
+        .where(visiblePlan(eq(planExecutions.status, "executing")))
+        .limit(100);
 
-    let recovered = 0;
-    for (const plan of executing) {
-      if (plan.executionLeaseExpiresAt && plan.executionLeaseExpiresAt.getTime() > Date.now()) {
-        scheduleInterruptedPlanRecovery(plan.id, plan.executionLeaseExpiresAt);
-        continue;
+      let recovered = 0;
+      for (const plan of executing) {
+        if (isOwnedByCurrentRuntime(plan.executionLeaseOwner) && isExecuting(plan.id)) {
+          continue;
+        }
+        const priorBootOwner = isOwnedByPriorBootOnThisInstance(plan.executionLeaseOwner)
+          ? plan.executionLeaseOwner
+          : null;
+        if (!priorBootOwner && plan.executionLeaseExpiresAt && plan.executionLeaseExpiresAt.getTime() > Date.now()) {
+          scheduleInterruptedPlanRecovery(plan.id, plan.executionLeaseExpiresAt);
+          continue;
+        }
+        if (await recoverInterruptedPlan(plan.id, priorBootOwner, {
+          ownerUserId: plan.ownerUserId,
+          accountId: plan.accountId,
+        })) recovered++;
       }
-      if (await recoverInterruptedPlan(plan.id)) recovered++;
-    }
 
-    if (recovered > 0) {
-      log.log(`[recovery] Recovered ${recovered} interrupted plan(s)`);
-    }
+      if (recovered > 0) {
+        log.log(`[recovery] Recovered ${recovered} interrupted plan(s)`);
+      }
 
-    return recovered;
-  } catch (err) {
-    log.error(`[recovery] Failed to scan for interrupted plans: ${err instanceof Error ? err.message : String(err)}`);
-    return 0;
-  }
+      return recovered;
+    } catch (err) {
+      log.error(`[recovery] Failed to scan for interrupted plans: ${err instanceof Error ? err.message : String(err)}`);
+      return 0;
+    }
+  });
 }
 
 // monitorChildSession, readFinalAssistantOutput, readChildFailureMessage,

@@ -615,6 +615,22 @@ app.use((req, res, next) => {
         log(`[startup] executorManager.start failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
       });
 
+      // Plan recovery is continuous, bounded, and replay-safe. Boot recovery
+      // handles immediate prior-boot ownership; this sweep closes gaps after
+      // transient database failures without creating a second mutation path.
+      const PLAN_RECOVERY_INTERVAL_MS = 60_000;
+      const runPlanRecovery = () => {
+        import("./plan-executor").then(async ({ recoverInterruptedPlans }) => {
+          const recovered = await recoverInterruptedPlans();
+          if (recovered > 0) {
+            log(`[scheduled] plan recovery: recovered=${recovered}`, "boot");
+          }
+        }).catch((err) => {
+          log(`[scheduled] plan recovery failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
+        });
+      };
+      setInterval(runPlanRecovery, PLAN_RECOVERY_INTERVAL_MS).unref();
+
       // Periodic prune of completed/abandoned voice_session_active rows so the
       // table (and its partial index) stay compact. Retention is configurable
       // via VOICE_SESSION_RETENTION_DAYS (default 30 days). Runs once per day.
