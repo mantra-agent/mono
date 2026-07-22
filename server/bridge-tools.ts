@@ -10625,7 +10625,19 @@ ${refs}` : ""),
         const newParentId = parentIdProvided
           ? (args.parentId === "" ? null : (args.parentId as string | null))
           : oldParentId;
-        if (parentIdProvided) { setData.parentId = newParentId; }
+        let movedPage: typeof libraryPages.$inferSelect | null = null;
+        if (parentIdProvided) {
+          const { moveLibraryPage } = await import("./library-move");
+          const moveResult = await moveLibraryPage(
+            {
+              pageId: resolvedId,
+              destinationParentId: newParentId,
+              destinationVaultId: args.destinationVaultId as string | undefined,
+            },
+            principal,
+          );
+          movedPage = moveResult.page;
+        }
         if (args.tags !== undefined) setData.tags = args.tags as string[];
         if (args.status !== undefined) setData.status = args.status as string | null;
         if (args.oneLiner !== undefined) setData.oneLiner = args.oneLiner as string | null;
@@ -10640,7 +10652,9 @@ ${refs}` : ""),
               ? [oldParentId, newParentId]
               : [oldParentId];
             await acquireLibraryParentLocks(tx, lockTargets);
-            const [row] = await tx.update(libraryPages).set(setData).where(eq(libraryPages.id, resolvedId)).returning();
+            const hasMetadataUpdates = Object.keys(setData).some((key) => key !== "updatedAt");
+            if (!hasMetadataUpdates && movedPage) return movedPage;
+            const [row] = await tx.update(libraryPages).set(setData).where(writableLib(eq(libraryPages.id, resolvedId))).returning();
             return row;
           });
           if (!updated) return { result: `Library page "${id}" not found.`, error: true };

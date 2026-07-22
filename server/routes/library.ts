@@ -1,13 +1,7 @@
 import type { Express } from "express";
 import type { Principal } from "../principal";
 import type { FieldDef } from "pg";
-import {
-  db,
-  pool,
-  acquireLibraryParentLocks,
-  isSerializationConflict,
-  type DrizzleTx,
-} from "../db";
+import { db, pool, isSerializationConflict } from "../db";
 import { z } from "zod";
 import {
   eq,
@@ -34,7 +28,7 @@ import {
   libraryPageViews,
 } from "@shared/models/info";
 import type { LibraryPage } from "@shared/models/info";
-import { vaults } from "@shared/models/vaults";
+// Vault destination validation lives in server/library-move.ts.
 import {
   MEMORY_INTEGRATION_STAGE,
   deriveMemoryIntegrationStage,
@@ -157,101 +151,7 @@ function writableLibrary(req: any, predicate?: SQL): SQL {
   );
 }
 
-type VaultMoveDecision =
-  | { ok: true }
-  | { ok: false; status: number; error: string; logDetail: string };
-
-/**
- * Vault safety guard for Library page moves/reparents — the single enforcement
- * boundary shared by PATCH /:id and PATCH /reorder, the two write paths that can
- * change a page's parent.
- *
- * A vault is a hard security scope boundary (SEC-LIB-001). Invariants:
- *  - `vault_id` is immutable across moves. A move to the vault-section root
- *    (parentId null) keeps the page in its current vault.
- *  - A parent in a different `vault_id` than the moving page is rejected (403).
- *  - A destination vault not visible to the principal, or archived, is rejected.
- *
- * Null `vault_id` rows (pre-backfill / system plumbing) stay unconstrained,
- * matching scoped-storage's backwards-compatibility semantics.
- */
-async function validateVaultSafeMove(
-  executor: Pick<DrizzleTx, "select">,
-  principal: Principal,
-  movingVaultId: string | null,
-  destinationParentVaultId: string | null,
-  isMoveToRoot: boolean,
-): Promise<VaultMoveDecision> {
-  // Effective destination vault: the parent's vault, or (for a root move) the
-  // page's own vault — because a move never changes vault_id.
-  const destVaultId = isMoveToRoot ? movingVaultId : destinationParentVaultId;
-
-  // Cross-vault reparent guard. Only enforced when both vaults are known; null
-  // vault_id rows remain unconstrained for backfill compatibility.
-  if (
-    !isMoveToRoot &&
-    movingVaultId !== null &&
-    destinationParentVaultId !== null &&
-    movingVaultId !== destinationParentVaultId
-  ) {
-    return {
-      ok: false,
-      status: 403,
-      error:
-        "Cannot move a page into a different vault. A vault is a hard security boundary.",
-      logDetail: `crossVault movingVault=${movingVaultId} destVault=${destinationParentVaultId}`,
-    };
-  }
-
-  if (destVaultId === null) {
-    return { ok: true };
-  }
-
-  // Destination vault must be in the principal's visible set (when scoped).
-  if (
-    principal.visibleVaultIds &&
-    principal.visibleVaultIds.length > 0 &&
-    !principal.visibleVaultIds.includes(destVaultId)
-  ) {
-    return {
-      ok: false,
-      status: 403,
-      error: "Destination vault is not visible.",
-      logDetail: `hiddenVault destVault=${destVaultId}`,
-    };
-  }
-
-  // Destination vault must exist, be owned by the principal's account, and be
-  // non-archived. System principals skip the account filter.
-  const vaultPredicate =
-    principal.actorType === "system" || !principal.accountId
-      ? eq(vaults.id, destVaultId)
-      : and(
-          eq(vaults.id, destVaultId),
-          eq(vaults.accountId, principal.accountId),
-        );
-  const [destVault] = await executor
-    .select({ id: vaults.id, isArchived: vaults.isArchived })
-    .from(vaults)
-    .where(vaultPredicate);
-  if (!destVault) {
-    return {
-      ok: false,
-      status: 403,
-      error: "Destination vault not found.",
-      logDetail: `missingVault destVault=${destVaultId}`,
-    };
-  }
-  if (destVault.isArchived) {
-    return {
-      ok: false,
-      status: 403,
-      error: "Destination vault is archived.",
-      logDetail: `archivedVault destVault=${destVaultId}`,
-    };
-  }
-  return { ok: true };
-}
+// Library hierarchy mutations are delegated to server/library-move.ts.
 
 const librarySurfaceInput = {
   surface: z.boolean().optional(),
@@ -941,27 +841,11 @@ export async function registerLibraryRoutes(app: Express) {
   const reorderSchema = z.object({
     id: z.string(),
     parentId: z.string().nullable(),
+    destinationVaultId: z.string().min(1).optional(),
     sortOrder: z.number().int().min(0),
   });
 
-  // Cycle check using a slim {id, parentId} projection — no jsonb / plain_text
-  // columns. Walk parent pointers from `proposedParentId` up to root; if we
-  // ever hit `nodeId`, the move would create a cycle.
-  function wouldCreateCycleLite(
-    parentMap: Map<string, string | null>,
-    nodeId: string,
-    proposedParentId: string,
-  ): boolean {
-    let current: string | null = proposedParentId;
-    const visited = new Set<string>();
-    while (current) {
-      if (current === nodeId) return true;
-      if (visited.has(current)) return false;
-      visited.add(current);
-      current = parentMap.get(current) ?? null;
-    }
-    return false;
-  }
+  // Cycle and subtree validation live in the canonical move service.
 
   // PATCH /api/info/library/reorder
   //
@@ -997,226 +881,29 @@ export async function registerLibraryRoutes(app: Express) {
       }
       throw err;
     }
-    const { id, parentId, sortOrder } = parsed;
-
-    // System folders cannot be moved or reparented
-    const [reorderTarget] = await db
-      .select({ tags: libraryPages.tags })
-      .from(libraryPages)
-      .where(visibleLibrary(req, eq(libraryPages.id, id)));
-    if (!reorderTarget) {
-      return res.status(404).json({ error: "Page not found" });
-    }
-    if (reorderTarget?.tags?.includes("system-folder")) {
-      return res.status(403).json({ error: "System folders cannot be moved." });
-    }
-
-    type ReorderResult =
-      | {
-          kind: "ok";
-          updated: LibraryPage;
-          oldParentId: string | null;
-          newParentId: string | null;
-        }
-      | { kind: "client-error"; status: number; error: string };
-
-    // Captured outside the transaction so the catch block can include
-    // oldParent/newParent in the 409 log line for triage. Populated after we
-    // first resolve the page's pre-move parent inside the tx.
-    let conflictOldParent: string | null | undefined = undefined;
-    let conflictNewParent: string | null = parentId;
-
+    const { id, parentId, destinationVaultId, sortOrder } = parsed;
     try {
-      const result: ReorderResult = await db.transaction(async (tx) => {
-        // Step 1: tiny single-row read just to learn the page's current
-        // parent. We need this to know which old-parent lock to take.
-        const [preRow] = await tx
-          .select({ parentId: libraryPages.parentId })
-          .from(libraryPages)
-          .where(visibleLibrary(req, eq(libraryPages.id, id)));
-        if (!preRow) {
-          return { kind: "client-error", status: 404, error: "Page not found" };
-        }
-        const oldParentFromSnapshot = preRow.parentId;
-        conflictOldParent = oldParentFromSnapshot;
-
-        // Step 2: acquire advisory locks on BOTH parents (sorted dedup
-        // inside the helper) so cycle-check + bulk shifts run on a stable
-        // snapshot.
-        await acquireLibraryParentLocks(tx, [oldParentFromSnapshot, parentId]);
-
-        // Step 3: post-lock slim {id, parentId} snapshot for cycle / parent
-        // existence checks. The reviewer flagged that doing the cycle check
-        // before the lock could miss a concurrent reparent that just shifted
-        // an ancestor — re-reading after the lock keeps the check
-        // lock-consistent.
-        const lite = await tx
-          .select({
-            id: libraryPages.id,
-            parentId: libraryPages.parentId,
-            vaultId: libraryPages.vaultId,
-          })
-          .from(libraryPages)
-          .where(visibleLibrary(req));
-        const parentMap = new Map(lite.map((p) => [p.id, p.parentId] as const));
-        const vaultMap = new Map(lite.map((p) => [p.id, p.vaultId] as const));
-
-        if (!parentMap.has(id)) {
-          return { kind: "client-error", status: 404, error: "Page not found" };
-        }
-        if (parentId !== null) {
-          if (!parentMap.has(parentId)) {
-            return {
-              kind: "client-error",
-              status: 400,
-              error: "Parent not found",
-            };
-          }
-          if (wouldCreateCycleLite(parentMap, id, parentId)) {
-            return {
-              kind: "client-error",
-              status: 400,
-              error: "Cannot move a node into its own descendant",
-            };
-          }
-        }
-
-        // Vault safety: reparenting must never cross a vault boundary or land
-        // in a hidden/archived vault. Runs inside the advisory-locked tx on the
-        // same lock-consistent snapshot as the cycle check.
-        const vaultDecision = await validateVaultSafeMove(
-          tx,
-          principalOrThrow(req),
-          vaultMap.get(id) ?? null,
-          parentId !== null ? (vaultMap.get(parentId) ?? null) : null,
-          parentId === null,
-        );
-        if (!vaultDecision.ok) {
-          log.warn(
-            `Reorder vault guard rejected: op=reorder page=${id} parent=${parentId ?? "<root>"} ${vaultDecision.logDetail}`,
-          );
-          return {
-            kind: "client-error",
-            status: vaultDecision.status,
-            error: vaultDecision.error,
-          };
-        }
-
-        // Step 4: re-read the row to get authoritative sort_order + parent
-        // (the row may have moved between Step 1 and acquiring the lock).
-        const [pageRow] = await tx
-          .select({
-            sortOrder: libraryPages.sortOrder,
-            parentId: libraryPages.parentId,
-          })
-          .from(libraryPages)
-          .where(visibleLibrary(req, eq(libraryPages.id, id)));
-        if (!pageRow) {
-          return { kind: "client-error", status: 404, error: "Page not found" };
-        }
-        const oldParentId = pageRow.parentId;
-        const oldSortOrder = pageRow.sortOrder;
-        const changingParent = oldParentId !== parentId;
-        conflictOldParent = oldParentId;
-
-        // If the actual old parent (post-lock) differs from what we locked
-        // in Step 2, grab the lock on the now-correct old parent too. Edge
-        // case but cheap and keeps the invariant.
-        if (oldParentId !== oldParentFromSnapshot) {
-          await acquireLibraryParentLocks(tx, [oldParentId]);
-        }
-
-        const newParentCondition = parentId
-          ? eq(libraryPages.parentId, parentId)
-          : isNull(libraryPages.parentId);
-        const [siblingCount] = await tx
-          .select({ cnt: dsql<number>`COUNT(*)` })
-          .from(libraryPages)
-          .where(visibleLibrary(req, and(newParentCondition, ne(libraryPages.id, id))));
-        const maxAllowed = Number(siblingCount?.cnt ?? 0);
-        const clampedSortOrder = Math.max(0, Math.min(sortOrder, maxAllowed));
-
-        if (changingParent) {
-          const oldParentCondition = oldParentId
-            ? eq(libraryPages.parentId, oldParentId)
-            : isNull(libraryPages.parentId);
-          await tx
-            .update(libraryPages)
-            .set({ sortOrder: dsql`${libraryPages.sortOrder} - 1` })
-            .where(
-              writableLibrary(req, and(
-                oldParentCondition,
-                gt(libraryPages.sortOrder, oldSortOrder),
-                ne(libraryPages.id, id),
-              )),
-            );
-          await tx
-            .update(libraryPages)
-            .set({ sortOrder: dsql`${libraryPages.sortOrder} + 1` })
-            .where(
-              writableLibrary(req, and(
-                newParentCondition,
-                gte(libraryPages.sortOrder, clampedSortOrder),
-                ne(libraryPages.id, id),
-              )),
-            );
-        } else if (clampedSortOrder > oldSortOrder) {
-          await tx
-            .update(libraryPages)
-            .set({ sortOrder: dsql`${libraryPages.sortOrder} - 1` })
-            .where(
-              writableLibrary(req, and(
-                newParentCondition,
-                gt(libraryPages.sortOrder, oldSortOrder),
-                lte(libraryPages.sortOrder, clampedSortOrder),
-                ne(libraryPages.id, id),
-              )),
-            );
-        } else if (clampedSortOrder < oldSortOrder) {
-          await tx
-            .update(libraryPages)
-            .set({ sortOrder: dsql`${libraryPages.sortOrder} + 1` })
-            .where(
-              writableLibrary(req, and(
-                newParentCondition,
-                gte(libraryPages.sortOrder, clampedSortOrder),
-                lt(libraryPages.sortOrder, oldSortOrder),
-                ne(libraryPages.id, id),
-              )),
-            );
-        }
-
-        const [updated] = await tx
-          .update(libraryPages)
-          .set({ parentId, sortOrder: clampedSortOrder, updatedAt: new Date() })
-          .where(writableLibrary(req, eq(libraryPages.id, id)))
-          .returning();
-
-        return { kind: "ok", updated, oldParentId, newParentId: parentId };
-      });
-
-      if (result.kind === "client-error") {
-        return res.status(result.status).json({ error: result.error });
-      }
-      res.json(result.updated);
+      const { moveLibraryPage } = await import("../library-move");
+      const result = await moveLibraryPage(
+        {
+          pageId: id,
+          destinationParentId: parentId,
+          destinationVaultId,
+          sortOrder,
+        },
+        principalOrThrow(req),
+      );
+      publishLibraryChanged("moved", result.page);
+      return res.json(result.page);
     } catch (err: any) {
-      if (isSerializationConflict(err)) {
-        log.warn(
-          `Reorder serialization conflict: op=reorder page=${id} oldParent=${conflictOldParent ?? "<unread>"} newParent=${conflictNewParent} requestedSort=${sortOrder} code=${err?.code} message=${err?.message}`,
-        );
+      if (isSerializationConflict(err) || err?.status === 409) {
         return res.status(409).json({
-          error: "Reorder conflict — please retry",
+          error: err.message || "Reorder conflict; please retry",
           code: err?.code,
           retry: true,
         });
       }
-      log.error(`Reorder failed: ${err.message}`);
-      if (err.name === "ZodError") {
-        return res
-          .status(400)
-          .json({ error: "Invalid input", details: err.errors });
-      }
-      res.status(500).json({ error: err.message });
+      return res.status(err?.status ?? 500).json({ error: err.message });
     }
   });
 
@@ -1274,6 +961,7 @@ export async function registerLibraryRoutes(app: Express) {
     content: z.any().optional(),
     plainTextContent: z.string().optional(),
     parentId: z.string().nullable().optional(),
+    destinationVaultId: z.string().min(1).optional(),
     tags: z.array(z.string()).optional(),
     status: z.string().nullable().optional(),
     emoji: z.string().nullable().optional(),
@@ -1310,44 +998,18 @@ export async function registerLibraryRoutes(app: Express) {
           setData.plainTextContent = synced.plainTextContent;
         }
       }
+      let movedPage: LibraryPage | null = null;
       if (updates.parentId !== undefined) {
-        const newParentId = updates.parentId === "" ? null : updates.parentId;
-        const principal = principalOrThrow(req);
-        // Resolve the moving page's vault (scoped read also confirms visibility).
-        const [movingPage] = await db
-          .select({ vaultId: libraryPages.vaultId })
-          .from(libraryPages)
-          .where(visibleLibrary(req, eq(libraryPages.id, req.params.id)));
-        if (!movingPage) {
-          return res.status(404).json({ error: "Library page not found" });
-        }
-        let destinationParentVaultId: string | null = null;
-        if (newParentId !== null) {
-          const [destParent] = await db
-            .select({ vaultId: libraryPages.vaultId })
-            .from(libraryPages)
-            .where(visibleLibrary(req, eq(libraryPages.id, newParentId)));
-          if (!destParent) {
-            return res.status(400).json({ error: "Parent not found" });
-          }
-          destinationParentVaultId = destParent.vaultId;
-        }
-        const vaultDecision = await validateVaultSafeMove(
-          db,
-          principal,
-          movingPage.vaultId,
-          destinationParentVaultId,
-          newParentId === null,
+        const { moveLibraryPage } = await import("../library-move");
+        const moveResult = await moveLibraryPage(
+          {
+            pageId: req.params.id,
+            destinationParentId: updates.parentId,
+            destinationVaultId: updates.destinationVaultId,
+          },
+          principalOrThrow(req),
         );
-        if (!vaultDecision.ok) {
-          log.warn(
-            `Library move vault guard rejected: op=patch page=${req.params.id} parent=${newParentId ?? "<root>"} ${vaultDecision.logDetail}`,
-          );
-          return res
-            .status(vaultDecision.status)
-            .json({ error: vaultDecision.error });
-        }
-        setData.parentId = newParentId;
+        movedPage = moveResult.page;
       }
       if (updates.tags !== undefined) setData.tags = updates.tags;
       if (updates.emoji !== undefined) setData.emoji = updates.emoji;
@@ -1355,14 +1017,20 @@ export async function registerLibraryRoutes(app: Express) {
         setData.structuralRole = normalizeLibraryStructuralRole(updates.structuralRole);
       Object.assign(setData, buildLibrarySurfaceSet(updates));
 
-      const [updated] = await db
-        .update(libraryPages)
-        .set({
-          ...setData,
-          updatedByUserId: principalOrThrow(req).userId ?? undefined,
-        })
-        .where(writableLibrary(req, eq(libraryPages.id, req.params.id)))
-        .returning();
+      const hasMetadataUpdates = Object.keys(setData).some(
+        (key) => key !== "updatedAt",
+      );
+      let updated = movedPage;
+      if (hasMetadataUpdates || !movedPage) {
+        [updated] = await db
+          .update(libraryPages)
+          .set({
+            ...setData,
+            updatedByUserId: principalOrThrow(req).userId ?? undefined,
+          })
+          .where(writableLibrary(req, eq(libraryPages.id, req.params.id)))
+          .returning();
+      }
       if (!updated)
         return res.status(404).json({ error: "Library page not found" });
 

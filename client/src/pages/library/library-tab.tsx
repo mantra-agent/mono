@@ -280,7 +280,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
     [isSearching, sections],
   );
 
-  const reorderMutation = useApiMutation<{ id: string; parentId: string | null; sortOrder: number }>({
+  const reorderMutation = useApiMutation<{ id: string; parentId: string | null; destinationVaultId: string; sortOrder: number }>({
     method: "PATCH",
     path: "/api/info/library/reorder",
     invalidateKeys: [["/api/info/library/tree"], ["/api/info/library"]],
@@ -453,7 +453,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                       onDownload={handleTreeDownload}
                       onEnrich={(id) => enrichMutation.mutate(id)}
                       onMove={(id) => setTreeMoveId(id)}
-                      onReorder={(data) => reorderMutation.mutate(data)}
+                      onReorder={(data) => reorderMutation.mutate({ ...data, destinationVaultId: section.vault.id })}
                       toggleExpand={toggleExpand}
                       unreadIds={unreadIds}
                       hasUnreadDescendantIds={hasUnreadDescendantIds}
@@ -481,7 +481,14 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                   onDownload={handleTreeDownload}
                   onEnrich={(id) => enrichMutation.mutate(id)}
                   onMove={(id) => setTreeMoveId(id)}
-                  onReorder={(data) => reorderMutation.mutate(data)}
+                  onReorder={(data) => {
+                    const destinationVaultId = data.parentId
+                      ? pages.find((candidate) => candidate.id === data.parentId)?.vaultId
+                      : pages.find((candidate) => candidate.id === data.id)?.vaultId;
+                    if (destinationVaultId) {
+                      reorderMutation.mutate({ ...data, destinationVaultId });
+                    }
+                  }}
                   toggleExpand={toggleExpand}
                   unreadIds={unreadIds}
                   hasUnreadDescendantIds={hasUnreadDescendantIds}
