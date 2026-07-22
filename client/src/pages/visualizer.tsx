@@ -17,7 +17,10 @@ const VISUALIZER_STATES = new Set<OrbState>([
 ]);
 
 function previewState(search: URLSearchParams): OrbState {
-  const state = search.get("state")?.trim();
+  const requestedState = search.get("state");
+  if (requestedState === null) return "entrance";
+
+  const state = requestedState.trim();
   return state && VISUALIZER_STATES.has(state as OrbState)
     ? state as OrbState
     : "idle";
