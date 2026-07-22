@@ -1672,17 +1672,21 @@ export async function runSchemaBootstrap(
           UPDATE calendar_event_metadata SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL;
 
           IF to_regclass('public.calendar_event_artifacts') IS NOT NULL THEN
+            ALTER TABLE calendar_event_artifacts ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
+            ALTER TABLE calendar_event_artifacts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
             ALTER TABLE calendar_event_artifacts ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;
             ALTER TABLE calendar_event_artifacts ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;
             UPDATE calendar_event_artifacts SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL;
             UPDATE calendar_event_artifacts SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL;
+            ALTER TABLE calendar_event_artifacts ALTER COLUMN created_at SET NOT NULL;
+            ALTER TABLE calendar_event_artifacts ALTER COLUMN updated_at SET NOT NULL;
           END IF;
 
           IF to_regclass('public.calendar_event_people') IS NOT NULL THEN
+            ALTER TABLE calendar_event_people ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
             ALTER TABLE calendar_event_people ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;
-            ALTER TABLE calendar_event_people ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;
             UPDATE calendar_event_people SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL;
-            UPDATE calendar_event_people SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL;
+            ALTER TABLE calendar_event_people ALTER COLUMN created_at SET NOT NULL;
           END IF;
 
           CREATE UNIQUE INDEX IF NOT EXISTS calendar_event_metadata_event_account_calendar_unique
@@ -5799,7 +5803,7 @@ export async function runSchemaBootstrap(
         AND (agent_join_override IS NOT NULL OR agent_join_enabled = TRUE)
     `);
     await pool.query(`
-      DO $
+      DO $migration$
       BEGIN
         IF NOT EXISTS (
           SELECT 1 FROM pg_constraint
@@ -5810,7 +5814,7 @@ export async function runSchemaBootstrap(
           ADD CONSTRAINT calendar_event_metadata_agent_join_mode_check
           CHECK (agent_join_mode IN ('dont_join', 'note_taking', 'join_and_talk'));
         END IF;
-      END $
+      END $migration$
     `);
   });
 
