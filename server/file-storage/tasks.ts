@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { tasks } from "@shared/schema";
+import { milestones, projects, tasks } from "@shared/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
 import type { Task, InsertTask, TaskStatus } from "@shared/models/work";
 import { createLogger } from "../log";
@@ -11,6 +11,13 @@ import { eventBus } from "../event-bus";
 const log = createLogger("StoreTasks");
 
 const taskScopeColumns = { scope: tasks.scope, ownerUserId: tasks.ownerUserId, accountId: tasks.accountId };
+const projectScopeColumns = { scope: projects.scope, ownerUserId: projects.ownerUserId, accountId: projects.accountId };
+const milestoneScopeColumns = {
+  scope: milestones.scope,
+  ownerUserId: milestones.ownerUserId,
+  accountId: milestones.accountId,
+  vaultId: milestones.vaultId,
+};
 
 function principalCacheKey(): string {
   const principal = getCurrentPrincipalOrSystem();
@@ -46,7 +53,7 @@ export class FileTaskStorage {
   private readonly _todoCache = new TTLCache<Task[]>("TodoTasks", Infinity);
   private readonly _singleTaskCache = new TTLCache<Task | undefined>("SingleTask", Infinity);
 
-  private invalidateCache(): void {
+  invalidateCache(): void {
     this._todoCache.invalidateAll();
     this._singleTaskCache.invalidateAll();
     eventBus.publish({ category: "system", event: "data:tasks_changed", payload: { source: "task_storage" } });
@@ -114,7 +121,37 @@ export class FileTaskStorage {
     });
   }
 
+  private async assertWorkPlacement(projectId: number | null | undefined, milestoneId: number | null | undefined): Promise<void> {
+    const principal = getCurrentPrincipalOrSystem();
+    if (projectId != null && (!Number.isInteger(projectId) || projectId <= 0)) {
+      throw new Error("projectId must be a positive integer");
+    }
+    if (milestoneId != null && (!Number.isInteger(milestoneId) || milestoneId <= 0)) {
+      throw new Error("milestoneId must be a positive integer");
+    }
+    if (milestoneId != null && projectId == null) {
+      throw new Error("milestoneId requires projectId");
+    }
+    if (projectId == null) return;
+    const projectRows = await db.select({ id: projects.id }).from(projects).where(
+      combineWithVisibleScope(principal, projectScopeColumns, eq(projects.id, projectId)),
+    ).limit(1);
+    if (projectRows.length === 0) throw new Error(`Project ${projectId} not found`);
+    if (milestoneId == null) return;
+    const milestoneRows = await db.select({ id: milestones.id }).from(milestones).where(
+      combineWithVisibleScope(
+        principal,
+        milestoneScopeColumns,
+        and(eq(milestones.projectId, projectId), eq(milestones.id, milestoneId)),
+      ),
+    ).limit(1);
+    if (milestoneRows.length === 0) {
+      throw new Error(`Milestone ${milestoneId} not found in project ${projectId}`);
+    }
+  }
+
   async createTask(input: InsertTask): Promise<Task> {
+    await this.assertWorkPlacement(input.projectId, input.milestoneId);
     const now = new Date();
     const effort = input.effort || "mid";
 
@@ -151,6 +188,12 @@ export class FileTaskStorage {
     if (!existing) {
       log.log(`updateTask id=${id} not-found`);
       return undefined;
+    }
+
+    if (updates.projectId !== undefined || updates.milestoneId !== undefined) {
+      const projectId = updates.projectId !== undefined ? updates.projectId : existing.projectId;
+      const milestoneId = updates.milestoneId !== undefined ? updates.milestoneId : existing.milestoneId;
+      await this.assertWorkPlacement(projectId, milestoneId);
     }
 
     const setValues: Record<string, unknown> = { updatedAt: new Date() };

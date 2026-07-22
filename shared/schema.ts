@@ -3,6 +3,7 @@ import { pgTable, text, varchar, serial, integer, real, boolean, timestamp, json
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { libraryPages } from "./models/info";
+import { vaults } from "./models/vaults";
 
 export * from "./models/chat";
 export * from "./models/goals";
@@ -500,6 +501,7 @@ export const projects = pgTable("projects", {
   completedAt: timestamp("completed_at", { withTimezone: true }),
   spec: text("spec").notNull().default(""),
   goalId: text("goal_id"),
+  /** @deprecated Milestones are canonical in the milestones table. Remove after one release (target: 2026-08-05). */
   milestones: jsonb("milestones").notNull().default([]),
   tags: jsonb("tags").notNull().default([]),
   people: jsonb("people").notNull().default([]),
@@ -518,6 +520,34 @@ export const projects = pgTable("projects", {
 ]);
 
 export type ProjectRow = typeof projects.$inferSelect;
+
+// ── Milestones ────────────────────────────────────────────────────
+export const milestones = pgTable("milestones", {
+  id: integer("id").notNull(),
+  projectId: integer("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  vaultId: text("vault_id").references(() => vaults.id, { onDelete: "set null" }),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+  scope: text("scope").notNull().default("user"),
+  createdByUserId: text("created_by_user_id"),
+  name: text("name").notNull(),
+  status: text("status").notNull().default("planned"),
+  startDate: text("start_date"),
+  dueDate: text("due_date"),
+  displayOrder: integer("display_order").notNull().default(0),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.projectId, table.id] }),
+  index("idx_milestones_project_order").on(table.projectId, table.displayOrder, table.id),
+  index("idx_milestones_scope_owner").on(table.scope, table.ownerUserId),
+  index("idx_milestones_account").on(table.accountId),
+  index("idx_milestones_vault").on(table.vaultId),
+  check("milestones_status_check", sql`${table.status} IN ('planned', 'active', 'completed')`),
+]);
+
+export type MilestoneRow = typeof milestones.$inferSelect;
 
 // ── Principles ────────────────────────────────────────────────────
 export const principles = pgTable("principles", {

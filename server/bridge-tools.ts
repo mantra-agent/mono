@@ -5938,7 +5938,10 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             dueDate: args.dueDate || null,
           });
           if (!milestoneProject) return { result: `Project ${projectId} not found`, error: true };
-          const addedMilestone = milestoneProject.milestones[milestoneProject.milestones.length - 1];
+          const addedMilestone = milestoneProject.milestones.reduce((latest, milestone) =>
+            !latest || milestone.id > latest.id ? milestone : latest,
+          null as (typeof milestoneProject.milestones)[number] | null);
+          if (!addedMilestone) return { result: `Milestone "${name}" was added but could not be reloaded`, error: true };
           return { result: `Milestone "${name}" added to project ${projectId} (milestone id: ${addedMilestone.id})` };
         }
         case "update_milestone": {
