@@ -49,6 +49,14 @@ export interface WorkspaceDocCompat {
   updatedAt: Date;
 }
 
+export interface InterruptedChatRecoveryCandidate {
+  docId: string;
+  ownerUserId: string;
+  accountId: string;
+  vaultId: string | null;
+  runtimeOwner: string | null;
+}
+
 function entryToDoc(entry: MemoryEntry): WorkspaceDocCompat {
   return {
     id: entry.id,
@@ -882,6 +890,57 @@ export class DocumentStorage {
     `);
     const row = ((rows.rows ?? rows) as { cnt: number }[])[0];
     return row?.cnt ?? 0;
+  }
+
+  async discoverInterruptedChatRecoveryCandidates(
+    limit = 100,
+  ): Promise<InterruptedChatRecoveryCandidate[]> {
+    const principal = getCurrentPrincipalOrSystem();
+    if (
+      principal.actorType !== "system" ||
+      principal.jobName !== "chat-recovery"
+    ) {
+      throw Object.assign(
+        new Error("Interrupted chat recovery discovery requires the named chat-recovery system principal"),
+        { status: 403 },
+      );
+    }
+    await targetReadsEnabled();
+    const boundedLimit = Math.max(1, Math.min(limit, 100));
+    const rows = await db
+      .select({
+        docId: documentStoreDocuments.documentId,
+        ownerUserId: documentStoreDocuments.ownerUserId,
+        accountId: documentStoreDocuments.accountId,
+        vaultId: documentStoreDocuments.vaultId,
+        runtimeOwner: sql<string | null>`${documentStoreDocuments.metadata}->>'activeRuntimeOwner'`,
+      })
+      .from(documentStoreDocuments)
+      .where(
+        and(
+          eq(documentStoreDocuments.documentType, "chat"),
+          eq(documentStoreDocuments.scope, "user"),
+          sql`${documentStoreDocuments.metadata}->>'status' = 'streaming'`,
+          sql`COALESCE(${documentStoreDocuments.metadata}->>'type', 'text') = 'text'`,
+          sql`COALESCE(${documentStoreDocuments.metadata}->>'sessionType', 'user') = 'user'`,
+          sql`${documentStoreDocuments.ownerUserId} IS NOT NULL`,
+          sql`${documentStoreDocuments.accountId} IS NOT NULL`,
+        ),
+      )
+      .orderBy(documentStoreDocuments.updatedAt)
+      .limit(boundedLimit);
+    log.info("interrupted chat recovery candidates discovered", {
+      count: rows.length,
+      limit: boundedLimit,
+      jobName: principal.jobName,
+    });
+    return rows.map((row) => ({
+      docId: row.docId,
+      ownerUserId: row.ownerUserId!,
+      accountId: row.accountId!,
+      vaultId: row.vaultId,
+      runtimeOwner: row.runtimeOwner,
+    }));
   }
 
   async getDocumentsMetadataOnly(
