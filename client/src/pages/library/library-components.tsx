@@ -453,25 +453,23 @@ export function MovePageDialog({ open, onOpenChange, page, pages }: {
   open: boolean; onOpenChange: (open: boolean) => void; page: LibraryPage | LibraryPageFull; pages: LibraryPage[];
 }) {
   const [query, setQuery] = useState("");
-  const { toast } = useToast();
+  const { visibleVaults, resolveVaultId } = useVisibleVaults();
 
-  const moveMutation = useApiMutation<{ id: string; parentId: string | null }>({
+  interface MovePageInput {
+    id: string;
+    parentId: string | null;
+    destinationVaultId: string;
+  }
+
+  const moveMutation = useApiMutation<MovePageInput>({
     method: "PATCH",
     path: ({ id }) => `/api/info/library/${id}`,
-    body: ({ parentId }) => ({ parentId: parentId ?? "" }),
-    invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"]],
+    body: ({ parentId, destinationVaultId }) => ({ parentId, destinationVaultId }),
+    invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"], ["/api/library2/placements"]],
     successMessage: () => `${page.title || "Page"} moved`,
     errorTitle: "Move failed",
     onSuccess: () => onOpenChange(false),
   });
-
-  // A vault is a hard security boundary and vault_id is immutable across moves,
-  // so destinations are restricted to the moving page's OWN vault (its section
-  // root + same-vault hierarchy). Pages in other vaults, and hidden/archived
-  // vaults, are excluded entirely.
-  const { resolveVaultId, isVaultVisible } = useVisibleVaults();
-  const movingVaultId = resolveVaultId(page.vaultId);
-  const movingVaultVisible = isVaultVisible(page.vaultId);
 
   const excludeIds = useMemo(() => {
     const ids = getDescendantIds(pages, page.id);
@@ -479,57 +477,72 @@ export function MovePageDialog({ open, onOpenChange, page, pages }: {
     return ids;
   }, [pages, page.id]);
 
-  const filteredPages = useMemo(() =>
-    pages.filter(p =>
-      !excludeIds.has(p.id) &&
-      movingVaultVisible &&
-      resolveVaultId(p.vaultId) === movingVaultId &&
-      (!query || p.title.toLowerCase().includes(query.toLowerCase()))
-    ),
-    [pages, excludeIds, query, movingVaultId, movingVaultVisible, resolveVaultId]
-  );
+  const destinationSections = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return visibleVaults.flatMap((vault) => {
+      const matchingPages = pages.filter((candidate) =>
+        !excludeIds.has(candidate.id) &&
+        resolveVaultId(candidate.vaultId) === vault.id &&
+        (!normalizedQuery || candidate.title.toLowerCase().includes(normalizedQuery))
+      );
+      if (normalizedQuery && matchingPages.length === 0 && !vault.name.toLowerCase().includes(normalizedQuery)) {
+        return [];
+      }
+      return [{ vault, pages: matchingPages }];
+    });
+  }, [excludeIds, pages, query, resolveVaultId, visibleVaults]);
+
+  const currentVaultId = resolveVaultId(page.vaultId);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>Move Page</DialogTitle>
-          <DialogDescription>Choose a new parent for "{page.title || "Untitled"}"</DialogDescription>
+          <DialogDescription>Choose a vault or page for "{page.title || "Untitled"}"</DialogDescription>
         </DialogHeader>
         <div className="relative">
           <Search className="absolute left-2 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search pages..." className="pl-7 h-8 text-sm" data-testid="input-move-search" autoFocus />
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search destinations..." className="pl-7 h-8 text-sm" data-testid="input-move-search" autoFocus />
         </div>
-        <ScrollArea className="max-h-48">
-          {page.parentId !== null && (
-            <button
-              className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-accent/50 flex items-center gap-2 text-muted-foreground"
-              data-testid="button-move-root"
-              disabled={moveMutation.isPending}
-              onClick={() => moveMutation.mutate({ id: page.id, parentId: null })}
-            >
-              <FolderInput className="h-3 w-3 shrink-0" />
-              <span className="truncate flex-1">Move to root</span>
-            </button>
-          )}
-          {filteredPages.map(p => (
-            <button
-              key={p.id}
-              className={cn(
-                "w-full text-left px-2 py-1.5 text-xs rounded hover:bg-accent/50 flex items-center gap-2",
-                p.id === page.parentId && "text-muted-foreground"
-              )}
-              data-testid={`button-move-${p.id}`}
-              disabled={moveMutation.isPending || p.id === page.parentId}
-              onClick={() => moveMutation.mutate({ id: page.id, parentId: p.id })}
-            >
-              <PageEmoji emoji={p.emoji} />
-              <span className="truncate flex-1">{p.title || "Untitled"}</span>
-              {p.id === page.parentId && <span className="text-xs text-muted-foreground">(current)</span>}
-            </button>
+        <ScrollArea className="max-h-64">
+          {destinationSections.map(({ vault, pages: destinationPages }) => (
+            <div key={vault.id} className="mb-2 last:mb-0">
+              <button
+                type="button"
+                className={cn(
+                  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm font-medium hover:bg-accent/50",
+                  page.parentId === null && currentVaultId === vault.id && "text-muted-foreground",
+                )}
+                data-testid={`button-move-vault-${vault.id}`}
+                disabled={moveMutation.isPending || (page.parentId === null && currentVaultId === vault.id)}
+                onClick={() => moveMutation.mutate({ id: page.id, parentId: null, destinationVaultId: vault.id })}
+              >
+                <FolderInput className="h-3.5 w-3.5 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">{vault.name}</span>
+                {page.parentId === null && currentVaultId === vault.id && <span className="text-xs">Current</span>}
+              </button>
+              {destinationPages.map((destinationPage) => (
+                <button
+                  type="button"
+                  key={destinationPage.id}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded py-1.5 pl-7 pr-2 text-left text-sm hover:bg-accent/50",
+                    destinationPage.id === page.parentId && "text-muted-foreground",
+                  )}
+                  data-testid={`button-move-${destinationPage.id}`}
+                  disabled={moveMutation.isPending || destinationPage.id === page.parentId}
+                  onClick={() => moveMutation.mutate({ id: page.id, parentId: destinationPage.id, destinationVaultId: vault.id })}
+                >
+                  <PageEmoji emoji={destinationPage.emoji} />
+                  <span className="min-w-0 flex-1 truncate">{destinationPage.title || "Untitled"}</span>
+                  {destinationPage.id === page.parentId && <span className="text-xs">Current</span>}
+                </button>
+              ))}
+            </div>
           ))}
-          {filteredPages.length === 0 && !page.parentId && (
-            <p className="text-xs text-muted-foreground text-center py-3">No pages to move to</p>
+          {destinationSections.length === 0 && (
+            <p className="px-2 py-3 text-sm text-muted-foreground">No matching destinations.</p>
           )}
         </ScrollArea>
       </DialogContent>

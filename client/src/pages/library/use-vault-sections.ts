@@ -122,9 +122,8 @@ export function useVaultSections({
       if (vid && visibleVaultIdSet.has(vid)) pagesByVault.get(vid)!.push(page);
     }
 
-    // Group root tree nodes by resolved vault (visible vaults only). Because a
-    // page's vault is immutable and moves are same-vault only, an entire subtree
-    // belongs to its root node's vault.
+    // Group root tree nodes by resolved vault (visible vaults only). The server
+    // transfer boundary keeps every descendant in the root node's vault.
     const rootsByVault = new Map<string, TreeNode[]>();
     for (const v of visibleVaults) rootsByVault.set(v.id, []);
     for (const root of treeData ?? []) {

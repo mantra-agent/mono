@@ -467,9 +467,16 @@ export async function applyReviewedLibraryCorpusMigration(input: { runId: string
       skipped++;
       continue;
     }
+    const { moveLibraryPage } = await import("./library-move");
+    await moveLibraryPage(
+      {
+        pageId: item.page_id,
+        destinationParentId: item.proposed_parent_id,
+        destinationVaultId: item.proposed_vault_id,
+      },
+      principal,
+    );
     await db.update(libraryPages).set({
-      parentId: item.proposed_parent_id,
-      vaultId: item.proposed_vault_id,
       structuralRole: normalizeLibraryStructuralRole(item.proposed_structural_role),
       updatedAt: sql`CURRENT_TIMESTAMP`,
       updatedByUserId: principal.userId ?? undefined,
