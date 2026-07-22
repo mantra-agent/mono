@@ -2021,6 +2021,15 @@ export class AgentExecutor extends EventEmitter {
     });
     log.log(`run START runId=${runId} executionMode=${ctx.executionMode} model=${modelString} activity=${options.activity || "agent"} sessionKey=${options.sessionKey}`);
     ctx.publish("run_start", { runId });
+    const persona = options.sessionId
+      ? await import("./session-persona")
+          .then(({ resolveSessionPersonaSnapshot }) => resolveSessionPersonaSnapshot(options.sessionId))
+      : undefined;
+    ctx.publish("model_info", {
+      model: modelString,
+      autoTier: String(routingTier),
+      persona,
+    });
 
     return { runId, abortController, startTime, modelString, maxTokens, thinkingBudget, thinking, routingTier, routingDecision, ctx };
   }
