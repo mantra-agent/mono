@@ -402,7 +402,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     const sessionId = outputMediaSession(req.params.token as string);
     if (!sessionId) return res.status(401).end();
     const audio = await nextMeetingAudio(sessionId);
-    if (!audio) return res.status(204).end();
+    if (!audio) {
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("X-Meeting-Audio-State", "idle");
+      return res.status(204).end();
+    }
 
     res.status(200);
     res.setHeader("Content-Type", audio.contentType);

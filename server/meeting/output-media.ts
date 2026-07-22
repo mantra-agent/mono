@@ -168,6 +168,7 @@ export function registerMeetingVisualizerTransport(): (
     const clients = visualizerClients.get(sessionId) ?? new Set<WebSocket>();
     clients.add(client);
     visualizerClients.set(sessionId, clients);
+    log.info(`visualizer socket connected sessionId=${sessionId} clients=${clients.size}`);
     if (!visualizerStates.has(sessionId)) {
       void resolveMeetingTransportSession(sessionId).then((session) => {
         if (!session?.meeting) {
@@ -182,17 +183,29 @@ export function registerMeetingVisualizerTransport(): (
     }
     const state = visualizerStates.get(sessionId) ?? resolvedVisualizerState(sessionId);
     client.send(JSON.stringify(nextVisualizerEvent({ type: "agent.state", state })));
+    let awaitingPong = false;
     const heartbeat = setInterval(() => {
-      if (client.readyState === WebSocket.OPEN) client.ping();
+      if (client.readyState !== WebSocket.OPEN) return;
+      if (awaitingPong) {
+        log.warn(`visualizer socket keepalive expired sessionId=${sessionId}`);
+        client.terminate();
+        return;
+      }
+      awaitingPong = true;
+      client.ping();
     }, 25_000);
     heartbeat.unref?.();
+    client.on("pong", () => {
+      awaitingPong = false;
+    });
     client.on("error", (error) => {
       log.warn(`visualizer socket error sessionId=${sessionId}: ${error.message}`);
     });
-    client.on("close", () => {
+    client.on("close", (code, reason) => {
       clearInterval(heartbeat);
       clients.delete(client);
       if (clients.size === 0) visualizerClients.delete(sessionId);
+      log.info(`visualizer socket closed sessionId=${sessionId} code=${code} reason=${reason.toString() || "none"} clients=${clients.size}`);
     });
   });
 
