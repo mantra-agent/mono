@@ -12,7 +12,39 @@ type ThinkingLoop = {
   filter: BiquadFilterNode;
 };
 
+let sharedVoiceAudioContext: AudioContext | null = null;
 let thinkingLoop: ThinkingLoop | null = null;
+
+function getVoiceAudioContext(): AudioContext | null {
+  try {
+    if (sharedVoiceAudioContext && sharedVoiceAudioContext.state !== "closed") {
+      return sharedVoiceAudioContext;
+    }
+    sharedVoiceAudioContext = new AudioContext();
+    return sharedVoiceAudioContext;
+  } catch {
+    return null;
+  }
+}
+
+export async function unlockVoiceAudioContext(): Promise<void> {
+  const ctx = getVoiceAudioContext();
+  if (!ctx) return;
+  try {
+    await ctx.resume();
+    const buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * 0.03), ctx.sampleRate);
+    const source = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    source.buffer = buffer;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    source.start();
+    source.stop(ctx.currentTime + 0.03);
+  } catch {
+    // Non-critical: browsers that deny unlock still keep visual feedback intact.
+  }
+}
 
 function closeThinkingLoop(loop: ThinkingLoop, delayMs = 180): void {
   const stopAt = loop.ctx.currentTime + delayMs / 1000;
@@ -23,15 +55,16 @@ function closeThinkingLoop(loop: ThinkingLoop, delayMs = 180): void {
     loop.carrierA.stop(stopAt + 0.04);
     loop.carrierB.stop(stopAt + 0.04);
     loop.modulator.stop(stopAt + 0.04);
-    setTimeout(() => loop.ctx.close(), delayMs + 120);
   } catch {
-    loop.ctx.close().catch(() => {});
+    // The shared voice AudioContext stays alive for future feedback sounds.
   }
 }
 
 function playVoiceChime(notes: ChimeNote[]): void {
   try {
-    const ctx = new AudioContext();
+    const ctx = getVoiceAudioContext();
+    if (!ctx) return;
+    void ctx.resume();
 
     const play = ({ freq, offset, duration, gain }: ChimeNote) => {
       const startAt = ctx.currentTime + offset;
@@ -53,7 +86,6 @@ function playVoiceChime(notes: ChimeNote[]): void {
     };
 
     notes.forEach(play);
-    setTimeout(() => ctx.close(), 700);
   } catch {
     // AudioContext not available (server-side or blocked) — silently skip
   }
@@ -90,7 +122,9 @@ export function playDisconnectionChime(): void {
 export function startVoiceThinkingLoop(): void {
   if (thinkingLoop) return;
   try {
-    const ctx = new AudioContext();
+    const ctx = getVoiceAudioContext();
+    if (!ctx) return;
+    void ctx.resume();
     const master = ctx.createGain();
     const filter = ctx.createBiquadFilter();
     const modulator = ctx.createOscillator();
