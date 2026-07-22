@@ -324,6 +324,7 @@ function buildRailwayDeploymentUrl(
 let currentRun: PublishRun | null = null;
 let lastRun: PublishRun | null = null;
 let publishRunLoaded = false;
+let publishRunLoadPromise: Promise<void> | null = null;
 let publishRunPersistQueue: Promise<void> = Promise.resolve();
 let runAbort: AbortController | null = null;
 /**
@@ -393,22 +394,96 @@ function schedulePublishRunPersist(): void {
     });
 }
 
-async function ensurePublishRunLoaded(): Promise<void> {
-  if (publishRunLoaded) return;
-  publishRunLoaded = true;
+function buildRecoveredPublishRun(run: PublishRun): PublishRun | null {
+  if (!run.deploymentId) return null;
+
+  const interruptedStage = run.stages.find((stage) => stage.status === "running");
+  if (!interruptedStage) return null;
+
+  const waitStage = run.stages.find((stage) => stage.name === "wait_for_success");
+  let resumeFrom: PublishStageName;
+  if (interruptedStage.name === "wait_for_success") {
+    resumeFrom = "wait_for_success";
+  } else if (
+    interruptedStage.name === "health_check" &&
+    waitStage?.status === "succeeded" &&
+    run.newProdCommitSha
+  ) {
+    resumeFrom = "health_check";
+  } else if (
+    interruptedStage.name === "ready" &&
+    waitStage?.status === "succeeded" &&
+    run.newProdCommitSha
+  ) {
+    resumeFrom = "ready";
+  } else {
+    return null;
+  }
+
+  const resumeIdx = STAGE_ORDER.indexOf(resumeFrom);
+  return {
+    ...run,
+    finishedAt: null,
+    resumeFromStage: resumeFrom,
+    stages: run.stages.map((stage) => {
+      const stageIdx = STAGE_ORDER.indexOf(stage.name);
+      if (stageIdx < resumeIdx && (stage.status === "succeeded" || stage.status === "skipped")) {
+        return stage;
+      }
+      return blankStage(stage.name);
+    }),
+  };
+}
+
+function resumeLoadedRunningPublishRun(run: PublishRun): boolean {
+  const recovered = buildRecoveredPublishRun(run);
+  if (!recovered) return false;
+
+  currentRun = recovered;
+  runAbort = new AbortController();
+  log.info("Resuming deployment-bound publish after process restart", {
+    runId: recovered.id,
+    deploymentId: recovered.deploymentId,
+    interruptedStage: run.stages.find((stage) => stage.status === "running")?.name ?? null,
+    resumeFromStage: recovered.resumeFromStage,
+  });
+  emit();
+  runPipeline(recovered, runAbort.signal).catch((err) => {
+    log.error(`Recovered publish pipeline crashed: ${err instanceof Error ? err.message : String(err)}`);
+  });
+  return true;
+}
+
+async function loadPersistedPublishRun(): Promise<void> {
   try {
     const stored = await getSetting<PublishRun>(PUBLISH_RUN_STATE_KEY);
     if (!stored) return;
     const run = clonePublishRun(stored);
     if (!run) return;
-    lastRun = run.status === "running" ? markLoadedRunningPublishRunInterrupted(run) : run;
-    if (run.status === "running") schedulePublishRunPersist();
+    if (run.status !== "running") {
+      lastRun = run;
+      return;
+    }
+    if (resumeLoadedRunningPublishRun(run)) return;
+    lastRun = markLoadedRunningPublishRunInterrupted(run);
+    schedulePublishRunPersist();
   } catch (err: any) {
     log.error("Failed to load persisted publish run snapshot", {
       error: err?.message || String(err),
       stack: err?.stack,
     });
   }
+}
+
+async function ensurePublishRunLoaded(): Promise<void> {
+  if (publishRunLoaded) return;
+  if (!publishRunLoadPromise) {
+    publishRunLoadPromise = loadPersistedPublishRun().finally(() => {
+      publishRunLoaded = true;
+      publishRunLoadPromise = null;
+    });
+  }
+  await publishRunLoadPromise;
 }
 
 function emit() {
