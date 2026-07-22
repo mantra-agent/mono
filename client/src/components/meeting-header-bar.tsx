@@ -15,7 +15,6 @@ import {
   AlertCircle,
   Ear,
   Hourglass,
-  Mic2,
   Loader2,
   LogOut,
   Mail,
@@ -25,12 +24,11 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { createLogger } from "@/lib/logger";
-import type { MeetingRecognitionStream, MeetingSessionMeta, MeetingBotStatus } from "@shared/models/chat";
+import type { MeetingSessionMeta, MeetingBotStatus } from "@shared/models/chat";
 import { createReferenceRef } from "@shared/references";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
 import { MeetingSpeakerAssignments } from "@/components/meeting-speaker-assignments";
-import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 
 const log = createLogger("MeetingHeaderBar");
 
@@ -76,101 +74,7 @@ function useElapsed(startedAt?: string, endedAt?: string): string | null {
   return formatElapsed(end - new Date(startedAt).getTime());
 }
 
-function formatRecognitionStreamSummary(stream: NonNullable<MeetingSessionMeta["recognition"]>["streams"][number]): string {
-  const segments = [
-    stream.transportLabel || `Stream ${stream.transportParticipantId}`,
-    stream.sourcePolicy === "shared_room"
-      ? "Shared room"
-      : stream.attribution === "excluded"
-        ? "Excluded"
-        : "Participant",
-    stream.status === "excluded"
-      ? "Excluded"
-      : stream.status.charAt(0).toUpperCase() + stream.status.slice(1),
-  ];
-
-  return segments.filter((segment, index) => (
-    segments.findIndex((candidate) => candidate.toLowerCase() === segment.toLowerCase()) === index
-  )).join(" · ");
-}
-
-function AudioSourcePolicyControl({
-  sessionId,
-  stream,
-  desiredMode,
-}: {
-  sessionId: string;
-  stream: MeetingRecognitionStream;
-  desiredMode: MeetingRecognitionStream["sourcePolicy"];
-}) {
-  const { toast } = useToast();
-  const isShared = desiredMode === "shared_room";
-  const isReconfiguring = desiredMode !== stream.sourcePolicy || stream.status === "connecting";
-  const mutation = useMutation({
-    mutationFn: async () => {
-      const mutationId = typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const response = await apiRequest(
-        "PATCH",
-        `/api/meetings/${encodeURIComponent(sessionId)}/audio-source-policy`,
-        {
-          sourceKey: stream.streamKey,
-          mode: isShared ? "participant_streams" : "shared_room",
-          mutationId,
-        },
-      );
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
-    },
-    onError: (error: Error) => {
-      log.error("Audio source policy toggle failed", {
-        sessionId,
-        sourceKey: stream.streamKey,
-        error,
-      });
-      toast({
-        title: "Audio source update failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-  const failed = stream.status === "failed" || stream.status === "fallback";
-
-  return (
-    <Button
-      type="button"
-      variant="outline"
-      size="sm"
-      className={cn(
-        "h-7 shrink-0 gap-1.5 px-2 text-xs",
-        isShared && !failed && "border-active/40 text-active hover:text-active",
-        failed && "border-destructive/30 text-destructive hover:text-destructive",
-      )}
-      onClick={() => mutation.mutate()}
-      disabled={mutation.isPending}
-      aria-pressed={isShared}
-      aria-label={`${isShared ? "Stop" : "Start"} shared-room recognition for ${stream.transportLabel || "this audio source"}`}
-      title={stream.detail || (isShared
-        ? "Treat future speech from this source as one participant"
-        : "Separate future speakers sharing this source")}
-      data-testid={`button-toggle-shared-source-${stream.transportParticipantId}`}
-    >
-      {mutation.isPending || isReconfiguring ? (
-        <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-      ) : failed ? (
-        <AlertCircle className="h-3 w-3 shrink-0" />
-      ) : (
-        <Mic2 className="h-3 w-3 shrink-0" />
-      )}
-      <span>{isReconfiguring ? "Recognizing" : failed && isShared ? "Shared degraded" : isShared ? "Shared" : "Individual"}</span>
-    </Button>
-  );
-}
+// Speaker identity, recognition evidence, and source policy render through one unified list.
 
 // ---------------------------------------------------------------------------
 // MeetingHeaderBar
@@ -308,12 +212,7 @@ export function MeetingHeaderBar({
   const showDistributionFailed =
     (recap?.distributionStatus === "failed" || recap?.distributionStatus === "blocked")
     && !recap.distributionSkipped;
-  const visibleParticipants = meeting.participants.filter(
-    (participant) => participant.source !== "machine_diarization",
-  );
-  const eligibleAudioStreams = (meeting.recognition?.streams || []).filter(
-    (stream) => stream.attribution !== "excluded",
-  );
+  // The unified mapping list derives visible humans from participants plus recognition streams.
 
   return (
     <div className="border-b border-border bg-card/60">
@@ -396,107 +295,20 @@ export function MeetingHeaderBar({
         )}
       </div>
 
-      {visibleParticipants.length > 0 && (
-        <div className="pb-2 pr-4" data-testid="meeting-participant-tree">
-          {visibleParticipants.map((participant, index) => (
-            <HierarchyTreeRow
-              key={participant.key || participant.personId || `${participant.label}-${index}`}
-              continues={index < visibleParticipants.length - 1}
-            >
-              <div
-                className="flex min-h-7 min-w-0 items-center px-2 py-1"
-                data-testid={`participant-${participant.label.replace(/\s+/g, "-").toLowerCase()}`}
-              >
-                {participant.personId ? (
-                  <ReferenceRenderer
-                    refValue={createReferenceRef({
-                      type: "person",
-                      id: participant.personId,
-                      metadata: { label: participant.label, href: `/people/${participant.personId}` },
-                    })}
-                    surface="simple-row"
-                    className="max-w-full"
-                  />
-                ) : (
-                  <span className="truncate text-sm text-muted-foreground" title={participant.label}>
-                    {participant.label}
-                  </span>
-                )}
-              </div>
-            </HierarchyTreeRow>
-          ))}
-        </div>
-      )}
-
-      {sessionId && isLive && eligibleAudioStreams.length > 0 && (
-        <div className="border-t border-border/20" data-testid="meeting-audio-source-policies">
-          {eligibleAudioStreams.map((stream, index) => (
-            <HierarchyTreeRow
-              key={stream.streamKey}
-              continues={index < eligibleAudioStreams.length - 1}
-            >
-              <div className="flex min-h-11 min-w-0 items-center gap-2 px-2 py-1">
-                <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
-                  {stream.transportLabel || `Audio source ${stream.transportParticipantId}`}
-                </span>
-                <AudioSourcePolicyControl
-                  sessionId={sessionId}
-                  stream={stream}
-                  desiredMode={meeting.audioSourcePolicies?.[stream.streamKey]?.mode || stream.sourcePolicy}
-                />
-              </div>
-            </HierarchyTreeRow>
-          ))}
-        </div>
-      )}
-
       {sessionId && (
         <MeetingSpeakerAssignments
-          participants={meeting.participants}
+          meeting={meeting}
           sessionId={sessionId}
         />
       )}
 
-      {meeting.recognition && (
-        meeting.recognition.status === "degraded" || meeting.recognition.streams.length > 0
-      ) && (
+      {meeting.recognition?.status === "degraded" && (
         <div
-          className="flex flex-wrap items-center gap-1.5 border-t border-border/20 px-4 py-1.5"
-          data-testid="meeting-recognition-state"
+          className="flex items-start gap-2 border-t border-border/20 bg-destructive/10 px-4 py-2 text-sm text-destructive"
+          data-testid="banner-meeting-recognition-degraded"
         >
-          {meeting.recognition.status === "degraded" && (
-            <div
-              className="flex w-full items-start gap-2 rounded border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive"
-              data-testid="banner-meeting-recognition-degraded"
-            >
-              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>{meeting.recognition.detail || meeting.sttStatusDetail || "Speaker recognition is degraded."}</span>
-            </div>
-          )}
-          {meeting.recognition.streams.map((stream) => (
-            <span
-              key={stream.streamKey}
-              className={cn(
-                "inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-xs",
-                stream.status === "failed" || stream.status === "fallback"
-                  ? "border-destructive/30 bg-destructive/10 text-destructive"
-                  : stream.status === "active"
-                    ? "border-active/30 bg-active/5 text-active"
-                    : "border-border bg-muted/50 text-muted-foreground",
-              )}
-              title={[stream.transportLabel, stream.provider, stream.model, stream.detail].filter(Boolean).join(" · ")}
-              data-testid={`chip-recognition-stream-${stream.transportParticipantId}`}
-            >
-              {stream.status === "connecting" ? (
-                <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-              ) : stream.status === "failed" || stream.status === "fallback" ? (
-                <AlertCircle className="h-3 w-3 shrink-0" />
-              ) : (
-                <Radio className="h-3 w-3 shrink-0" />
-              )}
-              <span className="truncate">{formatRecognitionStreamSummary(stream)}</span>
-            </span>
-          ))}
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{meeting.recognition.detail || meeting.sttStatusDetail || "Speaker recognition is degraded."}</span>
         </div>
       )}
 

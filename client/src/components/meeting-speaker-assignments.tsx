@@ -1,6 +1,13 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ChevronDown, Loader2, Search, UserRound } from "lucide-react";
+import {
+  AlertCircle,
+  ChevronDown,
+  Loader2,
+  Mic2,
+  Search,
+  UserRound,
+} from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { createLogger } from "@/lib/logger";
@@ -8,7 +15,14 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import type { MeetingParticipant } from "@shared/models/chat";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import { createReferenceRef } from "@shared/references";
+import type {
+  MeetingAudioSourceMode,
+  MeetingParticipant,
+  MeetingRecognitionStream,
+  MeetingSessionMeta,
+} from "@shared/models/chat";
 
 const log = createLogger("MeetingSpeakerAssignments");
 
@@ -18,8 +32,24 @@ interface SpeakerPersonOption {
   nicknames?: string[];
 }
 
+interface PersonSpeakerRow {
+  id: string;
+  participant?: MeetingParticipant;
+  stream?: MeetingRecognitionStream;
+}
+
+function normalizedLabel(value: string | null | undefined): string {
+  return value
+    ?.toLowerCase()
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim() || "";
+}
+
 function speakerDisplayLabel(participant: MeetingParticipant, index?: number): string {
-  return participant.label.trim() || `Unknown speaker${index == null ? "" : ` ${index + 1}`}`;
+  return participant.providerLabel?.trim()
+    || participant.label.trim()
+    || `Unknown speaker${index == null ? "" : ` ${index + 1}`}`;
 }
 
 function speakerTestId(participant: MeetingParticipant): string {
@@ -29,14 +59,136 @@ function speakerTestId(participant: MeetingParticipant): string {
     .toLowerCase();
 }
 
-function SpeakerAssignment({
+function recognitionTitle(stream?: MeetingRecognitionStream): string | undefined {
+  if (!stream) return undefined;
+  return [stream.transportLabel, stream.provider, stream.model, stream.detail]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function buildPersonSpeakerRows(meeting: MeetingSessionMeta): PersonSpeakerRow[] {
+  const humanStreams = meeting.recognition?.streams.filter(
+    (stream) => stream.attribution !== "excluded",
+  ) || [];
+  const excludedTransportIds = new Set(
+    meeting.recognition?.streams
+      .filter((stream) => stream.attribution === "excluded")
+      .map((stream) => stream.transportParticipantId) || [],
+  );
+  const visibleParticipants = meeting.participants.filter((participant) => {
+    if (participant.transportParticipantId
+      && excludedTransportIds.has(participant.transportParticipantId)) return false;
+    const label = normalizedLabel(participant.providerLabel || participant.label);
+    return !label.includes("mantra agent") && !label.includes("meeting bot");
+  });
+  return visibleParticipants.map((participant, index): PersonSpeakerRow => {
+    const directStream = participant.transportParticipantId
+      ? humanStreams.find(
+          (stream) => stream.transportParticipantId === participant.transportParticipantId,
+        )
+      : undefined;
+    const exactLabelStream = !directStream
+      ? humanStreams.filter(
+          (stream) => normalizedLabel(stream.transportLabel) === normalizedLabel(participant.label),
+        )
+      : [];
+    const stream = directStream || (exactLabelStream.length === 1 ? exactLabelStream[0] : undefined);
+    return {
+      id: participant.key || participant.personId || `${participant.label}-${index}`,
+      participant,
+      stream,
+    };
+  });
+}
+
+function AudioSourcePolicyControl({
+  sessionId,
+  stream,
+  desiredMode,
+}: {
+  sessionId: string;
+  stream: MeetingRecognitionStream;
+  desiredMode: MeetingAudioSourceMode;
+}) {
+  const { toast } = useToast();
+  const isShared = desiredMode === "shared_room";
+  const isReconfiguring = desiredMode !== stream.sourcePolicy || stream.status === "connecting";
+  const failed = stream.status === "failed" || stream.status === "fallback";
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const mutationId = typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const response = await apiRequest(
+        "PATCH",
+        `/api/meetings/${encodeURIComponent(sessionId)}/audio-source-policy`,
+        {
+          sourceKey: stream.streamKey,
+          mode: isShared ? "participant_streams" : "shared_room",
+          mutationId,
+        },
+      );
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+    },
+    onError: (error: Error) => {
+      log.error("Audio source policy toggle failed", {
+        sessionId,
+        sourceKey: stream.streamKey,
+        error,
+      });
+      toast({
+        title: "Audio source update failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className={cn(
+        "h-9 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground",
+        isShared && !failed && "text-active hover:text-active",
+        failed && "text-destructive hover:text-destructive",
+      )}
+      onClick={() => mutation.mutate()}
+      disabled={mutation.isPending}
+      aria-pressed={isShared}
+      aria-label={`${isShared ? "Stop" : "Start"} shared-room recognition for ${stream.transportLabel || "this audio source"}`}
+      title={stream.detail || (isShared
+        ? "Treat future speech from this source as one participant"
+        : "Separate future speakers sharing this source")}
+      data-testid={`button-toggle-shared-source-${stream.transportParticipantId}`}
+    >
+      {mutation.isPending || isReconfiguring ? (
+        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+      ) : failed ? (
+        <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+      ) : (
+        <Mic2 className="h-3.5 w-3.5 shrink-0" />
+      )}
+      <span>{isReconfiguring ? "Recognizing" : failed && isShared ? "Shared degraded" : isShared ? "Shared" : "Individual"}</span>
+    </Button>
+  );
+}
+
+function PersonAssignmentControl({
   participant,
   sessionId,
   people,
+  speakerLabel,
 }: {
   participant: MeetingParticipant;
   sessionId: string;
   people: SpeakerPersonOption[];
+  speakerLabel: string;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -79,113 +231,189 @@ function SpeakerAssignment({
   });
 
   return (
-    <div className="flex min-w-0 items-center gap-2" data-testid={`speaker-assignment-${testId}`}>
-      <span className="w-20 shrink-0 truncate text-xs font-medium text-foreground">
-        {speakerDisplayLabel(participant)}
-      </span>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={cn(
+            "h-11 min-w-0 w-full justify-start gap-2 px-3 text-sm sm:max-w-64",
+            !participant.personId && "text-muted-foreground",
+          )}
+          disabled={assignment.isPending}
+          data-testid={`button-assign-${testId}`}
+        >
+          {assignment.isPending ? (
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+          ) : (
+            <UserRound className="h-3.5 w-3.5 shrink-0" />
+          )}
+          <span className="truncate">
+            {assignedPerson?.name || (participant.personId ? participant.label : speakerLabel)}
+          </span>
+          <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-72 p-2" align="start">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search people"
+            className="h-9 pl-8 text-sm"
+            autoFocus
+            data-testid={`input-search-${testId}`}
+          />
+        </div>
+        <div className="mt-1 max-h-52 overflow-y-auto scrollbar-thin">
+          <button
             type="button"
-            variant="outline"
-            size="sm"
             className={cn(
-              "h-7 min-w-0 max-w-56 justify-start gap-1.5 px-2 text-xs",
-              !participant.personId && "text-muted-foreground",
+              "flex min-h-10 w-full items-center rounded px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent",
+              !participant.personId && "font-medium text-foreground",
             )}
+            onClick={() => assignment.mutate(null)}
             disabled={assignment.isPending}
-            data-testid={`button-assign-${testId}`}
+            data-testid={`option-unassigned-${testId}`}
           >
-            {assignment.isPending ? (
-              <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-            ) : (
-              <UserRound className="h-3 w-3 shrink-0" />
-            )}
-            <span className="truncate">
-              {assignedPerson?.name || (participant.personId ? "Assigned Person" : "Unassigned")}
-            </span>
-            <ChevronDown className="ml-auto h-3 w-3 shrink-0" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-64 p-2" align="start">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search people"
-              className="h-8 pl-7 text-xs"
-              autoFocus
-              data-testid={`input-search-${testId}`}
-            />
-          </div>
-          <div className="mt-1 max-h-52 overflow-y-auto scrollbar-thin">
+            Unassigned
+          </button>
+          {options.map((person) => (
             <button
+              key={person.id}
               type="button"
               className={cn(
-                "flex w-full items-center rounded px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent",
-                !participant.personId && "font-medium text-foreground",
+                "flex min-h-10 w-full items-center rounded px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent",
+                participant.personId === person.id && "font-medium text-foreground",
               )}
-              onClick={() => assignment.mutate(null)}
+              onClick={() => assignment.mutate(person.id)}
               disabled={assignment.isPending}
-              data-testid={`option-unassigned-${testId}`}
+              data-testid={`option-speaker-person-${person.id}`}
             >
-              Unassigned
+              <span className="truncate">{person.name}</span>
             </button>
-            {options.map((person) => (
-              <button
-                key={person.id}
-                type="button"
-                className={cn(
-                  "flex w-full items-center rounded px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent",
-                  participant.personId === person.id && "font-medium text-foreground",
-                )}
-                onClick={() => assignment.mutate(person.id)}
-                disabled={assignment.isPending}
-                data-testid={`option-speaker-person-${person.id}`}
-              >
-                <span className="truncate">{person.name}</span>
-              </button>
-            ))}
-            {options.length === 0 && (
-              <div className="px-2 py-3 text-center text-xs text-muted-foreground">
-                No people found
-              </div>
-            )}
-          </div>
-        </PopoverContent>
-      </Popover>
+          ))}
+          {options.length === 0 && (
+            <div className="px-2 py-3 text-sm text-muted-foreground">
+              No people found
+            </div>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function ExpectedPerson({ participant }: { participant: MeetingParticipant }) {
+  if (participant.personId) {
+    return (
+      <div className="flex min-h-11 min-w-0 items-center px-3">
+        <ReferenceRenderer
+          refValue={createReferenceRef({
+            type: "person",
+            id: participant.personId,
+            metadata: { label: participant.label, href: `/people/${participant.personId}` },
+          })}
+          surface="simple-row"
+          className="max-w-full"
+        />
+      </div>
+    );
+  }
+  return (
+    <div className="flex min-h-11 items-center gap-2 px-3 text-sm text-muted-foreground">
+      <UserRound className="h-3.5 w-3.5 shrink-0" />
+      <span className="truncate">{participant.label}</span>
+    </div>
+  );
+}
+
+function SpeakerState({
+  participant,
+  stream,
+}: {
+  participant: MeetingParticipant;
+  stream?: MeetingRecognitionStream;
+}) {
+  const failed = stream?.status === "failed" || stream?.status === "fallback";
+  const active = stream?.status === "active";
+  return (
+    <div
+      className="flex min-h-11 min-w-0 items-center gap-2 px-3 text-sm text-muted-foreground"
+      title={recognitionTitle(stream)}
+    >
+      <Mic2 className={cn(
+        "h-3.5 w-3.5 shrink-0",
+        active && "text-active",
+        failed && "text-destructive",
+      )} />
+      <span className="truncate">{participant.key ? speakerDisplayLabel(participant) : "No speaker detected"}</span>
     </div>
   );
 }
 
 export function MeetingSpeakerAssignments({
-  participants,
+  meeting,
   sessionId,
 }: {
-  participants: MeetingParticipant[];
+  meeting: MeetingSessionMeta;
   sessionId: string;
 }) {
-  const assignableSpeakers = participants.filter((participant) => !!participant.key);
+  const rows = useMemo(() => buildPersonSpeakerRows(meeting), [meeting]);
+  const assignableSpeakers = rows
+    .map((row) => row.participant)
+    .filter((participant): participant is MeetingParticipant => !!participant?.key);
   const { data } = useQuery<{ people: SpeakerPersonOption[] }>({
     queryKey: ["/api/people"],
     enabled: assignableSpeakers.length > 0,
   });
-  if (assignableSpeakers.length === 0) return null;
+  if (rows.length === 0) return null;
 
   return (
-    <div className="border-t border-border/20 px-4 py-2" data-testid="meeting-speaker-assignments">
-      <div className="mb-1.5 text-xs font-medium text-muted-foreground">Speakers</div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-        {assignableSpeakers.map((participant, index) => (
-          <SpeakerAssignment
-            key={participant.key}
-            participant={{ ...participant, label: speakerDisplayLabel(participant, index) }}
-            sessionId={sessionId}
-            people={data?.people || []}
-          />
-        ))}
-      </div>
+    <div className="border-t border-border/20" data-testid="meeting-speaker-assignments">
+      {rows.map((row) => {
+        const participant = row.participant;
+        const hasStableSpeaker = !!participant?.key;
+        return (
+          <div
+            key={row.id}
+            className="border-b border-border/20 last:border-b-0 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center"
+            data-testid={`person-speaker-row-${row.id.replace(/[^a-zA-Z0-9_-]+/g, "-")}`}
+          >
+            <div className="min-w-0 border-b border-border/10 sm:border-b-0 sm:border-r">
+              {hasStableSpeaker && participant ? (
+                <PersonAssignmentControl
+                  participant={participant}
+                  sessionId={sessionId}
+                  people={data?.people || []}
+                  speakerLabel={speakerDisplayLabel(participant)}
+                />
+              ) : participant ? (
+                <ExpectedPerson participant={participant} />
+              ) : (
+                <div className="flex min-h-11 items-center gap-2 px-3 text-sm text-muted-foreground">
+                  <UserRound className="h-3.5 w-3.5 shrink-0" />
+                  <span>Unresolved person</span>
+                </div>
+              )}
+            </div>
+            {participant ? (
+              <SpeakerState participant={participant} stream={row.stream} />
+            ) : null}
+            {meeting.botStatus === "live" && row.stream ? (
+              <div className="px-1 pb-1 sm:pb-0 sm:pr-2">
+                <AudioSourcePolicyControl
+                  sessionId={sessionId}
+                  stream={row.stream}
+                  desiredMode={meeting.audioSourcePolicies?.[row.stream.streamKey]?.mode || row.stream.sourcePolicy}
+                />
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
