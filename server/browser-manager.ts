@@ -692,8 +692,8 @@ export function getBrowserStats(): { activeBrowsers: number; activePages: number
   }
 }
 
-process.on("SIGTERM", () => { closeBrowser().catch(() => {}); });
-process.on("SIGINT", () => { closeBrowser().catch(() => {}); });
+// Signal-driven cleanup is owned by the server graceful-shutdown coordinator.
+// Keep only the synchronous exit fallback for abrupt local exits.
 process.on("exit", () => {
   if (browser) {
     try { browser.close(); } catch {}

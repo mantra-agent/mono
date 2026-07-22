@@ -20,6 +20,13 @@ import { createLogger } from "./log";
 import { bootTracker, registerBootStatusRoute } from "./boot-tracker";
 import { runSchemaBootstrap } from "./schema-bootstrap";
 import { isRecoverablePostgresConnectionError } from "./postgres-errors";
+import { closeDatabasePools } from "./db";
+import { admissionController } from "./run-admission";
+import { timerScheduler } from "./timer-scheduler";
+import { closeBrowser } from "./browser-manager";
+import { stopMemoryWatchdog } from "./memory-watchdog";
+import { stopSnapshotHeartbeat } from "./wedge-watchdog";
+import { beginRuntimeProcessLifecycle, markRuntimeProcessTermination, type RuntimeTerminationInput } from "./runtime-process-lifecycle";
 
 const serverLog = createLogger("Server");
 
@@ -145,6 +152,7 @@ import "./autonomous-skill-runner";
 
 const app = express();
 const httpServer = createServer(app);
+installGracefulShutdown();
 
 declare module "http" {
   interface IncomingMessage {
@@ -350,6 +358,7 @@ app.use((req, res, next) => {
   bootTracker.startPhase("database");
   const tMigrate0 = Date.now();
   await runSchemaBootstrap("boot");
+  await beginRuntimeProcessLifecycle();
   // Persona templates and skill recommendations are a runtime invariant, not
   // optional background maintenance. Complete them before accepting requests
   // so the first skill run after boot cannot observe a half-seeded state.
@@ -691,16 +700,12 @@ app.use((req, res, next) => {
           log(`[startup] Memory watchdog limit resolved from Railway serviceInstanceLimits: maxMemory=${maxMemoryMB}MB ${describeServiceInstanceLimits(limits)}`, "boot");
           startMemoryWatchdog({
             maxMemoryMB,
-            onGracefulShutdown: () => {
-              return new Promise<void>((resolve) => {
-                log("[shutdown] Memory pressure graceful shutdown — stopping new connections", "boot");
-                executorManager.stopSupervisor();
-                httpServer.close(() => {
-                  log("[shutdown] All in-flight connections drained", "boot");
-                  resolve();
-                });
-              });
-            },
+            onGracefulShutdown: () => shutdownApplication({
+              terminationKind: "unclean",
+              cause: "memory_pressure",
+              exitCode: parseInt(process.env.MEMORY_PRESSURE_EXIT_CODE || "78", 10),
+              signal: null,
+            }),
           });
         })
         .catch((err) => {
@@ -878,6 +883,85 @@ app.use((req, res, next) => {
     },
   );
 })();
+
+const SHUTDOWN_TIMEOUT_MS = Math.max(1_000, parseInt(process.env.APP_SHUTDOWN_TIMEOUT_MS || "8000", 10));
+let shutdownInstalled = false;
+let shutdownPromise: Promise<void> | null = null;
+
+function closeHttpServer(): Promise<void> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve(), Math.max(500, SHUTDOWN_TIMEOUT_MS - 1_000));
+    timeout.unref();
+    httpServer.close(() => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    httpServer.closeIdleConnections?.();
+  });
+}
+
+async function shutdownApplication(input: RuntimeTerminationInput): Promise<void> {
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    const startedAt = Date.now();
+    serverLog.info(`process_lifecycle ${JSON.stringify({
+      event: "graceful_shutdown_started",
+      bootId: process.env.WATCHDOG_BOOT_ID || null,
+      signal: input.signal,
+      cause: input.cause,
+      exitCode: input.exitCode,
+      shutdownTimeoutMs: SHUTDOWN_TIMEOUT_MS,
+    })}`);
+
+    timerScheduler.stop();
+    admissionController.shutdown();
+    executorManager.stopSupervisor();
+    await executorManager.stop().catch((error) => {
+      serverLog.warn(`executor shutdown degraded: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    stopMemoryWatchdog();
+    stopSnapshotHeartbeat();
+
+    await Promise.race([
+      Promise.allSettled([closeHttpServer(), closeBrowser()]),
+      new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_TIMEOUT_MS - 500)),
+    ]);
+
+    const terminationRecorded = await markRuntimeProcessTermination(input).catch((error) => {
+      serverLog.warn(`process lifecycle termination persistence failed: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    });
+    await closeDatabasePools();
+    serverLog.info(`process_lifecycle ${JSON.stringify({
+      event: "graceful_shutdown_complete",
+      bootId: process.env.WATCHDOG_BOOT_ID || null,
+      signal: input.signal,
+      cause: input.cause,
+      exitCode: input.exitCode,
+      terminationRecorded,
+      elapsedMs: Date.now() - startedAt,
+    })}`);
+  })();
+  return shutdownPromise;
+}
+
+function installGracefulShutdown(): void {
+  if (shutdownInstalled) return;
+  shutdownInstalled = true;
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.on(signal, () => {
+      void shutdownApplication({
+        terminationKind: "clean",
+        cause: "provider_or_operator_signal",
+        exitCode: 0,
+        signal,
+      }).then(() => process.exit(0)).catch((error) => {
+        serverLog.error(`graceful shutdown failed: ${error instanceof Error ? error.stack || error.message : String(error)}`);
+        process.exit(1);
+      });
+    });
+  }
+}
 
 let deferredServicesStarted = false;
 function startDeferredBackgroundServices(): void {

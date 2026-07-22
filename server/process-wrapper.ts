@@ -44,6 +44,8 @@ const WORKER_HEARTBEAT_DEAD_MS = parseInt(process.env.WORKER_HEARTBEAT_DEAD_MS |
 const MEMORY_PRESSURE_EXIT_CODE = 78;
 const BOOT_COMPLETE_MARKER = "__BOOT_COMPLETE__";
 const PREV_BOOT_ID_FILE = path.join("/tmp", "watchdog-prev-boot-id");
+const CHILD_PATH = "dist/index.mjs";
+const WRAPPER_ID = `${process.env.RAILWAY_REPLICA_ID || process.env.HOSTNAME || "local"}:${process.pid}:${Date.now().toString(36)}`;
 
 const PORT = parseInt(process.env.PORT || "5000", 10);
 const isDev = process.env.NODE_ENV !== "production";
@@ -70,22 +72,70 @@ let lastHeartbeatAt = 0;
 let isShuttingDown = false;
 let currentBootId = "";
 let prevBootId = "";
+let forwardedSignal: NodeJS.Signals | null = null;
+let pendingRestartTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingChildTerminationReason: string | null = null;
+let workerDeadReason: string | null = null;
+let previousExit: ChildExitEvidence | null = null;
+
+interface ChildExitEvidence {
+  bootId: string;
+  observedAt: string;
+  exitCode: number | null;
+  signal: string | null;
+  reason: string;
+  terminationKind: "clean" | "unclean";
+}
+
+type LifecycleEvent =
+  | "wrapper_boot"
+  | "child_started"
+  | "child_exit_observed"
+  | "restart_decision"
+  | "signal_forwarded"
+  | "restart_budget_exhausted";
 
 function timestamp(): string {
   return new Date().toISOString();
 }
 
-function logRestart(reason: string, exitCode: number | null, signal: string | null) {
-  const entry = {
-    timestamp: timestamp(),
-    reason,
+function logLifecycle(event: LifecycleEvent, details: Record<string, unknown>, level: "info" | "warn" | "error" = "info"): void {
+  const payload = {
+    event,
+    observedAt: timestamp(),
+    wrapperId: WRAPPER_ID,
+    wrapperPid: process.pid,
+    deploymentId: process.env.RAILWAY_DEPLOYMENT_ID || null,
+    replicaId: process.env.RAILWAY_REPLICA_ID || null,
+    ...details,
+  };
+  const line = `process_lifecycle ${JSON.stringify(payload)}`;
+  if (level === "error") log.error(line);
+  else if (level === "warn") log.warn(line);
+  else log.info(line);
+}
+
+function recordObservedExit(reason: string, exitCode: number | null, signal: string | null): ChildExitEvidence {
+  const evidence: ChildExitEvidence = {
+    bootId: currentBootId,
+    observedAt: timestamp(),
     exitCode,
     signal,
-    restartCount,
-    pid: child?.pid ?? null,
-    bootId: currentBootId,
+    reason,
+    terminationKind: exitCode === 0 && signal === null ? "clean" : "unclean",
   };
-  log.log(`RESTART EVENT: ${JSON.stringify(entry)}`);
+  previousExit = evidence;
+  logLifecycle("child_exit_observed", {
+    childBootId: evidence.bootId,
+    childPid: child?.pid ?? null,
+    exitCode,
+    signal,
+    reason,
+    terminationKind: evidence.terminationKind,
+    restartCount,
+    forwardedSignal,
+  }, evidence.terminationKind === "clean" ? "info" : "warn");
+  return evidence;
 }
 
 function pruneRestartTimestamps() {
@@ -218,8 +268,7 @@ function startHealthChecks() {
       log.warn(`Pool saturation degraded (${consecutivePoolDegraded}/${POOL_DEGRADED_FAILURES_BEFORE_KILL}) reasons=${result.reasons.join(",")}`);
       if (consecutivePoolDegraded >= POOL_DEGRADED_FAILURES_BEFORE_KILL) {
         log.error(`Pool wedged after ${POOL_DEGRADED_FAILURES_BEFORE_KILL} consecutive degraded probes — killing process`);
-        logRestart("pool_saturation", null, "SIGKILL");
-        killChild();
+        killChild("pool_saturation");
         return;
       }
     } else {
@@ -243,8 +292,7 @@ function startHealthChecks() {
           process.stderr.write(`UNRESPONSIVE_KILL bootId=${currentBootId} consecutiveFailures=${consecutiveHealthFailures} stdoutSilentMs=${stdoutSilentMs} heartbeatStaleMs=${heartbeatStaleMs} decision=${decision.reason} ts=${timestamp()}\n`);
         } catch {}
         log.error(`Server unresponsive after ${HEALTH_CHECK_FAILURES_BEFORE_KILL} consecutive health check failures (decision=${decision.reason} stdoutSilentMs=${stdoutSilentMs} heartbeatStaleMs=${heartbeatStaleMs}) — killing process`);
-        logRestart("unresponsive", null, "SIGKILL");
-        killChild();
+        killChild("unresponsive");
       }
     }
   }, HEALTH_CHECK_INTERVAL_MS);
@@ -263,8 +311,7 @@ function startBootDeadline() {
   bootDeadlineTimer = setTimeout(() => {
     if (bootComplete || isShuttingDown || !child) return;
     log.error(`Boot did not complete within ${BOOT_HARD_TIMEOUT_MS}ms — killing process`);
-    logRestart("boot_timeout", null, "SIGKILL");
-    killChild();
+    killChild("boot_timeout");
   }, BOOT_HARD_TIMEOUT_MS);
 }
 
@@ -285,8 +332,7 @@ function armSilentBootTimer() {
       process.stderr.write(`SILENT_BOOT_WEDGE bootId=${currentBootId} prevBootId=${prevBootId || "none"} silentMs=${silentMs} elapsedMs=${elapsed} ts=${timestamp()}\n`);
     } catch {}
     log.error(`SILENT_BOOT_WEDGE — no stdout for ${silentMs}ms (boot elapsed=${elapsed}ms) — killing process`);
-    logRestart("silent_boot_wedge", null, "SIGKILL");
-    killChild();
+    killChild("silent_boot_wedge");
   }, SILENT_BOOT_STDOUT_SILENT_MS);
 }
 
@@ -356,8 +402,7 @@ function startRuntimeWedgeWatchdog() {
       process.stderr.write(`RUNTIME_WEDGE bootId=${currentBootId} decision=${decision.reason} heartbeatStaleMs=${heartbeatStaleMs} lastHeartbeatAt=${lastHeartbeatAt} silentMs=${silentMs} lastStdoutAt=${lastStdoutAt} lastStderrAt=${lastStderrAt} stderrSilentMs=${stderrSilentMs} lastHealthOkAt=${lastHealthOkAt} healthSilentMs=${healthSilentMs} healthy=${healthy} ts=${timestamp()}\n`);
     } catch {}
     log.error(`RUNTIME_WEDGE — ${decision.reason} (heartbeatStaleMs=${heartbeatStaleMs} silentMs=${silentMs} healthSilentMs=${healthSilentMs} healthy=${healthy}) — killing process`);
-    logRestart(`runtime_wedge:${decision.reason}`, null, "SIGKILL");
-    killChild();
+    killChild(`runtime_wedge:${decision.reason}`);
   }, RUNTIME_WEDGE_CHECK_INTERVAL_MS);
 }
 
@@ -382,7 +427,8 @@ function onBootComplete() {
   startRuntimeWedgeWatchdog();
 }
 
-function killChild() {
+function killChild(reason: string) {
+  pendingChildTerminationReason = reason;
   if (child && child.pid) {
     try {
       child.kill("SIGKILL");
@@ -395,7 +441,7 @@ const WORKER_DEAD_EXIT_CODE = 79;
 function classifyExitReason(code: number | null, signal: string | null): string {
   if (signal === "SIGKILL") return "killed";
   if (code === MEMORY_PRESSURE_EXIT_CODE) return "memory_pressure";
-  if (code === WORKER_DEAD_EXIT_CODE) return "worker_canary_dead";
+  if (code === WORKER_DEAD_EXIT_CODE) return "watchdog_exit_79";
   if (code !== null && code !== 0) return "crash";
   return "clean_exit";
 }
@@ -405,10 +451,27 @@ function generateBootId(): string {
 }
 
 function startChild() {
+  pendingRestartTimer = null;
   pruneRestartTimestamps();
 
   if (restartTimestamps.length >= MAX_RESTARTS) {
-    log.error(`Max restarts (${MAX_RESTARTS}) reached within ${RESTART_WINDOW_MS / 1000}s window — giving up`);
+    logLifecycle("restart_budget_exhausted", {
+      childBootId: currentBootId || null,
+      restartCount,
+      startsInWindow: restartTimestamps.length,
+      restartWindowMs: RESTART_WINDOW_MS,
+      restartDecision: "give_up",
+    }, "error");
+    process.exit(1);
+  }
+
+  if (!isDev && !fs.existsSync(CHILD_PATH)) {
+    logLifecycle("restart_budget_exhausted", {
+      childPath: CHILD_PATH,
+      restartCount,
+      restartDecision: "give_up",
+      reason: "child_artifact_missing",
+    }, "error");
     process.exit(1);
   }
 
@@ -419,12 +482,20 @@ function startChild() {
     : nodeOptions;
 
   currentBootId = generateBootId();
+  bootComplete = false;
+  lastHeartbeatAt = 0;
+  consecutiveHealthFailures = 0;
+  consecutivePoolDegraded = 0;
+  forwardedSignal = null;
+  workerDeadReason = null;
 
   const childEnv = {
     ...process.env,
     NODE_OPTIONS: mergedNodeOptions,
     WRAPPED_BY_WATCHDOG: "true",
+    WATCHDOG_WRAPPER_ID: WRAPPER_ID,
     WATCHDOG_BOOT_ID: currentBootId,
+    WATCHDOG_PREVIOUS_EXIT_JSON: previousExit ? JSON.stringify(previousExit) : "",
     MEMORY_PRESSURE_EXIT_CODE: String(MEMORY_PRESSURE_EXIT_CODE),
   };
 
@@ -440,7 +511,7 @@ function startChild() {
       env: { ...childEnv, NODE_ENV: "development" },
     });
   } else {
-    child = spawn("node", ["dist/index.mjs"], {
+    child = spawn("node", [CHILD_PATH], {
       stdio,
       env: { ...childEnv, NODE_ENV: "production" },
     });
@@ -489,11 +560,22 @@ function startChild() {
     if (msg.type === "alive") {
       lastHeartbeatAt = typeof msg.t === "number" ? msg.t : Date.now();
     } else if (msg.type === "worker_dead") {
-      log.error(`Worker canary dead — reason=${msg.reason || "unknown"}; awaiting child exit`);
+      workerDeadReason = typeof msg.reason === "string" ? msg.reason : "unknown";
+      log.error(`Worker canary dead — reason=${workerDeadReason}; awaiting child exit`);
     }
   });
 
-  log.log(`Started server process (pid=${child.pid}, restart #${restartCount}, bootId=${currentBootId}, prevBootId=${prevBootId || "none"}, hardBootTimeout=${BOOT_HARD_TIMEOUT_MS}ms, silentBootMs=${SILENT_BOOT_STDOUT_SILENT_MS}, runtimeWedgeMs=${RUNTIME_WEDGE_STDOUT_SILENT_MS})`);
+  logLifecycle("child_started", {
+    childBootId: currentBootId,
+    childPid: child.pid ?? null,
+    childPath: isDev ? "server/index.ts" : CHILD_PATH,
+    previousChildBootId: previousExit?.bootId ?? (prevBootId || null),
+    restartCount,
+    startsInWindow: restartTimestamps.length,
+    hardBootTimeoutMs: BOOT_HARD_TIMEOUT_MS,
+    silentBootMs: SILENT_BOOT_STDOUT_SILENT_MS,
+    runtimeWedgeMs: RUNTIME_WEDGE_STDOUT_SILENT_MS,
+  });
 
   startBootDeadline();
   armSilentBootTimer();
@@ -505,25 +587,52 @@ function startChild() {
     clearSilentBootTimer();
     stopRuntimeWedgeWatchdog();
 
+    const reason = pendingChildTerminationReason || (workerDeadReason ? `worker_canary_dead:${workerDeadReason}` : classifyExitReason(code, signal));
+    pendingChildTerminationReason = null;
+    workerDeadReason = null;
+    const evidence = recordObservedExit(reason, code, signal);
+
     if (isShuttingDown) {
-      log.log(`Server exited during shutdown (code=${code}, signal=${signal})`);
-      process.exit(code ?? 0);
+      logLifecycle("restart_decision", {
+        childBootId: evidence.bootId,
+        exitCode: code,
+        signal,
+        terminationKind: evidence.terminationKind,
+        restartCount,
+        restartDecision: "shutdown",
+        forwardedSignal,
+      });
+      process.exit(code ?? (signal ? 1 : 0));
       return;
     }
 
-    const reason = classifyExitReason(code, signal);
-    logRestart(reason, code, signal);
-
-    if (code === 0 && signal === null) {
-      log.log(`Server exited cleanly (code=0) — not restarting`);
+    if (evidence.terminationKind === "clean") {
+      logLifecycle("restart_decision", {
+        childBootId: evidence.bootId,
+        exitCode: code,
+        signal,
+        terminationKind: evidence.terminationKind,
+        restartCount,
+        restartDecision: "stop",
+        reason: "clean_child_exit",
+      });
       process.exit(0);
       return;
     }
 
     restartCount++;
     const backoff = getBackoffMs();
-    log.log(`Restarting in ${backoff}ms...`);
-    setTimeout(startChild, backoff);
+    logLifecycle("restart_decision", {
+      childBootId: evidence.bootId,
+      exitCode: code,
+      signal,
+      terminationKind: evidence.terminationKind,
+      restartCount,
+      restartDecision: "restart",
+      backoffMs: backoff,
+      reason,
+    }, "warn");
+    pendingRestartTimer = setTimeout(startChild, backoff);
   });
 }
 
@@ -531,21 +640,35 @@ function setupSignalForwarding() {
   const signals: NodeJS.Signals[] = ["SIGTERM", "SIGINT"];
   for (const sig of signals) {
     process.on(sig, () => {
-      log.log(`Received ${sig} — forwarding to child and shutting down`);
+      if (isShuttingDown) return;
       isShuttingDown = true;
+      forwardedSignal = sig;
       stopHealthChecks();
       clearBootDeadline();
       clearSilentBootTimer();
       stopRuntimeWedgeWatchdog();
-      if (child && child.pid) {
-        try {
-          child.kill(sig);
-        } catch {}
+      if (pendingRestartTimer) {
+        clearTimeout(pendingRestartTimer);
+        pendingRestartTimer = null;
       }
+      const forwarded = Boolean(child?.pid && child.kill(sig));
+      logLifecycle("signal_forwarded", {
+        signal: sig,
+        childBootId: currentBootId || null,
+        childPid: child?.pid ?? null,
+        forwarded,
+      });
+      if (!child?.pid) process.exit(0);
       setTimeout(() => {
-        log.log(`Force exit after signal timeout`);
+        logLifecycle("restart_decision", {
+          childBootId: currentBootId || null,
+          childPid: child?.pid ?? null,
+          restartDecision: "give_up",
+          reason: "child_shutdown_timeout",
+          forwardedSignal: sig,
+        }, "error");
         process.exit(1);
-      }, 10_000);
+      }, 10_000).unref();
     });
   }
 }
@@ -558,7 +681,14 @@ function loadPrevBootId(): void {
   } catch {}
 }
 
-log.log(`Starting server wrapper (dev=${isDev}, port=${PORT}, hardBootTimeout=${BOOT_HARD_TIMEOUT_MS}ms)`);
+logLifecycle("wrapper_boot", {
+  dev: isDev,
+  port: PORT,
+  childPath: isDev ? "server/index.ts" : CHILD_PATH,
+  hardBootTimeoutMs: BOOT_HARD_TIMEOUT_MS,
+  maxRestarts: MAX_RESTARTS,
+  restartWindowMs: RESTART_WINDOW_MS,
+});
 loadPrevBootId();
 setupSignalForwarding();
 startChild();

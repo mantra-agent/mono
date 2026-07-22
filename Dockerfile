@@ -106,7 +106,8 @@ RUN chown -R mantra:mantra /app /home/mantra
 USER mantra
 ENV HOME=/home/mantra
 
-# Tini is PID 1: it forwards signals to the entrypoint and reaps orphaned
-# grandchildren from git, esbuild, Chromium, and other runtime tooling.
+# Tini is PID 1: it forwards signals to the exec'd process supervisor and
+# reaps orphaned grandchildren from git, esbuild, Chromium, and other runtime
+# tooling. The supervisor launches dist/index.mjs and forwards Railway signals.
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["sh", "scripts/docker-entrypoint.sh"]
