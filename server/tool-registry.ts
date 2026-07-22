@@ -359,19 +359,29 @@ export const TOOLS: Record<string, ToolMeta> = {
       properties: {
         question: { type: "string", description: "The concise question to present." },
         options: {
-          type: "array",
-          minItems: 2,
-          maxItems: 8,
-          items: {
-            type: "object",
-            properties: {
-              id: { type: "string", description: "Stable short option ID." },
-              label: { type: "string", description: "User-visible answer label." },
-              description: { type: "string", description: "Optional concise supporting detail." },
+          anyOf: [
+            {
+              type: "array",
+              minItems: 2,
+              maxItems: 8,
+              items: {
+                anyOf: [
+                  { type: "string", description: "User-visible answer label; a stable ID is derived." },
+                  {
+                    type: "object",
+                    properties: {
+                      id: { type: "string", description: "Stable short option ID." },
+                      label: { type: "string", description: "User-visible answer label." },
+                      description: { type: "string", description: "Optional concise supporting detail." },
+                    },
+                    required: ["id", "label"],
+                  },
+                ],
+              },
             },
-            required: ["id", "label"],
-          },
-          description: "Two to eight discrete choices.",
+            { type: "string", description: "A JSON-encoded array; accepted only as a recovery format and normalized before persistence." },
+          ],
+          description: "Two to eight discrete choices. Prefer an array of { id, label, description? } objects; plain labels and JSON-encoded arrays are normalized.",
         },
         selectionMode: { type: "string", enum: ["single", "multiple"], description: "single by default; multiple allows more than one choice." },
         allowOther: { type: "boolean", description: "Allow a free-text Other answer, default false." },

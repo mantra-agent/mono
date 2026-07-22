@@ -63,6 +63,7 @@ export type ToolExecutorResult = {
   error?: boolean;
   sideEffectOnly?: boolean;
   continuation?: ToolContinuation;
+  normalizedArguments?: Record<string, unknown>;
 };
 
 export type ToolExecutor = (name: string, args: Record<string, unknown>) => Promise<ToolExecutorResult>;
@@ -1362,7 +1363,7 @@ export class AgentExecutor extends EventEmitter {
         }
         // Chronology: record tool entry pointing to resolvedToolCalls index
         ctx.segmentChronology.push({ s: "tool", i: toolIdx });
-        ctx.publish("tool_result", { toolCallId, toolName: normalizedName, result: event.result, error: event.error ? event.result : undefined });
+        ctx.publish("tool_result", { toolCallId, toolName: normalizedName, arguments: resolvedArgs, result: event.result, error: event.error ? event.result : undefined });
         const toolStepStartResolved = ctx.activeToolUseSteps.get(toolCallId || "");
         if (toolStepStartResolved && toolCallId) {
           ctx.activeToolUseSteps.delete(toolCallId);
@@ -1371,7 +1372,7 @@ export class AgentExecutor extends EventEmitter {
         eventBus.publish({
           category: "tool",
           event: "agent.tool_result",
-          payload: { toolCallId, toolName: normalizedName, result: event.result, error: event.error, runId: ctx.runId, source: options.activity || "agent", resolvedBySdk: true },
+          payload: { toolCallId, toolName: normalizedName, arguments: resolvedArgs, result: event.result, error: event.error, runId: ctx.runId, source: options.activity || "agent", resolvedBySdk: true },
           runId: ctx.runId,
           sessionKey: options.sessionKey,
         });
@@ -1560,14 +1561,15 @@ export class AgentExecutor extends EventEmitter {
         error: toolResult.error,
       });
       const boundedToolResult = { ...toolResult, result: boundedResult };
+      const canonicalArgs = boundedToolResult.normalizedArguments ?? tc.input;
       const toolIdx = ctx.resolvedToolCalls.length;
-      ctx.resolvedToolCalls.push({ id: tc.id, name: tc.name, args: tc.input, result: boundedToolResult.result, error: boundedToolResult.error, durationMs, parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
+      ctx.resolvedToolCalls.push({ id: tc.id, name: tc.name, args: canonicalArgs, result: boundedToolResult.result, error: boundedToolResult.error, durationMs, parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
       // Chronology: record tool entry pointing to resolvedToolCalls index
       ctx.segmentChronology.push({ s: "tool", i: toolIdx });
       sideEffectFlags.push(!!toolResult.sideEffectOnly);
       continuation = toolResult.continuation || continuation;
 
-      ctx.publish("tool_result", { toolCallId: tc.id, toolName: tc.name, result: boundedToolResult.result, error: boundedToolResult.error ? boundedToolResult.result : undefined });
+      ctx.publish("tool_result", { toolCallId: tc.id, toolName: tc.name, arguments: canonicalArgs, result: boundedToolResult.result, error: boundedToolResult.error ? boundedToolResult.result : undefined });
       const toolStepStart = ctx.activeToolUseSteps.get(tc.id);
       if (toolStepStart) {
         ctx.activeToolUseSteps.delete(tc.id);
@@ -1576,7 +1578,7 @@ export class AgentExecutor extends EventEmitter {
       eventBus.publish({
         category: "tool",
         event: "agent.tool_result",
-        payload: { toolCallId: tc.id, toolName: tc.name, arguments: tc.input, result: boundedToolResult.result, error: boundedToolResult.error, runId: ctx.runId, source: options.activity || "agent" },
+        payload: { toolCallId: tc.id, toolName: tc.name, arguments: canonicalArgs, result: boundedToolResult.result, error: boundedToolResult.error, runId: ctx.runId, source: options.activity || "agent" },
         runId: ctx.runId,
         sessionKey: options.sessionKey,
       });

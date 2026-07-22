@@ -271,7 +271,7 @@ class SessionManager {
         break;
 
       case "tool_result":
-        prev = resolveToolResult(prev, event.toolCallId, event.result, event.error, event.toolName, event.ts);
+        prev = resolveToolResult(prev, event.toolCallId, event.result, event.error, event.toolName, event.ts, event.arguments);
         break;
 
       case "compacting":

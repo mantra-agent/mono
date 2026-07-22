@@ -330,8 +330,17 @@ export function resetZombiePeakCount() {
 function jsonSchemaPropertyToZod(prop: Record<string, unknown>): z.ZodTypeAny {
   const type = prop.type as string | undefined;
   const desc = prop.description as string | undefined;
+  const anyOf = Array.isArray(prop.anyOf) ? prop.anyOf as Record<string, unknown>[] : null;
 
   let schema: z.ZodTypeAny;
+
+  if (anyOf && anyOf.length > 0) {
+    const variants = anyOf.map(jsonSchemaPropertyToZod);
+    schema = variants.length === 1
+      ? variants[0]
+      : z.union(variants as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
+    return desc ? schema.describe(desc) : schema;
+  }
 
   switch (type) {
     case "string": {
@@ -879,7 +888,7 @@ function createMcpTools(
             type: "tool_result_resolved",
             toolCallId: callId,
             toolName: def.name,
-            arguments: args,
+            arguments: result.normalizedArguments ?? args,
             order: invocationOrder,
             result: result.result,
             error: result.error,

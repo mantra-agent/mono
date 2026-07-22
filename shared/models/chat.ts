@@ -408,6 +408,7 @@ export type ChatStreamEvent =
       type: "tool_result";
       toolCallId: string;
       toolName?: string;
+      arguments?: Record<string, unknown>;
       result?: unknown;
       error?: string;
     })
