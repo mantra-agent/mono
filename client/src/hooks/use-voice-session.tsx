@@ -17,7 +17,12 @@ import {
   type VoiceStartResponse,
 } from "@/lib/voice-start-transport";
 export type { VoiceStartResponse } from "@/lib/voice-start-transport";
-import { playConnectionChime, playDisconnectionChime } from "@/lib/voice-chime";
+import {
+  playConnectionChime,
+  playDisconnectionChime,
+  startVoiceThinkingLoop,
+  stopVoiceThinkingLoop,
+} from "@/lib/voice-chime";
 import { isNativeVoiceBridge, sendToNative, onNativeMessage } from "@/lib/native-voice-bridge";
 import {
   reduceVoiceUserTranscript,
@@ -284,6 +289,16 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   // the callback itself, so the second call is a hard no-op.
   const isStartingRef = useRef(false);
   const disconnectChimePlayedRef = useRef(false);
+
+  useEffect(() => {
+    if (status === "active" && voiceThinking && agentMode !== "speaking") {
+      startVoiceThinkingLoop();
+      return;
+    }
+    stopVoiceThinkingLoop();
+  }, [agentMode, status, voiceThinking]);
+
+  useEffect(() => () => stopVoiceThinkingLoop(), []);
 
   const playDisconnectChimeOnce = useCallback(() => {
     if (disconnectChimePlayedRef.current) return;
