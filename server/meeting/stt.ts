@@ -265,6 +265,7 @@ export function registerMeetingSTTAudioTransport(
     meetings: Map<string, MeetingSessionMeta>;
     streams: Map<string, ParticipantStream>;
     reconfigureStream: (stream: ParticipantStream, mode: MeetingAudioSourceMode) => Promise<void>;
+    resetRecognition: (sessionId: string) => Promise<void>;
   }>();
 
   const onSourcePolicyUpdated = (busEvent: BusEvent): void => {
@@ -294,6 +295,31 @@ export function registerMeetingSTTAudioTransport(
     }
   };
   eventBus.on("event", onSourcePolicyUpdated);
+
+  // In-place recovery: the meeting Reset control asks a still-live bot to
+  // re-arm speech recognition without leaving/rejoining. Mirrors the
+  // owner-audience gating used for source-policy changes.
+  const onRecognitionReset = (busEvent: BusEvent): void => {
+    if (busEvent.event !== "meeting.recognition.reset") return;
+    const sessionId = typeof busEvent.payload.sessionId === "string" ? busEvent.payload.sessionId : "";
+    if (!sessionId) return;
+    for (const connection of liveConnections) {
+      const meeting = connection.meetings.get(sessionId);
+      if (!meeting) continue;
+      if (
+        busEvent.audience.scope !== "user" ||
+        busEvent.audience.ownerUserId !== meeting.ownerUserId ||
+        busEvent.audience.accountId !== meeting.principalAccountId
+      ) continue;
+      void connection.resetRecognition(sessionId).catch((error) =>
+        log.error("meeting recognition reset failed", {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
+  };
+  eventBus.on("event", onRecognitionReset);
 
   wss.on("connection", (socket: WebSocket) => {
     const streams = new Map<string, ParticipantStream>();
@@ -485,9 +511,6 @@ export function registerMeetingSTTAudioTransport(
       });
     };
 
-    const connection = { meetings, streams, reconfigureStream };
-    liveConnections.add(connection);
-
     const excludeStream = (identity: StreamIdentity, detail: string): ParticipantStream => ({
       identity,
       recognition: {
@@ -643,6 +666,32 @@ export function registerMeetingSTTAudioTransport(
       sttReconnectTimers.set(mapKey, timer);
     };
 
+    // Force an immediate, budget-resetting rebuild of every live recognition
+    // stream for one meeting. The in-place recovery path for the meeting Reset
+    // control: used when the bot is still in the call but recognition is wedged
+    // (e.g. reconnect budget exhausted). Buffered audio and stream identity are
+    // preserved by reconnectStreamNow.
+    const resetRecognition = async (sessionId: string): Promise<void> => {
+      for (const [mapKey, stream] of streams) {
+        if (stream.identity.sessionId !== sessionId) continue;
+        if (["excluded", "closed"].includes(stream.recognition.status)) continue;
+        const timer = sttReconnectTimers.get(mapKey);
+        if (timer) {
+          clearTimeout(timer);
+          sttReconnectTimers.delete(mapKey);
+        }
+        sttReconnectAttempts.delete(mapKey);
+        await reconnectStreamNow(stream, mapKey).catch((error) =>
+          log.error(
+            `meeting recognition reset rebuild failed sessionId=${sessionId} stream=${stream.identity.streamId}: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+      }
+    };
+
+    const connection = { meetings, streams, reconfigureStream, resetRecognition };
+    liveConnections.add(connection);
+
     const initializeStream = async (
       sessionId: string,
       transportId: string,
@@ -777,6 +826,41 @@ export interface MeetingRecognitionLaunchPlan {
   recognitionStatus: MeetingRecognitionState["status"];
   reasonCode: MeetingRecognitionReasonCode;
   detail: string;
+}
+
+/**
+ * Map a recognition launch plan to the meeting-meta recognition/STT fields.
+ * Single source of truth for how a launch decision is written to meeting
+ * state, shared by initial join and reset/rejoin so both start recognition
+ * from an identical, waiting-for-audio baseline.
+ */
+export function meetingRecognitionLaunchMeta(
+  launch: MeetingRecognitionLaunchPlan,
+): Pick<
+  MeetingSessionMeta,
+  | "recognition"
+  | "sttProvider"
+  | "sttModel"
+  | "sttSource"
+  | "sttFallback"
+  | "sttStatus"
+  | "sttStatusDetail"
+> {
+  return {
+    recognition: {
+      mode: launch.mode,
+      status: launch.recognitionStatus,
+      reasonCode: launch.reasonCode,
+      detail: launch.detail,
+      streams: [] as MeetingRecognitionStream[],
+    },
+    sttProvider: launch.provider,
+    sttModel: launch.model,
+    sttSource: launch.source,
+    sttFallback: launch.fallback,
+    sttStatus: launch.sttStatus,
+    sttStatusDetail: launch.detail,
+  };
 }
 
 /** Canonical readiness and launch decision for meeting recognition. */
