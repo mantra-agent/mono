@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef, Fragment, type ReactNode } from "react";
+import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef, Fragment, type ReactNode } from "react";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ExpandableInteractionRow, type PersonInteraction } from "@/components/people/expandable-interaction-row";
@@ -60,6 +60,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   ArrowLeft,
   ArrowDownLeft,
@@ -2283,7 +2284,7 @@ function PersonDetailView({ personId, onClose, onDelete, openNewInteraction, onN
             </div>
           </ProfileTreeRow>
 
-          <ProfileTreeRow label={<span data-testid="label-tags">Tags</span>} icon={<SlidersHorizontal className="h-3.5 w-3.5" />} hasValue={(person.tags || []).length > 0} showEmpty={showEmptyProfileRows} testId="row-profile-tags"><div className="max-w-md"><DetailTagPicker tags={person.tags || []} onChange={(newTags) => updateMutation.mutate({ tags: newTags })} /></div></ProfileTreeRow>
+          <ProfileTreeRow label={<span data-testid="label-tags">Tags</span>} icon={<SlidersHorizontal className="h-3.5 w-3.5" />} hasValue={(person.tags || []).length > 0} showEmpty={showEmptyProfileRows} testId="row-profile-tags"><DetailTagPicker tags={person.tags || []} onChange={(newTags) => updateMutation.mutate({ tags: newTags })} /></ProfileTreeRow>
 
           <ProfileTreeRow
             label={<span data-testid="label-met">Met</span>}
@@ -3668,7 +3669,11 @@ function ImportView({ onSelectPerson, selectedEmailOverride, onClearSelection }:
 
 function DetailTagPicker({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) {
   const [input, setInput] = useState("");
-  const [adding, setAdding] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(tags.length);
+  const summaryRef = useRef<HTMLDivElement>(null);
+  const measurementRef = useRef<HTMLDivElement>(null);
+  const overflowButtonRef = useRef<HTMLButtonElement>(null);
   const { data: tagData } = useQuery<{ tags: { slug: string; label: string }[] }>({
     queryKey: ["/api/tags"],
   });
@@ -3677,67 +3682,124 @@ function DetailTagPicker({ tags, onChange }: { tags: string[]; onChange: (tags: 
     ? allTags.filter(t => t.label.toLowerCase().includes(input.toLowerCase()) && !tags.includes(t.slug)).slice(0, 5)
     : [];
 
+  useLayoutEffect(() => {
+    const summary = summaryRef.current;
+    const measurement = measurementRef.current;
+    const overflowButton = overflowButtonRef.current;
+    if (!summary || !measurement || !overflowButton) return;
+
+    const updateVisibleCount = () => {
+      const widths = Array.from(measurement.children).map(child => (child as HTMLElement).offsetWidth);
+      const gap = 4;
+      const availableWidth = summary.clientWidth;
+      const overflowWidth = overflowButton.offsetWidth;
+      const allTagsWidth = widths.reduce((total, width) => total + width, 0) + widths.length * gap + overflowWidth;
+
+      if (allTagsWidth <= availableWidth) {
+        setVisibleCount(tags.length);
+        return;
+      }
+
+      let occupiedWidth = overflowWidth;
+      let nextVisibleCount = 0;
+      for (const width of widths) {
+        const nextWidth = occupiedWidth + gap + width;
+        if (nextWidth > availableWidth) break;
+        occupiedWidth = nextWidth;
+        nextVisibleCount += 1;
+      }
+      setVisibleCount(nextVisibleCount);
+    };
+
+    updateVisibleCount();
+    const observer = new ResizeObserver(updateVisibleCount);
+    observer.observe(summary);
+    return () => observer.disconnect();
+  }, [tags]);
+
+  const addTag = (value: string) => {
+    const slug = value.trim().toLowerCase().replace(/\s+/g, "-");
+    if (!slug) return;
+    if (!tags.includes(slug)) onChange([...tags, slug]);
+    setInput("");
+  };
+
+  const hasOverflow = visibleCount < tags.length;
+
   return (
-    <div className="flex items-center gap-1 flex-wrap">
-      {tags.map(t => (
-        <Badge key={t} variant="outline" className="text-xs" data-testid={`badge-tag-${t}`}>
-          {t}
+    <Popover open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) setInput(""); }}>
+      <div ref={summaryRef} className="relative flex h-5 w-48 min-w-0 items-center justify-end gap-1 overflow-hidden" data-testid="detail-tags-summary">
+        <div ref={measurementRef} aria-hidden className="pointer-events-none absolute left-0 top-0 flex invisible items-center gap-1">
+          {tags.map(tag => <Badge key={tag} variant="outline" className="h-5 px-1.5 py-0 text-xs">{tag}</Badge>)}
+        </div>
+        {tags.slice(0, visibleCount).map(tag => (
+          <Badge key={tag} variant="outline" className="h-5 max-w-full shrink-0 overflow-hidden px-1.5 py-0 text-xs" data-testid={`badge-tag-${tag}`}>
+            <span className="truncate">{tag}</span>
+          </Badge>
+        ))}
+        <PopoverTrigger asChild>
           <button
-            className="ml-1 inline-flex"
-            onClick={(e) => { e.stopPropagation(); onChange(tags.filter(x => x !== t)); }}
-            data-testid={`button-remove-tag-${t}`}
+            ref={overflowButtonRef}
+            type="button"
+            className="inline-flex h-5 shrink-0 items-center rounded px-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            aria-label={hasOverflow ? `Show all ${tags.length} tags` : "Edit tags"}
+            data-testid={hasOverflow ? "button-tags-overflow" : "button-edit-tags"}
           >
-            <X className="h-2.5 w-2.5" />
+            {hasOverflow ? "..." : <Plus className="h-3 w-3" />}
           </button>
-        </Badge>
-      ))}
-      {adding ? (
-        <div className="relative">
+        </PopoverTrigger>
+      </div>
+      <PopoverContent align="end" className="w-64 space-y-2 p-2" onOpenAutoFocus={(event) => event.preventDefault()} data-testid="popover-detail-tags">
+        <div className="max-h-48 overflow-y-auto">
+          {tags.length > 0 ? tags.map(tag => (
+            <div key={tag} className="flex min-h-8 items-center justify-between gap-2 rounded px-2 text-sm hover:bg-accent">
+              <span className="min-w-0 truncate">{tag}</span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 min-h-7 w-7 shrink-0 px-0"
+                onClick={() => onChange(tags.filter(existingTag => existingTag !== tag))}
+                aria-label={`Remove ${tag}`}
+                data-testid={`button-remove-tag-${tag}`}
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+          )) : <div className="px-2 py-1.5 text-sm text-muted-foreground">No tags</div>}
+        </div>
+        <div className="relative border-t border-border/20 pt-2">
           <Input
             value={input}
-            onChange={e => setInput(e.target.value)}
-            placeholder="Tag"
-            className="w-28 text-xs"
-            autoFocus
-            onKeyDown={e => {
-              if (e.key === "Enter" && input.trim()) {
-                e.preventDefault();
-                const slug = input.trim().toLowerCase().replace(/\s+/g, "-");
-                if (!tags.includes(slug)) onChange([...tags, slug]);
-                setInput("");
-                setAdding(false);
+            onChange={event => setInput(event.target.value)}
+            placeholder="Add tag"
+            className="h-8 w-full text-left text-sm"
+            onKeyDown={event => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addTag(input);
               }
-              if (e.key === "Escape") { setAdding(false); setInput(""); }
+              if (event.key === "Escape") setOpen(false);
             }}
-            onBlur={() => { setTimeout(() => { setAdding(false); setInput(""); }, 200); }}
             data-testid="input-detail-tags"
           />
           {suggestions.length > 0 && (
-            <div className="absolute top-full left-0 right-0 z-50 border rounded-md bg-popover mt-1 divide-y">
-              {suggestions.map(s => (
-                <div
-                  key={s.slug}
-                  className="px-2 py-1.5 text-xs cursor-pointer hover-elevate"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    if (!tags.includes(s.slug)) onChange([...tags, s.slug]);
-                    setInput("");
-                    setAdding(false);
-                  }}
-                  data-testid={`option-tag-${s.slug}`}
+            <div className="mt-1 overflow-hidden rounded-md border bg-popover shadow-md">
+              {suggestions.map(suggestion => (
+                <button
+                  type="button"
+                  key={suggestion.slug}
+                  className="block min-h-8 w-full px-2 py-1.5 text-left text-sm hover:bg-accent"
+                  onClick={() => addTag(suggestion.slug)}
+                  data-testid={`option-tag-${suggestion.slug}`}
                 >
-                  {s.label}
-                </div>
+                  {suggestion.label}
+                </button>
               ))}
             </div>
           )}
         </div>
-      ) : (
-        <Button variant="ghost" size="icon" onClick={() => setAdding(true)} data-testid="button-add-tag">
-          <Plus className="h-3 w-3" />
-        </Button>
-      )}
-    </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
