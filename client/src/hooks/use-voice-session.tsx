@@ -106,6 +106,10 @@ export interface VoiceSessionContextValue {
   transcriptSessionId: string | null;
   voiceThinking: boolean;
   visualState: AgentVisualState;
+  /** One-shot flag: a fresh voice start is awaiting its renderer-owned entrance. */
+  voiceEntrancePending: boolean;
+  /** Marks the pending voice entrance as consumed by the orb that played it. */
+  consumeVoiceEntrance: () => void;
   /** Native host visibility. Browser hosts remain active. */
   isHostForeground: boolean;
   /** Reads the active SDK AnalyserNode level without driving context re-renders. */
@@ -243,6 +247,10 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const [connectionStartTime, setConnectionStartTime] = useState<number | null>(null);
   const [phasePersisted, setPhasePersisted] = useState(false);
   const [isHostForeground, setIsHostForeground] = useState(true);
+  // Armed at the canonical real voice start (startSession) and consumed by the
+  // orb that plays the black voice entrance, so the one-shot fires once per
+  // start rather than on every voice-surface/orb remount.
+  const [voiceEntrancePending, setVoiceEntrancePending] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -1641,6 +1649,10 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
 
     resetEphemeralVoiceState({ clearTranscript: true });
     setStatus("connecting");
+    // Arm the one-shot black voice entrance at the real start. Both browser and
+    // native voice flow through startSession, so this is the single canonical
+    // place the entrance is armed; reconnects never pass here.
+    setVoiceEntrancePending(true);
     setConnectionPhases(INITIAL_PHASES.map(p => ({ ...p })));
     setConnectionStartTime(Date.now());
     setPhasePersisted(false);
@@ -1719,6 +1731,10 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     setTranscript(prev => [...prev, entry]);
   }, []);
 
+  const consumeVoiceEntrance = useCallback(() => {
+    setVoiceEntrancePending(false);
+  }, []);
+
   const toggleMute = useCallback(() => {
     if (conversationRef.current) {
       const newMuted = !isMuted;
@@ -1784,6 +1800,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     transcriptSessionId,
     voiceThinking,
     visualState,
+    voiceEntrancePending,
+    consumeVoiceEntrance,
     isHostForeground,
     readAudioLevel,
     startSession,
@@ -1801,7 +1819,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     addTranscriptEntry,
     setVoiceToolHandler,
     setVoiceDiagnosticHandler,
-  }), [status, agentMode, userSpeaking, isMuted, transcript, userComposition, transcriptSessionId, voiceThinking, visualState, isHostForeground, readAudioLevel, startSession, endSession, toggleMute, latestMessage, setActiveConversationId, clearTranscript, activeConversationId, chatSessionKey, connectionPhases, connectionStartTime, phasePersisted, setVoiceThinking, addTranscriptEntry, setVoiceToolHandler, setVoiceDiagnosticHandler]);
+  }), [status, agentMode, userSpeaking, isMuted, transcript, userComposition, transcriptSessionId, voiceThinking, visualState, voiceEntrancePending, consumeVoiceEntrance, isHostForeground, readAudioLevel, startSession, endSession, toggleMute, latestMessage, setActiveConversationId, clearTranscript, activeConversationId, chatSessionKey, connectionPhases, connectionStartTime, phasePersisted, setVoiceThinking, addTranscriptEntry, setVoiceToolHandler, setVoiceDiagnosticHandler]);
 
   return (
     <VoiceSessionContext.Provider value={value}>

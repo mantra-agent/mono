@@ -1,4 +1,4 @@
-import { AgentOrb } from "@/components/agent-orb";
+import { VoiceEntranceOrb } from "@/components/voice-entrance-orb";
 import type { VoiceSessionContextValue } from "@/hooks/use-voice-session";
 
 interface MobileVoiceViewportProps {
@@ -16,9 +16,9 @@ export function MobileVoiceViewport({ voiceSession }: MobileVoiceViewportProps) 
       data-testid="mobile-voice-viewport"
       data-voice-state={voiceSession.visualState}
     >
-      <AgentOrb
+      <VoiceEntranceOrb
+        voiceSession={voiceSession}
         state={voiceSession.visualState}
-        initialEntrance="voice"
         maxFrameRate={30}
         paused={!voiceSession.isHostForeground}
         className="absolute left-1/2 top-1/2 h-[60%] w-[60%] -translate-x-1/2 -translate-y-1/2"

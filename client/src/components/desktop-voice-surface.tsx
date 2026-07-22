@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { FileText, MessagesSquare } from "lucide-react";
-import { AgentOrb } from "@/components/agent-orb";
+import { VoiceEntranceOrb } from "@/components/voice-entrance-orb";
 import { Button } from "@/components/ui/button";
 import type { VoiceSessionContextValue } from "@/hooks/use-voice-session";
 
@@ -64,9 +64,9 @@ export function DesktopVoiceSurface({ voiceSession, transcript }: DesktopVoiceSu
       data-testid="desktop-voice-surface"
       data-voice-state={voiceSession.visualState}
     >
-      <AgentOrb
+      <VoiceEntranceOrb
+        voiceSession={voiceSession}
         state={voiceSession.visualState}
-        initialEntrance="voice"
         audioLevel={audioLevel}
         maxFrameRate={60}
         className="absolute left-1/2 top-1/2 h-[60%] w-[60%] -translate-x-1/2 -translate-y-1/2 md:inset-0 md:h-full md:w-full md:translate-x-0 md:translate-y-0"
