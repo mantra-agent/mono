@@ -18,6 +18,7 @@ export function MobileVoiceViewport({ voiceSession }: MobileVoiceViewportProps) 
     >
       <AgentOrb
         state={voiceSession.visualState}
+        initialEntrance="voice"
         maxFrameRate={30}
         paused={!voiceSession.isHostForeground}
         className="absolute left-1/2 top-1/2 h-[60%] w-[60%] -translate-x-1/2 -translate-y-1/2"

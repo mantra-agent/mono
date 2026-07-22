@@ -1,4 +1,4 @@
-import type { OrbState, OrbVisuals } from './types';
+import type { AgentOrbInitialEntrance, OrbState, OrbVisuals } from './types';
 
 /** Per-state targets for one continuous field. JS lerps every parameter. */
 export const STATE_VISUALS: Record<OrbState, OrbVisuals> = {
@@ -76,6 +76,18 @@ export const STATE_VISUALS: Record<OrbState, OrbVisuals> = {
 
 const TRANSITION_DURATION = 0.55;
 export const ENTRANCE_DURATION = 3.2;
+export const VOICE_ENTRANCE_DURATION = 1.9;
+
+const VOICE_ENTRANCE_VISUALS: OrbVisuals = {
+  rimPower: 4.8, rimIntensity: 0, coreGlow: 0,
+  audioReactivity: 0, swirlSpeed: 0.08, swirlAmount: 0.02,
+  tickCount: 0, tickSpeed: 0, breathSpeed: 0, breathDepth: 0,
+  pulseStrength: 0, dimming: 0,
+  fieldEnergy: 0.12, filamentDensity: 0.86, cloudDensity: 0.08,
+  flowSpeed: 0.08, flowStrength: 0.12, coherence: 0.96,
+  attractorStrength: 0.72, knotStrength: 0.24, orbitPrecision: 0,
+  waveEnergy: 0, coreDarkness: 0.84,
+};
 
 export interface EntranceVeil {
   radiusPercent: number;
@@ -160,12 +172,20 @@ export interface AnimationState {
   time: number;
   effectiveAudioLevel: number;
   entranceElapsed: number;
+  initialEntrance: AgentOrbInitialEntrance | null;
+  initialEntranceElapsed: number;
+  initialEntranceStartProgress: number;
 }
 
-export function createAnimationState(initial: OrbState): AnimationState {
-  const currentVisuals = initial === 'entrance'
-    ? entranceVisuals(0)
-    : { ...STATE_VISUALS[initial] };
+export function createAnimationState(
+  initial: OrbState,
+  initialEntrance?: AgentOrbInitialEntrance,
+): AnimationState {
+  const currentVisuals = initialEntrance === 'voice'
+    ? { ...VOICE_ENTRANCE_VISUALS }
+    : initial === 'entrance'
+      ? entranceVisuals(0)
+      : { ...STATE_VISUALS[initial] };
   return {
     fromVisuals: { ...currentVisuals },
     nextState: initial,
@@ -175,7 +195,15 @@ export function createAnimationState(initial: OrbState): AnimationState {
     time: 0,
     effectiveAudioLevel: 0,
     entranceElapsed: 0,
+    initialEntrance: initialEntrance ?? null,
+    initialEntranceElapsed: initialEntrance ? 0 : VOICE_ENTRANCE_DURATION,
+    initialEntranceStartProgress: 0,
   };
+}
+
+/** Normalized renderer-local entrance progress for mesh presentation. */
+export function initialEntranceProgress(anim: AnimationState): number {
+  return smoothstep(anim.initialEntranceElapsed / VOICE_ENTRANCE_DURATION);
 }
 
 export function tickAnimation(
@@ -193,10 +221,33 @@ export function tickAnimation(
     anim.fromVisuals = { ...anim.currentVisuals };
     anim.nextState = targetState;
     anim.transitionElapsed = 0;
+    if (anim.initialEntrance === 'voice') {
+      anim.initialEntranceStartProgress = initialEntranceProgress(anim);
+    }
     if (targetState === 'entrance') anim.entranceElapsed = 0;
   }
 
-  if (anim.nextState === 'entrance') {
+  if (anim.initialEntrance === 'voice') {
+    anim.initialEntranceElapsed = Math.min(
+      anim.initialEntranceElapsed + dt,
+      VOICE_ENTRANCE_DURATION,
+    );
+    const progress = initialEntranceProgress(anim);
+    const retargetProgress = smoothstep(
+      (progress - anim.initialEntranceStartProgress)
+      / Math.max(0.001, 1 - anim.initialEntranceStartProgress),
+    );
+    anim.currentVisuals = lerpVisuals(
+      anim.fromVisuals,
+      STATE_VISUALS[anim.nextState],
+      retargetProgress,
+    );
+    if (anim.initialEntranceElapsed >= VOICE_ENTRANCE_DURATION) {
+      anim.initialEntrance = null;
+      anim.fromVisuals = { ...anim.currentVisuals };
+      anim.transitionElapsed = anim.transitionDuration;
+    }
+  } else if (anim.nextState === 'entrance') {
     anim.entranceElapsed = Math.min(anim.entranceElapsed + dt, ENTRANCE_DURATION);
     anim.currentVisuals = entranceVisuals(anim.entranceElapsed);
   } else {

@@ -10,7 +10,12 @@ import {
   haloVertexShader,
   haloFragmentShader,
 } from './shaders';
-import { createAnimationState, entranceVeil, tickAnimation } from './orb-state';
+import {
+  createAnimationState,
+  entranceVeil,
+  initialEntranceProgress,
+  tickAnimation,
+} from './orb-state';
 
 const log = createLogger('AgentOrb');
 const MAX_DPR = 1.5;
@@ -28,7 +33,14 @@ function qualitySteps(maxFrameRate: number): number {
  * AgentOrb is the shared pure render boundary for every voice host.
  * It owns GPU lifecycle only. Transport, state ownership, and audio capture stay outside.
  */
-export function AgentOrb({ state, audioLevel, maxFrameRate = 60, paused = false, className }: AgentOrbProps) {
+export function AgentOrb({
+  state,
+  initialEntrance,
+  audioLevel,
+  maxFrameRate = 60,
+  paused = false,
+  className,
+}: AgentOrbProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef(state);
   const audioRef = useRef(audioLevel);
@@ -43,6 +55,9 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, paused = false,
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const playVoiceEntrance = initialEntrance === 'voice' && !reducedMotion;
 
     let renderer: THREE.WebGLRenderer;
     try {
@@ -72,7 +87,7 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, paused = false,
     const fieldUniforms = {
       uTime: { value: 0 },
       uAudioLevel: { value: 0 },
-      uDimming: { value: 1 },
+      uDimming: { value: playVoiceEntrance ? 0 : 1 },
       uFieldEnergy: { value: 0 },
       uFilamentDensity: { value: 0.7 },
       uCloudDensity: { value: 0.3 },
@@ -111,7 +126,7 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, paused = false,
       uTickSpeed: { value: 0 },
       uBreathPhase: { value: 0 },
       uPulseStrength: { value: 0 },
-      uDimming: { value: 1.0 },
+      uDimming: { value: playVoiceEntrance ? 0 : 1.0 },
     };
     const orbMaterial = new THREE.ShaderMaterial({
       vertexShader: orbVertexShader,
@@ -126,7 +141,7 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, paused = false,
 
     const haloUniforms = {
       uIntensity: { value: 1.0 },
-      uDimming: { value: 1.0 },
+      uDimming: { value: playVoiceEntrance ? 0 : 1.0 },
     };
     const haloMaterial = new THREE.ShaderMaterial({
       vertexShader: haloVertexShader,
@@ -141,8 +156,12 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, paused = false,
     haloMesh.scale.setScalar(HALO_SCALE);
     scene.add(haloMesh);
 
-    const anim = createAnimationState(stateRef.current);
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (playVoiceEntrance) fieldMesh.scale.setScalar(0.28);
+
+    const anim = createAnimationState(
+      stateRef.current,
+      playVoiceEntrance ? 'voice' : undefined,
+    );
     let lastTime = performance.now();
     let lastRenderTime = 0;
     let animFrameId = 0;
@@ -163,6 +182,7 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, paused = false,
       // devicePixelRatio > 1 the canvas element lays out at device-pixel size,
       // overflows its container to the bottom-right, and pushes the orb off-center.
       renderer.setSize(w, h);
+      renderer.render(scene, camera);
     }
 
     function applyVisuals(now: number) {
@@ -183,6 +203,7 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, paused = false,
       lastTime = now;
       const visuals = tickAnimation(anim, dt, stateRef.current, audioRef.current);
       const audio = anim.effectiveAudioLevel;
+      const voiceEntranceProgress = initialEntranceProgress(anim);
       const breath = visuals.breathDepth * Math.sin(anim.time * visuals.breathSpeed);
       const veilElement = entranceVeilRef.current;
       if (veilElement) {
@@ -225,7 +246,10 @@ export function AgentOrb({ state, audioLevel, maxFrameRate = 60, paused = false,
       orbUniforms.uBreathPhase.value = breath;
 
       const scalePulse = 1.0 + audio * visuals.pulseStrength * 0.08;
-      fieldMesh.scale.setScalar(scalePulse * (1.0 + breath * 0.03));
+      const fieldResolveScale = 0.28 + voiceEntranceProgress * 0.72;
+      fieldMesh.scale.setScalar(
+        fieldResolveScale * scalePulse * (1.0 + breath * 0.03),
+      );
       orbMesh.scale.setScalar(scalePulse);
       haloUniforms.uIntensity.value = visuals.rimIntensity * (
         1.0 + audio * visuals.audioReactivity * 0.5

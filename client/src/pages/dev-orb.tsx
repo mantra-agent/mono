@@ -2,8 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { AgentOrb } from '@/components/agent-orb';
 import type { OrbState } from '@/components/agent-orb';
 
-const ALL_STATES: OrbState[] = [
+type OrbPreview = OrbState | 'voice_entrance';
+
+const ALL_PREVIEWS: OrbPreview[] = [
   'entrance',
+  'voice_entrance',
   'idle',
   'listening',
   'thinking',
@@ -12,8 +15,9 @@ const ALL_STATES: OrbState[] = [
   'degraded',
 ];
 
-const STATE_LABELS: Record<OrbState, string> = {
+const PREVIEW_LABELS: Record<OrbPreview, string> = {
   entrance: 'Entrance — white terminal resolves into idle',
+  voice_entrance: 'Voice Entrance — black field resolves into idle',
   idle: 'Idle — breathing glow',
   listening: 'Listening — amplitude-reactive rim',
   thinking: 'Thinking — internal swirl',
@@ -27,7 +31,7 @@ const STATE_LABELS: Record<OrbState, string> = {
  * Toggle states, drive amplitude manually, or let the synthetic envelope run.
  */
 export default function DevOrbPage() {
-  const [currentState, setCurrentState] = useState<OrbState>('idle');
+  const [currentPreview, setCurrentPreview] = useState<OrbPreview>('idle');
   const [audioLevel, setAudioLevel] = useState(0);
   const [useSynthetic, setUseSynthetic] = useState(true);
   const [autoCycle, setAutoCycle] = useState(false);
@@ -37,19 +41,29 @@ export default function DevOrbPage() {
   useEffect(() => {
     if (!autoCycle) return;
     const interval = setInterval(() => {
-      setCurrentState((visibleState) => {
-        const nextIndex = (ALL_STATES.indexOf(visibleState) + 1) % ALL_STATES.length;
-        return ALL_STATES[nextIndex];
+      setCurrentPreview((visiblePreview) => {
+        const nextIndex = (ALL_PREVIEWS.indexOf(visiblePreview) + 1) % ALL_PREVIEWS.length;
+        const nextPreview = ALL_PREVIEWS[nextIndex];
+        if (nextPreview === 'entrance' || nextPreview === 'voice_entrance') {
+          setOrbKey((key) => key + 1);
+        }
+        return nextPreview;
       });
-    }, currentState === 'entrance' ? 3600 : 3000);
+    }, currentPreview === 'entrance' ? 3600 : 3000);
     return () => clearInterval(interval);
-  }, [autoCycle, currentState]);
+  }, [autoCycle, currentPreview]);
 
-  const handleStateClick = useCallback((s: OrbState) => {
-    setCurrentState(s);
-    if (s === 'entrance') setOrbKey((key) => key + 1);
+  const handlePreviewClick = useCallback((preview: OrbPreview) => {
+    setCurrentPreview(preview);
+    if (preview === 'entrance' || preview === 'voice_entrance') {
+      setOrbKey((key) => key + 1);
+    }
     setAutoCycle(false);
   }, []);
+
+  const orbState: OrbState = currentPreview === 'voice_entrance'
+    ? 'idle'
+    : currentPreview;
 
   return (
     <div className="flex h-screen w-full bg-black">
@@ -57,13 +71,14 @@ export default function DevOrbPage() {
       <div className="flex-1 relative">
         <AgentOrb
           key={orbKey}
-          state={currentState}
+          state={orbState}
+          initialEntrance={currentPreview === 'voice_entrance' ? 'voice' : undefined}
           audioLevel={useSynthetic ? undefined : audioLevel}
           className="absolute inset-0"
         />
         {/* State indicator overlay */}
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-lg bg-card/80 px-3 py-1.5 text-sm font-medium text-foreground backdrop-blur-sm">
-          {STATE_LABELS[currentState]}
+          {PREVIEW_LABELS[currentPreview]}
         </div>
       </div>
 
@@ -78,17 +93,17 @@ export default function DevOrbPage() {
           <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
             State
           </span>
-          {ALL_STATES.map((s) => (
+          {ALL_PREVIEWS.map((preview) => (
             <button
-              key={s}
-              onClick={() => handleStateClick(s)}
+              key={preview}
+              onClick={() => handlePreviewClick(preview)}
               className={`rounded px-3 py-1.5 text-left text-sm transition-colors ${
-                currentState === s
+                currentPreview === preview
                   ? 'bg-cta text-cta-foreground'
                   : 'bg-card hover:bg-accent text-foreground'
               }`}
             >
-              {s}
+              {preview.replace('_', ' ')}
             </button>
           ))}
         </div>
@@ -143,8 +158,9 @@ export default function DevOrbPage() {
         <div className="mt-auto text-xs text-muted-foreground leading-relaxed">
           <p>
             This harness renders the AgentOrb component in isolation. Each state
-            has a distinct visual signature. Select <strong>entrance</strong> again
-            to replay its one-shot handoff. Audio reactivity is visible in
+            has a distinct visual signature. Select <strong>entrance</strong> or
+            <strong> voice entrance</strong> again to replay its one-shot handoff.
+            Audio reactivity is visible in
             <strong> listening</strong> and <strong>speaking</strong> states.
           </p>
           <p className="mt-2">

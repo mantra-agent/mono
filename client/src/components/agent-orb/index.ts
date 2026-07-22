@@ -1,2 +1,2 @@
 export { AgentOrb } from './AgentOrb';
-export type { AgentOrbProps, OrbState } from './types';
+export type { AgentOrbInitialEntrance, AgentOrbProps, OrbState } from './types';
