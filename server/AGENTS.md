@@ -200,7 +200,7 @@ Real-time voice database work uses the reserved `voice` lane. Install it before 
 
 ## Meeting Turn Orchestration
 
-Calendar attendee promotion is a calendar-domain mutation: re-read the Google event, verify the external attendee email, serialize by account + email, resolve a scoped existing Person before creation, then link the Person to event metadata. Schedule and Simple must consume the shared meeting-attendee payload and promotion route rather than create People directly.
+Calendar attendee promotion is a calendar-domain mutation: re-read the Google event, verify the external attendee email, serialize by account + email, resolve a scoped existing Person before creation, then link the Person to event metadata. Schedule and Simple must consume the shared meeting-attendee payload and promotion route rather than create People directly. Visible attendee identity deduplicates by resolved Person ID first, then normalized email. The event-person link mutation must tolerate rolling deployment before the `(metadata_id, person_id)` uniqueness repair has run.
 
 Calendar meeting participation uses one visible `agentJoinMode` discriminant: `dont_join`, `note_taking`, or `join_and_talk`. Calendar metadata owns the scheduled choice; `meeting/join.ts` snapshots it into the durable session as `participationPolicy` (`listen_only` or `auto`) before Recall dispatch. Schedule and Event Details must mutate that choice through the same calendar route. Legacy enabled/override booleans remain rolling-migration projections; nullable override temporarily preserves whether a materialized mode came from the user-wide policy or an explicit event choice.
 

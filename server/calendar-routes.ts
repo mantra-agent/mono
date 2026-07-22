@@ -256,6 +256,11 @@ export function registerCalendarRoutes(app: Express): void {
               private: false,
             });
         if (!resolved) throw new Error("Unable to resolve attendee profile");
+        await acquireAdvisoryTransactionLock(
+          tx,
+          ADVISORY_LOCK_NS.CALENDAR_ATTENDEE_PROMOTION,
+          `${principal.accountId}:person:${resolved.id}`,
+        );
 
         const metadata = await getMetadata(event.id, accountId, calendarId)
           ?? await setMetadata(event.id, accountId, calendarId, "meeting", undefined, [email]);

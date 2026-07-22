@@ -9,7 +9,7 @@ import { formatHour, getWindowLabel, inRange } from "@shared/wellness-window";
 import { queryActivityStatus } from "../routes/wellness";
 import { sourceRefsToReferenceRefs } from "@shared/simple-references";
 import { createReferenceRef } from "@shared/references";
-import { createMeetingArtifactChild, createMeetingPersonChild, formatMeetingInviteeName } from "@shared/meeting-feed-items";
+import { createMeetingArtifactChild, createMeetingPersonChild, dedupeMeetingInvitees, formatMeetingInviteeName } from "@shared/meeting-feed-items";
 import { listAllEvents, type CalendarEvent } from "../google-calendar";
 import { listMetadataByEvents, classifyEventByTitle, getLinkedArtifactsByMetadataIds } from "../calendar-metadata";
 import { buildEmailPersonContextMap, meetingInteractionContext, resolveMeetingArtifactContext, type EmailPersonContext, type MeetingArtifactContext } from "../meeting-context";
@@ -1063,9 +1063,15 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
     observedAt: event.start.dateTime ?? event.start.date,
   };
   const timeLabel = formatMeetingTime(event, timezone, section !== "now" && section !== "earlier");
-  const attendeeNames = event.attendees
-    .filter(a => !a.self)
-    .map(a => a.displayName || a.email.split("@")[0])
+  const externalAttendees = dedupeMeetingInvitees(
+    event.attendees.filter(attendee => !attendee.self && attendee.email),
+    attendee => {
+      const email = attendee.email.trim().toLowerCase();
+      return { personId: emailMap.get(email)?.id, email };
+    },
+  );
+  const attendeeNames = externalAttendees
+    .map(attendee => emailMap.get(attendee.email.trim().toLowerCase())?.name ?? formatMeetingInviteeName(attendee.displayName, attendee.email))
     .slice(0, 3);
 
   // Build children for attendees and location. These children remain source-grounded to
@@ -1084,7 +1090,6 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
       payload: { kind: "meeting_location" },
     });
   }
-  const externalAttendees = event.attendees.filter(a => !a.self);
   for (const attendee of externalAttendees.slice(0, 6)) {
     const matched = emailMap.get(attendee.email.toLowerCase());
     const name = matched?.name ?? formatMeetingInviteeName(attendee.displayName, attendee.email);
@@ -1138,7 +1143,7 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
       time: timeLabel,
       location: event.location || null,
       attendees: attendeeNames,
-      attendeeCount: event.attendees.filter(a => !a.self).length,
+      attendeeCount: externalAttendees.length,
       htmlLink: event.htmlLink || null,
       startDateTime: event.start.dateTime || null,
       endDateTime: event.end.dateTime || null,
