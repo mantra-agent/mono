@@ -98,6 +98,11 @@ const MIN_NODE_HIT_RADIUS_PX = 12;
 // Cold claims never disappear entirely: they hold a faint floor so the field keeps its ghosts.
 const RECENCY_OPACITY_FLOOR = 0.08;
 
+function recencyToVisibility(recency: number): number {
+  const heat = THREE.MathUtils.clamp(recency, 0, 1);
+  return RECENCY_OPACITY_FLOOR + (1 - RECENCY_OPACITY_FLOOR) * Math.pow(heat, 2.2);
+}
+
 const nodeVertexShader = `
   attribute float aVisibility;
   attribute float aEmphasis;
@@ -370,9 +375,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const emphasis = new Float32Array(sceneNodes.length);
     const tints = new Float32Array(sceneNodes.length * 3);
     sceneNodes.forEach((node, index) => {
-      const recency = THREE.MathUtils.clamp(node.recency, 0, 1);
-      const contrast = Math.pow(recency, 2.2);
-      visibility[index] = RECENCY_OPACITY_FLOOR + (1 - RECENCY_OPACITY_FLOOR) * contrast;
+      visibility[index] = recencyToVisibility(node.recency);
       (node.pendingDeletion ? deletionColor : nodeBaseColors[index]).toArray(tints, index * 3);
     });
     nodeGeometry.setAttribute("aVisibility", new THREE.InstancedBufferAttribute(visibility, 1));
@@ -562,7 +565,12 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         const depth = -cameraSpace.z;
         const projectedRadius = depth > 0 ? node.radius * pixelsPerRadian / depth : 0;
         const distanceVisibility = THREE.MathUtils.smoothstep(projectedRadius, 0.75, 3.5);
-        nodeLinkVisibility[index] = distanceVisibility * visibility[index];
+        const unrelated = hoveredIndex != null
+          && hoveredIndex !== index
+          && !hoveredNeighborIndices.has(index);
+        nodeLinkVisibility[index] = distanceVisibility
+          * recencyToVisibility(node.recency)
+          * (unrelated ? 0.62 : 1);
       });
 
       renderedLinks.forEach((link, linkIndex) => {
@@ -599,8 +607,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
             ? activeColor
             : nodeBaseColors[index];
         tint.toArray(tints, index * 3);
-        visibility[index] = (RECENCY_OPACITY_FLOOR + (1 - RECENCY_OPACITY_FLOOR) * THREE.MathUtils.clamp(node.recency, 0, 1))
-          * (unrelated ? 0.62 : 1);
+        visibility[index] = recencyToVisibility(node.recency) * (unrelated ? 0.62 : 1);
       });
       syncNodeMatrices();
       (nodeGeometry.getAttribute("aVisibility") as THREE.InstancedBufferAttribute).needsUpdate = true;
