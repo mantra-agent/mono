@@ -198,9 +198,15 @@ async function resolveWithCacheAndCoalescing(
   return promise;
 }
 
+/** Canonical chars→tokens estimator (chars/3.5). Single source for the estimate. */
+export function estimateTokensFromChars(chars: number): number {
+  if (!chars || chars <= 0) return 0;
+  return Math.ceil(chars / 3.5);
+}
+
 export function estimateTokens(text: string): number {
   if (!text) return 0;
-  return Math.ceil(text.length / 3.5);
+  return estimateTokensFromChars(text.length);
 }
 
 type SectionResolver = (request: ContextRequest) => Promise<string>;

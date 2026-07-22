@@ -29,12 +29,14 @@ import {
   Layers,
   ArrowLeft,
   Loader2,
+  Boxes,
 } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type {
   SpineMetadata,
   ContextCallType,
   LlmMode,
+  ContextWirePayload,
 } from "../../../shared/context-spine";
 
 interface UnifiedPreset {
@@ -63,7 +65,7 @@ function formatModelName(modelId: string): string {
   return name.replace(/-\d{8}$/, "");
 }
 
-function SummaryBar({ metadata }: { metadata: SpineMetadata }) {
+function SummaryBar({ metadata, wire }: { metadata: SpineMetadata; wire?: ContextWirePayload }) {
   const usagePct = metadata.contextWindow && metadata.contextWindow > 0
     ? Math.min((metadata.totalTokens / metadata.contextWindow) * 100, 100)
     : null;
@@ -74,6 +76,15 @@ function SummaryBar({ metadata }: { metadata: SpineMetadata }) {
         <Layers className="h-3 w-3" />
         {metadata.activeSectionCount}/{metadata.sectionCount} sections
       </span>
+      {wire && (
+        <span className="flex items-center gap-1" data-testid="text-wire-total">
+          <Boxes className="h-3 w-3" />
+          wire ~{formatTokens(wire.estimatedAttributableTokens)} est
+          {wire.capture?.providerInputTokens != null && (
+            <> · {formatTokens(wire.capture.providerInputTokens)} measured</>
+          )}
+        </span>
+      )}
       {metadata.placeholderCount > 0 && (
         <span className="flex items-center gap-1" data-testid="text-placeholder-count">
           <FileText className="h-3 w-3" />
@@ -170,6 +181,141 @@ function InstructionsCard({ metadata }: { metadata: SpineMetadata }) {
             ))}
           </div>
         )}
+      </div>
+    </Card>
+  );
+}
+
+function WireCapRow({ label, value, strong }: { label: string; value: number | null; strong?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-3 py-2">
+      <span className={strong ? "font-semibold" : "text-muted-foreground"}>{label}</span>
+      <span className={`tabular-nums ${strong ? "font-semibold" : "text-muted-foreground"}`}>
+        {value == null ? "—" : formatTokens(value)}
+      </span>
+    </div>
+  );
+}
+
+function WirePayloadCard({ wire }: { wire: ContextWirePayload }) {
+  const [showAllTools, setShowAllTools] = useState(false);
+  const cap = wire.capture;
+  const visibleTools = showAllTools ? wire.toolSchemas.tools : wire.toolSchemas.tools.slice(0, 25);
+
+  const breakdown: { label: string; hint?: string; tokens: number; strong?: boolean }[] = [
+    { label: "Spine (rendered template)", tokens: wire.spine.tokens },
+    {
+      label: `Tool schemas (${wire.toolSchemas.count})`,
+      hint: wire.toolSchemas.aliasCount > 0 ? `${wire.toolSchemas.aliasCount} alias schemas` : undefined,
+      tokens: wire.toolSchemas.totalTokens,
+    },
+    { label: "Estimated attributable", tokens: wire.estimatedAttributableTokens, strong: true },
+  ];
+
+  return (
+    <Card className="flex-1 min-h-0 overflow-auto" data-testid="wire-payload-card">
+      <div className="p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold">Wire payload</h2>
+          <span className="text-xs text-muted-foreground">estimate = {wire.estimator}</span>
+        </div>
+
+        <div className="rounded-lg border border-border/30 divide-y divide-border/20">
+          {breakdown.map(row => (
+            <div key={row.label} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className={row.strong ? "font-semibold" : ""}>{row.label}</span>
+                {row.hint && <span className="text-muted-foreground shrink-0">{row.hint}</span>}
+              </div>
+              <span className={`tabular-nums shrink-0 ${row.strong ? "font-semibold" : "text-muted-foreground"}`}>
+                {formatTokens(row.tokens)}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <div>
+          <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
+            Last real model-boundary call
+          </h3>
+          {cap ? (
+            <div className="rounded-lg border border-border/30 p-3 space-y-3 text-xs" data-testid="wire-capture">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
+                <span className="rounded-full border px-2 py-0.5">captured</span>
+                <span>{new Date(cap.capturedAt).toLocaleString()}</span>
+                <span className="font-mono">{cap.provider} / {formatModelName(cap.model)}</span>
+                {cap.activity && <span className="font-mono">activity: {cap.activity}</span>}
+              </div>
+              <div className="rounded-md border border-border/20 divide-y divide-border/20">
+                <WireCapRow label="Provider-measured input tokens" value={cap.providerInputTokens} strong />
+                <WireCapRow label="↳ system prompt (spine)" value={cap.systemPromptTokens} />
+                <WireCapRow label="↳ tool schemas" value={cap.toolSchemaTokens} />
+                <WireCapRow label="↳ conversation" value={cap.conversationTokens} />
+                <WireCapRow label="↳ SDK harness + system-reminders" value={cap.harnessAndRemindersTokens} />
+              </div>
+              {cap.providerTokensMayBeCumulative && (
+                <p className="text-muted-foreground">
+                  Provider tokens may be cumulative across a multi-turn session; first-turn calls read cleanly.
+                </p>
+              )}
+              <div>
+                <div className="text-muted-foreground mb-1">
+                  Captured system prompt{cap.systemPromptExcerptTruncated ? " (first 4k chars)" : ""}
+                </div>
+                <pre
+                  className="text-[11px] whitespace-pre-wrap font-mono bg-muted/30 rounded-md p-3 max-h-64 overflow-auto scrollbar-thin text-foreground/80"
+                  data-testid="wire-capture-excerpt"
+                >
+                  {cap.systemPromptExcerpt || "(empty)"}
+                </pre>
+              </div>
+            </div>
+          ) : (
+            <div
+              className="rounded-lg border border-dashed border-border/40 p-4 text-xs text-muted-foreground"
+              data-testid="wire-capture-empty"
+            >
+              No capture yet. Send a chat turn, then reload — the latest real call populates provider-measured
+              input tokens and the SDK harness cost here.
+            </div>
+          )}
+        </div>
+
+        <p className="text-[11px] text-muted-foreground leading-relaxed">{wire.sdkInjectedNote}</p>
+
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Tool schema sizes</h3>
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {formatTokens(wire.toolSchemas.totalTokens)} total
+            </span>
+          </div>
+          <div className="rounded-lg border border-border/30 divide-y divide-border/20">
+            {visibleTools.map(tool => (
+              <div key={tool.name} className="flex items-center justify-between gap-3 px-3 py-1.5 text-xs">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-mono truncate">{tool.name}</span>
+                  {tool.isAlias && (
+                    <span className="rounded-full border px-1.5 text-[10px] text-muted-foreground shrink-0">alias</span>
+                  )}
+                  <span className="text-muted-foreground/60 shrink-0">{tool.category}</span>
+                </div>
+                <span className="tabular-nums text-muted-foreground shrink-0">{formatTokens(tool.tokens)}</span>
+              </div>
+            ))}
+          </div>
+          {wire.toolSchemas.tools.length > 25 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs h-7 mt-2"
+              onClick={() => setShowAllTools(v => !v)}
+              data-testid="button-toggle-all-tools"
+            >
+              {showAllTools ? "Show top 25" : `Show all ${wire.toolSchemas.tools.length}`}
+            </Button>
+          )}
+        </div>
       </div>
     </Card>
   );
@@ -723,7 +869,7 @@ export default function ContextPage({ embedded }: { embedded?: boolean } = {}) {
   const includeParam = includeSections.length > 0 ? includeSections.join(",") : "";
   const excludeParam = excludeSections.length > 0 ? excludeSections.join(",") : "";
 
-  const renderedQuery = useQuery<{ rendered: string; metadata: SpineMetadata }>({
+  const renderedQuery = useQuery<{ rendered: string; metadata: SpineMetadata; wirePayload?: ContextWirePayload }>({
     queryKey: ["/api/context/preview/rendered", callType, llmMode, includeParam, excludeParam, debouncedMemoryQuery],
     queryFn: async () => {
       const params = new URLSearchParams({ callType, llmMode });
@@ -793,13 +939,14 @@ export default function ContextPage({ embedded }: { embedded?: boolean } = {}) {
                   <TabsTrigger value="runtime" data-testid="tab-runtime-view">Runtime</TabsTrigger>
                   <TabsTrigger value="instructions" data-testid="tab-instructions-view">Instructions</TabsTrigger>
                   <TabsTrigger value="prompt" data-testid="tab-prompt-view">Rendered Prompt</TabsTrigger>
+                  <TabsTrigger value="wire" data-testid="tab-wire-view">Wire Payload</TabsTrigger>
                   <TabsTrigger value="raw" data-testid="tab-raw-view">Raw</TabsTrigger>
                 </TabsList>
               </div>
             </div>
 
           {renderedQuery.data?.metadata && (
-            <SummaryBar metadata={renderedQuery.data.metadata} />
+            <SummaryBar metadata={renderedQuery.data.metadata} wire={renderedQuery.data.wirePayload} />
           )}
 
             <TabsContent value="runtime" className="mt-0 flex flex-col flex-1 min-h-0">
@@ -838,6 +985,28 @@ export default function ContextPage({ embedded }: { embedded?: boolean } = {}) {
                   rendered={renderedQuery.data.rendered}
                 />
               ) : null}
+            </TabsContent>
+
+            <TabsContent value="wire" className="mt-0 flex flex-col flex-1 min-h-0">
+              {isLoading ? (
+                <Skeleton className="h-full w-full" />
+              ) : renderedQuery.isError ? (
+                <Card>
+                  <div className="py-8 text-center">
+                    <p className="text-sm text-destructive" data-testid="text-wire-error">
+                      Failed to load wire payload.
+                    </p>
+                  </div>
+                </Card>
+              ) : renderedQuery.data?.wirePayload ? (
+                <WirePayloadCard wire={renderedQuery.data.wirePayload} />
+              ) : (
+                <Card>
+                  <div className="py-8 text-center">
+                    <p className="text-sm text-muted-foreground">No wire payload for this render.</p>
+                  </div>
+                </Card>
+              )}
             </TabsContent>
 
             <TabsContent value="raw" className="mt-0 flex flex-col flex-1 min-h-0">
