@@ -1,18 +1,9 @@
 // Use createLogger for logging ONLY
 import type { Express } from "express";
-import { contextBuilder, estimateTokens, estimateTokensFromChars } from "./context-builder";
+import { contextBuilder } from "./context-builder";
 import { getSectionsForCallType, SPINE_SECTIONS, getAllSectionIds } from "./context-spine-config";
-import { getToolSchemas, TOOL_ALIASES } from "./tool-registry";
-import { getCurrentPrincipal } from "./principal-context";
-import { getWireBoundaryCapture } from "./context-wire-capture";
-import type {
-  ContextCallType,
-  LlmMode,
-  ContextRequest,
-  ContextWirePayload,
-  WireToolSchemaEntry,
-  WireBoundaryCaptureView,
-} from "../shared/context-spine";
+import { getInferencePayloadCapture, INFERENCE_PAYLOAD_RETENTION_LIMIT, listInferencePayloadCaptures } from "./inference-payload-capture";
+import type { ContextCallType, LlmMode, ContextRequest } from "../shared/context-spine";
 import { createLogger } from "./log";
 
 const log = createLogger("ContextRoutes");
@@ -26,83 +17,7 @@ function parseCommaSeparated(value: unknown): string[] | undefined {
 const VALID_CALL_TYPES: ContextCallType[] = ["full", "world", "internal", "none"];
 const VALID_LLM_MODES: LlmMode[] = ["text", "voice"];
 
-/**
- * Compose the truthful wire-payload breakdown: the rendered spine plus the tool
- * schema block (reusing the exact `getToolSchemas` the chat path sends) plus the
- * latest real model-boundary capture for the requesting user. The SDK harness and
- * system-reminder envelopes are SDK-injected, so their cost surfaces as the gap
- * between provider-measured input tokens and Mantra's attributable estimate.
- */
-function buildWirePayload(spineTokens: number, renderedChars: number): ContextWirePayload {
-  const schemas = getToolSchemas();
-  const aliasNames = new Set(Object.keys(TOOL_ALIASES));
-  const fullJson = JSON.stringify(schemas);
-
-  const tools: WireToolSchemaEntry[] = schemas
-    .map(schema => {
-      const json = JSON.stringify(schema);
-      return {
-        name: schema.name,
-        category: schema.category,
-        chars: json.length,
-        tokens: estimateTokens(json),
-        isAlias: aliasNames.has(schema.name),
-      };
-    })
-    .sort((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name));
-
-  const toolTotalTokens = estimateTokens(fullJson);
-  const aliasCount = tools.reduce((n, t) => (t.isAlias ? n + 1 : n), 0);
-
-  const principal = getCurrentPrincipal();
-  const raw = getWireBoundaryCapture(
-    principal && principal.actorType === "user" ? principal.userId : null,
-  );
-
-  let capture: WireBoundaryCaptureView | null = null;
-  if (raw) {
-    const systemPromptTokens = estimateTokensFromChars(raw.systemPromptChars);
-    const toolSchemaTokens = estimateTokensFromChars(raw.toolSchemaChars);
-    const conversationTokens = estimateTokensFromChars(raw.conversationChars);
-    const attributableTokens = systemPromptTokens + toolSchemaTokens + conversationTokens;
-    const harnessAndRemindersTokens =
-      raw.providerInputTokens != null
-        ? Math.max(0, raw.providerInputTokens - attributableTokens)
-        : null;
-    capture = {
-      capturedAt: raw.capturedAt,
-      provider: raw.provider,
-      model: raw.model,
-      activity: raw.activity,
-      systemPromptTokens,
-      toolSchemaTokens,
-      conversationTokens,
-      attributableTokens,
-      providerInputTokens: raw.providerInputTokens,
-      providerCacheReadTokens: raw.providerCacheReadTokens,
-      harnessAndRemindersTokens,
-      providerTokensMayBeCumulative: raw.providerTokensMayBeCumulative,
-      systemPromptExcerpt: raw.systemPromptExcerpt,
-      systemPromptExcerptTruncated: raw.systemPromptExcerptTruncated,
-    };
-  }
-
-  return {
-    estimator: "chars/3.5",
-    spine: { tokens: spineTokens, chars: renderedChars },
-    toolSchemas: {
-      count: schemas.length,
-      aliasCount,
-      totalTokens: toolTotalTokens,
-      totalChars: fullJson.length,
-      tools,
-    },
-    estimatedAttributableTokens: spineTokens + toolTotalTokens,
-    capture,
-    sdkInjectedNote:
-      "System-reminder envelopes and the Claude Agent SDK harness are injected at the model boundary by the SDK, not authored in Mantra code. Their real cost appears in the captured call as the gap between provider-measured input tokens and Mantra's attributable estimate.",
-  };
-}
+// Captured inference payload routes below read only concrete provider-bound calls.
 
 export function registerContextRoutes(app: Express) {
   app.get("/api/context/preview", async (req, res) => {
@@ -175,16 +90,33 @@ export function registerContextRoutes(app: Express) {
 
       const spine = await contextBuilder.resolve(request);
       const rendered = contextBuilder.renderToPrompt(spine);
-      const wirePayload = buildWirePayload(spine.metadata.totalTokens, rendered.length);
 
-      res.json({
-        rendered,
-        metadata: spine.metadata,
-        wirePayload,
-      });
+      res.json({ rendered, metadata: spine.metadata });
     } catch (err: any) {
       log.error("rendered preview error:", err);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/context/inference-calls", async (req, res) => {
+    try {
+      const requested = Number.parseInt(String(req.query.limit ?? INFERENCE_PAYLOAD_RETENTION_LIMIT), 10);
+      const captures = await listInferencePayloadCaptures(Number.isFinite(requested) ? requested : INFERENCE_PAYLOAD_RETENTION_LIMIT);
+      res.json({ captures, retentionLimit: INFERENCE_PAYLOAD_RETENTION_LIMIT });
+    } catch (err: any) {
+      log.error("inference payload list error:", err);
+      res.status(err?.status || 500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/context/inference-calls/:id", async (req, res) => {
+    try {
+      const capture = await getInferencePayloadCapture(req.params.id);
+      if (!capture) return res.status(404).json({ error: "Inference payload capture not found" });
+      res.json(capture);
+    } catch (err: any) {
+      log.error("inference payload detail error:", err);
+      res.status(err?.status || 500).json({ error: err.message });
     }
   });
 

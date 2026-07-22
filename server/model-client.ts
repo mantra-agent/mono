@@ -20,6 +20,7 @@ import { createNamedSystemPrincipal } from "./principal";
 import { runWithPrincipal } from "./principal-context";
 import { resolveSessionModelTierOverride } from "./session-model-tier-override";
 import { safeStringify } from "./utils/safe-stringify";
+import { captureInferencePayload } from "./inference-payload-capture";
 
 let _openaiClient: OpenAI | null = null;
 let _anthropicClient: Anthropic | null = null;
@@ -355,6 +356,34 @@ export interface InferenceMetadata {
   requestId?: string;
 }
 
+async function captureProviderDispatch(
+  provider: string,
+  model: string,
+  boundary: string,
+  request: unknown,
+  options: Pick<ChatCompletionOptions | ChatCompletionStreamOptions, "activity" | "metadata">,
+  attempt = 1,
+): Promise<void> {
+  await captureInferencePayload({
+    provider,
+    model,
+    activity: options.activity ?? options.metadata?.activity ?? null,
+    boundary,
+    authority: `Concrete request object handed to ${boundary}`,
+    observableBoundary: `${boundary} immediately before dispatch`,
+    request,
+    excludedSensitiveFields: ["authorization headers", "provider credentials", "AbortSignal"],
+    attempt,
+    metadata: {
+      runId: options.metadata?.runId ?? null,
+      requestId: options.metadata?.requestId ?? null,
+      sessionKey: options.metadata?.sessionKey ?? null,
+    },
+    sessionId: options.metadata?.sessionId ?? null,
+    source: options.metadata?.source ?? null,
+  });
+}
+
 export interface ChatCompletionResult {
   content: string;
   model: string;
@@ -678,6 +707,7 @@ async function openaiCompletion(model: string, options: ChatCompletionOptions): 
 
   const clientRequestId = randomUUID();
   try {
+    await captureProviderDispatch("openai", model, "openai.chat.completions.create", params, options);
     const responsePromise = client.chat.completions.create(params, {
       signal: options.signal,
       maxRetries: 0,
@@ -730,6 +760,7 @@ async function openaiResponsesCompletion(model: string, options: ChatCompletionO
 
   const clientRequestId = randomUUID();
   try {
+    await captureProviderDispatch("openai", model, "openai.responses.create", params, options);
     const responsePromise = client.responses.create(params as any, {
       signal: options.signal,
       maxRetries: 0,
@@ -1389,6 +1420,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
 
     const scope = createCodexAttemptScope(parentSignal);
     try {
+      await captureProviderDispatch("openai-subscription", codexModel, "fetch codex responses", body, options, attempt + 1);
       const response = await fetchCodexAttempt(fetchOptions, scope, codexModel, "completion", attempt, CODEX_COMPLETION_MAX_ATTEMPTS);
       if (!response.ok || !response.body) {
         const text = await response.text().catch(() => "unknown error");
@@ -1624,6 +1656,7 @@ async function anthropicCompletion(model: string, options: ChatCompletionOptions
   const anthropicRequestOptions: Record<string, any> = {};
   if (options.signal) anthropicRequestOptions.signal = options.signal;
 
+  await captureProviderDispatch("anthropic", model, "anthropic.messages.create", params, options);
   const response = await client.messages.create(params, anthropicRequestOptions);
 
   let content = "";
@@ -2047,6 +2080,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
       try {
       let response: Response;
       try {
+        await captureProviderDispatch("openai-subscription", codexModel, "fetch codex responses stream", body, options, attempt + 1);
         response = await fetchCodexAttempt(fetchOptions, scope, codexModel, "stream", attempt, CODEX_STREAM_MAX_ATTEMPTS);
         if (!response.ok || !response.body) {
           const text = await response.text().catch(() => "unknown error");
@@ -2457,6 +2491,7 @@ async function* anthropicStream(model: string, options: ChatCompletionStreamOpti
     }
 
     try {
+      await captureProviderDispatch("anthropic", model, "anthropic.messages.stream", params, options, attempt + 1);
       const stream = client.messages.stream(params, {
         signal: options.signal,
       });
@@ -2596,6 +2631,7 @@ async function* openaiResponsesStream(model: string, options: ChatCompletionStre
     let connectedEmitted = false;
 
     // HTTP dispatch boundary: request build complete, dispatching to OpenAI.
+    await captureProviderDispatch("openai", model, "openai.responses.create stream", params, options);
     yield { type: "request_sent", metadata: { buildMs: Date.now() - start } };
     const dispatchAt = Date.now();
     const responsePromise = client.responses.create(params as any, {
@@ -2787,6 +2823,7 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
 
   try {
     // HTTP dispatch boundary: request build complete, dispatching to OpenAI.
+    await captureProviderDispatch("openai", model, "openai.chat.completions.create stream", params, options);
     yield { type: "request_sent", metadata: { buildMs: Date.now() - buildStart } };
     const dispatchAt = Date.now();
     const responsePromise = client.chat.completions.create(params, {

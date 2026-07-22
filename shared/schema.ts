@@ -337,6 +337,34 @@ export interface ApiCall {
 }
 export type InsertApiCall = z.infer<typeof insertApiCallSchema>;
 
+export const inferencePayloadCaptures = pgTable("inference_payload_captures", {
+  id: uuid("id").primaryKey(),
+  capturedAt: timestamp("captured_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id").notNull(),
+  accountId: text("account_id").notNull(),
+  createdByUserId: text("created_by_user_id").notNull(),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  activity: text("activity"),
+  boundary: text("boundary").notNull(),
+  authority: text("authority").notNull(),
+  observableBoundary: text("observable_boundary").notNull(),
+  request: jsonb("request").$type<unknown>().notNull(),
+  requestChars: integer("request_chars").notNull(),
+  excludedSensitiveFields: jsonb("excluded_sensitive_fields").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  residualLimitation: text("residual_limitation"),
+  attempt: integer("attempt").notNull().default(1),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  sessionId: text("session_id"),
+  source: text("source"),
+}, (table) => [
+  index("idx_inference_payload_owner_captured").on(table.ownerUserId, table.accountId, table.capturedAt),
+  index("idx_inference_payload_session").on(table.sessionId, table.capturedAt),
+]);
+
+export type InferencePayloadCaptureRow = typeof inferencePayloadCaptures.$inferSelect;
+
 // SpawnedIntentionSpec removed — intention system deprecated
 
 export const systemSettings = pgTable("system_settings", {

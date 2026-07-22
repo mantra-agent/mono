@@ -12,7 +12,7 @@ import { createLogger } from "./log";
 import { getModel } from "./model-registry";
 import { getSecretSync } from "./secrets-store";
 import { thinkingConfigKey } from "./thinking-config";
-import { recordWireBoundaryCapture } from "./context-wire-capture";
+import { captureInferencePayload } from "./inference-payload-capture";
 
 const log = createLogger("cli-sdk-adapter");
 
@@ -765,6 +765,24 @@ function buildSdkOptions(
   return sdkOptions;
 }
 
+function safeSdkOptionsForCapture(options: SdkOptions): Record<string, unknown> {
+  return {
+    model: options.model ?? null,
+    systemPrompt: options.systemPrompt ?? null,
+    tools: options.tools ?? null,
+    disallowedTools: options.disallowedTools ?? [],
+    settingSources: options.settingSources ?? [],
+    permissionMode: options.permissionMode ?? null,
+    allowDangerouslySkipPermissions: options.allowDangerouslySkipPermissions ?? false,
+    includePartialMessages: options.includePartialMessages ?? false,
+    persistSession: options.persistSession ?? false,
+    thinking: options.thinking ?? null,
+    effort: options.effort ?? null,
+    maxTurns: options.maxTurns ?? null,
+    mcpServers: options.mcpServers ? Object.keys(options.mcpServers) : [],
+  };
+}
+
 function buildPrompt(messages: Array<{ role: string; content: unknown; toolCallId?: string }>): { systemPrompt: string | undefined; prompt: string } {
   const systemMessages: string[] = [];
   const conversationParts: string[] = [];
@@ -1131,6 +1149,36 @@ export async function* cliSdkStream(
       }
     }
     handoffDoneAt = Date.now();
+    await captureInferencePayload({
+      provider: "claude-cli",
+      model,
+      activity: options.metadata?.activity ?? options.activity ?? null,
+      boundary: "claude-agent-sdk.query",
+      authority: "Application arguments handed to @anthropic-ai/claude-agent-sdk query()",
+      observableBoundary: "query({ prompt, options }) after prompt, MCP tools, and SDK options are finalized",
+      request: {
+        prompt,
+        options: safeSdkOptionsForCapture(sdkOptions),
+        applicationToolDefinitions: toolDefs,
+      },
+      excludedSensitiveFields: [
+        "options.env",
+        "options.pathToClaudeCodeExecutable",
+        "options.stderr",
+        "options.abortController",
+        "options.mcpServers runtime instances",
+      ],
+      residualLimitation: "Claude Agent SDK and Claude Code assemble the downstream Anthropic request, internal harness text, and tool-loop system-reminder envelopes below query(). The installed SDK exposes no provider-request hook, so this capture is the lowest authoritative observable boundary and does not invent those hidden fields.",
+      metadata: {
+        runId: options.runId ?? null,
+        conversationId: options.convId ?? null,
+        poolEligible,
+        poolHit: pooledHit,
+        voiceWarmHit,
+      },
+      sessionId: options.metadata?.sessionId ?? options.convId ?? null,
+      source: options.metadata?.source ?? null,
+    });
     if (poolEligible) {
       const startupFn = (await sdkModulePromise as unknown as { startup?: SdkStartupFn }).startup;
       if (startupFn) void scheduleWarmRefill(pKey, sdkOptions, startupFn);
@@ -1475,22 +1523,8 @@ export async function* cliSdkStream(
       `tokens=${inputTokens}+${outputTokens} cache=${cacheReadTokens}+${cacheWriteTokens}`
     );
 
-    // Non-blocking, ownership-scoped capture of the real outbound wire payload for
-    // the Context viewer. systemPrompt + toolDefs are exactly what was handed to the
-    // SDK; inputTokens is the provider's own measure. The SDK harness and system-
-    // reminder envelopes it injects show up as the gap between inputTokens and this
-    // attributable payload.
-    recordWireBoundaryCapture({
-      provider: "claude-cli",
-      model,
-      activity: options.metadata?.activity ?? null,
-      systemPrompt,
-      tools: toolDefs,
-      conversation: prompt,
-      providerInputTokens: inputTokens || null,
-      providerCacheReadTokens: cacheReadTokens || null,
-      providerTokensMayBeCumulative: usageSource === "assistant.usage",
-    });
+    // The request itself was captured at query() dispatch. Usage remains on the
+    // canonical inference audit row and is secondary to exact request inspection.
 
     yield {
       type: "usage",
@@ -1699,6 +1733,8 @@ export async function cliSdkCompletion(
     temperature: options.temperature,
     toolExecutor: options.toolExecutor,
     thinking: options.thinking,
+    activity: options.activity,
+    metadata: options.metadata,
     routingDecision: options.routingDecision,
     warmPoolLane: options.warmPoolLane,
     signal: options.signal,
