@@ -413,6 +413,129 @@ export async function deprecateRetiredBuiltinSkills(): Promise<void> {
   }
 }
 
+const AUTONOMY_MEETING_PROTOCOL_V15 = `## Meeting-readiness protocol
+
+For each upcoming external or high-prep meeting in the relevant planning window:
+
+1. Inspect canonical meeting metadata for a private agenda and inspect linked artifacts for an existing brief.
+2. Apply closed-loop run-history reconciliation using the meeting event ID, title, date, participants, agenda conversation, linked artifacts, and any prior surfaced result. Treat matching unresolved work as \`already_active\`. Never create parallel conversations or duplicate briefs.
+3. If the agenda is missing and no matching active agenda request exists, start one conversation about the agenda. Use the meeting title, date, participants, People records and interactions, related sessions, goals, projects, decisions, email, and relevant memories to make a concrete first draft. Put the proposed agenda directly in the opening chat message, not in a Library page. Ask Ray to confirm or revise it. Record the conversation and resolution criteria in the ledger.
+4. If an agenda exists but no linked brief exists, create or update one canonical Library brief, link it to the meeting with artifact kind \`brief\`, and surface it once for review. Build the brief from the agenda first, then enrich it with participant context, interactions, related sessions, goals, projects, decisions, email, and relevant memories.
+5. If both agenda and linked brief exist, verify readiness and take no duplicate action. Update an existing brief only when new material evidence changes preparation meaningfully.
+6. Never publish a private Mantra agenda into the shared calendar description. Use meeting metadata for agenda and meeting artifact links for briefs.
+
+The dependency is strict: **missing agenda → agenda conversation → confirmed/stored agenda → linked brief**. A brief must never be created before an agenda exists.`;
+
+const AUTONOMY_MEETING_PROTOCOL_V16 = `## Meeting-readiness protocol
+
+For each upcoming external or high-prep meeting in the relevant planning window:
+
+1. Inspect canonical meeting metadata and resolve its single preparation page from \`agendaLibraryPageId\`. Agenda and brief preparation are sections of that page, never separate artifacts.
+2. Apply closed-loop run-history reconciliation using the meeting event ID, title, date, participants, agenda conversation, canonical preparation page, and any prior surfaced result. Treat matching unresolved work as \`already_active\`. Never create parallel conversations or duplicate pages.
+3. If the agenda is missing and no matching active agenda request exists, start one conversation about the agenda. Use the meeting title, date, participants, People records and interactions, related sessions, goals, projects, decisions, email, and relevant memories to make a concrete first draft. Put the proposed agenda directly in the opening chat message. Ask Ray to confirm or revise it. Record the conversation and resolution criteria in the ledger.
+4. Once the agenda is confirmed, resolve the canonical preparation page. If absent, create one page and claim it through meetings action=\`set_metadata\` with \`agendaLibraryPageId\`. If it exists, update that page. Add briefing context beneath the agenda on the same page and surface it once for review.
+5. If the canonical page already contains the agenda and briefing context, verify readiness and take no duplicate action. Update it only when new material evidence changes preparation meaningfully.
+6. Never publish private Mantra preparation into the shared calendar description. Use meeting metadata for the canonical page. Use \`link_artifact\` only for distinct non-preparation artifacts with an explicit kind such as research, follow_up, or recap.
+
+The dependency is strict: **missing agenda → agenda conversation → confirmed agenda → one canonical preparation page**.`;
+
+/**
+ * Targeted monotonic migration for the live autonomy v1.5 policy. The checked-in
+ * bootstrap fixture is older, so replacing the full definition would erase
+ * closed-loop deduplication and opportunity-management policy. Patch only the
+ * superseded meeting section and version under the same system/unmodified guard.
+ */
+export async function migrateAutonomyCanonicalMeetingPrep(): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const [existing] = await db
+      .select({
+        id: skills.id,
+        author: skills.author,
+        customized: skills.customized,
+        version: skills.version,
+        description: skills.description,
+        process: skills.process,
+        outputSpec: skills.outputSpec,
+        checklist: skills.checklist,
+      })
+      .from(skills)
+      .where(eq(skills.name, "autonomy"));
+    if (!existing || existing.author !== "system" || existing.customized === true) return;
+    const versionOrder = compareSkillVersions(existing.version, "1.6");
+    if (versionOrder === null || versionOrder >= 0) return;
+    if (!existing.process.includes(AUTONOMY_MEETING_PROTOCOL_V15)) {
+      log.warn(`Skipped autonomy canonical prep migration from ${existing.version}: expected v1.5 meeting protocol was not found`);
+      return;
+    }
+
+    const process = existing.process.replace(AUTONOMY_MEETING_PROTOCOL_V15, AUTONOMY_MEETING_PROTOCOL_V16);
+    const description = existing.description
+      .replace("audits meetings for agenda-then-brief readiness", "audits meetings for single-page preparation readiness");
+    const outputSpec = existing.outputSpec
+      .replace("meeting-readiness results showing agenda-before-brief ordering", "meeting-readiness results showing one canonical preparation page");
+    const checklist = (existing.checklist ?? []).map((item: any) => {
+      if (typeof item?.check !== "string") return item;
+      if (item.check.includes("missing agenda → agenda conversation → stored agenda → linked brief")) {
+        return { ...item, check: item.check.replace("missing agenda → agenda conversation → stored agenda → linked brief", "missing agenda → agenda conversation → confirmed agenda → one canonical preparation page") };
+      }
+      if (item.check.includes("single canonical linked meeting brief only after an agenda exists")) {
+        return { ...item, check: "Creates or updates the meeting's single canonical preparation page only after the agenda is confirmed, and continues existing meeting work rather than creating duplicate asks, conversations, or pages" };
+      }
+      return item;
+    });
+
+    const updated = await db
+      .update(skills)
+      .set({ description, process, outputSpec, checklist, version: "1.6", updatedAt: new Date() })
+      .where(and(
+        eq(skills.id, existing.id),
+        eq(skills.author, "system"),
+        eq(skills.customized, false),
+        eq(skills.version, existing.version),
+      ))
+      .returning({ id: skills.id });
+    if (updated.length > 0) {
+      log.info(`Migrated autonomy meeting preparation policy ${existing.version} → 1.6 without replacing newer live content`);
+      return;
+    }
+  }
+}
+
+export async function migrateDailyBriefCanonicalMeetingPrep(): Promise<void> {
+  const [existing] = await db
+    .select({ id: skills.id, author: skills.author, customized: skills.customized, version: skills.version, process: skills.process })
+    .from(skills)
+    .where(eq(skills.name, "brief-daily"));
+  if (!existing || existing.author !== "system" || existing.customized === true) return;
+  const versionOrder = compareSkillVersions(existing.version, "7.7");
+  if (versionOrder === null || versionOrder >= 0) return;
+  if (existing.process.includes("A meeting has one canonical preparation page")) return;
+
+  const meetingPrepMarker = "7. **Meeting prep** (progressive disclosure):";
+  const weatherMarker = "8. **Weather:**";
+  const start = existing.process.indexOf(meetingPrepMarker);
+  const end = existing.process.indexOf(weatherMarker, start);
+  if (start < 0 || end < 0) {
+    log.warn(`Skipped Daily Brief canonical prep migration from ${existing.version}: meeting-prep section was not found`);
+    return;
+  }
+  const replacement = `${meetingPrepMarker}\n   - One-liner: time, title, key attendees\n   - People context only if it changes how Ray should show up\n   - On light days (Tue/Thu), just list the schedule without prep notes\n   - A meeting has one canonical preparation page. Resolve it from meeting metadata. If absent, claim the page with meetings action=set_metadata and agendaLibraryPageId. Update that same page for all agenda and brief preparation. Never create or link a second brief page. Use meetings action=link_artifact only for distinct non-preparation artifacts with an explicit kind such as research, follow_up, or recap.\n\n`;
+  const process = `${existing.process.slice(0, start)}${replacement}${existing.process.slice(end)}`;
+  const updated = await db
+    .update(skills)
+    .set({ process, version: "7.7", updatedAt: new Date() })
+    .where(and(
+      eq(skills.id, existing.id),
+      eq(skills.author, "system"),
+      eq(skills.customized, false),
+      eq(skills.version, existing.version),
+    ))
+    .returning({ id: skills.id });
+  if (updated.length > 0) {
+    log.info(`Migrated Daily Brief meeting preparation policy ${existing.version} → 7.7 without replacing newer live content`);
+  }
+}
+
 export async function migrateSkillProcessUpdates(): Promise<void> {
   const migrations: Array<{ name: string; sentinel: string }> = [
     {

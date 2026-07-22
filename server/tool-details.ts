@@ -252,7 +252,7 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
       delete: { description: "Delete/cancel a calendar event.", requiredParams: ["eventId"], optionalParams: ["accountId", "calendarId"] },
       set_metadata: { description: "Classify a calendar event, link People from attendee emails, and set its private agenda as a Library page. Event types: focus_block, exercise, meeting, planning, admin, personal.", requiredParams: ["googleEventId", "accountId", "calendarId", "eventType"], optionalParams: ["notes", "agendaLibraryPageId", "attendeeEmails", "sharedRoom", "sharedAudioAttendeeEmail"] },
       get_metadata: { description: "Get full metadata for a calendar event including linked tasks, people, and artifacts.", requiredParams: ["googleEventId", "accountId", "calendarId"] },
-      link_artifact: { description: "Link a Library page artifact such as a brief, agenda, research note, follow-up, or recap to a calendar event metadata record.", requiredParams: ["metadataId", "libraryPageId"], optionalParams: ["artifactKind", "title", "source"] },
+      link_artifact: { description: "Link an explicit non-preparation Library artifact to a meeting. Use set_metadata with agendaLibraryPageId for preparation. Legacy agenda/brief calls may only claim or resolve the same canonical page and never replace it.", requiredParams: ["metadataId", "libraryPageId", "artifactKind"], optionalParams: ["title", "source"] },
       unlink_artifact: { description: "Remove a Library artifact link from a calendar event by link record ID.", requiredParams: ["linkId"] },
     },
   },

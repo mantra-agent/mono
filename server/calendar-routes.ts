@@ -11,10 +11,8 @@ import { getTimezone, getDateInTimezone } from "./timezone";
 import { PeopleStorage, peopleStorage } from "./people-storage";
 import { createLogger } from "./log";
 import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, runWithDatabaseTransaction } from "./db";
-import { libraryPages } from "@shared/models/info";
-import { eq } from "drizzle-orm";
 import {
-  getMetadata, setMetadata, getLinkedPeople, linkArtifact, unlinkArtifact, getLinkedArtifacts,
+  getMetadata, getMetadataByIds, setMetadata, getLinkedPeople, linkArtifact, unlinkArtifact, getLinkedArtifacts,
   autoLogMeetingInteractions, EVENT_TYPES, CAPACITY_TYPES, type EventType, type CapacityType,
   setAgentJoin, setMeetingAgendaPage, linkMeetingPerson,
 } from "./calendar-metadata";
@@ -677,7 +675,7 @@ export function registerCalendarRoutes(app: Express): void {
 
   const linkArtifactSchema = z.object({
     libraryPageId: z.string().min(1),
-    artifactKind: z.string().optional(),
+    artifactKind: z.string().trim().min(1),
     title: z.string().optional(),
     source: z.string().optional(),
   });
@@ -691,12 +689,18 @@ export function registerCalendarRoutes(app: Express): void {
         return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
       const { libraryPageId, artifactKind, title, source } = parsed.data;
-      const page = (await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(eq(libraryPages.id, libraryPageId)).limit(1))[0]
-        || (await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(eq(libraryPages.slug, libraryPageId)).limit(1))[0];
-      if (!page) return res.status(404).json({ error: `Library page not found: ${libraryPageId}` });
-      const link = await linkArtifact(metadataId, page.id, artifactKind || "brief", title || page.title, source || "calendar_rest");
+      if (artifactKind === "agenda" || artifactKind === "brief") {
+        const metadata = (await getMetadataByIds([metadataId]))[0];
+        if (!metadata) return res.status(404).json({ error: `Calendar event metadata not found: ${metadataId}` });
+        const page = await setMeetingAgendaPage(metadata, libraryPageId);
+        return res.json({ canonicalPreparationPage: page });
+      }
+      const link = await linkArtifact(metadataId, libraryPageId, artifactKind, title, source || "calendar_rest");
       res.json({ link });
     } catch (error: any) {
+      if (typeof error?.message === "string" && error.message.includes("canonical preparation page")) {
+        return res.status(409).json({ error: error.message });
+      }
       res.status(500).json({ error: error.message });
     }
   });
