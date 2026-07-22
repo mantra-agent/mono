@@ -561,6 +561,27 @@ export const companies = pgTable("companies", {
 
 export type CompanyRow = typeof companies.$inferSelect;
 
+// ── Financial Models (investor-facing business model) ─────────────
+// User-owned. One model per account in v1 (enforced by a partial unique
+// index on account_id). Assumptions are stored as a normalized jsonb blob;
+// shared/models/business-model.ts owns the shape, defaults, and clamps.
+export const financialModels = pgTable("financial_models", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().default("Mantra Model"),
+  assumptions: jsonb("assumptions").notNull().default({}),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+  createdByUserId: text("created_by_user_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  index("idx_financial_models_scope_owner").on(table.scope, table.ownerUserId),
+  index("idx_financial_models_account").on(table.accountId),
+]);
+
+export type FinancialModelRow = typeof financialModels.$inferSelect;
+
 // ── Persons ───────────────────────────────────────────────────────
 export const persons = pgTable("persons", {
   id: text("id").primaryKey(),
