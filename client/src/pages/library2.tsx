@@ -43,9 +43,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { LibraryPageEditor } from "@/pages/library/library-components";
+import { LibraryPageEditor, PageEmoji } from "@/pages/library/library-components";
 import type { LibraryPage, LibraryPageFull } from "@/pages/library/types";
-import { useVaults, type Vault } from "@/hooks/use-vaults";
+import { type Vault } from "@/hooks/use-vaults";
+import { useVaultSections } from "@/pages/library/use-vault-sections";
 
 interface Library2IndexDestination {
   id: string;
@@ -75,6 +76,20 @@ interface Library2Placement {
   createdAt: string;
   page: LibraryPage;
 }
+
+/**
+ * One discriminated selection field for the Library2 list. A section click
+ * carries the exact placement identity (so Remove targets the right placement);
+ * a Recent click carries a page id (Recent shows the same pages as Library1,
+ * which may not be imported into Library2 yet).
+ */
+type Library2Selection =
+  | { kind: "placement"; placementId: string }
+  | { kind: "page"; pageId: string };
+
+const SECTION_LABEL_CLASS =
+  "mt-2 flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground";
+const QUIET_ROW_CLASS = "px-2 py-1.5 text-sm text-muted-foreground";
 
 type ImportSource =
   | { type: "page" | "section"; pageId: string }
@@ -363,19 +378,8 @@ function Library2Header({ onImport }: { onImport: () => void }) {
 
 export default function Library2Page() {
   const { toast } = useToast();
-  const {
-    visibleVaultIds: visibleVaultIdList,
-    isLoading: isVaultVisibilityLoading,
-  } = useVaults();
-  const visibleVaultIds = useMemo(
-    () =>
-      isVaultVisibilityLoading ? null : new Set(visibleVaultIdList),
-    [isVaultVisibilityLoading, visibleVaultIdList],
-  );
   const [importOpen, setImportOpen] = useState(false);
-  const [selectedPlacementId, setSelectedPlacementId] = useState<string | null>(
-    null,
-  );
+  const [selection, setSelection] = useState<Library2Selection | null>(null);
   const [search, setSearch] = useState("");
   const [expandedVaultIds, setExpandedVaultIds] = useState<Set<string>>(
     () => new Set(),
@@ -383,6 +387,30 @@ export default function Library2Page() {
   const [expandedDestinationIds, setExpandedDestinationIds] = useState<
     Set<string>
   >(() => new Set());
+  const { data: pages = [] } = useQuery<LibraryPage[]>({
+    queryKey: ["/api/info/library"],
+  });
+
+  // Vault sections + Recent come from the shared hook so Library2 matches
+  // Library1's vault membership, ordering, visibility, and recency behavior.
+  // Library2 keeps its own index-destination layout inside each vault section,
+  // so `sections` (raw page-tree grouping) is intentionally unused here — only
+  // `visibleVaults` and `recent` are shared.
+  const {
+    visibleVaults,
+    recent,
+    isLoading: isVaultLoading,
+  } = useVaultSections({ pages, recentLimit: 5 });
+
+  // Single visibility source of truth: the shared hook's resolved visible-vault
+  // set. Null while loading preserves the "show all until known" fallback, and
+  // toggling a vault off in the top bar reactively removes its section,
+  // placements, recent entries, and import destinations with no reload.
+  const visibleVaultIds = useMemo(
+    () => (isVaultLoading ? null : new Set(visibleVaults.map((v) => v.id))),
+    [isVaultLoading, visibleVaults],
+  );
+
   const { data: placements = [], isLoading } = useQuery<Library2Placement[]>({
     queryKey: ["/api/library2/placements"],
   });
@@ -394,37 +422,57 @@ export default function Library2Page() {
       !visibleVaultIds || visibleVaultIds.has(destination.vault.id),
   );
   const visiblePlacements = placements.filter(
-    (placement) =>
-      !visibleVaultIds || visibleVaultIds.has(placement.vaultId),
+    (placement) => !visibleVaultIds || visibleVaultIds.has(placement.vaultId),
   );
-  const { data: pages = [] } = useQuery<LibraryPage[]>({
-    queryKey: ["/api/info/library"],
-  });
-  const selected =
-    visiblePlacements.find(
-      (placement) => placement.placementId === selectedPlacementId,
-    ) ?? null;
+
+  // Resolve the discriminated selection into the page to load and the placement
+  // (if any) whose Remove action applies. A Recent page with no placement still
+  // opens read/edit; it just has no "Remove from Library2".
+  const activePlacement = useMemo<Library2Placement | null>(() => {
+    if (!selection) return null;
+    if (selection.kind === "placement") {
+      return (
+        visiblePlacements.find(
+          (placement) => placement.placementId === selection.placementId,
+        ) ?? null
+      );
+    }
+    return (
+      visiblePlacements.find(
+        (placement) => placement.page.id === selection.pageId,
+      ) ?? null
+    );
+  }, [selection, visiblePlacements]);
+
+  const activePageId = useMemo(() => {
+    if (!selection) return null;
+    if (selection.kind === "page") return selection.pageId;
+    return activePlacement?.page.id ?? null;
+  }, [selection, activePlacement]);
+
   const { data: selectedPageFull, isLoading: isPageLoading } =
     useQuery<LibraryPageFull>({
-      queryKey: ["/api/info/library", selected?.page.id],
-      enabled: Boolean(selected),
+      queryKey: ["/api/info/library", activePageId],
+      enabled: Boolean(activePageId),
     });
   const isMobile = useIsMobile();
 
   useEffect(() => {
-    if (destinations.length === 0) return;
+    if (visibleVaults.length === 0) return;
     setExpandedVaultIds((current) =>
-      current.size > 0
-        ? current
-        : new Set(destinations.map((destination) => destination.vault.id)),
+      current.size > 0 ? current : new Set(visibleVaults.map((v) => v.id)),
     );
+  }, [visibleVaults]);
+
+  useEffect(() => {
+    if (destinations.length === 0) return;
     setExpandedDestinationIds((current) =>
       current.size > 0
         ? current
         : new Set(
             destinations.flatMap((destination) =>
-              destination.destinations.map((indexDestination) =>
-                indexDestination.id,
+              destination.destinations.map(
+                (indexDestination) => indexDestination.id,
               ),
             ),
           ),
@@ -442,7 +490,7 @@ export default function Library2Page() {
     mutationFn: async (placementId: string) =>
       apiRequest("DELETE", `/api/library2/placements/${placementId}`),
     onSuccess: () => {
-      setSelectedPlacementId(null);
+      setSelection(null);
       queryClient.invalidateQueries({
         queryKey: ["/api/library2/placements"],
       });
@@ -457,6 +505,7 @@ export default function Library2Page() {
   });
 
   const searchTerm = search.trim().toLowerCase();
+  const isSearching = searchTerm.length > 0;
   const grouped = destinations
     .map((destination) => {
       return {
@@ -495,6 +544,18 @@ export default function Library2Page() {
     })
     .filter((destination) => destination.destinations.length > 0);
 
+  const groupedByVaultId = useMemo(
+    () => new Map(grouped.map((group) => [group.vault.id, group])),
+    [grouped],
+  );
+
+  // Every visible vault gets a header (including empty ones). During search,
+  // only vaults that still have matching placements are shown, matching
+  // Library1's "hide empty sections while searching" behavior.
+  const renderedVaults = isSearching
+    ? visibleVaults.filter((vault) => groupedByVaultId.has(vault.id))
+    : visibleVaults;
+
   const toggleInSet = (
     setter: Dispatch<SetStateAction<Set<string>>>,
     id: string,
@@ -507,8 +568,8 @@ export default function Library2Page() {
     });
   };
 
-  const showList = !isMobile || !selected;
-  const showEditor = !isMobile || Boolean(selected);
+  const showList = !isMobile || !activePageId;
+  const showEditor = !isMobile || Boolean(activePageId);
 
   return (
     <div className="flex h-full min-w-0 overflow-hidden bg-background">
@@ -541,115 +602,178 @@ export default function Library2Page() {
                 </button>
               )}
             </div>
-            {isLoading ? (
+            {isLoading || isVaultLoading ? (
               <div className="flex justify-center py-12">
                 <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
               </div>
-            ) : grouped.length === 0 ? (
-              <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                {searchTerm ? "No matching pages." : "No pages in Library2."}
-              </div>
             ) : (
-              grouped.map((destination) => {
-                const vaultExpanded = expandedVaultIds.has(
-                  destination.vault.id,
-                );
-                return (
-                  <div key={destination.vault.id} className="mb-1 min-w-0">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        toggleInSet(setExpandedVaultIds, destination.vault.id)
-                      }
-                      className="flex w-full min-w-0 items-center gap-1 rounded-md px-2 py-1.5 text-left text-sm font-medium text-foreground hover:bg-accent/70"
-                    >
-                      {vaultExpanded ? (
-                        <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                      ) : (
-                        <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-                      )}
-                      <span className="truncate">{destination.vault.name}</span>
-                    </button>
-                    {vaultExpanded &&
-                      destination.destinations.map((indexDestination) => {
-                        const destinationExpanded =
-                          expandedDestinationIds.has(indexDestination.id);
-                        const indent = 16 + indexDestination.depth * 16;
-                        return (
-                          <div key={indexDestination.id} className="min-w-0">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                toggleInSet(
-                                  setExpandedDestinationIds,
-                                  indexDestination.id,
-                                )
-                              }
-                              className="flex min-w-0 items-center gap-1 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent/70 hover:text-foreground"
-                              style={{
-                                marginLeft: indent,
-                                width: `calc(100% - ${indent}px)`,
-                              }}
+              <>
+                {!isSearching && (
+                  <div
+                    className="mb-1 min-w-0"
+                    data-testid="library2-recent-section"
+                  >
+                    <div className={SECTION_LABEL_CLASS}>
+                      <span className="truncate">Recent</span>
+                    </div>
+                    {recent.length === 0 ? (
+                      <div className={QUIET_ROW_CLASS}>Nothing recent yet.</div>
+                    ) : (
+                      recent.map((page) => (
+                        <button
+                          key={page.id}
+                          type="button"
+                          onClick={() =>
+                            setSelection({ kind: "page", pageId: page.id })
+                          }
+                          className={cn(
+                            "flex w-full min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent/50",
+                            activePageId === page.id && "bg-accent",
+                          )}
+                          data-testid={`library2-recent-${page.id}`}
+                        >
+                          <PageEmoji emoji={page.emoji} size="xs" />
+                          <span className="min-w-0 flex-1 truncate text-left">
+                            {page.title || "Untitled"}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+                {renderedVaults.length === 0 ? (
+                  <div className={QUIET_ROW_CLASS}>
+                    {isSearching ? "No matching pages." : "No vaults."}
+                  </div>
+                ) : (
+                  renderedVaults.map((vault) => {
+                    const group = groupedByVaultId.get(vault.id);
+                    const vaultExpanded = expandedVaultIds.has(vault.id);
+                    return (
+                      <div key={vault.id} className="mb-1 min-w-0">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            toggleInSet(setExpandedVaultIds, vault.id)
+                          }
+                          className="flex w-full min-w-0 items-center gap-1 rounded-md px-2 py-1.5 text-left text-sm font-medium text-foreground hover:bg-accent/70"
+                          data-testid={`library2-vault-section-${vault.id}`}
+                        >
+                          {vaultExpanded ? (
+                            <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                          ) : (
+                            <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                          )}
+                          {vault.icon ? (
+                            <span
+                              className="text-xs leading-none"
+                              aria-hidden="true"
                             >
-                              {destinationExpanded ? (
-                                <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                              ) : (
-                                <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-                              )}
-                              <span className="truncate">
-                                {indexDestination.title}
-                              </span>
-                            </button>
-                            {destinationExpanded &&
-                              indexDestination.placements.map((placement) => {
-                                const pageIndent = indent + 24;
-                                return (
+                              {vault.icon}
+                            </span>
+                          ) : null}
+                          <span className="truncate">{vault.name}</span>
+                        </button>
+                        {vaultExpanded &&
+                          (!group ? (
+                            <div
+                              className={QUIET_ROW_CLASS}
+                              style={{ marginLeft: 16 }}
+                            >
+                              No pages yet.
+                            </div>
+                          ) : (
+                            group.destinations.map((indexDestination) => {
+                              const destinationExpanded =
+                                expandedDestinationIds.has(indexDestination.id);
+                              const indent = 16 + indexDestination.depth * 16;
+                              return (
+                                <div
+                                  key={indexDestination.id}
+                                  className="min-w-0"
+                                >
                                   <button
-                                    key={placement.placementId}
                                     type="button"
                                     onClick={() =>
-                                      setSelectedPlacementId(
-                                        placement.placementId,
+                                      toggleInSet(
+                                        setExpandedDestinationIds,
+                                        indexDestination.id,
                                       )
                                     }
-                                    className={cn(
-                                      "flex min-w-0 items-center rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-accent/70",
-                                      selectedPlacementId ===
-                                        placement.placementId && "bg-accent",
-                                    )}
+                                    className="flex min-w-0 items-center gap-1 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent/70 hover:text-foreground"
                                     style={{
-                                      marginLeft: pageIndent,
-                                      width: `calc(100% - ${pageIndent}px)`,
+                                      marginLeft: indent,
+                                      width: `calc(100% - ${indent}px)`,
                                     }}
                                   >
+                                    {destinationExpanded ? (
+                                      <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                                    ) : (
+                                      <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                                    )}
                                     <span className="truncate">
-                                      {placement.page.title || "Untitled"}
+                                      {indexDestination.title}
                                     </span>
                                   </button>
-                                );
-                              })}
-                          </div>
-                        );
-                      })}
-                  </div>
-                );
-              })
+                                  {destinationExpanded &&
+                                    indexDestination.placements.map(
+                                      (placement) => {
+                                        const pageIndent = indent + 24;
+                                        return (
+                                          <button
+                                            key={placement.placementId}
+                                            type="button"
+                                            onClick={() =>
+                                              setSelection({
+                                                kind: "placement",
+                                                placementId:
+                                                  placement.placementId,
+                                              })
+                                            }
+                                            className={cn(
+                                              "flex min-w-0 items-center rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-accent/70",
+                                              activePlacement?.placementId ===
+                                                placement.placementId &&
+                                                "bg-accent",
+                                            )}
+                                            style={{
+                                              marginLeft: pageIndent,
+                                              width: `calc(100% - ${pageIndent}px)`,
+                                            }}
+                                          >
+                                            <span className="truncate">
+                                              {placement.page.title ||
+                                                "Untitled"}
+                                            </span>
+                                          </button>
+                                        );
+                                      },
+                                    )}
+                                </div>
+                              );
+                            })
+                          ))}
+                      </div>
+                    );
+                  })
+                )}
+              </>
             )}
           </ScrollArea>
         </div>
       )}
       {showEditor && (
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          {selected && (isPageLoading || !selectedPageFull) ? (
+          {activePageId && (isPageLoading || !selectedPageFull) ? (
             <div className="flex flex-1 items-center justify-center">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
-          ) : selected && selectedPageFull ? (
+          ) : activePageId && selectedPageFull ? (
             <LibraryPageEditor
-              selectedId={selected.page.id}
+              selectedId={activePageId}
               selectedPage={selectedPageFull}
               pages={pages}
-              library2PlacementId={selected.placementId}
+              library2PlacementId={activePlacement?.placementId}
               onRemoveFromLibrary2={(id) => removeMutation.mutate(id)}
             />
           ) : (
