@@ -198,7 +198,7 @@ export async function ensureMilestonesSchema(pool: ConnectionPool): Promise<void
     await client.query(`COMMENT ON COLUMN projects.milestones IS 'DEPRECATED: canonical milestones live in milestones table; remove after one release, target 2026-08-05'`);
     await client.query(`COMMENT ON TABLE milestones IS 'Canonical project milestones. Numeric id is project-local and unique with project_id.'`);
     await client.query("COMMIT");
-    log("milestones schema convergence complete", "migration");
+    log.log("milestones schema convergence complete");
   } catch (error) {
     try {
       await client.query("ROLLBACK");
