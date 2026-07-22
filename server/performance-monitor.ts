@@ -2,6 +2,7 @@
 import os from "os";
 import { getHeapUsageInfo } from "./memory-watchdog";
 import type { Request, Response, NextFunction } from "express";
+import { SUPERVISOR_HEALTH_PATH } from "./supervisor-health-contract";
 import { createLogger } from "./log";
 
 const log = createLogger("PerformanceMonitor");
@@ -111,7 +112,7 @@ function normalizeRoute(path: string): string {
 export function apiTimingMiddleware(req: Request, res: Response, next: NextFunction) {
   if (!req.path.startsWith("/api")) return next();
   if (req.path === "/api/diagnostics/performance") return next();
-  if (req.path === "/api/health") return next();
+  if (req.path === "/api/health" || req.path === SUPERVISOR_HEALTH_PATH) return next();
 
   requestCount++;
 

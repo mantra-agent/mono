@@ -1,6 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createLogger } from "./log";
 import { getPrincipal, type Principal } from "./principal";
+import { SUPERVISOR_HEALTH_PATH } from "./supervisor-health-contract";
 
 const log = createLogger("api-policy");
 
@@ -23,6 +24,7 @@ interface ApiPolicyEvaluation {
 
 const PUBLIC_RULES: ApiPolicyRule[] = [
   { classification: "public", exact: ["/api/health", "/api/version", "/api/boot-status", "/api/boot/status", "/api/client-error", "/api/auth/status", "/api/auth/automation-login"], reason: "health, boot, and authentication bootstrap" },
+  { classification: "public", methods: ["GET"], exact: [SUPERVISOR_HEALTH_PATH], reason: "process-local capability health probe" },
   { classification: "public", prefixes: ["/api/public", "/api/meeting-output"], reason: "explicit public capability-token or acquisition route" },
   { classification: "public", exact: ["/api/auth/login", "/api/auth/logout", "/api/auth/setup", "/api/auth/register", "/api/auth/reset"], reason: "authentication and setup flow" },
   { classification: "public", pattern: /^\/api\/auth\/(?:invite|reset)\/[^/]+$/, reason: "single-use authentication capability redemption" },
