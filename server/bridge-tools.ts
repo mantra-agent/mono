@@ -11474,19 +11474,44 @@ const workspaceTools: Record<string, ToolHandler> = {
     const filePath = args.path;
     if (!filePath) return { result: "Missing file path", error: true };
 
-    const resolved = resolveWorkspacePath(filePath);
-    if (!resolved) return { result: `Path escapes workspace: ${filePath}`, error: true };
-    if (!await pathExists(resolved)) return { result: `File not found: ${filePath}`, error: true };
-
     try {
-      const s = await stat(resolved);
-      if (s.isDirectory()) return { result: `Path is a directory, not a file: ${filePath}`, error: true };
+      let source: string | Buffer;
+      if (filePath.startsWith("/objects/")) {
+        const { requireCurrentUserPrincipal } = await import("./principal-context");
+        const principal = requireCurrentUserPrincipal();
+        const objectPath = filePath.split("?")[0];
+        const objectFile = await objectStorageService.getObjectEntityFile(objectPath, principal);
+        const canRead = await objectStorageService.canAccessObjectEntity({
+          principal,
+          objectFile,
+          requestedPermission: ObjectPermission.READ,
+        });
+        if (!canRead) return { result: `Access denied: ${filePath}`, error: true };
+
+        const metadata = await objectFile.getMetadata();
+        const maxDocxBytes = 25 * 1024 * 1024;
+        if (typeof metadata.contentLength === "number" && metadata.contentLength > maxDocxBytes) {
+          return { result: `DOCX exceeds the 25 MB read limit: ${filePath}`, error: true };
+        }
+        const [buffer] = await objectFile.download();
+        if (buffer.length > maxDocxBytes) {
+          return { result: `DOCX exceeds the 25 MB read limit: ${filePath}`, error: true };
+        }
+        source = buffer;
+      } else {
+        const resolved = resolveWorkspacePath(filePath);
+        if (!resolved) return { result: `Path escapes workspace: ${filePath}`, error: true };
+        if (!await pathExists(resolved)) return { result: `File not found: ${filePath}`, error: true };
+        const s = await stat(resolved);
+        if (s.isDirectory()) return { result: `Path is a directory, not a file: ${filePath}`, error: true };
+        source = resolved;
+      }
 
       const mode = args.mode || "text";
 
       if (mode === "rich" || mode === "annotated") {
         const { readDocxRich, formatRichContent } = await import("./docx-utils");
-        const content = await readDocxRich(resolved);
+        const content = await readDocxRich(source);
         const formatted = formatRichContent(content, mode === "annotated" ? "annotated" : "structured");
 
         const summary: string[] = [];
@@ -11503,7 +11528,7 @@ const workspaceTools: Record<string, ToolHandler> = {
       }
 
       const { readDocxRich } = await import("./docx-utils");
-      const content = await readDocxRich(resolved);
+      const content = await readDocxRich(source);
       const text = content.paragraphs
         .map(p => p.runs.map(r => r.text).join(""))
         .join("\n");

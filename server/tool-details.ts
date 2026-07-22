@@ -104,11 +104,11 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     },
   },
   docx: {
-    description: "Read, write, edit, and clone Word documents (.docx) in the scratch workspace. Actions: read, write, edit, clone.",
-    whenToUse: "When working with Word documents — reading content, creating new documents, editing existing ones, or using a document as a style template.",
-    example: 'Read: { "action": "read", "path": "report.docx" }\nWrite: { "action": "write", "path": "output.docx", "content": "# Title\\nContent..." }\nEdit: { "action": "edit", "path": "report.docx", "replacements": [{"find": "old", "replace": "new"}] }',
+    description: "Read uploaded or workspace Word documents (.docx), and write, edit, or clone documents in the scratch workspace. Actions: read, write, edit, clone.",
+    whenToUse: "When working with Word documents, including uploaded chat attachments. Read uploaded attachments directly from the exact /objects/uploads/<id>.docx path in attachment metadata.",
+    example: 'Read upload: { "action": "read", "path": "/objects/uploads/<id>.docx" }\nRead workspace file: { "action": "read", "path": "report.docx" }\nWrite: { "action": "write", "path": "output.docx", "content": "# Title\\nContent..." }\nEdit: { "action": "edit", "path": "report.docx", "replacements": [{"find": "old", "replace": "new"}] }',
     actions: {
-      read: { description: "Read a .docx file. Modes: text (plain text, default), rich (structured with metadata), annotated (inline markdown with comments/changes).", requiredParams: ["path"], optionalParams: ["mode"] },
+      read: { description: "Read a workspace .docx file or an uploaded attachment at its exact /objects/uploads/<id>.docx path. Modes: text (plain text, default), rich (structured with metadata), annotated (inline markdown with comments/changes).", requiredParams: ["path"], optionalParams: ["mode"] },
       write: { description: "Create a .docx from plain text or markdown. Lines starting with # become Word headings.", requiredParams: ["path", "content"] },
       edit: { description: "Find and replace text in a .docx while preserving all original formatting, styles, headers, footers, and images.", requiredParams: ["path", "replacements"], optionalParams: ["output_path"] },
       clone: { description: "Create a new .docx using a source document as a style template — preserves styles, fonts, page layout while replacing body content.", requiredParams: ["source_path", "output_path", "content"] },

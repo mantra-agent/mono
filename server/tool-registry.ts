@@ -303,14 +303,14 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   docx: {
-    description: "Read, write, edit, and clone Word documents (.docx) in the scratch workspace.",
+    description: "Read uploaded or workspace Word documents (.docx), and write, edit, or clone documents in the scratch workspace. For uploaded attachments, pass the exact /objects/uploads/<id>.docx path from attachment metadata.",
     category: "file",
 
     parameters: {
       type: "object",
       properties: {
         action: { type: "string", enum: ["read", "write", "edit", "clone"], description: "Action to perform" },
-        path: { type: "string", description: "File path (for read/write/edit)" },
+        path: { type: "string", description: "Workspace file path (for read/write/edit), or the exact /objects/uploads/<id>.docx attachment path (for read)" },
         mode: { type: "string", enum: ["text", "rich", "annotated"], description: "Read mode (for read, default 'text')" },
         content: { type: "string", description: "Content to write (for write/clone)" },
         output_path: { type: "string", description: "Output path (for edit/clone)" },

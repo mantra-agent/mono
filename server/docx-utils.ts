@@ -170,9 +170,17 @@ function isListItem(pPr: any[]): boolean {
   return false;
 }
 
-export async function readDocxRich(filePath: string): Promise<RichDocxContent> {
-  const fileBuffer = await readFile(filePath);
+export async function readDocxRich(source: string | Buffer): Promise<RichDocxContent> {
+  const fileBuffer = Buffer.isBuffer(source) ? source : await readFile(source);
   const zip = await JSZip.loadAsync(fileBuffer);
+  const maxUncompressedBytes = 100 * 1024 * 1024;
+  const uncompressedBytes = Object.values(zip.files).reduce((total, entry) => {
+    const size = (entry as typeof entry & { _data?: { uncompressedSize?: number } })._data?.uncompressedSize;
+    return total + (typeof size === "number" ? size : 0);
+  }, 0);
+  if (uncompressedBytes > maxUncompressedBytes) {
+    throw new Error("DOCX uncompressed content exceeds the 100 MB read limit");
+  }
   const parser = makeParser();
 
   const commentsMap = new Map<string, DocxComment>();
