@@ -1697,7 +1697,7 @@ export class MemoryVnextClaimStorage {
           jsonb_build_object(
             'lastMaintainedAt', ${decayedAt},
             'elapsedPeriods', ${input?.elapsedPeriods ?? 1},
-            'intervalDays', ${input?.intervalDays ?? null},
+            'intervalDays', ${input?.intervalDays ?? null}::integer,
             'delta', ${boundedDelta}
           ),
           true

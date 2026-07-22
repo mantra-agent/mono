@@ -81,6 +81,7 @@ const TIER_PRIORITY: Record<AdmissionTier, number> = {
 
 export class RunAdmissionController {
   private slots = new Map<string, AdmissionSlot>();
+  private suspendedSlots = new Map<string, AdmissionSlot>();
   private queue: QueuedRequest[] = [];
   private state: AdmissionState = "idle";
   private cooldownTimer: ReturnType<typeof setTimeout> | null = null;
@@ -109,6 +110,10 @@ export class RunAdmissionController {
 
   getSlots(): AdmissionSlot[] {
     return Array.from(this.slots.values());
+  }
+
+  getSuspendedSlots(): AdmissionSlot[] {
+    return Array.from(this.suspendedSlots.values());
   }
 
   getQueueDepth(): number {
@@ -382,17 +387,22 @@ export class RunAdmissionController {
     const slot = this.slots.get(runId);
     if (!slot) return fn();
 
+    this.suspendedSlots.set(runId, slot);
     this.releaseSlot(runId);
     log.debug(`Admission slot suspended: ${runId} tier=${slot.tier} lineageId=${slot.lineageId ?? "none"}`);
     try {
       return await fn();
     } finally {
-      await this.requestSlot(slot.tier, runId, {
-        sessionId: slot.sessionId,
-        activity: slot.activity,
-        lineageId: slot.lineageId,
-      });
-      log.debug(`Admission slot resumed: ${runId} tier=${slot.tier} lineageId=${slot.lineageId ?? "none"}`);
+      try {
+        await this.requestSlot(slot.tier, runId, {
+          sessionId: slot.sessionId,
+          activity: slot.activity,
+          lineageId: slot.lineageId,
+        });
+        log.debug(`Admission slot resumed: ${runId} tier=${slot.tier} lineageId=${slot.lineageId ?? "none"}`);
+      } finally {
+        this.suspendedSlots.delete(runId);
+      }
     }
   }
 
@@ -546,6 +556,7 @@ export class RunAdmissionController {
     }
     this.queue = [];
     this.slots.clear();
+    this.suspendedSlots.clear();
   }
 
   reset(): void {
