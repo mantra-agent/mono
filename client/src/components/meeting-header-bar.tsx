@@ -18,7 +18,7 @@ import {
   Loader2,
   LogOut,
   Mail,
-  MoreVertical,
+  MoreHorizontal,
   Radio,
   RotateCcw,
 } from "lucide-react";
@@ -38,6 +38,7 @@ import { createReferenceRef } from "@shared/references";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { ExpandableLibraryPage } from "@/components/library/inline-library-page";
 import { MeetingSpeakerAssignments } from "@/components/meeting-speaker-assignments";
+import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 
 const log = createLogger("MeetingHeaderBar");
 
@@ -261,10 +262,11 @@ export function MeetingHeaderBar({
   const showDistributionFailed =
     (recap?.distributionStatus === "failed" || recap?.distributionStatus === "blocked")
     && !recap.distributionSkipped;
+  const hasRecapArtifact = recap?.status === "ready" && Boolean(recap.pageId && recap.pageSlug);
   // The unified mapping list derives visible humans from participants plus recognition streams.
 
   return (
-    <div className="border-b border-border bg-card/60">
+    <div className="my-1 min-w-0 overflow-hidden rounded-md border border-border/60 bg-muted/20">
       {/* ── Main info row ── */}
       <div
         className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2"
@@ -307,7 +309,7 @@ export function MeetingHeaderBar({
                   aria-label="Meeting controls"
                   disabled={busy}
                 >
-                  <MoreVertical className="h-3.5 w-3.5" />
+                  <MoreHorizontal className="h-3.5 w-3.5" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-52">
@@ -369,12 +371,20 @@ export function MeetingHeaderBar({
 
       {/* ── Agenda ── */}
       {meeting.agendaPage ? (
-        <div className="border-t border-border/20 px-4 py-2">
-          <ExpandableLibraryPage page={meeting.agendaPage} />
+        <div className="border-t border-border/20">
+          <HierarchyTreeRow continues={hasRecapArtifact}>
+            <div className="px-2 py-1.5">
+              <ExpandableLibraryPage page={meeting.agendaPage} />
+            </div>
+          </HierarchyTreeRow>
         </div>
       ) : meeting.agenda ? (
-        <div className="border-t border-border/20 px-4 py-2 text-sm text-muted-foreground whitespace-pre-line">
-          {meeting.agenda}
+        <div className="border-t border-border/20">
+          <HierarchyTreeRow continues={hasRecapArtifact}>
+            <div className="px-2 py-1.5 text-sm text-muted-foreground whitespace-pre-line">
+              {meeting.agenda}
+            </div>
+          </HierarchyTreeRow>
         </div>
       ) : null}
 
@@ -390,68 +400,70 @@ export function MeetingHeaderBar({
       )}
 
       {/* ── Recap ready row: expandable page + distribution controls ── */}
-      {recap?.status === "ready" && recap.pageId && recap.pageSlug && (
-        <div
-          className="px-4 py-2"
-          data-testid="card-meeting-recap-ready"
-        >
-          <ExpandableLibraryPage
-            page={{
-              id: recap.pageId,
-              slug: recap.pageSlug,
-              title: recap.pageTitle || "Meeting Recap",
-            }}
-            readOnly
-          />
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-          {/* Distribution: preparing */}
-          {showDistributionSpinner && (
-            <span
-              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground"
-              data-testid="chip-distribution-drafting"
-            >
-              <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-              Preparing draft emails…
-            </span>
-          )}
-
-          {/* Distribution: failed or blocked with retry button */}
-          {showDistributionFailed && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 gap-1.5 text-xs border-destructive/30 text-destructive hover:bg-destructive/10"
-              onClick={() => retryDistribution.mutate()}
-              disabled={retryDistribution.isPending}
-              data-testid="button-retry-distribution"
-              title={recap.distributionError ?? "Retry distribution"}
-            >
-              {retryDistribution.isPending ? (
+      {hasRecapArtifact && recap?.pageId && recap.pageSlug && (
+        <HierarchyTreeRow continues={false}>
+          <div
+            className="border-t border-border/20 px-2 py-1.5"
+            data-testid="card-meeting-recap-ready"
+          >
+            <ExpandableLibraryPage
+              page={{
+                id: recap.pageId,
+                slug: recap.pageSlug,
+                title: recap.pageTitle || "Meeting Recap",
+              }}
+              readOnly
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+            {/* Distribution: preparing */}
+            {showDistributionSpinner && (
+              <span
+                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground"
+                data-testid="chip-distribution-drafting"
+              >
                 <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-              ) : (
-                <AlertCircle className="h-3 w-3 shrink-0" />
-              )}
-              <span>
-                {recap.distributionStatus === "blocked"
-                  ? "Draft emails blocked"
-                  : "Draft emails failed"}
+                Preparing draft emails…
               </span>
-              <span className="text-xs text-destructive/70">Retry</span>
-            </Button>
-          )}
+            )}
 
-          {/* Distribution: skipped — absence of drafts is never silent */}
-          {recap.distributionStatus === "ready" && recap.distributionSkipped && (
-            <span
-              className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground"
-              data-testid="chip-distribution-skipped"
-            >
-              <Mail className="h-3 w-3 shrink-0" />
-              No recipients resolved — no drafts created
-            </span>
-          )}
+            {/* Distribution: failed or blocked with retry button */}
+            {showDistributionFailed && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-xs border-destructive/30 text-destructive hover:bg-destructive/10"
+                onClick={() => retryDistribution.mutate()}
+                disabled={retryDistribution.isPending}
+                data-testid="button-retry-distribution"
+                title={recap.distributionError ?? "Retry distribution"}
+              >
+                {retryDistribution.isPending ? (
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                ) : (
+                  <AlertCircle className="h-3 w-3 shrink-0" />
+                )}
+                <span>
+                  {recap.distributionStatus === "blocked"
+                    ? "Draft emails blocked"
+                    : "Draft emails failed"}
+                </span>
+                <span className="text-xs text-destructive/70">Retry</span>
+              </Button>
+            )}
+
+            {/* Distribution: skipped — absence of drafts is never silent */}
+            {recap.distributionStatus === "ready" && recap.distributionSkipped && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground"
+                data-testid="chip-distribution-skipped"
+              >
+                <Mail className="h-3 w-3 shrink-0" />
+                No recipients resolved — no drafts created
+              </span>
+            )}
+            </div>
           </div>
-        </div>
+        </HierarchyTreeRow>
       )}
 
       {/* ── Recap failed ── */}

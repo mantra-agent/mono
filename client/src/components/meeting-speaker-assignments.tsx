@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
+import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import type {
   MeetingAudioSourceMode,
   MeetingParticipant,
@@ -369,49 +370,59 @@ export function MeetingSpeakerAssignments({
     queryKey: ["/api/people"],
     enabled: assignableSpeakers.length > 0,
   });
+  const hasArtifactChildren = Boolean(
+    meeting.agendaPage
+    || meeting.agenda
+    || (meeting.recap?.status === "ready" && meeting.recap.pageId && meeting.recap.pageSlug),
+  );
   if (rows.length === 0) return null;
 
   return (
     <div className="border-t border-border/20" data-testid="meeting-speaker-assignments">
-      {rows.map((row) => {
+      {rows.map((row, index) => {
         const participant = row.participant;
         const hasStableSpeaker = !!participant?.key;
+        const continues = index < rows.length - 1 || hasArtifactChildren;
         return (
-          <div
-            key={row.id}
-            className="border-b border-border/20 last:border-b-0 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center"
-            data-testid={`person-speaker-row-${row.id.replace(/[^a-zA-Z0-9_-]+/g, "-")}`}
-          >
-            <div className="min-w-0 border-b border-border/10 sm:border-b-0 sm:border-r">
-              {hasStableSpeaker && participant ? (
-                <PersonAssignmentControl
-                  participant={participant}
-                  sessionId={sessionId}
-                  people={data?.people || []}
-                  speakerLabel={speakerDisplayLabel(participant)}
-                />
-              ) : participant ? (
-                <ExpectedPerson participant={participant} />
-              ) : (
-                <div className="flex min-h-11 items-center gap-2 px-3 text-sm text-muted-foreground">
-                  <UserRound className="h-3.5 w-3.5 shrink-0" />
-                  <span>Unresolved person</span>
-                </div>
+          <HierarchyTreeRow key={row.id} continues={continues}>
+            <div
+              className={cn(
+                "sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center",
+                continues && "border-b border-border/20",
               )}
-            </div>
-            {participant ? (
-              <SpeakerState participant={participant} stream={row.stream} />
-            ) : null}
-            {meeting.botStatus === "live" && row.stream ? (
-              <div className="px-1 pb-1 sm:pb-0 sm:pr-2">
-                <AudioSourcePolicyControl
-                  sessionId={sessionId}
-                  stream={row.stream}
-                  desiredMode={meeting.audioSourcePolicies?.[row.stream.streamKey]?.mode || row.stream.sourcePolicy}
-                />
+              data-testid={`person-speaker-row-${row.id.replace(/[^a-zA-Z0-9_-]+/g, "-")}`}
+            >
+              <div className="min-w-0 border-b border-border/10 sm:border-b-0 sm:border-r">
+                {hasStableSpeaker && participant ? (
+                  <PersonAssignmentControl
+                    participant={participant}
+                    sessionId={sessionId}
+                    people={data?.people || []}
+                    speakerLabel={speakerDisplayLabel(participant)}
+                  />
+                ) : participant ? (
+                  <ExpectedPerson participant={participant} />
+                ) : (
+                  <div className="flex min-h-11 items-center gap-2 px-3 text-sm text-muted-foreground">
+                    <UserRound className="h-3.5 w-3.5 shrink-0" />
+                    <span>Unresolved person</span>
+                  </div>
+                )}
               </div>
-            ) : null}
-          </div>
+              {participant ? (
+                <SpeakerState participant={participant} stream={row.stream} />
+              ) : null}
+              {meeting.botStatus === "live" && row.stream ? (
+                <div className="px-1 pb-1 sm:pb-0 sm:pr-2">
+                  <AudioSourcePolicyControl
+                    sessionId={sessionId}
+                    stream={row.stream}
+                    desiredMode={meeting.audioSourcePolicies?.[row.stream.streamKey]?.mode || row.stream.sourcePolicy}
+                  />
+                </div>
+              ) : null}
+            </div>
+          </HierarchyTreeRow>
         );
       })}
     </div>
