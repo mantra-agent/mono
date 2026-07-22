@@ -10,9 +10,11 @@ A Railway runtime may execute only its deployed entrypoint. Never launch `server
 
 GitNexus has one runtime authority: `gitnexus-runtime.ts`. Development may resolve the installed package, while deployed production must resolve only the build-owned `dist/gitnexus-runtime/gitnexus` artifact. That artifact is graph-only: LadybugDB graph ingestion and Cypher are required, native FTS is optional and must never be installed, loaded, or indexed in the production process. Code search composes graph/Cypher retrieval with Mantra's PostgreSQL semantic index.
 
-## Meeting speaker identity boundary
+## Meeting identity and recap sender boundary
 
 Meeting identity is session-owned state. Calendar organizer and attendee email/People links define the canonical roster; Recall participant IDs, display names, email, and host status are transport evidence that binds stable speaker keys to that roster. Provider labels never become canonical identity when stronger calendar or manual evidence exists. Owner-authenticated manual assignment may correct any stable speaker key, rewrites persisted transcript speaker metadata through `chat-file-storage.ts`, and reconciles recap participant references plus People interactions. Later provider retries must never overwrite `identitySource: "manual"`.
+
+Recap sender authority is the principal-visible connected Google account identified by the exact calendar event's `accountId`, because that account fetched the event and owns Mantra's Gmail action. Google `event.organizer` is event authorship only. An external organizer remains a recipient; the connected sender account is removed from recipients. Failed recap distribution retries remain owner-authenticated and replay-safe through `distributeRecap(...)`. Explicit ensure actions may retry immediately; speaker correction retries only after every stable speaker has a canonical Person identity, preventing the first successful draft from freezing partial attribution.
 
 ## Library2 placement boundary
 

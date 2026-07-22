@@ -16,7 +16,8 @@
  *     from `recap.ts` and runs inside the same `runWithPrincipal` context so
  *     all writes are user-owned, not system orphans.
  */
-import { db } from "../db";
+import { createHash } from "crypto";
+import { db, pool } from "../db";
 import { meetingRecapDistributions } from "@shared/schema";
 import { libraryPages } from "@shared/models/info";
 import {
@@ -55,6 +56,34 @@ const libraryScopeColumns = {
 // Bound the compact, editable recap email body.
 const EMAIL_BODY_CHAR_LIMIT = 30_000;
 
+function distributionLockKey(sessionId: string): bigint {
+  const hash = createHash("sha256").update(`meeting-recap-distribution:${sessionId}`).digest();
+  let key = 0n;
+  for (let index = 0; index < 8; index += 1) {
+    key = (key << 8n) | BigInt(hash[index]);
+  }
+  return key & 0x7fffffffffffffffn;
+}
+
+async function withDistributionLock<T>(
+  sessionId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect();
+  const key = distributionLockKey(sessionId);
+  try {
+    await client.query("SELECT pg_advisory_lock($1::bigint)", [key.toString()]);
+    return await operation();
+  } finally {
+    try {
+      await client.query("SELECT pg_advisory_unlock($1::bigint)", [key.toString()]);
+    } catch {
+      log.warn(`Failed to release recap distribution lock session=${sessionId}`);
+    }
+    client.release();
+  }
+}
+
 // ─── Public entry point ───────────────────────────────────────────────────────
 
 /**
@@ -63,6 +92,36 @@ const EMAIL_BODY_CHAR_LIMIT = 30_000;
  * 
  * CHANGE 3: Trap principal mismatch early to detect ALS leaks.
  */
+export type RecapDistributionRecoveryOutcome =
+  | "not_ready"
+  | "not_failed"
+  | "waiting_for_speaker_identity"
+  | "retried";
+
+/**
+ * Recover a failed distribution after owner-authenticated speaker correction.
+ * Wait for every stable speaker to have canonical identity so the first
+ * successful draft cannot freeze partially corrected participant attribution.
+ */
+export async function recoverRecapDistributionAfterSpeakerResolution(
+  sessionId: string,
+  meeting: MeetingSessionMeta,
+  principal: Principal,
+): Promise<RecapDistributionRecoveryOutcome> {
+  const recap = meeting.recap;
+  if (!recap || recap.status !== "ready") return "not_ready";
+  if (recap.distributionStatus !== "blocked" && recap.distributionStatus !== "failed") {
+    return "not_failed";
+  }
+  const hasUnresolvedStableSpeaker = meeting.participants.some(
+    (participant) => !!participant.key && !participant.personId,
+  );
+  if (hasUnresolvedStableSpeaker) return "waiting_for_speaker_identity";
+
+  await distributeRecap(sessionId, meeting, recap, principal, { retryFailed: true });
+  return "retried";
+}
+
 export async function distributeRecap(
   sessionId: string,
   meeting: MeetingSessionMeta,
@@ -94,6 +153,7 @@ export async function distributeRecap(
 
   log.info(`Starting recap distribution for session ${sessionId}`);
 
+  return withDistributionLock(sessionId, async () => {
   try {
     // Idempotency guard: drafted/sent work is immutable. Explicit retry only
     // clears failed rows so the same canonical path can recreate drafts.
@@ -150,6 +210,7 @@ export async function distributeRecap(
         log.error(`Failed to persist distribution failure for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`),
       );
   }
+  });
 }
 
 async function markDistributionBlocked(
@@ -199,27 +260,33 @@ async function runDistribution(
   recap: MeetingRecapMeta,
   principal: Principal,
 ): Promise<void> {
-  // 1. Mark in-progress so MeetingHeaderBar can show spinner.
+  const {
+    distributionError: _previousDistributionError,
+    distributionSkipped: _previousDistributionSkipped,
+    ...attemptRecap
+  } = recap;
+
+  // 1. Mark in-progress and clear stale terminal state from the prior attempt.
   await chatStorage.updateMeetingMeta(sessionId, {
-    recap: { ...recap, distributionStatus: "drafting" },
+    recap: { ...attemptRecap, distributionStatus: "drafting", draftIds: [] },
   });
 
-  // 2. Resolve the exact calendar event and its organizer-owned Gmail account.
+  // 2. Resolve the exact calendar event and its connected source account.
   // Gmail sends as the authenticated account; array order is never sender authority.
   const emailContext = await resolveMeetingEmailContext(meeting);
   const attendees = emailContext
-    ? await resolveRecipients(meeting, emailContext.event, emailContext.organizerAccount.email)
+    ? await resolveRecipients(meeting, emailContext.event, emailContext.senderAccount.email)
     : [];
 
   if (!emailContext) {
-    log.warn(`Meeting organizer Gmail account could not be resolved for session ${sessionId}; blocking distribution`);
+    log.warn(`Meeting calendar source account could not be resolved for session ${sessionId}; blocking distribution`);
     await markDistributionBlocked(
       sessionId,
-      recap,
+      attemptRecap,
       principal,
       [],
-      "Meeting organizer Gmail account is not connected",
-      "organizer_gmail_not_connected",
+      "Meeting calendar account is not connected to Gmail",
+      "calendar_account_not_connected",
     );
     return;
   }
@@ -228,7 +295,7 @@ async function runDistribution(
     log.warn(`No calendar invitees resolved for session ${sessionId}; blocking distribution`);
     await markDistributionBlocked(
       sessionId,
-      recap,
+      attemptRecap,
       principal,
       [],
       "Meeting invitees could not be resolved from the calendar event",
@@ -238,17 +305,17 @@ async function runDistribution(
   }
 
   log.info(
-    `Distributing recap for session ${sessionId} from organizerAccount=${emailContext.organizerAccount.id} to ${attendees.length} attendee(s)`,
+    `Distributing recap for session ${sessionId} from calendarAccount=${emailContext.senderAccount.id} to ${attendees.length} attendee(s)`,
   );
 
-  // 3. The authenticated organizer Gmail account is the sender. Never fall
-  // back to another connected identity because that changes authorship.
-  const gmailAccountId = emailContext.organizerAccount.id;
+  // 3. The authenticated account that fetched this exact event is the sender.
+  // Google event organizer describes event authorship, not Mantra authorship.
+  const gmailAccountId = emailContext.senderAccount.id;
 
   // 4. Render the user-owned canonical Library recap into the editable draft.
   const subjectMeetingName = meeting.title?.trim() || recap.pageTitle?.replace(/^Meeting:\s*/i, "").trim() || "Our meeting";
   const subject = `Meeting recap: ${subjectMeetingName}`;
-  const body = await buildEmailContent(recap, meeting, attendees, emailContext.event, principal);
+  const body = await buildEmailContent(attemptRecap, meeting, attendees, emailContext.event, principal);
 
   // 5. Record one tracking row per invitee, then create one editable draft
   // addressed to the complete invitee set. The draft is the human decision
@@ -277,6 +344,9 @@ async function runDistribution(
   }
 
   const draftIds: string[] = [];
+  let draftError: string | null = distributionRowIds.length > 0
+    ? null
+    : "Recap recipient records could not be created";
   if (distributionRowIds.length > 0) {
     try {
       const draft = await emailDraftStorage.create(principal, {
@@ -300,6 +370,7 @@ async function runDistribution(
       log.debug(`Gmail recap draft created for ${attendees.length} invitee(s) (draftId=${draft.id})`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      draftError = msg.slice(0, 500);
       log.warn(`Recap draft creation failed for session ${sessionId}: ${msg}`);
       await db
         .update(meetingRecapDistributions)
@@ -313,9 +384,26 @@ async function runDistribution(
     }
   }
 
-  // 6. Finalize session meta.
+  // 6. Finalize with one truthful terminal discriminant.
+  if (draftError || draftIds.length === 0) {
+    const detail = draftError || "Recap draft was not created";
+    await chatStorage.updateMeetingMeta(sessionId, {
+      recap: {
+        ...attemptRecap,
+        distributionStatus: "failed",
+        distributionError: detail,
+        draftIds: [],
+      },
+    });
+    eventBus.publish({
+      category: "agent",
+      event: "meeting:recap_distribution_failed",
+      payload: { sessionId, reason: "draft_not_created", attendeeCount: attendees.length },
+    });
+    return;
+  }
   await chatStorage.updateMeetingMeta(sessionId, {
-    recap: { ...recap, distributionStatus: "ready", draftIds },
+    recap: { ...attemptRecap, distributionStatus: "ready", draftIds },
   });
 
   // 7. Surface the draft through the same canonical session-message
@@ -363,7 +451,7 @@ interface ResolvedAttendee {
 
 interface MeetingEmailContext {
   event: CalendarEvent;
-  organizerAccount: GmailAccount;
+  senderAccount: GmailAccount;
 }
 
 async function resolveMeetingEmailContext(
@@ -380,20 +468,18 @@ async function resolveMeetingEmailContext(
       meeting.providerEventId,
     );
     const accounts = await listGmailAccounts();
-    const organizerEmail = event.organizer?.email?.trim().toLowerCase();
-    let organizerAccount = organizerEmail
-      ? accounts.find((account) => account.email.trim().toLowerCase() === organizerEmail)
-      : undefined;
-    if (!organizerAccount && event.organizer?.self) {
-      organizerAccount = accounts.find((account) => account.id === event.accountId);
-    }
-    if (!organizerAccount) {
+    const accountEmail = event.accountEmail.trim().toLowerCase();
+    const senderAccount = accounts.find((account) => account.id === event.accountId)
+      || (accountEmail
+        ? accounts.find((account) => account.email.trim().toLowerCase() === accountEmail)
+        : undefined);
+    if (!senderAccount) {
       log.warn(
-        `Calendar organizer has no connected Gmail account event=${event.id} calendarAccount=${event.accountId}`,
+        `Calendar source account has no connected Gmail identity event=${event.id} calendarAccount=${event.accountId}`,
       );
       return null;
     }
-    return { event, organizerAccount };
+    return { event, senderAccount };
   } catch (error) {
     log.warn(
       `Meeting email context resolution failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -409,7 +495,7 @@ async function resolveMeetingEmailContext(
 async function resolveRecipients(
   meeting: MeetingSessionMeta,
   event: CalendarEvent,
-  organizerEmail: string,
+  senderEmail: string,
 ): Promise<ResolvedAttendee[]> {
   const emailMap = new Map<string, ResolvedAttendee>();
   for (const invitee of event.attendees ?? []) {
@@ -450,14 +536,15 @@ async function resolveRecipients(
     );
   }
 
-  const normalizedOrganizer = organizerEmail.trim().toLowerCase();
-  if (isValidEmail(normalizedOrganizer) && !emailMap.has(normalizedOrganizer)) {
+  const normalizedOrganizer = event.organizer?.email?.trim().toLowerCase();
+  if (normalizedOrganizer && isValidEmail(normalizedOrganizer) && !emailMap.has(normalizedOrganizer)) {
     emailMap.set(normalizedOrganizer, {
       email: normalizedOrganizer,
       name: event.organizer?.displayName?.trim() || undefined,
     });
   }
 
+  emailMap.delete(senderEmail.trim().toLowerCase());
   return [...emailMap.values()];
 }
 
@@ -498,10 +585,8 @@ async function buildEmailContent(
       ? `${attendee.name} <${attendee.email}>`
       : attendee.email)
     .join(", ");
-  const organizerEmail = event.organizer?.email?.trim().toLowerCase();
   const greetingNames = [...new Set(
     attendees
-      .filter((attendee) => attendee.email !== organizerEmail)
       .map((attendee) => firstName(attendee.name))
       .filter((name): name is string => !!name),
   )];
