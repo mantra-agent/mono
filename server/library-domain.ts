@@ -18,7 +18,7 @@ export type LibraryStructuralRole = (typeof LIBRARY_STRUCTURAL_ROLES)[number];
 
 export const MANTRA_LIBRARY_VAULT_NAME = "Mantra";
 export const CANONICAL_LIBRARY_INDEX_BOOTSTRAP_MARKDOWN =
-  "# Library Index\n\n## Entities\n\n## Concepts\n\n## Synthesis\n\nThis semantic catalog lists compiled Wiki pages only. It is intentionally empty until ingest creates or updates Wiki pages.";
+  "# Library Index\n\nThis vault has no approved Index sections yet.";
 
 const log = createLogger("LibraryDomain");
 

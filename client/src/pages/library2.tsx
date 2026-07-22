@@ -45,7 +45,7 @@ import {
 } from "@/components/ui/select";
 import { LibraryPageEditor } from "@/pages/library/library-components";
 import type { LibraryPage, LibraryPageFull } from "@/pages/library/types";
-import type { Vault } from "@/hooks/use-vaults";
+import { useVaults, type Vault } from "@/hooks/use-vaults";
 
 interface Library2IndexDestination {
   id: string;
@@ -92,17 +92,23 @@ function importKey(
 function ImportDialog({
   open,
   onOpenChange,
+  visibleVaultIds,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  visibleVaultIds: Set<string> | null;
 }) {
   const { toast } = useToast();
   const { data: pages = [] } = useQuery<LibraryPage[]>({
     queryKey: ["/api/info/library"],
   });
-  const { data: destinations = [] } = useQuery<Library2VaultDestination[]>({
+  const { data: destinationData = [] } = useQuery<Library2VaultDestination[]>({
     queryKey: ["/api/library2/destinations"],
   });
+  const destinations = destinationData.filter(
+    (destination) =>
+      !visibleVaultIds || visibleVaultIds.has(destination.vault.id),
+  );
   const [sourceType, setSourceType] = useState<"page" | "section" | "vault">(
     "page",
   );
@@ -357,6 +363,15 @@ function Library2Header({ onImport }: { onImport: () => void }) {
 
 export default function Library2Page() {
   const { toast } = useToast();
+  const {
+    visibleVaultIds: visibleVaultIdList,
+    isLoading: isVaultVisibilityLoading,
+  } = useVaults();
+  const visibleVaultIds = useMemo(
+    () =>
+      isVaultVisibilityLoading ? null : new Set(visibleVaultIdList),
+    [isVaultVisibilityLoading, visibleVaultIdList],
+  );
   const [importOpen, setImportOpen] = useState(false);
   const [selectedPlacementId, setSelectedPlacementId] = useState<string | null>(
     null,
@@ -371,14 +386,22 @@ export default function Library2Page() {
   const { data: placements = [], isLoading } = useQuery<Library2Placement[]>({
     queryKey: ["/api/library2/placements"],
   });
-  const { data: destinations = [] } = useQuery<Library2VaultDestination[]>({
+  const { data: destinationData = [] } = useQuery<Library2VaultDestination[]>({
     queryKey: ["/api/library2/destinations"],
   });
+  const destinations = destinationData.filter(
+    (destination) =>
+      !visibleVaultIds || visibleVaultIds.has(destination.vault.id),
+  );
+  const visiblePlacements = placements.filter(
+    (placement) =>
+      !visibleVaultIds || visibleVaultIds.has(placement.vaultId),
+  );
   const { data: pages = [] } = useQuery<LibraryPage[]>({
     queryKey: ["/api/info/library"],
   });
   const selected =
-    placements.find(
+    visiblePlacements.find(
       (placement) => placement.placementId === selectedPlacementId,
     ) ?? null;
   const { data: selectedPageFull, isLoading: isPageLoading } =
@@ -441,7 +464,7 @@ export default function Library2Page() {
         destinations: destination.destinations
           .map((indexDestination) => ({
             ...indexDestination,
-            placements: placements.filter((placement) => {
+            placements: visiblePlacements.filter((placement) => {
               if (
                 placement.vaultId !== destination.vault.id ||
                 (searchTerm &&
@@ -636,7 +659,11 @@ export default function Library2Page() {
           )}
         </div>
       )}
-      <ImportDialog open={importOpen} onOpenChange={setImportOpen} />
+      <ImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        visibleVaultIds={visibleVaultIds}
+      />
     </div>
   );
 }
