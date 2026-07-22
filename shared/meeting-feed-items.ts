@@ -2,6 +2,12 @@ import type { SimpleFeedItem, SimpleSection, SimpleSourceRef } from "./models/si
 import { createReferenceRef } from "./references";
 import { sourceRefsToReferenceRefs } from "./simple-references";
 
+export interface MeetingAttendeePromotion {
+  eventId: string;
+  accountId: string;
+  calendarId: string;
+}
+
 export interface MeetingPersonChildInput {
   key: string;
   section: SimpleSection;
@@ -12,6 +18,7 @@ export interface MeetingPersonChildInput {
   personId?: string | null;
   profileSummary?: string | null;
   lastInteractionContext?: string | null;
+  promotion?: MeetingAttendeePromotion | null;
 }
 
 export interface MeetingArtifactChildInput {
@@ -24,6 +31,24 @@ export interface MeetingArtifactChildInput {
   source?: string | null;
   summary?: string | null;
   oneLiner?: string | null;
+}
+
+export function formatMeetingInviteeName(displayName: string | null | undefined, email: string): string {
+  const source = displayName?.trim() || email.split("@")[0]?.replace(/[._]+/g, " ") || email;
+  return source
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .map(word => {
+      if (!word || (!/^[a-z]+(?:[-'][a-z]+)*$/i.test(word))) return word;
+      if (word !== word.toLowerCase() && word !== word.toUpperCase()) return word;
+      return word
+        .toLowerCase()
+        .split(/([-'])/)
+        .map(part => part === "-" || part === "'" ? part : `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+        .join("");
+    })
+    .join(" ");
 }
 
 export function createMeetingPersonChild(input: MeetingPersonChildInput): SimpleFeedItem {
@@ -46,6 +71,7 @@ export function createMeetingPersonChild(input: MeetingPersonChildInput): Simple
       personId: input.personId ?? null,
       profileSummary: input.profileSummary ?? null,
       lastInteractionContext: input.lastInteractionContext ?? null,
+      promotion: input.promotion ?? null,
     },
   };
 }
