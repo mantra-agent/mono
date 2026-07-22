@@ -24,6 +24,7 @@ import {
   Heart,
   Home,
   Lightbulb,
+  LineChart,
   Mail,
   Megaphone,
   Newspaper,
@@ -110,6 +111,13 @@ const navSections: NavSection[] = [
       { title: "Goals", url: "/goals", icon: Target, titleTone: "muted" },
       { title: "Decisions", url: "/decisions", icon: Scale },
       { title: "Strategy", url: "/strategy", icon: Swords },
+    ],
+  },
+  {
+    label: "Business",
+    defaultOpen: false,
+    items: [
+      { title: "Model", url: "/business/model", icon: LineChart },
     ],
   },
   {

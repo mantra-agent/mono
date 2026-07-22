@@ -5680,6 +5680,26 @@ export async function runSchemaBootstrap(
     );
   });
 
+  await heal("financial models domain", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS financial_models (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL DEFAULT 'Mantra Model',
+        assumptions JSONB NOT NULL DEFAULT '{}'::jsonb,
+        scope TEXT NOT NULL DEFAULT 'user',
+        owner_user_id TEXT,
+        account_id TEXT,
+        created_by_user_id TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_financial_models_scope_owner ON financial_models(scope, owner_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_financial_models_account ON financial_models(account_id)`);
+    // One model per account in v1: enforce structurally so concurrent get-or-create cannot duplicate.
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_financial_models_account ON financial_models(account_id) WHERE account_id IS NOT NULL`);
+  });
+
   // Backfill media items from S3 — idempotent, safe to run on every startup
   try {
     const { backfillMediaFromStorage } = await import("./media/media-storage");
