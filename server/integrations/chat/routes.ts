@@ -2192,11 +2192,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         model: chatModel,
         runId: diagnosticRunId,
       });
-      journal("model_info", {
-        model: chatModel,
-        autoTier: selectedAutoTier || undefined,
-        persona: assistantDraft?.persona,
-      });
       chatRunLifecycle.assertCurrent(lease);
       let assistantDraftLastCheckpoint = 0;
 
