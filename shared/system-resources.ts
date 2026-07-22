@@ -43,6 +43,7 @@ export interface ExecutorRunRow {
   model: string | null;
   activity: string | null;
   ageMs: number;
+  admitted: boolean;
   aborted: boolean;
 }
 
@@ -64,6 +65,7 @@ export interface AdmissionResource {
   tierCounts: Record<string, number>;
   queuedByTier: Record<string, number>;
   slots: AdmissionSlotRow[];
+  suspendedSlots: AdmissionSlotRow[];
 }
 
 export interface ZombieResource {

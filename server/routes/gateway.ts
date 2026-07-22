@@ -309,6 +309,7 @@ export async function registerGatewayRoutes(app: Express) {
       const slow = getSlowQueryStats();
       const runs = agentExecutor.getActiveRuns();
       const slots = admissionController.getSlots();
+      const suspendedSlots = admissionController.getSuspendedSlots();
       const tierCounts = admissionController.getTierCounts();
       const queuedByTier = admissionController.getQueuedByTier();
       const queueDepth = admissionController.getQueueDepth();
@@ -321,15 +322,15 @@ export async function registerGatewayRoutes(app: Express) {
       const transportMetrics = getRealtimeTransportMetrics();
       const sessionMetrics = sessionManager.getSubscriptionMetrics();
 
-      const slotRunIds = new Set(slots.map(s => s.runId));
+      const accountedRunIds = new Set([
+        ...slots.map((slot) => slot.runId),
+        ...suspendedSlots.map((slot) => slot.runId),
+      ]);
       let divergence = 0;
       const divergenceParts: string[] = [];
-      for (const r of runs) {
-        if (!r.aborted && !slotRunIds.has(r.runId)) {
-          divergence++;
-        }
-      }
-      if (divergence > 0) divergenceParts.push(`${divergence} executor run(s) without admission slot`);
+      const orphanRuns = runs.filter((run) => run.admitted && !run.aborted && !accountedRunIds.has(run.runId));
+      divergence += orphanRuns.length;
+      if (orphanRuns.length > 0) divergenceParts.push(`${orphanRuns.length} admitted executor run(s) without admission ownership`);
       if (zombies.active > 0 && runs.filter(r => r.aborted).length < zombies.active) {
         const delta = zombies.active - runs.filter(r => r.aborted).length;
         divergence += delta;
@@ -366,6 +367,7 @@ export async function registerGatewayRoutes(app: Express) {
             model: r.model ?? null,
             activity: r.activity ?? null,
             ageMs: now - r.startedAt,
+            admitted: r.admitted,
             aborted: !!r.aborted,
           })),
         },
@@ -379,6 +381,12 @@ export async function registerGatewayRoutes(app: Express) {
             tier: s.tier,
             ageMs: now - s.grantedAt,
             yieldRequested: s.yieldRequested,
+          })),
+          suspendedSlots: suspendedSlots.map((slot) => ({
+            runId: slot.runId,
+            tier: slot.tier,
+            ageMs: now - slot.grantedAt,
+            yieldRequested: slot.yieldRequested,
           })),
         },
         zombies: { active: zombies.active, peak: zombies.peak },
@@ -462,23 +470,31 @@ export async function registerGatewayRoutes(app: Express) {
 
       const activeRuns = agentExecutor.getActiveRuns();
       const slots = admissionController.getSlots();
+      const suspendedSlots = admissionController.getSuspendedSlots();
       const tierCounts = admissionController.getTierCounts();
       const zombies = getZombieMetrics();
 
       const runIds = new Set(activeRuns.map(r => r.runId));
-      const slotIds = new Set(slots.map(s => s.runId));
+      const accountedRunIds = new Set([
+        ...slots.map((slot) => slot.runId),
+        ...suspendedSlots.map((slot) => slot.runId),
+      ]);
       const slotsWithoutRuns = slots.filter(s => !runIds.has(s.runId)).map(s => s.runId);
-      const runsWithoutSlots = activeRuns.filter(r => !slotIds.has(r.runId)).map(r => r.runId);
+      const suspensionsWithoutRuns = suspendedSlots.filter((slot) => !runIds.has(slot.runId)).map((slot) => slot.runId);
+      const runsWithoutOwnership = activeRuns
+        .filter((run) => run.admitted && !accountedRunIds.has(run.runId))
+        .map((run) => run.runId);
 
       const divergence = {
         // Slots we are still holding for runs the executor has already forgotten.
         // In a healthy world this is empty; non-empty means a leak the way #853
         // describes — admission says busy, executor says nothing is running.
         slotsWithoutActiveRun: slotsWithoutRuns,
-        // Runs the executor knows about that have no admission slot. Should also
-        // be empty under the new ordering (drain → release → delete) but is
-        // briefly populated during the post-abort drain window.
-        runsWithoutAdmissionSlot: runsWithoutSlots,
+        // Admitted runs must own either an active permit or an explicit
+        // blocking-child suspension. Anything else is true accounting drift.
+        admittedRunsWithoutOwnership: runsWithoutOwnership,
+        // Suspensions owned by runs the executor has already forgotten.
+        suspendedSlotsWithoutActiveRun: suspensionsWithoutRuns,
         // Zombies past slot release. Should be 0 under the new contract; if not,
         // residual CLI subprocesses outlived their drain grace.
         zombiesActive: zombies.active,
@@ -509,6 +525,13 @@ export async function registerGatewayRoutes(app: Express) {
             sessionId: s.sessionId,
             activity: s.activity,
           })),
+          suspendedSlots: suspendedSlots.map((slot) => ({
+            runId: slot.runId,
+            tier: slot.tier,
+            ageMs: Date.now() - slot.grantedAt,
+            sessionId: slot.sessionId,
+            activity: slot.activity,
+          })),
         },
         zombies,
         pool: {
@@ -519,6 +542,8 @@ export async function registerGatewayRoutes(app: Express) {
         divergence,
         healthy:
           divergence.slotsWithoutActiveRun.length === 0 &&
+          divergence.suspendedSlotsWithoutActiveRun.length === 0 &&
+          divergence.admittedRunsWithoutOwnership.length === 0 &&
           divergence.zombiesActive === 0,
       });
     } catch (error: unknown) {

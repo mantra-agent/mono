@@ -10241,12 +10241,16 @@ ${refs}` : ""),
       try {
         const { admissionController } = await import("./run-admission");
         const slots = admissionController.getSlots();
+        const suspendedSlots = admissionController.getSuspendedSlots();
         if (slots.length === 0) {
           parts.push(`**Admission Slots:** none`);
         } else {
           const now = Date.now();
           const summary = slots.map(s => `${s.runId.slice(0, 8)}(${s.tier},${Math.round((now - s.grantedAt) / 1000)}s${s.yieldRequested ? ",yielding" : ""})`).join(", ");
           parts.push(`**Admission Slots:** ${slots.length} — ${summary}`);
+        }
+        if (suspendedSlots.length > 0) {
+          parts.push(`**Suspended Admission:** ${suspendedSlots.length} — ${suspendedSlots.map((slot) => `${slot.runId.slice(0, 8)}(${slot.tier})`).join(", ")}`);
         }
       } catch { parts.push("**Admission Slots:** unavailable"); }
 
@@ -10262,12 +10266,16 @@ ${refs}` : ""),
         const { getZombieMetrics } = await import("./cli-sdk-adapter");
         const runs = agentExecutor.getActiveRuns();
         const slots = admissionController.getSlots();
+        const suspendedSlots = admissionController.getSuspendedSlots();
         const zombies = getZombieMetrics();
-        const slotIds = new Set(slots.map(s => s.runId));
+        const accountedRunIds = new Set([
+          ...slots.map((slot) => slot.runId),
+          ...suspendedSlots.map((slot) => slot.runId),
+        ]);
         let drift = 0;
         const driftParts: string[] = [];
-        const orphanRuns = runs.filter(r => !r.aborted && !slotIds.has(r.runId)).length;
-        if (orphanRuns > 0) { drift += orphanRuns; driftParts.push(`${orphanRuns} run(s) without slot`); }
+        const orphanRuns = runs.filter((run) => run.admitted && !run.aborted && !accountedRunIds.has(run.runId)).length;
+        if (orphanRuns > 0) { drift += orphanRuns; driftParts.push(`${orphanRuns} admitted run(s) without ownership`); }
         const abortedCount = runs.filter(r => r.aborted).length;
         if (zombies.active > abortedCount) {
           const delta = zombies.active - abortedCount;
