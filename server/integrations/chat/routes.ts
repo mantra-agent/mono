@@ -75,8 +75,8 @@ const chatLog = createLogger("ChatStream");
 const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
 function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
 
-function isLiveSessionStatus(session: { status?: string }): boolean {
-  return session.status === "streaming";
+function isLiveSessionStatus(session: { id: string }): boolean {
+  return sessionManager.getSnapshot(session.id)?.runActive === true;
 }
 
 type SessionReminderState = { active: true; timerId: string; fireAt: string | null; nextBoot: boolean; nextBuild: boolean };
