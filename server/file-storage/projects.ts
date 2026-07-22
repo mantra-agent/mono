@@ -1,6 +1,6 @@
-import { db } from "../db";
-import { projects } from "@shared/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { db, acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS } from "../db";
+import { milestones as milestoneRows, projects, tasks } from "@shared/schema";
+import { eq, and, sql, inArray, asc } from "drizzle-orm";
 import type {
   Project, InsertProject, ActivityEntry, Milestone, ProjectNote, ProjectFile, ProjectPage,
   ProjectStatus, PriorityLevel,
@@ -14,19 +14,33 @@ import { eventBus } from "../event-bus";
 const log = createLogger("StoreProjects");
 
 const projectScopeColumns = { scope: projects.scope, ownerUserId: projects.ownerUserId, accountId: projects.accountId };
+const milestoneScopeColumns = {
+  scope: milestoneRows.scope,
+  ownerUserId: milestoneRows.ownerUserId,
+  accountId: milestoneRows.accountId,
+  vaultId: milestoneRows.vaultId,
+};
+const taskScopeColumns = { scope: tasks.scope, ownerUserId: tasks.ownerUserId, accountId: tasks.accountId };
 
 function principalCacheKey(): string {
   const principal = getCurrentPrincipalOrSystem();
   return `${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}`;
 }
 
-function getNextMilestoneId(existing: Milestone[]): number {
-  if (existing.length === 0) return 1;
-  return Math.max(...existing.map(m => m.id)) + 1;
+function rowToMilestone(row: typeof milestoneRows.$inferSelect): Milestone {
+  return {
+    id: row.id,
+    name: row.name,
+    status: row.status as Milestone["status"],
+    order: row.displayOrder,
+    startDate: row.startDate ?? null,
+    dueDate: row.dueDate ?? null,
+    completedAt: row.completedAt?.toISOString() ?? null,
+  };
 }
 
-/** Convert a DB row to the Project model shape */
-function rowToProject(row: typeof projects.$inferSelect): Project {
+/** Convert a DB row to the stable Project model shape. Milestones are hydrated separately. */
+function rowToProject(row: typeof projects.$inferSelect, milestones: Milestone[] = []): Project {
   // Normalize legacy "planned" status to "planning"
   let status = row.status as ProjectStatus;
   if (status === ("planned" as ProjectStatus)) status = "planning";
@@ -43,7 +57,7 @@ function rowToProject(row: typeof projects.$inferSelect): Project {
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,
     spec: row.spec,
     goalId: row.goalId || null,
-    milestones: (row.milestones as Milestone[]) || [],
+    milestones,
     tags: (row.tags as string[]) || [],
     people: (row.people as string[]) || [],
     notes: (row.notes as ProjectNote[]) || [],
@@ -65,6 +79,37 @@ export class FileProjectStorage {
     eventBus.publish({ category: "system", event: "data:projects_changed", payload: { source: "project_storage" } });
   }
 
+  private async getMilestonesForProjects(projectIds: number[]): Promise<Map<number, Milestone[]>> {
+    const byProject = new Map<number, Milestone[]>();
+    if (projectIds.length === 0) return byProject;
+
+    const rows = await db.select().from(milestoneRows).where(
+      combineWithVisibleScope(
+        getCurrentPrincipalOrSystem(),
+        milestoneScopeColumns,
+        inArray(milestoneRows.projectId, projectIds),
+      ),
+    ).orderBy(asc(milestoneRows.projectId), asc(milestoneRows.displayOrder), asc(milestoneRows.id));
+
+    for (const row of rows) {
+      const list = byProject.get(row.projectId) ?? [];
+      list.push(rowToMilestone(row));
+      byProject.set(row.projectId, list);
+    }
+    return byProject;
+  }
+
+  async getMilestone(projectId: number, milestoneId: number): Promise<Milestone | undefined> {
+    const rows = await db.select().from(milestoneRows).where(
+      combineWithVisibleScope(
+        getCurrentPrincipalOrSystem(),
+        milestoneScopeColumns,
+        and(eq(milestoneRows.projectId, projectId), eq(milestoneRows.id, milestoneId)),
+      ),
+    ).limit(1);
+    return rows[0] ? rowToMilestone(rows[0]) : undefined;
+  }
+
   async getProjects(options?: { status?: string }): Promise<Project[]> {
     const cacheKey = `projects:${principalCacheKey()}:${options?.status || "all"}`;
     return this._projectsCache.getOrFetch(cacheKey, async () => {
@@ -82,8 +127,9 @@ export class FileProjectStorage {
       );
 
       const rows = await db.select().from(projects).where(scopedWhere);
+      const milestonesByProject = await this.getMilestonesForProjects(rows.map(row => row.id));
 
-      const result = rows.map(rowToProject);
+      const result = rows.map(row => rowToProject(row, milestonesByProject.get(row.id) ?? []));
 
       result.sort((a, b) => {
         const priorityOrder: Record<string, number> = { high: 0, mid: 1, low: 2 };
@@ -108,186 +154,302 @@ export class FileProjectStorage {
         log.debug(`getProject id=${id} not-found`);
         return undefined;
       }
+      const milestonesByProject = await this.getMilestonesForProjects([id]);
       log.debug(`getProject id=${id} found`);
-      return rowToProject(rows[0]);
+      return rowToProject(rows[0], milestonesByProject.get(id) ?? []);
     });
   }
 
   async createProject(input: InsertProject): Promise<Project> {
+    const principal = getCurrentPrincipalOrSystem();
     const now = new Date();
 
-    const milestones: Milestone[] = (input.milestones || []).map((m: Milestone, idx: number) => ({
-      id: m.id ?? idx + 1,
-      name: m.name || "Unnamed",
-      status: m.status || "planned",
-      order: m.order ?? idx,
-      startDate: m.startDate || null,
-      dueDate: m.dueDate || null,
-      completedAt: (m.status || "planned") === "completed" ? m.completedAt ?? now.toISOString() : null,
-    }));
+    const created = await db.transaction(async tx => {
+      const [row] = await tx.insert(projects).values({
+        title: input.title,
+        description: input.description || "",
+        status: input.status || "idea",
+        priority: input.priority || "mid",
+        owner: input.owner || "me",
+        requiresReview: input.requiresReview ?? false,
+        dueDate: input.dueDate ?? null,
+        completedAt: (input.status || "idea") === "completed" ? now : null,
+        spec: input.spec || "",
+        goalId: input.goalId || null,
+        // Deprecated milestone JSON intentionally remains at its database default.
+        tags: (input.tags || []) as unknown as Record<string, unknown>,
+        people: (input.people || []) as unknown as Record<string, unknown>,
+        notes: [] as unknown as Record<string, unknown>,
+        files: [] as unknown as Record<string, unknown>,
+        pages: [] as unknown as Record<string, unknown>,
+        activity: [] as unknown as Record<string, unknown>,
+        createdAt: now,
+        updatedAt: now,
+        ...ownedInsertValues(principal, projectScopeColumns),
+      }).returning();
 
-    const [row] = await db.insert(projects).values({
-      title: input.title,
-      description: input.description || "",
-      status: input.status || "idea",
-      priority: input.priority || "mid",
-      owner: input.owner || "me",
-      requiresReview: input.requiresReview ?? false,
-      dueDate: input.dueDate ?? null,
-      completedAt: (input.status || "idea") === "completed" ? now : null,
-      spec: input.spec || "",
-      goalId: input.goalId || null,
-      milestones: milestones as unknown as Record<string, unknown>,
-      tags: (input.tags || []) as unknown as Record<string, unknown>,
-      people: (input.people || []) as unknown as Record<string, unknown>,
-      notes: [] as unknown as Record<string, unknown>,
-      files: [] as unknown as Record<string, unknown>,
-      pages: [] as unknown as Record<string, unknown>,
-      activity: [] as unknown as Record<string, unknown>,
-      createdAt: now,
-      updatedAt: now,
-      ...ownedInsertValues(getCurrentPrincipalOrSystem(), projectScopeColumns),
-    }).returning();
+      const normalized = (input.milestones || []).map((milestone: Milestone, index: number) => ({
+        id: milestone.id ?? index + 1,
+        projectId: row.id,
+        vaultId: null,
+        ownerUserId: row.ownerUserId,
+        accountId: row.accountId,
+        scope: row.scope,
+        createdByUserId: principal.userId ?? row.ownerUserId,
+        name: milestone.name || "Unnamed",
+        status: milestone.status || "planned",
+        startDate: milestone.startDate || null,
+        dueDate: milestone.dueDate || null,
+        displayOrder: milestone.order ?? index,
+        completedAt: (milestone.status || "planned") === "completed"
+          ? milestone.completedAt ? new Date(milestone.completedAt) : now
+          : null,
+        createdAt: now,
+        updatedAt: now,
+      }));
+      if (normalized.length > 0) await tx.insert(milestoneRows).values(normalized);
+      return { row, milestones: normalized.map(item => rowToMilestone(item)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.id - b.id) };
+    });
 
     this.invalidateCache();
-    const project = rowToProject(row);
+    const project = rowToProject(created.row, created.milestones);
     log.debug(`createProject id=${project.id} title="${project.title}" status=${project.status}`);
     return project;
   }
 
   async updateProject(id: number, updates: Partial<InsertProject>): Promise<Project | undefined> {
-    const existing = await this.getProject(id);
-    if (!existing) {
+    const principal = getCurrentPrincipalOrSystem();
+    const updated = await db.transaction(async tx => {
+      await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.PROJECT_MILESTONES, String(id));
+      const [existing] = await tx.select().from(projects).where(
+        combineWithWritableScope(principal, projectScopeColumns, eq(projects.id, id)),
+      ).limit(1);
+      if (!existing) return false;
+
+      const now = new Date();
+      const setValues: Record<string, unknown> = { updatedAt: now };
+      if (updates.title !== undefined) setValues.title = updates.title;
+      if (updates.description !== undefined) setValues.description = updates.description;
+      if (updates.status !== undefined) {
+        setValues.status = updates.status;
+        if (updates.status === "completed" && existing.status !== "completed") setValues.completedAt = now;
+        else if (updates.status !== "completed") setValues.completedAt = null;
+      }
+      if (updates.priority !== undefined) setValues.priority = updates.priority;
+      if (updates.owner !== undefined) setValues.owner = updates.owner;
+      if (updates.requiresReview !== undefined) setValues.requiresReview = updates.requiresReview;
+      if (updates.dueDate !== undefined) setValues.dueDate = updates.dueDate;
+      if (updates.spec !== undefined) setValues.spec = updates.spec;
+      if (updates.goalId !== undefined) setValues.goalId = updates.goalId;
+      if (updates.tags !== undefined) setValues.tags = updates.tags as unknown as Record<string, unknown>;
+      if (updates.people !== undefined) setValues.people = updates.people as unknown as Record<string, unknown>;
+      if (updates.pages !== undefined) setValues.pages = updates.pages as unknown as Record<string, unknown>;
+      await tx.update(projects).set(setValues).where(
+        combineWithWritableScope(principal, projectScopeColumns, eq(projects.id, id)),
+      );
+
+      if (updates.milestones !== undefined) {
+        const priorRows = await tx.select().from(milestoneRows).where(
+          combineWithWritableScope(principal, milestoneScopeColumns, eq(milestoneRows.projectId, id)),
+        );
+        const priorById = new Map(priorRows.map(row => [row.id, row]));
+        let nextId = Math.max(0, ...priorRows.map(row => row.id)) + 1;
+        const seen = new Set<number>();
+        const replacement = (updates.milestones as Milestone[]).map((milestone, index) => {
+          const milestoneId = milestone.id ?? nextId++;
+          if (seen.has(milestoneId)) throw new Error(`Duplicate milestone id ${milestoneId} in project ${id}`);
+          seen.add(milestoneId);
+          const prior = priorById.get(milestoneId);
+          const status = milestone.status || "planned";
+          return {
+            id: milestoneId,
+            projectId: id,
+            vaultId: prior?.vaultId ?? null,
+            ownerUserId: existing.ownerUserId,
+            accountId: existing.accountId,
+            scope: existing.scope,
+            createdByUserId: prior?.createdByUserId ?? principal.userId ?? existing.ownerUserId,
+            name: milestone.name || "Unnamed",
+            status,
+            startDate: milestone.startDate || null,
+            dueDate: milestone.dueDate || null,
+            displayOrder: milestone.order ?? index,
+            completedAt: status === "completed"
+              ? milestone.completedAt ? new Date(milestone.completedAt) : prior?.completedAt ?? now
+              : null,
+            createdAt: prior?.createdAt ?? now,
+            updatedAt: now,
+          };
+        });
+        const removedIds = priorRows.filter(row => !seen.has(row.id)).map(row => row.id);
+        if (removedIds.length > 0) {
+          await tx.update(tasks).set({ milestoneId: null, updatedAt: now }).where(
+            combineWithWritableScope(
+              principal,
+              taskScopeColumns,
+              and(eq(tasks.projectId, id), inArray(tasks.milestoneId, removedIds)),
+            ),
+          );
+        }
+        await tx.delete(milestoneRows).where(
+          combineWithWritableScope(principal, milestoneScopeColumns, eq(milestoneRows.projectId, id)),
+        );
+        if (replacement.length > 0) await tx.insert(milestoneRows).values(replacement);
+      }
+      return true;
+    });
+
+    if (!updated) {
       log.debug(`updateProject id=${id} not-found`);
       return undefined;
     }
-
-    let milestones = existing.milestones;
-    if (updates.milestones) {
-      const nowIso = new Date().toISOString();
-      const priorById = new Map(existing.milestones.map(m => [m.id, m]));
-      milestones = (updates.milestones as Milestone[]).map((m: Milestone, idx: number) => {
-        const id = m.id ?? getNextMilestoneId(existing.milestones) + idx;
-        const status = m.status || "planned";
-        return {
-          id,
-          name: m.name || "Unnamed",
-          status,
-          order: m.order ?? idx,
-          startDate: m.startDate || null,
-          dueDate: m.dueDate || null,
-          completedAt: status === "completed" ? m.completedAt ?? priorById.get(id)?.completedAt ?? nowIso : null,
-        };
-      });
-    }
-
-    const setValues: Record<string, unknown> = {
-      updatedAt: new Date(),
-      milestones: milestones as unknown as Record<string, unknown>,
-    };
-
-    if (updates.title !== undefined) setValues.title = updates.title;
-    if (updates.description !== undefined) setValues.description = updates.description;
-    if (updates.status !== undefined) {
-      setValues.status = updates.status;
-      if (updates.status === "completed" && existing.status !== "completed") setValues.completedAt = new Date();
-      else if (updates.status !== "completed") setValues.completedAt = null;
-    }
-    if (updates.priority !== undefined) setValues.priority = updates.priority;
-    if (updates.owner !== undefined) setValues.owner = updates.owner;
-    if (updates.requiresReview !== undefined) setValues.requiresReview = updates.requiresReview;
-    if (updates.dueDate !== undefined) setValues.dueDate = updates.dueDate;
-    if (updates.spec !== undefined) setValues.spec = updates.spec;
-    if (updates.goalId !== undefined) setValues.goalId = updates.goalId;
-    if (updates.tags !== undefined) setValues.tags = updates.tags as unknown as Record<string, unknown>;
-    if (updates.people !== undefined) setValues.people = updates.people as unknown as Record<string, unknown>;
-    if (updates.pages !== undefined) setValues.pages = updates.pages as unknown as Record<string, unknown>;
-
-    const [row] = await db.update(projects).set(setValues).where(
-      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, id))
-    ).returning();
     this.invalidateCache();
+    if (updates.milestones !== undefined) {
+      const { fileTaskStorage } = await import("./tasks");
+      fileTaskStorage.invalidateCache();
+    }
     log.debug(`updateProject id=${id} fields=${Object.keys(updates).join(",")}`);
-    return rowToProject(row);
+    return this.getProject(id);
   }
 
   async addMilestone(projectId: number, input: { name: string; status?: string; startDate?: string | null; dueDate?: string | null }): Promise<Project | undefined> {
-    const existing = await this.getProject(projectId);
-    if (!existing) {
+    if (input.status && !["planned", "active", "completed"].includes(input.status)) {
+      throw new Error(`Invalid milestone status: ${input.status}`);
+    }
+    const principal = getCurrentPrincipalOrSystem();
+    const newId = await db.transaction(async tx => {
+      await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.PROJECT_MILESTONES, String(projectId));
+      const [project] = await tx.select().from(projects).where(
+        combineWithWritableScope(principal, projectScopeColumns, eq(projects.id, projectId)),
+      ).limit(1);
+      if (!project) return null;
+      const existing = await tx.select({ id: milestoneRows.id, displayOrder: milestoneRows.displayOrder })
+        .from(milestoneRows)
+        .where(combineWithVisibleScope(principal, milestoneScopeColumns, eq(milestoneRows.projectId, projectId)));
+      const id = Math.max(0, ...existing.map(row => row.id)) + 1;
+      const displayOrder = Math.max(-1, ...existing.map(row => row.displayOrder)) + 1;
+      const status = (input.status as Milestone["status"]) || "planned";
+      const now = new Date();
+      await tx.insert(milestoneRows).values({
+        id,
+        projectId,
+        vaultId: null,
+        ownerUserId: project.ownerUserId,
+        accountId: project.accountId,
+        scope: project.scope,
+        createdByUserId: principal.userId ?? project.ownerUserId,
+        name: input.name,
+        status,
+        startDate: input.startDate || null,
+        dueDate: input.dueDate || null,
+        displayOrder,
+        completedAt: status === "completed" ? now : null,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await tx.update(projects).set({ updatedAt: now }).where(
+        combineWithWritableScope(principal, projectScopeColumns, eq(projects.id, projectId)),
+      );
+      return id;
+    });
+
+    if (newId === null) {
       log.debug(`addMilestone projectId=${projectId} not-found`);
       return undefined;
     }
-
-    const newId = getNextMilestoneId(existing.milestones);
-    const status = (input.status as Milestone["status"]) || "planned";
-    const milestone: Milestone = {
-      id: newId,
-      name: input.name,
-      status,
-      order: existing.milestones.length,
-      startDate: input.startDate || null,
-      dueDate: input.dueDate || null,
-      completedAt: status === "completed" ? new Date().toISOString() : null,
-    };
-
-    const milestones = [...existing.milestones, milestone];
-    const [row] = await db.update(projects).set({
-      milestones: milestones as unknown as Record<string, unknown>,
-      updatedAt: new Date(),
-    }).where(
-      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
-    ).returning();
-
     this.invalidateCache();
     log.debug(`addMilestone projectId=${projectId} milestoneId=${newId} name="${input.name}"`);
-    return rowToProject(row);
+    return this.getProject(projectId);
   }
 
   async updateMilestone(projectId: number, milestoneId: number, updates: Partial<Milestone>): Promise<Project | undefined> {
-    const existing = await this.getProject(projectId);
-    if (!existing) {
-      log.debug(`updateMilestone projectId=${projectId} not-found`);
-      return undefined;
+    if (updates.status && !["planned", "active", "completed"].includes(updates.status)) {
+      throw new Error(`Invalid milestone status: ${updates.status}`);
     }
-
-    const milestones = existing.milestones.map(m => {
-      if (m.id !== milestoneId) return m;
-      const next = { ...m, ...updates, id: m.id };
-      if (next.status === "completed" && m.status !== "completed") next.completedAt = updates.completedAt ?? new Date().toISOString();
-      if (next.status !== "completed") next.completedAt = null;
-      return next;
+    const principal = getCurrentPrincipalOrSystem();
+    const changed = await db.transaction(async tx => {
+      await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.PROJECT_MILESTONES, String(projectId));
+      const [project] = await tx.select().from(projects).where(
+        combineWithWritableScope(principal, projectScopeColumns, eq(projects.id, projectId)),
+      ).limit(1);
+      if (!project) return false;
+      const [existing] = await tx.select().from(milestoneRows).where(
+        combineWithWritableScope(
+          principal,
+          milestoneScopeColumns,
+          and(eq(milestoneRows.projectId, projectId), eq(milestoneRows.id, milestoneId)),
+        ),
+      ).limit(1);
+      if (!existing) return false;
+      const nextStatus = updates.status ?? existing.status;
+      const setValues: Record<string, unknown> = { updatedAt: new Date() };
+      if (updates.name !== undefined) setValues.name = updates.name;
+      if (updates.status !== undefined) setValues.status = updates.status;
+      if (updates.order !== undefined) setValues.displayOrder = updates.order;
+      if (updates.startDate !== undefined) setValues.startDate = updates.startDate;
+      if (updates.dueDate !== undefined) setValues.dueDate = updates.dueDate;
+      if (nextStatus === "completed" && existing.status !== "completed") {
+        setValues.completedAt = updates.completedAt ? new Date(updates.completedAt) : new Date();
+      } else if (nextStatus !== "completed") {
+        setValues.completedAt = null;
+      } else if (updates.completedAt !== undefined) {
+        setValues.completedAt = updates.completedAt ? new Date(updates.completedAt) : null;
+      }
+      await tx.update(milestoneRows).set(setValues).where(
+        combineWithWritableScope(
+          principal,
+          milestoneScopeColumns,
+          and(eq(milestoneRows.projectId, projectId), eq(milestoneRows.id, milestoneId)),
+        ),
+      );
+      await tx.update(projects).set({ updatedAt: new Date() }).where(
+        combineWithWritableScope(principal, projectScopeColumns, eq(projects.id, projectId)),
+      );
+      return true;
     });
 
-    const [row] = await db.update(projects).set({
-      milestones: milestones as unknown as Record<string, unknown>,
-      updatedAt: new Date(),
-    }).where(
-      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
-    ).returning();
-
+    if (!changed) return undefined;
     this.invalidateCache();
     log.debug(`updateMilestone projectId=${projectId} milestoneId=${milestoneId}`);
-    return rowToProject(row);
+    return this.getProject(projectId);
   }
 
   async removeMilestone(projectId: number, milestoneId: number): Promise<Project | undefined> {
-    const existing = await this.getProject(projectId);
-    if (!existing) {
-      log.debug(`removeMilestone projectId=${projectId} not-found`);
-      return undefined;
-    }
+    const principal = getCurrentPrincipalOrSystem();
+    const removed = await db.transaction(async tx => {
+      await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.PROJECT_MILESTONES, String(projectId));
+      const [project] = await tx.select().from(projects).where(
+        combineWithWritableScope(principal, projectScopeColumns, eq(projects.id, projectId)),
+      ).limit(1);
+      if (!project) return false;
+      const deleted = await tx.delete(milestoneRows).where(
+        combineWithWritableScope(
+          principal,
+          milestoneScopeColumns,
+          and(eq(milestoneRows.projectId, projectId), eq(milestoneRows.id, milestoneId)),
+        ),
+      ).returning({ id: milestoneRows.id });
+      if (deleted.length === 0) return false;
+      const now = new Date();
+      await tx.update(tasks).set({ milestoneId: null, updatedAt: now }).where(
+        combineWithWritableScope(
+          principal,
+          taskScopeColumns,
+          and(eq(tasks.projectId, projectId), eq(tasks.milestoneId, milestoneId)),
+        ),
+      );
+      await tx.update(projects).set({ updatedAt: now }).where(
+        combineWithWritableScope(principal, projectScopeColumns, eq(projects.id, projectId)),
+      );
+      return true;
+    });
 
-    const milestones = existing.milestones.filter(m => m.id !== milestoneId);
-    const [row] = await db.update(projects).set({
-      milestones: milestones as unknown as Record<string, unknown>,
-      updatedAt: new Date(),
-    }).where(
-      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
-    ).returning();
-
+    if (!removed) return undefined;
     this.invalidateCache();
+    const { fileTaskStorage } = await import("./tasks");
+    fileTaskStorage.invalidateCache();
     log.debug(`removeMilestone projectId=${projectId} milestoneId=${milestoneId}`);
-    return rowToProject(row);
+    return this.getProject(projectId);
   }
 
 
@@ -302,16 +464,16 @@ export class FileProjectStorage {
       ...existing.pages.filter(p => p.id !== page.id),
       page,
     ];
-    const [row] = await db.update(projects).set({
+    await db.update(projects).set({
       pages: pages as unknown as Record<string, unknown>,
       updatedAt: new Date(),
     }).where(
       combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
-    ).returning();
+    );
 
     this.invalidateCache();
     log.debug(`addPage projectId=${projectId} pageId=${page.id} title="${page.title}"`);
-    return rowToProject(row);
+    return this.getProject(projectId);
   }
 
   async addFile(projectId: number, file: ProjectFile): Promise<Project | undefined> {
@@ -322,16 +484,16 @@ export class FileProjectStorage {
     }
 
     const files = [...existing.files, file];
-    const [row] = await db.update(projects).set({
+    await db.update(projects).set({
       files: files as unknown as Record<string, unknown>,
       updatedAt: new Date(),
     }).where(
       combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
-    ).returning();
+    );
 
     this.invalidateCache();
     log.debug(`addFile projectId=${projectId} fileId=${file.id} name="${file.name}"`);
-    return rowToProject(row);
+    return this.getProject(projectId);
   }
 
   async removeFile(projectId: number, fileId: string): Promise<ProjectFile | undefined> {

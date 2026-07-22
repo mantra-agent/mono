@@ -785,6 +785,7 @@ export const ADVISORY_LOCK_NS = {
   COMPACTION_OPERATION: 0x434f4d50, // 'COMP' — serializes one scoped compaction claim
   CALENDAR_ATTENDEE_PROMOTION: 0x43415450, // 'CATP' — serializes profile promotion by account + attendee email
   MEETING_PREP: 0x4d545052, // 'MTPR' — serializes one canonical preparation-page claim per meeting
+  PROJECT_MILESTONES: 0x50524d53, // 'PRMS' — serializes milestone replacement and project-local ID allocation
 } as const;
 
 const LIBRARY_ROOT_SENTINEL = "__LIBRARY_ROOT__";

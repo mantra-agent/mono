@@ -2,6 +2,10 @@
 
 Root `AGENTS.md` is mandatory and authoritative for Engineering Principles, architecture, and repository constraints. Root `CODING.md` is mandatory and authoritative for engineering workflow, Coding Task Gate, git policy, verification, and final reporting. This file adds local constraints only. Load this file before touching files under `server/`. For UI/product-facing work, also load root `DESIGN.md`. If instructions conflict, follow root `AGENTS.md` for principles/architecture and root `CODING.md` for procedure unless Ray explicitly overrides.
 
+## Work storage boundary
+
+Project milestones are first-class rows in `milestones`, keyed by `(project_id, id)` because numeric milestone IDs are project-local and tasks pair `project_id` with `milestone_id`. `FileProjectStorage` is the canonical read/write boundary: it hydrates the stable `Project.milestones` response shape from scoped rows, inherits milestone ownership from the writable parent project, and serializes per-project replacement/ID allocation. The deprecated `projects.milestones` JSON column is rollback-only and must not be read or written by runtime code.
+
 # Runtime Identity
 
 `runtime-identity.ts` is the single source of truth for deployment identity: canonical Platform Environment, Railway environment/service, serving host (`RAILWAY_PUBLIC_DOMAIN`), canonical hosting-binding public URL, git commit, and DB host. `platform-environment-resolver.ts` is the canonical server boundary for mapping Railway's injected project/environment/service IDs or an explicit Platform Environment ID through the hosting binding, provider connection, encrypted credential, and provider configuration. Runtime identity resolves once at boot, flags unresolved bindings loudly, and is injected into agent context via the `world_model.runtime` spine section. New code that needs the public base URL for external callbacks must await `getRuntimePublicBaseUrl()`.
