@@ -39,6 +39,7 @@ export function AgentOrb({
   audioLevel,
   maxFrameRate = 60,
   paused = false,
+  sustainFrameProduction = false,
   className,
 }: AgentOrbProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -164,9 +165,9 @@ export function AgentOrb({
     );
     let lastTime = performance.now();
     let lastRenderTime = 0;
-    let animFrameId = 0;
+    let frameHandle: number | undefined;
     let hidden = document.hidden;
-    let wasPaused = hidden || pausedRef.current;
+    let wasPaused = (!sustainFrameProduction && hidden) || pausedRef.current;
     const frameIntervalMs = 1000 / Math.max(1, Math.min(60, maxFrameRate));
 
     function resize() {
@@ -186,7 +187,7 @@ export function AgentOrb({
     }
 
     function applyVisuals(now: number) {
-      const shouldPause = hidden || pausedRef.current;
+      const shouldPause = (!sustainFrameProduction && hidden) || pausedRef.current;
       if (shouldPause) {
         wasPaused = true;
         return;
@@ -259,14 +260,27 @@ export function AgentOrb({
       renderer.render(scene, camera);
     }
 
+    function scheduleFrame() {
+      frameHandle = sustainFrameProduction
+        ? window.setTimeout(() => animate(performance.now()), frameIntervalMs)
+        : requestAnimationFrame(animate);
+    }
+
     function animate(now: number) {
-      animFrameId = requestAnimationFrame(animate);
       applyVisuals(now);
+      scheduleFrame();
+    }
+
+    function cancelScheduledFrame() {
+      if (frameHandle === undefined) return;
+      if (sustainFrameProduction) window.clearTimeout(frameHandle);
+      else cancelAnimationFrame(frameHandle);
+      frameHandle = undefined;
     }
 
     function handleVisibilityChange() {
       hidden = document.hidden;
-      wasPaused = hidden || pausedRef.current;
+      wasPaused = (!sustainFrameProduction && hidden) || pausedRef.current;
       lastTime = performance.now();
       lastRenderTime = 0;
     }
@@ -275,10 +289,10 @@ export function AgentOrb({
     resizeObserver.observe(container);
     document.addEventListener('visibilitychange', handleVisibilityChange);
     resize();
-    animFrameId = requestAnimationFrame(animate);
+    scheduleFrame();
 
     return () => {
-      cancelAnimationFrame(animFrameId);
+      cancelScheduledFrame();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       resizeObserver.disconnect();
       scene.remove(fieldMesh, orbMesh, haloMesh);

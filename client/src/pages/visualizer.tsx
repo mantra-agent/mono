@@ -188,8 +188,8 @@ export default function VisualizerPage() {
   const search = new URLSearchParams(window.location.search);
   const token = search.get("token")?.trim() || "";
   const feed = useMeetingVisualizerFeed(token);
-  const recallMeetingLevel = useRecallMeetingLevel(Boolean(token && feed.connected));
-  useMeetingSpeech(token, feed.connected);
+  const recallMeetingLevel = useRecallMeetingLevel(Boolean(token));
+  useMeetingSpeech(token, Boolean(token));
 
   const state = token ? feed.state : previewState(search);
   const audioLevel = token
@@ -204,6 +204,7 @@ export default function VisualizerPage() {
         state={state}
         audioLevel={audioLevel}
         maxFrameRate={token ? 15 : 60}
+        sustainFrameProduction={Boolean(token)}
         className="absolute inset-0"
       />
     </main>

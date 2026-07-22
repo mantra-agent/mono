@@ -23,6 +23,11 @@ export interface AgentOrbProps {
   maxFrameRate?: number;
   /** Pause frame production while preserving the mounted GPU scene. */
   paused?: boolean;
+  /**
+   * Keep producing bounded frames even when the host document is hidden.
+   * Reserved for captured media surfaces whose video track must stay live.
+   */
+  sustainFrameProduction?: boolean;
   /** Additional CSS class for the container */
   className?: string;
 }
