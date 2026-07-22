@@ -245,14 +245,21 @@ export function AgentOrb({
       orbUniforms.uDimming.value = visuals.dimming;
       orbUniforms.uBreathPhase.value = breath;
 
-      const scalePulse = 1.0 + audio * visuals.pulseStrength * 0.08;
+      const visualMotion = visuals.flowSpeed + visuals.swirlSpeed * 0.55 + visuals.attractorStrength * 0.18;
+      fieldMesh.rotation.y = anim.time * visualMotion * 0.18;
+      fieldMesh.rotation.x = Math.sin(anim.time * visualMotion * 0.42) * visuals.flowStrength * 0.08;
+      orbMesh.rotation.z = anim.time * visuals.swirlSpeed * 0.045;
+      haloMesh.rotation.z = -anim.time * visuals.swirlSpeed * 0.025;
+
+      const thinkingPulse = visuals.attractorStrength * (0.012 + 0.01 * Math.sin(anim.time * visuals.breathSpeed));
+      const scalePulse = 1.0 + audio * visuals.pulseStrength * 0.08 + thinkingPulse;
       const fieldResolveScale = 0.28 + voiceEntranceProgress * 0.72;
       fieldMesh.scale.setScalar(
         fieldResolveScale * scalePulse * (1.0 + breath * 0.03),
       );
       orbMesh.scale.setScalar(scalePulse);
       haloUniforms.uIntensity.value = visuals.rimIntensity * (
-        1.0 + audio * visuals.audioReactivity * 0.5
+        1.0 + audio * visuals.audioReactivity * 0.5 + visuals.attractorStrength * 0.08 * (1.0 + Math.sin(anim.time * visuals.breathSpeed))
       );
       haloUniforms.uDimming.value = visuals.dimming;
       haloMesh.scale.setScalar(HALO_SCALE * scalePulse);
