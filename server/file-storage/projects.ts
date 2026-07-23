@@ -19,6 +19,18 @@ import { eventBus } from "../event-bus";
 
 const log = createLogger("StoreProjects");
 
+export interface WorkCreationProvenance {
+  originType: "meeting";
+  originId: string;
+}
+
+function normalizeCreationProvenance(provenance?: WorkCreationProvenance): WorkCreationProvenance | null {
+  if (!provenance) return null;
+  const originId = provenance.originId.trim();
+  if (!originId) throw new Error("Meeting work creation requires an origin id");
+  return { originType: "meeting", originId };
+}
+
 // D4: vault_id is deliberately absent from work scope columns. It anchors
 // placement and inheritance only; vault co-membership never grants work access.
 const projectScopeColumns = {
@@ -184,10 +196,11 @@ export class FileProjectStorage {
     return rowToProject(rows[0], milestonesByProject.get(id) ?? []);
   }
 
-  async createProject(input: InsertProject): Promise<Project> {
+  async createProject(input: InsertProject, provenance?: WorkCreationProvenance): Promise<Project> {
     const principal = getCurrentPrincipalOrSystem();
     const now = new Date();
     const vaultId = resolveCreationVaultId(input.vaultId);
+    const creationProvenance = normalizeCreationProvenance(provenance);
 
     const created = await db.transaction(async tx => {
       const [row] = await tx.insert(projects).values({
@@ -234,6 +247,20 @@ export class FileProjectStorage {
         updatedAt: now,
       }));
       if (normalized.length > 0) await tx.insert(milestoneRows).values(normalized);
+      if (creationProvenance) {
+        await objectGrantService.grantMeetingDefaultsInTransaction(
+          tx,
+          { objectType: "project", objectId: row.id },
+          creationProvenance.originId,
+        );
+        for (const milestone of normalized) {
+          await objectGrantService.grantMeetingDefaultsInTransaction(
+            tx,
+            { objectType: "milestone", objectId: milestone.id, projectId: row.id },
+            creationProvenance.originId,
+          );
+        }
+      }
       return { row, milestones: normalized.map(item => rowToMilestone(item)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.id - b.id) };
     });
 
@@ -344,11 +371,16 @@ export class FileProjectStorage {
     return this.getProject(id);
   }
 
-  async addMilestone(projectId: number, input: { name: string; status?: string; startDate?: string | null; dueDate?: string | null }): Promise<Project | undefined> {
+  async addMilestone(
+    projectId: number,
+    input: { name: string; status?: string; startDate?: string | null; dueDate?: string | null },
+    provenance?: WorkCreationProvenance,
+  ): Promise<Project | undefined> {
     if (input.status && !["planned", "active", "completed"].includes(input.status)) {
       throw new Error(`Invalid milestone status: ${input.status}`);
     }
     const principal = getCurrentPrincipalOrSystem();
+    const creationProvenance = normalizeCreationProvenance(provenance);
     const newId = await db.transaction(async tx => {
       await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.PROJECT_MILESTONES, String(projectId));
       const [project] = await tx.select().from(projects).where(
@@ -379,6 +411,13 @@ export class FileProjectStorage {
         createdAt: now,
         updatedAt: now,
       });
+      if (creationProvenance) {
+        await objectGrantService.grantMeetingDefaultsInTransaction(
+          tx,
+          { objectType: "milestone", objectId: id, projectId },
+          creationProvenance.originId,
+        );
+      }
       await tx.update(projects).set({ updatedAt: now }).where(
         combineWithWorkObjectAccess(principal, projectScopeColumns, "project", "admin", eq(projects.id, projectId)),
       );

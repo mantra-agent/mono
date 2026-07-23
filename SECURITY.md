@@ -1,5 +1,7 @@
 # Mantra Security Doctrine and Threat Model
 
+<!-- 2026-07-22 authorization delta: Task assignment is a paired typed subject independent of `owner`; its task-only write grant is synchronized transactionally through ObjectGrantService. Meeting-origin project/milestone read defaults are written only in the object creation transaction from the bounded set of that meeting's live task-assignment subjects. Existing parents never inherit access from task placement. Assets: S2 work rows, subject identity, grant/audit state. Threats: IDOR, stale assignee grants, partial assignment/grant writes, parent-context disclosure, unbounded fan-out. Controls: paired DB constraint, admin-only reassignment, shared advisory lock, canonical grant mutation/audit, exact meeting origin, creation-time-only defaults, 500-subject budget. Status: closed in source; residual invited-subject resolution and claim rebinding remain owned by P3. -->
+
 **Status:** Canonical security baseline<br>
 **Baseline date:** 2026-07-20<br>
 **Source reviewed:** `mantra-agent/mono` at `06d9134` plus the July 21 assistant-checkpoint change<br>
