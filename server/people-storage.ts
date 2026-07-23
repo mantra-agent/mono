@@ -22,6 +22,15 @@ import {
 
 const personScopeColumns = { scope: persons.scope, ownerUserId: persons.ownerUserId, accountId: persons.accountId };
 const personMergeAliasScopeColumns = { scope: personMergeAliases.scope, ownerUserId: personMergeAliases.ownerUserId, accountId: personMergeAliases.accountId };
+type PeopleTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+export function normalizePersonEmail(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+    throw new Error("Email must be a valid address");
+  }
+  return normalized;
+}
 
 export interface ContactInfo {
   type: "email" | "phone" | "social" | "other";
@@ -702,36 +711,38 @@ export class PeopleStorage {
     throw new Error(`Person merge alias depth exceeded for ${id}`);
   }
 
-  private async syncPersonEmails(person: Person): Promise<void> {
-    const emails = new Set<string>();
-    for (const ci of person.contactInfo || []) {
-      if (ci.type === "email" && ci.value) {
-        const normalized = ci.value.toLowerCase().trim();
-        if (normalized.includes("@")) emails.add(normalized);
+  private async syncPersonEmails(
+    executor: Pick<PeopleTransaction, "select" | "delete" | "insert">,
+    person: Person,
+  ): Promise<void> {
+    const emails = [...new Set(
+      (person.contactInfo || [])
+        .filter(contact => contact.type === "email" && contact.value.trim().length > 0)
+        .map(contact => contact.value.trim().toLowerCase())
+        .filter(email => email.includes("@")),
+    )];
+    if (emails.length > 0) {
+      const conflicts = await executor
+        .select({ email: personEmailsTable.email, personId: personEmailsTable.personId })
+        .from(personEmailsTable)
+        .where(inArray(personEmailsTable.email, emails));
+      if (conflicts.some(row => row.personId !== person.id)) {
+        throw new Error("Email is already assigned to another Person");
       }
     }
 
-    await db.delete(personEmailsTable).where(eq(personEmailsTable.personId, person.id));
+    await executor.delete(personEmailsTable).where(eq(personEmailsTable.personId, person.id));
 
     const now = new Date();
     for (const email of emails) {
-      await db.insert(personEmailsTable)
-        .values({
-          email,
-          personId: person.id,
-          personName: person.name,
-          source: "contact_info",
-          createdAt: now,
-          updatedAt: now,
-        })
-        .onConflictDoUpdate({
-          target: personEmailsTable.email,
-          set: {
-            personId: person.id,
-            personName: person.name,
-            updatedAt: now,
-          },
-        });
+      await executor.insert(personEmailsTable).values({
+        email,
+        personId: person.id,
+        personName: person.name,
+        source: "contact_info",
+        createdAt: now,
+        updatedAt: now,
+      });
     }
   }
 
@@ -742,7 +753,7 @@ export class PeopleStorage {
     for (const entry of people) {
       const person = await storage.getPerson(entry.id);
       if (!person) continue;
-      await storage.syncPersonEmails(person);
+      await db.transaction(tx => storage.syncPersonEmails(tx, person));
       const emailCount = (person.contactInfo || []).filter(ci => ci.type === "email" && ci.value).length;
       count += emailCount;
     }
@@ -1003,10 +1014,12 @@ export class PeopleStorage {
 
   private async savePerson(person: Person): Promise<void> {
     const now = new Date();
-    await db.insert(persons)
-      .values({
+    const principal = getCurrentPrincipalOrSystem();
+    await db.transaction(async tx => {
+      await tx.insert(persons)
+        .values({
         id: person.id,
-        ...ownedInsertValues(getCurrentPrincipalOrSystem(), personScopeColumns),
+        ...ownedInsertValues(principal, personScopeColumns),
         name: person.name,
         nicknames: person.nicknames,
         cabinetLevel: person.cabinetLevel,
@@ -1070,10 +1083,9 @@ export class PeopleStorage {
           updatedAt: person.updatedAt ? new Date(person.updatedAt) : now,
         },
       });
-    this.invalidateListCache();
-    await this.syncPersonEmails(person).catch((err) => {
-      log.warn(`syncPersonEmails failed for personId=${person.id}: ${err?.message || err}`);
+      await this.syncPersonEmails(tx, person);
     });
+    this.invalidateListCache();
   }
 
   async getCabinetConfig(): Promise<CabinetConfig> {
@@ -1201,9 +1213,12 @@ export class PeopleStorage {
     try {
       await this.assignInitialVaultMembership(person.id);
     } catch (error) {
-      await db.delete(persons).where(
-        combineWithWritableScope(getCurrentPrincipalOrSystem(), personScopeColumns, eq(persons.id, person.id)),
-      );
+      await db.transaction(async tx => {
+        await tx.delete(personEmailsTable).where(eq(personEmailsTable.personId, person.id));
+        await tx.delete(persons).where(
+          combineWithWritableScope(getCurrentPrincipalOrSystem(), personScopeColumns, eq(persons.id, person.id)),
+        );
+      });
       throw error;
     }
     const created = await this.getPerson(person.id);
