@@ -17,6 +17,8 @@ import { principalOwnsMeeting } from "../meeting/owner-principal";
 import { finalizeMeetingSession } from "../meeting/recap";
 import { distributeRecap } from "../meeting/distribution";
 import { createLogger } from "../log";
+import type { RecipientRecapProjectionResponse } from "@shared/meeting-recipient-recap";
+import { getRecipientRecapProjection } from "../meeting/recipient-projection";
 
 const log = createLogger("MeetingDistributionRoutes");
 
@@ -27,6 +29,31 @@ const scopeColumns = {
 };
 
 export function registerMeetingDistributionRoutes(app: Express): void {
+  /**
+   * GET /api/public/meeting-recaps/:token
+   *
+   * Resolve one opaque recipient capability into a data-minimized recap and
+   * exact meeting-origin task grants. Invalid, expired, and revoked tokens are
+   * deliberately indistinguishable.
+   */
+  app.get("/api/public/meeting-recaps/:token", async (req, res) => {
+    try {
+      const projection = await getRecipientRecapProjection(req.params.token ?? "");
+      if (!projection) {
+        res.status(404).json({ error: "Recap unavailable" });
+        return;
+      }
+      const response: RecipientRecapProjectionResponse = { projection };
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Referrer-Policy", "no-referrer");
+      res.json(response);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error(`Failed to project recipient recap: ${msg}`);
+      res.status(404).json({ error: "Recap unavailable" });
+    }
+  });
+
   /**
    * POST /api/meetings/:sessionId/recap/retry
    *
@@ -102,6 +129,8 @@ export function registerMeetingDistributionRoutes(app: Express): void {
             id: meetingRecapDistributions.id,
             attendeeEmail: meetingRecapDistributions.attendeeEmail,
             attendeeName: meetingRecapDistributions.attendeeName,
+            accessExpiresAt: meetingRecapDistributions.accessExpiresAt,
+            accessRevokedAt: meetingRecapDistributions.accessRevokedAt,
             draftId: meetingRecapDistributions.draftId,
             status: meetingRecapDistributions.status,
             sendMethod: meetingRecapDistributions.sendMethod,

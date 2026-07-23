@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { eq, and, sql, inArray, desc } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import { emailDrafts, type EmailDraft } from "@shared/schema";
+import { emailDrafts, meetingRecapDistributions, type EmailDraft } from "@shared/schema";
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
 import {
@@ -17,6 +17,12 @@ const scopeColumns = {
   scope: emailDrafts.scope,
   ownerUserId: emailDrafts.ownerUserId,
   accountId: emailDrafts.accountId,
+};
+
+const recapDistributionScopeColumns = {
+  scope: meetingRecapDistributions.scope,
+  ownerUserId: meetingRecapDistributions.ownerUserId,
+  accountId: meetingRecapDistributions.accountId,
 };
 
 export interface CreateEmailDraftInput {
@@ -275,6 +281,32 @@ export class EmailDraftStorage {
     return updated ?? null;
   }
 
+  private async markRecapDistributionSent(principal: Principal, draftId: string): Promise<void> {
+    await db.update(meetingRecapDistributions).set({
+      status: "sent",
+      sentAt: sql`COALESCE(${meetingRecapDistributions.sentAt}, CURRENT_TIMESTAMP)`,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    }).where(combineWithWritableScope(
+      principal,
+      recapDistributionScopeColumns,
+      eq(meetingRecapDistributions.draftId, draftId),
+    ));
+  }
+
+  private async revokeRecapDistribution(principal: Principal, draftId: string): Promise<void> {
+    await db.update(meetingRecapDistributions).set({
+      status: "failed",
+      error: "Recap draft discarded",
+      discardedAt: sql`COALESCE(${meetingRecapDistributions.discardedAt}, CURRENT_TIMESTAMP)`,
+      accessRevokedAt: sql`COALESCE(${meetingRecapDistributions.accessRevokedAt}, CURRENT_TIMESTAMP)`,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    }).where(combineWithWritableScope(
+      principal,
+      recapDistributionScopeColumns,
+      eq(meetingRecapDistributions.draftId, draftId),
+    ));
+  }
+
   /**
    * Send a draft. ONLY callable by user principals (actorType === 'user').
    * Idempotent: if already sent, returns the existing sent record.
@@ -292,6 +324,7 @@ export class EmailDraftStorage {
 
     // Idempotent: already sent
     if (existing.status === "sent") {
+      await this.markRecapDistributionSent(principal, id);
       return existing;
     }
 
@@ -317,6 +350,7 @@ export class EmailDraftStorage {
         combineWithWritableScope(principal, scopeColumns, eq(emailDrafts.id, id)),
       )
       .returning();
+    await this.markRecapDistributionSent(principal, id);
     log.info(`sent draft ${id}, messageId=${result.messageId}`);
     return sent;
   }
@@ -330,7 +364,7 @@ export class EmailDraftStorage {
     assertWritable(principal, existing, "email_draft");
 
     if (existing.status !== "draft") {
-      // Already terminal — return as-is
+      if (existing.status === "discarded") await this.revokeRecapDistribution(principal, id);
       return existing;
     }
 
@@ -344,6 +378,7 @@ export class EmailDraftStorage {
         combineWithWritableScope(principal, scopeColumns, eq(emailDrafts.id, id)),
       )
       .returning();
+    await this.revokeRecapDistribution(principal, id);
     log.info(`discarded draft ${id}`);
     return discarded ?? null;
   }

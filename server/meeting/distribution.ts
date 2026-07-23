@@ -16,7 +16,7 @@
  *     from `recap.ts` and runs inside the same `runWithPrincipal` context so
  *     all writes are user-owned, not system orphans.
  */
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { db, pool } from "../db";
 import { meetingRecapDistributions } from "@shared/schema";
 import { libraryPages } from "@shared/models/info";
@@ -37,6 +37,7 @@ import { eventBus } from "../event-bus";
 import { eq, and, SQL } from "drizzle-orm";
 import type { Principal } from "../principal";
 import type { MeetingSessionMeta, MeetingRecapMeta } from "@shared/models/chat";
+import { getRuntimePublicBaseUrl } from "../runtime-identity";
 
 const log = createLogger("MeetingDistribution");
 
@@ -55,6 +56,26 @@ const libraryScopeColumns = {
 
 // Bound the compact, editable recap email body.
 const EMAIL_BODY_CHAR_LIMIT = 30_000;
+const RECIPIENT_ACCESS_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
+
+interface RecipientAccessCapability {
+  token: string;
+  tokenHash: string;
+  expiresAt: Date;
+}
+
+function createRecipientAccessCapability(): RecipientAccessCapability {
+  const token = randomBytes(32).toString("base64url");
+  return {
+    token,
+    tokenHash: createHash("sha256").update(token).digest("hex"),
+    expiresAt: new Date(Date.now() + RECIPIENT_ACCESS_TTL_MS),
+  };
+}
+
+function recipientRecapUrl(publicBaseUrl: string, token: string): string {
+  return `${publicBaseUrl.replace(/\/$/, "")}/recap/${encodeURIComponent(token)}`;
+}
 
 function distributionLockKey(sessionId: string): bigint {
   const hash = createHash("sha256").update(`meeting-recap-distribution:${sessionId}`).digest();
@@ -312,16 +333,28 @@ async function runDistribution(
   // Google event organizer describes event authorship, not Mantra authorship.
   const gmailAccountId = emailContext.senderAccount.id;
 
-  // 4. Render the user-owned canonical Library recap into the editable draft.
+  // 4. Every recipient receives a distinct capability because the granted work
+  // projection is subject-specific. A shared draft would collapse authority.
+  const publicBaseUrl = await getRuntimePublicBaseUrl();
+  if (!publicBaseUrl) {
+    await markDistributionBlocked(
+      sessionId,
+      attemptRecap,
+      principal,
+      attendees,
+      "Recipient recap links are unavailable for this deployment",
+      "public_url_unavailable",
+    );
+    return;
+  }
   const subjectMeetingName = meeting.title?.trim() || recap.pageTitle?.replace(/^Meeting:\s*/i, "").trim() || "Our meeting";
   const subject = `Meeting recap: ${subjectMeetingName}`;
-  const body = await buildEmailContent(attemptRecap, meeting, attendees, emailContext.event, principal);
+  const draftIds: string[] = [];
+  const draftErrors: string[] = [];
 
-  // 5. Record one tracking row per invitee, then create one editable draft
-  // addressed to the complete invitee set. The draft is the human decision
-  // surface; distribution rows preserve per-recipient provenance.
-  const distributionRowIds: string[] = [];
   for (const attendee of attendees) {
+    const capability = createRecipientAccessCapability();
+    let distributionId: string | null = null;
     try {
       const owned = ownedInsertValues(principal, scopeColumns);
       const [row] = await db
@@ -331,28 +364,28 @@ async function runDistribution(
           attendeeEmail: attendee.email,
           attendeeName: attendee.name ?? null,
           isMantraUser: false,
+          accessTokenHash: capability.tokenHash,
+          accessExpiresAt: capability.expiresAt,
           sendMethod: "gmail_draft",
           status: "pending",
           ...owned,
         })
-        .returning();
-      distributionRowIds.push(row.id);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.warn(`Failed to record recap recipient ${attendee.email} (session=${sessionId}): ${msg}`);
-    }
-  }
+        .returning({ id: meetingRecapDistributions.id });
+      distributionId = row?.id ?? null;
+      if (!distributionId) throw new Error("Recap recipient record was not created");
 
-  const draftIds: string[] = [];
-  let draftError: string | null = distributionRowIds.length > 0
-    ? null
-    : "Recap recipient records could not be created";
-  if (distributionRowIds.length > 0) {
-    try {
+      const body = await buildEmailContent(
+        attemptRecap,
+        meeting,
+        attendee,
+        emailContext.event,
+        principal,
+        recipientRecapUrl(publicBaseUrl, capability.token),
+      );
       const draft = await emailDraftStorage.create(principal, {
         sessionId,
-        gmailAccountId: gmailAccountId!,
-        to: attendees.map((attendee) => attendee.email),
+        gmailAccountId,
+        to: [attendee.email],
         subject,
         body,
         bodyFormat: "markdown",
@@ -360,33 +393,45 @@ async function runDistribution(
       await db
         .update(meetingRecapDistributions)
         .set({ draftId: draft.id, status: "draft_created", updatedAt: new Date() })
-        .where(
-          and(
-            eq(meetingRecapDistributions.sessionId, sessionId),
-            writableScopePredicate(principal, scopeColumns) as SQL,
-          ),
-        );
+        .where(and(
+          eq(meetingRecapDistributions.id, distributionId),
+          writableScopePredicate(principal, scopeColumns) as SQL,
+        ));
       draftIds.push(draft.id);
-      log.debug(`Gmail recap draft created for ${attendees.length} invitee(s) (draftId=${draft.id})`);
+      log.debug(`Gmail recap draft created for recipient (draftId=${draft.id})`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      draftError = msg.slice(0, 500);
-      log.warn(`Recap draft creation failed for session ${sessionId}: ${msg}`);
-      await db
-        .update(meetingRecapDistributions)
-        .set({ status: "failed", error: msg.slice(0, 500), updatedAt: new Date() })
-        .where(
-          and(
-            eq(meetingRecapDistributions.sessionId, sessionId),
+      draftErrors.push(msg.slice(0, 500));
+      log.warn(`Recap draft creation failed for one recipient (session=${sessionId}): ${msg}`);
+      if (distributionId) {
+        await db
+          .update(meetingRecapDistributions)
+          .set({ status: "failed", error: msg.slice(0, 500), accessRevokedAt: new Date(), updatedAt: new Date() })
+          .where(and(
+            eq(meetingRecapDistributions.id, distributionId),
             writableScopePredicate(principal, scopeColumns) as SQL,
-          ),
-        );
+          ));
+      }
     }
   }
 
-  // 6. Finalize with one truthful terminal discriminant.
-  if (draftError || draftIds.length === 0) {
-    const detail = draftError || "Recap draft was not created";
+  // 5. Finalize with one truthful terminal discriminant.
+  if (draftErrors.length > 0 || draftIds.length !== attendees.length) {
+    const detail = draftErrors[0] || "One or more recap drafts were not created";
+    for (const draftId of draftIds) {
+      await emailDraftStorage.discard(principal, draftId).catch((error) => {
+        log.warn(`Failed to discard partial recap draft ${draftId}: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
+    await db.update(meetingRecapDistributions).set({
+      status: "failed",
+      error: detail,
+      accessRevokedAt: new Date(),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(meetingRecapDistributions.sessionId, sessionId),
+      writableScopePredicate(principal, scopeColumns) as SQL,
+    ));
     await chatStorage.updateMeetingMeta(sessionId, {
       recap: {
         ...attemptRecap,
@@ -553,9 +598,10 @@ async function resolveRecipients(
 async function buildEmailContent(
   recap: MeetingRecapMeta,
   meeting: MeetingSessionMeta,
-  attendees: ResolvedAttendee[],
+  attendee: ResolvedAttendee,
   event: CalendarEvent,
   principal: Principal,
+  recipientUrl: string,
 ): Promise<string> {
   if (!recap.pageId) throw new Error("Canonical recap page is missing");
 
@@ -580,19 +626,13 @@ async function buildEmailContent(
   const timeLabel = Number.isNaN(startedAt.getTime())
     ? "Time unavailable"
     : `${formatInTimezone(startedAt, { hour: "numeric", minute: "2-digit", timeZoneName: "short" })} ${formatInTimezone(startedAt, { month: "short", day: "numeric", year: "numeric" })}`;
-  const participantLine = attendees
-    .map((attendee) => attendee.name
-      ? `${attendee.name} <${attendee.email}>`
-      : attendee.email)
-    .join(", ");
-  const greetingNames = [...new Set(
-    attendees
-      .map((attendee) => firstName(attendee.name))
-      .filter((name): name is string => !!name),
-  )];
-  const greeting = greetingNames.length > 0
-    ? `Hi ${new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(greetingNames)},`
-    : "Hi,";
+  const participantLine = meeting.participants
+    .map((participant) => participant.displayName?.trim() || participant.email?.trim())
+    .filter((label): label is string => !!label)
+    .filter((label, index, labels) => labels.indexOf(label) === index)
+    .join(", ") || "Participants unavailable";
+  const greetingName = firstName(attendee.name);
+  const greeting = greetingName ? `Hi ${greetingName},` : "Hi,";
 
   const summary = sectionContent(storedRecap, "Summary");
   if (!summary) throw new Error("Canonical recap summary is missing");
@@ -609,7 +649,7 @@ async function buildEmailContent(
     ...sections.map((section) =>
       `**${section.title}**\n${section.items.map((item) => `- ${item}`).join("\n")}`,
     ),
-    "Details and Transcript Available at [trymantra.ai](https://www.trymantra.ai).",
+    `[Open your recap and assigned work](${recipientUrl})`,
   ];
   const body = blocks.join("\n\n");
   if (body.length > EMAIL_BODY_CHAR_LIMIT) {

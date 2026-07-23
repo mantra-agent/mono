@@ -5997,6 +5997,9 @@ export async function runSchemaBootstrap(
         attendee_email  TEXT NOT NULL,
         attendee_name   TEXT,
         is_mantra_user  BOOLEAN NOT NULL DEFAULT false,
+        access_token_hash TEXT,
+        access_expires_at TIMESTAMPTZ,
+        access_revoked_at TIMESTAMPTZ,
         draft_id        UUID,
         send_method     TEXT NOT NULL DEFAULT 'gmail_draft',
         status          TEXT NOT NULL DEFAULT 'pending',
@@ -6009,7 +6012,11 @@ export async function runSchemaBootstrap(
     `);
     await pool.query(`ALTER TABLE meeting_recap_distributions ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE meeting_recap_distributions ADD COLUMN IF NOT EXISTS discarded_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE meeting_recap_distributions ADD COLUMN IF NOT EXISTS access_token_hash TEXT`);
+    await pool.query(`ALTER TABLE meeting_recap_distributions ADD COLUMN IF NOT EXISTS access_expires_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE meeting_recap_distributions ADD COLUMN IF NOT EXISTS access_revoked_at TIMESTAMPTZ`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_mrd_session ON meeting_recap_distributions(session_id)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_mrd_access_token_hash_unique ON meeting_recap_distributions(access_token_hash) WHERE access_token_hash IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_mrd_owner   ON meeting_recap_distributions(owner_user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_mrd_account ON meeting_recap_distributions(account_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_mrd_status_account ON meeting_recap_distributions(account_id, status)`);

@@ -54,6 +54,7 @@ const LogsPage = lazyWithRetry(() => import("@/pages/logs"));
 const UserDetailsPage = lazyWithRetry(() => import("@/pages/user-details"));
 const LoginPage = lazyWithRetry(() => import("@/pages/login"));
 const RegisterPage = lazyWithRetry(() => import("@/pages/register"));
+const RecipientRecapPage = lazyWithRetry(() => import("@/pages/recipient-recap"));
 const WaitlistPage = lazyWithRetry(() => import("@/pages/waitlist"));
 const BuildPage = lazyWithRetry(() => import("@/pages/build"));
 const DatabasePage = lazyWithRetry(() => import("@/pages/build").then(m => ({ default: m.DatabasePage })));
@@ -352,6 +353,16 @@ function AuthGate({ children }: { children: ReactNode }) {
           <Route path="/register" component={RegisterPage} />
           <Route path="/register/:token" component={RegisterPage} />
         </Switch>
+      </Suspense>
+    );
+  }
+
+  if (location.startsWith("/recap/")) {
+    return (
+      <Suspense fallback={<PageFallback />}>
+        <Route path="/recap/:token">
+          {(params: { token?: string }) => <RecipientRecapPage token={params.token ?? ""} />}
+        </Route>
       </Suspense>
     );
   }
