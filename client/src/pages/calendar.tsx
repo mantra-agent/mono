@@ -209,8 +209,8 @@ function getEventHour(event: CalendarEvent, timezone: string): number {
   return getPartsInTimezone(event.start.dateTime, timezone).hour;
 }
 
-interface DayHourRow {
-  hour: number;
+interface DaySlotRow {
+  slot: number;
 }
 
 interface DayEventBlock {
@@ -219,46 +219,61 @@ interface DayEventBlock {
   rowSpan: number;
 }
 
-function getEventEndHour(event: CalendarEvent, timezone: string): number {
-  if (!event.end.dateTime) return getEventHour(event, timezone);
-  const end = getPartsInTimezone(event.end.dateTime, timezone);
-  const lastTouchedHour = end.minute === 0 ? end.hour - 1 : end.hour;
-  return Math.max(getEventHour(event, timezone), lastTouchedHour);
+function slotHour(slot: number): number {
+  return Math.floor(slot / 2);
 }
 
-function getDayHourRows(section: ScheduleSection, events: CalendarEvent[], timezone: string, now = new Date()): DayHourRow[] {
-  const today = isToday(section.start, timezone);
-  const startHour = today ? getPartsInTimezone(now.toISOString(), timezone).hour : 5;
-  const timedEvents = events.filter(event => !isAllDay(event) && event.start.dateTime);
-  const latestEventHour = timedEvents.reduce<number | null>((latest, event) => {
-    const endHour = getEventEndHour(event, timezone);
-    return latest === null ? endHour : Math.max(latest, endHour);
-  }, null);
-  if (latestEventHour === null || latestEventHour < startHour) return [];
+function isHourStartSlot(slot: number): boolean {
+  return slot % 2 === 0;
+}
 
-  return Array.from({ length: latestEventHour - startHour + 1 }, (_, index) => ({
-    hour: startHour + index,
+function getEventStartSlot(event: CalendarEvent, timezone: string): number {
+  if (!event.start.dateTime) return 0;
+  const start = getPartsInTimezone(event.start.dateTime, timezone);
+  return Math.floor((start.hour * 60 + start.minute) / 30);
+}
+
+function getEventEndSlot(event: CalendarEvent, timezone: string): number {
+  const startSlot = getEventStartSlot(event, timezone);
+  if (!event.end.dateTime) return startSlot;
+  const end = getPartsInTimezone(event.end.dateTime, timezone);
+  const lastTouchedSlot = Math.ceil((end.hour * 60 + end.minute) / 30) - 1;
+  return Math.max(startSlot, lastTouchedSlot);
+}
+
+function getDaySlotRows(section: ScheduleSection, events: CalendarEvent[], timezone: string, now = new Date()): DaySlotRow[] {
+  const today = isToday(section.start, timezone);
+  const startSlot = (today ? getPartsInTimezone(now.toISOString(), timezone).hour : 5) * 2;
+  const timedEvents = events.filter(event => !isAllDay(event) && event.start.dateTime);
+  const latestEventSlot = timedEvents.reduce<number | null>((latest, event) => {
+    const endSlot = getEventEndSlot(event, timezone);
+    return latest === null ? endSlot : Math.max(latest, endSlot);
+  }, null);
+  if (latestEventSlot === null || latestEventSlot < startSlot) return [];
+
+  return Array.from({ length: latestEventSlot - startSlot + 1 }, (_, index) => ({
+    slot: startSlot + index,
   }));
 }
 
-function getDayEventBlocks(rows: DayHourRow[], events: CalendarEvent[], timezone: string): DayEventBlock[] {
+function getDayEventBlocks(rows: DaySlotRow[], events: CalendarEvent[], timezone: string): DayEventBlock[] {
   if (rows.length === 0) return [];
-  const firstHour = rows[0].hour;
-  const lastHour = rows[rows.length - 1].hour;
+  const firstSlot = rows[0].slot;
+  const lastSlot = rows[rows.length - 1].slot;
 
   return events
     .filter(event => !isAllDay(event) && event.start.dateTime)
     .map(event => ({
       event,
-      startHour: Math.max(firstHour, getEventHour(event, timezone)),
-      endHour: Math.min(lastHour, getEventEndHour(event, timezone)),
+      startSlot: Math.max(firstSlot, getEventStartSlot(event, timezone)),
+      endSlot: Math.min(lastSlot, getEventEndSlot(event, timezone)),
     }))
-    .filter(({ startHour, endHour }) => startHour <= endHour)
-    .sort((a, b) => a.startHour - b.startHour || a.endHour - b.endHour)
-    .map(({ event, startHour, endHour }) => ({
+    .filter(({ startSlot, endSlot }) => startSlot <= endSlot)
+    .sort((a, b) => a.startSlot - b.startSlot || a.endSlot - b.endSlot)
+    .map(({ event, startSlot, endSlot }) => ({
       event,
-      rowStart: startHour - firstHour + 1,
-      rowSpan: endHour - startHour + 1,
+      rowStart: startSlot - firstSlot + 1,
+      rowSpan: endSlot - startSlot + 1,
     }));
 }
 
@@ -750,8 +765,8 @@ function ScheduleTreeSection({ section, mode, events, loading, calendarMap, acco
   onEventClick: (event: CalendarEvent) => void;
 }) {
   const [open, setOpen] = useState(true);
-  const dayHourRows = useMemo(
-    () => mode === "day" ? getDayHourRows(section, events, timezone) : [],
+  const daySlotRows = useMemo(
+    () => mode === "day" ? getDaySlotRows(section, events, timezone) : [],
     [events, mode, section, timezone],
   );
   const allDayEvents = mode === "day" ? events.filter(isAllDay) : [];
@@ -773,7 +788,7 @@ function ScheduleTreeSection({ section, mode, events, loading, calendarMap, acco
                 <DayAllDayRow events={allDayEvents} onEventClick={onEventClick} />
               )}
               <DayTimeline
-                rows={dayHourRows}
+                rows={daySlotRows}
                 events={events}
                 accountEmails={accountEmails}
                 timezone={timezone}
@@ -834,7 +849,7 @@ function DayAllDayRow({ events, onEventClick }: {
 }
 
 function DayTimeline({ rows, events, accountEmails, timezone, onEventClick }: {
-  rows: DayHourRow[];
+  rows: DaySlotRow[];
   events: CalendarEvent[];
   accountEmails: string[];
   timezone: string;
@@ -848,17 +863,25 @@ function DayTimeline({ rows, events, accountEmails, timezone, onEventClick }: {
       className="grid w-full grid-cols-[3.5rem_minmax(0,1fr)] pr-2"
       style={{ gridTemplateRows: `repeat(${rows.length}, 1.75rem)` }}
     >
-      {rows.map((row, index) => (
-        <div key={row.hour} className="contents" data-testid={`schedule-hour-${formatHourLabel(row.hour)}`}>
-          <span
-            className="self-center pr-2 text-right text-[11px] leading-none tabular-nums text-muted-foreground"
-            style={{ gridColumn: 1, gridRow: index + 1 }}
-          >
-            {formatHourLabel(row.hour)}
-          </span>
-          <span className="border-b border-l border-border/30" style={{ gridColumn: 2, gridRow: index + 1 }} />
-        </div>
-      ))}
+      {rows.map((row, index) => {
+        const hourStart = isHourStartSlot(row.slot);
+        const hourLabel = formatHourLabel(slotHour(row.slot));
+        const hourBoundary = !hourStart || index === rows.length - 1;
+        return (
+          <div key={row.slot} className="contents" data-testid={`${hourStart ? "schedule-hour" : "schedule-half-hour"}-${hourLabel}`}>
+            <span
+              className="self-center pr-2 text-right text-[11px] leading-none tabular-nums text-muted-foreground"
+              style={{ gridColumn: 1, gridRow: index + 1 }}
+            >
+              {hourStart ? hourLabel : null}
+            </span>
+            <span
+              className={cn("border-b border-l border-border/30", !hourBoundary && "border-b-border/10")}
+              style={{ gridColumn: 2, gridRow: index + 1 }}
+            />
+          </div>
+        );
+      })}
       {blocks.map(block => (
         <DayEventBlockView
           key={`${block.event.calendarId}:${block.event.id}`}
