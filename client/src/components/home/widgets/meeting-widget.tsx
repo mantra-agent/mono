@@ -26,11 +26,15 @@ function primaryReference(item: SimpleFeedItem) {
 /** Inline mode: renders as a reference link (like other widgets) */
 function MeetingInline({ item }: { item: SimpleFeedItem }) {
   const reference = primaryReference(item);
+  const isMeetingRecord = item.payload?.kind === "meeting_record";
+  const completedClassName = !isMeetingRecord && item.status === "completed"
+    ? "text-neutral hover:text-neutral"
+    : undefined;
 
   return reference ? (
-    <ReferenceRenderer refValue={reference} surface="simple-row" className={item.status === "completed" ? "text-neutral hover:text-neutral" : undefined} />
+    <ReferenceRenderer refValue={reference} surface="simple-row" className={completedClassName} />
   ) : (
-    <span className={cn("truncate text-sm font-medium", item.status === "completed" && "text-neutral line-through")}>{item.title}</span>
+    <span className={cn("truncate text-sm font-medium", !isMeetingRecord && item.status === "completed" && "text-neutral line-through")}>{item.title}</span>
   );
 }
 

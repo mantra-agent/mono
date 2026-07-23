@@ -154,6 +154,10 @@ function expandedContent(item: SimpleFeedItem, hasPerson: boolean): string | nul
     return parts.join("\n\n");
   }
 
+  if (kind === "meeting_record") {
+    return stringPayload(item, "meetingSummary");
+  }
+
   if (kind === "meeting_artifact") {
     return stringPayload(item, "artifactSummary") ?? stringPayload(item, "artifactOneLiner");
   }
@@ -304,7 +308,8 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children }: Si
 
   const completed = item.status === "completed" || mutation.isSuccess;
   const disabled = (!action && !entryUi) || mutation.isPending || completed;
-  const showCheckCircle = completed || item.completable || item.widgetType === "meeting";
+  const isMeetingRecord = item.payload?.kind === "meeting_record";
+  const showCheckCircle = !isMeetingRecord && (completed || item.completable || item.widgetType === "meeting");
   const embedded = layout === "embedded";
 
   const titleHref = firstExternalUrl(item.title);
@@ -413,21 +418,23 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children }: Si
               {item.time ?? ""}
             </span>
 
-            {/* Checkbox column (always rendered for vertical alignment) */}
-            <span className="w-4 shrink-0 flex items-center justify-center">
-              {item.payload?.needsDate && !completed ? (
-                <SimpleCheckCircle variant="caution" tooltip="Missing Due Date" />
-              ) : showCheckCircle ? (
-                <SimpleCheckCircle
-                  checked={completed}
-                  pending={mutation.isPending}
-                  disabled={disabled}
-                  interactive={item.completable && !completed}
-                  label={`Complete ${item.title}`}
-                  onClick={requestCompletion}
-                />
-              ) : null}
-            </span>
+            {/* Checkbox column is reserved only for objects with completion semantics. */}
+            {!isMeetingRecord && (
+              <span className="w-4 shrink-0 flex items-center justify-center">
+                {item.payload?.needsDate && !completed ? (
+                  <SimpleCheckCircle variant="caution" tooltip="Missing Due Date" />
+                ) : showCheckCircle ? (
+                  <SimpleCheckCircle
+                    checked={completed}
+                    pending={mutation.isPending}
+                    disabled={disabled}
+                    interactive={item.completable && !completed}
+                    label={`Complete ${item.title}`}
+                    onClick={requestCompletion}
+                  />
+                ) : null}
+              </span>
+            )}
           </>
         )}
 
