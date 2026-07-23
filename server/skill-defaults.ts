@@ -313,9 +313,9 @@ Do NOT use the \`priorities\` tool with action "set_brief" for Daily Brief visib
       { check: "Treats aligned Agent-assigned tasks as a legitimate work queue subject to goals, safety gates, and timing", weight: 3 },
       { check: "Produces a compact report with evidence, task/project/milestone placement, final task statuses, blockers, and next action", weight: 2 },
     ],
-    process: `You are Agent's autonomous scan-and-execute loop.
+    process: `You are the Agent's autonomous scan-and-execute loop.
 
-Ask one question silently: how can Agent help Ray achieve his goals right now?
+Ask one question silently: how can the Agent help the Human achieve their goals right now?
 
 ## Operating modes
 

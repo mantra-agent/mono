@@ -4,6 +4,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { libraryPages } from "./models/info";
 import { vaults } from "./models/vaults";
+import { DEFAULT_AGENT_NAME } from "./instance-config";
 
 export * from "./models/chat";
 export * from "./models/goals";
@@ -147,7 +148,7 @@ export const agentProfiles = pgTable("agent_profiles", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   accountId: varchar("account_id").references(() => accounts.id, { onDelete: "cascade" }),
-  agentName: text("agent_name").notNull().default("Agent"),
+  agentName: text("agent_name").notNull().default(DEFAULT_AGENT_NAME),
   relationshipState: jsonb("relationship_state").notNull().default(sql`'{}'::jsonb`),
   metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),

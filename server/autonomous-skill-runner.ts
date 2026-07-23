@@ -15,6 +15,7 @@ import type { AdmissionTier } from "./run-admission";
 
 import { getSideEffectTier, type SideEffectTier } from "./autonomy-tiers";
 import { isAgentType } from "@shared/instance-config";
+import { resolveCurrentProfileIdentity } from "./profile-identity";
 import { getCurrentPrincipal, runWithPrincipal } from "./principal-context";
 import type { Principal } from "./principal";
 
@@ -1336,7 +1337,8 @@ export async function triggerResponseOnChildSession(sessionId: string): Promise<
     systemPrompt = contextBuilder.renderToPrompt(spine);
   } catch (err) {
     logger.warn(`[triggerResponse] [${sessionId}] context build failed, using minimal prompt: ${err instanceof Error ? err.message : String(err)}`);
-    systemPrompt = "You are Agent, a synthetic intelligence assistant. Respond to the messages in this session.";
+    const { agentName } = await resolveCurrentProfileIdentity();
+    systemPrompt = `Your name is ${agentName}. Your type is Agent. Respond to the messages in this session.`;
   }
 
   // Assemble executor messages from session history

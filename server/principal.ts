@@ -5,6 +5,7 @@ import { createLogger } from "./log";
 import { recordPrincipalDiagnosticEvent } from "./principal-diagnostics";
 import { accounts, memberships, userProfiles, agentProfiles, privilegedAccessAudit, type User } from "@shared/schema";
 import { getUserEffectivePermissions, type Permission } from "./permissions";
+import { DEFAULT_AGENT_NAME } from "@shared/instance-config";
 
 const log = createLogger("principal");
 
@@ -243,7 +244,7 @@ async function ensureProfileRows(user: User, accountId: string): Promise<void> {
 
   await db
     .insert(agentProfiles)
-    .values({ userId: user.id, accountId, agentName: "Agent" })
+    .values({ userId: user.id, accountId, agentName: DEFAULT_AGENT_NAME })
     .onConflictDoUpdate({
       target: agentProfiles.userId,
       set: { accountId, updatedAt: sql`CURRENT_TIMESTAMP` },

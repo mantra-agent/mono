@@ -6,6 +6,7 @@ import { getModelForActivity, ACTIVITY_CHAT, ACTIVITY_FRAMING, ACTIVITY_VOICE, t
 import { getContextWindow } from "./model-registry";
 import { withTimeout, isTimeoutError, CONTEXT_ASSEMBLY_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";
+import { resolveCurrentProfileIdentity } from "./profile-identity";
 
 const log = createLogger("AgentContext");
 
@@ -662,7 +663,8 @@ export async function assembleContext(options: {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.warn(`ContextBuilder degraded to minimal fallback reason=${isTimeoutError(err) ? "timeout" : "failure"} timeoutMs=${CONTEXT_ASSEMBLY_TIMEOUT_MS}: ${msg}`);
-    spinePrompt = `You are Agent.\n\nCurrent time: ${getLocalTimeString()}`;
+    const { agentName } = await resolveCurrentProfileIdentity();
+    spinePrompt = `Your name is ${agentName}. Your type is Agent.\n\nCurrent time: ${getLocalTimeString()}`;
   }
 
   let systemPrompt = buildSystemPromptFromSpine(spinePrompt);

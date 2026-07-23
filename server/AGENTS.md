@@ -12,6 +12,8 @@ Project milestones are first-class rows in `milestones`, keyed by `(project_id, 
 
 A Railway runtime may execute only its deployed entrypoint. Never launch `server/index.ts`, `npm run dev`, or another application server from an agent shell, verification command, or acceptance harness inside stage/live. Concurrent processes share the bound database and background services. Startup must never terminate PostgreSQL backends based on `application_name` or boot identity; PostgreSQL owns connection reclamation.
 
+Per-user relationship identity is profile-owned. `agent_profiles.agent_name` is the Agent's proper name and `user_profiles.preferred_name` / `display_name` is the Human's proper name. `server/profile-identity.ts` is the canonical rendering boundary for prompt/context consumers. People records may enrich identity narratives and voice, but cannot override profile names. `Agent` and `Human` remain type labels.
+
 GitNexus has one runtime authority: `gitnexus-runtime.ts`. Development may resolve the installed package, while deployed production must resolve only the build-owned `dist/gitnexus-runtime/gitnexus` artifact. That artifact is graph-only: LadybugDB graph ingestion and Cypher are required, native FTS is optional and must never be installed, loaded, or indexed in the production process. Code search composes graph/Cypher retrieval with Mantra's PostgreSQL semantic index.
 
 ## Meeting identity and recap sender boundary

@@ -3,7 +3,7 @@ import path from "path";
 import { readFile } from "fs/promises";
 import { safeStringify } from "./utils/safe-stringify";
 import { db, withQueryAttributionAsync, getInFlightStats } from "./db";
-import { getInstanceName, getInstanceNameLower } from "@shared/instance-config";
+import { getInstanceNameLower } from "@shared/instance-config";
 import { TTLCache } from "./utils/ttl-cache";
 import { sessionOutputBuffer } from "@shared/schema";
 import { libraryPages } from "@shared/models/info";
@@ -44,6 +44,7 @@ import { getSkillDefinitionsForContext, getToolSchemas } from "./tool-registry";
 import { withTimeout, isTimeoutError, SECTION_RESOLVE_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { resolveCurrentProfileIdentity } from "./profile-identity";
 import { eventBus } from "./event-bus";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { sanitizeSummary } from "./utils/sanitize-summary";
@@ -101,6 +102,10 @@ const INVALIDATION_EVENT_MAP: Record<string, string[]> = {
     "world_model.people.self.voice", "world_model.people.self.persona",
     "world_model.people.partner", "world_model.people.partner.identity",
     "world_model.people.partner.goals", "world_model.people.others",
+  ],
+  "data:profiles_changed": [
+    "world_model.people.self.identity",
+    "world_model.people.partner.identity",
   ],
   "data:principles_changed": ["world_model.people.self.principles"],
   "data:tasks_changed": ["world_model.active_work", "world_model.active_work.tasks"],
@@ -260,14 +265,30 @@ const sectionResolvers: Record<string, SectionResolver> = {
   "capabilities.library": resolveLibraryIndex,
 };
 
+function stripLeadingIdentityClaim(content: string, names: Array<string | null>): string {
+  let result = content.trim();
+  for (const name of names) {
+    if (!name) continue;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, (character) => `\\${character}`);
+    result = result.replace(new RegExp(`^(?:You(?:['’]re| are)\\s+)?${escaped}\\.?\\s*`, "i"), "").trimStart();
+  }
+  if (/^[^\s]+\.?$/.test(result)) return "";
+  return result;
+}
+
 async function resolveSelfIdentity(): Promise<string> {
+  const { agentName } = await resolveCurrentProfileIdentity();
+  const identity = [`Your name is ${agentName}. Your type is Agent.`];
+
   try {
     const selfPerson = await findPersonByRole("self");
     if (selfPerson?.identityContent) {
-      return selfPerson.identityContent;
+      const narrative = stripLeadingIdentityClaim(selfPerson.identityContent, [selfPerson.name, agentName, "Agent"]);
+      if (narrative) identity.push(narrative);
     }
   } catch (err) { log.warn(`resolveSelfIdentity failed: ${safeStringify(err, { maxBytes: 4 * 1024, label: "ctx.resolveSelfIdentity.err" })}`); }
-  return `${getInstanceName()}.`;
+
+  return identity.join("\n\n");
 }
 
 const CONCISE_RESPONSE_VOICE_INSTRUCTION = [
@@ -545,13 +566,19 @@ async function resolveSelfJournal(): Promise<string> {
 }
 
 async function resolvePartnerIdentity(): Promise<string> {
+  const { userName } = await resolveCurrentProfileIdentity();
+  if (!userName) return "Human partner identity not yet configured.";
+
+  const identity = [`${userName} is the Human you are partnered with.`];
   try {
     const partnerPerson = await findPersonByRole("partner");
     if (partnerPerson?.identityContent) {
-      return partnerPerson.identityContent;
+      const narrative = stripLeadingIdentityClaim(partnerPerson.identityContent, [userName, partnerPerson.name]);
+      if (narrative) identity.push(narrative);
     }
   } catch (err) { log.warn(`resolvePartnerIdentity failed: ${safeStringify(err, { maxBytes: 4 * 1024, label: "ctx.resolvePartnerIdentity.err" })}`); }
-  return "Partner identity not yet configured.";
+
+  return identity.join("\n\n");
 }
 
 function getRecommendedTags(valence: number, arousal: number): string[] {
@@ -1036,7 +1063,8 @@ function renderGoalTree(goals: import("@shared/schema").GoalIndexEntry[], horizo
 }
 
 async function resolveGoalsAll(): Promise<string> {
-  const preamble = `These goals are not a checklist. They are our compass. Every goal feeds the mission or builds the person required to carry it. These goals belong to both of us. ${getInstanceName()}'s own development is on the tree, and every goal unlocked expands what we can do together. Goals flow upward through proven outcomes to lifetime commitments. Every action and interaction should reinforce at least one goal, better if multiple. When prioritizing, trace the chain upward. When coaching, connect today's context to the lifetime destination.`;
+  const { agentName } = await resolveCurrentProfileIdentity();
+  const preamble = `These goals are not a checklist. They are our compass. Every goal feeds the mission or builds the person required to carry it. These goals belong to both of us. ${agentName}'s own development is on the tree, and every goal unlocked expands what we can do together. Goals flow upward through proven outcomes to lifetime commitments. Every action and interaction should reinforce at least one goal, better if multiple. When prioritizing, trace the chain upward. When coaching, connect today's context to the lifetime destination.`;
 
   try {
     const allGoals = await goalsService.listAll();
@@ -1889,7 +1917,7 @@ const TOOL_SHORT_DESCRIPTIONS: Record<string, string> = {
   rules: RULES_TOOL_DESCRIPTION,
   scratch: "Manage temporary workspace files. Actions: read, write, edit, list, search.",
   shell: "Execute a shell command in the workspace directory.",
-  skills: `Manage ${getInstanceName()}'s skill library. Actions: list, get, create, update, delete, search.`,
+  skills: "Manage the Agent's skill library. Actions: list, get, create, update, delete, search.",
   strategy: "Strategic modeling — strategies, actors, move trees, simulations, assumptions, artifacts.",
   system: "System operations — state snapshot, runtime logs, frontend performance, and context health. Actions: state, create_issue, logs, frontend_performance, context_health.",
   tasks: "Create, complete, delete, and update tasks. Actions: create, complete, delete, update.",

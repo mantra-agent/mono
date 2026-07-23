@@ -1,12 +1,12 @@
 /**
  * Client-side instance identity configuration.
  *
- * Reads VITE_INSTANCE_NAME from build-time env, falling back to "Agent".
+ * Reads VITE_INSTANCE_NAME from build-time env, falling back to the product name.
  * For the server-side equivalent, see @shared/instance-config.ts.
  */
 
 export function getInstanceName(): string {
-  return import.meta.env.VITE_INSTANCE_NAME || "Agent";
+  return import.meta.env.VITE_INSTANCE_NAME || "Mantra";
 }
 
 /** Check if a session/owner/timer type represents the agent. */

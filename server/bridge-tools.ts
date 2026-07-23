@@ -4004,6 +4004,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         .update(agentProfiles)
         .set(updates)
         .where(eq(agentProfiles.userId, principal.userId));
+      eventBus.publish({
+        category: "agent",
+        event: "data:profiles_changed",
+        payload: { source: "agent_profile_tool", userId: principal.userId },
+      });
       if (updatedAgentName && principal.accountId) {
         const { ensureAgentLibraryRoot } = await import("./onboarding");
         await ensureAgentLibraryRoot({ ...principal, userId: principal.userId, accountId: principal.accountId }, updatedAgentName);
