@@ -356,24 +356,35 @@ export async function registerLibraryRoutes(app: Express) {
   }
 
   try {
-    const { rows: hasTypeCol } = await pool.query(`
-      SELECT 1 FROM information_schema.columns
-      WHERE table_name = 'library_pages' AND column_name = 'type'
+    const { rows: legacyColumns } = await pool.query(`
+      SELECT
+        EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'library_pages' AND column_name = 'type'
+        ) AS has_type,
+        EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'library_pages' AND column_name = 'metadata'
+        ) AS has_metadata
     `);
-    if (hasTypeCol.length > 0) {
-      log.log(
-        `[migration] Migrating library_pages: unifying type system to tags+status`,
-      );
+    const hasType = legacyColumns[0]?.has_type === true;
+    const hasMetadata = legacyColumns[0]?.has_metadata === true;
+    if (hasType) {
+      log.log(`[migration] Migrating library_pages: unifying type system to tags+status`);
       await pool.query(
         `ALTER TABLE library_pages ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'`,
       );
       await pool.query(
         `ALTER TABLE library_pages ADD COLUMN IF NOT EXISTS status TEXT`,
       );
-      await pool.query(`
+      await pool.query(hasMetadata ? `
         UPDATE library_pages
         SET tags = ARRAY['spec'],
             status = COALESCE((metadata->>'status'), 'draft')
+        WHERE type = 'spec'
+      ` : `
+        UPDATE library_pages
+        SET tags = ARRAY['spec'], status = COALESCE(status, 'draft')
         WHERE type = 'spec'
       `);
       await pool.query(`
@@ -381,9 +392,11 @@ export async function registerLibraryRoutes(app: Express) {
       `);
       await pool.query(`DROP INDEX IF EXISTS idx_library_pages_type`);
       await pool.query(`ALTER TABLE library_pages DROP COLUMN IF EXISTS type`);
-      await pool.query(
-        `ALTER TABLE library_pages DROP COLUMN IF EXISTS metadata`,
-      );
+    }
+    if (hasMetadata) {
+      await pool.query(`ALTER TABLE library_pages DROP COLUMN IF EXISTS metadata`);
+    }
+    if (hasType || hasMetadata) {
       log.debug(`[migration] Library pages type→tags migration complete`);
     }
   } catch (e: any) {

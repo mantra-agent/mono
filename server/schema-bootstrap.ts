@@ -2277,18 +2277,6 @@ export async function runSchemaBootstrap(
 
 
 
-  await heal("library_pages type+metadata columns", async () => {
-    await pool.query(
-      `ALTER TABLE library_pages ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'page'`,
-    );
-    await pool.query(
-      `ALTER TABLE library_pages ADD COLUMN IF NOT EXISTS metadata JSONB`,
-    );
-    await pool.query(
-      `CREATE INDEX IF NOT EXISTS idx_library_pages_type ON library_pages(type)`,
-    );
-  });
-
   await heal("plaid_transactions source column", async () => {
     await pool.query(
       `ALTER TABLE plaid_transactions ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'plaid'`,

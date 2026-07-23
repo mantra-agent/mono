@@ -1,9 +1,8 @@
-import { eq, or, sql } from "drizzle-orm";
-import { db } from "../db";
+import { and, eq, or, sql } from "drizzle-orm";
+import { db, pool } from "../db";
 import { createLogger } from "../log";
-import { resolveLibraryParent } from "../library-index";
 import { publishLibraryChanged, slugifyLibraryTitle } from "../library-save";
-import { setSetting } from "../system-settings";
+import { getSetting, setSetting } from "../system-settings";
 import { projects } from "@shared/schema";
 import { libraryPages } from "@shared/models/info";
 import { syncContentFields } from "@shared/markdown-tiptap";
@@ -12,7 +11,18 @@ import type { ProjectNote, ProjectPage } from "@shared/models/work";
 const log = createLogger("MigrateProjectNotesSpecToLibrary");
 const RUN_KEY = "migration.project-notes-spec-to-library.v1";
 
-type ProjectRow = typeof projects.$inferSelect;
+type ProjectRow = Pick<
+  typeof projects.$inferSelect,
+  | "id"
+  | "title"
+  | "spec"
+  | "notes"
+  | "pages"
+  | "scope"
+  | "ownerUserId"
+  | "accountId"
+  | "vaultId"
+>;
 type MigrationKind = "notes" | "spec";
 
 type MigrationStats = {
@@ -66,18 +76,33 @@ function projectAlreadyLinks(project: ProjectRow, slug: string): boolean {
   return normalizePages(project.pages).some(page => page.slug === slug || page.id === slug);
 }
 
-async function existingPage(slug: string): Promise<typeof libraryPages.$inferSelect | undefined> {
+async function existingPage(project: ProjectRow, slug: string): Promise<typeof libraryPages.$inferSelect | undefined> {
   const [page] = await db.select()
     .from(libraryPages)
-    .where(eq(libraryPages.slug, slug))
+    .where(and(
+      eq(libraryPages.slug, slug),
+      eq(libraryPages.scope, project.scope),
+      project.ownerUserId === null
+        ? sql`${libraryPages.ownerUserId} IS NULL`
+        : eq(libraryPages.ownerUserId, project.ownerUserId),
+      project.accountId === null
+        ? sql`${libraryPages.accountId} IS NULL`
+        : eq(libraryPages.accountId, project.accountId),
+      project.vaultId === null
+        ? sql`${libraryPages.vaultId} IS NULL`
+        : eq(libraryPages.vaultId, project.vaultId),
+    ))
     .limit(1);
   return page;
 }
 
-async function createMigrationPage(project: ProjectRow, kind: MigrationKind, parentId: string): Promise<typeof libraryPages.$inferSelect> {
+async function createMigrationPage(project: ProjectRow, kind: MigrationKind): Promise<typeof libraryPages.$inferSelect> {
+  if (!project.vaultId) {
+    throw new Error(`project ${project.id} has no vault after work schema convergence`);
+  }
   const title = pageTitle(project, kind);
   const slug = pageSlug(project, kind);
-  const existing = await existingPage(slug);
+  const existing = await existingPage(project, slug);
   if (existing) return existing;
 
   const markdown = kind === "notes" ? markdownForNotes(project) : markdownForSpec(project);
@@ -87,12 +112,15 @@ async function createMigrationPage(project: ProjectRow, kind: MigrationKind, par
     slug,
     content: synced.content,
     plainTextContent: synced.plainTextContent,
-    parentId,
     tags: ["project", `project:${project.id}`, kind],
     status: "migrated",
     scope: project.scope,
     ownerUserId: project.ownerUserId,
     accountId: project.accountId,
+    vaultId: project.vaultId,
+    structuralRole: "artifact",
+    createdByUserId: project.ownerUserId,
+    updatedByUserId: project.ownerUserId,
     updatedAt: sql`CURRENT_TIMESTAMP`,
   }).returning();
 
@@ -130,11 +158,31 @@ export async function migrateProjectNotesSpecToLibrary(): Promise<MigrationStats
     projectsScanned: 0,
     skippedAlreadyMigrated: 0,
   };
+  const client = await pool.connect();
 
   try {
+    await client.query("SELECT pg_advisory_lock(hashtext($1))", [RUN_KEY]);
+    const completed = await getSetting<{ completedAt?: unknown }>(RUN_KEY);
+    if (typeof completed?.completedAt === "string") {
+      log.info(`already complete completedAt=${completed.completedAt}; skipped`);
+      return stats;
+    }
+
     await ensureProjectPagesColumn();
-    const parentId = await resolveLibraryParent("notes");
-    const rows = await db.select().from(projects).where(or(sql`jsonb_array_length(${projects.notes}) > 0`, sql`length(trim(${projects.spec})) > 0`));
+    const rows: ProjectRow[] = await db.select({
+      id: projects.id,
+      title: projects.title,
+      spec: projects.spec,
+      notes: projects.notes,
+      pages: projects.pages,
+      scope: projects.scope,
+      ownerUserId: projects.ownerUserId,
+      accountId: projects.accountId,
+      vaultId: projects.vaultId,
+    }).from(projects).where(or(
+      sql`CASE WHEN jsonb_typeof(${projects.notes}) = 'array' THEN jsonb_array_length(${projects.notes}) ELSE 0 END > 0`,
+      sql`length(trim(COALESCE(${projects.spec}, ''))) > 0`,
+    ));
     stats.projectsScanned = rows.length;
 
     for (const project of rows) {
@@ -149,8 +197,8 @@ export async function migrateProjectNotesSpecToLibrary(): Promise<MigrationStats
           stats.skippedAlreadyMigrated += 1;
           continue;
         }
-        const existed = await existingPage(slug);
-        const page = existed ?? await createMigrationPage(project, kind, parentId);
+        const existed = await existingPage(project, slug);
+        const page = existed ?? await createMigrationPage(project, kind);
         const linked = await linkPageToProject(project, page);
         if (linked || !existed) {
           stats.pagesCreated += existed ? 0 : 1;
@@ -170,6 +218,9 @@ export async function migrateProjectNotesSpecToLibrary(): Promise<MigrationStats
     const message = error instanceof Error ? error.message : String(error);
     log.error(`failed error=${message}`);
     throw error;
+  } finally {
+    await client.query("SELECT pg_advisory_unlock(hashtext($1))", [RUN_KEY]).catch(() => undefined);
+    client.release();
   }
 }
 
