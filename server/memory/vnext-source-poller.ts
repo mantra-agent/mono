@@ -17,10 +17,7 @@ import {
   hashContent,
   buildChunkHeader,
 } from "./vnext-content-chunking";
-import {
-  memoryVnextClaimStorage,
-  persistClaimCandidates,
-} from "./vnext-claim-storage";
+import { persistClaimCandidates } from "./vnext-claim-storage";
 import {
   extractClaimsFromChunk,
   deduplicateChunkClaims,
@@ -38,11 +35,7 @@ const MAX_SOURCES_PER_RUN = 10;
 /** Max claims per source across all chunks */
 const MAX_CLAIMS_PER_SOURCE = 3;
 
-/** Confidence decay per re-extraction miss */
-const RECONCILIATION_DECAY_DELTA = 0.1;
-
-/** Confidence at or below which claims become retirement candidates */
-const RETIREMENT_CONFIDENCE_THRESHOLD = 0.1;
+// Re-extraction absence is not contradiction, supersession, or evidence against a claim.
 
 /** Stuck processing timeout in minutes */
 const STUCK_PROCESSING_TIMEOUT_MINUTES = 30;
@@ -241,20 +234,8 @@ async function processSource(
     return { created: 0, reinforced: 0, skipped: 0, decayed: 0, retirementCandidates: 0 };
   }
 
-  // Detect re-extraction: if lastExtractedAt is set, this source was previously processed
-  const isReExtraction = !!row.lastExtractedAt;
-
-  // Collect existing claim content hashes before extraction for reconciliation
-  let preExistingClaimIds: Set<number> | undefined;
-  if (isReExtraction) {
-    const existingClaims = await memoryVnextClaimStorage.findClaimsBySourceOrigin(
-      sourceContent.sourceType,
-      row.sourceId,
-    );
-    preExistingClaimIds = new Set(existingClaims.map((c) => c.id));
-    log.info(
-      `processSource: re-extraction detected, ${preExistingClaimIds.size} existing claims for source=${row.sourceType}:${row.sourceId}`,
-    );
+  if (row.lastExtractedAt) {
+    log.debug(`processSource: re-extraction preserves unreproduced claims source=${row.sourceType}:${row.sourceId}`);
   }
 
   // Chunk and extract
@@ -288,16 +269,8 @@ async function processSource(
     result.skipped = persistResult.skipped;
   }
 
-  // Reconciliation: decay claims that were NOT re-produced during re-extraction
-  if (isReExtraction && preExistingClaimIds && preExistingClaimIds.size > 0) {
-    const reconcileResult = await reconcileStaleClaimsAfterReExtraction(
-      preExistingClaimIds,
-      sourceContent.sourceType,
-      row.sourceId,
-    );
-    result.decayed = reconcileResult.decayed;
-    result.retirementCandidates = reconcileResult.retirementCandidates;
-  }
+  // Absence from a re-extraction pass is not negative evidence. Existing claims,
+  // certainty, lifecycle stage, and availability remain unchanged.
 
   await markCompleted(row.id, contentHash);
 
@@ -308,83 +281,8 @@ async function processSource(
   return result;
 }
 
-// ---------------------------------------------------------------------------
-// Reconciliation: decay unreproduced claims after re-extraction
-// ---------------------------------------------------------------------------
-
-/**
- * After re-extracting claims from an edited source, compare the current
- * set of claims from that source against the pre-existing set.
- *
- * Claims that were reinforced during persistence (semantic dedup match)
- * will have a bumped recallCount/lastRecalledAt. Claims that were NOT
- * re-produced get their confidence decayed. Claims at or below the
- * retirement threshold become candidates for retirement.
- */
-async function reconcileStaleClaimsAfterReExtraction(
-  preExistingClaimIds: Set<number>,
-  source: string,
-  sourceId: string,
-): Promise<{ decayed: number; retirementCandidates: number }> {
-  // Re-fetch the claims to see which ones were reinforced (updated recently)
-  const currentClaims = await memoryVnextClaimStorage.findClaimsBySourceOrigin(
-    source,
-    sourceId,
-  );
-
-  // Claims that were reinforced will have lastRecalledAt updated during this run
-  // We use a 5-minute window to detect "just reinforced"
-  const recentThreshold = new Date(Date.now() - 5 * 60 * 1000);
-
-  let decayed = 0;
-  let retirementCandidates = 0;
-
-  for (const claim of currentClaims) {
-    if (!preExistingClaimIds.has(claim.id)) {
-      // Newly created claim, not a pre-existing one
-      continue;
-    }
-
-    // Check if this claim was reinforced during the current extraction
-    const wasReinforced =
-      claim.lastRecalledAt && claim.lastRecalledAt > recentThreshold;
-
-    if (wasReinforced) {
-      log.debug(
-        `reconcile: claim #${claim.id} reinforced, skipping decay`,
-      );
-      continue;
-    }
-
-    // This pre-existing claim was NOT re-produced — decay confidence
-    const updated = await memoryVnextClaimStorage.decayClaimConfidence(
-      claim.id,
-      RECONCILIATION_DECAY_DELTA,
-    );
-
-    if (updated) {
-      decayed++;
-      if (updated.confidence <= RETIREMENT_CONFIDENCE_THRESHOLD) {
-        retirementCandidates++;
-        log.info(
-          `reconcile: claim #${claim.id} confidence=${updated.confidence.toFixed(2)} is retirement candidate`,
-        );
-      } else {
-        log.debug(
-          `reconcile: claim #${claim.id} confidence decayed to ${updated.confidence.toFixed(2)}`,
-        );
-      }
-    }
-  }
-
-  if (decayed > 0) {
-    log.info(
-      `reconcile: source=${source}:${sourceId} decayed=${decayed} retirementCandidates=${retirementCandidates}`,
-    );
-  }
-
-  return { decayed, retirementCandidates };
-}
+// Re-extraction intentionally has no negative-evidence reconciliation. Explicit
+// contradiction or supersession relationships own any future certainty change.
 
 // ---------------------------------------------------------------------------
 // Build principal from queue row ownership

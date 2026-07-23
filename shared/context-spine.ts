@@ -101,6 +101,8 @@ export interface ContextRequest {
   llmMode: LlmMode;
   sessionKey?: string | null;
   sessionId?: string;
+  /** Stable identity for one context assembly attempt. Retries reuse it. */
+  contextBuildId?: string;
   modelTier?: string | null;
   activity?: string | null;
   toolDefinitions?: Array<{ name: string; description: string }> | null;

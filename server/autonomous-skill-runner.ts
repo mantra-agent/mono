@@ -1089,6 +1089,7 @@ async function runSkillPipeline(
       llmMode: "text",
       activity: config.activity,
       sessionId,
+      contextBuildId: `skill-run:${sessionId}`,
       includeSections: config.includeSections,
       excludeSections: config.excludeSections,
     });
@@ -1333,6 +1334,7 @@ export async function triggerResponseOnChildSession(sessionId: string): Promise<
       llmMode: "text",
       activity: ACTIVITY_WORK,
       sessionId,
+      contextBuildId: `child-session:${sessionId}:response`,
     });
     systemPrompt = contextBuilder.renderToPrompt(spine);
   } catch (err) {

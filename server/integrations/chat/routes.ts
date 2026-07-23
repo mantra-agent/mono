@@ -1311,6 +1311,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     ) => void,
     currentMessageIds?: string[],
     callerGeneration?: number,
+    contextBuildId?: string,
     onCompactionActivity?: (update: import("../../agent-context").CompactionActivityUpdate) => void,
   ): Promise<{
     messages: ExecutorMessage[];
@@ -1557,6 +1558,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       })),
       model: resolvedModel,
       sessionId,
+      contextBuildId,
       currentMessage: enrichedContent,
       meetingContext,
       onProgress,
@@ -1761,6 +1763,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           onProgress,
           currentMessageIds,
           callerGeneration,
+          contextBuildId,
         );
       }
     }
@@ -2320,6 +2323,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         onCtxProgress,
         currentMessageIds,
         lease.generation,
+        diagnosticRunId,
         onCompactionActivity,
       );
       chatRunLifecycle.assertCurrent(lease);
@@ -2402,6 +2406,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           })),
           model: routingDecision.modelString,
           sessionId,
+          contextBuildId: `${diagnosticRunId}:persona-refresh`,
           currentMessage: enrichedContent,
           meetingContext,
         });

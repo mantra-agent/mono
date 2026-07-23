@@ -98,6 +98,8 @@ export class AgentTimerHandler implements TimerHandler {
         }),
       ),
       model: chatModel,
+      sessionId,
+      contextBuildId: `timer-run:${run.id}`,
     });
 
     const messages: ExecutorMessageType[] = [

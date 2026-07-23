@@ -1,4 +1,4 @@
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import path from "path";
 import { readFile } from "fs/promises";
 import { safeStringify } from "./utils/safe-stringify";
@@ -182,7 +182,12 @@ async function resolveWithCacheAndCoalescing(
     if (cached !== null) return cached;
   }
 
-  const flightKey = cacheKey;
+  // Every memory.graph build must cross its own exposure boundary. Separate
+  // builds may share the inner retrieval cache, but must not coalesce away
+  // one build's idempotent exposure event.
+  const flightKey = sectionId === "memory.graph" && request.contextBuildId
+    ? `${cacheKey}::context-build:${request.contextBuildId}`
+    : cacheKey;
   const existing = _sectionInFlight.get(flightKey);
   if (existing) {
     log.verbose(() => `[ContextBuilder] cache COALESCE section=${sectionId} — awaiting in-flight resolve`);
@@ -1708,7 +1713,8 @@ function renderVnextContext(
         ...(claim.metadata as Record<string, unknown> ?? {}),
         confidence: claim.confidence,
         claimType: claim.claimType,
-        recallCount: claim.recallCount,
+        legacyRecallCount: claim.recallCount,
+        recallTelemetryStatus: "compatibility_only",
       },
     });
     refs.set(claim.id, candidate.sourceRefs.map((ref) => ({
@@ -1732,29 +1738,35 @@ function renderVnextContext(
   };
 }
 
-function recordVnextContextRecall(claimIds: number[], source: "fresh" | "cache"): void {
+async function recordVnextContextExposure(
+  claimIds: number[],
+  contextBuildId: string,
+  source: "fresh" | "cache",
+): Promise<void> {
   const uniqueIds = Array.from(new Set(claimIds));
   if (uniqueIds.length === 0) return;
-  void import("./memory/vnext-claim-storage")
-    .then(({ memoryVnextClaimStorage }) => memoryVnextClaimStorage.reinforceClaims(uniqueIds))
-    .then((updated) => {
-      log.debug(JSON.stringify({
-        event: "memory.graph.context_recall_recorded",
-        path: "vnext",
-        source,
-        requested: uniqueIds.length,
-        updated,
-      }));
-    })
-    .catch((err) => {
-      log.warn(JSON.stringify({
-        event: "memory.graph.context_recall_failed",
-        path: "vnext",
-        source,
-        requested: uniqueIds.length,
-        error: err instanceof Error ? err.message : String(err),
-      }));
-    });
+  try {
+    const { memoryVnextSignalStorage } = await import("./memory/vnext-signal-storage");
+    const outcome = await memoryVnextSignalStorage.recordContextExposure(uniqueIds, contextBuildId, source);
+    log.debug(JSON.stringify({
+      event: "memory.graph.context_exposure_recorded",
+      path: "vnext",
+      contextBuildId,
+      source,
+      ...outcome,
+      strengthDelta: 0,
+      certaintyDelta: 0,
+    }));
+  } catch (err) {
+    log.warn(JSON.stringify({
+      event: "memory.graph.context_exposure_failed",
+      path: "vnext",
+      contextBuildId,
+      source,
+      requested: uniqueIds.length,
+      error: err instanceof Error ? err.message : String(err),
+    }));
+  }
 }
 
 async function resolveGraphMemory(request: ContextRequest): Promise<string> {
@@ -1778,7 +1790,9 @@ async function resolveGraphMemory(request: ContextRequest): Promise<string> {
   const queryHash = `${contextPrincipalKey()}::vnext::${getQueryHash(focusText)}::${tokenBudget}`;
   const cached = _graphMemoryCache.get(queryHash);
   if (cached !== undefined) {
-    if (cached.content) recordVnextContextRecall(cached.recalledClaimIds, "cache");
+    if (cached.content && request.contextBuildId) {
+      await recordVnextContextExposure(cached.recalledClaimIds, request.contextBuildId, "cache");
+    }
     return cached.content;
   }
 
@@ -1798,7 +1812,9 @@ async function resolveGraphMemory(request: ContextRequest): Promise<string> {
     const result = renderVnextContext(retrieved.candidates, tokenBudget);
     if (result.content) {
       _graphMemoryCache.set(queryHash, result);
-      recordVnextContextRecall(result.recalledClaimIds, "fresh");
+      if (request.contextBuildId) {
+        await recordVnextContextExposure(result.recalledClaimIds, request.contextBuildId, "fresh");
+      }
       log.debug(JSON.stringify({
         event: "memory.graph.context_resolved",
         path: "vnext",
@@ -2215,10 +2231,12 @@ function countSections(sections: ResolvedSection[], countFn: (s: ResolvedSection
 
 export class ContextBuilder {
   async resolve(request: ContextRequest, onProgress?: (step: string, status: "started" | "done", elapsedMs?: number) => void): Promise<ResolvedSpine> {
-    const { callType, llmMode = "text" } = request;
+    const contextBuildId = request.contextBuildId?.trim() || `context-build:${randomUUID()}`;
+    const resolvedRequest: ContextRequest = { ...request, contextBuildId };
+    const { callType, llmMode = "text" } = resolvedRequest;
     const start = Date.now();
 
-    log.debug(`resolve start callType=${callType} llmMode=${llmMode} activity=${request.activity ?? "none"} sessionKey=${request.sessionKey ?? "none"}`);
+    log.debug(`resolve start contextBuildId=${contextBuildId} callType=${callType} llmMode=${llmMode} activity=${resolvedRequest.activity ?? "none"} sessionKey=${resolvedRequest.sessionKey ?? "none"}`);
 
     if (callType === "none") {
       log.debug(`resolve skipped (callType=none)`);
@@ -2365,7 +2383,7 @@ export class ContextBuilder {
       try {
         const content = await withQueryAttributionAsync("context-build", () =>
           withTimeout(
-            resolveWithCacheAndCoalescing(config.id, config, resolver, request),
+            resolveWithCacheAndCoalescing(config.id, config, resolver, resolvedRequest),
             SECTION_RESOLVE_TIMEOUT_MS,
             `section:${config.id}`,
           )
@@ -2483,7 +2501,7 @@ export class ContextBuilder {
     const { modelTier: tier, modelId, contextWindow } = this.resolveModelInfo(request);
 
     const elapsed = Date.now() - start;
-    log.debug(`resolve done in ${elapsed}ms callType=${callType} totalTokens=${totalTokens} sections=${sectionCount} active=${activeSectionCount} placeholders=${placeholderCount} instructionGroups=${instructionGroups.map(g => g.id).join(",") || "none"} references=${references.map(r => r.id).join(",") || "none"} model=${modelId ?? "none"} contextWindow=${contextWindow ?? "none"}`);
+    log.debug(`resolve done contextBuildId=${contextBuildId} in ${elapsed}ms callType=${callType} totalTokens=${totalTokens} sections=${sectionCount} active=${activeSectionCount} placeholders=${placeholderCount} instructionGroups=${instructionGroups.map(g => g.id).join(",") || "none"} references=${references.map(r => r.id).join(",") || "none"} model=${modelId ?? "none"} contextWindow=${contextWindow ?? "none"}`);
 
     return {
       callType,

@@ -63,6 +63,7 @@ export async function assembleVoiceContext(
     profile: "voice",
     toolDefinitions: toolDefs,
     sessionId: chatSessionId || undefined,
+    contextBuildId: `voice-session:${sessionId}:preparation`,
     onProgress: sendPhaseEvent,
   }).then((result) => {
     contextElapsed = Date.now() - ctxStart;

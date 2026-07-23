@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import type { Express } from "express";
 import { executorManager } from "../executor-manager";
 import { eventBus } from "../event-bus";
@@ -34,9 +35,11 @@ export async function registerVoiceRoutes(app: Express) {
 
       const { filterToolSchemasForAuthority } = await import("../agent-authority");
       const toolDefs = filterToolSchemasForAuthority(getToolDefinitions(), { origin: "voice" });
+      const queryId = `voice-query:${randomUUID()}`;
       const resolvedSpine = await contextBuilder.resolve({
         callType: "full",
         llmMode: "voice",
+        contextBuildId: queryId,
         toolDefinitions: toolDefs.map(t => ({ name: t.name, description: t.description })),
       });
       const systemPrompt = contextBuilder.renderToPrompt(resolvedSpine);

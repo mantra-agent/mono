@@ -139,7 +139,9 @@ export interface VnextClaimDetail {
   lifecycle: {
     stage: string;
     stageUpdatedAt: Date;
+    /** Legacy compatibility telemetry. It has no strength, certainty, or lifecycle authority. */
     recallCount: number;
+    /** Legacy compatibility telemetry. New passive exposure lives in memory_vnext_exposures. */
     lastRecalledAt: Date | null;
     activeTouchedAt: Date | null;
     createdAt: Date;
@@ -590,12 +592,26 @@ export class MemoryVnextClaimStorage {
         target: memoryVnextClaims.contentHash,
         set: {
           title: sql`COALESCE(${memoryVnextClaims.title}, ${input.claim.title || null})`,
-          recallCount: sql`${memoryVnextClaims.recallCount} + 1`,
-          lastRecalledAt: new Date(),
-          metadata,
         },
       })
       .returning();
+
+    const exactDuplicatePreserved = claim.contentHash === contentHash
+      && (claim.source !== input.source
+        || claim.sourceId !== (input.sourceId ?? null)
+        || claim.sourceClaimIndex !== (input.claim.sourceClaimIndex ?? null)
+        || claim.createdAt.getTime() !== createdAt.getTime());
+    if (exactDuplicatePreserved) {
+      log.debug(JSON.stringify({
+        event: "memory.vnext.exact_duplicate_preserved",
+        claimId: claim.id,
+        source: input.source,
+        sourceId: input.sourceId ?? null,
+        recallDelta: 0,
+        strengthDelta: 0,
+        certaintyDelta: 0,
+      }));
+    }
 
     for (const sourceRef of input.sourceRefs ?? []) {
       await this.addSourceRef(claim.id, sourceRef);
@@ -790,7 +806,7 @@ export class MemoryVnextClaimStorage {
           and(eq(memoryVnextClaims.contentHash, claim.contentHash), sql`${memoryVnextClaims.id} <> ${claim.id}`),
         ),
       )
-      .orderBy(desc(memoryVnextClaims.confidence), desc(memoryVnextClaims.recallCount), desc(memoryVnextClaims.createdAt))
+      .orderBy(desc(memoryVnextClaims.confidence), desc(memoryVnextClaims.createdAt))
       .limit(Math.min(Math.max(limit, 1), 25));
   }
 
@@ -918,28 +934,20 @@ export class MemoryVnextClaimStorage {
     };
   }
 
+  /**
+   * Compatibility-only legacy API. Recall counters are preserved for reads but
+   * no longer accept writes or carry strength, certainty, or lifecycle meaning.
+   * New meaningful use must call MemoryVnextSignalStorage.recordStrengthEvent.
+   */
   async reinforceClaims(ids: number[]): Promise<number> {
     const uniqueIds = Array.from(new Set(ids.filter((id) => Number.isInteger(id) && id > 0)));
-    if (uniqueIds.length === 0) return 0;
-
-    const principal = getCurrentPrincipalOrSystem();
-    const recalledAt = new Date();
-    const updated = await db
-      .update(memoryVnextClaims)
-      .set({
-        recallCount: sql`${memoryVnextClaims.recallCount} + 1`,
-        lastRecalledAt: recalledAt,
-        updatedByUserId: principal.userId ?? undefined,
-      })
-      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, inArray(memoryVnextClaims.id, uniqueIds)))
-      .returning({ id: memoryVnextClaims.id });
-
     log.debug(JSON.stringify({
-      event: "memory.vnext.claims_reinforced",
+      event: "memory.vnext.legacy_recall_write_ignored",
       requested: uniqueIds.length,
-      updated: updated.length,
+      updated: 0,
+      compatibilityOnly: true,
     }));
-    return updated.length;
+    return 0;
   }
 
   async reinforceClaim(id: number): Promise<void> {
@@ -1671,54 +1679,23 @@ export class MemoryVnextClaimStorage {
   }
 
   /**
-   * Decay a claim's confidence by a delta (min 0.1).
-   * Returns the updated claim. Used by the reconciliation loop
-   * when a previously-extracted claim is not re-produced.
+   * Compatibility-only legacy API. Silence and elapsed time are not evidence,
+   * so this method preserves the claim without changing certainty.
    */
   async decayClaimConfidence(
     id: number,
     delta: number,
     input?: VnextConfidenceDecayInput,
   ): Promise<MemoryVnextClaim | null> {
-    const principal = getCurrentPrincipalOrSystem();
-    const minConfidence = 0.1;
-    const now = input?.decayedAt ?? new Date();
-    const boundedDelta = Math.max(0, delta);
-    if (boundedDelta <= 0) return this.getClaim(id);
-    const decayedAt = now.toISOString();
-    const expectedLastDecayedAt = input?.expectedLastDecayedAt?.toISOString() ?? null;
-    const confidenceDecayMetadata = JSON.stringify({
-      lastMaintainedAt: decayedAt,
-      elapsedPeriods: input?.elapsedPeriods ?? 1,
+    const claim = await this.getClaim(id);
+    log.debug(JSON.stringify({
+      event: "memory.vnext.legacy_confidence_decay_ignored",
+      claimId: id,
+      requestedDelta: Math.max(0, delta),
       intervalDays: input?.intervalDays ?? null,
-      delta: boundedDelta,
-    });
-    const replayGuard = input
-      ? expectedLastDecayedAt
-        ? sql`${memoryVnextClaims.metadata}->>'lastDecayedAt' = ${expectedLastDecayedAt}`
-        : sql`NOT (COALESCE(${memoryVnextClaims.metadata}, '{}'::jsonb) ? 'lastDecayedAt')`
-      : sql`TRUE`;
-    const [updated] = await db
-      .update(memoryVnextClaims)
-      .set({
-        confidence: sql`GREATEST(${minConfidence}, ${memoryVnextClaims.confidence} - ${boundedDelta})`,
-        updatedByUserId: principal.userId ?? undefined,
-        updatedAt: now,
-        metadata: sql`jsonb_set(
-          jsonb_set(
-            COALESCE(${memoryVnextClaims.metadata}, '{}'::jsonb),
-            '{lastDecayedAt}',
-            to_jsonb(${decayedAt}::text),
-            true
-          ),
-          '{lifecycle,confidenceDecay}',
-          ${confidenceDecayMetadata}::jsonb,
-          true
-        )`,
-      })
-      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, and(eq(memoryVnextClaims.id, id), replayGuard)))
-      .returning();
-    return updated ?? null;
+      compatibilityOnly: true,
+    }));
+    return claim;
   }
 
   /**
@@ -2021,13 +1998,19 @@ export async function persistClaimCandidates(
       }
 
       if (nearDuplicate) {
-        await memoryVnextClaimStorage.reinforceClaim(nearDuplicate.id);
         for (const sourceRef of sourceRefs ?? []) {
           await memoryVnextClaimStorage.addSourceRef(nearDuplicate.id, sourceRef);
         }
-        log.debug(
-          `${logPrefix}: reinforced existing claim #${nearDuplicate.id} (similarity=${nearDuplicate.similarity.toFixed(3)}) for "${claim.content.slice(0, 60)}"`,
-        );
+        log.debug(JSON.stringify({
+          event: "memory.vnext.semantic_duplicate_preserved",
+          claimId: nearDuplicate.id,
+          similarity: nearDuplicate.similarity,
+          source,
+          sourceId: sourceId ?? null,
+          recallDelta: 0,
+          strengthDelta: 0,
+          certaintyDelta: 0,
+        }));
         persistedClaimIds.set(i, nearDuplicate.id);
         reinforced++;
         continue;

@@ -116,11 +116,10 @@ function scoreCandidate(
     weights.contrastive * signals.contrastive +
     weights.temporal * signals.temporal;
   const provenanceBoost = sourceRefs.length > 0 ? 1.08 : 0.96;
-  const reinforcementBoost = 1 + Math.min(Math.log1p(claim.recallCount) * 0.025, 0.12);
   const connectivityBoost = 1 + Math.min(linkCount * 0.015, 0.1);
   const confidenceBoost = 0.72 + Math.max(0, Math.min(1, claim.confidence)) * 0.38;
   return Math.min(1, base * lifecycleBoost(claim.lifecycleStage) * claimTypeBoost(claim.claimType)
-    * provenanceBoost * reinforcementBoost * connectivityBoost * confidenceBoost);
+    * provenanceBoost * connectivityBoost * confidenceBoost);
 }
 
 async function loadRecentClaims(): Promise<MemoryVnextClaim[]> {

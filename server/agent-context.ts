@@ -536,6 +536,8 @@ export async function assembleContext(options: {
   model?: string;
   activity?: ActivityId;
   sessionId?: string;
+  /** Stable identity for one context build. Retry paths must reuse it. */
+  contextBuildId?: string;
   /**
    * Optional spine section ids (or id-prefixes) to OMIT from the assembled
    * prompt. Wired through the existing context-builder exclusion path so
@@ -556,6 +558,7 @@ export async function assembleContext(options: {
     conversationHistory = [],
     activity,
     sessionId,
+    contextBuildId,
     excludeSections,
     includeSections,
     currentMessage,
@@ -641,6 +644,7 @@ export async function assembleContext(options: {
       ? conversationHistory.map(m => ({ role: m.role, content: m.content || "" }))
       : null,
     sessionId: sessionId || undefined,
+    contextBuildId,
     includeSections: resolvedIncludeSections,
     excludeSections: resolvedExcludeSections,
     currentMessage: currentMessage || undefined,
