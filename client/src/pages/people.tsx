@@ -2372,7 +2372,7 @@ function PersonDetailView({ personId, onClose, onDelete, openNewInteraction, onN
             </Popover>
           </ProfileTreeRow>
 
-          <ProfileTreeRow label={<span data-testid="label-company">Company</span>} icon={<Building2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.company)} showEmpty={showEmptyProfileRows} mobileLayout="inline" testId="row-profile-company">
+          <ProfileTreeRow label={<span data-testid="label-company">Company</span>} icon={<Building2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.company || person.companyId)} showEmpty={showEmptyProfileRows} mobileLayout="inline" testId="row-profile-company">
             <CompanyReferenceField value={person.companyId ? `@company:${person.companyId}` : person.company || ""} onCommit={(value) => {
               const match = value.match(/^@company:([^\s]+)$/);
               updateMutation.mutate({ companyId: match ? match[1] : "" });
