@@ -21,6 +21,7 @@ const log = createLogger("RemoveLegacyVaultPages");
 const MIGRATION_KEY = "remove-legacy-vault-pages-v1";
 const RAY_OWNER_USER_ID = "f6de5710-5f8a-4e91-afa2-c673a997ce2d";
 const RAY_ACCOUNT_ID = "1d52cbc6-d922-4afd-b5e8-0eeeb5babd47";
+const MIGRATION_LOCK_KEY = `migration.${MIGRATION_KEY}.${RAY_ACCOUNT_ID}`;
 const VAULT_NAMES = ["Personal", "Mantra", "Enklu", "Tive"] as const;
 const MARKER_NAMES = ["Personal", "Enklu", "Tive"] as const;
 
@@ -198,8 +199,19 @@ async function readMigrationStatus(): Promise<string | null> {
 }
 
 async function captureManifest(principal: Principal): Promise<void> {
-  const existing = await readMigrationStatus();
-  if (existing) return;
+  const existing = await readMigrationRecord();
+  if (existing && existing.manifest.length > 0) {
+    if (existing.status === "failed") {
+      await pool.query(
+        `UPDATE library_vault_identity_migrations
+         SET status = 'running', error = NULL, completed_at = NULL,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE migration_key = $1 AND owner_user_id = $2 AND account_id = $3`,
+        [MIGRATION_KEY, RAY_OWNER_USER_ID, RAY_ACCOUNT_ID],
+      );
+    }
+    return;
+  }
   const pages = await db
     .select()
     .from(libraryPages)
@@ -247,7 +259,11 @@ async function captureManifest(principal: Principal): Promise<void> {
     `INSERT INTO library_vault_identity_migrations
       (migration_key, scope, owner_user_id, account_id, status, manifest, started_at, updated_at)
      VALUES ($1, 'user', $2, $3, 'running', $4::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-     ON CONFLICT (migration_key, owner_user_id, account_id) DO NOTHING`,
+     ON CONFLICT (migration_key, owner_user_id, account_id) DO UPDATE
+     SET status = 'running', manifest = EXCLUDED.manifest, error = NULL,
+         completed_at = NULL, updated_at = CURRENT_TIMESTAMP
+     WHERE library_vault_identity_migrations.status = 'failed'
+       AND library_vault_identity_migrations.manifest = '[]'::jsonb`,
     [MIGRATION_KEY, RAY_OWNER_USER_ID, RAY_ACCOUNT_ID, JSON.stringify(manifest)],
   );
 }
@@ -667,35 +683,53 @@ async function markComplete(): Promise<void> {
 }
 
 async function markFailed(error: unknown): Promise<void> {
+  const message = error instanceof Error ? error.message.slice(0, 2_000) : String(error).slice(0, 2_000);
   await pool.query(
-    `UPDATE library_vault_identity_migrations
-     SET status = 'failed', updated_at = CURRENT_TIMESTAMP, error = $4
-     WHERE migration_key = $1 AND owner_user_id = $2 AND account_id = $3`,
-    [
-      MIGRATION_KEY,
-      RAY_OWNER_USER_ID,
-      RAY_ACCOUNT_ID,
-      error instanceof Error ? error.message.slice(0, 2_000) : String(error).slice(0, 2_000),
-    ],
+    `INSERT INTO library_vault_identity_migrations
+      (migration_key, scope, owner_user_id, account_id, status, manifest, error, started_at, updated_at)
+     VALUES ($1, 'user', $2, $3, 'failed', '[]'::jsonb, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+     ON CONFLICT (migration_key, owner_user_id, account_id) DO UPDATE
+     SET status = 'failed', updated_at = CURRENT_TIMESTAMP, error = EXCLUDED.error`,
+    [MIGRATION_KEY, RAY_OWNER_USER_ID, RAY_ACCOUNT_ID, message],
   );
 }
 
 /**
  * Bounded repair of Ray's July 21 shadow-adoption residue.
  *
- * Replay model: the before-state manifest is inserted once; every move is
- * idempotent through the canonical move boundary; metadata selection is
- * deterministic; delete guards include the exact row snapshot and no-child
+ * Replay model: one account-scoped session lock serializes replicas; the
+ * before-state manifest is captured once and preserved across retries; every
+ * move is idempotent through the canonical move boundary; metadata selection
+ * is deterministic; delete guards include the exact row snapshot and no-child
  * predicate; and terminal assertions precede the durable completed marker.
+ * This repair runs post-ready because one account's prerequisite drift must
+ * never become a universal service-availability dependency.
  */
 export async function removeLegacyVaultPages(): Promise<void> {
   if (await readMigrationStatus() === "completed") return;
-  const principal = await readRayPrincipal();
-  const vaultMap = await readVaultMap();
-  principal.visibleVaultIds = Object.values(vaultMap);
-  principal.activeVaultId = vaultMap.Mantra;
+  const lockClient = await pool.connect();
+  let lockHeld = false;
 
   try {
+    const lock = await lockClient.query(
+      `SELECT pg_try_advisory_lock(hashtext($1)) AS acquired`,
+      [MIGRATION_LOCK_KEY],
+    );
+    lockHeld = lock.rows[0]?.acquired === true;
+    if (!lockHeld) {
+      log.info("Legacy Library Vault repair already owned by another replica", {
+        migrationKey: MIGRATION_KEY,
+        accountId: RAY_ACCOUNT_ID,
+      });
+      return;
+    }
+    if (await readMigrationStatus() === "completed") return;
+
+    const principal = await readRayPrincipal();
+    const vaultMap = await readVaultMap();
+    principal.visibleVaultIds = Object.values(vaultMap);
+    principal.activeVaultId = vaultMap.Mantra;
+
     await runWithPrincipal(principal, async () => {
       await captureManifest(principal);
       const markers = await readMarkers(principal, vaultMap.Mantra);
@@ -732,5 +766,13 @@ export async function removeLegacyVaultPages(): Promise<void> {
   } catch (error) {
     await markFailed(error).catch(() => undefined);
     throw error;
+  } finally {
+    if (lockHeld) {
+      await lockClient.query(
+        `SELECT pg_advisory_unlock(hashtext($1))`,
+        [MIGRATION_LOCK_KEY],
+      ).catch(() => undefined);
+    }
+    lockClient.release();
   }
 }

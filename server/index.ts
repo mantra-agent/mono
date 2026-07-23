@@ -57,7 +57,6 @@ process.on("unhandledRejection", (reason) => {
 import { addObjectAclsTable } from "./migrations/add-object-acls";
 import { ensureVaults } from "./migrations/ensure-vaults";
 import { migrateProjectNotesSpecToLibrary } from "./migrations/migrate-project-notes-spec-to-library";
-import { removeLegacyVaultPages } from "./migrations/remove-legacy-vault-pages";
 
 const objectAclsMigrationReady = addObjectAclsTable();
 const vaultsMigrationReady = objectAclsMigrationReady.then(() => ensureVaults());
@@ -491,7 +490,6 @@ app.use((req, res, next) => {
   await ensureInvitedSubjectSchema(workVaultPool);
   const { ensureTaskAssignmentSchema } = await import("./task-assignment-schema");
   await ensureTaskAssignmentSchema(workVaultPool);
-  await removeLegacyVaultPages();
 
   const tRoutes0 = Date.now();
   await registerRoutes(httpServer, app);
@@ -548,6 +546,20 @@ app.use((req, res, next) => {
       try {
         process.stdout.write("\n__BOOT_COMPLETE__\n");
       } catch {}
+
+      // User-specific repairs run after readiness. They preserve exact fail-closed
+      // data guards and durable failure evidence, but never gate universal service
+      // availability. Each repair owns replica serialization and replay safety.
+      const runUserDataRepairs = () => {
+        import("./migrations/remove-legacy-vault-pages")
+          .then(({ removeLegacyVaultPages }) => removeLegacyVaultPages())
+          .catch((error: unknown) => {
+            serverLog.warn(
+              `[post-ready] legacy Library Vault repair blocked: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          });
+      };
+      setTimeout(runUserDataRepairs, 1_000).unref();
 
       // Worker-thread heartbeat (Task #995). Spawn a tiny worker that posts a
       // heartbeat every 1s. Forward each beat to the wrapper over IPC. If the
