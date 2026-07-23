@@ -561,6 +561,7 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 - **Vault membership:** `person_vault_memberships` is the canonical many-to-many Person-to-Vault join. `person-vault-access.ts` owns the read predicate; authenticated People are visible only when at least one membership resolves to a currently visible live Vault in the principal account. `PeopleStorage.replaceVaultMemberships()` is the only ordinary replacement boundary.
 - **Bulk identity resolution:** `PeopleStorage.getPeopleByIds()` loads the principal-scoped alias graph once, resolves chains in memory with cycle/depth guards, then fetches People with one scoped `IN` query. Bulk size must not determine query count.
 - **Computed fields:** rollup (contact frequency), due status (cadence-based), outreach priority, mobilization readiness.
+- **Profile content contract:** `quickSummary` is the concise current profile shown in the UI. Notes hold supporting untimed context, evidence, history, and source detail. People creation must accept both; note mutations should surface when the profile still lacks a summary, never synthesize one by copying note text.
 - Key files: `people-storage.ts`, `person-vault-access.ts`, `person-merge-service.ts`, `import-queue.ts`.
 
 ### Finance

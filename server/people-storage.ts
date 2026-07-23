@@ -1026,6 +1026,7 @@ export class PeopleStorage {
       notes: data.notes || [],
       interactions: data.interactions || [],
       tags: data.tags || [],
+      quickSummary: data.quickSummary,
       private: data.private ?? false,
       vaultIds: [],
       createdAt: now,
