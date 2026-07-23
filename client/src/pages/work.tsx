@@ -9,7 +9,6 @@ import { useVaults } from "@/hooks/use-vaults";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getInstanceName } from "@/lib/instance-config";
 import { Card } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -48,6 +47,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuCheckboxItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   DropdownMenuSub,
@@ -1985,6 +1985,37 @@ function ProjectTreeNode({
                     Add File
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
+                  {project.canManageVaults && (
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger data-testid={`menu-project-vaults-${project.id}`}>
+                        <Shield className="h-3.5 w-3.5 mr-2" />
+                        Vaults
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="w-56">
+                        {vaults.map(vault => {
+                          const checked = project.vaultIds.includes(vault.id);
+                          const onlyMembership = checked && project.vaultIds.length === 1;
+                          return (
+                            <DropdownMenuCheckboxItem
+                              key={vault.id}
+                              checked={checked}
+                              disabled={onlyMembership || vaultMembershipPending}
+                              onSelect={(event) => event.preventDefault()}
+                              onCheckedChange={(nextChecked) => {
+                                const next = nextChecked
+                                  ? [...new Set([...project.vaultIds, vault.id])]
+                                  : project.vaultIds.filter(vaultId => vaultId !== vault.id);
+                                onUpdateVaults(next);
+                              }}
+                              data-testid={`checkbox-project-vault-${project.id}-${vault.id}`}
+                            >
+                              <span className="min-w-0 flex-1 truncate">{vault.name}</span>
+                            </DropdownMenuCheckboxItem>
+                          );
+                        })}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  )}
                   <DropdownMenuItem
                     className="text-error-foreground"
                     onClick={onDeleteProject}
@@ -2011,51 +2042,6 @@ function ProjectTreeNode({
                     placeholder="Add a project description..."
                     testIdPrefix={`project-description-${project.id}`}
                   />
-                  {project.canManageVaults && (
-                    <div className="flex min-w-0 items-center justify-between gap-2 text-sm" data-testid={`project-vaults-row-${project.id}`}>
-                      <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
-                        <Shield className="h-3.5 w-3.5" />
-                        Vaults
-                      </span>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button
-                          variant="ghost"
-                          className="h-8 min-w-0 max-w-64 justify-end px-2 text-right text-sm font-normal"
-                          data-testid={`button-edit-project-vaults-${project.id}`}
-                        >
-                          <span className="truncate">
-                            {vaults.filter(vault => project.vaultIds.includes(vault.id)).map(vault => vault.name).join(", ") || "Choose Vaults"}
-                          </span>
-                          <ChevronDown className="ml-1 h-3 w-3 shrink-0 text-muted-foreground" />
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent align="end" className="w-64 p-1" data-testid={`popover-project-vaults-${project.id}`}>
-                        {vaults.map(vault => {
-                          const checked = project.vaultIds.includes(vault.id);
-                          const onlyMembership = checked && project.vaultIds.length === 1;
-                          return (
-                            <label key={vault.id} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent sm:min-h-9">
-                              <Checkbox
-                                checked={checked}
-                                disabled={onlyMembership || vaultMembershipPending}
-                                onCheckedChange={(nextChecked) => {
-                                  const next = nextChecked
-                                    ? [...new Set([...project.vaultIds, vault.id])]
-                                    : project.vaultIds.filter(vaultId => vaultId !== vault.id);
-                                  onUpdateVaults(next);
-                                }}
-                                aria-label={`${checked ? "Remove from" : "Add to"} ${vault.name}`}
-                                data-testid={`checkbox-project-vault-${project.id}-${vault.id}`}
-                              />
-                              <span className="min-w-0 flex-1 truncate">{vault.name}</span>
-                            </label>
-                          );
-                        })}
-                        </PopoverContent>
-                      </Popover>
-                    </div>
-                  )}
                   <ProjectReferenceChipRow project={project} people={people} />
                 </div>
               </div>
