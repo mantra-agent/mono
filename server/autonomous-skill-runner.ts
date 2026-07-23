@@ -87,14 +87,16 @@ function describeExecutorFailure(result: ExecutorRunResult): string {
   const duration = durationMs > 0 ? `${(durationMs / 60000).toFixed(1)}m` : "unknown duration";
   const toolCallCount = result.toolCalls?.length ?? 0;
 
-  if (result.abortReason === "idle_timeout" || result.abortReason === "pipeline_timeout" || result.abortReason === "zombie_timeout" || result.abortReason === "run_time_limit") {
+  if (result.abortReason === "idle_timeout" || result.abortReason === "stream_idle_timeout" || result.abortReason === "pipeline_timeout" || result.abortReason === "zombie_timeout" || result.abortReason === "run_time_limit") {
     const guardLabel = result.abortReason === "run_time_limit"
       ? "execution hard-cap watchdog"
       : result.abortReason === "pipeline_timeout"
         ? "skill inactivity watchdog"
         : result.abortReason === "zombie_timeout"
           ? "executor zombie watchdog"
-          : "idle-timeout watchdog";
+          : result.abortReason === "stream_idle_timeout"
+            ? "model stream watchdog"
+            : "idle-timeout watchdog";
     return [
       `Skill run stopped by ${guardLabel}.`,
       "This was not user-cancelled.",

@@ -238,8 +238,10 @@ function describeAbortReasonForUser(result: ExecutorRunResult): string | null {
       : "";
 
   switch (result.abortReason) {
+    case "stream_idle_timeout":
+      return `Timeout: the model provider stream stopped making progress (${duration}). This was not user-cancelled, and earlier tool activity remains valid.`;
     case "idle_timeout":
-      return `Timeout: executor stream idle-timeout watchdog stopped the run after no stream/tool activity (${duration}). This was not user-cancelled.`;
+      return `Timeout: executor activity watchdog stopped the run after no stream/tool activity (${duration}). This was not user-cancelled.`;
     case "pipeline_timeout":
       return `Timeout: pipeline watchdog stopped the run after ${duration}${toolText}.`;
     case "run_time_limit":
@@ -273,9 +275,15 @@ function buildSystemNotice(result: ExecutorRunResult): SystemNotice {
 
   if (result.abortReason) {
     switch (result.abortReason) {
+      case "stream_idle_timeout":
+        errorType = "response_interrupted";
+        description = `The model provider stream stopped making progress${durationMs != null ? ` after ${(durationMs / 60000).toFixed(1)} minutes` : ""}. This was not user-cancelled, and earlier tool activity remains valid.`;
+        actionHint =
+          "Resume or send another message and I'll continue where I left off.";
+        break;
       case "idle_timeout":
         errorType = "response_interrupted";
-        description = `Idle-timeout watchdog stopped the run after no executor stream/tool activity${durationMs != null ? ` for ${(durationMs / 60000).toFixed(1)} minutes` : ""}. This was not user-cancelled.`;
+        description = `Executor activity watchdog stopped the run after no stream/tool activity${durationMs != null ? ` for ${(durationMs / 60000).toFixed(1)} minutes` : ""}. This was not user-cancelled.`;
         actionHint =
           "Resume or send another message and I'll continue where I left off.";
         break;

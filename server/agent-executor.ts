@@ -120,12 +120,12 @@ function toolTransfersExecutionToChild(name: string, args: Record<string, unknow
   return args.action === "execute" || args.action === "resume";
 }
 
-export type AbortReason = "idle_timeout" | "pipeline_timeout" | "run_time_limit" | "cancelled" | "superseded" | "error" | "circuit_breaker" | "zombie_timeout";
+export type AbortReason = "idle_timeout" | "stream_idle_timeout" | "pipeline_timeout" | "run_time_limit" | "cancelled" | "superseded" | "error" | "circuit_breaker" | "zombie_timeout";
 
 /** Runtime set of valid AbortReason values — used to validate signal reasons from AbortController.
  *  Single source of truth: keep in sync with the AbortReason union above. */
 const VALID_ABORT_REASONS: ReadonlySet<string> = new Set<AbortReason>([
-  "idle_timeout", "pipeline_timeout", "run_time_limit", "cancelled", "superseded", "error", "circuit_breaker", "zombie_timeout",
+  "idle_timeout", "stream_idle_timeout", "pipeline_timeout", "run_time_limit", "cancelled", "superseded", "error", "circuit_breaker", "zombie_timeout",
 ]);
 
 function getAbortReason(signal: AbortSignal, fallback: AbortReason = "cancelled"): AbortReason {
@@ -819,7 +819,7 @@ export function mergeIterationResults(
 }
 
 export class AgentExecutor extends EventEmitter {
-  private activeRuns = new Map<string, { abort: AbortController; createdAt: number; startedAt?: number; lastActivityAt?: number; admitted: boolean; sessionId?: string; model?: string; activity?: string; sessionKey?: string; requestContent?: string; aborted?: boolean; hardCapMs?: number }>();
+  private activeRuns = new Map<string, { abort: AbortController; createdAt: number; startedAt?: number; lastActivityAt?: number; admitted: boolean; sessionId?: string; model?: string; activity?: string; sessionKey?: string; requestContent?: string; aborted?: boolean; hardCapMs?: number; streamIdleDeadlineAt?: number }>();
   private zombieCheckTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
@@ -843,7 +843,8 @@ export class AgentExecutor extends EventEmitter {
         const ageMs = now - run.startedAt;
         const idleMs = now - run.lastActivityAt;
         const hardCap = run.hardCapMs ?? ZOMBIE_HARD_CAP_MS;
-        if (idleMs > ZOMBIE_IDLE_THRESHOLD_MS || (hardCap > 0 && ageMs > hardCap)) {
+        const streamDeadlineActive = run.streamIdleDeadlineAt !== undefined && now <= run.streamIdleDeadlineAt;
+        if ((!streamDeadlineActive && idleMs > ZOMBIE_IDLE_THRESHOLD_MS) || (hardCap > 0 && ageMs > hardCap)) {
           if (run.abort.signal.aborted) {
             log.warn(`zombie activeRun still draining runId=${runId} sessionId=${run.sessionId} model=${run.model} activity=${run.activity} ageMs=${ageMs} idleMs=${idleMs} — already aborted, awaiting drain`);
             continue;
@@ -2162,10 +2163,14 @@ export class AgentExecutor extends EventEmitter {
     const streamLoopStart = Date.now();
 
     const thinkingInfo = getThinkingInfo(modelString);
-    const idleTimeoutMs = thinkingInfo.level === "extended" ? STREAM_IDLE_TIMEOUT_EXTENDED_MS : STREAM_IDLE_TIMEOUT_MS;
+    const resolvedThinkingActive = thinking.thinking.type !== "disabled";
+    const reasoningStream = thinkingInfo.level !== "none" || resolvedThinkingActive;
+    const idleTimeoutMs = reasoningStream ? STREAM_IDLE_TIMEOUT_EXTENDED_MS : STREAM_IDLE_TIMEOUT_MS;
+    const runEntry = this.activeRuns.get(ctx.runId);
 
     const resetIdleTimer = () => {
       if (idleTimer) clearTimeout(idleTimer);
+      if (runEntry) runEntry.streamIdleDeadlineAt = Date.now() + idleTimeoutMs;
       idleTimer = setTimeout(() => {
         const elapsedMs = Date.now() - streamLoopStart;
         const hasPartialContent = ctx.iterationText.length > 0;
@@ -2215,7 +2220,7 @@ export class AgentExecutor extends EventEmitter {
           `pendingToolCalls=${ctx.pendingToolCalls.length} resolvedToolCalls=${ctx.resolvedToolCalls.length}`
         );
         ctx.lastStreamDiagnostics = { eventCount: streamEventCount, elapsedMs, lastEventType };
-        ctx.abortReason = "idle_timeout";
+        ctx.abortReason = "stream_idle_timeout";
         abortController.abort(ctx.abortReason);
         if (streamGenerator) {
           // Force-close the generator and HAND THE CLEANUP CHAIN to the run's
@@ -2409,6 +2414,7 @@ export class AgentExecutor extends EventEmitter {
       throw streamErr;
     } finally {
       if (idleTimer) clearTimeout(idleTimer);
+      if (runEntry) runEntry.streamIdleDeadlineAt = undefined;
     }
 
     // Zombie abort detection: when the zombie detector fires abortRun()
