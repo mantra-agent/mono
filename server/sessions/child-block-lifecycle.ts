@@ -132,7 +132,7 @@ export async function onChildSessionCompleted(
   parentSessionId: string,
   childSessionId: string,
   result: {
-    status: "succeeded" | "failed" | "yielded";
+    status: "succeeded" | "degraded" | "failed" | "yielded";
     summary?: string;
     error?: string;
     durationMs?: number;

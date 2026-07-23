@@ -4379,6 +4379,15 @@ export async function runSchemaBootstrap(
     );
   });
 
+  await heal("skills run-quality config columns", async () => {
+    await pool.query(
+      `ALTER TABLE skills ADD COLUMN IF NOT EXISTS required_tools JSONB`,
+    );
+    await pool.query(
+      `ALTER TABLE skills ADD COLUMN IF NOT EXISTS score_threshold REAL`,
+    );
+  });
+
   await heal("skills session_type column", async () => {
     await pool.query(
       `ALTER TABLE skills ADD COLUMN IF NOT EXISTS session_type text`,

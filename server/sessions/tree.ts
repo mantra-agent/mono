@@ -5,6 +5,7 @@ import { createLogger } from "../log";
 import { createHash } from "node:crypto";
 import type { TriggerType } from "@shared/models/chat";
 import type { AdmissionTier } from "../run-admission";
+import type { AutonomousRunResult } from "../autonomous-skill-runner";
 
 const log = createLogger("SessionTree");
 
@@ -71,7 +72,7 @@ export interface SpawnChildSessionOptions {
 
 export interface SpawnChildSessionResult {
   sessionId: string;
-  status?: "succeeded" | "failed" | "yielded";
+  status?: "succeeded" | "degraded" | "failed" | "yielded";
   summary?: string;
   /** Final assistant message text from the child session (populated when awaited). */
   output?: string;
@@ -413,7 +414,7 @@ export async function spawnChildSession(
 
   type RunnerHandle = {
     sessionId: string;
-    runnerPromise: Promise<{ status: "succeeded" | "failed" | "yielded"; summary?: string; error?: string; durationMs: number; sessionId: string } | null>;
+    runnerPromise: Promise<AutonomousRunResult | null>;
   };
 
   // Phase 1: under advisory lock, atomically lookup-or-start the runner.

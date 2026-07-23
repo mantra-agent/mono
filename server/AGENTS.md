@@ -391,6 +391,7 @@ Four interacting layers: intention stack (what), timer scheduler (when), skill r
 - **PreContext builders** for skill timers: brief, review, reflect, plan (weekly redirects to monthly on last Friday)
 - **Agent timer attention boundary** — freeform `agent` timers execute in top-level `autonomous` sessions under SYSTEM. Timer-origin models cannot call `converse`; explicit `reminder` timers alone create one visible `agent` session, and the scheduler marks that session unread.
 - **Landscape Scan is native** — `SkillTimerHandler` routes the canonical `scan` timer directly to `runLandscapeScan()`. The LLM skill must not own scan admission, stale-run recovery, or a second curation pass.
+- **Run-quality coupling** — a skill may declare `requiredTools` (each must have ≥1 successful invocation) and `scoreThreshold` (minimum checklist pass rate 0-1). The runner computes the terminal discriminant at completion: missing required tools → skill run `degraded`, timer outcome `degraded`. Async scoring below threshold reconciles `succeeded`→`degraded` on the skill run and `success`→`degraded` on the launching timer run via guarded fromStatus transitions (`reconcileSkillRunStatus`, `reconcileRunStatusBySession`), emitting `skill.run.degraded`. Never map skill run status straight to timer success without this gate.
 
 ### Plan Execution
 

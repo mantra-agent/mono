@@ -531,6 +531,7 @@ function RunStatusIcon({ status, passRate }: { status: string; passRate?: number
   if (status === "running") return <Loader2 className="h-3.5 w-3.5 text-info shrink-0 animate-spin" />;
   if (status === "yielded") return <Clock className="h-3.5 w-3.5 text-warning shrink-0" />;
   if (status === "checkpoint") return <PauseCircle className="h-3.5 w-3.5 text-info shrink-0" />;
+  if (status === "degraded") return <AlertCircle className="h-3.5 w-3.5 text-warning shrink-0" />;
   if (status === "failed") return <XCircle className="h-3.5 w-3.5 text-error shrink-0" />;
   if (passRate != null) {
     if (passRate > 0.5) return <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />;
@@ -639,6 +640,7 @@ function RunHistorySection({ skillName }: { skillName: string }) {
                       run.status === "succeeded" ? "text-success-foreground" :
                       run.status === "running" ? "text-info-foreground" :
                       run.status === "checkpoint" ? "text-info" :
+                      run.status === "degraded" ? "text-warning-foreground" :
                       run.status === "yielded" ? "text-warning-foreground" : "text-error-foreground"
                     )}>
                       {run.status}

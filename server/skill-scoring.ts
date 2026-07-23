@@ -243,10 +243,63 @@ async function scoreSkillRun(
     await storage.incrementSkillFailure(skill.id);
   }
 
+  await reconcileBelowThreshold(skill, skillId, sessionId, passed, total, passRate);
+
   log.log(
     `${skillId}: ${passed}/${total} checks passed (${Math.round(passRate * 100)}%)` +
       (comparativeWinner ? ` | vs prior: ${comparativeWinner}` : ""),
   );
+}
+
+/**
+ * Couple async checklist scoring back into terminal run/timer status. A skill
+ * may declare scoreThreshold (0-1); a scored pass rate below it reconciles a
+ * "succeeded" skill run — and the timer run that launched it — to "degraded".
+ * Guarded transitions keep this idempotent, and a reconciliation failure must
+ * never lose the already-recorded score.
+ */
+async function reconcileBelowThreshold(
+  skill: { scoreThreshold?: number | null },
+  skillId: string,
+  sessionId: string,
+  passed: number,
+  total: number,
+  passRate: number,
+): Promise<void> {
+  const threshold = typeof skill.scoreThreshold === "number" ? skill.scoreThreshold : null;
+  if (threshold == null || passRate >= threshold) return;
+  const reason = `checklist_below_threshold: ${passed}/${total} checks passed (${Math.round(passRate * 100)}% < ${Math.round(threshold * 100)}%)`;
+  try {
+    const reconciledRun = await storage.reconcileSkillRunStatus(sessionId, "succeeded", "degraded", reason);
+    const { timerStorage } = await import("./file-storage");
+    const reconciledTimer = await timerStorage.reconcileRunStatusBySession(sessionId, "success", "degraded", reason);
+    log.warn(
+      `${skillId}: ${reason}` +
+      ` | skillRun=${reconciledRun ? "degraded" : "unchanged"}` +
+      ` | timerRun=${reconciledTimer ? `degraded (${reconciledTimer.runId})` : "unchanged"}`,
+    );
+    eventBus.publish({
+      category: "skill",
+      event: "skill.run.degraded",
+      payload: {
+        sessionId,
+        skillId,
+        reason: "checklist_below_threshold",
+        passRate,
+        threshold,
+        ...(reconciledTimer ? { timerRunId: reconciledTimer.runId, timerId: reconciledTimer.timerId } : {}),
+      },
+    });
+    if (reconciledTimer) {
+      eventBus.publish({
+        category: "timer",
+        event: "timer.run.degraded",
+        payload: { runId: reconciledTimer.runId, timerId: reconciledTimer.timerId, status: "degraded", reason, reconciled: true },
+      });
+    }
+  } catch (err) {
+    log.warn(`${skillId}: below-threshold reconciliation failed for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 async function evaluateChecklist(
