@@ -237,7 +237,11 @@ async function captureReferenceSnapshot(
         and(eq(memoryVnextEntityLinks.entityType, "person"), eq(memoryVnextEntityLinks.entityId, sourceId)),
       ),
     ),
-    tx.select().from(opportunities).where(
+    tx.select({
+      id: opportunities.id,
+      contactPersonId: opportunities.contactPersonId,
+      championPersonId: opportunities.championPersonId,
+    }).from(opportunities).where(
       combineWithWritableScope(
         principal,
         opportunityScope,
