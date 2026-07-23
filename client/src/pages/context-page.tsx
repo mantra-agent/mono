@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Clock, FileJson2, Layers } from "lucide-react";
+import { AlertTriangle, ChevronRight, Clock, FileJson2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { usePageHeader } from "@/hooks/use-page-header";
-import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
-import type { SpineMetadata } from "@shared/context-spine";
+import { HIERARCHY_SECTION_HEADER_CLASS, HIERARCHY_SESSION_ROW_CLASS } from "@/components/hierarchy-section-header";
 import type {
   InferencePayloadCapture,
   InferencePayloadCaptureListResponse,
@@ -25,76 +25,6 @@ function formatModelName(modelId: string): string {
 function formatTokens(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
   return String(n);
-}
-
-function SummaryBar({ metadata }: { metadata: SpineMetadata }) {
-  const usagePct = metadata.contextWindow && metadata.contextWindow > 0
-    ? Math.min((metadata.totalTokens / metadata.contextWindow) * 100, 100)
-    : null;
-  return (
-    <div className="flex items-center gap-3 text-xs text-muted-foreground" data-testid="context-summary-bar">
-      <span className="flex items-center gap-1">
-        <Layers className="h-3 w-3" />
-        {metadata.activeSectionCount}/{metadata.sectionCount} sections
-      </span>
-      {metadata.contextWindow && metadata.modelId && usagePct !== null && (
-        <>
-          <span>{formatModelName(metadata.modelId)} / {metadata.modelTier} tier</span>
-          <span className="tabular-nums">
-            {formatTokens(metadata.totalTokens)} / {formatTokens(metadata.contextWindow)} ({usagePct.toFixed(1)}%)
-          </span>
-        </>
-      )}
-    </div>
-  );
-}
-
-function RuntimeCard({ metadata }: { metadata: SpineMetadata }) {
-  const coding = metadata.codingContext;
-  return (
-    <Card className="flex-1 min-h-0 min-w-0 overflow-auto">
-      <div className="p-4 space-y-4">
-        <h2 className="text-sm font-semibold">Runtime</h2>
-        {coding ? (
-          <div className="space-y-2">
-            {coding.requiredReferences.map((reference) => (
-              <div key={reference.id} className="flex items-start justify-between gap-4 border-b border-border/20 py-2 text-sm last:border-b-0">
-                <div className="min-w-0">
-                  <div>{reference.label}</div>
-                  {reference.source && <div className="font-mono text-xs text-muted-foreground break-all">{reference.source}</div>}
-                </div>
-                <span className="shrink-0 text-xs text-muted-foreground">{reference.loaded ? "loaded" : reference.required ? "tool boundary" : "on demand"}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="px-2 py-1.5 text-sm text-muted-foreground">No coding context metadata recorded.</div>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-function InstructionsCard({ metadata }: { metadata: SpineMetadata }) {
-  return (
-    <Card className="flex-1 min-h-0 min-w-0 overflow-auto">
-      <div className="p-4 space-y-3">
-        <h2 className="text-sm font-semibold">Instructions</h2>
-        {(metadata.instructionGroups || []).map((group) => (
-          <div key={group.id} className="flex items-start justify-between gap-4 border-b border-border/20 py-2 text-sm last:border-b-0">
-            <div className="min-w-0">
-              <div>{group.title}</div>
-              <div className="font-mono text-xs text-muted-foreground break-all">{group.id}</div>
-            </div>
-            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatTokens(group.tokenCount)} tokens</span>
-          </div>
-        ))}
-        {(metadata.instructionGroups || []).length === 0 && (
-          <div className="px-2 py-1.5 text-sm text-muted-foreground">No instruction groups recorded.</div>
-        )}
-      </div>
-    </Card>
-  );
 }
 
 interface CapturedSection {
@@ -422,38 +352,70 @@ function HtmlContent({ value }: { value: string }) {
   return <div className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{htmlToReadableText(value)}</div>;
 }
 
-function MessageContent({ value }: { value: unknown }) {
-  const messages = Array.isArray(value) ? value : [value];
+/**
+ * A row styled exactly like a Session-menu session title. Non-expandable rows
+ * render as a plain row with an optional right-aligned value; expandable rows
+ * add the same chevron disclosure the session menu uses.
+ */
+function SessionMenuRow({
+  label,
+  meta,
+  expandedContent,
+  defaultOpen = false,
+  testId,
+}: {
+  label: ReactNode;
+  meta?: ReactNode;
+  expandedContent?: ReactNode;
+  defaultOpen?: boolean;
+  testId?: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  const labelNode = <span className="min-w-0 flex-1 truncate text-foreground">{label}</span>;
+  const metaNode = meta != null ? (
+    <span className="ml-auto shrink-0 pl-2 text-xs tabular-nums text-muted-foreground">{meta}</span>
+  ) : null;
+
+  if (!expandedContent) {
+    return (
+      <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "text-muted-foreground")} data-testid={testId}>
+        {labelNode}
+        {metaNode}
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-2">
-      {messages.map((message, index) => {
-        const record = isRecord(message) ? message : { content: message };
-        const label = messageLabel(message, index) ?? `Message ${index + 1}`;
-        const content = record.content ?? record.text ?? record.message ?? message;
-        return (
-          <div key={`${label}-${index}`} className="border-b border-border/20 pb-3 last:border-b-0 last:pb-0">
-            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
-            {typeof content === "string"
-              ? <MarkdownContent value={content} />
-              : <PayloadTreeNode node={buildPayloadNode("content", content, ["content"], `message-${index}`)} defaultOpen={true} />}
-          </div>
-        );
-      })}
-    </div>
+    <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
+      <CollapsibleTrigger className={cn(HIERARCHY_SESSION_ROW_CLASS, "text-muted-foreground hover:bg-accent/70")}>
+        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
+        {labelNode}
+        {metaNode}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="px-2 pb-3 pl-7 text-xs leading-relaxed text-foreground">{expandedContent}</div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
-function ToolContent({ value }: { value: unknown }) {
-  const tools = Array.isArray(value) ? value : [value];
+function MessageSection({ value }: { value: unknown }) {
+  const messages = Array.isArray(value) ? value : [value];
   return (
-    <div className="space-y-1">
-      {tools.map((tool, index) => {
-        const label = toolLabel(tool, index) ?? `Tool ${index + 1}`;
+    <div className="space-y-0.5">
+      {messages.map((message, index) => {
+        const label = messageLabel(message, index) ?? `Message ${index + 1}`;
+        const record = isRecord(message) ? message : { content: message };
+        const content = record.content ?? record.text ?? record.message ?? message;
         return (
-          <PayloadTreeNode
+          <SessionMenuRow
             key={`${label}-${index}`}
-            node={buildPayloadNode(label, tool, ["tools", String(index)], `tool-${index}`)}
-            defaultOpen={true}
+            label={label}
+            testId={`message-row-${index}`}
+            expandedContent={typeof content === "string"
+              ? <MarkdownContent value={content} />
+              : <PayloadTreeNode node={buildPayloadNode("content", content, ["content"], `message-${index}`)} defaultOpen={true} />}
           />
         );
       })}
@@ -461,32 +423,179 @@ function ToolContent({ value }: { value: unknown }) {
   );
 }
 
-function SectionContent({ section }: { section: PromptSection }) {
+function scalarPreview(value: unknown): string {
+  if (typeof value === "string") return value.length > 80 ? `${value.slice(0, 80)}…` : value;
+  return String(value);
+}
+
+function JsonSection({ value, sectionId }: { value: unknown; sectionId: string }) {
+  if (isRecord(value)) {
+    const entries = Object.entries(value);
+    if (entries.length > 0) {
+      return (
+        <div className="space-y-0.5">
+          {entries.map(([key, fieldValue]) => {
+            const isScalar = fieldValue === null || ["string", "number", "boolean"].includes(typeof fieldValue);
+            return (
+              <SessionMenuRow
+                key={key}
+                label={labelFromKey(key)}
+                meta={isScalar ? scalarPreview(fieldValue) : undefined}
+                testId={`option-row-${key}`}
+                expandedContent={isScalar
+                  ? undefined
+                  : <PayloadTreeNode node={buildPayloadNode(key, fieldValue, [sectionId, key], `${sectionId}-${key}`)} defaultOpen={true} />}
+              />
+            );
+          })}
+        </div>
+      );
+    }
+  }
+  return <ExactContent value={value} testId={`section-content-${sectionId}`} />;
+}
+
+interface ToolParamDoc {
+  name: string;
+  typeLabel: string;
+  required: boolean;
+  description: string | null;
+}
+
+interface ToolDoc {
+  name: string;
+  description: string | null;
+  params: ToolParamDoc[];
+}
+
+function schemaTypeLabel(schema: unknown): string {
+  if (!isRecord(schema)) return "any";
+  if (Array.isArray(schema.enum)) return schema.enum.map((option) => JSON.stringify(option)).join(" | ");
+  const type = schema.type;
+  if (typeof type === "string") {
+    if (type === "array" && isRecord(schema.items)) return `${schemaTypeLabel(schema.items)}[]`;
+    return type;
+  }
+  if (Array.isArray(type)) return type.filter((entry) => typeof entry === "string").join(" | ") || "any";
+  return "any";
+}
+
+function describeTool(tool: unknown): ToolDoc | null {
+  if (!isRecord(tool)) return null;
+  const fn = isRecord(tool.function) ? tool.function : null;
+  const name = typeof tool.name === "string" ? tool.name : typeof fn?.name === "string" ? fn.name : null;
+  if (!name) return null;
+
+  const description = typeof tool.description === "string"
+    ? tool.description
+    : typeof fn?.description === "string" ? fn.description : null;
+
+  const schema = isRecord(tool.input_schema)
+    ? tool.input_schema
+    : isRecord(tool.inputSchema)
+      ? tool.inputSchema
+      : isRecord(fn?.parameters)
+        ? (fn.parameters as Record<string, unknown>)
+        : null;
+
+  const properties = schema && isRecord(schema.properties) ? schema.properties : {};
+  const required = schema && Array.isArray(schema.required)
+    ? schema.required.filter((entry): entry is string => typeof entry === "string")
+    : [];
+
+  const params: ToolParamDoc[] = Object.entries(properties).map(([paramName, paramSchema]) => ({
+    name: paramName,
+    typeLabel: schemaTypeLabel(paramSchema),
+    required: required.includes(paramName),
+    description: isRecord(paramSchema) && typeof paramSchema.description === "string" ? paramSchema.description : null,
+  }));
+
+  return { name, description, params };
+}
+
+function ToolDocumentation({ doc }: { doc: ToolDoc }) {
+  return (
+    <div className="space-y-3">
+      {doc.description && (
+        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{doc.description}</p>
+      )}
+      {doc.params.length > 0 ? (
+        <div className="space-y-2">
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Parameters</div>
+          {doc.params.map((param) => (
+            <div key={param.name} className="border-l-2 border-border/40 pl-3">
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <span className="font-mono text-sm text-foreground">{param.name}</span>
+                <span className="font-mono text-xs text-muted-foreground">{param.typeLabel}</span>
+                <span className={cn("text-xs", param.required ? "text-warning" : "text-muted-foreground")}>
+                  {param.required ? "required" : "optional"}
+                </span>
+              </div>
+              {param.description && (
+                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{param.description}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-xs text-muted-foreground">No input parameters.</div>
+      )}
+    </div>
+  );
+}
+
+function ToolSection({ value }: { value: unknown }) {
+  const tools = Array.isArray(value) ? value : [value];
+  return (
+    <div className="space-y-0.5">
+      {tools.map((tool, index) => {
+        const doc = describeTool(tool);
+        const label = doc?.name ?? toolLabel(tool, index) ?? `Tool ${index + 1}`;
+        return (
+          <SessionMenuRow
+            key={`${label}-${index}`}
+            label={<span className="font-mono text-foreground">{label}</span>}
+            meta={doc ? `${doc.params.length} param${doc.params.length === 1 ? "" : "s"}` : undefined}
+            testId={`tool-row-${index}`}
+            expandedContent={doc
+              ? <ToolDocumentation doc={doc} />
+              : <ExactContent value={tool} testId={`tool-raw-${index}`} />}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function SectionBody({ section }: { section: PromptSection }) {
   if (section.kind === "overhead") {
     return <div className="rounded-md bg-muted/30 p-3 text-sm text-muted-foreground">Provider-reported input tokens outside the captured request object.</div>;
   }
   if (section.kind === "markdown" && typeof section.value === "string") return <MarkdownContent value={section.value} />;
   if (section.kind === "html" && typeof section.value === "string") return <HtmlContent value={section.value} />;
-  if (section.kind === "messages") return <MessageContent value={section.value} />;
-  if (section.kind === "tools") return <ToolContent value={section.value} />;
-  if (section.kind === "json") return <PayloadTreeNode node={buildPayloadNode(section.title, section.value, [section.id], section.id)} defaultOpen={true} />;
-  return <ExactContent value={section.value} testId={`payload-content-${section.id}`} />;
+  if (section.kind === "messages") return <MessageSection value={section.value} />;
+  if (section.kind === "tools") return <ToolSection value={section.value} />;
+  if (section.kind === "json") return <JsonSection value={section.value} sectionId={section.id} />;
+  return <ExactContent value={section.value} testId={`section-content-${section.id}`} />;
 }
 
-function PromptSectionRow({ section, defaultOpen = false }: { section: PromptSection; defaultOpen?: boolean }) {
+function PromptSectionBlock({ section, defaultOpen = false }: { section: PromptSection; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <ProfileTreeRow
-      label={<span className="font-medium text-foreground">{section.title}</span>}
-      hasValue={true}
-      showEmpty={true}
-      defaultOpen={defaultOpen}
-      mobileLayout="inline"
-      testId={`prompt-section-${section.id}`}
-      expandedContentClassName="min-w-0 max-w-full overflow-hidden pl-8"
-      expandedContent={<SectionContent section={section} />}
-    >
-      <span className="shrink-0 tabular-nums text-muted-foreground">{formatTokens(section.tokenCount)} input tokens</span>
-    </ProfileTreeRow>
+    <Collapsible open={open} onOpenChange={setOpen} data-testid={`prompt-section-${section.id}`}>
+      <CollapsibleTrigger className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}>
+        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
+        <span>{section.title}</span>
+        <span className="ml-auto shrink-0 font-normal normal-case tracking-normal tabular-nums text-muted-foreground">
+          {formatTokens(section.tokenCount)} tokens
+        </span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="px-1 pb-2 pt-1">
+          <SectionBody section={section} />
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -497,10 +606,7 @@ function PromptCaptureSections({ capture }: { capture: InferencePayloadCapture }
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         <span className="font-mono">{capture.provider} / {capture.model}</span>
-        <span>{capture.boundary}</span>
         <span className="tabular-nums">{formatTokens(accounting.totalTokens)} input tokens</span>
-        <span>{accounting.source === "provider" ? "provider reported" : "estimated from captured request"}</span>
-        <span>attempt {capture.attempt}</span>
       </div>
       {capture.completeness === "legacy_incomplete" && (
         <div className="flex items-center gap-2 rounded-md border border-warning/40 px-3 py-2 text-xs text-warning" data-testid="legacy-capture-warning">
@@ -510,7 +616,7 @@ function PromptCaptureSections({ capture }: { capture: InferencePayloadCapture }
       )}
       <div className="flex-1 min-h-0 min-w-0 overflow-y-auto rounded-lg border border-border/30 p-2 scrollbar-thin" data-testid="prompt-capture-sections">
         {accounting.sections.map((section, index) => (
-          <PromptSectionRow key={section.id} section={section} defaultOpen={index === 0} />
+          <PromptSectionBlock key={section.id} section={section} defaultOpen={index === 0} />
         ))}
       </div>
       {capture.evidence.residualLimitation && (
@@ -525,22 +631,12 @@ function PromptCaptureSections({ capture }: { capture: InferencePayloadCapture }
 function captureLabel(capture: InferencePayloadCaptureSummary): string {
   const timestamp = new Date(capture.capturedAt).toLocaleString();
   const legacy = capture.completeness === "legacy_incomplete" ? " · legacy" : "";
-  return `${timestamp} · ${formatModelName(capture.model)} · ${capture.boundary}${legacy}`;
+  return `${timestamp} · ${formatModelName(capture.model)}${legacy}`;
 }
 
 export default function ContextPage({ embedded }: { embedded?: boolean } = {}) {
   usePageHeader({ title: "Context", skip: !!embedded });
-  const [viewTab, setViewTab] = useState("prompt");
   const [selectedCaptureId, setSelectedCaptureId] = useState("");
-
-  const previewQuery = useQuery<{ metadata: SpineMetadata }>({
-    queryKey: ["/api/context/preview/rendered", "full", "text"],
-    queryFn: async () => {
-      const response = await fetch("/api/context/preview/rendered?callType=full&llmMode=text");
-      if (!response.ok) throw new Error("Failed to load context metadata");
-      return response.json();
-    },
-  });
 
   const capturesQuery = useQuery<InferencePayloadCaptureListResponse>({
     queryKey: ["/api/context/inference-calls"],
@@ -572,56 +668,35 @@ export default function ContextPage({ embedded }: { embedded?: boolean } = {}) {
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden" data-testid="context-page">
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-3">
-        <Tabs value={viewTab} onValueChange={setViewTab} className="flex min-h-0 flex-1 flex-col">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            {viewTab === "prompt" && (
-              <Select value={selectedCaptureId} onValueChange={setSelectedCaptureId}>
-                <SelectTrigger className="min-w-0 sm:w-[520px]" data-testid="select-inference-call">
-                  <SelectValue placeholder="Select a recent inference call" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(capturesQuery.data?.captures ?? []).map((capture) => (
-                    <SelectItem key={capture.id} value={capture.id}>{captureLabel(capture)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            {captureQuery.data && viewTab === "prompt" && (
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Clock className="h-3 w-3" />{new Date(captureQuery.data.capturedAt).toLocaleString()}
-              </span>
-            )}
-            <TabsList className="sm:ml-auto">
-              <TabsTrigger value="prompt" data-testid="tab-prompt-view">Prompt</TabsTrigger>
-              <TabsTrigger value="runtime">Runtime</TabsTrigger>
-              <TabsTrigger value="instructions">Instructions</TabsTrigger>
-            </TabsList>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Select value={selectedCaptureId} onValueChange={setSelectedCaptureId}>
+            <SelectTrigger className="min-w-0 sm:w-[520px]" data-testid="select-inference-call">
+              <SelectValue placeholder="Select a recent inference call" />
+            </SelectTrigger>
+            <SelectContent>
+              {(capturesQuery.data?.captures ?? []).map((capture) => (
+                <SelectItem key={capture.id} value={capture.id}>{captureLabel(capture)}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {captureQuery.data && (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Clock className="h-3 w-3" />{new Date(captureQuery.data.capturedAt).toLocaleString()}
+            </span>
+          )}
+        </div>
+
+        {capturesQuery.isLoading || captureQuery.isLoading ? (
+          <Skeleton className="h-full w-full" />
+        ) : capturesQuery.isError || captureQuery.isError ? (
+          <div className="px-2 py-1.5 text-sm text-destructive">Failed to load captured inference payload.</div>
+        ) : captureQuery.data ? (
+          <PromptCaptureSections capture={captureQuery.data} />
+        ) : (
+          <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
+            <FileJson2 className="h-4 w-4" />No captured inference calls yet.
           </div>
-
-          {viewTab !== "prompt" && previewQuery.data?.metadata && <SummaryBar metadata={previewQuery.data.metadata} />}
-
-          <TabsContent value="prompt" className="mt-0 flex min-h-0 flex-1 flex-col">
-            {capturesQuery.isLoading || captureQuery.isLoading ? (
-              <Skeleton className="h-full w-full" />
-            ) : capturesQuery.isError || captureQuery.isError ? (
-              <div className="px-2 py-1.5 text-sm text-destructive">Failed to load captured inference payload.</div>
-            ) : captureQuery.data ? (
-              <PromptCaptureSections capture={captureQuery.data} />
-            ) : (
-              <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
-                <FileJson2 className="h-4 w-4" />No captured inference calls yet.
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="runtime" className="mt-0 flex min-h-0 flex-1 flex-col">
-            {previewQuery.isLoading ? <Skeleton className="h-full w-full" /> : previewQuery.data?.metadata ? <RuntimeCard metadata={previewQuery.data.metadata} /> : null}
-          </TabsContent>
-
-          <TabsContent value="instructions" className="mt-0 flex min-h-0 flex-1 flex-col">
-            {previewQuery.isLoading ? <Skeleton className="h-full w-full" /> : previewQuery.data?.metadata ? <InstructionsCard metadata={previewQuery.data.metadata} /> : null}
-          </TabsContent>
-        </Tabs>
+        )}
       </div>
     </div>
   );
