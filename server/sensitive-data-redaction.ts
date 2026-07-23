@@ -1,3 +1,6 @@
+// Canonical secret-redaction policy for every log sink and reusable
+// diagnostic artifact. See server/AGENTS.md ("canonical server log
+// serialization boundary") and the SECURITY.md log-redaction delta.
 const REDACTED = "[REDACTED]";
 const DEFAULT_MAX_DEPTH = 8;
 const DEFAULT_MAX_OBJECT_KEYS = 64;
@@ -13,14 +16,34 @@ export interface SensitiveDataRedactionOptions {
   maxNodes?: number;
 }
 
+// Structured field names are high-confidence evidence, so this policy is a
+// deliberate strict SUPERSET of the freeform text patterns in
+// redactSensitiveText below. When merging or refactoring either vocabulary,
+// diff them as sets first and take the union or justify every drop — silently
+// adopting the narrower set is exactly how the `sessionCookie` suffix
+// regression shipped in PR #1045 (cured here).
+//
+// Pagination/sync cursors are operational identifiers, not credentials.
+// Redacting them blinds Gmail/Calendar/provider sync debugging for zero
+// security gain. Push tokens deliberately stay redacted: they authorize
+// delivery to a device.
+const NON_SECRET_TOKEN_SUFFIXES = [
+  "pagetoken",
+  "synctoken",
+  "continuationtoken",
+  "deltatoken",
+  "cursortoken",
+  "nexttoken",
+  "prevtoken",
+];
+
 export function isSensitiveFieldName(key: string): boolean {
   const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  const isNonSecretCursor = NON_SECRET_TOKEN_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
   return normalized === "authorization"
     || normalized === "proxyauthorization"
     || normalized === "password"
     || normalized === "passwd"
-    || normalized === "cookie"
-    || normalized === "setcookie"
     || normalized.includes("secret")
     || normalized.includes("credential")
     || normalized.includes("privatekey")
@@ -28,7 +51,8 @@ export function isSensitiveFieldName(key: string): boolean {
     || normalized.includes("accesstoken")
     || normalized.includes("refreshtoken")
     || normalized.includes("idtoken")
-    || normalized.endsWith("token");
+    || normalized.endsWith("cookie")
+    || (!isNonSecretCursor && normalized.endsWith("token"));
 }
 
 export function redactSensitiveText(value: string): string {
@@ -42,6 +66,22 @@ export function redactSensitiveText(value: string): string {
       /((?:"|')?[A-Za-z0-9_-]*(?:authorization|api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|auth[-_]?token|secret|credential|password|passwd|private[-_]?key|cookie)[A-Za-z0-9_-]*(?:"|')?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,}\]]+)/gi,
       `$1"${REDACTED}"`,
     );
+}
+
+// Slack past the final cut keeps a secret straddling the truncation boundary
+// fully visible to the patterns before the tail is dropped. Sized to exceed
+// real-world token lengths (JWTs run 1-2KB).
+const TRUNCATION_SLACK_CHARS = 4_096;
+
+/**
+ * Truncate BEFORE running the redaction regexes so pathological inputs pay
+ * bounded CPU at the hot logging boundary, instead of seven pattern passes
+ * over an arbitrarily large string that is about to be cut anyway.
+ */
+export function redactBoundedText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return redactSensitiveText(value);
+  const redacted = redactSensitiveText(value.slice(0, maxLength + TRUNCATION_SLACK_CHARS));
+  return `${redacted.slice(0, maxLength)}…[truncated]`;
 }
 
 export function redactSensitiveValue(
@@ -63,10 +103,7 @@ export function redactSensitiveValue(
     if (visitedNodes > limits.maxNodes) return "[Traversal budget exceeded]";
     if (item === null || item === undefined) return item;
     if (typeof item === "string") {
-      const redacted = redactSensitiveText(item);
-      return redacted.length > limits.maxStringLength
-        ? `${redacted.slice(0, limits.maxStringLength)}…[truncated]`
-        : redacted;
+      return redactBoundedText(item, limits.maxStringLength);
     }
     if (typeof item === "number" || typeof item === "boolean") return item;
     if (typeof item === "bigint") return `${item.toString()}n`;
@@ -92,6 +129,10 @@ export function redactSensitiveValue(
     if (item instanceof Error) {
       output.name = redactSensitiveText(item.name);
       output.message = redactSensitiveText(item.message);
+      // `stack` is a non-enumerable own property, so the key walk below never
+      // sees it. Capture it here — bounded and redacted — or logged Error
+      // objects lose their most valuable forensic field.
+      if (item.stack) output.stack = redactBoundedText(item.stack, 4_000);
     }
     const keys = Object.keys(source);
     for (const key of keys.slice(0, limits.maxObjectKeys)) {

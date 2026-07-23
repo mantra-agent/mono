@@ -1137,6 +1137,22 @@ export class AgentExecutor extends EventEmitter {
         break;
       }
 
+      case "attempt_reset": {
+        // A transient provider failure voided the prior attempt's streamed
+        // reasoning; the replacement attempt re-derives it from scratch. Drop
+        // the uncommitted accumulation so chronology, the persisted thinking
+        // record, and next-iteration conversation context cannot stitch two
+        // attempts together.
+        ctx.chronologyThinkingBuf = "";
+        ctx.iterationThinking = "";
+        if (ctx.chronologyThinkingIdx >= 0) {
+          const entry = ctx.segmentChronology[ctx.chronologyThinkingIdx];
+          if (entry && entry.s === "thinking") (entry as { s: "thinking"; c: string }).c = "";
+        }
+        log.debug(`attempt_reset voided replayed reasoning runId=${ctx.runId} iteration=${ctx.iteration}`);
+        break;
+      }
+
       case "thinking_delta": {
         this.markFirstResponseOutput(ctx, options, "thinking");
         if (!ctx.thinkingStepActive) {

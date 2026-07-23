@@ -2,7 +2,7 @@
 import { mkdirSync, createWriteStream, type WriteStream } from "fs";
 import { readFile, readdir, stat, unlink } from "fs/promises";
 import { join, resolve } from "path";
-import { redactSensitiveText, redactSensitiveValue } from "./sensitive-data-redaction";
+import { redactBoundedText, redactSensitiveValue } from "./sensitive-data-redaction";
 
 /** Severity ranking for threshold-based filtering: selecting a level shows that level and above. */
 const LOG_LEVEL_RANK: Record<string, number> = { verbose: -1, debug: 0, log: 1, info: 1, warn: 2, error: 3 };
@@ -104,10 +104,15 @@ export function getRecentLogStats(): { capacity: number; held: number; droppedLi
   return { capacity: LOG_BUFFER_SIZE, held: ringCount, droppedLifetime: ringDroppedCount };
 }
 
+// Per-argument character bound approximating LOG_MESSAGE_MAX_BYTES so the
+// redaction regexes never scan more input than the line can carry anyway.
+// boundLogMessage remains the byte-authoritative final bound.
+const LOG_TEXT_ARG_MAX_CHARS = 64_000;
+
 function formatArgs(args: unknown[]): string {
   return args
     .map((arg) => {
-      if (typeof arg === "string") return redactSensitiveText(arg);
+      if (typeof arg === "string") return redactBoundedText(arg, LOG_TEXT_ARG_MAX_CHARS);
       try {
         return JSON.stringify(redactSensitiveValue(arg));
       } catch {
@@ -298,7 +303,7 @@ export function appendClientLog(level: string, source: string, message: string) 
   const normalizedLevel = level === "log" ? "info" : level.toLowerCase();
   if (!(normalizedLevel in LOG_LEVEL_RANK) || !shouldEmitLevel(normalizedLevel)) return;
   const clientSource = `client:${source.slice(0, 128)}`;
-  const boundedMessage = boundLogMessage(redactSensitiveText(message));
+  const boundedMessage = boundLogMessage(redactBoundedText(message, LOG_TEXT_ARG_MAX_CHARS));
   appendToLogFile(normalizedLevel, clientSource, boundedMessage);
   bufferLog(normalizedLevel, boundedMessage, clientSource);
   sink?.({ level: normalizedLevel, message: boundedMessage, source: clientSource });
