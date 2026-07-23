@@ -7,7 +7,6 @@ import { sql } from "drizzle-orm";
 import {
   getInstanceName,
   getInstanceNameLower,
-  setInstanceNameCache,
 } from "@shared/instance-config";
 import { getTableConfig, type PgTable } from "drizzle-orm/pg-core";
 
@@ -756,7 +755,7 @@ export async function runSchemaBootstrap(
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid()::text,
         user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         account_id VARCHAR REFERENCES accounts(id) ON DELETE CASCADE,
-        agent_name TEXT NOT NULL DEFAULT 'Agent',
+        agent_name TEXT NOT NULL DEFAULT 'Mantra',
         relationship_state JSONB NOT NULL DEFAULT '{}'::jsonb,
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1277,7 +1276,7 @@ export async function runSchemaBootstrap(
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid()::text,
         user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         account_id VARCHAR REFERENCES accounts(id) ON DELETE CASCADE,
-        agent_name TEXT NOT NULL DEFAULT 'Agent',
+        agent_name TEXT NOT NULL DEFAULT 'Mantra',
         relationship_state JSONB NOT NULL DEFAULT '{}'::jsonb,
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1290,6 +1289,21 @@ export async function runSchemaBootstrap(
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_agent_profiles_account ON agent_profiles(account_id)`,
     );
+    await pool.query(`ALTER TABLE agent_profiles ALTER COLUMN agent_name SET DEFAULT 'Mantra'`);
+    await pool.query(`
+      UPDATE agent_profiles
+      SET agent_name = 'Mantra',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE agent_name = 'Agent'
+    `);
+    await pool.query(`
+      UPDATE agent_profiles
+      SET metadata = metadata - 'identityModel' - 'rayIdentityModel',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE metadata ? 'identityModel'
+         OR metadata ? 'rayIdentityModel'
+    `);
+    // Human profile placeholder names are repaired after People storage is available.
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS privileged_access_audit (
@@ -3231,7 +3245,7 @@ export async function runSchemaBootstrap(
       );
     }
 
-    // Ensure the agent person exists
+    // Ensure the legacy enrichment record exists without making it name authority.
     const hasAgent = allPeople.some(
       (p) =>
         p.cabinetLevel === "agent" ||
@@ -3255,16 +3269,47 @@ export async function runSchemaBootstrap(
       log(`Created ${getInstanceName()} as Agent person entity`, "migration");
     }
 
-    // Populate the instance name cache from the agent person record
-    const refreshedPeople = await ps.listPeople();
-    const agentPerson = refreshedPeople.find((p) => p.cabinetLevel === "agent");
-    if (agentPerson) {
-      setInstanceNameCache(agentPerson.name);
-      log(
-        `Instance name cache set to "${agentPerson.name}" from People table`,
-        "migration",
-      );
-    }
+    // People records remain narrative enrichment. Profile rows own proper names.
+
+    await pool.query(`
+      WITH canonical_user_people AS (
+        SELECT DISTINCT ON (up.user_id)
+          up.user_id,
+          p.name,
+          p.nicknames
+        FROM user_profiles up
+        JOIN persons p
+          ON p.cabinet_level = 'user'
+         AND (
+           (up.account_id IS NOT NULL AND p.account_id = up.account_id)
+           OR p.owner_user_id = up.user_id
+         )
+        ORDER BY up.user_id, p.updated_at DESC
+      )
+      UPDATE user_profiles up
+      SET display_name = CASE
+            WHEN up.display_name IS NULL OR lower(up.display_name) = lower(u.email)
+              THEN cup.name
+            ELSE up.display_name
+          END,
+          preferred_name = CASE
+            WHEN up.preferred_name IS NULL OR lower(up.preferred_name) = lower(u.email)
+              THEN COALESCE(NULLIF(cup.nicknames->>0, ''), NULLIF(split_part(cup.name, ' ', 1), ''), cup.name)
+            ELSE up.preferred_name
+          END,
+          updated_at = CURRENT_TIMESTAMP
+      FROM users u, canonical_user_people cup
+      WHERE up.user_id = u.id
+        AND cup.user_id = up.user_id
+        AND (
+          up.display_name IS NULL
+          OR up.preferred_name IS NULL
+          OR lower(up.display_name) = lower(u.email)
+          OR lower(up.preferred_name) = lower(u.email)
+        )
+    `);
+
+    // Agent and Human names are resolved from their canonical profile rows.
   } catch (err: any) {
     log(
       `${getInstanceName()} person creation/migration skipped: ${err.message}`,

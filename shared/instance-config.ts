@@ -3,29 +3,15 @@
  *
  * Separates three concerns that were previously conflated:
  * 1. Category labels (enum values like "agent") — what TYPE of thing this is
- * 2. Instance name (e.g. "Agent") — the proper noun for THIS instance
- * 3. Display strings — user-facing text derived from the instance name
- *
- * The agent's name is resolved from the People table (cabinetLevel = "agent")
- * at boot time via setInstanceNameCache(). Falls back to INSTANCE_NAME env var,
- * then to "Agent" if neither is available.
+ * 2. Per-user names — resolved from agent_profiles by user-scoped code
+ * 3. App-level fallback display strings for surfaces without a user principal
  */
 
-/** Module-level cache populated at boot by the server. */
-let _instanceNameCache: string | null = null;
+export const DEFAULT_AGENT_NAME = "Mantra";
 
-/**
- * Set the cached instance name. Called once at server boot after querying
- * the People table for the person with cabinetLevel = "agent".
- */
-export function setInstanceNameCache(name: string): void {
-  _instanceNameCache = name;
-}
-
-/** The proper name of this agent instance. */
+/** App-level fallback name. User-scoped surfaces must read agent_profiles. */
 export function getInstanceName(): string {
-  if (_instanceNameCache) return _instanceNameCache;
-  return (typeof process !== "undefined" && process.env?.INSTANCE_NAME) || "Agent";
+  return (typeof process !== "undefined" && process.env?.INSTANCE_NAME) || DEFAULT_AGENT_NAME;
 }
 
 /** Check if a session/owner/timer type represents the agent. */

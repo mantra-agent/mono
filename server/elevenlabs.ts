@@ -255,7 +255,7 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
     conversation_config: {
       agent: {
         prompt: {
-          prompt: "You are Agent, a personal AI coach and executive assistant.",
+          prompt: "You are an Agent. Use the identity and instructions supplied by the custom LLM context.",
           llm: "custom-llm",
           custom_llm: {
             url: callbackUrl,

@@ -8,6 +8,8 @@ import { getPrincipal, type Principal } from "./principal";
 import { ownedInsertValues } from "./scoped-storage";
 import { peopleStorage } from "./people-storage";
 import { seedFtuePrioritiesForUser } from "./ftue-goals";
+import { DEFAULT_AGENT_NAME } from "@shared/instance-config";
+import { eventBus } from "./event-bus";
 import {
   accounts,
   agentProfiles,
@@ -21,7 +23,7 @@ import {
 } from "@shared/schema";
 
 const log = createLogger("Onboarding");
-export const FTUE_AGENT_NAME = "Mantra";
+export const FTUE_AGENT_NAME = DEFAULT_AGENT_NAME;
 
 const ROOTS = [
   { key: "notes", title: "Notes", slug: "notes", emoji: "📝", sortOrder: 0 },
@@ -382,9 +384,13 @@ export async function createUserWorkspace(
 ) {
   const user = await getUserOrThrow(principal.userId);
   const accountId = await ensurePersonalAccount(user, principal);
-  const displayName = displayNameFor(user, input);
-  const preferredName = preferredNameFor(user, input);
-  const agentName = FTUE_AGENT_NAME;
+  const [[existingProfile], [existingAgentProfile]] = await Promise.all([
+    db.select().from(userProfiles).where(eq(userProfiles.userId, principal.userId)).limit(1),
+    db.select().from(agentProfiles).where(eq(agentProfiles.userId, principal.userId)).limit(1),
+  ]);
+  const displayName = cleanText(input.name, 120) ?? existingProfile?.displayName ?? displayNameFor(user, input);
+  const preferredName = cleanText(input.preferredName, 80) ?? existingProfile?.preferredName ?? preferredNameFor(user, input);
+  const agentName = existingAgentProfile?.agentName ?? FTUE_AGENT_NAME;
   const roots = await ensurePrivateRoots(principal, preferredName);
   if (agentName !== "Agent") {
     roots.agent = await ensureAgentLibraryRoot(principal, agentName);
@@ -395,11 +401,6 @@ export async function createUserWorkspace(
     await seedFtuePrioritiesForUser(principal);
   }
 
-  const [existingProfile] = await db
-    .select()
-    .from(userProfiles)
-    .where(eq(userProfiles.userId, principal.userId))
-    .limit(1);
   const now = new Date().toISOString();
   const onboardingStatus = input.markCompleted
     ? "completed"
@@ -468,6 +469,12 @@ export async function createUserWorkspace(
         updatedAt: sql`CURRENT_TIMESTAMP`,
       },
     });
+
+  eventBus.publish({
+    category: "agent",
+    event: "data:profiles_changed",
+    payload: { source: "onboarding", userId: principal.userId },
+  });
 
   // Fire-and-forget: these are non-critical for the onboarding response.
   // Structurally non-blocking so the user navigates immediately.

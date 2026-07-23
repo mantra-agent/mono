@@ -47,9 +47,10 @@ export async function buildChatContinuationSection(chatSessionId: string | null)
     const { chatFileStorage } = await import("../chat-file-storage");
     const messages = await chatFileStorage.getMessagesBySession(chatSessionId);
     if (messages && messages.length > 0) {
-      const { getInstanceName } = await import("@shared/instance-config");
+      const { resolveCurrentProfileIdentity } = await import("../profile-identity");
+      const { agentName, userName } = await resolveCurrentProfileIdentity();
       const chatHistory = messages.map(m => {
-        const role = m.role === "assistant" ? getInstanceName() : "User";
+        const role = m.role === "assistant" ? agentName : userName ?? "Human";
         const raw = m.content || "";
         const content = raw.length > SINGLE_MESSAGE_HARD_CAP
           ? raw.slice(0, SINGLE_MESSAGE_HARD_CAP) + "…[truncated]"
