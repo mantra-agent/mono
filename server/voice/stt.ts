@@ -6,6 +6,7 @@ import {
   deepgramConfigured,
   type DeepgramWord,
 } from "../integrations/deepgram/streaming";
+import type { SpeechRecognitionHints } from "../speech-recognition-hints";
 
 const log = createLogger("VoiceSTT");
 
@@ -24,6 +25,7 @@ export interface STTAudioStream {
   encoding: "pcm_s16le";
   sampleRateHz: 16000;
   channels: 1;
+  hints?: SpeechRecognitionHints;
 }
 
 /** Canonical recognition result. Consumers act only on final utterances. */
@@ -133,6 +135,7 @@ export class ScribeRealtimeSTTProvider implements STTProvider {
       language_code: HIGH_QUALITY_SCRIBE_POLICY.languageCode,
       include_timestamps: "true",
     });
+    for (const keyterm of stream.hints?.keyterms || []) params.append("keyterms", keyterm);
     const socket = new WebSocket(`wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params}`, {
       headers: { "xi-api-key": apiKey },
     });
@@ -291,6 +294,7 @@ export class DeepgramDiarizingSTTProvider implements STTProvider {
         sampleRateHz: DEEPGRAM_DIARIZATION_POLICY.sampleRateHz,
         endpointingMs: DEEPGRAM_DIARIZATION_POLICY.endpointingMs,
         diarize: true,
+        keyterms: stream.hints?.keyterms,
       },
       async (event) => {
         if (!event.isFinal) return;

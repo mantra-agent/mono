@@ -58,6 +58,7 @@ export interface NativeVoiceSessionConfig {
   sessionId?: string;
   chatSessionId?: string | null;
   chatSessionKey?: string;
+  overrides?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,7 +262,7 @@ function VoiceSessionInner({
           // React Native MUST use agentId (WebRTC), not signedUrl (WebSocket).
           conversation.startSession({
             agentId: pendingConfig.agentId,
-            overrides: {
+            overrides: pendingConfig.overrides || {
               tts: { voiceId: pendingConfig.voiceId || undefined },
             },
             customLlmExtraBody: {
@@ -309,7 +310,7 @@ function VoiceSessionInner({
     try {
       conversation.startSession({
         agentId: config.agentId,
-        overrides: {
+        overrides: config.overrides || {
           tts: { voiceId: config.voiceId || undefined },
         },
         customLlmExtraBody: {

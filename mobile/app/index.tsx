@@ -302,6 +302,7 @@ export default function PrimaryScreen() {
           sessionId: msg.sessionId,
           chatSessionId: msg.chatSessionId,
           chatSessionKey: msg.chatSessionKey,
+          overrides: msg.overrides,
         });
         break;
       }

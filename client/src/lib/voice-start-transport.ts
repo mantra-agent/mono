@@ -20,6 +20,7 @@ export interface VoiceStartResponse {
   }>;
   persona?: { id: number; name: string; icon: string };
   firstMessage?: string;
+  recognitionKeyterms?: string[];
 }
 
 export interface VoiceStartPhaseEvent {

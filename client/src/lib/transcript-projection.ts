@@ -136,6 +136,12 @@ export function hasCompactionBoundary(messages: Message[]): boolean {
   return messages.some((message) => message.model === "compaction-marker");
 }
 
+function isTerminalAssistantMessage(message: Message): boolean {
+  return message.role === "assistant"
+    && !message.id.startsWith("draft-")
+    && message.assistantState !== "streaming";
+}
+
 export function freezeStreamingContent(streaming: StreamingContent): StreamingContent {
   return {
     ...streaming,
@@ -215,8 +221,7 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
     ? new Date(visiblePendingTurn.submittedAt).getTime()
     : frozenStreamHandoff?.lowerBound ?? null;
   const terminalAssistantNowPersisted = terminalStreamAvailable && persistedMessages.some((message) => {
-    if (message.role !== "assistant" || message.id.startsWith("draft-")) return false;
-    if (!message.assistantState || message.assistantState === "streaming") return false;
+    if (!isTerminalAssistantMessage(message)) return false;
     if (
       rawStreaming.runId &&
       message.assistantRunId &&
@@ -259,8 +264,7 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
     if (!visiblePendingTurn || !pendingTurnPersisted) return false;
     const pendingSubmittedAt = new Date(visiblePendingTurn.submittedAt).getTime();
     return persistedMessages.some((message) => {
-      if (message.role !== "assistant" || message.id.startsWith("draft-")) return false;
-      if (!message.assistantState || message.assistantState === "streaming") return false;
+      if (!isTerminalAssistantMessage(message)) return false;
       if (new Date(message.createdAt).getTime() < pendingSubmittedAt) return false;
       return (message.content || "").trim().length > 0 || (message.segmentChronology?.length ?? 0) > 0;
     });
@@ -333,8 +337,7 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
 
   const frozenAssistantNowPersisted = frozenStreamHandoff
     ? persistedMessages.some((message) => {
-        if (message.role !== "assistant" || message.id.startsWith("draft-")) return false;
-        if (!message.assistantState || message.assistantState === "streaming") return false;
+        if (!isTerminalAssistantMessage(message)) return false;
         if (
           frozenStreamHandoff.streaming.runId &&
           message.assistantRunId &&

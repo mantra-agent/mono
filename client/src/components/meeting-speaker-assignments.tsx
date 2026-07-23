@@ -236,24 +236,36 @@ function PersonAssignmentControl({
       <PopoverTrigger asChild>
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           size="sm"
           className={cn(
-            "h-11 min-w-0 w-full justify-start gap-2 px-3 text-sm sm:max-w-64",
+            "h-5 min-h-5 max-w-full min-w-0 justify-start rounded-md border border-transparent px-1.5 py-0 text-xs font-normal shadow-none",
+            open && "border-input bg-muted/50",
             !participant.personId && "text-muted-foreground",
           )}
           disabled={assignment.isPending}
+          aria-expanded={open}
           data-testid={`button-assign-${testId}`}
         >
           {assignment.isPending ? (
             <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+          ) : assignedPerson && participant.personId ? (
+            <ReferenceRenderer
+              refValue={createReferenceRef({
+                type: "person",
+                id: participant.personId,
+                metadata: { label: assignedPerson.name, href: `/people/${participant.personId}` },
+              })}
+              surface="chat-inline"
+              className="mx-0 max-w-full pointer-events-none"
+            />
           ) : (
-            <UserRound className="h-3.5 w-3.5 shrink-0" />
+            <>
+              <UserRound className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{speakerLabel}</span>
+            </>
           )}
-          <span className="truncate">
-            {assignedPerson?.name || (participant.personId ? participant.label : speakerLabel)}
-          </span>
-          <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0" />
+          {open && <ChevronDown className="ml-1 h-3 w-3 shrink-0 text-muted-foreground" />}
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-72 p-2" align="start">
@@ -394,12 +406,14 @@ export function MeetingSpeakerAssignments({
             >
               <div className="min-w-0 border-b border-border/10 sm:border-b-0 sm:border-r">
                 {hasStableSpeaker && participant ? (
-                  <PersonAssignmentControl
-                    participant={participant}
-                    sessionId={sessionId}
-                    people={data?.people || []}
-                    speakerLabel={speakerDisplayLabel(participant)}
-                  />
+                  <div className="flex min-h-11 min-w-0 items-center px-3">
+                    <PersonAssignmentControl
+                      participant={participant}
+                      sessionId={sessionId}
+                      people={data?.people || []}
+                      speakerLabel={speakerDisplayLabel(participant)}
+                    />
+                  </div>
                 ) : participant ? (
                   <ExpectedPerson participant={participant} />
                 ) : (

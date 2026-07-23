@@ -779,8 +779,8 @@ export interface MeetingRecognitionStream {
 
 export type MeetingRecognitionReasonCode =
   | "participant_audio_ready"
-  | "deepgram_not_configured"
-  | "scribe_not_configured";
+  | "shared_room_recognition_unavailable"
+  | "participant_recognition_unavailable";
 
 export interface MeetingRecognitionState {
   mode: MeetingSpeakerPolicy["mode"];
