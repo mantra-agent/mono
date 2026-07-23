@@ -212,7 +212,7 @@ export async function migrateOpportunitySchema(): Promise<void> {
       ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS vault_id TEXT;
       UPDATE opportunities SET owner_user_id = user_id WHERE owner_user_id IS NULL;
 
-      DO $
+      DO $opportunity_migration$
       BEGIN
         IF NOT EXISTS (
           SELECT 1
@@ -225,7 +225,7 @@ export async function migrateOpportunitySchema(): Promise<void> {
             FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE SET NULL;
         END IF;
       END
-      $;
+      $opportunity_migration$;
 
       CREATE INDEX IF NOT EXISTS idx_opportunities_status ON opportunities(status);
       CREATE INDEX IF NOT EXISTS idx_opportunities_type ON opportunities(type);
