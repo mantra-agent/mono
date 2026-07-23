@@ -4538,11 +4538,12 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const childConv = await chatFileStorage.getSession(childId);
           const childMessages = await chatFileStorage.getMessagesBySession(childId);
           const hasAssistantResponse = childMessages.some(m => m.role === "assistant");
+          const authorityNote = "Authority: conversational child only. This child does not receive engineering Git-write delegation; use a plan with an Engineer step for code-writing work.";
           if (!hasAssistantResponse && childMessages.length > 0) {
             await triggerChildSessionResponse(childId, "session.spawn_child.reused");
-            return { result: `Reused existing child session ${childId}${childConv?.title ? ` (${childConv.title})` : ""} for spawn reason "${spawnReason}". Started execution.` };
+            return { result: `Reused existing child session ${childId}${childConv?.title ? ` (${childConv.title})` : ""} for spawn reason "${spawnReason}". Started execution. ${authorityNote}` };
           }
-          return { result: `Reused existing child session ${childId}${childConv?.title ? ` (${childConv.title})` : ""} for spawn reason "${spawnReason}".` };
+          return { result: `Reused existing child session ${childId}${childConv?.title ? ` (${childConv.title})` : ""} for spawn reason "${spawnReason}". ${authorityNote}` };
         }
 
         // Build the warm-start brief from existing summarization paths.
@@ -4614,8 +4615,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
         await triggerChildSessionResponse(childId, "session.spawn_child");
 
-        toolExec.log(`[session.spawn_child] parent=${sessionId} child=${childId} spawnReason=${spawnReason} briefLen=${brief.length} autoStart=true`);
-        return { result: `Spawned child session ${childId}${childConv?.title ? ` (${childConv.title})` : ""}. Warm-start brief seated (${brief.length} chars). Started execution.` };
+        toolExec.log(`[session.spawn_child] parent=${sessionId} child=${childId} spawnReason=${spawnReason} briefLen=${brief.length} autoStart=true engineeringDelegation=false`);
+        return {
+          result: [
+            `Spawned child session ${childId}${childConv?.title ? ` (${childConv.title})` : ""}.`,
+            `Warm-start brief seated (${brief.length} chars). Started execution.`,
+            "Authority: conversational child only. This child does not receive engineering Git-write delegation; use a plan with an Engineer step for code-writing work.",
+          ].join(" "),
+        };
       } catch (err: any) {
         return { result: `spawn_child failed: ${err?.message || err}`, error: true };
       }
@@ -10259,15 +10266,21 @@ ${refs}` : ""),
     if (action === "get") {
       const toolName = args.tool;
       if (!toolName) return { result: "Missing tool parameter for get action", error: true };
-      const { TOOLS } = await import("./tool-registry");
-      const meta = TOOLS[toolName];
-      if (!meta) return { result: `Unknown tool: ${toolName}`, error: true };
+      const { getToolSchemas } = await import("./tool-registry");
+      const { filterToolSchemasForAuthority } = await import("./agent-authority");
+      const schemas = filterToolSchemasForAuthority(
+        getToolSchemas(),
+        args._authorityContext || {},
+      );
+      const meta = schemas.find((schema) => schema.name === toolName);
+      if (!meta) return { result: `Tool unavailable under current execution authority: ${toolName}`, error: true };
 
       let detail = `## ${toolName}\n${meta.description}\nCategory: ${meta.category}`;
       if (meta.parameters?.properties) {
         const params = Object.entries(meta.parameters.properties).map(([k, v]) => {
-          const prop = v as { description?: string; type?: string };
-          return `  - ${k}: ${prop.description || prop.type || ""}${meta.parameters?.required?.includes(k) ? " (required)" : ""}`;
+          const prop = v as { description?: string; type?: string; enum?: unknown[] };
+          const allowedValues = Array.isArray(prop.enum) ? ` Allowed: ${prop.enum.join(", ")}.` : "";
+          return `  - ${k}: ${prop.description || prop.type || ""}${allowedValues}${meta.parameters?.required?.includes(k) ? " (required)" : ""}`;
         });
         detail += `\nParameters:\n${params.join("\n")}`;
       }
@@ -15916,9 +15929,16 @@ export async function executeTool(
   toolExec.verbose(() => `dispatch tool=${toolName} callId=${toolCallId} argKeys=${Object.keys(normalizedArgs).join(",")}`);
 
   const enrichedArgs = { ...normalizedArgs };
-  // Universal _sessionId/_sessionKey injection — all tools get session context
+  // Universal _sessionId/_sessionKey injection — all tools get session context.
+  // Authority context is server-derived and injected only after public argument
+  // validation so capability introspection can describe this exact execution.
   if (context?.sessionId) enrichedArgs._sessionId = context.sessionId;
   if (context?.sessionKey) enrichedArgs._sessionKey = context.sessionKey;
+  enrichedArgs._authorityContext = {
+    ...context?.authority,
+    sessionId: context?.sessionId,
+    sessionKey: context?.sessionKey,
+  };
   if (resolvedName === "orient" && context?.orientationPersonaPolicy) {
     enrichedArgs._orientationPersonaPolicy = context.orientationPersonaPolicy;
   }

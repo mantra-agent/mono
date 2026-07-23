@@ -160,7 +160,23 @@ export function authorizeToolInvocation(
   return { allowed: true };
 }
 
-export function filterToolSchemasForAuthority<T extends { name: string; parameters: Record<string, any> }>(
+function describeAuthorityFilteredActions(
+  toolName: string,
+  allowedActions: unknown[],
+  removedActionCount: number,
+): string | null {
+  if (removedActionCount === 0) return null;
+  if (toolName === "git") {
+    return [
+      `Current execution authority permits only: ${allowedActions.join(", ")}.`,
+      "Omitted Git actions are intentionally unavailable under this session's provenance, not evidence of a broken provider credential.",
+      "Plan/workflow engineering children receive delegated write authority; generic session.spawn_child children do not.",
+    ].join(" ");
+  }
+  return `Current execution authority permits only: ${allowedActions.join(", ")}.`;
+}
+
+export function filterToolSchemasForAuthority<T extends { name: string; description?: string; parameters: Record<string, any> }>(
   schemas: T[],
   context: AgentAuthorityContext,
   principal: Principal | null = getCurrentPrincipal(),
@@ -173,13 +189,27 @@ export function filterToolSchemasForAuthority<T extends { name: string; paramete
         typeof action === "string" && authorizeToolInvocation(schema.name, { action }, context, principal).allowed,
       );
       if (allowedActions.length === 0) continue;
+      const authorityDescription = describeAuthorityFilteredActions(
+        schema.name,
+        allowedActions,
+        actionSchema.enum.length - allowedActions.length,
+      );
       result.push({
         ...schema,
+        ...(authorityDescription
+          ? { description: `${schema.description || ""} ${authorityDescription}`.trim() }
+          : {}),
         parameters: {
           ...schema.parameters,
           properties: {
             ...schema.parameters.properties,
-            action: { ...actionSchema, enum: allowedActions },
+            action: {
+              ...actionSchema,
+              enum: allowedActions,
+              ...(authorityDescription
+                ? { description: `${actionSchema.description || "Action to perform"}. ${authorityDescription}` }
+                : {}),
+            },
           },
         },
       });
