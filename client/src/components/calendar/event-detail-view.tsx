@@ -595,12 +595,26 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
         calendarId: calendarId || selectedCalendarId,
         mode: nextMode,
       });
-      return response.json();
+      return response.json() as Promise<{ metadata: CalendarMetadata }>;
     },
     onMutate: (nextMode) => {
       const previousMode = joinMode;
       setJoinMode(nextMode);
       return { previousMode };
+    },
+    onSuccess: ({ metadata: updatedMetadata }) => {
+      queryClient.setQueryData<EventMetadataQueryData>(metadataQueryKey, current => ({
+        metadata: updatedMetadata,
+        people: current?.people ?? [],
+        artifacts: current?.artifacts ?? [],
+      }));
+      setJoinMode(resolveMeetingJoinMode(
+        updatedMetadata.agentJoinMode,
+        updatedMetadata.agentJoinEnabled,
+        updatedMetadata.agentJoinOverride,
+      ));
+      queryClient.invalidateQueries({ queryKey: ["/api/calendar/events"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
     },
     onError: (err: any, _nextMode, context) => {
       setJoinMode(context?.previousMode ?? resolveMeetingJoinMode(
@@ -609,16 +623,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
         metadata?.agentJoinOverride,
       ));
       toast({ title: "Failed to update meeting agent", description: err.message, variant: "destructive" });
-    },
-    onSettled: async () => {
-      const refreshed = await queryClient.fetchQuery<EventMetadataQueryData>({ queryKey: metadataQueryKey });
-      setJoinMode(resolveMeetingJoinMode(
-        refreshed.metadata?.agentJoinMode,
-        refreshed.metadata?.agentJoinEnabled ?? false,
-        refreshed.metadata?.agentJoinOverride,
-      ));
-      queryClient.invalidateQueries({ queryKey: ["/api/calendar/events"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
     },
   });
 
