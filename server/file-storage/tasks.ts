@@ -107,7 +107,7 @@ function rowToTask(row: typeof tasks.$inferSelect): Task {
   return {
     id: row.id,
     title: row.title,
-    vaultId: row.vaultId!,
+    vaultId: row.vaultId,
     description: row.description,
     status: (row.status === "push" ? "on_hold" : row.status) as TaskStatus,
     priority: row.priority as Task["priority"],
@@ -190,7 +190,7 @@ export class FileTaskStorage {
     return rowToTask(rows[0]);
   }
 
-  private async assertWorkPlacement(projectId: number | null | undefined, milestoneId: number | null | undefined): Promise<void> {
+  private async assertWorkPlacement(projectId: number | null | undefined, milestoneId: number | null | undefined): Promise<string | null> {
     const principal = getCurrentPrincipalOrSystem();
     if (projectId != null && (!Number.isInteger(projectId) || projectId <= 0)) {
       throw new Error("projectId must be a positive integer");
@@ -201,12 +201,12 @@ export class FileTaskStorage {
     if (milestoneId != null && projectId == null) {
       throw new Error("milestoneId requires projectId");
     }
-    if (projectId == null) return;
-    const projectRows = await db.select({ id: projects.id }).from(projects).where(
+    if (projectId == null) return null;
+    const projectRows = await db.select({ id: projects.id, vaultId: projects.vaultId }).from(projects).where(
       combineWithProjectAccess(principal, "read", eq(projects.id, projectId)),
     ).limit(1);
     if (projectRows.length === 0) throw new Error(`Project ${projectId} not found`);
-    if (milestoneId == null) return;
+    if (milestoneId == null) return projectRows[0].vaultId;
     const milestoneRows = await db.select({ id: milestones.id }).from(milestones).where(
       combineWithProjectDerivedWorkAccess(
         principal,
@@ -219,13 +219,14 @@ export class FileTaskStorage {
     if (milestoneRows.length === 0) {
       throw new Error(`Milestone ${milestoneId} not found in project ${projectId}`);
     }
+    return projectRows[0].vaultId;
   }
 
   async createTask(input: InsertTask, provenance?: TaskMutationProvenance): Promise<Task> {
-    await this.assertWorkPlacement(input.projectId, input.milestoneId);
+    const parentVaultId = await this.assertWorkPlacement(input.projectId, input.milestoneId);
     const now = new Date();
     const effort = input.effort || "mid";
-    const vaultId = resolveCreationVaultId(input.vaultId);
+    const vaultId = parentVaultId ?? resolveCreationVaultId(input.vaultId);
     const assigneeInput = assignmentFromValues(input.assigneeSubjectType, input.assigneeSubjectId);
     const origin = resolveMutationOrigin(provenance);
 
@@ -285,10 +286,11 @@ export class FileTaskStorage {
       const existing = existingRow ? rowToTask(existingRow) : undefined;
       if (!existing) return undefined;
 
+      let placementVaultId: string | null | undefined;
       if (updates.projectId !== undefined || updates.milestoneId !== undefined) {
         const projectId = updates.projectId !== undefined ? updates.projectId : existing.projectId;
         const milestoneId = updates.milestoneId !== undefined ? updates.milestoneId : existing.milestoneId;
-        await this.assertWorkPlacement(projectId, milestoneId);
+        placementVaultId = await this.assertWorkPlacement(projectId, milestoneId);
       }
 
       const previousAssignee = assignmentFromValues(existing.assigneeSubjectType, existing.assigneeSubjectId);
@@ -314,6 +316,7 @@ export class FileTaskStorage {
       if (updates.requiresReview !== undefined) setValues.requiresReview = updates.requiresReview;
       if (updates.projectId !== undefined) setValues.projectId = updates.projectId;
       if (updates.milestoneId !== undefined) setValues.milestoneId = updates.milestoneId;
+      if (placementVaultId) setValues.vaultId = placementVaultId;
       if (updates.tags !== undefined) setValues.tags = updates.tags;
       if (updates.context !== undefined) setValues.context = updates.context;
       if (updates.output !== undefined) setValues.output = updates.output;

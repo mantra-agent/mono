@@ -389,8 +389,8 @@ export class FileProjectStorage {
         })),
       );
 
-      const primaryVaultId = normalizedVaultIds.includes(project.vaultId!)
-        ? project.vaultId!
+      const primaryVaultId = normalizedVaultIds.includes(project.vaultId)
+        ? project.vaultId
         : normalizedVaultIds[0];
       await tx.update(projects)
         .set({ vaultId: primaryVaultId, updatedAt: new Date() })
@@ -398,6 +398,14 @@ export class FileProjectStorage {
           eq(projects.id, projectId),
           projectOwnerAccessPredicate(principal, "admin"),
         ));
+      if (primaryVaultId !== project.vaultId) {
+        await tx.update(milestoneRows)
+          .set({ vaultId: primaryVaultId, updatedAt: new Date() })
+          .where(eq(milestoneRows.projectId, projectId));
+        await tx.update(tasks)
+          .set({ vaultId: primaryVaultId, updatedAt: new Date() })
+          .where(eq(tasks.projectId, projectId));
+      }
     });
 
     this.invalidateCache();
@@ -457,7 +465,7 @@ export class FileProjectStorage {
           return {
             id: milestoneId,
             projectId: id,
-            vaultId: prior?.vaultId ?? existing.vaultId,
+            vaultId: existing.vaultId,
             ownerUserId: existing.ownerUserId,
             accountId: existing.accountId,
             scope: existing.scope,

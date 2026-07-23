@@ -525,7 +525,7 @@ export const tasks = pgTable("tasks", {
   projectId: integer("project_id"),
   milestoneId: integer("milestone_id"),
   /** Container and inheritance anchor only. Work visibility remains owner/grant based. */
-  vaultId: text("vault_id").references(() => vaults.id, { onDelete: "restrict" }),
+  vaultId: text("vault_id").notNull().references(() => vaults.id, { onDelete: "restrict" }),
   tags: jsonb("tags").notNull().default([]),
   deliverable: text("deliverable").notNull().default(""),
   acceptanceCriteria: text("acceptance_criteria").notNull().default(""),
@@ -567,7 +567,7 @@ export const projects = pgTable("projects", {
   spec: text("spec").notNull().default(""),
   goalId: text("goal_id"),
   /** Migration-compatible primary/default Vault. project_vault_memberships owns Project visibility. */
-  vaultId: text("vault_id").references(() => vaults.id, { onDelete: "restrict" }),
+  vaultId: text("vault_id").notNull().references(() => vaults.id, { onDelete: "restrict" }),
   /** @deprecated Milestones are canonical in the milestones table. Remove after one release (target: 2026-08-05). */
   milestones: jsonb("milestones").notNull().default([]),
   tags: jsonb("tags").notNull().default([]),
@@ -610,7 +610,7 @@ export type ProjectVaultMembership = typeof projectVaultMemberships.$inferSelect
 export const milestones = pgTable("milestones", {
   id: integer("id").notNull(),
   projectId: integer("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
-  vaultId: text("vault_id").references(() => vaults.id, { onDelete: "restrict" }),
+  vaultId: text("vault_id").notNull().references(() => vaults.id, { onDelete: "restrict" }),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
   scope: text("scope").notNull().default("user"),

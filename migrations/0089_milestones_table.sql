@@ -28,7 +28,8 @@ CREATE INDEX IF NOT EXISTS idx_milestones_account
 CREATE INDEX IF NOT EXISTS idx_milestones_vault
   ON milestones(vault_id);
 
--- Additive, replay-safe backfill from the deprecated projects.milestones JSON.
+-- Additive backfill from deprecated projects.milestones JSON during initial migration.
+-- Runtime convergence records adoption and never replays this rollback-only source afterward.
 -- IDs remain project-local because tasks identify a milestone together with project_id.
 INSERT INTO milestones (
   id,
@@ -115,6 +116,6 @@ END $migration$;
 -- projects.milestones is intentionally retained, read-inactive, for one release.
 -- Removal target: 2026-08-05 after rollback compatibility has elapsed.
 COMMENT ON COLUMN projects.milestones IS
-  'DEPRECATED: canonical milestones live in milestones table; remove after one release, target 2026-08-05';
+  'DEPRECATED: rollback-only snapshot; canonical milestones live in milestones table; never replay after adoption; remove after one release, target 2026-08-05';
 COMMENT ON TABLE milestones IS
   'Canonical project milestones. Numeric id is project-local and unique with project_id.';
