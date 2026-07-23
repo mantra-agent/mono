@@ -5,9 +5,11 @@ import { usePageHeader } from "@/hooks/use-page-header";
 import { useSearch, useLocation } from "wouter";
 import { useFocusContext } from "@/hooks/use-focus-context";
 import { useFocusSession } from "@/hooks/use-focus-session";
+import { useVaults } from "@/hooks/use-vaults";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getInstanceName } from "@/lib/instance-config";
 import { Card } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -88,6 +90,7 @@ import {
   Package,
   CalendarDays,
   Search as SearchIcon,
+  Shield,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
@@ -1143,6 +1146,7 @@ function TaskRow({
 
 function ProjectsView({ selectedProjectId }: { selectedProjectId?: number | null }) {
   const { toast } = useToast();
+  const { vaults } = useVaults();
   const [, setLocation] = useLocation();
   const { route, setSessionForRoute, setWidgetOpen } = useFocusSession();
   const [showCreate, setShowCreate] = useState(false);
@@ -1189,6 +1193,24 @@ function ProjectsView({ selectedProjectId }: { selectedProjectId?: number | null
     mutationFn: ({ id, data }: { id: number; data: any }) => apiRequest("PATCH", `/api/projects/projects/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/projects/projects"] });
+    },
+  });
+
+  const vaultMembershipMutation = useMutation({
+    mutationFn: async ({ projectId, vaultIds }: { projectId: number; vaultIds: string[] }) => {
+      const response = await apiRequest("PATCH", `/api/projects/projects/${projectId}/vaults`, { vaultIds });
+      return response.json() as Promise<Project>;
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData<Project[]>(["/api/projects/projects"], current =>
+        current?.map(project => project.id === updated.id ? updated : project),
+      );
+      queryClient.setQueryData(["/api/projects/projects", updated.id], updated);
+      queryClient.invalidateQueries({ queryKey: ["/api/projects/tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects/todo"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to update Vaults", description: error.message, variant: "destructive" });
     },
   });
 
@@ -1415,6 +1437,9 @@ function ProjectsView({ selectedProjectId }: { selectedProjectId?: number | null
                     onDeleteProject={() => setPendingDeleteProject({ id: project.id, title: project.title })}
                     onDeleteMilestone={(milestone) => setPendingDeleteMilestone({ projectId: project.id, milestoneId: milestone.id, name: milestone.name })}
                     onUpdateProject={(data) => updateProjectMutation.mutate({ id: project.id, data })}
+                    onUpdateVaults={(vaultIds) => vaultMembershipMutation.mutate({ projectId: project.id, vaultIds })}
+                    vaultMembershipPending={vaultMembershipMutation.isPending}
+                    vaults={vaults}
                     onUpdateMilestone={(milestoneId, data) => updateMilestoneMutation.mutate({ projectId: project.id, milestoneId, data })}
                     onDiscuss={discussWorkItem}
                     discussPending={discussMutation.isPending}
@@ -1642,6 +1667,9 @@ function ProjectTreeNode({
   onDeleteProject,
   onDeleteMilestone,
   onUpdateProject,
+  onUpdateVaults,
+  vaultMembershipPending,
+  vaults,
   onUpdateMilestone,
   onDiscuss,
   discussPending,
@@ -1674,6 +1702,9 @@ function ProjectTreeNode({
   onDeleteProject: () => void;
   onDeleteMilestone: (milestone: Milestone) => void;
   onUpdateProject: (data: any) => void;
+  onUpdateVaults: (vaultIds: string[]) => void;
+  vaultMembershipPending: boolean;
+  vaults: Array<{ id: string; name: string }>;
   onUpdateMilestone: (milestoneId: number, data: Partial<Milestone>) => void;
   onDiscuss: (item: DiscussableWorkItem) => void;
   discussPending: boolean;
@@ -1980,6 +2011,51 @@ function ProjectTreeNode({
                     placeholder="Add a project description..."
                     testIdPrefix={`project-description-${project.id}`}
                   />
+                  {project.canManageVaults && (
+                    <div className="flex min-w-0 items-center justify-between gap-2 text-sm" data-testid={`project-vaults-row-${project.id}`}>
+                      <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
+                        <Shield className="h-3.5 w-3.5" />
+                        Vaults
+                      </span>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                          variant="ghost"
+                          className="h-8 min-w-0 max-w-64 justify-end px-2 text-right text-sm font-normal"
+                          data-testid={`button-edit-project-vaults-${project.id}`}
+                        >
+                          <span className="truncate">
+                            {vaults.filter(vault => project.vaultIds.includes(vault.id)).map(vault => vault.name).join(", ") || "Choose Vaults"}
+                          </span>
+                          <ChevronDown className="ml-1 h-3 w-3 shrink-0 text-muted-foreground" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent align="end" className="w-64 p-1" data-testid={`popover-project-vaults-${project.id}`}>
+                        {vaults.map(vault => {
+                          const checked = project.vaultIds.includes(vault.id);
+                          const onlyMembership = checked && project.vaultIds.length === 1;
+                          return (
+                            <label key={vault.id} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent sm:min-h-9">
+                              <Checkbox
+                                checked={checked}
+                                disabled={onlyMembership || vaultMembershipPending}
+                                onCheckedChange={(nextChecked) => {
+                                  const next = nextChecked
+                                    ? [...new Set([...project.vaultIds, vault.id])]
+                                    : project.vaultIds.filter(vaultId => vaultId !== vault.id);
+                                  onUpdateVaults(next);
+                                }}
+                                aria-label={`${checked ? "Remove from" : "Add to"} ${vault.name}`}
+                                data-testid={`checkbox-project-vault-${project.id}-${vault.id}`}
+                              />
+                              <span className="min-w-0 flex-1 truncate">{vault.name}</span>
+                            </label>
+                          );
+                        })}
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                  )}
                   <ProjectReferenceChipRow project={project} people={people} />
                 </div>
               </div>

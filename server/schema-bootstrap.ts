@@ -3521,6 +3521,66 @@ export async function runSchemaBootstrap(
     log(`Skill seed/migration failed: ${err.message}`, "migration");
   }
 
+  await heal("project vault memberships", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS project_vault_memberships (
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE RESTRICT,
+        scope TEXT NOT NULL DEFAULT 'user',
+        owner_user_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        created_by_user_id TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (project_id, vault_id)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_project_vault_memberships_vault_project ON project_vault_memberships(vault_id, project_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_project_vault_memberships_scope_owner ON project_vault_memberships(scope, owner_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_project_vault_memberships_account ON project_vault_memberships(account_id)`);
+    const backfill = await pool.query(`
+      INSERT INTO project_vault_memberships (
+        project_id, vault_id, scope, owner_user_id, account_id, created_by_user_id
+      )
+      SELECT project.id, project.vault_id, 'user', project.owner_user_id, project.account_id, project.owner_user_id
+      FROM projects AS project
+      JOIN vaults AS vault
+        ON vault.id = project.vault_id
+       AND vault.account_id = project.account_id
+       AND vault.is_archived = FALSE
+      WHERE project.scope = 'user'
+        AND project.owner_user_id IS NOT NULL
+        AND project.account_id IS NOT NULL
+      ON CONFLICT (project_id, vault_id) DO NOTHING
+    `);
+    const unresolved = await pool.query(`
+      SELECT count(*)::int AS count
+      FROM projects AS project
+      WHERE project.scope = 'user'
+        AND project.owner_user_id IS NOT NULL
+        AND project.account_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM project_vault_memberships AS membership
+          JOIN vaults AS vault
+            ON vault.id = membership.vault_id
+           AND vault.account_id = project.account_id
+           AND vault.is_archived = FALSE
+          WHERE membership.project_id = project.id
+            AND membership.owner_user_id = project.owner_user_id
+            AND membership.account_id = project.account_id
+        )
+    `);
+    const unresolvedCount = Number(unresolved.rows[0]?.count ?? 0);
+    if (unresolvedCount > 0) {
+      throw new Error(`Project Vault membership convergence unresolved projects=${unresolvedCount}`);
+    }
+    await pool.query(`COMMENT ON TABLE project_vault_memberships IS 'Canonical live Project-to-Vault membership and owner visibility authority.'`);
+    await pool.query(`COMMENT ON COLUMN projects.vault_id IS 'Migration-compatible primary/default Vault; project_vault_memberships owns Project visibility.'`);
+    if (backfill.rowCount) {
+      log(`[boot] project vault membership backfill: inserted=${backfill.rowCount}`, "migration");
+    }
+  });
+
   await heal("person vault memberships", async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS person_vault_memberships (
