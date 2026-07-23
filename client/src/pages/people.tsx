@@ -2303,7 +2303,7 @@ function PersonDetailView({ personId, onClose, onDelete, openNewInteraction, onN
             </div>
           </ProfileTreeRow>
 
-          <ProfileTreeRow label={<span data-testid="label-tags">Tags</span>} icon={<SlidersHorizontal className="h-3.5 w-3.5" />} hasValue={(person.tags || []).length > 0} showEmpty={showEmptyProfileRows} mobileLayout="inline" testId="row-profile-tags"><DetailTagPicker tags={person.tags || []} onChange={(newTags) => updateMutation.mutate({ tags: newTags })} /></ProfileTreeRow>
+          <DetailTagRow tags={person.tags || []} showEmpty={showEmptyProfileRows} onChange={(newTags) => updateMutation.mutate({ tags: newTags })} />
 
           <ProfileTreeRow
             label={<span data-testid="label-met">Met</span>}
@@ -3724,13 +3724,12 @@ function ImportView({ onSelectPerson, selectedEmailOverride, onClearSelection }:
   );
 }
 
-function DetailTagPicker({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) {
+function DetailTagRow({ tags, showEmpty, onChange }: { tags: string[]; showEmpty: boolean; onChange: (tags: string[]) => void }) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(tags.length);
   const summaryRef = useRef<HTMLDivElement>(null);
   const measurementRef = useRef<HTMLDivElement>(null);
-  const overflowButtonRef = useRef<HTMLButtonElement>(null);
   const { data: tagData } = useQuery<{ tags: { slug: string; label: string }[] }>({
     queryKey: ["/api/tags"],
   });
@@ -3742,25 +3741,23 @@ function DetailTagPicker({ tags, onChange }: { tags: string[]; onChange: (tags: 
   useLayoutEffect(() => {
     const summary = summaryRef.current;
     const measurement = measurementRef.current;
-    const overflowButton = overflowButtonRef.current;
-    if (!summary || !measurement || !overflowButton) return;
+    if (!summary || !measurement) return;
 
     const updateVisibleCount = () => {
       const widths = Array.from(measurement.children).map(child => (child as HTMLElement).offsetWidth);
       const gap = 4;
       const availableWidth = summary.clientWidth;
-      const overflowWidth = overflowButton.offsetWidth;
-      const allTagsWidth = widths.reduce((total, width) => total + width, 0) + widths.length * gap + overflowWidth;
+      const allTagsWidth = widths.reduce((total, width) => total + width, 0) + Math.max(0, widths.length - 1) * gap;
 
       if (allTagsWidth <= availableWidth) {
         setVisibleCount(tags.length);
         return;
       }
 
-      let occupiedWidth = overflowWidth;
+      let occupiedWidth = 0;
       let nextVisibleCount = 0;
       for (const width of widths) {
-        const nextWidth = occupiedWidth + gap + width;
+        const nextWidth = occupiedWidth + (nextVisibleCount > 0 ? gap : 0) + width;
         if (nextWidth > availableWidth) break;
         occupiedWidth = nextWidth;
         nextVisibleCount += 1;
@@ -3785,27 +3782,38 @@ function DetailTagPicker({ tags, onChange }: { tags: string[]; onChange: (tags: 
 
   return (
     <Popover open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) setInput(""); }}>
-      <div ref={summaryRef} className="relative flex h-5 w-48 min-w-0 items-center justify-end gap-1 overflow-hidden" data-testid="detail-tags-summary">
-        <div ref={measurementRef} aria-hidden className="pointer-events-none absolute left-0 top-0 flex invisible items-center gap-1">
-          {tags.map(tag => <Badge key={tag} variant="outline" className="h-5 px-1.5 py-0 text-xs">{tag}</Badge>)}
+      <ProfileTreeRow
+        label={<span data-testid="label-tags">Tags</span>}
+        icon={<SlidersHorizontal className="h-3.5 w-3.5" />}
+        hasValue={tags.length > 0}
+        showEmpty={showEmpty}
+        actionContent={(
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 min-h-5 w-5 min-w-5 shrink-0 rounded px-0 text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+              aria-label={hasOverflow ? `Show all ${tags.length} tags` : "Edit tags"}
+              data-testid={hasOverflow ? "button-tags-overflow" : "button-edit-tags"}
+            >
+              {hasOverflow ? <MoreHorizontal className="h-3.5 w-3.5" /> : <Plus className="h-3 w-3" />}
+            </Button>
+          </PopoverTrigger>
+        )}
+        mobileLayout="inline"
+        testId="row-profile-tags"
+      >
+        <div ref={summaryRef} className="relative flex h-5 w-48 min-w-0 items-center justify-end gap-1 overflow-hidden" data-testid="detail-tags-summary">
+          <div ref={measurementRef} aria-hidden className="pointer-events-none invisible absolute left-0 top-0 flex items-center gap-1">
+            {tags.map(tag => <Badge key={tag} variant="outline" className="h-5 px-1.5 py-0 text-xs">{tag}</Badge>)}
+          </div>
+          {tags.slice(0, visibleCount).map(tag => (
+            <Badge key={tag} variant="outline" className="h-5 max-w-full shrink-0 overflow-hidden px-1.5 py-0 text-xs" data-testid={`badge-tag-${tag}`}>
+              <span className="truncate">{tag}</span>
+            </Badge>
+          ))}
         </div>
-        {tags.slice(0, visibleCount).map(tag => (
-          <Badge key={tag} variant="outline" className="h-5 max-w-full shrink-0 overflow-hidden px-1.5 py-0 text-xs" data-testid={`badge-tag-${tag}`}>
-            <span className="truncate">{tag}</span>
-          </Badge>
-        ))}
-        <PopoverTrigger asChild>
-          <button
-            ref={overflowButtonRef}
-            type="button"
-            className="inline-flex h-5 shrink-0 items-center rounded px-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            aria-label={hasOverflow ? `Show all ${tags.length} tags` : "Edit tags"}
-            data-testid={hasOverflow ? "button-tags-overflow" : "button-edit-tags"}
-          >
-            {hasOverflow ? "..." : <Plus className="h-3 w-3" />}
-          </button>
-        </PopoverTrigger>
-      </div>
+      </ProfileTreeRow>
       <PopoverContent align="end" className="w-64 space-y-2 p-2" onOpenAutoFocus={(event) => event.preventDefault()} data-testid="popover-detail-tags">
         <div className="max-h-48 overflow-y-auto">
           {tags.length > 0 ? tags.map(tag => (
