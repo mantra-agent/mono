@@ -151,6 +151,27 @@ function serializeTransitionPathDetail(detail: import("./vnext-transition-graph"
   };
 }
 
+function serializePredictionDetail(detail: import("./vnext-prediction-ledger").PredictionLedgerDetail) {
+  return {
+    prediction: {
+      ...detail.prediction,
+      expectedAt: serializeDate(detail.prediction.expectedAt),
+      generatedAt: serializeDate(detail.prediction.generatedAt),
+      createdAt: serializeDate(detail.prediction.createdAt),
+    },
+    resolutions: detail.resolutions.map((resolution) => ({
+      ...resolution,
+      resolvedAt: serializeDate(resolution.resolvedAt),
+      createdAt: serializeDate(resolution.createdAt),
+    })),
+    certaintyEvents: detail.certaintyEvents.map((event) => ({
+      ...event,
+      occurredAt: serializeDate(event.occurredAt),
+      createdAt: serializeDate(event.createdAt),
+    })),
+  };
+}
+
 function serializeVnextDimensions(dimensions: VnextClaimDimensions) {
   return {
     ...dimensions,
@@ -1526,6 +1547,44 @@ async function handleRecomputeVnextTransitionPaths(req: Request, res: Response):
   }
 }
 
+async function handleGetVnextPredictions(req: Request, res: Response): Promise<void> {
+  try {
+    const predictionId = parsePositiveInt(req.query.predictionId);
+    const limit = Math.min(parsePositiveInt(req.query.limit) ?? 25, 100);
+    const { inspectPredictionLedger, inspectPredictionRuns } = await import("./vnext-prediction-ledger");
+    const [predictions, runs] = await Promise.all([
+      inspectPredictionLedger({ predictionId: predictionId ?? undefined, limit }),
+      inspectPredictionRuns(Math.min(limit, 25)),
+    ]);
+    res.json({
+      storage: "memory_vnext_predictions",
+      shadowOnly: true,
+      total: predictions.length,
+      predictions: predictions.map(serializePredictionDetail),
+      runs: runs.map((run) => ({ ...run, startedAt: serializeDate(run.startedAt), completedAt: serializeDate(run.completedAt), createdAt: serializeDate(run.createdAt) })),
+    });
+  } catch (error: unknown) {
+    res.status(500).json({ error: errorMessage(error) });
+  }
+}
+
+async function handleRunVnextShadowPredictions(req: Request, res: Response): Promise<void> {
+  try {
+    const limit = Math.min(parsePositiveInt(req.body?.limit) ?? 25, 25);
+    const runKey = typeof req.body?.runKey === "string" && req.body.runKey.trim() ? req.body.runKey.trim().slice(0, 300) : undefined;
+    const { runShadowPredictionLoop } = await import("./vnext-prediction-ledger");
+    const result = await runShadowPredictionLoop({ trigger: "manual_api", limit, runKey });
+    eventBus.publish({
+      category: "memory",
+      event: "entries_changed",
+      payload: { action: "vnext_shadow_prediction_loop", storage: "memory_vnext_predictions", ...result, level: "info" },
+    });
+    res.json({ shadowOnly: true, storage: "memory_vnext_predictions", ...result });
+  } catch (error: unknown) {
+    res.status(500).json({ error: errorMessage(error) });
+  }
+}
+
 async function handleGetVnextClaimLifecycle(req: Request, res: Response): Promise<void> {
   try {
     const id = parsePositiveInt(req.params.id);
@@ -1584,6 +1643,8 @@ export function registerMemoryRoutes(app: Express) {
   app.get("/api/memory/vnext/claims/counts", handleGetVnextClaimCounts);
   app.get("/api/memory/vnext/transition-paths", handleGetVnextTransitionPaths);
   app.post("/api/memory/vnext/transition-paths/recompute", handleRecomputeVnextTransitionPaths);
+  app.get("/api/memory/vnext/predictions", requirePermission("system:read"), handleGetVnextPredictions);
+  app.post("/api/memory/vnext/predictions/run-shadow", requirePermission("system:write"), handleRunVnextShadowPredictions);
   app.get("/api/memory/vnext/claims", handleSearchVnextClaims);
   app.get("/api/memory/vnext/claims/:id", handleGetVnextClaim);
   app.get("/api/memory/vnext/claims/:id/sources", handleGetVnextClaimSources);

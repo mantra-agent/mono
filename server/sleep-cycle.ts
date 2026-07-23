@@ -178,6 +178,15 @@ export async function runFullSleepCycle(options?: { includeGSI?: boolean }): Pro
             sourced: vnextLifecycle.sourced,
             linked: vnextLifecycle.linked,
             bridges: { created: vnextLifecycle.bridges.created, finalEdges: vnextLifecycle.bridges.finalEdges, ceiling: vnextLifecycle.bridges.ceiling },
+            shadowPredictions: vnextLifecycle.shadowPredictions
+              ? {
+                  generated: vnextLifecycle.shadowPredictions.generated,
+                  resolved: vnextLifecycle.shadowPredictions.resolved,
+                  scored: vnextLifecycle.shadowPredictions.scored,
+                  certaintyUpdates: vnextLifecycle.shadowPredictions.certaintyUpdates,
+                  abstained: vnextLifecycle.shadowPredictions.abstained,
+                }
+              : null,
             errors: vnextLifecycle.errors,
           }
         : null,
@@ -217,6 +226,9 @@ export async function runFullSleepCycle(options?: { includeGSI?: boolean }): Pro
               `- Canonicalized: ${vnextLifecycle.canonicalized}`,
               `- Sourced: ${vnextLifecycle.sourced} / Linked: ${vnextLifecycle.linked}`,
               `- Bridges: ${vnextLifecycle.bridges.created} created, ${vnextLifecycle.bridges.finalEdges}/${vnextLifecycle.bridges.ceiling} edges`,
+              vnextLifecycle.shadowPredictions
+                ? `- Shadow predictions: ${vnextLifecycle.shadowPredictions.generated} generated, ${vnextLifecycle.shadowPredictions.resolved} resolved, ${vnextLifecycle.shadowPredictions.scored} scored, ${vnextLifecycle.shadowPredictions.abstained} abstained`
+                : `- Shadow predictions: unavailable`,
               `- Errors: ${vnextLifecycle.errors}`,
             ].join("\n")
           : "- Skipped (phase did not run)",
