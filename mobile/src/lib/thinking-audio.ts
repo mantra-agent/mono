@@ -5,7 +5,16 @@ const LOG_TAG = 'ThinkingAudio';
 const SAMPLE_RATE = 22050;
 const STEP_SECONDS = 0.28;
 const ARPEGGIO = [392, 493.88, 587.33, 659.25, 587.33, 493.88];
-const DURATION_SECONDS = STEP_SECONDS * ARPEGGIO.length;
+// Layer a deeper macro-cycle on top of the base phrase: bake several transposed
+// passes into one loop buffer (mirrors the web thinking-loop's per-repeat
+// transposition) so a long thinking span doesn't sound like the same ~1.7s
+// loop repeating over and over — the full buffer takes ~7s to come back around.
+const PHRASE_SEMITONES = [0, -2, 2, -1];
+const MACRO_ARPEGGIO = PHRASE_SEMITONES.flatMap((semitones) => {
+  const transpose = Math.pow(2, semitones / 12);
+  return ARPEGGIO.map((freq) => freq * transpose);
+});
+const DURATION_SECONDS = STEP_SECONDS * MACRO_ARPEGGIO.length;
 const TWO_PI = Math.PI * 2;
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
@@ -57,9 +66,9 @@ function buildThinkingLoopDataUri(): string {
     const t = index / SAMPLE_RATE;
     const phase = t / DURATION_SECONDS;
     const loopWindow = 0.5 - 0.5 * Math.cos(TWO_PI * phase);
-    const stepIndex = Math.min(ARPEGGIO.length - 1, Math.floor(t / STEP_SECONDS));
+    const stepIndex = Math.min(MACRO_ARPEGGIO.length - 1, Math.floor(t / STEP_SECONDS));
     const localT = t - stepIndex * STEP_SECONDS;
-    const freq = ARPEGGIO[stepIndex];
+    const freq = MACRO_ARPEGGIO[stepIndex];
     const attack = Math.min(1, localT / 0.055);
     const release = Math.max(0, 1 - Math.max(0, localT - 0.16) / 0.18);
     const envelope = Math.sin(attack * Math.PI * 0.5) * release;

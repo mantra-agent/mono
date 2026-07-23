@@ -7,11 +7,19 @@ type ThinkingLoop = {
   timers: number[];
   oscillators: OscillatorNode[];
   stopped: boolean;
+  cycleIndex: number;
 };
 
 const THINKING_ARPEGGIO = [392, 493.88, 587.33, 659.25, 587.33, 493.88];
 const THINKING_STEP_SECONDS = 0.28;
 const THINKING_PATTERN_SECONDS = THINKING_ARPEGGIO.length * THINKING_STEP_SECONDS;
+
+// A slower macro-cycle layered on top of the base pattern: each repeat transposes
+// by one of these semitone offsets before returning to the same tone. Combined
+// with the independent filter-drift cycle below, the loop doesn't sound identical
+// again for ~47s, so long thinking spans don't read as a stuck ringtone.
+const THINKING_PHRASE_SEMITONES = [0, -2, 2, -1];
+const THINKING_FILTER_DRIFT_HZ = [1450, 1620, 1300, 1550, 1220, 1700, 1380];
 
 let sharedVoiceAudioContext: AudioContext | null = null;
 let thinkingLoop: ThinkingLoop | null = null;
@@ -135,7 +143,13 @@ export function playDisconnectionChime(): void {
 function scheduleThinkingArpeggio(loop: ThinkingLoop, startAt: number): void {
   if (loop.stopped) return;
 
-  THINKING_ARPEGGIO.forEach((freq, index) => {
+  const semitoneShift = THINKING_PHRASE_SEMITONES[loop.cycleIndex % THINKING_PHRASE_SEMITONES.length];
+  const transpose = Math.pow(2, semitoneShift / 12);
+  const reverseThisCycle = Math.floor(loop.cycleIndex / THINKING_PHRASE_SEMITONES.length) % 2 === 1;
+  const notes = reverseThisCycle ? [...THINKING_ARPEGGIO].reverse() : THINKING_ARPEGGIO;
+
+  notes.forEach((baseFreq, index) => {
+    const freq = baseFreq * transpose;
     const noteStart = startAt + index * THINKING_STEP_SECONDS;
     const noteDuration = 0.34;
     const oscillator = loop.ctx.createOscillator();
@@ -161,6 +175,15 @@ function scheduleThinkingArpeggio(loop: ThinkingLoop, startAt: number): void {
     loop.oscillators.push(oscillator);
   });
 
+  // Drift the lowpass cutoff on its own, longer-period cycle so timbre and
+  // pitch don't reset in lockstep — the two cycles only realign after
+  // lcm(phrase, drift) repeats, well past any normal thinking turn.
+  const driftHz = THINKING_FILTER_DRIFT_HZ[loop.cycleIndex % THINKING_FILTER_DRIFT_HZ.length];
+  loop.filter.frequency.cancelScheduledValues(startAt);
+  loop.filter.frequency.setValueAtTime(loop.filter.frequency.value, startAt);
+  loop.filter.frequency.linearRampToValueAtTime(driftHz, startAt + THINKING_PATTERN_SECONDS * 0.6);
+
+  loop.cycleIndex += 1;
   const nextTimer = window.setTimeout(() => {
     scheduleThinkingArpeggio(loop, loop.ctx.currentTime + 0.04);
   }, THINKING_PATTERN_SECONDS * 1000);
@@ -191,7 +214,7 @@ export function startVoiceThinkingLoop(): void {
     filter.connect(master);
     master.connect(ctx.destination);
 
-    const loop: ThinkingLoop = { ctx, master, filter, timers: [], oscillators: [], stopped: false };
+    const loop: ThinkingLoop = { ctx, master, filter, timers: [], oscillators: [], stopped: false, cycleIndex: 0 };
     thinkingLoop = loop;
     scheduleThinkingArpeggio(loop, ctx.currentTime + 0.04);
   } catch {
