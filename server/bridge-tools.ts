@@ -1050,7 +1050,7 @@ async function handlePeopleMerge(args: Record<string, any>): Promise<ToolHandler
 }
 
 async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandlerResult> {
-  const { peopleStorage } = await import("./people-storage");
+  const { normalizePersonEmail, peopleStorage } = await import("./people-storage");
   const resolved = await resolvePersonId(args);
   if (!resolved) return { result: `Person not found: ${args.id || args.name}`, error: true };
 
@@ -1083,6 +1083,18 @@ async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandle
   }
   if (typeof args.familiarity === "string") updates.familiarity = args.familiarity;
   if (typeof args.trust === "string") updates.trust = args.trust;
+  if (typeof args.email === "string" && args.email.trim()) {
+    const email = normalizePersonEmail(args.email);
+    const existing = await peopleStorage.getPerson(resolved.id);
+    if (!existing) return { result: `Person not found: ${resolved.id}`, error: true };
+    updates.contactInfo = [
+      ...existing.contactInfo.filter(contact =>
+        contact.type !== "email" ||
+        (contact.label !== "primary" && contact.value.trim().toLowerCase() !== email)
+      ),
+      { type: "email", label: "primary", value: email },
+    ];
+  }
 
   const companyIdValue = typeof args.companyId === "string" ? args.companyId.trim() : "";
 
@@ -1099,7 +1111,7 @@ async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandle
   }
 
   if (!requestedNewName && Object.keys(updates).length === 0 && !companyIdValue) {
-    return { result: "No updatable fields provided. Supported: newName (with expectedCurrentName), quickSummary, cabinetLevel, companyId, company, role, relation, professionalRelations, familiarity, trust, tags.", error: true };
+    return { result: "No updatable fields provided. Supported: newName (with expectedCurrentName), email, quickSummary, cabinetLevel, companyId, company, role, relation, professionalRelations, familiarity, trust, tags.", error: true };
   }
 
   let renamed = false;
@@ -1134,7 +1146,7 @@ async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandle
   const changed = [
     ...(renamed ? [`name (was "${expectedCurrentName}", preserved as nickname)`] : []),
     ...(companyIdValue ? ["companyId"] : []),
-    ...Object.keys(updates),
+    ...Object.keys(updates).map(field => field === "contactInfo" ? "email" : field),
   ].join(", ");
   const ignoredNote = ignoredTags.length
     ? `\n\nIgnored redundant tags: ${ignoredTags.map(t => `${t.tag} (${t.reason})`).join(", ")}`
@@ -1143,12 +1155,12 @@ async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandle
 }
 
 async function handlePeopleCreate(args: Record<string, any>): Promise<ToolHandlerResult> {
-  const { peopleStorage } = await import("./people-storage");
+  const { normalizePersonEmail, peopleStorage } = await import("./people-storage");
   const name = args.name;
   if (!name) return { result: "Missing person name", error: true };
   const contactInfo: Array<{ type: "email"; label: string; value: string }> = [];
-  if (args.email) {
-    contactInfo.push({ type: "email", label: "primary", value: args.email });
+  if (typeof args.email === "string" && args.email.trim()) {
+    contactInfo.push({ type: "email", label: "primary", value: normalizePersonEmail(args.email) });
   }
   const peopleMetadata = await import("@shared/people-metadata");
   if (typeof args.relation === "string" && args.relation.trim()) {
