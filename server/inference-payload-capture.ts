@@ -1,7 +1,8 @@
 import { randomUUID } from "crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { db } from "./db";
+import { db, hasAmbientDatabaseTransaction } from "./db";
 import { createLogger } from "./log";
+import { safeStringify, safeTruncate } from "./utils/safe-stringify";
 import { getCurrentPrincipal, requireCurrentUserPrincipal } from "./principal-context";
 import { ownedInsertValues, visibleScopePredicate } from "./scoped-storage";
 import { inferencePayloadCaptures } from "@shared/schema";
@@ -35,6 +36,81 @@ function serializedLength(value: unknown): number {
   } catch {
     return 0;
   }
+}
+
+interface CapturedDatabaseError {
+  name: string;
+  message: string;
+  code?: string;
+  severity?: string;
+  detail?: string;
+  hint?: string;
+  position?: string;
+  internalPosition?: string;
+  internalQuery?: string;
+  where?: string;
+  schema?: string;
+  table?: string;
+  column?: string;
+  dataType?: string;
+  constraint?: string;
+  file?: string;
+  line?: string;
+  routine?: string;
+}
+
+const DATABASE_ERROR_FIELDS = [
+  "code",
+  "severity",
+  "detail",
+  "hint",
+  "position",
+  "internalPosition",
+  "internalQuery",
+  "where",
+  "schema",
+  "table",
+  "column",
+  "dataType",
+  "constraint",
+  "file",
+  "line",
+  "routine",
+] as const;
+
+function captureDatabaseErrorChain(error: unknown): CapturedDatabaseError[] {
+  const chain: CapturedDatabaseError[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (current !== undefined && current !== null && chain.length < 5 && !seen.has(current)) {
+    seen.add(current);
+    const record = typeof current === "object" ? current as Record<string, unknown> : null;
+    const item: CapturedDatabaseError = {
+      name: current instanceof Error ? current.name : typeof current,
+      message: safeTruncate(
+        current instanceof Error ? current.message : String(current),
+        2_000,
+        "inference-payload-capture.error-message",
+      ),
+    };
+    if (record) {
+      for (const field of DATABASE_ERROR_FIELDS) {
+        const value = record[field];
+        if (typeof value === "string" && value.length > 0) {
+          item[field] = safeTruncate(
+            value,
+            2_000,
+            `inference-payload-capture.error-${field}`,
+          );
+        }
+      }
+    }
+    chain.push(item);
+    current = record?.cause;
+  }
+
+  return chain;
 }
 
 function toSummary(row: typeof inferencePayloadCaptures.$inferSelect): InferencePayloadCaptureSummary {
@@ -109,7 +185,26 @@ export async function captureInferencePayload(input: CaptureInferencePayloadInpu
     log.debug(`captured provider payload id=${id} provider=${input.provider} boundary=${input.boundary} chars=${requestChars}`);
     return id;
   } catch (error) {
-    log.error(`provider payload capture failed provider=${input.provider} boundary=${input.boundary}: ${error instanceof Error ? error.message : String(error)}`);
+    const diagnostic = {
+      provider: input.provider,
+      boundary: input.boundary,
+      model: input.model,
+      activity: input.activity ?? null,
+      sessionId: input.sessionId ?? null,
+      attempt: input.attempt ?? 1,
+      ambientTransaction: hasAmbientDatabaseTransaction(),
+      errorChain: captureDatabaseErrorChain(error),
+    };
+    log.warn(
+      `provider payload capture failed ${safeStringify(diagnostic, {
+        label: "inference-payload-capture.failure",
+        maxBytes: 16_000,
+        maxDepth: 8,
+        maxKeys: 32,
+        maxArrayItems: 8,
+        maxStrLen: 2_000,
+      })}`,
+    );
     return null;
   }
 }
