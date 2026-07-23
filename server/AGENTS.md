@@ -529,7 +529,7 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 - `shared/models/opportunities.ts` — opportunity_artifacts table schema, artifact kinds
 
 ### Architecture
-- **Opportunity Vault placement:** `opportunities.vault_id` is nullable and scalar. Null Opportunities remain visible; a non-null assignment is zero-or-one placement validated by `OpportunityStorage`, never authorization scope.
+- **Opportunity Vault placement:** `opportunities.vault_id` is nullable and scalar. Null Opportunities remain visible; a non-null assignment is zero-or-one placement validated by `OpportunityStorage`, never authorization scope. Boot must converge the Opportunity schema after Vault readiness and before route registration; request-time auto-heal is recovery, not the deployment path.
 - **6 tables:** `exec_experience` (with scope: title, location, teamSizePeak, directReports, pnlOwned, budgetManaged, fundingRaised, companyContext), `exec_skills`, `exec_opportunities`, `exec_metrics` (verified quantified accomplishments), `exec_education`, `opportunity_artifacts`
 - **Artifact slot system:** Each opportunity has 3 slots (research, cover_letter, resume). Slots are upserted via unique(opportunityId, kind) constraint. Each slot links to a Library page and optionally a generated DOCX file
 - **Server-owned provisioning:** `ensureArtifactSlot()` resolves or creates the Library hierarchy (Opportunities root → Company → artifact page) before spawning the skill session. This prevents race conditions on page creation

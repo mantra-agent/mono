@@ -138,21 +138,29 @@ async function syncOpportunityFollowUp(input: FollowUpSyncInput): Promise<void> 
   }
 }
 
+function getDatabaseErrorCode(error: unknown): string | undefined {
+  let current = error;
+  for (let depth = 0; depth < 5 && current && typeof current === "object"; depth += 1) {
+    const candidate = current as { code?: unknown; cause?: unknown };
+    if (typeof candidate.code === "string" && candidate.code.length > 0) return candidate.code;
+    current = candidate.cause;
+  }
+  return undefined;
+}
+
 async function autoHeal<T>(operation: () => Promise<T>): Promise<T> {
   try {
     return await operation();
   } catch (err) {
-    const code = (err as { code?: string }).code;
-    const message = err instanceof Error ? err.message : String(err);
+    const code = getDatabaseErrorCode(err);
     if ((code === "42703" || code === "42P01") && !schemaMigrated) {
-      log.debug(`auto-heal: migrating schema after column/relation error (${message})`);
+      log.warn(`auto-heal: converging opportunity schema after PostgreSQL error code=${code}`);
       await migrateOpportunitySchema();
       schemaMigrated = true;
       try {
         return await operation();
       } catch (retryErr) {
-        const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
-        log.warn(`auto-heal: retry failed after migration (${retryMsg})`);
+        log.error(`auto-heal: retry failed after opportunity schema convergence code=${getDatabaseErrorCode(retryErr) ?? "unknown"}`);
         throw retryErr;
       }
     }
@@ -163,6 +171,8 @@ async function autoHeal<T>(operation: () => Promise<T>): Promise<T> {
 export async function migrateOpportunitySchema(): Promise<void> {
   const client = await pool.connect();
   try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('opportunity-schema-v1'))");
     await client.query(`
       CREATE TABLE IF NOT EXISTS opportunities (
         id SERIAL PRIMARY KEY,
@@ -272,7 +282,11 @@ export async function migrateOpportunitySchema(): Promise<void> {
         CONSTRAINT uq_opportunity_skill UNIQUE(opportunity_id, skill_id)
       );
     `);
+    await client.query("COMMIT");
     log.debug("opportunity schema migration complete");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
   } finally {
     client.release();
   }
