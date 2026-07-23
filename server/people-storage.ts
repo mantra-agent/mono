@@ -192,6 +192,16 @@ export interface PersonIndexEntry {
   private: boolean;
 }
 
+export interface PersonVaultMembershipView {
+  id: string;
+  name: string;
+}
+
+export interface PersonVaultMutationResult {
+  person: Person;
+  changed: boolean;
+}
+
 export interface CabinetLevel {
   id: string;
   name: string;
@@ -780,7 +790,150 @@ export class PeopleStorage {
       .onConflictDoNothing();
   }
 
-  async replaceVaultMemberships(personId: string, vaultIds: string[]): Promise<Person> {
+  async listVaultMemberships(personId: string): Promise<PersonVaultMembershipView[]> {
+    const principal = getCurrentPrincipalOrSystem();
+    if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+      throw new Error("Person Vault membership requires an authenticated user account");
+    }
+
+    const [person] = await db
+      .select({ id: persons.id })
+      .from(persons)
+      .where(visiblePersonPredicate(principal, eq(persons.id, personId)))
+      .limit(1);
+    if (!person) throw new Error(`Person ${personId} not found or not visible`);
+
+    return db
+      .select({ id: vaults.id, name: vaults.name })
+      .from(personVaultMemberships)
+      .innerJoin(vaults, eq(vaults.id, personVaultMemberships.vaultId))
+      .where(and(
+        eq(personVaultMemberships.personId, personId),
+        eq(personVaultMemberships.scope, "user"),
+        eq(personVaultMemberships.ownerUserId, principal.userId),
+        eq(personVaultMemberships.accountId, principal.accountId),
+        inArray(personVaultMemberships.vaultId, principal.visibleVaultIds),
+        eq(vaults.accountId, principal.accountId),
+        eq(vaults.isArchived, false),
+      ))
+      .orderBy(vaults.position, vaults.createdAt);
+  }
+
+  async addVaultMembership(personId: string, vaultId: string): Promise<PersonVaultMutationResult> {
+    const principal = getCurrentPrincipalOrSystem();
+    if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+      throw new Error("Person Vault membership requires an authenticated user account");
+    }
+    const normalizedVaultId = vaultId.trim();
+    if (!normalizedVaultId) throw new Error("vaultId is required");
+
+    const changed = await db.transaction(async tx => {
+      const [person] = await tx
+        .select({ id: persons.id })
+        .from(persons)
+        .where(writablePersonPredicate(principal, eq(persons.id, personId)))
+        .for("update");
+      if (!person) throw new Error(`Person ${personId} not found or not writable`);
+
+      const [ownedVault] = await tx
+        .select({ id: vaults.id })
+        .from(vaults)
+        .where(and(
+          eq(vaults.id, normalizedVaultId),
+          eq(vaults.accountId, principal.accountId),
+          inArray(vaults.id, principal.visibleVaultIds),
+          eq(vaults.isArchived, false),
+        ))
+        .limit(1);
+      if (!ownedVault) throw new Error("Person Vault must be live and belong to the active account");
+
+      const inserted = await tx
+        .insert(personVaultMemberships)
+        .values({
+          personId,
+          vaultId: normalizedVaultId,
+          scope: "user",
+          ownerUserId: principal.userId,
+          accountId: principal.accountId,
+          createdByUserId: principal.userId,
+        })
+        .onConflictDoNothing()
+        .returning({ vaultId: personVaultMemberships.vaultId });
+      return inserted.length > 0;
+    });
+
+    if (changed) this.invalidateListCache();
+    return { person: await this.loadWritablePersonAfterVaultMutation(principal, personId), changed };
+  }
+
+  async removeVaultMembership(personId: string, vaultId: string): Promise<PersonVaultMutationResult> {
+    const principal = getCurrentPrincipalOrSystem();
+    if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+      throw new Error("Person Vault membership requires an authenticated user account");
+    }
+    const normalizedVaultId = vaultId.trim();
+    if (!normalizedVaultId) throw new Error("vaultId is required");
+
+    const changed = await db.transaction(async tx => {
+      const [person] = await tx
+        .select({ id: persons.id })
+        .from(persons)
+        .where(writablePersonPredicate(principal, eq(persons.id, personId)))
+        .for("update");
+      if (!person) throw new Error(`Person ${personId} not found or not writable`);
+
+      const [ownedVault] = await tx
+        .select({ id: vaults.id })
+        .from(vaults)
+        .where(and(
+          eq(vaults.id, normalizedVaultId),
+          eq(vaults.accountId, principal.accountId),
+          inArray(vaults.id, principal.visibleVaultIds),
+          eq(vaults.isArchived, false),
+        ))
+        .limit(1);
+      if (!ownedVault) throw new Error("Person Vault must be live and belong to the active account");
+
+      const memberships = await tx
+        .select({ vaultId: personVaultMemberships.vaultId })
+        .from(personVaultMemberships)
+        .innerJoin(vaults, eq(vaults.id, personVaultMemberships.vaultId))
+        .where(combineWithWritableScope(
+          principal,
+          personVaultMembershipScopeColumns,
+          and(
+            eq(personVaultMemberships.personId, personId),
+            eq(vaults.accountId, principal.accountId),
+            eq(vaults.isArchived, false),
+          ),
+        ))
+        .for("update");
+      if (!memberships.some(membership => membership.vaultId === normalizedVaultId)) return false;
+      if (memberships.length === 1) throw new Error("A Person must belong to at least one Vault");
+
+      const removed = await tx
+        .delete(personVaultMemberships)
+        .where(combineWithWritableScope(
+          principal,
+          personVaultMembershipScopeColumns,
+          and(
+            eq(personVaultMemberships.personId, personId),
+            eq(personVaultMemberships.vaultId, normalizedVaultId),
+          ),
+        ))
+        .returning({ vaultId: personVaultMemberships.vaultId });
+      return removed.length > 0;
+    });
+
+    if (changed) this.invalidateListCache();
+    return { person: await this.loadWritablePersonAfterVaultMutation(principal, personId), changed };
+  }
+
+  async replaceVaultMemberships(
+    personId: string,
+    vaultIds: string[],
+    options: { requireVisibleTargets?: boolean } = {},
+  ): Promise<Person> {
     const principal = getCurrentPrincipalOrSystem();
     if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
       throw new Error("Person Vault membership requires an authenticated user account");
@@ -802,10 +955,15 @@ export class PeopleStorage {
         .where(and(
           inArray(vaults.id, normalizedVaultIds),
           eq(vaults.accountId, principal.accountId),
+          ...(options.requireVisibleTargets
+            ? [inArray(vaults.id, principal.visibleVaultIds)]
+            : []),
           eq(vaults.isArchived, false),
         ));
       if (ownedVaults.length !== normalizedVaultIds.length) {
-        throw new Error("Every Person Vault must be live and belong to the active account");
+        throw new Error(options.requireVisibleTargets
+          ? "Every Person Vault must be visible, live, and belong to the active account"
+          : "Every Person Vault must be live and belong to the active account");
       }
 
       await tx.delete(personVaultMemberships).where(
@@ -828,6 +986,13 @@ export class PeopleStorage {
     });
 
     this.invalidateListCache();
+    return this.loadWritablePersonAfterVaultMutation(principal, personId);
+  }
+
+  private async loadWritablePersonAfterVaultMutation(
+    principal: ReturnType<typeof getCurrentPrincipalOrSystem>,
+    personId: string,
+  ): Promise<Person> {
     const rows = await db.select().from(persons).where(
       combineWithWritableScope(principal, personScopeColumns, eq(persons.id, personId)),
     );

@@ -170,9 +170,9 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     },
   },
   people: {
-    description: "Manage personal contacts — search, list, get details, check outreach agenda, add notes, log interactions. Actions: list, get, search, agenda, add_note, update_note, delete_note, log_interaction, create, scan_imports, scan_ignored, granular import-candidate reads/decisions, and preview/apply batch processing.",
-    whenToUse: "User mentions a person, wants to look up contact details, log an interaction, or manage their relationship network.",
-    example: 'Search: { "action": "search", "query": "Sarah" }\nAdd note: { "action": "add_note", "id": "person-id", "content": "..." }',
+    description: "Manage personal contacts — search, list, get details, check outreach agenda, add notes, log interactions, and read or change Person Vault memberships. Vault actions: get_vault_memberships, add_vault_membership, remove_vault_membership, and set_vault_memberships. Full replacement requires a non-empty vaultIds array plus confirmReplace=true.",
+    whenToUse: "User mentions a person, wants to look up contact details, log an interaction, manage their relationship network, or assign profiles to Vaults.",
+    example: 'Search: { "action": "search", "query": "Sarah" }\nAdd Vault: { "action": "add_vault_membership", "id": "person-id", "vaultId": "vault-id" }\nReplace Vaults: { "action": "set_vault_memberships", "id": "person-id", "vaultIds": ["vault-id"], "confirmReplace": true }',
   },
   work: {
     description: "Manage projects and work status — create projects, list/get projects with tasks, manage files, milestones, and goal links. Actions: create_project, status, list_projects, get_project, list_tasks, set_goal, add_file, read_file, remove_file, add_milestone, update_milestone, remove_milestone.",
