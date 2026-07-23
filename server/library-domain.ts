@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "./db";
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
@@ -101,7 +101,10 @@ async function ensureMantraVault(principal: Principal): Promise<string> {
     .returning({ id: vaults.id });
 
   await ensureUserCanSeeVault(principal, created.id);
-  log.log(`Ensured Mantra Library vault for account=${scopedPrincipal.accountId}`);
+  log.info("Ensured Mantra Library vault", {
+    accountId: scopedPrincipal.accountId,
+    vaultId: created.id,
+  });
   return created.id;
 }
 
@@ -158,7 +161,7 @@ export async function ensureVaultPage(input: {
       existing.accountId !== input.principal.accountId
     ) {
       throw Object.assign(
-        new Error("Library vault page is visible but not writable"),
+        new Error("Library page is visible but not writable"),
         { status: 403 },
       );
     }
@@ -204,9 +207,125 @@ export async function ensureVaultPage(input: {
   return created;
 }
 
+export type CanonicalLibraryMetadataKind = "index" | "wiki" | "log";
+
+const canonicalMetadata = {
+  index: {
+    title: "Index",
+    tag: "library-index",
+    tags: ["library-index", "library-meta"],
+    markdown: CANONICAL_LIBRARY_INDEX_BOOTSTRAP_MARKDOWN,
+    sortOrder: 0,
+  },
+  wiki: {
+    title: "Wiki",
+    tag: "wiki",
+    tags: ["wiki", "library-meta"],
+    markdown: "# Wiki\n\nAgent-maintained compiled knowledge for this vault.",
+    sortOrder: 1,
+  },
+  log: {
+    title: "Log",
+    tag: "library-log",
+    tags: ["library-log", "library-meta"],
+    markdown: "# Library Log\n\nAppend-only maintenance history for this vault.",
+    sortOrder: 2,
+  },
+} as const;
+
+/**
+ * Canonical metadata identity is `(vault_id, structural_role=meta, kind tag)`.
+ * Parentage is normalized only after that identity is resolved under a
+ * transaction-scoped lock, so moving metadata to the vault root cannot fork it.
+ */
+export async function ensureCanonicalVaultMetadataPage(input: {
+  principal: Principal;
+  vaultId: string;
+  kind: CanonicalLibraryMetadataKind;
+}): Promise<typeof libraryPages.$inferSelect> {
+  requireAccountPrincipal(input.principal);
+  const definition = canonicalMetadata[input.kind];
+  const synced = syncContentFields({ markdown: definition.markdown });
+  const lockKey = `library-metadata:${input.vaultId}:${input.kind}`;
+
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
+    const candidates = await tx
+      .select()
+      .from(libraryPages)
+      .where(
+        combineWithVisibleScope(
+          input.principal,
+          libraryScopeColumns,
+          and(
+            eq(libraryPages.vaultId, input.vaultId),
+            eq(libraryPages.structuralRole, "meta"),
+            sql`${definition.tag} = ANY(${libraryPages.tags})`,
+          ),
+        ),
+      )
+      .orderBy(asc(libraryPages.createdAt), asc(libraryPages.id))
+      .limit(2);
+
+    if (candidates.length > 1) {
+      throw Object.assign(
+        new Error(`Vault has multiple canonical ${definition.title} pages; migration repair is required`),
+        { status: 409 },
+      );
+    }
+
+    const existing = candidates[0];
+    if (existing) {
+      const desiredTags = Array.from(new Set([...(existing.tags ?? []), ...definition.tags]));
+      const [updated] = await tx
+        .update(libraryPages)
+        .set({
+          title: definition.title,
+          slug: slugify(definition.title),
+          parentId: null,
+          structuralRole: "meta",
+          tags: desiredTags,
+          sortOrder: definition.sortOrder,
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+          updatedByUserId: input.principal.userId ?? undefined,
+        })
+        .where(
+          combineWithWritableScope(
+            input.principal,
+            libraryScopeColumns,
+            eq(libraryPages.id, existing.id),
+          ),
+        )
+        .returning();
+      if (!updated) {
+        throw Object.assign(new Error("Canonical Library metadata page is not writable"), { status: 403 });
+      }
+      return updated;
+    }
+
+    const [created] = await tx
+      .insert(libraryPages)
+      .values({
+        title: definition.title,
+        slug: slugify(definition.title),
+        content: synced.content,
+        plainTextContent: synced.plainTextContent,
+        parentId: null,
+        tags: [...definition.tags],
+        structuralRole: "meta",
+        sortOrder: definition.sortOrder,
+        ...ownedInsertValues(input.principal, libraryScopeColumns),
+        vaultId: input.vaultId,
+        createdByUserId: input.principal.userId ?? undefined,
+        updatedByUserId: input.principal.userId ?? undefined,
+      })
+      .returning();
+    return created;
+  });
+}
+
 export interface MantraLibraryVaultBootstrapResult {
   vaultId: string;
-  rootPageId: string;
   wikiPageId: string;
   indexPageId: string;
   logPageId: string;
@@ -216,61 +335,12 @@ export async function ensureMantraLibraryVault(
   principal: Principal = getCurrentPrincipalOrSystem(),
 ): Promise<MantraLibraryVaultBootstrapResult> {
   const vaultId = await ensureMantraVault(principal);
-
-  const root = await ensureVaultPage({
-    principal,
-    vaultId,
-    title: MANTRA_LIBRARY_VAULT_NAME,
-    parentId: null,
-    structuralRole: "meta",
-    tags: ["vault", "mantra", "library-vault"],
-    plainTextContent:
-      "# Mantra\n\nTop-level Library vault for Mantra product knowledge. Wiki, Index, and Log are maintained under this vault.",
-    sortOrder: 0,
-    slugFallback: "mantra",
-  });
-
-  const wiki = await ensureVaultPage({
-    principal,
-    vaultId,
-    title: "Wiki",
-    parentId: root.id,
-    structuralRole: "meta",
-    tags: ["wiki", "library-meta", "mantra"],
-    plainTextContent:
-      "# Wiki\n\nAgent-maintained compiled knowledge for the Mantra vault. Entity, Concept, and Synthesis pages live under this section.",
-    sortOrder: 0,
-    slugFallback: "wiki",
-  });
-
-  const index = await ensureVaultPage({
-    principal,
-    vaultId,
-    title: "Index",
-    parentId: root.id,
-    structuralRole: "meta",
-    tags: ["library-index", "library-meta", "mantra"],
-    plainTextContent: CANONICAL_LIBRARY_INDEX_BOOTSTRAP_MARKDOWN,
-    sortOrder: 1,
-    slugFallback: "index",
-  });
-
-  const logPage = await ensureVaultPage({
-    principal,
-    vaultId,
-    title: "Log",
-    parentId: root.id,
-    structuralRole: "meta",
-    tags: ["library-log", "library-meta", "mantra"],
-    plainTextContent:
-      "# Library Log\n\nAppend-only maintenance history for the Mantra vault.\n\n## Bootstrap\n\nMantra vault, Wiki, Index, and Log metadata pages were ensured replay-safely.",
-    sortOrder: 2,
-    slugFallback: "log",
-  });
+  const index = await ensureCanonicalVaultMetadataPage({ principal, vaultId, kind: "index" });
+  const wiki = await ensureCanonicalVaultMetadataPage({ principal, vaultId, kind: "wiki" });
+  const logPage = await ensureCanonicalVaultMetadataPage({ principal, vaultId, kind: "log" });
 
   return {
     vaultId,
-    rootPageId: root.id,
     wikiPageId: wiki.id,
     indexPageId: index.id,
     logPageId: logPage.id,

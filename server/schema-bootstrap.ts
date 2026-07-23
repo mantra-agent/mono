@@ -539,6 +539,32 @@ export async function runSchemaBootstrap(
   await ensureBrowserPerformanceTelemetrySchema(pool);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS library_vault_identity_migrations (
+      id SERIAL PRIMARY KEY,
+      migration_key TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'user',
+      owner_user_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      manifest JSONB NOT NULL DEFAULT '[]'::jsonb,
+      error TEXT,
+      started_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at TIMESTAMPTZ(6),
+      CONSTRAINT library_vault_identity_migration_status_check
+        CHECK (status IN ('running', 'completed', 'failed'))
+    )
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uk_library_vault_identity_migration_replay
+    ON library_vault_identity_migrations(migration_key, owner_user_id, account_id)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_library_vault_identity_migration_owner
+    ON library_vault_identity_migrations(scope, owner_user_id, account_id, updated_at)
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS memory_vnext_exposures (
       id SERIAL PRIMARY KEY,
       claim_id INTEGER NOT NULL REFERENCES memory_vnext_claims(id) ON DELETE CASCADE,
