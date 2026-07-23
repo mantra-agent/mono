@@ -50,9 +50,8 @@ export function ProfileTreeRow({
           className={cn(
             "group relative grid w-full items-center gap-x-2 rounded-md px-2 py-1.5 text-left text-sm select-none transition-colors hover:bg-accent/70",
             mobileLayout === "inline"
-              ? "grid-cols-[auto_minmax(0,1fr)_minmax(0,auto)_auto] gap-y-0"
-              : "grid-cols-[minmax(0,1fr)_auto] gap-y-1",
-            "sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] sm:gap-y-1",
+              ? "grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] gap-y-0"
+              : "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] sm:gap-y-1",
           )}
         >
           <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
@@ -70,7 +69,9 @@ export function ProfileTreeRow({
               "[&_input[type=date]]:[color-scheme:dark] [&_input[type=date]::-webkit-calendar-picker-indicator]:h-3 [&_input[type=date]::-webkit-calendar-picker-indicator]:w-3 [&_input[type=date]::-webkit-calendar-picker-indicator]:opacity-60 [&_input[type=date]::-webkit-calendar-picker-indicator]:invert",
               "[&_textarea]:bg-muted/50 [&_textarea]:text-xs",
               "[&_[role=combobox]]:h-5 [&_[role=combobox]]:w-48 [&_[role=combobox]]:justify-end [&_[role=combobox]]:bg-muted/50 [&_[role=combobox]]:px-1.5 [&_[role=combobox]]:py-0 [&_[role=combobox]]:text-right [&_[role=combobox]]:text-xs [&_[role=combobox]>span]:text-right",
-              "[&_button]:min-h-11 [&_button]:px-2 [&_button]:text-xs sm:[&_button]:min-h-5 sm:[&_button]:px-1.5",
+              mobileLayout === "inline"
+                ? "[&_button]:min-h-5 [&_button]:px-1.5 [&_button]:text-xs"
+                : "[&_button]:min-h-11 [&_button]:px-2 [&_button]:text-xs sm:[&_button]:min-h-5 sm:[&_button]:px-1.5",
             )}
           >
             {children}
@@ -103,7 +104,14 @@ export function ProfileTreeRow({
               {actionContent}
             </div>
           ) : (
-            <span className="hidden h-5 w-5 shrink-0 sm:block" />
+            <span
+              className={cn(
+                "shrink-0",
+                usesSessionMenuControls
+                  ? "h-6 min-h-6 w-6 min-w-6"
+                  : "hidden h-5 w-5 sm:block",
+              )}
+            />
           )}
           {menuContent ? (
             <DropdownMenu modal={false}>
