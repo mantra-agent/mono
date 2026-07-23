@@ -38,6 +38,8 @@ Metadata may keep historical stage-sweep details for audit/display, but it is no
 - Strength is a canonical read projection of typed `memory_vnext_strength_events` plus decay. Exposure and legacy recall contribute zero.
 - Claim time uses `observed_at`, `valid_from`, `valid_until`, `occurred_at`, and `expected_by`. Lifecycle stage is migration compatibility metadata, not truth authority.
 - `vnext-claim-dimensions.ts` is the only dimension-derivation boundary. Do not store or introduce a combined memory-quality score.
+- `vnext-transition-graph.ts` is the canonical claim-relationship mutation and transition-path derivation boundary. New edges use a structural class (`semantic`, `evidence`, `temporal`, `causal`, or `consolidation`), certainty, provenance, and observation/hypothesis status. Asserted edges cite source refs; derived edges also carry method/version. Causal edges remain `causal_hypothesis`; semantic similarity and temporal sequence never establish causality.
+- Transition paths are bounded, ownership-scoped projections of explicit state → action → state temporal edges, with optional evidence-traceable cause/mechanism hypotheses. Recompute by stable derivation key; preserve raw claims, source refs, and legacy links.
 
 ## Integration Stages During Migration
 

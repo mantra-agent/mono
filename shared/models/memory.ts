@@ -619,6 +619,10 @@ export const memoryVnextClaimLinks = pgTable(
       .notNull()
       .references(() => memoryVnextClaims.id, { onDelete: "cascade" }),
     relationship: text("relationship").notNull(),
+    relationshipClass: text("relationship_class").notNull().default("legacy"),
+    producerKind: text("producer_kind").notNull().default("legacy"),
+    epistemicStatus: text("epistemic_status").notNull().default("legacy_unassessed"),
+    edgeKey: text("edge_key"),
     /** Legacy relationship strength compatibility field. */
     strength: real("strength").notNull().default(0.5),
     certainty: real("certainty"),
@@ -640,8 +644,14 @@ export const memoryVnextClaimLinks = pgTable(
       table.toClaimId,
       table.relationship,
     ),
+    uniqueIndex("uk_memory_vnext_claim_link_edge_key").on(
+      table.ownerUserId,
+      table.accountId,
+      table.edgeKey,
+    ),
     index("idx_memory_vnext_claim_links_from").on(table.fromClaimId),
     index("idx_memory_vnext_claim_links_to").on(table.toClaimId),
+    index("idx_memory_vnext_claim_links_class").on(table.relationshipClass, table.relationship),
     index("idx_memory_vnext_claim_links_scope_owner").on(table.scope, table.ownerUserId),
     index("idx_memory_vnext_claim_links_account").on(table.accountId),
   ],
@@ -656,6 +666,120 @@ export const insertMemoryVnextClaimLinkSchema = createInsertSchema(
 
 export type MemoryVnextClaimLink = typeof memoryVnextClaimLinks.$inferSelect;
 export type InsertMemoryVnextClaimLink = z.infer<typeof insertMemoryVnextClaimLinkSchema>;
+
+export const memoryVnextRelationshipClasses = ["semantic", "evidence", "temporal", "causal", "consolidation", "legacy"] as const;
+export type MemoryVnextRelationshipClass = (typeof memoryVnextRelationshipClasses)[number];
+export const memoryVnextRelationshipTypes = [
+  "equivalent_to", "similar_to", "qualifies",
+  "supports", "contradicts", "supersedes",
+  "precedes", "followed_by", "overlaps",
+  "explains", "contributed_to", "caused", "prevented", "resulted_in",
+  "consolidates", "duplicate_of",
+] as const;
+export type MemoryVnextRelationship = (typeof memoryVnextRelationshipTypes)[number];
+export const memoryVnextEdgeProducerKinds = ["asserted", "derived", "legacy"] as const;
+export type MemoryVnextEdgeProducerKind = (typeof memoryVnextEdgeProducerKinds)[number];
+export const memoryVnextEdgeEpistemicStatuses = ["observation", "hypothesis", "causal_hypothesis", "legacy_unassessed"] as const;
+export type MemoryVnextEdgeEpistemicStatus = (typeof memoryVnextEdgeEpistemicStatuses)[number];
+
+export const memoryVnextClaimLinkEvidence = pgTable(
+  "memory_vnext_claim_link_evidence",
+  {
+    id: serial("id").primaryKey(),
+    claimLinkId: integer("claim_link_id").notNull().references(() => memoryVnextClaimLinks.id, { onDelete: "cascade" }),
+    sourceRefId: integer("source_ref_id").notNull().references(() => memoryVnextSourceRefs.id, { onDelete: "restrict" }),
+    role: text("role").notNull().default("basis"),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    unique("uk_memory_vnext_claim_link_evidence").on(table.claimLinkId, table.sourceRefId, table.role),
+    index("idx_memory_vnext_claim_link_evidence_link").on(table.claimLinkId),
+    index("idx_memory_vnext_claim_link_evidence_source").on(table.sourceRefId),
+    index("idx_memory_vnext_claim_link_evidence_owner").on(table.scope, table.ownerUserId),
+    index("idx_memory_vnext_claim_link_evidence_account").on(table.accountId),
+  ],
+);
+export type MemoryVnextClaimLinkEvidence = typeof memoryVnextClaimLinkEvidence.$inferSelect;
+
+export const memoryVnextTransitionPaths = pgTable(
+  "memory_vnext_transition_paths",
+  {
+    id: serial("id").primaryKey(),
+    derivationKey: text("derivation_key").notNull(),
+    status: text("status").notNull(),
+    certainty: real("certainty").notNull(),
+    elapsedSeconds: integer("elapsed_seconds"),
+    contextKeys: text("context_keys").array().notNull().default(sql`'{}'::text[]`),
+    entityKeys: text("entity_keys").array().notNull().default(sql`'{}'::text[]`),
+    producerMethod: text("producer_method").notNull(),
+    derivationVersion: text("derivation_version").notNull(),
+    evidence: jsonb("evidence").notNull().default(sql`'{}'::jsonb`),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    updatedByUserId: text("updated_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_memory_vnext_transition_derivation").on(table.ownerUserId, table.accountId, table.derivationKey),
+    index("idx_memory_vnext_transition_owner").on(table.scope, table.ownerUserId),
+    index("idx_memory_vnext_transition_account").on(table.accountId),
+    index("idx_memory_vnext_transition_method").on(table.producerMethod, table.derivationVersion),
+  ],
+);
+
+export const memoryVnextTransitionMembers = pgTable(
+  "memory_vnext_transition_members",
+  {
+    id: serial("id").primaryKey(),
+    transitionPathId: integer("transition_path_id").notNull().references(() => memoryVnextTransitionPaths.id, { onDelete: "cascade" }),
+    claimId: integer("claim_id").notNull().references(() => memoryVnextClaims.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    ordinal: integer("ordinal").notNull().default(0),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    unique("uk_memory_vnext_transition_member").on(table.transitionPathId, table.claimId, table.role),
+    index("idx_memory_vnext_transition_member_path").on(table.transitionPathId, table.role, table.ordinal),
+    index("idx_memory_vnext_transition_member_claim").on(table.claimId, table.role),
+    index("idx_memory_vnext_transition_member_owner").on(table.scope, table.ownerUserId),
+  ],
+);
+
+export const memoryVnextTransitionEdges = pgTable(
+  "memory_vnext_transition_edges",
+  {
+    id: serial("id").primaryKey(),
+    transitionPathId: integer("transition_path_id").notNull().references(() => memoryVnextTransitionPaths.id, { onDelete: "cascade" }),
+    claimLinkId: integer("claim_link_id").notNull().references(() => memoryVnextClaimLinks.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    unique("uk_memory_vnext_transition_edge").on(table.transitionPathId, table.claimLinkId, table.role),
+    index("idx_memory_vnext_transition_edge_path").on(table.transitionPathId),
+    index("idx_memory_vnext_transition_edge_link").on(table.claimLinkId),
+    index("idx_memory_vnext_transition_edge_owner").on(table.scope, table.ownerUserId),
+  ],
+);
+
+export type MemoryVnextTransitionPath = typeof memoryVnextTransitionPaths.$inferSelect;
+export type MemoryVnextTransitionMember = typeof memoryVnextTransitionMembers.$inferSelect;
+export type MemoryVnextTransitionEdge = typeof memoryVnextTransitionEdges.$inferSelect;
 
 export const memoryVnextIntegrationLevels = ["isolated", "associated", "integrated", "structural"] as const;
 export type MemoryVnextIntegrationLevel = (typeof memoryVnextIntegrationLevels)[number];
