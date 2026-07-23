@@ -9,6 +9,7 @@ import { VoiceEvents } from "@shared/event-catalog";
 import { getSecretSync } from "../secrets-store";
 import crypto from "crypto";
 import { FTUE_AGENT_NAME } from "../onboarding";
+import { resolveSpeechRecognitionHints } from "../speech-recognition-hints";
 import {
   assembleVoiceContext,
   ensureVoiceSessionPersona,
@@ -733,6 +734,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
       const sessionPersona = chatSessionId
         ? await (await import("../session-persona")).resolveSessionPersonaSnapshot(chatSessionId)
         : undefined;
+      const recognitionHints = await resolveSpeechRecognitionHints();
       const replayMetadata = {
         agentId: elAgentId,
         voiceId,
@@ -741,6 +743,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
         chatSessionKey: chatSessionKey || undefined,
         timings: { ...timings, total: totalElapsed },
         ...(sessionPersona ? { persona: sessionPersona } : {}),
+        recognitionKeyterms: recognitionHints.keyterms,
         ...(serverTranscript ? { serverTranscript } : {}),
         ...(firstMessage ? { firstMessage } : {}),
       };

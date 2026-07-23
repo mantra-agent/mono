@@ -731,14 +731,19 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const initElevenLabsSession = useCallback(async (
     signedUrl: string,
     isReconnect: boolean,
-    overrideOpts?: { agentId?: string; voiceId?: string; sessionId?: string; chatSessionId?: string; systemPrompt?: string; firstMessage?: string },
+    overrideOpts?: { agentId?: string; voiceId?: string; sessionId?: string; chatSessionId?: string; systemPrompt?: string; firstMessage?: string; recognitionKeyterms?: string[] },
   ): Promise<Awaited<ReturnType<typeof Conversation.startSession>>> => {
     const sessionStartTs = Date.now();
     const overrideSummary = {
-      ...(overrideOpts || {}),
+      agentId: overrideOpts?.agentId,
+      voiceId: overrideOpts?.voiceId,
+      sessionId: overrideOpts?.sessionId,
+      chatSessionId: overrideOpts?.chatSessionId,
+      firstMessage: overrideOpts?.firstMessage ? `<${overrideOpts.firstMessage.length} chars>` : undefined,
       systemPrompt: overrideOpts?.systemPrompt
         ? `<${overrideOpts.systemPrompt.length} chars>`
         : undefined,
+      recognitionKeytermCount: overrideOpts?.recognitionKeyterms?.length || 0,
     };
     log.debug("VOICE:START_SESSION:SIGNED_URL_RECEIVED", { hasSignedUrl: Boolean(signedUrl), isReconnect, overrides: overrideSummary });
 
@@ -749,9 +754,13 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
 
     const overridesPayload: {
       agent: { prompt?: { prompt: string }; firstMessage?: string };
+      asr?: { keywords: string[] };
       tts: { voiceId?: string };
     } = {
       agent: {},
+      ...(overrideOpts?.recognitionKeyterms?.length
+        ? { asr: { keywords: overrideOpts.recognitionKeyterms } }
+        : {}),
       tts: {
         voiceId: overrideOpts?.voiceId || undefined,
       },
@@ -763,7 +772,11 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       overridesPayload.agent.firstMessage = overrideOpts.firstMessage;
     }
     phoneDiag("session_start_overrides", {
-      overrides: overridesPayload,
+      overrides: {
+        agent: overridesPayload.agent,
+        tts: overridesPayload.tts,
+        asrKeywordCount: overridesPayload.asr?.keywords.length || 0,
+      },
       customLlmExtraBody: { sessionId: overrideOpts?.sessionId, chatSessionId: overrideOpts?.chatSessionId },
       isReconnect,
     });
@@ -775,7 +788,11 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
           new Blob([JSON.stringify({
             event: "session_start_overrides_beacon",
             details: {
-              overrides: overridesPayload,
+              overrides: {
+                agent: overridesPayload.agent,
+                tts: overridesPayload.tts,
+                asrKeywordCount: overridesPayload.asr?.keywords.length || 0,
+              },
               customLlmExtraBody: { sessionId: overrideOpts?.sessionId, chatSessionId: overrideOpts?.chatSessionId },
               isReconnect,
               ts: new Date().toISOString(),
@@ -1156,6 +1173,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
         sessionId: startData.sessionId || undefined,
         chatSessionId: startData.chatSessionId || undefined,
         firstMessage: startData.firstMessage || undefined,
+        recognitionKeyterms: startData.recognitionKeyterms,
       });
       conversationRef.current = conversation;
 

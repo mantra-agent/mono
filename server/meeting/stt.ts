@@ -29,6 +29,11 @@ import {
   runWithMeetingOwnerPrincipal,
 } from "./owner-principal";
 import { publishMeetingAudioLevel, syncMeetingVisualizerBotStatus } from "./output-media";
+import {
+  createSpeechRecognitionHints,
+  resolveSpeechRecognitionHints,
+  type SpeechRecognitionHints,
+} from "../speech-recognition-hints";
 
 const log = createLogger("MeetingSTT");
 const MAX_PARTICIPANT_STREAMS = 16;
@@ -123,6 +128,38 @@ interface ParticipantStream {
   connectPromise: Promise<void>;
 }
 
+export interface MeetingRecognitionCapabilities {
+  participantStreams: { available: boolean; provider: string; model: string };
+  sharedRoom: { available: boolean; provider: string; model: string };
+}
+
+export function meetingRecognitionCapabilities(): MeetingRecognitionCapabilities {
+  const scribe = new ScribeRealtimeSTTProvider();
+  const deepgram = new DeepgramDiarizingSTTProvider();
+  return {
+    participantStreams: {
+      available: scribe.isConfigured(),
+      provider: scribe.provider,
+      model: scribe.model,
+    },
+    sharedRoom: {
+      available: deepgram.isConfigured(),
+      provider: deepgram.provider,
+      model: deepgram.model,
+    },
+  };
+}
+
+export function unavailableMeetingRecognitionDetail(mode: MeetingAudioSourceMode): string {
+  return mode === "shared_room"
+    ? "Shared-room speaker separation requires a configured real-time machine-diarization provider. Deepgram Nova-3 is the current adapter."
+    : "Participant-stream recognition requires ElevenLabs Scribe Realtime.";
+}
+
+function isConfigurationError(detail: string): boolean {
+  return /not configured/i.test(detail);
+}
+
 function sessionIdFromPayload(payload: RecallAudioPayload): string | null {
   const value = payload.data?.bot?.metadata?.sessionId;
   return typeof value === "string" && value.length > 0 ? value : null;
@@ -209,7 +246,7 @@ async function ingestFinalUtterance(
   diarized: boolean,
 ): Promise<void> {
   const clusterKey = diarized
-    ? `stream:${utterance.streamId}:deepgram:${utterance.providerSpeakerId || "unknown"}`
+    ? `stream:${utterance.streamId}:${utterance.provider}:${utterance.providerSpeakerId || "unknown"}`
     : `recall:${utterance.participant.transportId}`;
   const result = await ingestMeetingEvent({
     sessionId,
@@ -261,6 +298,33 @@ export function registerMeetingSTTAudioTransport(
   const wss = new WebSocketServer({ noServer: true });
   const scribeProvider = new ScribeRealtimeSTTProvider();
   const deepgramProvider = new DeepgramDiarizingSTTProvider();
+  const meetingHints = new Map<string, Promise<SpeechRecognitionHints>>();
+  const recognitionHintsForMeeting = (
+    sessionId: string,
+    meeting: MeetingSessionMeta,
+  ): Promise<SpeechRecognitionHints> => {
+    const existing = meetingHints.get(sessionId);
+    if (existing) return existing;
+    const fallback = createSpeechRecognitionHints([
+      "Mantra",
+      meeting.title,
+      ...meeting.participants.flatMap((participant) => [participant.label, participant.providerLabel]),
+    ]);
+    const resolution = runWithMeetingOwnerPrincipal(meeting, () =>
+      resolveSpeechRecognitionHints({
+        participants: meeting.participants,
+        contextTerms: [meeting.title],
+      }),
+    ).catch((error) => {
+      log.warn("meeting recognition vocabulary resolution failed; using meeting-local hints", {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return fallback;
+    });
+    meetingHints.set(sessionId, resolution);
+    return resolution;
+  };
   const liveConnections = new Set<{
     meetings: Map<string, MeetingSessionMeta>;
     streams: Map<string, ParticipantStream>;
@@ -445,6 +509,7 @@ export function registerMeetingSTTAudioTransport(
           encoding: "pcm_s16le",
           sampleRateHz: 16000,
           channels: 1,
+          hints: await recognitionHintsForMeeting(identity.sessionId, meeting),
           },
           async (utterance) => {
           if (utterance.isFinal && isCurrent(stream)) {
@@ -622,6 +687,10 @@ export function registerMeetingSTTAudioTransport(
           return;
         }
       }
+      if (isConfigurationError(detail)) {
+        await failStream(stream, detail);
+        return;
+      }
       const attempts = (sttReconnectAttempts.get(mapKey) ?? 0) + 1;
       if (attempts > STT_RECONNECT_MAX_ATTEMPTS) {
         sttReconnectAttempts.delete(mapKey);
@@ -794,6 +863,7 @@ export function registerMeetingSTTAudioTransport(
         stream.stt?.close();
       }
       liveConnections.delete(connection);
+      for (const sessionId of meetings.keys()) meetingHints.delete(sessionId);
       for (const [sessionId, meeting] of meetings) {
         persistRecognition(sessionId, meeting, streams, true).catch((error) =>
           log.error(`failed to persist closed recognition state sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`),
@@ -868,28 +938,30 @@ export function createMeetingRecognitionLaunchPlan(
   policy?: MeetingSpeakerPolicy,
 ): MeetingRecognitionLaunchPlan {
   const mode = meetingDefaultAudioSourceMode(policy);
-  const scribe = new ScribeRealtimeSTTProvider();
-  const deepgram = new DeepgramDiarizingSTTProvider();
-  const provider = mode === "shared_room" ? deepgram : scribe;
-  const alternateProvider = mode === "shared_room" ? scribe : deepgram;
+  const capabilities = meetingRecognitionCapabilities();
+  const requested = mode === "shared_room"
+    ? capabilities.sharedRoom
+    : capabilities.participantStreams;
+  const participantFallback = mode === "shared_room" && capabilities.participantStreams.available
+    ? capabilities.participantStreams
+    : null;
 
-  if (provider.isConfigured() || alternateProvider.isConfigured()) {
-    const requestedReady = provider.isConfigured();
+  if (requested.available || participantFallback) {
     return {
       outcome: "participant_audio",
-      mode,
-      provider: requestedReady ? provider.provider : alternateProvider.provider,
-      model: requestedReady ? provider.model : alternateProvider.model,
+      mode: requested.available ? mode : "participant_streams",
+      provider: requested.available ? requested.provider : participantFallback!.provider,
+      model: requested.available ? requested.model : participantFallback!.model,
       source: "recall_participant_audio",
-      fallback: !requestedReady,
-      sttStatus: requestedReady ? "inactive" : "fallback",
-      recognitionStatus: requestedReady ? "waiting" : "degraded",
-      reasonCode: requestedReady
+      fallback: !requested.available,
+      sttStatus: requested.available ? "inactive" : "fallback",
+      recognitionStatus: requested.available ? "waiting" : "degraded",
+      reasonCode: requested.available
         ? "participant_audio_ready"
-        : mode === "shared_room" ? "deepgram_not_configured" : "scribe_not_configured",
-      detail: requestedReady
+        : "shared_room_recognition_unavailable",
+      detail: requested.available
         ? `Waiting for Recall participant audio for ${mode === "shared_room" ? "shared-room" : "participant"} recognition`
-        : `${mode === "shared_room" ? "Shared-room" : "Participant"} recognition is unavailable because ${mode === "shared_room" ? "DEEPGRAM_API_KEY" : "ELEVENLABS_API_KEY"} is not configured. Live audio sources remain available and can be switched to the configured recognition mode.`,
+        : `${unavailableMeetingRecognitionDetail(mode)} Starting in Individual mode so transcription remains active.`,
     };
   }
 
@@ -903,9 +975,11 @@ export function createMeetingRecognitionLaunchPlan(
     fallback: true,
     sttStatus: "fallback",
     recognitionStatus: "degraded",
-    reasonCode: sharedRoom ? "deepgram_not_configured" : "scribe_not_configured",
+    reasonCode: sharedRoom
+      ? "shared_room_recognition_unavailable"
+      : "participant_recognition_unavailable",
     detail: sharedRoom
-      ? "Shared-room speaker recognition is unavailable because DEEPGRAM_API_KEY is not configured. Transcript capture continues through Recall, but people sharing one microphone will not be separated. Configure DEEPGRAM_API_KEY and start a new meeting."
-      : "Participant-audio recognition is unavailable because ELEVENLABS_API_KEY is not configured. Transcript capture continues through Recall. Configure ELEVENLABS_API_KEY and start a new meeting.",
+      ? `${unavailableMeetingRecognitionDetail("shared_room")} Transcript capture continues through Recall, but people sharing one microphone will not be separated.`
+      : "Participant-audio recognition is unavailable because ElevenLabs Scribe Realtime is not configured. Transcript capture continues through Recall.",
   };
 }

@@ -82,7 +82,9 @@ export async function joinMeetingByUrl(opts: {
     eventStart: identity.eventStart,
     eventEnd: identity.eventEnd,
     resolutionSource: identity.resolutionSource,
-    speakerPolicy: identity.speakerPolicy,
+    speakerPolicy: recognitionLaunch.mode === "shared_room"
+      ? identity.speakerPolicy
+      : { mode: "participant_streams" },
     ...meetingRecognitionLaunchMeta(recognitionLaunch),
     participationPolicy: opts.joinMode === "note_taking" ? "listen_only" : "auto",
   });

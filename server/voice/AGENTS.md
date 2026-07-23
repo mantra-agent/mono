@@ -20,7 +20,7 @@ voice/
 ├── tool-middleware.ts    — Voice-specific tool execution middleware
 ├── thinking-filter.ts    — Strips <thinking> blocks from streaming output
 ├── synthesis.ts          — Canonical portable speech synthesis for non-browser transports
-├── stt.ts                — Provider-neutral labeled PCM recognition boundary; Scribe for one-speaker streams, Deepgram diarization for explicitly selected shared-room streams
+├── stt.ts                — Provider-neutral labeled PCM recognition boundary; Scribe for one-speaker streams, Deepgram diarization for explicitly selected shared-room streams; both consume bounded contextual keyterms resolved by `speech-recognition-hints.ts`
 ├── turn-context.ts       — TurnContext factory for per-turn state
 ├── session-state.ts      — Shim for v2.5 callers (delegates to session.ts)
 ├── sse-stream.ts         — Response SSE instrumentation (v2.5)
@@ -67,6 +67,7 @@ Uses per-iteration content model (`iterationResults[]`) with explicit `mergeIter
 - Tool middleware runs inside `iterator.next()` — keep it fast, no heavy I/O
 - The thinking filter is stateful per-turn — always create a fresh one via `createThinkingFilter()`
 - Never block the SSE response — use fire-and-forget for non-critical logging
+- STT adapters consume `SpeechRecognitionHints`; meeting/voice entry points resolve user-owned identity, roster, and People vocabulary once and providers only translate that contract to their wire format
 
 ### Speech Synthesis Ownership
 Normal voice configuration is the sole source of truth for voice identity, model, expression tags, pronunciation, and voice settings. `voice/synthesis.ts` owns the portable provider request: `streamVoiceAudio()` returns progressive audio, and buffered consumers derive bytes through `synthesizeVoiceAudio()` rather than opening a second provider path. Meeting/Recall and phone/Twilio may deliver, buffer, or transcode that audio, but must not own provider selection or speech configuration.

@@ -5,6 +5,10 @@ import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
 import { getPrincipal } from "../principal";
 import type { MeetingAudioSourceMode } from "@shared/models/chat";
+import {
+  meetingRecognitionCapabilities,
+  unavailableMeetingRecognitionDetail,
+} from "../meeting/stt";
 
 const log = createLogger("MeetingAudioSourceRoutes");
 const MODES = new Set<MeetingAudioSourceMode>(["participant_streams", "shared_room"]);
@@ -42,12 +46,25 @@ export function registerMeetingAudioSourceRoutes(app: Express): void {
         res.status(400).json({ error: 'mode must be "participant_streams" or "shared_room"' });
         return;
       }
+      const requestedMode = mode as MeetingAudioSourceMode;
+      const capabilities = meetingRecognitionCapabilities();
+      const available = requestedMode === "shared_room"
+        ? capabilities.sharedRoom.available
+        : capabilities.participantStreams.available;
+      if (!available) {
+        res.status(409).json({
+          error: unavailableMeetingRecognitionDetail(requestedMode),
+          code: "recognition_capability_unavailable",
+          mode: requestedMode,
+        });
+        return;
+      }
 
       try {
         const result = await chatStorage.setMeetingAudioSourcePolicy(
           sessionId,
           sourceKey,
-          mode as MeetingAudioSourceMode,
+          requestedMode,
           mutationId,
         );
         if (result.outcome === "not_found" || result.outcome === "not_owned") {
@@ -66,7 +83,7 @@ export function registerMeetingAudioSourceRoutes(app: Express): void {
           eventBus.publish({
             category: "voice",
             event: "meeting.audio_source_policy.updated",
-            payload: { sessionId, sourceKey, mode, mutationId },
+            payload: { sessionId, sourceKey, mode: requestedMode, mutationId },
             audience: { scope: "user", ownerUserId: principal.userId, accountId: principal.accountId },
           });
         }
