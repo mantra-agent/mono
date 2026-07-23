@@ -122,9 +122,32 @@ function serializeVnextEntityLink(link: MemoryVnextEntityLink) {
 function serializeVnextClaimLink(link: MemoryVnextClaimLink) {
   return {
     id: link.id, fromClaimId: link.fromClaimId, toClaimId: link.toClaimId,
-    relationship: link.relationship, strength: link.strength, certainty: link.certainty,
+    relationship: link.relationship, relationshipClass: link.relationshipClass,
+    producerKind: link.producerKind, epistemicStatus: link.epistemicStatus,
+    edgeKey: link.edgeKey, strength: link.strength, certainty: link.certainty,
     producerMethod: link.producerMethod, derivationVersion: link.derivationVersion,
     provenance: link.provenance, createdAt: serializeDate(link.createdAt),
+  };
+}
+
+function serializeTransitionPathDetail(detail: import("./vnext-transition-graph").VnextTransitionPathDetail) {
+  return {
+    path: {
+      ...detail.path,
+      createdAt: serializeDate(detail.path.createdAt),
+      updatedAt: serializeDate(detail.path.updatedAt),
+    },
+    members: detail.members.map((member) => ({
+      ...member,
+      createdAt: serializeDate(member.createdAt),
+      claim: serializeVnextClaim(member.claim),
+    })),
+    edges: detail.edges.map((edge) => ({
+      ...edge,
+      createdAt: serializeDate(edge.createdAt),
+      claimLink: serializeVnextClaimLink(edge.claimLink),
+      evidence: edge.evidence.map((item) => ({ ...item, createdAt: serializeDate(item.createdAt) })),
+    })),
   };
 }
 
@@ -1428,6 +1451,8 @@ async function handleGetVnextClaim(req: Request, res: Response): Promise<void> {
       sources: detail.sources.map(serializeVnextSourceRef),
       entityLinks: detail.entityLinks.map(serializeVnextEntityLink),
       claimLinks: detail.claimLinks.map(serializeVnextClaimLink),
+      claimLinkEvidence: detail.claimLinkEvidence.map((item) => ({ ...item, createdAt: serializeDate(item.createdAt) })),
+      transitionPaths: detail.transitionPaths.map(serializeTransitionPathDetail),
       dimensions: serializeVnextDimensions(detail.dimensions),
       lifecycle: {
         ...detail.lifecycle,
@@ -1471,6 +1496,31 @@ async function handleGetVnextClaimLinks(req: Request, res: Response): Promise<vo
     if (!id) { res.status(400).json({ error: "Invalid claim id" }); return; }
     const links = await memoryVnextClaimStorage.listClaimLinks(id);
     res.json({ storage: "memory_vnext_claim_links", claimId: id, total: links.length, claimLinks: links.map(serializeVnextClaimLink) });
+  } catch (error: unknown) {
+    res.status(500).json({ error: errorMessage(error) });
+  }
+}
+
+async function handleGetVnextTransitionPaths(req: Request, res: Response): Promise<void> {
+  try {
+    const claimId = parsePositiveInt(req.query.claimId);
+    const pathId = parsePositiveInt(req.query.pathId);
+    const limit = Math.min(parsePositiveInt(req.query.limit) ?? 25, 100);
+    const { inspectTransitionPaths } = await import("./vnext-transition-graph");
+    const paths = await inspectTransitionPaths({ claimId: claimId ?? undefined, pathId: pathId ?? undefined, limit });
+    res.json({ storage: "memory_vnext_transition_paths", total: paths.length, paths: paths.map(serializeTransitionPathDetail) });
+  } catch (error: unknown) {
+    res.status(500).json({ error: errorMessage(error) });
+  }
+}
+
+async function handleRecomputeVnextTransitionPaths(req: Request, res: Response): Promise<void> {
+  try {
+    const limit = Math.min(parsePositiveInt(req.body?.limit) ?? 250, 250);
+    const { recomputeTransitionPaths } = await import("./vnext-transition-graph");
+    const result = await recomputeTransitionPaths(limit);
+    eventBus.publish({ category: "memory", event: "entries_changed", payload: { action: "vnext_transition_recompute", storage: "memory_vnext_transition_paths", ...result, level: "info" } });
+    res.json({ recomputed: true, storage: "memory_vnext_transition_paths", ...result });
   } catch (error: unknown) {
     res.status(500).json({ error: errorMessage(error) });
   }
@@ -1532,6 +1582,8 @@ export function registerMemoryRoutes(app: Express) {
   app.post("/api/memory/vnext/claims/nuke", handleNukeVnextClaims);
   app.get("/api/memory/vnext/sources", handleGetVnextSources);
   app.get("/api/memory/vnext/claims/counts", handleGetVnextClaimCounts);
+  app.get("/api/memory/vnext/transition-paths", handleGetVnextTransitionPaths);
+  app.post("/api/memory/vnext/transition-paths/recompute", handleRecomputeVnextTransitionPaths);
   app.get("/api/memory/vnext/claims", handleSearchVnextClaims);
   app.get("/api/memory/vnext/claims/:id", handleGetVnextClaim);
   app.get("/api/memory/vnext/claims/:id/sources", handleGetVnextClaimSources);

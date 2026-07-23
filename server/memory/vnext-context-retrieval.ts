@@ -85,10 +85,13 @@ function claimTypeBoost(type: string): number {
   return 1;
 }
 
-function relationshipSignal(relationship: string): "causal" | "contrastive" | "semantic" {
-  const normalized = relationship.toLowerCase();
-  if (["causes", "caused_by", "supports", "derived_from", "leads_to"].includes(normalized)) return "causal";
-  if (["contradicts", "supersedes", "evolves", "replaces"].includes(normalized)) return "contrastive";
+function relationshipSignal(link: MemoryVnextClaimLink): "causal" | "contrastive" | "semantic" {
+  if (link.relationshipClass === "causal" && link.epistemicStatus === "causal_hypothesis") return "causal";
+  if (link.relationshipClass === "evidence" && ["contradicts", "supersedes"].includes(link.relationship)) return "contrastive";
+  if (link.relationshipClass === "legacy") {
+    const normalized = link.relationship.toLowerCase();
+    if (["contradicts", "supersedes", "evolves", "replaces"].includes(normalized)) return "contrastive";
+  }
   return "semantic";
 }
 
@@ -216,7 +219,7 @@ export async function retrieveVnextContext(
       const neighborSignal = ensureSignals(neighborId);
       const propagated = Math.max(seedSignal.semantic, seedSignal.recency, seedSignal.causal, seedSignal.contrastive)
         * Math.max(0, Math.min(1, link.strength)) * (depth === 1 ? 0.9 : 0.65);
-      const kind = relationshipSignal(link.relationship);
+      const kind = relationshipSignal(link);
       neighborSignal[kind] = Math.max(neighborSignal[kind], propagated);
       neighborSignal.paths.add(`${kind}:${link.relationship}`);
       if (!visited.has(neighborId)) {

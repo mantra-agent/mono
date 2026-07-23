@@ -635,6 +635,75 @@ export async function runSchemaBootstrap(
   await pool.query(`COMMENT ON COLUMN memory_vnext_claim_links.strength IS 'Legacy compatibility field. Relationship certainty is stored separately.'`);
 
   await pool.query(`
+    ALTER TABLE memory_vnext_claim_links
+      ADD COLUMN IF NOT EXISTS relationship_class TEXT NOT NULL DEFAULT 'legacy',
+      ADD COLUMN IF NOT EXISTS producer_kind TEXT NOT NULL DEFAULT 'legacy',
+      ADD COLUMN IF NOT EXISTS epistemic_status TEXT NOT NULL DEFAULT 'legacy_unassessed',
+      ADD COLUMN IF NOT EXISTS edge_key TEXT
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uk_memory_vnext_claim_link_edge_key ON memory_vnext_claim_links(owner_user_id, account_id, edge_key) WHERE edge_key IS NOT NULL`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_links_class ON memory_vnext_claim_links(relationship_class, relationship)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS memory_vnext_claim_link_evidence (
+      id SERIAL PRIMARY KEY,
+      claim_link_id INTEGER NOT NULL REFERENCES memory_vnext_claim_links(id) ON DELETE CASCADE,
+      source_ref_id INTEGER NOT NULL REFERENCES memory_vnext_sources(id) ON DELETE RESTRICT,
+      role TEXT NOT NULL DEFAULT 'basis',
+      scope TEXT NOT NULL DEFAULT 'user', owner_user_id TEXT, account_id TEXT, created_by_user_id TEXT,
+      created_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT uk_memory_vnext_claim_link_evidence UNIQUE (claim_link_id, source_ref_id, role),
+      CONSTRAINT memory_vnext_claim_link_evidence_role_valid CHECK (role IN ('basis', 'counterexample', 'corroboration'))
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_link_evidence_link ON memory_vnext_claim_link_evidence(claim_link_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_link_evidence_source ON memory_vnext_claim_link_evidence(source_ref_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_link_evidence_owner ON memory_vnext_claim_link_evidence(scope, owner_user_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_link_evidence_account ON memory_vnext_claim_link_evidence(account_id)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS memory_vnext_transition_paths (
+      id SERIAL PRIMARY KEY, derivation_key TEXT NOT NULL, status TEXT NOT NULL, certainty REAL NOT NULL,
+      elapsed_seconds INTEGER, context_keys TEXT[] NOT NULL DEFAULT '{}', entity_keys TEXT[] NOT NULL DEFAULT '{}',
+      producer_method TEXT NOT NULL, derivation_version TEXT NOT NULL, evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+      scope TEXT NOT NULL DEFAULT 'user', owner_user_id TEXT, account_id TEXT, created_by_user_id TEXT, updated_by_user_id TEXT,
+      created_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT memory_vnext_transition_status_valid CHECK (status IN ('observed_transition', 'causal_hypothesis')),
+      CONSTRAINT memory_vnext_transition_certainty_bounded CHECK (certainty >= 0 AND certainty <= 1),
+      CONSTRAINT memory_vnext_transition_elapsed_nonnegative CHECK (elapsed_seconds IS NULL OR elapsed_seconds >= 0)
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uk_memory_vnext_transition_derivation ON memory_vnext_transition_paths(owner_user_id, account_id, derivation_key)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_transition_owner ON memory_vnext_transition_paths(scope, owner_user_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_transition_account ON memory_vnext_transition_paths(account_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_transition_method ON memory_vnext_transition_paths(producer_method, derivation_version)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS memory_vnext_transition_members (
+      id SERIAL PRIMARY KEY, transition_path_id INTEGER NOT NULL REFERENCES memory_vnext_transition_paths(id) ON DELETE CASCADE,
+      claim_id INTEGER NOT NULL REFERENCES memory_vnext_claims(id) ON DELETE CASCADE, role TEXT NOT NULL, ordinal INTEGER NOT NULL DEFAULT 0,
+      scope TEXT NOT NULL DEFAULT 'user', owner_user_id TEXT, account_id TEXT, created_by_user_id TEXT,
+      created_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT uk_memory_vnext_transition_member UNIQUE (transition_path_id, claim_id, role),
+      CONSTRAINT memory_vnext_transition_member_role_valid CHECK (role IN ('prior_state', 'action', 'mechanism', 'later_state'))
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_transition_member_path ON memory_vnext_transition_members(transition_path_id, role, ordinal)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_transition_member_claim ON memory_vnext_transition_members(claim_id, role)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_transition_member_owner ON memory_vnext_transition_members(scope, owner_user_id)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS memory_vnext_transition_edges (
+      id SERIAL PRIMARY KEY, transition_path_id INTEGER NOT NULL REFERENCES memory_vnext_transition_paths(id) ON DELETE CASCADE,
+      claim_link_id INTEGER NOT NULL REFERENCES memory_vnext_claim_links(id) ON DELETE CASCADE, role TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'user', owner_user_id TEXT, account_id TEXT, created_by_user_id TEXT,
+      created_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT uk_memory_vnext_transition_edge UNIQUE (transition_path_id, claim_link_id, role),
+      CONSTRAINT memory_vnext_transition_edge_role_valid CHECK (role IN ('prior_to_action', 'action_to_later', 'mechanism_evidence'))
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_transition_edge_path ON memory_vnext_transition_edges(transition_path_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_transition_edge_link ON memory_vnext_transition_edges(claim_link_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_transition_edge_owner ON memory_vnext_transition_edges(scope, owner_user_id)`);
+  await pool.query(`COMMENT ON TABLE memory_vnext_transition_paths IS 'Replay-safe derived state-action-state paths. Temporal sequence alone never establishes causality.'`);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS communication_audiences (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,

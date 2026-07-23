@@ -146,6 +146,8 @@ export interface VnextClaimDetail {
   sources: MemoryVnextSourceRef[];
   entityLinks: MemoryVnextEntityLink[];
   claimLinks: MemoryVnextClaimLink[];
+  claimLinkEvidence: import("@shared/schema").MemoryVnextClaimLinkEvidence[];
+  transitionPaths: import("./vnext-transition-graph").VnextTransitionPathDetail[];
   dimensions: VnextClaimDimensions;
   lifecycle: {
     stage: string;
@@ -844,12 +846,19 @@ export class MemoryVnextClaimStorage {
       this.listEntityLinks(id),
       this.listClaimLinks(id),
     ]);
+    const { inspectTransitionPaths, listClaimLinkEvidence } = await import("./vnext-transition-graph");
+    const [claimLinkEvidence, transitionPaths] = await Promise.all([
+      listClaimLinkEvidence(claimLinks.map((link) => link.id)),
+      inspectTransitionPaths({ claimId: id, limit: 25 }),
+    ]);
     const dimensions = await deriveVnextClaimDimensions({ claim, sources, entityLinks, claimLinks });
     return {
       claim,
       sources,
       entityLinks,
       claimLinks,
+      claimLinkEvidence,
+      transitionPaths,
       dimensions,
       lifecycle: {
         stage: claim.lifecycleStage,
@@ -1243,6 +1252,7 @@ export class MemoryVnextClaimStorage {
           quote: sql`COALESCE(excluded.quote, ${memoryVnextSourceRefs.quote})`,
           spanStart: sql`COALESCE(excluded.span_start, ${memoryVnextSourceRefs.spanStart})`,
           spanEnd: sql`COALESCE(excluded.span_end, ${memoryVnextSourceRefs.spanEnd})`,
+          strength: sql`excluded.strength`,
           clarity: sql`COALESCE(excluded.clarity, ${memoryVnextSourceRefs.clarity})`,
           certainty: sql`COALESCE(excluded.certainty, ${memoryVnextSourceRefs.certainty})`,
           sourceObservedAt: sql`COALESCE(excluded.source_observed_at, ${memoryVnextSourceRefs.sourceObservedAt})`,
@@ -1300,78 +1310,19 @@ export class MemoryVnextClaimStorage {
     if (link) await this.touchClaim(claimId);
   }
 
+  /** @deprecated Canonical relationships must use upsertClaimRelationship with evidence provenance. */
   async linkClaims(
-    fromClaimId: number,
-    toClaimId: number,
-    relationship: string,
-    strength = 0.5,
+    _fromClaimId: number,
+    _toClaimId: number,
+    _relationship: string,
+    _strength = 0.5,
   ): Promise<MemoryVnextClaimLink | null> {
-    const principal = getCurrentPrincipalOrSystem();
-    if (fromClaimId === toClaimId) {
-      log.debug(JSON.stringify({
-        event: "memory.vnext.claim_link_skipped",
-        reason: "self_link",
-        claimId: fromClaimId,
-        relationship,
-      }));
-      return null;
-    }
-
-    const writableClaims = await db
-      .select({ id: memoryVnextClaims.id })
-      .from(memoryVnextClaims)
-      .where(combineWithWritableScope(
-        principal,
-        vnextClaimScopeColumns,
-        inArray(memoryVnextClaims.id, [fromClaimId, toClaimId]),
-      ));
-    const writableClaimIds = new Set(writableClaims.map((claim) => claim.id));
-    if (!writableClaimIds.has(fromClaimId) || !writableClaimIds.has(toClaimId)) {
-      log.warn(JSON.stringify({
-        event: "memory.vnext.claim_link_rejected",
-        reason: "claim_not_writable",
-        fromClaimId,
-        toClaimId,
-        relationship,
-      }));
-      throw new Error(`Cannot link vNext claims ${fromClaimId} -> ${toClaimId}: claim not writable`);
-    }
-
-    const boundedStrength = Math.max(0, Math.min(1, Number.isFinite(strength) ? strength : 0.5));
-    const [link] = await db
-      .insert(memoryVnextClaimLinks)
-      .values({
-        fromClaimId,
-        toClaimId,
-        relationship,
-        strength: boundedStrength,
-        ...ownedInsertValues(principal, vnextClaimLinkScopeColumns),
-        createdByUserId: principal.userId ?? undefined,
-        updatedByUserId: principal.userId ?? undefined,
-      })
-      .onConflictDoNothing()
-      .returning();
-
-    await this.advanceLifecycleStage(fromClaimId, MEMORY_VNEXT_LIFECYCLE_STAGE.LINKED, {
-      reason: "claim_link_evidence_present",
-      metadata: { claimLink: { direction: "out", relationship, toClaimId } },
-    });
-    await this.advanceLifecycleStage(toClaimId, MEMORY_VNEXT_LIFECYCLE_STAGE.LINKED, {
-      reason: "claim_link_evidence_present",
-      metadata: { claimLink: { direction: "in", relationship, fromClaimId } },
-    });
-    if (link) await this.touchClaims([fromClaimId, toClaimId]);
-
-    log.info(JSON.stringify({
-      event: link ? "memory.vnext.claim_link_created" : "memory.vnext.claim_link_preserved",
-      linkId: link?.id ?? null,
-      fromClaimId,
-      toClaimId,
-      relationship,
-      strength: boundedStrength,
-    }));
-    return link ?? null;
+    throw new Error("Loose vNext claim-link writes are retired; use upsertClaimRelationship with typed provenance");
   }
+
+  // The former arbitrary string-based implementation was removed. Keeping
+  // this failing compatibility method makes bypass attempts visible while
+  // existing compiled callers migrate to upsertClaimRelationship.
 
   async listBridgeCandidates(limit = 50): Promise<VnextBridgeCandidate[]> {
     const principal = getCurrentPrincipalOrSystem();
@@ -1656,7 +1607,15 @@ export class MemoryVnextClaimStorage {
           fromClaimId: normalizedFrom,
           toClaimId: normalizedTo,
           relationship: VNEXT_BRIDGE_RELATIONSHIP,
+          relationshipClass: "legacy",
+          producerKind: "derived",
+          epistemicStatus: "hypothesis",
+          edgeKey: createHash("sha256").update(`${principal.userId}\u001fbridge-v1\u001f${normalizedFrom}\u001f${normalizedTo}`).digest("hex"),
           strength,
+          certainty: strength,
+          producerMethod: "semantic_bridge_band",
+          derivationVersion: "v1",
+          provenance: { basis: "embedding_similarity_plus_entity_signal", causalTruthEstablished: false },
           ...ownedInsertValues(principal, vnextClaimLinkScopeColumns),
           createdByUserId: principal.userId,
           updatedByUserId: principal.userId,
@@ -2171,18 +2130,48 @@ export async function persistClaimCandidates(
     }
 
     try {
-      const relationship =
-        claim.claimType === "action"
-          ? "caused_by"
-          : claim.claimType === "state"
-            ? "resulted_from"
-            : "related_to";
-      await memoryVnextClaimStorage.linkClaims(parentClaimId, childClaimId, relationship, 0.9);
+      // sourceClaimIndex is model-proposed semantic structure only. The shared
+      // source can support a bounded qualifies edge, but it cannot establish
+      // temporal order or causality without independent canonical evidence.
+      const linkedSourceIdentity = sourceRefs[0]
+        ? { sourceType: sourceRefs[0].sourceType, sourceId: sourceRefs[0].sourceId }
+        : sourceMemoryId
+          ? { sourceType: "memory", sourceId: String(sourceMemoryId) }
+          : sourceId
+            ? { sourceType: source, sourceId }
+            : null;
+      const parentSources = linkedSourceIdentity
+        ? await memoryVnextClaimStorage.listSourceRefs(parentClaimId).then((refs) => refs.filter((ref) => ref.sourceType === linkedSourceIdentity.sourceType && ref.sourceId === linkedSourceIdentity.sourceId))
+        : [];
+      const childSources = linkedSourceIdentity
+        ? await memoryVnextClaimStorage.listSourceRefs(childClaimId).then((refs) => refs.filter((ref) => ref.sourceType === linkedSourceIdentity.sourceType && ref.sourceId === linkedSourceIdentity.sourceId))
+        : [];
+      const evidenceSourceRefIds = [...new Set([...parentSources, ...childSources].map((source) => source.id))].slice(0, 20);
+      if (evidenceSourceRefIds.length === 0) throw new Error("sourceClaimIndex link has no persisted source evidence");
+      const { upsertClaimRelationship } = await import("./vnext-transition-graph");
+      await upsertClaimRelationship({
+        fromClaimId: parentClaimId,
+        toClaimId: childClaimId,
+        relationship: "qualifies",
+        certainty: Math.min(claim.confidence, claims[claim.sourceClaimIndex]?.confidence ?? claim.confidence),
+        producerKind: "asserted",
+        epistemicStatus: "hypothesis",
+        provenance: {
+          source: "claim_extraction_source_claim_index",
+          candidateIndex: i,
+          sourceClaimIndex: claim.sourceClaimIndex,
+          causalTruthEstablished: false,
+        },
+        evidenceSourceRefIds,
+        replayKey: `source-claim-index:${source}:${sourceId ?? sourceMemoryId ?? "unknown"}:${parentClaimId}:${childClaimId}`,
+      });
       log.debug(JSON.stringify({
         event: "memory.vnext.source_claim_link_processed",
         parentClaimId,
         childClaimId,
-        relationship,
+        relationship: "qualifies",
+        relationshipClass: "semantic",
+        causalTruthEstablished: false,
         candidateIndex: i,
         sourceClaimIndex: claim.sourceClaimIndex,
       }));

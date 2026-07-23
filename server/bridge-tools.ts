@@ -13458,6 +13458,27 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           sources: detail.sources.map(r => ({ ...r, createdAt: iso(r.createdAt) })),
           entityLinks: detail.entityLinks.map(r => ({ ...r, createdAt: iso(r.createdAt) })),
           claimLinks: detail.claimLinks.map(r => ({ ...r, createdAt: iso(r.createdAt) })),
+          claimLinkEvidence: detail.claimLinkEvidence.map(r => ({ ...r, createdAt: iso(r.createdAt) })),
+          transitionPaths: detail.transitionPaths.map(path => ({
+            path: { ...path.path, createdAt: iso(path.path.createdAt), updatedAt: iso(path.path.updatedAt) },
+            members: path.members.map(member => ({
+              ...member,
+              createdAt: iso(member.createdAt),
+              claim: {
+                ...member.claim,
+                observedAt: iso(member.claim.observedAt), validFrom: iso(member.claim.validFrom), validUntil: iso(member.claim.validUntil),
+                occurredAt: iso(member.claim.occurredAt), expectedBy: iso(member.claim.expectedBy),
+                lifecycleStageUpdatedAt: iso(member.claim.lifecycleStageUpdatedAt), lastRecalledAt: iso(member.claim.lastRecalledAt),
+                activeTouchedAt: iso(member.claim.activeTouchedAt), createdAt: iso(member.claim.createdAt), updatedAt: iso(member.claim.updatedAt),
+              },
+            })),
+            edges: path.edges.map(edge => ({
+              ...edge,
+              createdAt: iso(edge.createdAt),
+              claimLink: { ...edge.claimLink, createdAt: iso(edge.claimLink.createdAt) },
+              evidence: edge.evidence.map(item => ({ ...item, createdAt: iso(item.createdAt) })),
+            })),
+          })),
           dimensions: {
             ...detail.dimensions,
             strength: {

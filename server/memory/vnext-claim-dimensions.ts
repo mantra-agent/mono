@@ -32,8 +32,14 @@ export interface VnextClaimDimensions {
     entityRelationshipCount: number;
     sourceRelationshipTypes: string[];
     claimRelationshipTypes: string[];
+    claimRelationshipClasses: string[];
+    observationCount: number;
+    hypothesisCount: number;
+    causalHypothesisCount: number;
+    legacyUnassessedCount: number;
     assessedRelationshipCertaintyCount: number;
     relationshipCertaintyIsSeparateFromClaimCertainty: true;
+    sequenceDoesNotEstablishCausality: true;
   };
   integration: {
     level: MemoryVnextIntegrationLevel;
@@ -331,8 +337,14 @@ export async function deriveVnextClaimDimensions(input: {
       entityRelationshipCount: entityLinks.length,
       sourceRelationshipTypes: [...new Set(sources.map((source) => source.relationship))].sort(),
       claimRelationshipTypes: [...new Set(claimLinks.map((link) => link.relationship))].sort(),
+      claimRelationshipClasses: [...new Set(claimLinks.map((link) => link.relationshipClass))].sort(),
+      observationCount: claimLinks.filter((link) => link.epistemicStatus === "observation").length,
+      hypothesisCount: claimLinks.filter((link) => link.epistemicStatus === "hypothesis").length,
+      causalHypothesisCount: claimLinks.filter((link) => link.epistemicStatus === "causal_hypothesis").length,
+      legacyUnassessedCount: claimLinks.filter((link) => link.epistemicStatus === "legacy_unassessed").length,
       assessedRelationshipCertaintyCount: sources.filter((source) => source.certainty != null).length + claimLinks.filter((link) => link.certainty != null).length,
       relationshipCertaintyIsSeparateFromClaimCertainty: true,
+      sequenceDoesNotEstablishCausality: true,
     },
     integration,
     certainty,
