@@ -244,6 +244,8 @@ AgentExecutor stream → publishJournalToUI() → SessionManager.applyEvent()
 
 Generic EventBus events are process-local operational signals. `chat.stream` is delivered synchronously and discarded; other events live in a principal-scoped 2,000-entry memory ring for current-boot history, hook testing, and reconnect replay. EventBus never writes to PostgreSQL. Canonical user state and hook execution records remain durable in their owning stores.
 
+Provider-bound inference payload captures are durable diagnostic evidence, not part of the caller's business mutation. `inference-payload-capture.ts` owns their principal-scoped write, retention, lossless JSONB-safe request envelope, transparent decode, and bounded database error evidence. Capture and retention run on the general lane outside any ambient database transaction so caller rollback cannot erase evidence or turn capture into a nested savepoint.
+
 ### When Working Here
 - `SessionManager` is a singleton — one instance per server process
 - Chat response ownership begins when a message is accepted, before model selection or context assembly. `server/integrations/chat/run-lifecycle.ts` is the sole generation authority across preparation, execution, persistence, and finalization. User messages always persist; only the newest generation may produce or settle an assistant response. Supersession and explicit cancellation are distinct terminal reasons.
@@ -597,6 +599,7 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 
 ## Workflow orchestration
 
+- Workflow stage definitions own an explicit `persona`. Stage child creation must pass it through `spawnChildSession` before context assembly and first inference; never infer workflow persona from the stage title or repair missing identity in the client.
 - Workflow stage children execute exactly one assigned stage. They must never create or start another workflow; `createWorkflowRun` enforces this from durable `workflow_sessions.role = stage_attempt` ownership so tool and HTTP callers share one boundary.
 - Stage results follow the template transition. A result with a named recovery destination keeps the run active and starts that destination; `blocked` pauses only when the transition has no destination, while `needs_review` remains a review gate.
 - Workflow state and its inline widget own progress. Do not write stage-start, stage-completion, retry, or transition prose into the parent session.
