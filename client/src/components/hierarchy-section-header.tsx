@@ -9,6 +9,15 @@ import { cn } from "@/lib/utils";
 export const HIERARCHY_SECTION_HEADER_CLASS =
   "flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground";
 
+/**
+ * Canonical Session-menu row base typography (the clickable session-title
+ * rows). Shared so any surface that wants the same row style — like the Context
+ * prompt viewer — matches by construction. State-specific classes (active
+ * background, status color, hover) are composed on top by the consumer.
+ */
+export const HIERARCHY_SESSION_ROW_CLASS =
+  "group relative flex items-center gap-2 rounded-md px-2 py-1.5 text-sm w-full text-left cursor-pointer select-none transition-colors overflow-hidden";
+
 interface HierarchySectionHeaderProps extends HTMLAttributes<HTMLDivElement> {
   children: ReactNode;
 }

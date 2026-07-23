@@ -40,7 +40,7 @@ import { isDurablyActiveSession, type ChatSession } from "@shared/models/chat";
 import { SessionActionsMenuItems } from "@/components/session-actions-menu";
 import { SessionDetailsModal } from "@/components/session-details-modal";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
-import { HIERARCHY_SECTION_HEADER_CLASS } from "@/components/hierarchy-section-header";
+import { HIERARCHY_SECTION_HEADER_CLASS, HIERARCHY_SESSION_ROW_CLASS } from "@/components/hierarchy-section-header";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -286,7 +286,7 @@ export function ConversationItem({
 
   // Build container class — selected uses bg-sidebar-accent but keeps status color
   const containerClass = cn(
-    "group relative flex items-center gap-2 rounded-md px-2 py-1.5 text-sm w-full text-left cursor-pointer select-none transition-colors overflow-hidden",
+    HIERARCHY_SESSION_ROW_CLASS,
     isActive ? "bg-accent" : "hover:bg-accent/70",
     statusTextClass
   );
