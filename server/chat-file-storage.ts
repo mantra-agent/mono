@@ -29,6 +29,7 @@ import type {
   MeetingParticipant,
   MeetingSessionMeta,
   MessageSpeakerMeta,
+  ChatSession,
   PersonaSnapshot,
   QuestionResponseMeta,
   SystemStepRecord,
@@ -609,6 +610,13 @@ async function runWithChatDocumentOwner<T>(
   );
 }
 
+function countMeetingTranscriptMessages(data: SessionData): number {
+  if (data.type !== "meeting") return 0;
+  return data.messages.filter(
+    (message) => message.role === "user" && Boolean(message.speaker) && Boolean(message.content.trim()),
+  ).length;
+}
+
 function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
   return {
     title: data.title,
@@ -622,6 +630,8 @@ function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
     lastMessageRole: getLastMessageRole(data.messages),
     awaitingQuestionResponse: hasUnansweredQuestion(data.messages) || undefined,
     type: data.type || "text",
+    meeting: data.meeting,
+    meetingTranscriptCount: countMeetingTranscriptMessages(data),
     sessionType: data.sessionType || "user",
     isPinned: data.isPinned || false,
     pinReason: data.pinReason || null,
@@ -906,6 +916,7 @@ function convToMeta(data: SessionData): FileSession {
     intentionId: data.intentionId,
     voiceSessionId: data.voiceSessionId,
     meeting: data.meeting,
+    meetingTranscriptCount: countMeetingTranscriptMessages(data),
     messageCount: data.messages.length,
     lastMessageRole: getLastMessageRole(data.messages),
     awaitingQuestionResponse: hasUnansweredQuestion(data.messages) || undefined,
@@ -1061,6 +1072,8 @@ function docMetadataToSession(doc: {
     hasUnreadResult: metadataBool(meta, "hasUnreadResult"),
     intentionId: metadataString(meta, "intentionId"),
     voiceSessionId: metadataString(meta, "voiceSessionId"),
+    meeting: meta.meeting as MeetingSessionMeta | undefined,
+    meetingTranscriptCount: metadataNumber(meta, "meetingTranscriptCount"),
     messageCount: metadataNumber(meta, "messageCount") || 0,
     lastMessageRole: toLastMessageRole(metadataString(meta, "lastMessageRole")),
     awaitingQuestionResponse: metadataBool(meta, "awaitingQuestionResponse") || undefined,

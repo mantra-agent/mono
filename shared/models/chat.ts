@@ -917,6 +917,8 @@ export interface ChatSession {
   intentionId?: string;
   voiceSessionId?: string;
   meeting?: MeetingSessionMeta;
+  /** Number of persisted attributed transcript fragments for meeting sessions. Indexed with session metadata. */
+  meetingTranscriptCount?: number;
   messageCount?: number;
   lastMessageRole?: LastMessageRole;
   topics?: string[];

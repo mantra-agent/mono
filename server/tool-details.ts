@@ -242,8 +242,8 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     },
   },
   meetings: {
-    description: "Manage calendar events — create, list, update, delete meetings, classify events, and link tasks/people.",
-    whenToUse: "User wants to schedule, check, reschedule, cancel meetings, classify calendar events, or link tasks/priorities to calendar blocks.",
+    description: "Manage calendar events and query the canonical completed meeting index, including transcript-note counts, participants, and linked Library artifacts.",
+    whenToUse: "Use calendar actions to schedule, check, reschedule, or classify events. Use records/count/get when the user asks about meetings Mantra attended, took notes for, recapped, or linked to People and Pages.",
     example: 'Add: { "action": "add", "summary": "Meeting with Sarah", "start": "2026-02-23T14:00:00-06:00" }\nList: { "action": "list" }\nSet metadata: { "action": "set_metadata", "googleEventId": "...", "accountId": "...", "calendarId": "primary", "eventType": "focus_block", "attendeeEmails": ["sarah@example.com"] }\nGet metadata: { "action": "get_metadata", "googleEventId": "...", "accountId": "...", "calendarId": "primary" }',
     actions: {
       add: { description: "Create a new calendar event.", requiredParams: ["summary", "start"], optionalParams: ["end", "description", "location", "attendees", "accountId", "calendarId"] },
@@ -254,6 +254,9 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
       get_metadata: { description: "Get full metadata for a calendar event including linked tasks, people, and artifacts.", requiredParams: ["googleEventId", "accountId", "calendarId"] },
       link_artifact: { description: "Link an explicit non-preparation Library artifact to a meeting. Use set_metadata with agendaLibraryPageId for preparation. Legacy agenda/brief calls may only claim or resolve the same canonical page and never replace it.", requiredParams: ["metadataId", "libraryPageId", "artifactKind"], optionalParams: ["title", "source"] },
       unlink_artifact: { description: "Remove a Library artifact link from a calendar event by link record ID.", requiredParams: ["linkId"] },
+      records: { description: "List completed meeting sessions from the canonical meeting index with participants, note evidence, and linked pages.", optionalParams: ["query", "hasNotes", "startAfter", "startBefore", "limit", "offset"] },
+      count: { description: "Return exact completed meeting, meetings-with-notes, transcript fragment, and ready-recap counts." },
+      get: { description: "Get one canonical completed or attempted meeting session by ID.", requiredParams: ["meetingId"] },
     },
   },
   priorities: {

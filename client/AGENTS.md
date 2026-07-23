@@ -225,6 +225,10 @@ Hosting credentials and environment configuration belong to Platform Environment
 
 Use `ProfileTreeRow` for compact label/value rows with optional progressive disclosure. Pass `defaultOpen` only when readiness or missing required configuration must be visible on first render; ordinary detail rows stay collapsed.
 
+### Meeting Tree Rows
+
+Network Meetings reuses `SimpleWidgetRenderer` and `SimpleTreeRow` for completed meeting sessions. Meeting rows expand inline to the shared People and Library artifact children; do not create a second meeting card or a split-view detail surface.
+
 ## Voice
 
 Voice transcript rows use one required lifecycle discriminant: `provisional`, `committed`, or `placeholder`. Only canonical server transcript events may create committed user speech. Local provider/native callbacks may create provisional composer text, and reconnect snapshots contain committed persisted history. Live and replayed voice events must pass through one event-ID-deduplicating reducer and require exact `chatSessionId` identity before mutating state or advancing the cursor.

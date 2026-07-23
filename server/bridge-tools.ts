@@ -9966,9 +9966,34 @@ ${refs}` : ""),
       get_metadata: (a) => bridgeHandlers.get_metadata_meeting(a),
       link_artifact: (a) => bridgeHandlers.link_artifact_meeting(a),
       unlink_artifact: (a) => bridgeHandlers.unlink_artifact_meeting(a),
+      records: async (a) => {
+        const { listCompletedMeetings } = await import("./meetings/meeting-index");
+        const result = await listCompletedMeetings({
+          query: typeof a.query === "string" ? a.query : undefined,
+          hasNotes: typeof a.hasNotes === "boolean" ? a.hasNotes : undefined,
+          startAfter: typeof a.startAfter === "string" ? a.startAfter : undefined,
+          startBefore: typeof a.startBefore === "string" ? a.startBefore : undefined,
+          limit: typeof a.limit === "number" ? a.limit : undefined,
+          offset: typeof a.offset === "number" ? a.offset : undefined,
+        });
+        return { result: JSON.stringify(result, null, 2) };
+      },
+      count: async () => {
+        const { getMeetingCounts } = await import("./meetings/meeting-index");
+        return { result: JSON.stringify(await getMeetingCounts(), null, 2) };
+      },
+      get: async (a) => {
+        const id = String(a.meetingId || a.id || "").trim();
+        if (!id) return { result: "Missing meetingId", error: true };
+        const { getMeetingRecord } = await import("./meetings/meeting-index");
+        const meeting = await getMeetingRecord(id);
+        return meeting
+          ? { result: JSON.stringify(meeting, null, 2) }
+          : { result: `Meeting not found: ${id}`, error: true };
+      },
     };
     const handler = sub[action];
-    if (!handler) return { result: `Unknown meetings action: ${action}. Available: add, list, update, delete, set_metadata, get_metadata, link_artifact, unlink_artifact`, error: true };
+    if (!handler) return { result: `Unknown meetings action: ${action}. Available: add, list, update, delete, set_metadata, get_metadata, link_artifact, unlink_artifact, records, count, get`, error: true };
     return handler(args);
   },
 

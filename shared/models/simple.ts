@@ -24,6 +24,7 @@ export type SimpleSection = typeof SIMPLE_SECTIONS[number];
 
 export const SIMPLE_SOURCE_TYPES = [
   "calendar",
+  "meeting",
   "wellness",
   "comms",
   "priority",
