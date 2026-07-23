@@ -3,7 +3,9 @@ import Logger from './logger';
 
 const LOG_TAG = 'ThinkingAudio';
 const SAMPLE_RATE = 22050;
-const DURATION_SECONDS = 1.2;
+const STEP_SECONDS = 0.28;
+const ARPEGGIO = [392, 493.88, 587.33, 659.25, 587.33, 493.88];
+const DURATION_SECONDS = STEP_SECONDS * ARPEGGIO.length;
 const TWO_PI = Math.PI * 2;
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
@@ -55,9 +57,14 @@ function buildThinkingLoopDataUri(): string {
     const t = index / SAMPLE_RATE;
     const phase = t / DURATION_SECONDS;
     const loopWindow = 0.5 - 0.5 * Math.cos(TWO_PI * phase);
-    const breath = 0.62 + 0.38 * Math.sin(TWO_PI * 0.83 * t);
-    const shimmer = Math.sin(TWO_PI * 392 * t) * 0.55 + Math.sin(TWO_PI * 587.33 * t) * 0.32;
-    const sample = shimmer * breath * loopWindow * 0.22;
+    const stepIndex = Math.min(ARPEGGIO.length - 1, Math.floor(t / STEP_SECONDS));
+    const localT = t - stepIndex * STEP_SECONDS;
+    const freq = ARPEGGIO[stepIndex];
+    const attack = Math.min(1, localT / 0.055);
+    const release = Math.max(0, 1 - Math.max(0, localT - 0.16) / 0.18);
+    const envelope = Math.sin(attack * Math.PI * 0.5) * release;
+    const tone = Math.sin(TWO_PI * freq * t) * 0.72 + Math.sin(TWO_PI * freq * 2 * t) * 0.08;
+    const sample = tone * envelope * loopWindow * 0.16;
     const clamped = Math.max(-1, Math.min(1, sample));
     view.setInt16(44 + index * 2, Math.round(clamped * 32767), true);
   }
@@ -71,7 +78,7 @@ async function getSound(): Promise<Audio.Sound> {
 
   loadingPromise = Audio.Sound.createAsync(
     { uri: buildThinkingLoopDataUri() },
-    { isLooping: true, shouldPlay: false, volume: 0.34 },
+    { isLooping: true, shouldPlay: false, volume: 0.28 },
   ).then(({ sound: created }) => {
     sound = created;
     return created;
@@ -85,7 +92,7 @@ async function getSound(): Promise<Audio.Sound> {
 export async function startThinkingAudioLoop(): Promise<void> {
   try {
     const activeSound = await getSound();
-    await activeSound.setStatusAsync({ isLooping: true, volume: 0.34, positionMillis: 0 });
+    await activeSound.setStatusAsync({ isLooping: true, volume: 0.28, positionMillis: 0 });
     await activeSound.playAsync();
   } catch (error) {
     Logger.warn(LOG_TAG, 'Failed to start thinking audio', { error: error instanceof Error ? error.message : String(error) });

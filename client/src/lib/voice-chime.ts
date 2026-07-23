@@ -3,14 +3,15 @@ type ChimeNote = { freq: number; offset: number; duration: number; gain: number 
 type ThinkingLoop = {
   ctx: AudioContext;
   master: GainNode;
-  modulator: OscillatorNode;
-  modulatorGain: GainNode;
-  carrierA: OscillatorNode;
-  carrierB: OscillatorNode;
-  carrierAGain: GainNode;
-  carrierBGain: GainNode;
   filter: BiquadFilterNode;
+  timers: number[];
+  oscillators: OscillatorNode[];
+  stopped: boolean;
 };
+
+const THINKING_ARPEGGIO = [392, 493.88, 587.33, 659.25, 587.33, 493.88];
+const THINKING_STEP_SECONDS = 0.28;
+const THINKING_PATTERN_SECONDS = THINKING_ARPEGGIO.length * THINKING_STEP_SECONDS;
 
 let sharedVoiceAudioContext: AudioContext | null = null;
 let thinkingLoop: ThinkingLoop | null = null;
@@ -47,14 +48,22 @@ export async function unlockVoiceAudioContext(): Promise<void> {
 }
 
 function closeThinkingLoop(loop: ThinkingLoop, delayMs = 180): void {
+  loop.stopped = true;
+  loop.timers.forEach(window.clearTimeout);
+  loop.timers.length = 0;
+
   const stopAt = loop.ctx.currentTime + delayMs / 1000;
   try {
     loop.master.gain.cancelScheduledValues(loop.ctx.currentTime);
     loop.master.gain.setValueAtTime(loop.master.gain.value, loop.ctx.currentTime);
     loop.master.gain.linearRampToValueAtTime(0, stopAt);
-    loop.carrierA.stop(stopAt + 0.04);
-    loop.carrierB.stop(stopAt + 0.04);
-    loop.modulator.stop(stopAt + 0.04);
+    for (const oscillator of loop.oscillators) {
+      try {
+        oscillator.stop(stopAt + 0.04);
+      } catch {
+        // Oscillator may already have ended naturally.
+      }
+    }
   } catch {
     // The shared voice AudioContext stays alive for future feedback sounds.
   }
@@ -113,11 +122,46 @@ export function playDisconnectionChime(): void {
   ]);
 }
 
+function scheduleThinkingArpeggio(loop: ThinkingLoop, startAt: number): void {
+  if (loop.stopped) return;
+
+  THINKING_ARPEGGIO.forEach((freq, index) => {
+    const noteStart = startAt + index * THINKING_STEP_SECONDS;
+    const noteDuration = 0.34;
+    const oscillator = loop.ctx.createOscillator();
+    const gain = loop.ctx.createGain();
+    const pan = loop.ctx.createStereoPanner();
+
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(freq, noteStart);
+    oscillator.frequency.exponentialRampToValueAtTime(freq * 1.003, noteStart + noteDuration);
+
+    gain.gain.setValueAtTime(0.0001, noteStart);
+    gain.gain.linearRampToValueAtTime(0.018, noteStart + 0.055);
+    gain.gain.exponentialRampToValueAtTime(0.001, noteStart + noteDuration);
+
+    pan.pan.setValueAtTime((index % 2 === 0 ? -0.08 : 0.08), noteStart);
+
+    oscillator.connect(gain);
+    gain.connect(pan);
+    pan.connect(loop.filter);
+
+    oscillator.start(noteStart);
+    oscillator.stop(noteStart + noteDuration + 0.03);
+    loop.oscillators.push(oscillator);
+  });
+
+  const nextTimer = window.setTimeout(() => {
+    scheduleThinkingArpeggio(loop, loop.ctx.currentTime + 0.04);
+  }, THINKING_PATTERN_SECONDS * 1000);
+  loop.timers.push(nextTimer);
+}
+
 /**
  * Starts the canonical thinking bed for voice turns. The sound is intentionally
- * quiet, tonal, and loop-safe: a soft two-oscillator shimmer through a low-pass
- * filter, amplitude-modulated slowly enough to read as work without becoming an
- * alert. It stops via `stopVoiceThinkingLoop()` as soon as speech begins.
+ * quiet and melodic: a soft ascending/descending arpeggio that reads as active
+ * work without becoming a ringtone or a drone. It stops via
+ * `stopVoiceThinkingLoop()` as soon as speech begins.
  */
 export function startVoiceThinkingLoop(): void {
   if (thinkingLoop) return;
@@ -127,47 +171,19 @@ export function startVoiceThinkingLoop(): void {
     void ctx.resume();
     const master = ctx.createGain();
     const filter = ctx.createBiquadFilter();
-    const modulator = ctx.createOscillator();
-    const modulatorGain = ctx.createGain();
-    const carrierA = ctx.createOscillator();
-    const carrierB = ctx.createOscillator();
-    const carrierAGain = ctx.createGain();
-    const carrierBGain = ctx.createGain();
 
     master.gain.setValueAtTime(0, ctx.currentTime);
-    master.gain.linearRampToValueAtTime(0.026, ctx.currentTime + 0.16);
+    master.gain.linearRampToValueAtTime(0.82, ctx.currentTime + 0.16);
 
     filter.type = "lowpass";
-    filter.frequency.setValueAtTime(1350, ctx.currentTime);
-    filter.Q.setValueAtTime(0.7, ctx.currentTime);
-
-    modulator.type = "sine";
-    modulator.frequency.setValueAtTime(0.42, ctx.currentTime);
-    modulatorGain.gain.setValueAtTime(0.008, ctx.currentTime);
-
-    carrierA.type = "sine";
-    carrierA.frequency.setValueAtTime(392, ctx.currentTime);
-    carrierAGain.gain.setValueAtTime(0.018, ctx.currentTime);
-
-    carrierB.type = "sine";
-    carrierB.frequency.setValueAtTime(587.33, ctx.currentTime);
-    carrierBGain.gain.setValueAtTime(0.011, ctx.currentTime);
-
-    modulator.connect(modulatorGain);
-    modulatorGain.connect(carrierAGain.gain);
-    modulatorGain.connect(carrierBGain.gain);
-    carrierA.connect(carrierAGain);
-    carrierB.connect(carrierBGain);
-    carrierAGain.connect(filter);
-    carrierBGain.connect(filter);
+    filter.frequency.setValueAtTime(1450, ctx.currentTime);
+    filter.Q.setValueAtTime(0.45, ctx.currentTime);
     filter.connect(master);
     master.connect(ctx.destination);
 
-    carrierA.start();
-    carrierB.start();
-    modulator.start();
-
-    thinkingLoop = { ctx, master, modulator, modulatorGain, carrierA, carrierB, carrierAGain, carrierBGain, filter };
+    const loop: ThinkingLoop = { ctx, master, filter, timers: [], oscillators: [], stopped: false };
+    thinkingLoop = loop;
+    scheduleThinkingArpeggio(loop, ctx.currentTime + 0.04);
   } catch {
     // AudioContext may be blocked or unavailable. Visual feedback still works.
   }
